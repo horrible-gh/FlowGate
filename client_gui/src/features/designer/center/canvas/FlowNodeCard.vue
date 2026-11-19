@@ -217,10 +217,17 @@ const CARD_MARK_ICONS = {
 } as const
 
 const { t } = useI18n()
+/**
+ * The [Q] mark's tooltip, one line per unanswered question: Q number, what the server recorded (flowgate.v02test.0051 C:
+ * a review loop parked for the answer reads 질문 답변 대기; otherwise 대기 중 / AI 답변 중 / 자동 답변 실패 / 사람 답변 필요),
+ * and the responder's error code and message as sent — the reason a question has no answerer stays visible.
+ */
 const questionTitle = computed(() => (props.data.questionWait ?? []).map(item => {
   const state = ['pending', 'dispatched', 'failed', 'user_decision'].includes(item.state) ? item.state : 'pending'
-  return [`Q${item.seq}`, t(`gui.inspector.qna.wait_${state}`), item.code, item.message].filter(Boolean).join(' · ')
-}).join('\\n') || t('gui.inspector.qna.wait_pending'))
+  const loop = item.phase === 'loop_wait'
+  const stateLabel = loop && state === 'pending' ? null : t(`gui.inspector.qna.wait_${state}`)
+  return [`Q${item.seq}`, loop ? t('gui.inspector.qna.wait_loop') : null, stateLabel, item.code, item.message].filter(Boolean).join(' · ')
+}).join('\n') || t('gui.inspector.qna.wait_pending'))
 
 function documentLabel(doc: CardDocumentButton): string {
   const label = t('gui.designer.center.open_card_document', { kind: doc.docType ?? t('gui.designer.center.document'), title: doc.title })

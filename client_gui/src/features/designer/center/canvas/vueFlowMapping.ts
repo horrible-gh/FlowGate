@@ -98,7 +98,7 @@ export interface FlowGateNodeData {
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
-  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null; phase?: string | null; waitStatus?: string | null; resumeStage?: string | null; waitedAt?: string | null }[]
   bodyUnreadable?: boolean
   /**
    * v02gui.0015 T2 (NR0006 §6-6): the earlier attempts of the card whose uncommitted changes its attempt did not take

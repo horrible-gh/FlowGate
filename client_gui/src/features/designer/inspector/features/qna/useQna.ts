@@ -67,14 +67,19 @@ import {
   qnaBodyContext,
   qnaErrorKey,
   qnaFailureKey,
+  qnaPrecheckView,
+  qnaPrecheckViews,
+  QNA_ASK_REUSED_KEY,
   qnaTabCount,
   qnaView,
   type QnaAvailability,
   type QnaItemView,
+  type QnaPrecheckView,
 } from './qnaModel'
 
 /** Server events after which the questions are read again (D#1 §7.4). */
-export const QNA_EVENTS = ['qna_q_registered', 'qna_answer_registered'] as const
+// flowgate.v02test.0051 C: a responder's state change (dispatched / failed / handed to a person) reads the questions again too.
+export const QNA_EVENTS = ['qna_q_registered', 'qna_answer_registered', 'qna_responder_state_changed'] as const
 
 /** Server events after which the answering guard (AI activity, disposal) is read again. */
 export const QNA_GUARD_EVENTS = ['ai_invoke_started', 'ai_invoke_finished', 'document_explorer_refresh'] as const
@@ -108,6 +113,16 @@ export interface QnaAskFailure {
 
 export interface QnaState {
   readonly items: ComputedRef<readonly QnaItemView[] | null>
+  /**
+   * The document's searches that registered no question (a reused answer, a refused resend, a failed search), newest
+   * first — read from `search_prechecks`, so they are still there after a reload.
+   */
+  readonly prechecks: ComputedRef<readonly QnaPrecheckView[]>
+  /**
+   * The reuse the last ask came to (200 `reused_answer`: its source and answer), shown at once; null when the last ask
+   * registered a question, or once the read after it carries the same record in `prechecks`.
+   */
+  readonly askReused: ComputedRef<QnaPrecheckView | null>
   readonly availability: ComputedRef<QnaAvailability>
   readonly status: Readonly<Ref<InspectorResourceStatus>>
   readonly stale: Readonly<Ref<boolean>>
@@ -178,6 +193,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
   const failure = ref<QnaFailure | null>(null)
   const asking = ref(false)
   const askFailure = ref<QnaAskFailure | null>(null)
+  const lastReuse = shallowRef<{ docId: string; view: QnaPrecheckView } | null>(null)
   const requesting = ref<number | null>(null)
   const aiFailure = ref<QnaFailure | null>(null)
   // Questions of this document answered from here. The server adds an answer on every POST, so such a
@@ -194,6 +210,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
     () => {
       failure.value = null
       askFailure.value = null
+      lastReuse.value = null
       aiFailure.value = null
       sent.clear()
       requested.clear()
@@ -207,6 +224,15 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
   })
 
   const items = computed(() => (readThread.value ? qnaView(readThread.value.items, readThread.value.docId) : null))
+
+  const prechecks = computed(() => qnaPrecheckViews(readThread.value?.searchPrechecks))
+
+  const askReused = computed<QnaPrecheckView | null>(() => {
+    const reuse = lastReuse.value
+    if (!reuse || reuse.docId !== target()?.docId) return null
+    // The read after the ask carries the same record: it is listed with the others, not twice.
+    return reuse.view.precheckId !== null && prechecks.value.some((view) => view.precheckId === reuse.view.precheckId) ? null : reuse.view
+  })
 
   // flowgate.v02.0070 T#5: superseded, or not (false), or not known (null) — the document read is not back, or its last
   // read failed. A superseded document once read stays so.
@@ -297,11 +323,21 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
     const docId = current.docId
     asking.value = true
     askFailure.value = null
+    lastReuse.value = null
     let stored = false
     try {
       try {
-        await qaAsk({ docId, body: question })
-        stored = true
+        const result = await qaAsk({ docId, body: question })
+        // 200 reused_answer: the server found the same answer and registered nothing. Say so and keep the text.
+        // Its source (document · Q number · answerer), answer and found count are kept and shown (askReused / prechecks).
+        if (result.reusedAnswer) {
+          if (target()?.docId === docId) {
+            askFailure.value = { key: QNA_ASK_REUSED_KEY }
+            if (result.precheck) lastReuse.value = { docId, view: qnaPrecheckView(result.precheck) }
+          }
+        } else {
+          stored = true
+        }
       } catch (error) {
         if (target()?.docId === docId) askFailure.value = { key: qnaAskFailureKey(qaErrorOf(error).kind) }
       }
@@ -341,6 +377,8 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
 
   return {
     items,
+    prechecks,
+    askReused,
     availability,
     status: thread.status,
     stale: thread.stale,

@@ -118,7 +118,7 @@ it('shows the human handoff reason on the Q badge in the selected language', asy
     questionWait: [{ seq: 629, state: 'user_decision', code: 'user_decision_required', message: '권한 선택 필요' }],
   } }, global: { plugins: [i18n], stubs: { Handle: true } } })
   const badge = wrapper.get('[data-test="designer-canvas-node-question-icon"]')
-  expect(badge.attributes('title')).toContain('사용자 판단 대기')
+  expect(badge.attributes('title')).toContain('사람 답변 필요')
   expect(badge.attributes('title')).toContain('권한 선택 필요')
   expect(badge.attributes('aria-label')).toContain('Q629')
   wrapper.unmount()

@@ -72,6 +72,9 @@ interface ServerItem {
   asker_provider: Record<string, unknown> | null
   answers: Record<string, unknown>[]
   created_at?: string
+  /** flowgate.v02test.0051 C: the automatic responder's record and the past-answer search record. */
+  responder?: Record<string, unknown> | null
+  search_summary?: Record<string, unknown>
 }
 
 /** flowgate.v02.0070 T#5: when question 10 was registered. */
@@ -259,17 +262,19 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(qaReadCall).toHaveBeenCalledTimes(1)
     expect(qaReadCall).toHaveBeenCalledWith(V01_DOC)
     expect(order(w)).toEqual([
-      [10, 'waiting'],
-      [13, 'waiting'],
+      [10, 'queued'],
+      [13, 'queued'],
       [12, 'open'],
       [11, 'answered'],
     ])
-    // 0052 T#1: the response proves only answered or not — every unanswered question is 미답변
-    // (neutral) whoever asked it; the asker kind is never shown as a team review or a hand-off.
-    for (const id of [10, 13, 12]) {
-      expect(itemEl(w, id).find('[data-test="qna-item-state"]').text(), String(id)).toBe('미답변')
-      expect(itemEl(w, id).find('[data-test="qna-item-state"]').attributes('data-tone'), String(id)).toBe('neutral')
+    // flowgate.v02test.0051 C: an AI's question with no responder record is 대기 중 (queued, no answerer assigned yet) — it is
+    // never shown as waiting for the user; a person's open question stays 미답변. The asker kind is no hand-off.
+    for (const id of [10, 13]) {
+      expect(itemEl(w, id).find('[data-test="qna-item-state"]').text(), String(id)).toBe('대기 중')
+      expect(itemEl(w, id).find('[data-test="qna-item-state"]').attributes('data-tone'), String(id)).toBe('info')
     }
+    expect(itemEl(w, 12).find('[data-test="qna-item-state"]').text()).toBe('미답변')
+    expect(itemEl(w, 12).find('[data-test="qna-item-state"]').attributes('data-tone')).toBe('neutral')
     expect(w.text()).not.toContain('팀 내 검토')
     expect(itemEl(w, 11).find('[data-test="qna-item-state"]').text()).toBe('완료')
     // The answered question folds under the 완료 group while questions are pending.
@@ -344,7 +349,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(windowOf(10)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
       expect(windowOf(10)!.querySelectorAll('[data-test="qna-window-option"]')).toHaveLength(2)
       expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
-      expect(windowText(10, 'qna-window-state')).toBe('미답변')
+      expect(windowText(10, 'qna-window-state')).toBe('대기 중')
       await open(w, 11)
       expect(windowText(11, 'qna-window-body')).toBe('범위를 가정했습니다.')
       // No registration time sent: none shown (the API has no time the question changed).
@@ -416,7 +421,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       await open(w, 10)
       await w.setProps({ target: v01Target({ readOnly: 'conflict', docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
       await flushPromises()
-      expect(order(w)).toEqual([[20, 'waiting']])
+      expect(order(w)).toEqual([[20, 'queued']])
       expect([...document.body.querySelectorAll('[data-test="qna-window"]')].map((el) => el.getAttribute('data-item'))).toEqual(['10'])
       expect(windowText(10, 'qna-window-doc')).toBe(`문서: ${V01_DOC}`)
       expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
@@ -624,7 +629,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     expect(windowOf(10)!.querySelector('[data-test="qna-window-failure"]')).toBeNull()
     expect(qaReadCall).toHaveBeenCalledTimes(2)
     expect(activityRead).toHaveBeenCalledTimes(2)
-    expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
+    expect(itemEl(w, 13).attributes('data-state')).toBe('queued')
     expect(fieldOf(13).value).toBe('완료 기준')
   })
 
@@ -664,7 +669,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     await send(w, 13)
     // Saved on the server; the questions shown are still the read from before the answer.
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
-    expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
+    expect(itemEl(w, 13).attributes('data-state')).toBe('queued')
     expect(isDisabled(submitOf(13))).toBe(true)
     expect(submitOf(10).attributes('title')).toBe('답변을 보내는 중입니다.')
     await submitOf(13).trigger('click')
@@ -684,7 +689,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     refusals.set('read', networkError())
     await send(w, 13)
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
-    expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
+    expect(itemEl(w, 13).attributes('data-state')).toBe('queued')
     await write(w, 13, '완료 기준 다시')
     expect(isDisabled(submitOf(13))).toBe(true)
     await submitOf(13).trigger('click')
@@ -709,7 +714,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     await w.setProps({ target: v01Target({ docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
     reject(qRefusal(409, 'disposed'))
     await flushPromises()
-    expect(order(w)).toEqual([[20, 'waiting']])
+    expect(order(w)).toEqual([[20, 'queued']])
     await open(w, 20)
     expect(windowOf(20)!.querySelector('[data-test="qna-window-failure"]')).toBeNull()
     expect(windowOf(13)!.querySelector('[data-test="qna-window-failure"]')).not.toBeNull()
@@ -875,7 +880,7 @@ describe('Q&A tab — server events (flowgate.v02.0048 T#7)', () => {
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
     expect(qaReadCall).toHaveBeenCalledTimes(2)
-    expect(itemEl(w, 14).attributes('data-state')).toBe('waiting')
+    expect(itemEl(w, 14).attributes('data-state')).toBe('queued')
   })
 
   it('qna_answer_registered (another tab answered) reads again; the question becomes answered', async () => {
@@ -947,10 +952,10 @@ describe('Q&A tab — Node change (flowgate.v02.0048 T#7)', () => {
     const w = await mountTab(v01Target())
     await w.setProps({ target: v01Target({ docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
     await flushPromises()
-    expect(order(w)).toEqual([[20, 'waiting']])
+    expect(order(w)).toEqual([[20, 'queued']])
     releaseFirst()
     await flushPromises()
-    expect(order(w)).toEqual([[20, 'waiting']])
+    expect(order(w)).toEqual([[20, 'queued']])
   })
 
   // flowgate.v02.0150: the window and its unsent draft stay whatever is selected; closing the window drops the draft.
@@ -1057,5 +1062,101 @@ describe('Q&A tab in the Frame (real registry)', () => {
     await openTab(w, 'Q&A')
     const text = w.text()
     for (const word of ['팀 내 처리', '재개', '멘트 복사', '위임']) expect(text).not.toContain(word)
+  })
+})
+
+// --- flowgate.v02test.0051 C: who answers, why it failed, and whether the past answers were searched ------------------
+
+describe('Q&A tab — responder states and the search record (flowgate.v02test.0051 C)', () => {
+  const item = (id: number, fields: Partial<ServerItem>): ServerItem => ({
+    id, seq: id - 40, title: `질문 ${id}`, body: `본문 ${id}`, asker_kind: 'ai', options: [], asker_provider: null, answers: [], ...fields,
+  })
+  const stateOf = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-item-state"]')
+
+  beforeEach(() => {
+    threads.set(V01_DOC, [
+      item(41, {}),
+      item(42, { responder: { state: 'dispatched', run_id: 'air_1', attempts: 1 } }),
+      item(43, { responder: { state: 'failed', error_code: 'no_independent_responder', error_message: '독립 답변 AI 없음', attempts: 2 } }),
+      item(44, { responder: { state: 'user_decision', attempts: 1 } }),
+      item(45, { asker_kind: 'human' }),
+      item(46, { answers: [{ id: 5, body: 'ok', author_kind: 'ai', selected_options: [], author_provider: null }] }),
+    ])
+  })
+
+  it('tells the four unanswered states apart; a technical failure is not "person needed"', async () => {
+    const w = await mountTab(v01Target())
+    // A person's turn first, then failed, AI answering, queued, a person's open question, answered.
+    expect(order(w)).toEqual([[44, 'human_needed'], [43, 'failed'], [42, 'ai_answering'], [41, 'queued'], [45, 'open'], [46, 'answered']])
+    expect(stateOf(w, 41).text()).toBe('대기 중')
+    expect(stateOf(w, 42).text()).toBe('AI 답변 중')
+    expect(stateOf(w, 43).text()).toBe('기술 실패')
+    expect(stateOf(w, 44).text()).toBe('사람 답변 필요')
+    expect(stateOf(w, 45).text()).toBe('미답변')
+    expect(stateOf(w, 43).attributes('data-tone')).toBe('danger')
+    expect(stateOf(w, 44).attributes('data-tone')).toBe('warning')
+  })
+
+  it('shows the error code and message of a failed question in the list and in the window, and only there', async () => {
+    const w = await mountTab(v01Target())
+    expect(itemEl(w, 43).find('[data-test="qna-item-responder"]').text()).toContain('no_independent_responder')
+    expect(itemEl(w, 43).find('[data-test="qna-item-responder"]').text()).toContain('독립 답변 AI 없음')
+    for (const id of [41, 42, 44, 45]) expect(itemEl(w, id).find('[data-test="qna-item-responder"]').exists(), String(id)).toBe(false)
+    await open(w, 43)
+    expect(windowText(43, 'qna-window-responder')).toContain('오류 코드: no_independent_responder')
+    expect(windowText(43, 'qna-window-responder')).toContain('오류 내용: 독립 답변 AI 없음')
+    expect(windowText(43, 'qna-window-state')).toBe('기술 실패')
+  })
+
+  it('a failed question can still be answered by a person (nothing is hidden or closed)', async () => {
+    const w = await mountTab(v01Target())
+    await write(w, 43, '사람이 답합니다')
+    await send(w, 43)
+    expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 43, body: '사람이 답합니다', selectedOptionIds: [] })
+  })
+
+  it('a question without a search record says "검색 기록 없음" — never "검색함"', async () => {
+    const w = await mountTab(v01Target())
+    expect(itemEl(w, 41).find('[data-test="qna-item-search"]').text()).toBe('검색 기록 없음')
+    expect(itemEl(w, 41).find('[data-test="qna-item-search"]').attributes('data-search')).toBe('no_record')
+    await open(w, 41)
+    expect(windowText(41, 'qna-window-search')).toBe('검색 기록 없음')
+  })
+
+  it('shows searched, how many were found and the reused answer with its source', async () => {
+    threads.set(V01_DOC, [
+      item(51, { search_summary: { searched: true, status: 'registered', found_count: 3, returned_count: 3, reused_answer: null } }),
+      item(52, {
+        search_summary: {
+          searched: true, status: 'registered', found_count: 2, returned_count: 2,
+          reused_answer: { answer_id: 8, doc_id: 'flowgate.v02test.0036.0007-TR', seq: 1, author_label: 'Claude Opus 5.5' },
+          reuse_rejection_reason: '대상 문서가 다릅니다',
+        },
+      }),
+      item(53, { search_summary: { searched: true, status: 'search_failed', found_count: null } }),
+      item(54, { search_summary: { searched: true, status: 'registered', found_count: 0 } }),
+    ])
+    const w = await mountTab(v01Target())
+    const line = (id: number) => itemEl(w, id).find('[data-test="qna-item-search"]').text()
+    expect(line(51)).toBe('검색함 · 찾은 3건 · 재사용한 답 없음')
+    expect(line(54)).toBe('검색함 · 찾은 0건 · 재사용한 답 없음')
+    expect(line(53)).toContain('검색 실패')
+    expect(line(52)).toContain('재사용한 답: flowgate.v02test.0036.0007-TR Q1 · 답변자 Claude Opus 5.5')
+    await open(w, 52)
+    expect(windowText(52, 'qna-window-search')).toContain('기존 답을 쓰지 않은 사유: 대상 문서가 다릅니다')
+  })
+
+  it('reads the responder and search record again after a reload (the same view)', async () => {
+    const w = await mountTab(v01Target())
+    const before = order(w)
+    wrapper?.unmount()
+    wrapper = null
+    const again = await mountTab(v01Target())
+    expect(order(again)).toEqual(before)
+    expect(itemEl(again, 43).find('[data-test="qna-item-responder"]').text()).toContain('no_independent_responder')
+  })
+
+  it('reads the questions again on a responder state change', () => {
+    expect(QNA_EVENTS).toContain('qna_responder_state_changed')
   })
 })

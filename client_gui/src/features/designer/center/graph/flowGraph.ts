@@ -184,9 +184,11 @@ export interface FlowGraphNodeRun extends RoleRunFields {
   readonly hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered. Absent = false. */
   readonly question?: boolean
-  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null; phase?: string | null; waitStatus?: string | null; resumeStage?: string | null; waitedAt?: string | null }[]
   /** flowgate.v02.0064 T#4: the card is running now (the server's card running lock, `node_running`). Absent = not sent. */
   readonly nodeRunning?: boolean
+  /** flowgate.v02test.0051 A1: `node_running_cause` — `question_wait:<run>`: the running lock holds a review loop that waits for an answer. */
+  readonly nodeRunningCause?: string | null
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions. Absent = 0. */
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number

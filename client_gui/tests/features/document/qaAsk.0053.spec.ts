@@ -30,7 +30,7 @@ beforeEach(() => {
 describe('qaAsk — POST /q/{doc_id}/questions (flowgate.v02.0053 T#6)', () => {
   it('registers one question as a person and returns the added ids', async () => {
     postRequest.mockResolvedValue({ data: { ok: true, doc_id: DOC, added_item_ids: [31] } })
-    await expect(qaAsk({ docId: DOC, body: '완료 기준은 무엇인가요?' })).resolves.toEqual({ docId: DOC, itemIds: [31] })
+    await expect(qaAsk({ docId: DOC, body: '완료 기준은 무엇인가요?' })).resolves.toEqual({ docId: DOC, itemIds: [31], reusedAnswer: null, precheck: null })
     expect(postRequest).toHaveBeenCalledTimes(1)
     expect(postRequest).toHaveBeenCalledWith(`/api/v1/q/${encodeURIComponent(DOC)}/questions`, {
       asker_kind: 'human',
@@ -39,8 +39,8 @@ describe('qaAsk — POST /q/{doc_id}/questions (flowgate.v02.0053 T#6)', () => {
   })
 
   it('reads only integer ids', () => {
-    expect(toQaAskResult({ ok: true, doc_id: DOC, added_item_ids: [3, 'x', 4.5, null, 5] })).toEqual({ docId: DOC, itemIds: [3, 5] })
-    expect(toQaAskResult(null)).toEqual({ docId: null, itemIds: [] })
+    expect(toQaAskResult({ ok: true, doc_id: DOC, added_item_ids: [3, 'x', 4.5, null, 5] })).toEqual({ docId: DOC, itemIds: [3, 5], reusedAnswer: null, precheck: null })
+    expect(toQaAskResult(null)).toEqual({ docId: null, itemIds: [], reusedAnswer: null, precheck: null })
   })
 
   it('a refusal is thrown as it is', async () => {

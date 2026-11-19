@@ -40,6 +40,14 @@
           <span v-if="windowItem(win.itemId)!.createdAt" class="inspector-qna-sub" data-test="qna-window-asked-at">{{ t(k('detail.asked_at'), { at: formatAt(windowItem(win.itemId)!.createdAt!) }) }}</span>
           <InspectorStatusChip v-if="awaiting.has(win.itemId)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-window-ai-waiting" />
         </div>
+        <ul class="inspector-qna-trace" data-test="qna-window-trace">
+          <li v-if="windowItem(win.itemId)!.responder" class="inspector-qna-failure" data-test="qna-window-responder">
+            <span v-for="line in responderLines(windowItem(win.itemId)!.responder!)" :key="line">{{ line }}</span>
+          </li>
+          <li data-test="qna-window-search" :data-search="windowItem(win.itemId)!.search.kind">
+            <span v-for="line in searchLines(windowItem(win.itemId)!.search)" :key="line">{{ line }}</span>
+          </li>
+        </ul>
         <span v-if="windowItem(win.itemId)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc"><LineIcon name="file" class="inspector-qna-doc-icon" />{{ t(k('detail.doc'), { docId: windowItem(win.itemId)!.docId }) }}</span>
         <p v-if="windowItem(win.itemId)!.title" class="inspector-qna-window-q">{{ windowItem(win.itemId)!.title }}</p>
         <p class="inspector-qna-text inspector-qna-qbody" data-test="qna-window-body">{{ windowItem(win.itemId)!.body }}</p>
@@ -147,7 +155,19 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { qnaBodyLine, type QnaAvailability, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
+import {
+  qnaBodyLine,
+  qnaResponderLines,
+  qnaSearchLines,
+  qnaStateKey,
+  qnaStateTone,
+  type QnaAvailability,
+  type QnaItemState,
+  type QnaItemView,
+  type QnaResponderView,
+  type QnaSearchView,
+  type QnaSide,
+} from './qnaModel'
 import { useQna } from './useQna'
 import type { QnaWindow } from './useQnaWindows'
 
@@ -315,13 +335,25 @@ function firstLine(body: string): string {
   return body.split(/\r?\n/, 1)[0] ?? ''
 }
 
-/** The response proves only answered or not: both unanswered states read 미답변. */
+/** flowgate.v02test.0051 C: the chip says what the server recorded — queued / AI answering / technical failure / person needed. */
 function stateKey(state: QnaItemState): string {
-  return state === 'answered' ? 'state.answered' : 'state.unanswered'
+  return qnaStateKey(state)
 }
 
 function toneOf(state: QnaItemState): InspectorChipTone {
-  return state === 'answered' ? 'success' : 'neutral'
+  return qnaStateTone(state)
+}
+
+const text = (key: string, params?: Record<string, string | number>) => t(k(key), params ?? {})
+
+/** A failed question's error code, message and attempts, one line each. */
+function responderLines(view: QnaResponderView): string[] {
+  return qnaResponderLines(view, text)
+}
+
+/** The past-answer search record: searched / found count, the reused answer with its source, "기록 없음" for legacy. */
+function searchLines(view: QnaSearchView): string[] {
+  return qnaSearchLines(view, text)
 }
 </script>
 
@@ -329,6 +361,27 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 /* 0016-CH (시안 basodrr4 B안, 선택지만 A안): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
    colours; the question body sits in an inset block, the options are a stacked radio list, and the form ends with the
    ask-an-AI controls on the left and 답변 on the right. */
+.inspector-qna-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  color: #7189a2;
+  font-size: 11px;
+  list-style: none;
+}
+
+.inspector-qna-trace li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.inspector-qna-trace .inspector-qna-failure {
+  color: #f0a3a3;
+}
+
 .inspector-qna-answers {
   display: flex;
   flex-direction: column;

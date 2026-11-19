@@ -8,9 +8,11 @@
        답: side` — a ↗ button that opens the question in a modeless window (the full body, every
        answer, the full answer form), and a short inline answer line (field + 보내기, the options)
        under each question that still has no answer. Answered questions fold into a "완료 n" group,
-       open when nothing is pending. Who waits for whom is not in the response (no "AI answering" /
-       "handed to the user" / reviewer field), so every unanswered question is 미답변 whoever asked
-       it and an answered one 완료 (0052 T#1) — the asker kind is never read as a hand-off.
+       open when nothing is pending. flowgate.v02test.0051 C: the chip says what the server recorded about the
+       automatic responder (`responder`): 대기 중 (no answerer assigned yet) / AI 답변 중 / 기술 실패 (with its error code
+       and message) / 사람 답변 필요 (only a `user_decision`); a question a person asked with nothing recorded is 미답변
+       and an answered one 완료 - the asker kind alone is never read as a hand-off. The small line also shows the
+       past-answer search record (searched / found count / reused answer and its source, "검색 기록 없음" for legacy).
        The window's title line keeps its badge and buttons in view: the title shrinks with an
        ellipsis, the badge does not. Answering is not editing the question, so there is no 편집
        badge; 읽기 전용 shows only when the Flow is read only (ownership conflict).
@@ -64,6 +66,17 @@
     <InspectorPaneState v-else-if="errorKey && !items" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
     <template v-else-if="items">
       <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
+      <!-- flowgate.v02test.0051 C: searches that registered no question (a reused answer, a refused resend, a failed
+           search). No question line carries them, so they are listed here from `search_prechecks` and stay after a reload.
+           The reuse the last ask just came to shows at once, until the read after it lists the same record. -->
+      <ul v-if="askReused || prechecks.length" class="inspector-qna-prechecks" data-test="qna-prechecks">
+        <li v-if="askReused" class="inspector-qna-precheck" data-test="qna-ask-reused" :data-outcome="askReused.outcome">
+          <p v-for="(line, index) in precheckLines(askReused)" :key="index" data-test="qna-precheck-line">{{ line }}</p>
+        </li>
+        <li v-for="precheck in prechecks" :key="precheck.key" class="inspector-qna-precheck" data-test="qna-precheck" :data-outcome="precheck.outcome" :data-precheck="precheck.precheckId ?? ''">
+          <p v-for="(line, index) in precheckLines(precheck)" :key="index" data-test="qna-precheck-line">{{ line }}</p>
+        </li>
+      </ul>
       <ul v-if="items.length" class="inspector-qna-list">
         <template v-for="(item, index) in items" :key="item.id">
           <!-- v7 `.qa-grp.tg`: the answered questions fold under one line with their number. -->
@@ -98,6 +111,8 @@
                 </span>
                 <small class="inspector-qna-small">
                   <span data-test="qna-item-asker" :data-side="item.asker.kind">{{ sideText(item.asker) }}</span>
+                  <span v-if="item.responder" class="inspector-qna-failure" :title="responderText(item.responder)" data-test="qna-item-responder">{{ responderText(item.responder) }}</span>
+                  <span :title="searchText(item.search)" data-test="qna-item-search" :data-search="item.search.kind">{{ searchText(item.search) }}</span>
                 </small>
               </div>
               <!-- flowgate.v02.0053 T#5 (0053 CH): the same document icon as the document lines (tooltip 열기). -->
@@ -131,7 +146,20 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import QnaWindows from './QnaWindows.vue'
-import { qnaAskReady, type QnaAvailability, type QnaItemState, type QnaSide } from './qnaModel'
+import {
+  qnaAskReady,
+  qnaPrecheckLines,
+  qnaResponderLines,
+  qnaSearchLines,
+  qnaStateKey,
+  qnaStateTone,
+  type QnaAvailability,
+  type QnaItemState,
+  type QnaPrecheckView,
+  type QnaResponderView,
+  type QnaSearchView,
+  type QnaSide,
+} from './qnaModel'
 import { useQna } from './useQna'
 import { nextQnaWindowPlace, openQnaWindow, qnaWindowKey, type QnaWindow } from './useQnaWindows'
 
@@ -147,6 +175,8 @@ const k = (key: string) => `gui.inspector.qna.${key}`
 
 const {
   items,
+  prechecks,
+  askReused,
   availability: liveAvailability,
   status,
   errorKey,
@@ -251,13 +281,30 @@ function firstLine(body: string): string {
   return body.split(/\r?\n/, 1)[0] ?? ''
 }
 
-/** The response proves only answered or not: both unanswered states read 미답변. */
+/** flowgate.v02test.0051 C: the chip says what the server recorded — queued / AI answering / technical failure / person needed. */
 function stateKey(state: QnaItemState): string {
-  return state === 'answered' ? 'state.answered' : 'state.unanswered'
+  return qnaStateKey(state)
 }
 
 function toneOf(state: QnaItemState): InspectorChipTone {
-  return state === 'answered' ? 'success' : 'neutral'
+  return qnaStateTone(state)
+}
+
+const text = (key: string, params?: Record<string, string | number>) => t(k(key), params ?? {})
+
+/** A failed question's error code and message (one line; the full text is the tooltip). */
+function responderText(view: QnaResponderView): string {
+  return qnaResponderLines(view, text).join(' · ')
+}
+
+/** A search that registered no question, line by line: what came of it, the count, the source, the reused answer. */
+function precheckLines(view: QnaPrecheckView): string[] {
+  return qnaPrecheckLines(view, text)
+}
+
+/** The past-answer search record as one line: searched / found count / reused answer, or "검색 기록 없음". */
+function searchText(view: QnaSearchView): string {
+  return qnaSearchLines(view, text).join(' · ')
 }
 </script>
 
@@ -359,6 +406,41 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   color: #7189a2;
   font-size: 10.5px;
   white-space: nowrap;
+}
+
+.inspector-qna-prechecks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.inspector-qna-precheck {
+  padding: 5px 9px;
+  border: 1px dashed var(--fg2-line);
+  border-radius: 8px;
+  color: #9db2c8;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.inspector-qna-precheck p {
+  margin: 0;
+}
+
+.inspector-qna-precheck p:first-child {
+  color: #c9d7e5;
+  font-weight: 600;
+}
+
+.inspector-qna-failure {
+  overflow: hidden;
+  color: #f0a3a3;
+  text-overflow: ellipsis;
 }
 
 .inspector-qna-open {
