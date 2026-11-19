@@ -713,7 +713,6 @@ export default {
         settings: '설정',
         ai: 'AI',
         qna: 'Q&A',
-        merge: '병합 · 충돌',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: '문서 상태',
@@ -826,6 +825,9 @@ export default {
         review_ai: '검수 AI',
         review_count: '검수 횟수',
         time_limit: '실행 제한 시간',
+        // flowgate.v02test.0053 0003-T: the two 검증 options of a work card (실행 AI's advanced settings).
+        verify_max_runs: '검증 최대 횟수',
+        verify_run_minutes: '검증 1회 최대 시간',
         review_basis: '검수 기준',
         // flowgate.v02.0053 T#7 — the 테스트 card's 시나리오 작성 block and a refused change's icon name.
         scenario_title: '시나리오 작성',
@@ -3345,6 +3347,13 @@ export default {
         lower_impact: '저장·일시정지된 실행의 반복 선택은 이후 실행/재개 시 현재 상한으로 재평가됩니다. 상한을 넘은 기존 선택은 검수 없음 또는 기본 재시작 횟수로 처리될 수 있습니다.',
         lower_no_rewrite: '이 화면은 실행별 저장값을 바꾸거나 실행을 재개하지 않습니다.',
       },
+      // flowgate.v02test.0053 0003-T (1-A): the two 검증 defaults (verify_max_runs, verify_run_timeout_sec).
+      verify: {
+        title: '검증',
+        card_hint: '카드에서 따로 정하지 않으면 이 값을 따릅니다',
+        runs: { label: '검증 최대 횟수', hint: '카드 하나가 쓸 수 있는 검증 횟수입니다. 1 이상, 기본값은 3회입니다.', unit: '회', invalid: '{min} 이상의 정수를 입력하세요.' },
+        minutes: { label: '검증 1회 최대 시간', hint: '검증 한 번이 돌 수 있는 최대 시간(분)입니다. 1~30, 기본값은 3분(180초)입니다.', unit: '분', invalid: '{min}~{max}분 사이의 정수를 입력하세요.' },
+      },
       leave: {
         title: '저장하지 않은 변경이 있습니다',
         unsaved: '이 화면을 떠나면 저장하지 않은 Scratch 보존 기간 · AI 반복 상한 입력이 사라집니다.',
@@ -3528,6 +3537,8 @@ export default {
       unknown_key: '알 수 없는 설정입니다.',
       invalid_value: '허용되지 않는 값입니다.',
       ai_repeat_count_out_of_range: '반복 상한은 1~30 사이의 정수만 저장할 수 있습니다.',
+      verify_max_runs_out_of_range: '검증 최대 횟수는 1 이상의 정수만 저장할 수 있습니다.',
+      verify_run_timeout_out_of_range: '검증 1회 최대 시간은 1~30분 사이의 정수(분)만 저장할 수 있습니다.',
       action_failed: '요청을 처리하지 못했습니다.',
       agent_not_found: '에이전트를 찾을 수 없습니다.',
       enrollment_not_allowed: '사용 중인 원격 에이전트만 등록 토큰을 발급할 수 있습니다.',

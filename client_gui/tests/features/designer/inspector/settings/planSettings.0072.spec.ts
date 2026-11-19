@@ -242,7 +242,7 @@ describe('the WP card’s settings form (flowgate.v02.0072 T#3)', () => {
     const w = await mountTab()
     const label = (name: string) =>
       w.findAll('[data-test="inspector-control-row"]').find((row) => row.attributes('data-label') === name)!.get('.inspector-control-label')
-    expect(label('검수 횟수').attributes('title')).toBe('사람이 쓴 WP는 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작')
+    expect(label('검수 횟수').attributes('title')).toBe('사람이 쓴 작업 계획은 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작')
     expect(label('재시작').attributes('title')).toBeUndefined()
   })
 })
@@ -298,7 +298,10 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     for (const fields of [running, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()
-      expect(select(w, 'run_ai').attributes('disabled'), JSON.stringify(fields)).toBeDefined()
+      // A card the server has not answered yet (its key is not the server's) draws no AI rows at all since the AI-roles
+      // settings (``legacyAiShown`` needs the read card): nothing is there to change, so nothing is sent.
+      if ('nodeId' in fields && fields.nodeId === 'tmp_wp') expect(w.find('select[data-test="inspector-run-settings-run_ai"]').exists()).toBe(false)
+      else expect(select(w, 'run_ai').attributes('disabled'), JSON.stringify(fields)).toBeDefined()
       await flip(w)
       w.unmount()
     }

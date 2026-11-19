@@ -39,7 +39,8 @@ const NODE: CardSettingsFacts = {
 
 describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () => {
   it('the fields of each kind follow v7 (T#2 fields._FIELDS)', () => {
-    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'])
+    // flowgate.v02test.0053 0003-T: the two 검증 options follow the time limit.
+    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'])
     expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'])
   })
 
