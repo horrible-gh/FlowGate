@@ -35,8 +35,7 @@ TOML 하위 영역 이름은 `[area."conversation.chat"]`처럼 따옴표로 묶
 
 영역 밖 파일은 import 전에 제외한다. 요약의 selected/excluded는 지도상 파일 수이고,
 collected는 이번 명령에서 실제 수집한 파일 수다(tier로 건너뛴 테스트가 포함될 수 있음).
-영역 옵션을 생략하면 기존 수집과 tier 동작을 유지한다. 이 단계에서는 시간 측정·tier 재분류를
-하지 않았다. 아래 과거 실측표를 새 영역의 실행 시간으로 해석하지 않는다.
+영역 옵션을 생략하면 전체를 수집한다. tier는 아래 A3 실측 규칙을 따른다. 아래 과거 실측표를 새 영역의 실행 시간으로 해석하지 않는다.
 
 클라이언트는 `client_gui/`에서 실행한다.
 
@@ -109,7 +108,8 @@ python -m pytest tests                   # release / 대규모 리팩터링 (= f
 
 1. `@pytest.mark.fast` / `.standard` / `.full` 을 직접 붙였으면 그것이 이긴다.
    테스트·클래스·모듈(`pytestmark`) 어디에 붙여도 된다.
-2. 안 붙였으면 모듈 소스를 보고 기계적으로 정한다.
+2. `tests/timings.json`의 유효한 직렬 기록이 있으면 파일 합계 5초 이하 fast, 30초 이하 standard, 그 밖은 full이다.
+3. 기록이 없거나 불완전하거나 파일 해시가 달라지면 모듈 소스를 보고 기계적으로 정한다.
    * fast — `TestClient`, `subprocess`/git, `sleep(` 을 쓰지 않는다
    * standard — git/subprocess 를 쓰지 않고 파일명이 e2e·dialect·migration·worktree·git 계열이 아니다
    * full — 나머지
@@ -117,6 +117,35 @@ python -m pytest tests                   # release / 대규모 리팩터링 (= f
 목록이 아니라 규칙인 이유가 있다. 계층을 파일 목록으로 관리하면 **새로 만든 파일이 어느
 계층에도 안 들어가는 사고**가 난다. 규칙이면 새 파일도 쓰는 순간 같은 기준으로 분류되고,
 예외가 필요한 파일만 맨 위에 한 줄 적으면 된다.
+
+### 파일별 시간 기록과 예산 보고 (0053 A3)
+
+`server/`에서 `--fg-timings-out=<저장소 밖 경로>`를 붙이면 setup/call/teardown의 합을
+파일별 JSON으로 쓴다. xdist는 컨트롤러 한 곳에서 보고를 합산한다. 기동·import·수집 시간은
+포함하지 않으며 병렬 합계는 직렬 실측값이 아니다.
+
+```text
+python -m pytest tests -q --fg-timings-out=/tmp/flowgate-timings.json
+python tools/test_budget.py --timings /tmp/flowgate-timings.json
+```
+
+첫 명령은 server 기준, 둘째는 저장소 루트 기준이다. Windows에서는 저장소 밖의 실제
+임시 경로를 사용한다. 전체 측정은 M1 측정 카드에서 수행한다. 작업 검증에서는 해당 파일만
+측정한다. 출력은 매 실행마다 교체하며 이전 측정에 자동 병합하지 않는다.
+
+`server/tests/timings.json`은 version 1, files 객체를 가진 커밋 대상 기준선이다.
+현재 files는 비어 있다(미측정). 각 키는 server 기준 테스트 경로이며 값은 seconds,
+seconds_by_marker(auto/fast/standard/full), sha256, eligible이다. 출력에는 측정 시각과
+종료 코드도 들어간다. M1에서 검토한 직렬 결과를 기준선에 반영한다.
+
+병렬, `-k`/`-m`, node id 지정, fast/standard 실행, skip/실패/중단 등 불완전한 기록은
+기준선으로 쓰지 않는다. 파일별 모든 수집 항목의 3단계 보고가 있어야 한다. 파일 해시가
+바뀌면 이전 기록은 무시한다. 명시 tier 마커는 항상 시간 기록보다 우선한다.
+
+예산 보고는 영역별 누적 fast/standard/full의 직렬 작업 시간과 미측정 파일 수를 표시한다.
+마커로 지정한 시간은 해당 계층에 반영한다. fast 60초와 파일 60초 초과를 표시하며 실패로
+처리하지 않는다. standard의 2-worker 120초 예산은 직렬 합계를 2로 나눠 충족했다고
+판정할 수 없으므로 병렬 wall time을 별도로 확인한다. unknown이 있으면 합계는 불완전하다.
 
 ### 클라이언트
 

@@ -184,12 +184,13 @@ def _classify_skip(reason: str) -> str:
 # therefore buys nothing, which is why R0001 §6 asks for tiers instead — and why this is
 # a selection mechanism, not a cleanup.
 #
-# A test's tier is decided in two steps:
+# A test's tier is decided in three steps:
 #
 #   1. An explicit `@pytest.mark.fast` / `.standard` / `.full` (on the test, its class or
 #      the module's `pytestmark`) always wins. That is the escape hatch for anything the
 #      rule below gets wrong, and the only thing a new test has to know about.
-#   2. Otherwise the tier is derived from what the module's source actually does, using
+#   2. A complete serial timing with the same file hash: <=5s fast, <=30s standard.
+#   3. Otherwise the tier is derived from what the module's source actually does, using
 #      the classification NR0003 §10.2 measured:
 #        fast      — no TestClient, no subprocess/git, no sleep
 #        standard  — everything except git/subprocess work and e2e/dialect/migration files
@@ -211,6 +212,7 @@ _NOT_STANDARD_TEXT = ("subprocess", '"git"', "'git'")
 _NOT_STANDARD_NAME = ("_e2e", "dialect", "migration", "worktree", "git_")
 
 _tier_cache: dict[str, str] = {}
+_measured_timings = {}
 
 # 유예된 테스트가 달고 가는 skip 사유의 꼬리표. 요약이 이 문자열로 유예 건수를 세므로
 # 아래 marker 문구와 반드시 같이 움직여야 한다.
@@ -228,6 +230,11 @@ _tier_deferred = 0
 
 def _tier_for_module(path: Path) -> str:
     """Derived tier for a test module — see the note above for the rule."""
+    if _measured_timings:
+        from timing_support import measured_tier
+        measured = measured_tier(_measured_timings, path, _SERVER_DIR)
+        if measured is not None:
+            return measured
     key = str(path)
     cached = _tier_cache.get(key)
     if cached:
@@ -438,6 +445,7 @@ def pytest_unconfigure(config):
 
 
 def pytest_addoption(parser):
+    parser.addoption("--fg-timings-out", default=None, help="Write file setup/call/teardown timings as JSON.")
     parser.addoption("--area", default=None, help="Comma-separated test areas (including parent names).")
     parser.addoption("--changed", default=None, help="Comma-separated changed paths relative to server/.")
     parser.addoption(
@@ -476,6 +484,18 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_configure(config):
+    global _measured_timings
+    _measured_timings = {}
+    # Synthetic conftest-only contract tests have no timing helper.
+    if (_SERVER_DIR / "tests/timing_support.py").is_file():
+        from timing_support import load_timings, TimingRecorder
+        try:
+            _measured_timings = load_timings(_SERVER_DIR / "tests/timings.json")
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            raise pytest.UsageError(f"test timings: {exc}") from exc
+        output = getattr(config.option, "fg_timings_out", None)
+        if output:
+            config.pluginmanager.register(TimingRecorder(config, _SERVER_DIR, output), "flowgate-timings")
     # Probe here, not in pytest_report_header: `-q` suppresses the header entirely, and
     # the summary would then have nothing to report — which is the exact silence this
     # whole block exists to remove, and every CI invocation uses -q.
