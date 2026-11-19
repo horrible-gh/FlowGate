@@ -10,8 +10,8 @@ The card's core checks (NR0007 §5 items 9, 3-a, 1):
 2. a cancel of an active run that has no control in this process ends nothing while the
    owner or the tree is UNKNOWN: 409 ``selfcheck_cancel_unconfirmed``, the run keeps its
    state and ``active_key``, no live process is signalled;
-3. while a live run holds the Group's slot a second start stays ``already_running``, and
-   the refusal carries the holder's summary, readable through the Group-scoped read.
+3. (0053 1-B) a live run no longer holds the Group: a second start is queued, and both runs
+   are readable through the Group-scoped read and list.
 
 Rework (review of rev 0): a gate pass that fails after its ``recovering`` CAS -- the finish
 write, the incomplete write, or the read back after the CAS -- gives the fence back, so the
@@ -260,7 +260,7 @@ def test_a_cancel_with_no_control_here_ends_nothing_unproved(world, monkeypatch,
         assert int(lock["protected"]) == 1
 
 
-def test_a_second_start_stays_already_running_and_names_the_holder(flow):
+def test_a_second_start_is_queued_and_the_group_read_lists_both_runs(flow):
     client = flow["client"]
     client.app.include_router(routes.group_router)
     new = _as(RAW["new"])
@@ -269,24 +269,20 @@ def test_a_second_start_stays_already_running_and_names_the_holder(flow):
     rid = slow.json()["self_check_run_id"]
     _wait(client, f"{DRAFT_RUNS}/{rid}", new, statuses={"running"})
 
-    busy = client.post(DRAFT_RUNS, headers=new, json={"program": "python", "args": ["check_ok.py"]})
+    second = client.post(DRAFT_RUNS, headers=new, json={"program": "python", "args": ["check_slow.py"]})
 
-    assert busy.status_code == 409
-    error = busy.json()["error"]
-    assert error["code"] == "selfcheck_already_running"
-    assert error["details"]["self_check_run_id"] == rid
-    holder = error["details"]["run"]
-    assert {k: holder[k] for k in ("self_check_run_id", "group_id", "tr_doc_id", "draft", "owner_kind",
-                                   "status", "same_owner")} == {
-        "self_check_run_id": rid, "group_id": G, "tr_doc_id": None, "draft": True, "owner_kind": "draft",
-        "status": "running", "same_owner": True}
-    assert holder["created_at"] and "stdout_tail" not in holder and "args" not in holder
-    # The summary names a read any worker token of the Group can follow; another Group's cannot.
-    assert holder["group_read_path"] == f"/self-check/group/runs/{rid}"
-    read = client.get("/api/v1" + holder["group_read_path"], headers=new)
-    assert read.status_code == 200 and read.json()["status"] == "running"
-    assert [r["self_check_run_id"] for r in client.get("/api/v1/self-check/group/runs", headers=new).json()["runs"]] == [rid]
-    assert client.get("/api/v1" + holder["group_read_path"], headers=_as(RAW["new_other"])).status_code == 404
+    assert second.status_code == 202, second.text                            # no 409 already_running
+    sid = second.json()["self_check_run_id"]
+    assert second.json()["status"] == "queued" and sid != rid
+    _wait(client, f"{DRAFT_RUNS}/{sid}", new, statuses={"running"})          # both run at once
+    # Both are readable through the Group's routes; another Group's token reads neither.
+    for run_id in (rid, sid):
+        read = client.get(f"/api/v1/self-check/group/runs/{run_id}", headers=new)
+        assert read.status_code == 200 and read.json()["status"] == "running"
+        assert client.get(f"/api/v1/self-check/group/runs/{run_id}", headers=_as(RAW["new_other"])).status_code == 404
+    listed = client.get("/api/v1/self-check/group/runs", headers=new).json()["runs"]
+    assert [r["self_check_run_id"] for r in listed] == [rid, sid]
+    assert all(r["group_id"] == G and r["draft"] is True and "stdout_tail" not in r for r in listed)
     # The help's Group operations are the registered routes.
     listed = {(m, "/api/v1" + p) for _n, m, p, _s in help_catalog.SELF_CHECK_GROUP_HTTP_OPERATIONS}
     assert listed == {(m, r.path) for r in routes.group_router.routes for m in r.methods if m != "HEAD"}

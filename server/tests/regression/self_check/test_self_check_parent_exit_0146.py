@@ -1,4 +1,4 @@
-"""0146: parent boundaries with a real Self-check worker/tree and temporary DB/G."""
+"""0146: parent boundaries with a real Self-check worker/tree and temporary DB (0053 1-B: queue runs, no G)."""
 from __future__ import annotations
 
 import threading
@@ -147,11 +147,15 @@ def test_close_around_worker_spawn_preserves_slot_until_real_stop(flow, monkeypa
         assert entered.wait(10)
         progress.end_owned(run, boundary="hop", reason="concurrent_end")
         row = db.get_run(rid)
-        assert row["status"] == "pending" and row["cancel_requested"] and row["active_key"]
+        # 0053 1-B: the claimed run keeps its slot (reservation) until it really stops; it holds
+        # no Group slot. Another start is refused because the owner scope is closed, not because
+        # the Group is busy.
+        assert row["status"] == "pending" and row["cancel_requested"] and row["active_key"] is None
         assert db.host_reservations(None, 64)[0] >= 1
         refused = flow["client"].post(DRAFT_RUNS, headers=_as(RAW["new"]),
                                      json=dict(program="python", args=["check_ok.py"]))
-        assert refused.status_code == 409
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"]["code"] == "selfcheck_owner_scope_closed"
     finally:
         release.set()
     assert wait(flow, rid)["status"] == "cancelled"
@@ -214,11 +218,11 @@ def test_terminate_failure_keeps_tree_slot_and_cpu_until_real_stop(flow, monkeyp
     try:
         progress.end_owned(run, boundary="run", reason="failed_terminate")
         row = db.get_run(rid)
-        assert row["status"] == "running" and row["active_key"] and row["cancel_requested"]
+        assert row["status"] == "running" and row["cancel_requested"]
         assert row["finished_at"] is None and control.proc.poll() is None
-        assert db.host_reservations(None, 64)[0] >= 1
+        assert db.host_reservations(None, 64)[0] >= 1                      # its slot stays taken
         assert flow["store"]._fetch_one("SELECT * FROM resource_lock WHERE lock_key = ?",
-                                      [lock_manager.lock_key("G", P, G)])
+                                      [lock_manager.lock_key("G", P, G)]) is None   # 0053 1-B: no G
     finally:
         monkeypatch.setattr(control, "cancel", real)
         assert real()

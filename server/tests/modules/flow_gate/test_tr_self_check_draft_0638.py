@@ -341,11 +341,11 @@ def test_concurrent_start_and_registration_never_strand_a_draft_row(thread_store
             _finish(outcome["row"]["self_check_run_id"])
 
 
-def test_start_maps_a_closed_owner_to_forbidden_and_releases_the_group_lock(monkeypatch, tmp_path):
-    released = []
+def test_start_maps_a_closed_owner_to_forbidden_and_leaves_nothing(monkeypatch, tmp_path):
+    """0053 1-B: the request is queued without any Group lock; an owner closed by the time the
+    queued row is inserted is 403 and its snapshot is removed again."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: True)
-    monkeypatch.setattr(service.db_runs, "has_group_recovery_incomplete", lambda *_: False)
-    monkeypatch.setattr(service.db_runs, "get_active", lambda *_: None)
     monkeypatch.setattr(service, "_worktree", lambda _t: tmp_path)
     monkeypatch.setattr(service, "_probe", lambda _root: {})
     monkeypatch.setattr(service.policy, "controlled_path", lambda root, host: ("PATH", None))
@@ -353,21 +353,31 @@ def test_start_maps_a_closed_owner_to_forbidden_and_releases_the_group_lock(monk
         executable="pytest", name="pytest", origin="venv", argv_prefix=[]))
     monkeypatch.setattr(service.policy, "validate_cwd", lambda root, rel: tmp_path)
     monkeypatch.setattr(service.policy, "scrubbed_env", lambda path, runtime: {"PATH": path})
-    monkeypatch.setattr(service.lock_manager, "new_context", lambda *_: SimpleNamespace(ctx_id="ctx_0638"))
-    monkeypatch.setattr(service.lock_manager, "acquire", lambda *a, **k: SimpleNamespace(ok=True, lock_key="G:0638"))
-    monkeypatch.setattr(service.lock_manager, "release", lambda ctx, key: released.append(key))
+    monkeypatch.setattr(service.lock_manager, "acquire", lambda *a, **k: pytest.fail("the queue takes no lock"))
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+    snapshots = []
+
+    def snapshot(root, run_id):
+        base = queue.snapshot_root() / run_id
+        (base / queue.TREE_DIR).mkdir(parents=True)
+        snapshots.append(base)
+        return base
+
+    monkeypatch.setattr(queue, "take_snapshot", snapshot)
+    removed = []
+    monkeypatch.setattr(queue, "remove_snapshot_dir", lambda path: removed.append(Path(path)))
 
     def _closed(*_a, **_k):
         raise runs_db.DraftOwnerClosedError("consumed")
 
-    monkeypatch.setattr(service.db_runs, "create_pending", _closed)
+    monkeypatch.setattr(service.db_runs, "create_queued", _closed)
     monkeypatch.setattr(service.threading, "Thread", lambda *a, **k: pytest.fail("no worker for a refused run"))
     target = {"project_id": P, "group_id": G, "tr_doc_id": None, "owner_token_id": "tok_new_1",
               "draft_doc_ref": SEQ_DOC}
     with pytest.raises(service.SelfCheckError) as caught:
         service._start(target, {"program": "pytest", "args": ["-q"]}, "u_0638")
     assert (caught.value.status, caught.value.code) == (403, "selfcheck_forbidden")
-    assert released == ["G:0638"]
+    assert len(snapshots) == 1 and removed == snapshots                     # its snapshot is removed
 
 
 # ── Service: who may own a draft run ─────────────────────────────────────────
@@ -435,11 +445,9 @@ def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch, 
         service.start_draft(TOKEN, {"program": "pytest"})
     assert caught.value.code == "selfcheck_disabled"
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: True)
+    # 0053 1-B: a Group's unproved pre-queue run no longer refuses a start (a queued request runs
+    # in its own snapshot, without G); the next gate, the managed worktree, still applies.
     monkeypatch.setattr(service.db_runs, "has_group_recovery_incomplete", lambda *_: True)
-    with pytest.raises(service.SelfCheckError) as caught:
-        service.start_draft(TOKEN, {"program": "pytest"})
-    assert caught.value.code == "selfcheck_recovery_incomplete"
-    monkeypatch.setattr(service.db_runs, "has_group_recovery_incomplete", lambda *_: False)
     monkeypatch.setattr(service.git_service, "effective_src_root_ex", lambda *_: (None, "base"))
     with pytest.raises(service.SelfCheckError) as caught:
         service.start_draft(TOKEN, {"program": "pytest"})

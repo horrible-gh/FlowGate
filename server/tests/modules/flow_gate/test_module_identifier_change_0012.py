@@ -998,7 +998,7 @@ def test_archive_state_alone_does_not_make_a_group_busy(archived, monkeypatch):
     archived.execute("CREATE TABLE chat_command_requests (group_id TEXT, status TEXT)")
     for target, name in ((group_ai_leases, "get_active"), (chain, "has_active_run"), (ai_invoke_paused_chains, "exists"),
                          (git_integration, "get_open_session_by_group"), (test_runs, "get_active_by_group"),
-                         (tr_self_check_runs, "get_active")):
+                         (tr_self_check_runs, "group_open_runs")):
         monkeypatch.setattr(target, name, lambda *a, **k: None)
     monkeypatch.setattr(module_rename, "get_store", lambda: _Store(archived))
     runs = {"status": "idle", "idle_reason": "completed"}

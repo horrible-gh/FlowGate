@@ -1,12 +1,14 @@
 """0110 T#3 rework: a Graph attempt run's W follows the run's proof, like its Group's G.
 
-An attempt token's source writes (``graph_run.workspace.mutation``) take the attempt's W alone -- no G -- so the
-Self-check run that tests the attempt tree holds that W, and:
+An attempt token's source writes (``graph_run.workspace.mutation``) take the attempt's W alone -- no G.
+0053 1-B: a Self-check run of an attempt is queued with a snapshot of the attempt tree and runs in that snapshot,
+so it takes neither G nor the attempt's W:
 
-1. while the run executes, an attempt write is refused (BUSY); the W goes with the run's terminal write;
-2. when the run ends with its process tree not proved empty (a partial spawn), the W stays protected with G -- an
-   attempt write gets RECOVERY_REQUIRED -- and the reaper frees both once the tree is proved empty;
-3. a stale W (its owner instance judged DEAD) is reclaimed only through the Self-check gate: owner alive -> kept
+1. while the run executes, an attempt write goes through; what it writes does not reach the run;
+2. when the run ends with its process tree not proved empty (a partial spawn), only its execution slot stays taken
+   (recovery_incomplete, its reservation) -- no G or W is protected, attempt writes go on -- and the reaper ends
+   it once the tree is proved empty;
+3. (pre-queue runs) a stale W (its owner instance judged DEAD) is reclaimed only through the Self-check gate: owner alive -> kept
    (BUSY), owner dead but a child unproved -> protected (RECOVERY_REQUIRED, run recovery_incomplete) until a
    re-verification proves the tree and frees G and W together, owner dead and tree empty -> reclaimed.
 
@@ -84,32 +86,50 @@ def _worker_done(rid):
         assert not worker.is_alive(), "the run's worker did not end"
 
 
-def test_a_running_attempt_run_holds_its_w_and_frees_it_with_its_end(attempt):
+def _settled(store, rid, timeout=60.0):
+    """Wait until a queued run was claimed and its worker is done with it (ended or held)."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        row = _row(store, rid)
+        if row["status"] in ("completed", "failed", "cancelled") or row["recovery_state"] != "none":
+            break
+        time.sleep(0.05)
+    _worker_done(rid)
+    return _row(store, rid)
+
+
+def test_an_attempt_run_is_queued_from_its_tree_and_never_takes_its_w(attempt):
+    import time
     store, client = attempt.store, attempt.client
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_gate.py"]})
     assert started.status_code == 202, started.text
     body = started.json()
     rid = body["self_check_run_id"]
     assert (body["attempt_id"], body["input_commit"]) == (ATTEMPT, attempt.head)
-    # The request returned after the worker's spawn (the Stop gate is kept until then): the row is running.
+    assert _row(store, rid)["queue_key"] == f"attempt:{ATTEMPT}"
+    deadline = time.monotonic() + 30
+    while _row(store, rid)["status"] != "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert _row(store, rid)["status"] == "running"
-    w = _w(store, attempt.branch)
-    assert w is not None
-    assert (w["holder_ctx_id"], w["holder_kind"], w["hold_class"], int(w["protected"])) == (
-        lock_manager.selfcheck_ctx_id(rid), "selfcheck", "short", 0)
-
-    assert _attempt_write(attempt.branch).kind == lock_manager.BUSY
-
-    (attempt.root / "go.flag").write_text("", encoding="utf-8")
-    _worker_done(rid)
-    row = _row(store, rid)
+    assert _w(store, attempt.branch) is None and _g(store) is None            # no W, no G
+    assert _attempt_write(attempt.branch).ok                                  # attempt writes go on
+    (attempt.root / "go.flag").write_text("", encoding="utf-8")               # written to the attempt tree...
+    time.sleep(0.5)
+    assert _row(store, rid)["status"] == "running"                            # ...does not reach the snapshot
+    snapshot_tree = os.path.join(_row(store, rid)["snapshot_path"], "tree")
+    with open(os.path.join(snapshot_tree, "go.flag"), "w", encoding="utf-8"):
+        pass
+    row = _settled(store, rid)
     assert (row["status"], row["exit_code"], row["attempt_id"]) == ("completed", 0, ATTEMPT), row
     assert _w(store, attempt.branch) is None and _g(store) is None
     assert _attempt_write(attempt.branch).ok
 
 
-def test_an_unproved_end_keeps_the_attempt_w_protected_until_the_tree_is_proved(attempt, monkeypatch):
-    """The real ``_finish`` after a partial spawn (a live process learnt, as 0080 ⑤): G and W both protected."""
+def test_an_unproved_end_keeps_only_the_runs_slot_until_the_tree_is_proved(attempt, monkeypatch):
+    """The real ``_finish`` after a partial spawn (a live process learnt, as 0080 ⑤): the run is held as
+    recovery_incomplete with its reservation; no G or W is protected."""
+    from modules.flow_gate.db import tr_self_check_runs as runs_db
     store, client = attempt.store, attempt.client
     live, identity = attempt.process(alive=True)
     learnt = ({"process_owner_kind": "windows_job", "target_pid": live.pid, "target_start_identity": identity}
@@ -125,19 +145,16 @@ def test_an_unproved_end_keeps_the_attempt_w_protected_until_the_tree_is_proved(
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_ok.py"]})
     assert started.status_code == 202, started.text
     rid = started.json()["self_check_run_id"]
-    _worker_done(rid)
-
-    row = _row(store, rid)
-    assert row["status"] == "pending" and row["active_key"], row
+    row = _settled(store, rid)
+    assert row["status"] == "pending" and row["active_key"] is None, row
     assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", proof.TREE_UNPROVEN)
-    g, w = _g(store), _w(store, attempt.branch)
-    assert g is not None and int(g["protected"]) == 1
-    assert w is not None and w["holder_ctx_id"] == lock_manager.selfcheck_ctx_id(rid), "the attempt's W was released"
-    assert int(w["protected"]) == 1
-    assert _attempt_write(attempt.branch).kind == lock_manager.RECOVERY_REQUIRED
+    assert _g(store) is None and _w(store, attempt.branch) is None            # nothing protected but the slot
+    assert _attempt_write(attempt.branch).ok
+    reserved = row["cpu_reservation"]
+    assert reserved >= 1 and runs_db.host_reservations(row["host_node_key"], 64)[1] >= reserved
 
-    assert job_sweeper.step_selfcheck_reaper() == 0                 # tree still unproved: both stay
-    assert int(_w(store, attempt.branch)["protected"]) == 1 and live.poll() is None
+    assert job_sweeper.step_selfcheck_reaper() == 0                 # tree still unproved: the slot stays
+    assert _row(store, rid)["recovery_state"] == "incomplete" and live.poll() is None
 
     live.kill()
     live.wait(timeout=10)
@@ -146,7 +163,7 @@ def test_an_unproved_end_keeps_the_attempt_w_protected_until_the_tree_is_proved(
     row = _row(store, rid)
     assert (row["status"], row["error_code"], row["active_key"]) == ("failed", "interrupted_by_restart", None), row
     assert _w(store, attempt.branch) is None and _g(store) is None
-    assert _attempt_write(attempt.branch).ok
+    assert runs_db.host_reservations(row["host_node_key"], 64) == (0, 0)
 
 
 @pytest.mark.parametrize("case", ["owner_alive", "child_alive", "proved"])

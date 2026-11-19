@@ -1404,10 +1404,6 @@ _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
      "parallel_share 가 1 이상의 정수가 아니다(상한 64) → 명령이 쓸 worker 수를 정수로 보내거나 생략한다(생략하면 1).",
      "parallel_share is not an integer of at least 1 (at most 64) -> send the worker count your command uses as an integer, or omit it (default 1).",
      "parallel_share が 1 以上の整数ではない(上限 64) → コマンドが使う worker 数を整数で送るか省略する(省略時は 1)。"),
-    ("selfcheck_host_capacity_exhausted",
-     "이 호스트의 Self-check 처리기 예약이 모두 찼다(직렬 실행과 pytest 가 아닌 명령도 1을 예약한다). run 기록은 만들어지지 않았다. details 에 limit·reserved_total·reserved_protected(복구 대기 run 의 예약)·requested 가 있다 → 잠시 뒤 같은 요청을 다시 보낸다. 백그라운드로 넘기지 않는다. 같은 Group 의 실행 중 거절(selfcheck_already_running)과는 다른 코드다.",
-     "Every Self-check processor of this host is reserved (serial runs and non-pytest commands reserve 1 too). No run row was created. details carries limit, reserved_total, reserved_protected (held by runs awaiting recovery) and requested -> send the same request again a little later; do not move it to the background. It is a different code from the same-Group refusal (selfcheck_already_running).",
-     "このホストの Self-check 処理器の予約がすべて埋まっている(直列実行や pytest 以外のコマンドも 1 を予約する)。run 記録は作られていない。details に limit・reserved_total・reserved_protected(復旧待ち run の予約)・requested がある → 少し待って同じ要求を再送する。バックグラウンドに回さない。同じ Group の実行中拒否(selfcheck_already_running)とは別のコードである。"),
     ("selfcheck_cpu_limit_violation",
      "failed run 의 error_code 다(POSIX 호스트). run 의 프로세스가 받은 처리기 밖으로 처리기 집합을 넓혀 트리를 끝냈다. 결과를 검증 근거로 쓰지 않는다 → 명령이 처리기 설정을 바꾸지 않게 하고 다시 실행한다.",
      "The error_code of a failed run (POSIX host): a process of the run widened its processor set beyond the granted processors and the tree was ended. Do not use its result as evidence -> keep the command from changing processor affinity and run it again.",
@@ -1464,10 +1460,6 @@ _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
      "취소 요청은 기록됐지만(details.cancel.accepted) 실행이 멈췄음을 확인하지 못했다. 이 서버에 그 run 의 실행 제어가 없고, 소유 서버의 종료나 프로세스 트리 전체의 부재가 증명되지 않았다(details.cancel.reason, 사유별 코드는 details.reason_code). run 상태와 보호는 그대로 유지된다 → 취소를 반복하지 말고 read 로 상태를 지켜보며, 계속 남으면 run 요약과 사유를 TR 에 보고한다.",
      "The cancel was recorded (details.cancel.accepted) but the run is not confirmed stopped: no control for it exists in this server, and neither the owning server's end nor the absence of the whole process tree is proved (details.cancel.reason; the reason-specific code is details.reason_code). The run keeps its state and protection -> do not repeat the cancel; follow its status with read, and if it stays, report the run summary and the reason in the TR.",
      "取消要求は記録された(details.cancel.accepted)が、実行の停止は確認できていない。このサーバーにその run の実行制御がなく、所有サーバーの終了もプロセスツリー全体の不在も証明されていない(details.cancel.reason、理由別コードは details.reason_code)。run の状態と保護はそのまま維持される → 取消を繰り返さず read で状態を見守り、残り続ける場合は run 要約と理由を TR に報告する。"),
-    ("selfcheck_recovery_incomplete",
-     "이전 run 의 프로세스 정리가 아직 끝나지 않았다. 서버의 주기 reaper 가 소유 서버 종료와 트리 부재가 증명되면 정리하고, 콘솔 사용자(perm_document_update)는 소유권 재검증을 요청할 수 있다(증명 없으면 거절) → 새 run 을 반복해서 밀어 넣지 말고 사유를 보고한 뒤 잠시 후 한 번 더 시도한다.",
-     "Cleanup of an earlier run's process tree is unfinished. The server's periodic reaper ends it once the owner's end and the empty tree are proved, and a console user (perm_document_update) may ask for an ownership re-verification (refused without proof) -> do not hammer new runs; report the reason and retry once after a short wait.",
-     "以前の run のプロセス整理が未完了。所有サーバーの終了とツリーの不在が証明されればサーバーの定期 reaper が整理し、コンソールユーザー(perm_document_update)は所有権の再検証を要求できる(証明がなければ拒否) → 新しい run を連打せず、理由を報告して少し待ってから1回だけ再試行する。"),
     ("selfcheck_foreign_run",
      "selfcheck_already_running 의 details.reason_code 다. 슬롯을 잡은 run 이 다른 TR 이나 다른 draft 토큰의 것이라 이 토큰의 read/cancel 경로로는 보이지 않는다(selfcheck_run_not_found) → details.run 의 group_read_path 로 상태만 조회하며 끝나기를 기다리고, 오래 남으면 run 요약을 TR 에 보고한다. 취소를 시도하지 않는다.",
      "The details.reason_code of selfcheck_already_running: the run holding the slot belongs to another TR or another draft token, so this token's read/cancel paths do not see it (selfcheck_run_not_found) -> follow its status through details.run.group_read_path and wait; if it stays, report the run summary in the TR. Do not try to cancel it.",
@@ -1665,7 +1657,7 @@ _SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
         "guarantee": "실행의 프로세스 트리 전체는 운영체제가 R개 처리기에만 묶는다(Windows Job 처리기 한정, POSIX supervisor 처리기 집합). 도구의 협조와 무관하게 동시에 실행되는 worker 는 R 을 넘지 못한다. R 보다 많은 worker 를 만드는 도구는 실패하지 않고 느려진다.",
         "pytest": "pytest 병렬은 큰 선택에서만 -n <몫> --dist loadfile 로 쓰고 parallel_share 를 같은 수로 준다. server/tests 의 pytest 는 실행 하나의 worker 슬롯 풀(크기 R)을 나눠 써서 실제 worker 를 빈 슬롯 수로 낮추고, 중첩 pytest 는 남은 슬롯만 쓰며 없으면 슬롯 없이 직렬로 돈다. 안에서 pytest 를 여러 번 띄우는 스크립트보다 pytest 직접 실행을 쓴다.",
         "serial_only": "고정 포트 연결 통합 테스트, 같은 소스에 산출물을 쓰는 빌드·타입 검사, 단일·소수 파일 선택은 병렬을 쓰지 않는다.",
-        "refusal": "409 selfcheck_host_capacity_exhausted 를 받으면 잠시 뒤 같은 요청을 다시 보낸다. 백그라운드로 넘기지 않는다.",
+        "queue": "요청은 거절되지 않고 큐에 들어간다(즉시 status queued 로 응답). 그 순간의 워크트리 사본에서 돌며 Group 잠금을 잡지 않는다. 처리기 예약 R 은 큐가 실행을 시작할 때 정해지고(cpu_reservation) 자리가 없으면 기다린다. 결과는 read_self_check 로 조회한다. 같은 카드의 새 요청은 아직 시작하지 않은 이전 요청을 취소한다.",
         "verification": "개발 중에는 변경과 직접 관련된 테스트만, 수정 후에는 직전 실패 항목만, 최종 코드에서 회귀를 한 번 돈다. 기준선은 제품 파일을 처음 고치기 전에 한 번만 돌리고, 기준선과 최종 회귀는 같은 호스트·같은 worker 조건(같은 parallel_share 와 -n)으로 돌린다. 같은 -n auto 라도 호스트·몫에 따라 적용 worker 가 달라지며, 달라지면 기준선을 재사용할 수 없다.",
     },
     "en": {
@@ -1673,7 +1665,7 @@ _SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
         "guarantee": "The operating system limits the run's whole process tree to R processors (Windows Job affinity, POSIX supervisor processor set). Whatever the tool does, no more than R workers execute at once. A tool that starts more workers than R does not fail; it runs slower.",
         "pytest": "Use pytest parallelism only for large selections, as -n <share> --dist loadfile with parallel_share set to the same number. server/tests pytest shares one worker slot pool of size R per run and lowers its workers to the free slots; a nested pytest uses only the slots left and runs serially without a slot when none is free. Prefer running pytest directly over a script that starts pytest several times.",
         "serial_only": "Keep fixed-port connection integration tests, builds or type checks writing into the same source, and single- or few-file selections serial.",
-        "refusal": "On 409 selfcheck_host_capacity_exhausted send the same request again a little later. Do not move it to the background.",
+        "queue": "A request is never refused for capacity: it is queued and answered at once (status queued). It runs in a copy of the worktree taken at that moment and takes no Group lock. Its reservation R is decided when the queue starts it (cpu_reservation); until a processor is free it waits. Read the result with read_self_check. A new request of the same card cancels its earlier requests that have not started.",
         "verification": "During development run only the tests tied to the change, after a fix only the last failures, and the regression once on the final code. Run the baseline once before the first product file change, and run baseline and final regression on the same host with the same worker setting (same parallel_share and -n). The same -n auto may apply a different worker count on another host or share, and then the baseline cannot be reused.",
     },
     "ja": {
@@ -1681,7 +1673,7 @@ _SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
         "guarantee": "実行のプロセスツリー全体を OS が R 個の処理器だけに限定する(Windows Job の処理器限定、POSIX supervisor の処理器集合)。ツールの協力に関係なく同時に実行される worker は R を超えない。R より多くの worker を作るツールは失敗せず遅くなる。",
         "pytest": "pytest の並列は大きな選択でだけ -n <分> --dist loadfile で使い、parallel_share を同じ数にする。server/tests の pytest は実行ごとの worker スロットプール(サイズ R)を分け合い、実際の worker を空きスロット数に下げる。入れ子の pytest は残りのスロットだけを使い、なければスロットなしで直列に動く。内部で pytest を何度も起動するスクリプトより pytest の直接実行を使う。",
         "serial_only": "固定ポートの接続統合テスト、同じソースに成果物を書くビルド・型検査、単一・少数ファイルの選択は並列にしない。",
-        "refusal": "409 selfcheck_host_capacity_exhausted を受けたら、少し待って同じ要求を再送する。バックグラウンドに回さない。",
+        "queue": "要求は容量で拒否されずキューに入り、すぐに status queued で応答される。その時点のワークツリーの写しで実行され、Group ロックを取らない。処理器の予約 R はキューが実行を始めるときに決まり(cpu_reservation)、空きがなければ待つ。結果は read_self_check で確認する。同じカードの新しい要求は、まだ始まっていない以前の要求を取り消す。",
         "verification": "開発中は変更に直接関係するテストだけ、修正後は直前の失敗項目だけ、最終コードで回帰を 1 回実行する。基準線は製品ファイルを最初に変更する前に 1 回だけ実行し、基準線と最終回帰は同じホスト・同じ worker 条件(同じ parallel_share と -n)で実行する。同じ -n auto でもホストや分によって適用 worker が変わり、変われば基準線を再利用できない。",
     },
 }
@@ -1775,11 +1767,9 @@ def _content_tr_self_check(ctx: dict) -> dict:
     parallel_copy = _SELF_CHECK_PARALLEL_COPY.get(locale, _SELF_CHECK_PARALLEL_COPY[FALLBACK_LOCALE])
     content["parallel"] = {
         "request_field": "parallel_share",
-        "response_fields": ["cpu_share_requested", "cpu_reservation", "reservation"],
-        "refusal_code": "selfcheck_host_capacity_exhausted",
-        "refusal_details": ["limit", "reserved_total", "reserved_protected", "requested"],
+        "response_fields": ["cpu_share_requested", "cpu_reservation", "enqueued_at", "queue"],
         **{key: parallel_copy[key] for key in ("reservation", "guarantee", "pytest", "serial_only",
-                                               "refusal", "verification")},
+                                               "queue", "verification")},
     }
     attempt_id = _self_check_attempt(ctx)
     if attempt_id:
