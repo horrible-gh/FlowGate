@@ -1,4 +1,4 @@
--- 200_question_loop_waits.sql
+-- 203_question_loop_waits.sql
 -- flowgate.v02test.0051 T0005 (A1, NR 0003 §2.1/§2.4): a document review loop that reaches a hop boundary while
 -- questions its own AI run asked are still unanswered is parked here instead of starting its next hop. The worker
 -- returns its run and the group lease; the card responder answers; once every question is answered the loop goes

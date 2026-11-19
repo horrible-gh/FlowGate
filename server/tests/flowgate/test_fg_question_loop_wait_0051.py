@@ -89,7 +89,7 @@ class Store:
 
 
 def _wait_table(conn):
-    conn.executescript((MIGRATIONS / "sqlite" / "200_question_loop_waits.sql").read_text(encoding="utf-8"))
+    conn.executescript((MIGRATIONS / "sqlite" / "203_question_loop_waits.sql").read_text(encoding="utf-8"))
 
 
 # ── Part 1: the real worker hop loop and checkpoint ─────────────────────────────
@@ -726,7 +726,7 @@ def test_the_parked_run_end_judges_no_loop_end_and_follows_its_questions(monkeyp
 
 
 def test_the_wait_table_exists_in_every_dialect_with_the_fields_a2_reads():
-    names = {d: (MIGRATIONS / d / "200_question_loop_waits.sql").read_text(encoding="utf-8")
+    names = {d: (MIGRATIONS / d / "203_question_loop_waits.sql").read_text(encoding="utf-8")
              for d in ("sqlite", "mysql", "postgres")}
     for text in names.values():
         for column in ("loop_run_id", "graph_exec_id", "assignment_stage", "assignment_seq", "asker_inv_id",
@@ -1164,7 +1164,7 @@ RUN2, RUN3 = "aiv2_loop_run_2", "aiv2_loop_run_3"
 
 
 def _exclusion_table(conn):
-    conn.executescript((MIGRATIONS / "sqlite" / "201_review_count_exclusions.sql").read_text(encoding="utf-8"))
+    conn.executescript((MIGRATIONS / "sqlite" / "205_review_count_exclusions.sql").read_text(encoding="utf-8"))
 
 
 def _iso(moment):
@@ -1624,7 +1624,7 @@ def test_the_stage_timeout_moves_by_the_wait_and_keeps_its_floor():
 
 
 def test_the_exclusion_table_exists_in_every_dialect_and_is_insert_only(monkeypatch):
-    names = {d: (MIGRATIONS / d / "201_review_count_exclusions.sql").read_text(encoding="utf-8")
+    names = {d: (MIGRATIONS / d / "205_review_count_exclusions.sql").read_text(encoding="utf-8")
              for d in ("sqlite", "mysql", "postgres")}
     for text in names.values():
         for column in ("review_id", "doc_ref", "cause", "wait_id", "basis", "question_item_ids"):

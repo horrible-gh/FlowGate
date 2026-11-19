@@ -1,4 +1,4 @@
--- 200_question_loop_waits.sql
+-- 203_question_loop_waits.sql
 -- flowgate.v02test.0051 T0005 (A1, NR 0003 §2.1/§2.4): a document review loop that reaches a hop boundary while
 -- questions its own AI run asked are still unanswered is parked here instead of starting its next hop. The worker
 -- returns its run and the group lease; the card responder answers; once every question is answered the loop goes
@@ -19,36 +19,36 @@
 -- waited_at             wait start; answered_at when every question was found answered (the resume claim);
 -- ended_at              resumed / cancelled. A2 reads waited_at..answered_at as the time excluded from the loop budget.
 CREATE TABLE IF NOT EXISTS question_loop_waits (
-    wait_id TEXT NOT NULL PRIMARY KEY,
-    group_id TEXT NOT NULL,
-    doc_ref TEXT NOT NULL,
-    loop_run_id TEXT NOT NULL,
-    graph_exec_id TEXT,
-    graph_attempt_id TEXT,
-    graph_run_id TEXT,
-    node_key TEXT,
-    assignment_stage TEXT,
+    wait_id VARCHAR(64) NOT NULL PRIMARY KEY,
+    group_id VARCHAR(191) NOT NULL,
+    doc_ref VARCHAR(191) NOT NULL,
+    loop_run_id VARCHAR(64) NOT NULL,
+    graph_exec_id VARCHAR(64),
+    graph_attempt_id VARCHAR(64),
+    graph_run_id VARCHAR(64),
+    node_key VARCHAR(191),
+    assignment_stage VARCHAR(32),
     assignment_seq INTEGER,
-    asked_hop_kind TEXT NOT NULL CHECK (asked_hop_kind IN ('review', 'rework')),
-    asker_inv_id TEXT,
+    asked_hop_kind VARCHAR(16) NOT NULL CHECK (asked_hop_kind IN ('review', 'rework')),
+    asker_inv_id VARCHAR(64),
     asked_round_no INTEGER NOT NULL,
-    hop_outcome TEXT CHECK (hop_outcome IS NULL OR hop_outcome IN ('succeeded', 'failed')),
-    resume_stage TEXT NOT NULL CHECK (resume_stage IN ('review', 'rework')),
+    hop_outcome VARCHAR(16) CHECK (hop_outcome IS NULL OR hop_outcome IN ('succeeded', 'failed')),
+    resume_stage VARCHAR(16) NOT NULL CHECK (resume_stage IN ('review', 'rework')),
     resume_round_no INTEGER NOT NULL,
     resume_attempts_used INTEGER NOT NULL DEFAULT 0,
     question_item_ids TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('waiting', 'resuming', 'resumed', 'cancelled')),
-    waited_at TEXT NOT NULL,
-    answered_at TEXT,
-    resume_requested_at TEXT,
-    resume_exec_id TEXT,
-    resumed_at TEXT,
-    resumed_run_id TEXT,
-    ended_at TEXT,
-    end_reason TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    status VARCHAR(16) NOT NULL CHECK (status IN ('waiting', 'resuming', 'resumed', 'cancelled')),
+    waited_at VARCHAR(40) NOT NULL,
+    answered_at VARCHAR(40),
+    resume_requested_at VARCHAR(40),
+    resume_exec_id VARCHAR(64),
+    resumed_at VARCHAR(40),
+    resumed_run_id VARCHAR(64),
+    ended_at VARCHAR(40),
+    end_reason VARCHAR(191),
+    created_at VARCHAR(40) NOT NULL,
+    updated_at VARCHAR(40) NOT NULL,
+    UNIQUE KEY uq_question_loop_waits_loop_run (loop_run_id),
+    KEY idx_question_loop_waits_group_status (group_id, status),
+    KEY idx_question_loop_waits_resume_exec (resume_exec_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_question_loop_waits_loop_run ON question_loop_waits (loop_run_id);
-CREATE INDEX IF NOT EXISTS idx_question_loop_waits_group_status ON question_loop_waits (group_id, status);
-CREATE INDEX IF NOT EXISTS idx_question_loop_waits_resume_exec ON question_loop_waits (resume_exec_id);
