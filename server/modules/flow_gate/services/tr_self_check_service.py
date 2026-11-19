@@ -102,6 +102,10 @@ def public(row: dict) -> dict:
     # is limited to cpu_reservation processors (None: a run admitted before the host cap).
     result["cpu_share_requested"] = row.get("cpu_share_requested")
     result["cpu_reservation"] = row.get("cpu_reservation")
+    if row.get("verify_stage_key"):
+        from modules.flow_gate.services import tr_self_check_quota as quota
+        result["verification"] = quota.allowance({"stage_key": row["verify_stage_key"],
+            "max_runs": row["verify_max_runs"], "run_timeout_sec": row["verify_timeout_sec"]})
     return result
 
 
@@ -386,7 +390,7 @@ def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
     args = request.get("args", [])
     cwd = request.get("cwd", ".")
     timeout = request.get("timeout_seconds", 300)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 1800:
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
         raise SelfCheckError(422, "selfcheck_invalid_timeout")
     try:
         policy.validate_program(program)
@@ -638,7 +642,11 @@ def _record_spawn(run_id: str, claim: str | None = None, lease_lost: threading.E
         if stage == "spawning":
             if lease_lost is not None and lease_lost.is_set():
                 raise SelfCheckError(409, "selfcheck_state_conflict")
-            if not db_runs.mark_spawn_started(run_id, ownership["process_owner_kind"], claim=claim):
+            try:
+                marked = db_runs.mark_spawn_started(run_id, ownership["process_owner_kind"], claim=claim)
+            except db_runs.SelfCheckQuotaExhausted as exc:
+                raise SelfCheckError(409, exc.code) from exc
+            if not marked:
                 raise SelfCheckError(500, "selfcheck_state_conflict")
             return
         _store_ownership(run_id, ownership, claim)
@@ -849,6 +857,9 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext | None, lock_key: st
         if lock == _LockKeeper.GONE:
             code = "selfcheck_lock_lost"
         else:
+            cause = exc.__cause__
+            if isinstance(cause, SelfCheckError):
+                exc = cause
             code = exc.code if isinstance(exc, (SelfCheckError, policy.PolicyError)) else (
                 "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
         terminal = db_runs.finish_failed(run_id, error_code=code, claim=claim)
@@ -974,6 +985,12 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
     if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
     program, args, relative_cwd, timeout = _validate_request(request)
+    from modules.flow_gate.services import tr_self_check_quota as quota
+    limits = quota.resolve(target.get("caller_token") or target.get("attempt_token"), target)
+    if quota.allowance(limits)["remaining"] == 0:
+        raise SelfCheckError(409, "selfcheck_quota_exhausted")
+    target = {**target, "verify_limits": limits}
+    timeout = min(request.get("timeout_seconds", limits["run_timeout_sec"]), limits["run_timeout_sec"])
     share = _requested_share(request)
     root = _worktree(target)
     path_value, _ = policy.controlled_path(root, _HOST_PATH)
@@ -986,6 +1003,8 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
         row = queue.enqueue(target, program=program, args=args, relative_cwd=relative_cwd,
                             timeout=timeout, share=share, command=command, path_value=path_value,
                             root=root, requested_by=requested_by)
+    except db_runs.SelfCheckQuotaExhausted as exc:
+        raise SelfCheckError(409, exc.code) from exc
     except db_runs.DraftOwnerClosedError as exc:
         # The TR registered (or the token was revoked) after draft_target admitted it.
         raise SelfCheckError(403, "selfcheck_forbidden", "draft owner token is no longer open") from exc

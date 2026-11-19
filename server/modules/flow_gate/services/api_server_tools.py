@@ -191,15 +191,15 @@ DESCRIPTIONS["run_self_check"] = (
 DESCRIPTIONS["read_self_check"] = (
     "Read Self-check evidence for the bound TR (in a TR(new) step: the runs your work token started). "
     "Omit self_check_run_id to list recent runs, or pass one to read "
-    "that run in detail. If the selected run is pending/running, repeat read_self_check until it reaches "
-    "completed/failed/cancelled. For a TR edit or TR(new) worker, on a non-zero exit read the output, fix the code "
+    "that run in detail. Continue your work while queued/pending/running and read the result when needed. "
+    "For a TR edit or TR(new) worker, on a non-zero exit read the output, fix the code "
     "within scope, then run_self_check again. TR review workers are read-only and may only inspect the recorded "
     "evidence; only TR edit and TR(new) workers may run or cancel Self-check. "
     "A completed pytest run carries result_summary (counts, failures, status none/incomplete/mismatch/complete) "
     "and environment_evidence. Pass baseline_run_id with self_check_run_id to get baseline_comparison: whether that "
     "earlier run, made before your first product change, may stand in for re-running the baseline, and if so "
     "new / existing / definition-changed / resolved-or-gone failures. It is advisory evidence only: it never turns "
-    "a failure into a pass, and a reusable=false answer means run the baseline again."
+    "a failure into a pass; a reusable=false answer cannot be used as comparison evidence."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
 # 0064 T-B4d (P0006 §4.2.5 ①): one tool shares the four scope schemas, so the description names the scopes.

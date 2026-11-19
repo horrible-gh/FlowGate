@@ -527,6 +527,17 @@ def mark_running(
     return get_run(run_id)
 
 
+class SelfCheckQuotaExhausted(Exception):
+    code = "selfcheck_quota_exhausted"
+
+
+def verify_used(stage_key: str, store=None) -> int:
+    row = (store or get_store())._fetch_one(
+        "SELECT COALESCE(SUM(verify_started_count), 0) AS used FROM tr_self_check_runs WHERE verify_stage_key = ?",
+        [stage_key])
+    return int(row["used"])
+
+
 def mark_spawn_started(run_id: str, process_owner_kind: str, claim: str | None = None) -> bool:
     """0080 T#3: the stamp a spawn writes before its first Popen -- ``process_owner_kind``
     on a pending row with no process recorded yet. From then on a missing target record
@@ -540,12 +551,23 @@ def mark_spawn_started(run_id: str, process_owner_kind: str, claim: str | None =
     stamps (and the run is never handed over) or the run was handed over (and this worker
     never spawns)."""
     fence, fence_params = _claim_fence(claim)
-    return get_store()._execute_affected(
-        "UPDATE tr_self_check_runs SET process_owner_kind = ?"
-        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'"
-        " AND process_owner_kind IS NULL AND target_pid IS NULL AND supervisor_pid IS NULL" + fence,
-        [process_owner_kind, run_id, *fence_params],
-    ) > 0
+    store = get_store()
+    with store.transaction():
+        _lock_host_capacity(store)
+        row = store._fetch_one("SELECT * FROM tr_self_check_runs WHERE self_check_run_id = ?", [run_id])
+        if (not row or row["status"] != "pending" or row["cancel_requested"]
+                or row["process_owner_kind"] is not None
+                or (claim is not None and row.get("queue_lease_owner") != claim)):
+            return False
+        if row.get("verify_stage_key") and verify_used(row["verify_stage_key"], store) >= row["verify_max_runs"]:
+            raise SelfCheckQuotaExhausted()
+        return store._execute_affected(
+            "UPDATE tr_self_check_runs SET process_owner_kind = ?,"
+            " verify_started_count = verify_started_count + CASE WHEN verify_stage_key IS NULL THEN 0 ELSE 1 END"
+            " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none' AND cancel_requested = 0"
+            " AND process_owner_kind IS NULL AND target_pid IS NULL AND supervisor_pid IS NULL" + fence,
+            [process_owner_kind, run_id, *fence_params],
+        ) > 0
 
 
 def record_spawn_ownership(
@@ -582,8 +604,9 @@ def clear_spawn_started(run_id: str, claim: str | None = None) -> bool:
     worker that lost its claim never clears the stamp of the worker that took the run over."""
     fence, fence_params = _claim_fence(claim)
     return get_store()._execute_affected(
-        "UPDATE tr_self_check_runs SET process_owner_kind = NULL"
-        " WHERE self_check_run_id = ? AND status = 'pending'"
+        "UPDATE tr_self_check_runs SET process_owner_kind = NULL,"
+        " verify_started_count = CASE WHEN verify_started_count > 0 THEN verify_started_count - 1 ELSE 0 END"
+        " WHERE self_check_run_id = ? AND status = 'pending' AND process_owner_kind IS NOT NULL"
         " AND target_pid IS NULL AND supervisor_pid IS NULL" + fence,
         [run_id, *fence_params],
     ) > 0
@@ -1193,6 +1216,7 @@ def create_queued(
     source_before: dict | None = None,
     progress_owner: dict | None = None,
     supersede_code: str | None = None,
+    verify_limits: dict | None = None,
 ) -> dict:
     """Insert a ``queued`` run (0053 1-B). No active_key: a Group may queue any number of runs.
 
@@ -1225,6 +1249,8 @@ def create_queued(
         _lock_host_capacity(store)
         if progress_owner is not None:
             _require_progress_owner(store, progress_owner, project_id, group_id)
+        if verify_limits is not None and verify_used(verify_limits["stage_key"], store) >= verify_limits["max_runs"]:
+            raise SelfCheckQuotaExhausted()
         order = _card_next_order(store, queue_key)
         draft = tr_doc_id is None
         lock_first = store.dialect != _dialect.SQLITE
@@ -1264,6 +1290,10 @@ def create_queued(
             )
         if draft and not lock_first:
             _require_open_owner(store, owner_token_id)
+        if verify_limits is not None:
+            store._execute(
+                "UPDATE tr_self_check_runs SET verify_stage_key = ?, verify_max_runs = ?, verify_timeout_sec = ? WHERE self_check_run_id = ?",
+                [verify_limits["stage_key"], verify_limits["max_runs"], verify_limits["run_timeout_sec"], run_id])
         if supersede_code is not None:
             older = store._fetch_all(
                 "SELECT self_check_run_id FROM tr_self_check_runs WHERE queue_key = ?"

@@ -305,7 +305,7 @@ def enqueue(target: dict, *, program: str, args: list[str], relative_cwd: str, t
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
             attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"),
             cpu_share_requested=share, owner_marker=proof.owner_marker(run_id), source_before=before,
-            progress_owner=target.get("progress_owner"),
+            progress_owner=target.get("progress_owner"), verify_limits=target.get("verify_limits"),
             # rev2: a request without a snapshot supersedes nothing (it fails at once below).
             supersede_code=None if snapshot_error is not None else SUPERSEDED)
     except Exception:

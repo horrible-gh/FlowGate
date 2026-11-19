@@ -457,7 +457,8 @@ def test_help_explains_the_cap_the_share_and_the_queue(locale):
     assert parallel["request_field"] == "parallel_share"
     # 0053 1-B: the 409 capacity refusal is gone; the help explains the queue instead.
     assert "refusal_code" not in parallel and "refusal" not in parallel
-    assert set(parallel) >= {"reservation", "guarantee", "pytest", "serial_only", "queue", "verification"}
+    assert set(parallel) >= {"reservation", "guarantee", "pytest", "serial_only", "queue"}
+    assert content["verification"].startswith("Self-check:")
     assert "--dist loadfile" in parallel["pytest"] and "queued" in parallel["queue"]
     codes = {row["code"] for row in content["errors"]}
     assert {"selfcheck_invalid_share", "selfcheck_cpu_limit_violation"} <= codes

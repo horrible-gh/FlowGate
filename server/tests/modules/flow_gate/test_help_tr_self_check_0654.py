@@ -106,7 +106,7 @@ def test_help_timeout_bounds_match_the_service():
     example = dict(help_catalog.SELF_CHECK_EXAMPLE)
     for good in (1, help_catalog.SELF_CHECK_TIMEOUT_DEFAULT, help_catalog.SELF_CHECK_TIMEOUT_MAX):
         service._validate_request(dict(example, timeout_seconds=good))
-    for bad in (0, help_catalog.SELF_CHECK_TIMEOUT_MAX + 1):
+    for bad in (0, -1, True):
         with pytest.raises(service.SelfCheckError) as caught:
             service._validate_request(dict(example, timeout_seconds=bad))
         assert caught.value.code == "selfcheck_invalid_timeout"
@@ -118,10 +118,10 @@ def test_help_timeout_bounds_match_the_service():
 def test_canonical_example_passes_the_real_validation(locale):
     example = _content(locale)["request"]["example"]
     assert example == {
-        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": 300,
+        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": 180,
     }
     program, args, cwd, timeout = service._validate_request(example)
-    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", 300)
+    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", 180)
 
 
 @pytest.mark.parametrize("locale", LOCALES)
@@ -146,7 +146,7 @@ def test_lifecycle_describes_run_read_cancel_and_terminal_states(locale):
     flow = content["lifecycle"]["flow"]
     for token in ("run_self_check", "self_check_run_id", "read_self_check", "cancel_self_check"):
         assert token in flow
-    assert content["lifecycle"]["statuses"] == ["pending", "running", "completed", "failed", "cancelled"]
+    assert content["lifecycle"]["statuses"] == ["queued", "pending", "running", "completed", "failed", "cancelled"]
     for field in ("exit_code", "timed_out", "stdout_tail", "stderr_tail", "source_changed_during_run",
                   "worktree_state_changed", "error_code"):
         assert field in content["lifecycle"]["result_fields"]
