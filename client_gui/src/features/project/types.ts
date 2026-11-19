@@ -567,13 +567,15 @@ export interface FlowCanvasNodeRun extends RoleRunFields {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
-  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null; phase?: string | null; waitStatus?: string | null; resumeStage?: string | null; waitedAt?: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
    * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
+  /** flowgate.v02test.0051 A1: why the card runs (`node_running_cause`): `question_wait:<run>` = a review loop waits for an answer; absent when not sent. */
+  nodeRunningCause?: string | null
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number
@@ -831,13 +833,15 @@ export interface FlowRunNode extends RoleRunFields {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
-  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null; phase?: string | null; waitStatus?: string | null; resumeStage?: string | null; waitedAt?: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
    * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
+  /** flowgate.v02test.0051 A1: why the card runs (`node_running_cause`): `question_wait:<run>` = a review loop waits for an answer; absent when not sent. */
+  nodeRunningCause?: string | null
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number

@@ -51,6 +51,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
+    ...('node_running_cause' in raw ? { nodeRunningCause: str(raw.node_running_cause) } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
