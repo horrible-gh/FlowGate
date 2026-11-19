@@ -164,11 +164,13 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
   if (load?.status !== 'ready') return
   const node = load.graph.nodes.find(item => item.id === requested.nodeId)
   if (!node) return
-  const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId)
+  const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId && !!item.scenario === !!requested.scenario)
   if (!doc) return
-  const card = node.definition && doc.ownerSlot ? {
+  // The 시나리오 button opens the shared TS document through its owner line, the 지시서 (as the Inspector does).
+  const ownerSlot = doc.scenario ? 'instruction' : doc.ownerSlot
+  const card = node.definition && ownerSlot ? {
     projectId: props.center.state.projectId!, flowId, nodeKey: node.id,
-    ownerSlot: doc.ownerSlot, openedDocId: doc.docId,
+    ownerSlot, openedDocId: doc.docId,
   } : null
   openDocument(doc.docId, 'view', { card })
 }

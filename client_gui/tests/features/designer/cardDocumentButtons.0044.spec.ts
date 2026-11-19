@@ -10,8 +10,25 @@ const line = (slot: string, docId: string | null, docType = 'TS') => ({ slot, do
 describe('0044 live document buttons', () => {
   it('deduplicates shared TS documents and prefers the instruction owner regardless of slot order', () => {
     const docs = cardDocumentButtons({ cardDocuments: [line('scenario', 'a'), line('instruction', 'a'), line('report', 'b', 'TSR'), line('report', null)], document: null })
-    expect(docs.map(d => [d.docId, d.ownerSlot, d.report])).toEqual([['a', 'instruction', false], ['b', 'report', true]])
+    // flowgate.v02test.0041: the shared TS document keeps one 지시서 button and gets its own 시나리오 button right after it.
+    expect(docs.map(d => [d.docId, d.ownerSlot, d.report, !!d.scenario])).toEqual([['a', 'instruction', false, false], ['a', 'scenario', false, true], ['b', 'report', true, false]])
     expect(cardDocumentButtons({ cardDocuments: [], document: null })).toEqual([])
+  })
+  it('gives a test card three buttons (지시서 · 시나리오 · 레포트) and opens the pressed one', async () => {
+    const i18n = prepareInspectorI18n()
+    const documents = cardDocumentButtons({ cardDocuments: [line('instruction', 'a'), line('scenario', 'a'), line('report', 'b', 'TSR')], document: null })
+    const wrapper = mount(FlowNodeCard, { props: { id: 'n', data: { kind: 'test', title: 'Card', selected: false, state: null, documents } }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    const buttons = wrapper.findAll('[data-test="designer-canvas-node-document"]')
+    expect(buttons).toHaveLength(3)
+    expect(new Set(buttons.map(b => b.get('path').attributes('d'))).size).toBe(3)
+    expect(buttons.map(b => b.attributes('data-scenario'))).toEqual(['false', 'true', 'false'])
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('open-document')).toEqual([[{ nodeId: 'n', docId: 'a', scenario: true }]])
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('open-document')?.[1]).toEqual([{ nodeId: 'n', docId: 'a' }])
+    // A card without a scenario line (work, design ...) keeps its two buttons.
+    expect(cardDocumentButtons({ cardDocuments: [line('instruction', 'a', 'T'), line('report', 'b', 'TR')], document: null })).toHaveLength(2)
+    wrapper.unmount()
   })
   it('uses a free document only when there are no card slots; null live slots never revive an old document', () => {
     const document = { docId: 'free', typeCode: 'M', title: 'Memo', seq: 1, docReviewStatus: null, status: 'draft', supersedes: [] }
