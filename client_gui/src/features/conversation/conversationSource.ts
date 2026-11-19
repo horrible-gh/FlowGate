@@ -59,7 +59,7 @@ export interface ConversationSource {
   /** flowgate.v02test.0030: `providerOrigin` — how the AI was chosen; kept on the run (client_provider_origin). */
   startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, providerOrigin?: ProviderOrigin): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
-  listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
+  listRuns(scope: ConversationScope, limit: number, cursor?: string, chatId?: string): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>
   /**
    * flowgate.v02gui.0011 B: stops a press by its `clientRequestId` before /start named its run. Optional: without it a

@@ -781,15 +781,22 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
   }
 }
 
-/** The server clamps this existing API at 100 and has no cursor / CH filter. */
-export async function fetchChatRuns(scope: ConversationScope, limit: number): Promise<AiRunList> {
-  const data = await call(() => getRequest<{ items?: Array<{ run_id?: string; doc_ref?: string | null }>;
-    total?: number; has_more?: boolean }>(`${API}/ai-invoke/runs`, { group_id: scope.groupId, limit: Math.min(100, Math.max(1, limit)) }))
+/** Keyset pages scoped to the open chat; no arbitrary history ceiling. */
+export async function fetchChatRuns(scope: ConversationScope, limit: number, cursor?: string, chatId?: string): Promise<AiRunList> {
+  const data = await call(() => getRequest<{ items?: Array<{ run_id?: string; doc_ref?: string | null; status?: string; action_scope?: string; group_id?: string; end_reason?: string | null; outcome?: string | null; exit_code?: number | null; succeeded?: boolean | null; started_at?: string | null; finished_at?: string | null }>;
+    total?: number; has_more?: boolean; next_cursor?: string | null }>(`${API}/ai-invoke/runs`, { group_id: scope.groupId, limit: Math.min(100, Math.max(1, limit)), ...(cursor ? { cursor } : {}), ...(chatId ? { doc_ref: chatId } : {}) }))
   const items = (data?.items ?? []).filter((item) => typeof item?.run_id === 'string' && item.run_id.trim()).map((item) => ({
     runId: item.run_id!, docRef: textOrNull(item.doc_ref),
+    ...(item.status === 'finished' && 'exit_code' in item ? { result: {
+      runId: item.run_id!, docRef: textOrNull(item.doc_ref), status: 'finished' as const,
+      actionScope: textOrNull(item.action_scope), groupId: textOrNull(item.group_id),
+      endReason: textOrNull(item.end_reason), outcome: textOrNull(item.outcome), exitCode: nullableNumber(item.exit_code),
+      succeeded: typeof item.succeeded === 'boolean' ? item.succeeded : null,
+      startedAt: textOrNull(item.started_at), finishedAt: textOrNull(item.finished_at),
+    } } : {}),
   }))
   const total = nullableNumber(data?.total)
-  return { items, total, hasMore: data?.has_more !== false || total == null || total > items.length }
+  return { items, total, hasMore: data?.has_more !== false || items.length !== (data?.items ?? []).length || (data?.next_cursor === undefined && total != null && total > items.length), ...(data?.next_cursor !== undefined ? { nextCursor: textOrNull(data.next_cursor) } : {}) }
 }
 
 export async function cancelRun(runId: string): Promise<void> {

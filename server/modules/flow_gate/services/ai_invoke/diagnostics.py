@@ -370,6 +370,9 @@ def _run_list_item_stored(row: dict) -> dict:
         "doc_ref": row.get("doc_ref"),
         "mode": row["mode"],
         "status": "finished",
+        "action_scope": row.get("action_scope"),
+        "exit_code": row.get("exit_code"),
+        "succeeded": ai_run_succeeded(row),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
         "docs_target": row.get("docs_target"),
@@ -388,7 +391,8 @@ def _run_list_item_stored(row: dict) -> dict:
 
 
 def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
-               limit: Optional[int] = None) -> dict:
+               limit: Optional[int] = None, cursor: Optional[str] = None,
+               doc_ref: Optional[str] = None) -> dict:
     """GET /ai-invoke/runs (L0007 §2.10.3): live runs (memory) merged with finished
     runs (DB0008's `ai_invoke_runs`), newest first. Exactly one of group_id/project
     scopes the query — the route layer validates format and permission; this
@@ -408,6 +412,33 @@ def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
         raise _http_error(404, "project_not_found", f"Project not found: {project_id}")
 
     from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    if doc_ref is not None or cursor is not None:
+        import base64
+        import json
+        before = None
+        if cursor:
+            try:
+                before = json.loads(base64.urlsafe_b64decode(cursor).decode("utf-8"))
+                if not isinstance(before, list) or len(before) != 2 or not all(isinstance(v, str) for v in before):
+                    raise ValueError("invalid cursor")
+            except Exception as exc:
+                raise HTTPException(422, "Invalid run history cursor") from exc
+        live = list_live_runs(group_id=group_id) if group_id is not None else list_live_runs(project_id=project_id)
+        live = [item for item in live if (doc_ref is None or item.get("doc_ref") == doc_ref)
+                and (before is None or (item.get("started_at") or "", item["run_id"]) < tuple(before))]
+        rows = db_runs.list_history_page(group_id, project_id, doc_ref, before, limit_value + len(live) + 1)
+        by_id = {row["run_id"]: _run_list_item_stored(row) for row in rows}
+        by_id.update({item["run_id"]: item for item in live})
+        merged = sorted(by_id.values(), key=lambda item: (item.get("started_at") or "", item["run_id"]), reverse=True)
+        items = merged[:limit_value]
+        has_more = len(merged) > limit_value
+        next_cursor = None
+        if has_more:
+            last = items[-1]
+            next_cursor = base64.urlsafe_b64encode(json.dumps([last.get("started_at") or "", last["run_id"]]).encode()).decode()
+        return {"ok": True, "limit": limit_value, "total": None, "has_more": has_more,
+                "next_cursor": next_cursor, "items": items, "group_id": group_id, "project": project_id}
 
     if group_id is not None:
         live_items = list_live_runs(group_id=group_id)

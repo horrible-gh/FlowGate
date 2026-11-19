@@ -424,9 +424,10 @@ export interface AiRunState {
   sourceAccess?: ChatSourceAccess | null
 }
 
-/** Existing group run-history window (no CH filter or pagination cursor). */
+/** Newest-first run-history page. */
 export interface AiRunList {
-  items: Array<{ runId: string; docRef: string | null }>
+  nextCursor?: string | null
+  items: Array<{ runId: string; docRef: string | null; result?: AiRunState }>
   total: number | null
   hasMore: boolean
 }

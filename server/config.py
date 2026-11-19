@@ -85,8 +85,8 @@ class Settings(BaseSettings):
     DB_SERVER_PROCESSES: int = 3
     DB_RESERVED_CONNECTIONS: int = 20
     DB_ACQUIRE_TIMEOUT: float = 30.0
-    DB_POOL_MAX_LIFETIME: Optional[float] = None
-    DB_POOL_MAX_IDLE: Optional[float] = None
+    DB_POOL_MAX_LIFETIME: Optional[float] = 1800.0
+    DB_POOL_MAX_IDLE: Optional[float] = 300.0
 
     # NOTE: preset activation is now managed by server/res/preset_hands.json
     # and not by environment settings. PRESET_HANDS removed per T072.
@@ -454,6 +454,8 @@ class DatabaseSetting:
             # first, apply only what is genuinely pending second.
             boot_config = {k: v for k, v in self.config.items() if k != "migration"}
             self.db_instance, self.sqloader, _ = database_init(boot_config)
+            from modules.flow_gate.db.resilience import install_checkout_validation
+            install_checkout_validation(self.db_instance)
             self.run_migrations(self.config.get("migration") or {})
             logger.debug(f"✅ DB initialized - type: {type(self.db_instance).__name__}, db_type: {getattr(self.db_instance, 'db_type', 'N/A')}")
         except Exception as e:

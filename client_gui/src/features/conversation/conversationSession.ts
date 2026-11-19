@@ -291,6 +291,7 @@ export interface ConversationSession {
    * way its [다시 시도] does (selectChat of the same chat), so a reconnect, online or a return to the panel brings it
    * back without a page reload.
    */
+  dismissHistoryWarning(): void
   recover(parts?: ChatRefresh): Promise<void>
   /**
    * flowgate.v02.0142 T#1: the AI of the message is pinned when it is sent: `target.providerId` when given (the first
@@ -943,11 +944,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     })
   }
 
-  function showHistoryUnconfirmed(chatId: string, unconfirmed: boolean): void {
+  function showHistoryUnconfirmed(chatId: string, unconfirmed: boolean, failedRuns: string[] = []): void {
     const id = `local-status-history:${encodeURIComponent(chatId)}`
     state.activities = state.activities.filter((a) => a.id !== id)
     if (unconfirmed) state.activities = upsertActivity(state.activities, {
-      kind: 'status', id, chatId, createdAt: null, tone: 'warning', code: 'run_history_unconfirmed', text: null,
+      kind: 'status', id, chatId, createdAt: null, tone: 'warning', code: 'run_history_unconfirmed', text: failedRuns.length ? failedRuns.join(', ') : null,
     })
   }
 
@@ -1636,27 +1637,33 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (wanted.history && !running.value) await restoreRuns(chatId, gen)
   }
 
-  /** Existing group history has no cursor. At most two windows and fifty detail reads. */
+  /** Read keyset pages, then resolve only runs without a proven reply. */
   async function restoreRuns(chatId: string, gen: number): Promise<void> {
     if (!isCurrentChat(chatId, gen) || !state.scope) return
     const request = ++historyRequest
     const scope = { ...state.scope }
     const current = () => isCurrentChat(chatId, gen) && request === historyRequest
     let uncertain = false
+    const failedRuns: string[] = []
     const candidates = new Set<string>()
     const listedLiveChats = new Map<string, string>()
+    const listedResults = new Map<string, AiRunState>()
     try {
-      let list = await source.listRuns(scope, RUN_HISTORY_INITIAL_LIMIT)
-      if (!current()) return
-      if (list.hasMore) {
-        list = await source.listRuns(scope, RUN_HISTORY_MAX_LIMIT)
+      let cursor: string | undefined
+      const seenCursors = new Set<string>()
+      do {
+        const list = await source.listRuns(scope, RUN_HISTORY_INITIAL_LIMIT, cursor, chatId)
         if (!current()) return
-      }
-      uncertain = list.hasMore
-      for (const item of list.items) if (item.docRef === chatId) {
-        candidates.add(item.runId)
-        listedLiveChats.set(item.runId, item.docRef)
-      }
+        for (const item of list.items) if (item.docRef === chatId) {
+          candidates.add(item.runId)
+          listedLiveChats.set(item.runId, item.docRef)
+          if (item.result) listedResults.set(item.runId, item.result)
+        }
+        if (!list.hasMore) break
+        if (!list.nextCursor || seenCursors.has(list.nextCursor)) { uncertain = true; break }
+        cursor = list.nextCursor
+        seenCursors.add(cursor)
+      } while (current())
     } catch {
       if (!current()) return
       uncertain = true
@@ -1665,9 +1672,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     for (const turn of state.turns) if (turn.sourceRunId) candidates.add(turn.sourceRunId)
     for (const activity of state.activities) if (activity.runId) candidates.add(activity.runId)
     for (const runId of terminalRuns.keys()) candidates.add(runId)
-    if (candidates.size > RUN_HISTORY_DETAIL_LIMIT) uncertain = true
     const confirmed: AiRunState[] = []
-    for (const runId of [...candidates].slice(0, RUN_HISTORY_DETAIL_LIMIT)) {
+    for (const runId of candidates) {
+      const summary = listedResults.get(runId)
+      if (bodyState(runId, 'failed') === 'present' && summary && runId !== state.runId) {
+        terminalRuns.set(runId, summary)
+        confirmed.push(summary)
+        continue
+      }
       if (!current()) return
       if (runId === state.runId) continue // history never owns the active-run lock
       const check = (runChecks.get(runId) ?? 0) + 1
@@ -1676,13 +1688,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
         const run = await source.fetchRun(runId)
         if (!current()) return
         if (runId === state.runId || check !== runChecks.get(runId)) continue
-        if (!runBelongsToChat(run, runId, chatId, listedLiveChats.get(runId) ?? null)) { uncertain = true; continue }
+        if (!runBelongsToChat(run, runId, chatId, listedLiveChats.get(runId) ?? null)) { uncertain = true; failedRuns.push(runId); continue }
         if (run.status === 'running') continue
         terminalRuns.set(runId, run)
         confirmed.push(run)
       } catch {
         if (!current()) return
         uncertain = true
+        failedRuns.push(runId)
       }
     }
     // Do not make an already-proven reply depend on covering unrelated older history.
@@ -1698,7 +1711,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (run.runId !== state.runId && terminalRuns.get(run.runId) === run) renderTerminal(chatId, run, result)
       }
     }
-    if (current()) showHistoryUnconfirmed(chatId, uncertain)
+    if (current()) showHistoryUnconfirmed(chatId, uncertain, failedRuns)
   }
 
   async function renameActiveChat(title: string): Promise<boolean> {
@@ -2807,6 +2820,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     setChatTitle,
     loadOlder,
     catchUp,
+    dismissHistoryWarning: () => {
+      state.activities = state.activities.filter(a => a.kind !== 'status' || a.code !== 'run_history_unconfirmed')
+    },
     recover,
     send,
     retry,

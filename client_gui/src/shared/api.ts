@@ -703,9 +703,9 @@ export const isAuthRejection = (error: unknown): boolean => {
 // re-sent once only, since each attempt already waited the full path timeout. The re-sent request
 // goes through the request interceptor again with its already-raised timeout, so the per-path
 // ceiling (30s / 130s / 330s) is kept.
-const GET_RETRY_MAX = 2
+const GET_RETRY_MAX = 5
 const GET_RETRY_MAX_AFTER_TIMEOUT = 1
-const GET_RETRY_BASE_MS = 300
+const GET_RETRY_BASE_MS = 500
 const GET_RETRY_MAX_DELAY_MS = 3_000
 const GET_RETRY_STATUSES = new Set([502, 503, 504])
 

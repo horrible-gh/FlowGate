@@ -1,8 +1,9 @@
 """Authentication dependencies."""
-import os,jwt
+import jwt
 from fastapi import Depends,HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from .jwt_service import decode_token
+from modules.flow_gate.db.resilience import auth_unavailable
 from .token_store import is_blacklisted
 from .session_store import is_session_active
 oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -23,9 +24,8 @@ def verify_token(token:str=Depends(oauth2_scheme)):
         if payload.get("jti") and is_blacklisted(payload["jti"]):raise HTTPException(401,"Token has been revoked")
         if payload.get("sid") and not is_session_active(payload["sid"]):raise HTTPException(401,"session_revoked")
     except HTTPException:raise
-    except Exception:
-        if os.environ.get("TESTING")=="1":return payload
-        raise credentials
+    except Exception as exc:
+        raise auth_unavailable(exc) from exc
     if payload.get("sid"):_note_activity(payload["sid"],payload.get("sub"))
     return payload
 # flowgate.v02.0020 (시스템 › 보안 › 자동 로그아웃): an API request is session activity. It is
@@ -48,7 +48,9 @@ def _note_activity(sid,uid):
             raise HTTPException(401,"session_idle")
         touch_session(sid)
     except HTTPException:raise
-    except Exception:pass
+    except Exception as exc:
+        _activity_seen.pop(sid,None)
+        raise auth_unavailable(exc) from exc
 def get_current_user(payload:dict=Depends(verify_token)):
     user_id=payload.get("sub")
     if not user_id:raise HTTPException(401,"Invalid token subject")
@@ -57,11 +59,16 @@ def get_current_user(payload:dict=Depends(verify_token)):
     # 0276 NR0003 finding 2: one of the five fixed per-request auth queries.
     # db.users.create/update/delete invalidate this entry, so is_active/is_admin
     # changes take effect immediately in-process.
-    user=_auth_cache.user_cache().get_or_load(user_id,lambda:db_users.get_by_id(user_id))
+    try:
+        user=_auth_cache.user_cache().get_or_load(user_id,lambda:db_users.get_by_id(user_id))
+    except Exception as exc:
+        raise auth_unavailable(exc) from exc
     if not user:raise HTTPException(401,"User not found")
     if not user.get("is_active"):raise HTTPException(403,"User account is inactive")
     return user
 def optional_current_user(token:str|None=Depends(OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login",auto_error=False))):
     if not token:return None
     try:return get_current_user(verify_token(token))
-    except HTTPException:return None
+    except HTTPException as exc:
+        if exc.status_code >= 500:raise
+        return None

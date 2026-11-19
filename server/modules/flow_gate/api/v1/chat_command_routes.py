@@ -60,7 +60,11 @@ def _worker_run(request: Request) -> tuple[dict, dict]:
     raw = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     try:
         token = token_service.verify(raw)
-    except Exception:
+    except Exception as exc:
+        from modules.flow_gate.db.resilience import unavailable, auth_unavailable
+        if unavailable(exc):
+            error = auth_unavailable(exc)
+            raise commands.ChatCommandError(503, "database_unavailable", error.detail) from exc
         raise commands.ChatCommandError(403, "chat_command_forbidden", "a live AI chat run token is required")
     from modules.flow_gate.services import ai_invoke_service
 

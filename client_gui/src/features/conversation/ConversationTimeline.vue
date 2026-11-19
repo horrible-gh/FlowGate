@@ -75,6 +75,8 @@
           :activity="item.activity"
           :busy="item.kind === 'command' && deciding.includes(item.activity.id)"
           :read-only="readOnly"
+          @retry-history="emit('retry-history')"
+          @dismiss-history="emit('dismiss-history')"
           @decide="(decision) => emit('decide', item.activity.id, decision)"
           @open-change="item.kind === 'change' && emit('open-change', item.activity)"
           @open-file="(runId, path) => emit('open-file', runId, path)"
@@ -130,6 +132,8 @@ const emit = defineEmits<{
   reload: []
   retry: [localId: string]
   decide: [commandId: string, decision: CommandDecision]
+  'retry-history': []
+  'dismiss-history': []
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]

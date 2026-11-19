@@ -53,6 +53,8 @@
       :checkpoint-busy="state.savingCheckpoint"
       :my-participant-key="state.myParticipantKey"
       @mutate="session.mutateTurn"
+      @retry-history="session.recover({ history: true })"
+      @dismiss-history="session.dismissHistoryWarning"
       @load-older="session.loadOlder"
       @reload="reloadChat"
       @retry="start.retry"

@@ -168,11 +168,9 @@ def _revocation_reason(ctx: dict) -> Optional[str]:
     Blocking (three single-row reads at worst, usually all cache hits), so call
     it through ``anyio.to_thread.run_sync``, never straight from the loop.
 
-    A lookup that *raises* is reported as a stop reason instead of being
-    ignored: this is the check that decides whether a revoked login keeps
-    receiving pushes, so the unknown answer has to be the closed one. The client
-    reconnects, and a reconnect made while the DB is unreachable fails at the
-    door rather than silently inheriting a stream nobody can validate.
+    A lookup that raises suspends delivery while the stream retries validation.
+    Repeated failure closes the connection without declaring the login revoked.
+    A reconnect while the DB is unreachable receives 503.
     """
     jti, sid, user_id = ctx.get("jti"), ctx.get("sid"), ctx["user_id"]
     try:
@@ -185,7 +183,7 @@ def _revocation_reason(ctx: dict) -> Optional[str]:
             return "session_revoked"
         user = _load_user(user_id)
     except Exception as exc:
-        logger.debug(f"[SSE] auth re-check failed: {exc}")
+        logger.warning(f"[SSE] auth re-check unavailable type={type(exc).__name__}")
         return "auth_check_failed"
     if not user:
         return "user_not_found"
@@ -206,7 +204,11 @@ def _authenticate(jwt_token: str) -> Optional[dict]:
     ctx = _claims(payload)
     if ctx is None:
         return None
-    if _revocation_reason(ctx) is not None:
+    reason = _revocation_reason(ctx)
+    if reason == "auth_check_failed":
+        from fastapi import HTTPException
+        raise HTTPException(503, "Authentication service temporarily unavailable")
+    if reason is not None:
         return None
     return ctx
 
@@ -237,7 +239,13 @@ async def sse_stream(
 
     # The blocking DB reads sit inside _authenticate, so it runs in a worker
     # thread: an `async def` handler must not block the event loop (0279 T0005).
-    ctx = await anyio.to_thread.run_sync(_authenticate, jwt_token)
+    from fastapi import HTTPException
+    try:
+        ctx = await anyio.to_thread.run_sync(_authenticate, jwt_token)
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        return JSONResponse(status_code=503, content={"ok": False, "error_message": exc.detail}, headers={"Retry-After": "1"})
     if ctx is None:
         return JSONResponse(
             status_code=401,
@@ -256,6 +264,24 @@ async def sse_stream(
     shutdown_event = getattr(request.app.state, "shutdown_event", None)
 
     async def event_generator():
+        async def checked_reason():
+            # Keep queued events private until identity is confirmed again. A transient
+            # failure neither revokes the login nor loses the event being delivered.
+            for attempt in range(3):
+                reason = await anyio.to_thread.run_sync(_revocation_reason, ctx)
+                if reason != "auth_check_failed":
+                    return reason
+                if attempt < 2:
+                    if shutdown_event is None:
+                        await asyncio.sleep(_SSE_HEARTBEAT_TIMEOUT)
+                    else:
+                        try:
+                            await asyncio.wait_for(shutdown_event.wait(), _SSE_HEARTBEAT_TIMEOUT)
+                            return "auth_check_failed"
+                        except asyncio.TimeoutError:
+                            pass
+            return "auth_check_failed"
+
         try:
             while True:
                 if await request.is_disconnected():
@@ -272,12 +298,13 @@ async def sse_stream(
                         break
                     # Re-check before *delivering*: a session revoked while this
                     # event sat in the queue must not receive it (0371 T0012).
-                    reason = await anyio.to_thread.run_sync(_revocation_reason, ctx)
+                    reason = await checked_reason()
                     if reason is not None:
                         logger.debug(
                             f"[SSE] auth ended stream user={user_id} reason={reason}"
                         )
-                        yield _auth_revoked_frame(reason)
+                        if reason != "auth_check_failed":
+                            yield _auth_revoked_frame(reason)
                         break
                     event_id = _frame_id()
                     event_name = (
@@ -306,12 +333,13 @@ async def sse_stream(
                     # stream is re-checked once per cadence, so a revoked login
                     # stops receiving pushes within ~_SSE_HEARTBEAT_TIMEOUT
                     # seconds (NR0007 §4 recommendation 2).
-                    reason = await anyio.to_thread.run_sync(_revocation_reason, ctx)
+                    reason = await checked_reason()
                     if reason is not None:
                         logger.debug(
                             f"[SSE] auth ended stream user={user_id} reason={reason}"
                         )
-                        yield _auth_revoked_frame(reason)
+                        if reason != "auth_check_failed":
+                            yield _auth_revoked_frame(reason)
                         break
                     yield f"id: {_frame_id()}\nevent: ping\ndata: {{}}\n\n"
         except (GeneratorExit, asyncio.CancelledError):

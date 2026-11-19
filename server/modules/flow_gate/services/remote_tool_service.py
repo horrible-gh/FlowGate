@@ -244,7 +244,10 @@ def _reconcile_worker_grant_scopes(grant: dict) -> bool:
     try:
         if db_grants.get_scopes(grant_id) != set(scopes):
             db_grants.replace_scopes(grant_id, scopes)
-    except Exception:
+    except Exception as exc:
+        from modules.flow_gate.db.resilience import unavailable, auth_unavailable
+        if unavailable(exc):
+            raise auth_unavailable(exc) from exc
         return False
     return True
 
@@ -262,7 +265,10 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
         return None
     try:
         token_rec = token_service.verify(raw_token)
-    except Exception:
+    except Exception as exc:
+        from modules.flow_gate.db.resilience import unavailable, auth_unavailable
+        if unavailable(exc):
+            raise auth_unavailable(exc) from exc
         return None
 
     token_id = token_rec.get("token_id")

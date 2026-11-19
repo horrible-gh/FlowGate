@@ -436,7 +436,10 @@ const runResultFlowName = computed(() => {
 // The recovery signal has a server-provided sequence; observations never create it.
 watch(() => center.state.tabs.map(tab => [tab.flowId, center.state.runs[tab.flowId]?.confirmedCommand] as const), (entries, previous) => {
   for (const [flowId, command] of entries) {
-    if (command && previous?.find(([id]) => id === flowId)?.[1] !== command) runResult.armCommand(flowId, command)
+    if (command && previous?.find(([id]) => id === flowId)?.[1] !== command) {
+      runResult.armCommand(flowId, command)
+      toasts.value = toasts.value.filter(item => item.commandRequestId !== command.commandRequestId)
+    }
   }
 }, { flush: 'sync' })
 function discardCorruptRunCommand() {
@@ -497,6 +500,7 @@ const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks
 // document's stays until it is closed) follows a language switch. The server's message and the document ids it
 // names stay as they were sent.
 interface ShellToast {
+  readonly commandRequestId?: string | null
   readonly id: string
   readonly tone: NonNullable<ToastHostItem['tone']>
   readonly duration: number | null
@@ -573,7 +577,7 @@ watch(
     const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
     // A refused document is read, not glanced at: that toast stays until it is closed.
     const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000
-    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, text, tone, duration }]
+    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, text, tone, duration, commandRequestId: error.outcome === 'unconfirmed' ? error.commandRequestId : null }]
   },
 )
 

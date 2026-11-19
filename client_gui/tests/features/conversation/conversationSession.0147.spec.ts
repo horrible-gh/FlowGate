@@ -2,7 +2,7 @@ import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { ConversationRequestError } from '@/features/conversation/api'
-import { CATCHUP_MAX_ROUNDS, FINAL_TURN_READ_ATTEMPTS, RUN_HISTORY_DETAIL_LIMIT, RUN_POLL_MS, createConversationSession, type ConversationSession } from '@/features/conversation/conversationSession'
+import { CATCHUP_MAX_ROUNDS, FINAL_TURN_READ_ATTEMPTS, RUN_POLL_MS, createConversationSession, type ConversationSession } from '@/features/conversation/conversationSession'
 import type { AiRunState, TurnsPage } from '@/features/conversation/types'
 import { createFakeSource, turn } from './fakeConversationSource'
 
@@ -467,20 +467,20 @@ describe('0147 fresh-session restoration from stored run history, no active run'
     else source.listRuns.mockRejectedValue(new ConversationRequestError('isolated failure', failure === '403' ? 403 : null, null))
     await session.selectChat(B); await session.selectChat(A); await flushPromises()
     expect(codes(session)).toEqual(['run_history_unconfirmed'])
-    if (failure === 'truncated') expect(source.listRuns.mock.calls.slice(-2).map((c: any[]) => c[1])).toEqual([20, 100])
+    if (failure === 'truncated') expect(source.listRuns.mock.calls.at(-1)?.[1]).toBe(20)
     source.listRuns.mockResolvedValue({ items: [{ runId: 'r1', docRef: A }], total: 1, hasMore: false })
     await session.selectChat(A)
     expect(codes(session)).toEqual(['run_no_reply'])
     expect(source.startChatRun).not.toHaveBeenCalled()
   })
 
-  it('history details are capped, and a delayed list for the old CH is discarded', async () => {
+  it('history details have no arbitrary cap, and a delayed list for the old CH is discarded', async () => {
     const { session, source } = await setup()
     source.listRuns.mockResolvedValue({ items: Array.from({ length: 100 }, (_, i) => ({ runId: `history-${i}`, docRef: A })), total: 100, hasMore: false })
     source.fetchRun.mockClear()
     await session.selectChat(A)
-    expect(source.fetchRun).toHaveBeenCalledTimes(RUN_HISTORY_DETAIL_LIMIT)
-    expect(codes(session)).toContain('run_history_unconfirmed')
+    expect(source.fetchRun).toHaveBeenCalledTimes(100)
+    expect(codes(session)).not.toContain('run_history_unconfirmed')
     let answer!: (value: any) => void
     source.listRuns.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve }))
     const old = session.catchUp(); await flushPromises()

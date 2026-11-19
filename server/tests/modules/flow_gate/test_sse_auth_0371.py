@@ -134,6 +134,26 @@ def _reason_of(frame):
     return json.loads(frame.split("data: ", 1)[1].strip())["reason"]
 
 
+@pytest.mark.asyncio
+async def test_transient_auth_failure_keeps_stream_and_delivers_after_recovery():
+    calls = 0
+    def user(_):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("temporary database outage")
+        return _ACTIVE_USER
+    stream, patchers = await _open_stream(user=user)
+    try:
+        frame = await asyncio.wait_for(anext(stream), 1)
+        assert "event: ping" in frame
+        assert "auth_revoked" not in frame
+        assert calls >= 3
+    finally:
+        await stream.aclose()
+        _exit(patchers)
+
+
 # ── connect time ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -196,7 +216,7 @@ async def test_connect_rejected_when_a_lookup_raises():
     def boom(_user_id):
         raise RuntimeError("db down")
 
-    assert await _connect_status(user=boom) == 401
+    assert await _connect_status(user=boom) == 503
 
 
 @pytest.mark.asyncio
@@ -450,10 +470,11 @@ def test_auth_lookups_never_run_on_the_event_loop():
     0279 T0005 pattern that once froze the whole server for 40 seconds. The
     connect check and both in-stream re-checks must be offloaded."""
     assert "await anyio.to_thread.run_sync(_authenticate, jwt_token)" in _SOURCE
-    assert _SOURCE.count("await anyio.to_thread.run_sync(_revocation_reason, ctx)") == 2
+    assert _SOURCE.count("await anyio.to_thread.run_sync(_revocation_reason, ctx)") == 1
+    assert _SOURCE.count("await checked_reason()") == 2
     # …and no direct call from the loop slipped back in.
     assert "= _authenticate(" not in _SOURCE
-    assert "= _revocation_reason(" not in _SOURCE
+    assert "= _revocation_reason(" not in _SOURCE.split("async def sse_stream", 1)[1]
 
 
 def test_the_recheck_does_not_re_decode_the_jwt():

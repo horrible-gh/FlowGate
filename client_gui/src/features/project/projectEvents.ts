@@ -163,7 +163,7 @@ function healthy(hub: Hub): boolean {
   return hub.retry === null && hub.stream !== null && hub.stream.readyState === EventSource.OPEN
 }
 
-type Revive = 'token' | 'online' | 'visible'
+type Revive = 'token' | 'online' | 'visible' | 'focus'
 
 /**
  * T0005 ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
@@ -174,7 +174,11 @@ function revive(reason: Revive) {
   // EventSource can be gone while a hub lingers (a test environment that removed it): nothing to reconnect with.
   if (typeof EventSource === 'undefined') return
   for (const [projectId, hub] of [...hubs]) {
-    if (hubs.get(projectId) !== hub || healthy(hub)) continue
+    if (hubs.get(projectId) !== hub) continue
+    if (healthy(hub)) {
+      if (reason !== 'token') resyncAll(hub)
+      continue
+    }
     if (reason === 'token' && hub.retry === null && hub.stream !== null && hub.token === currentToken()) continue
     replace(projectId, hub)
   }
@@ -182,6 +186,7 @@ function revive(reason: Revive) {
 
 const onTokenRefreshed = () => revive('token')
 const onOnline = () => revive('online')
+const onFocus = () => revive('focus')
 const onVisibility = () => {
   if (document.visibilityState === 'visible') revive('visible')
 }
@@ -193,10 +198,12 @@ function watchConnection(on: boolean) {
   if (on) {
     window.addEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.addEventListener('online', onOnline)
+    window.addEventListener('focus', onFocus)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
   } else {
     window.removeEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.removeEventListener('online', onOnline)
+    window.removeEventListener('focus', onFocus)
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
   }
 }

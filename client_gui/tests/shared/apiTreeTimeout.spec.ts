@@ -151,12 +151,12 @@ describe('shared/api GET retry keeps the per-path timeout (v02gui.0017 B4)', () 
     expect(seen.map((c) => c.timeout)).toEqual([LONG_TIMEOUT_MS, LONG_TIMEOUT_MS])
   })
 
-  it('re-sends an ordinary GET after 503 on the 30s default, at most twice', async () => {
-    const seen = flakyAdapter(5, gateway(503))
+  it('re-sends an ordinary GET after 503 across a restart, at most five times', async () => {
+    const seen = flakyAdapter(10, gateway(503))
     await expect(api.get('/api/v1/documents')).rejects.toMatchObject({ response: { status: 503 } })
-    expect(seen).toHaveLength(3) // first try + 2 retries
+    expect(seen).toHaveLength(6) // first try + 5 retries
     expect(seen.every((c) => c.timeout === DEFAULT_TIMEOUT_MS)).toBe(true)
-  })
+  }, 15_000)
 
   it('re-sends a timed-out GET only once', async () => {
     const seen = flakyAdapter(5, (config) => {

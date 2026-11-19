@@ -474,6 +474,21 @@ def latest_finished_for_group(group_id: str, doc_ref: Optional[str] = None) -> O
     return _row_to_payload(row) if row is not None else None
 
 
+def list_history_page(group_id, project_id, doc_ref, before, limit):
+    clauses = ["group_id = ?" if group_id is not None else "project_id = ?"]
+    params = [group_id if group_id is not None else project_id]
+    if doc_ref is not None:
+        clauses.append("doc_ref = ?")
+        params.append(doc_ref)
+    if before is not None:
+        clauses.append("(started_at < ? OR (started_at = ? AND run_id < ?))")
+        params.extend([before[0], before[0], before[1]])
+    rows = get_store()._fetch_all(
+        "SELECT * FROM ai_invoke_runs WHERE " + " AND ".join(clauses)
+        + " ORDER BY started_at DESC, run_id DESC LIMIT ?", params + [limit])
+    return [_row_to_payload(row) for row in rows]
+
+
 def list_by_group(group_id: str, limit: int) -> list[dict]:
     """Newest-first page for a group (DB0008 4 Q2).
 

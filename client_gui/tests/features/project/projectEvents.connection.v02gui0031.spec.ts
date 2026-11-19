@@ -200,7 +200,7 @@ describe('v02gui.0031 T0005 ① project stream follows token rotation, online an
     expect(FakeEventSource.all).toHaveLength(3)
     expect(live()).toHaveLength(1)
     FakeEventSource.all[2].emit('open')
-    expect(a.resync).toHaveBeenCalledTimes(1)
+    expect(a.resync).toHaveBeenCalledTimes(3) // online + visible refresh even an open connection
   })
 
   it('a stream whose first attempt failed resyncs on its first open (what was read meanwhile may be stale)', () => {

@@ -1424,6 +1424,8 @@ def list_ai_invoke_runs(
     group_id: Optional[str] = None,
     project: Optional[str] = None,
     limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+    doc_ref: Optional[str] = None,
 ):
     """Browse past runs by number (L0007 §2.10.3) — until now a run was only
     reachable by its id, so a dead chain with no card left could not be found at
@@ -1453,7 +1455,8 @@ def list_ai_invoke_runs(
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
     try:
-        result = ai_invoke_service.list_runs(group_id=group_id, project=project, limit=limit)
+        options = {"cursor": cursor, "doc_ref": doc_ref} if cursor is not None or doc_ref is not None else {}
+        result = ai_invoke_service.list_runs(group_id=group_id, project=project, limit=limit, **options)
     except HTTPException as exc:
         return _err(exc)
     return JSONResponse(status_code=200, content=result)

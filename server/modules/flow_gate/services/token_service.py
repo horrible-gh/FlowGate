@@ -103,10 +103,9 @@ def _verify_hash(stored_hash: str, candidate_hash: str) -> bool:
 
 
 def _next_token_id() -> str:
-    """Assign a token_id in the format tok_YYYYMMDD_NNNNNN."""
+    """Independent 128-bit ids across processes; legacy numbered ids stay readable."""
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    count = db_tokens.count_by_date_prefix(date_str)
-    return f"tok_{date_str}_{count + 1:06d}"
+    return f"tok_{date_str}_{secrets.token_hex(16)}"
 
 
 def _sanitize_project_name(name: str) -> str:
@@ -230,11 +229,17 @@ def issue(
     created_at_str = now.isoformat(timespec="seconds")
     expires_at_str = expires_at.isoformat(timespec="seconds")
 
-    scratch_path = _scratch_dir(project, token_id)
-    # Normalize the stored path before creating anything on disk, so a storage
-    # conversion error cannot leave an untracked directory behind.
-    stored_scratch = to_storage_relative(scratch_path, project)
-    token_scratch.create(project, token_id, scratch_path)
+    for attempt in range(5):
+        scratch_path = _scratch_dir(project, token_id)
+        stored_scratch = to_storage_relative(scratch_path, project)
+        try:
+            token_scratch.create(project, token_id, scratch_path)
+            break
+        except FileExistsError:
+            _log.warning("token scratch collision id=%s attempt=%s", token_id, attempt + 1, exc_info=True)
+            token_id = _next_token_id()
+    else:
+        raise HTTPException(503, "Task folder could not be allocated; please retry.")
 
     source_access: Optional[str] = None
     command_access: Optional[str] = None

@@ -161,6 +161,10 @@
     <!-- flowgate.v02gui.0026: the run in progress looks like the question policy conversation's "AI가 답하는 중…". -->
     <span v-if="running" class="tl-dots" data-test="tl-running-dots" aria-hidden="true"><i /><i /><i /></span>
     <span class="tl-status-text">{{ statusText }}</span>
+    <template v-if="activity.code === 'run_history_unconfirmed'">
+      <button type="button" class="tl-act-btn" data-test="tl-history-retry" @click="emit('retry-history')">{{ t('gui.common.retry') }}</button>
+      <button type="button" class="tl-act-btn" data-test="tl-history-dismiss" @click="emit('dismiss-history')">{{ t('gui.conversation.close') }}</button>
+    </template>
     <span v-if="activity.createdAt" class="tl-status-time" :title="activity.createdAt">{{ formatTimelineTime(activity.createdAt) }}</span>
     <!-- flowgate.v02test.0024 C: a warning / error line copies its whole text (the wording and the server detail). -->
     <button
@@ -194,6 +198,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   decide: [decision: CommandDecision]
+  'retry-history': []
+  'dismiss-history': []
   'open-change': []
   'open-file': [runId: string, path: string]
 }>()

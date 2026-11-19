@@ -25,6 +25,17 @@ def default_scratch_ttl(monkeypatch):
 
 @pytest.fixture
 def owned(monkeypatch, tmp_path):
+    # Exercise real journal/filesystem ownership inside the isolated tmp tree.
+    # The document gate otherwise consults a live store unrelated to this fixture.
+    from contextlib import nullcontext
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    def gate(operation, *args, **kwargs):
+        if operation == "paths":
+            return args[1]()
+        if operation == "paths_scope":
+            return nullcontext()
+        raise AssertionError(operation)
+    monkeypatch.setattr(ports, "_handlers", {**ports._handlers, ports.DOCUMENT_WRITE_GATE: gate})
     monkeypatch.setattr(token_scratch.storage_paths, "get_storage_root", lambda: tmp_path)
     monkeypatch.setattr(token_service, "get_storage_root", lambda: tmp_path)
     monkeypatch.setattr(token_scratch.db_projects, "get_by_id", lambda _: {"project_name": "Project"})
@@ -270,6 +281,40 @@ def test_issue_failure_removes_its_new_scratch(owned, monkeypatch, scope, fail_a
     with pytest.raises(RuntimeError, match=fail_at):
         token_service.issue(PROJECT, None, scope, None, "user")
     assert not (root / "work" / "Project" / token_id).exists()
+
+
+def test_issue_skips_existing_folder_without_touching_its_contents(owned, monkeypatch):
+    root, rows, _ = owned
+    existing_id, existing = _scratch(root, 200, old=False)
+    marker = existing / "keep.txt"
+    marker.write_text("earlier owner", encoding="utf-8")
+    fresh_id = "tok_20261009_" + "a" * 32
+    ids = iter([existing_id, fresh_id])
+    monkeypatch.setattr(token_service, "_next_token_id", lambda: next(ids))
+    monkeypatch.setattr(token_service, "_active_pepper", lambda: ("v1", "pepper"))
+    monkeypatch.setattr(token_service, "to_storage_relative", lambda path, _: str(path))
+    monkeypatch.setattr(token_service, "get_store", lambda: _Store())
+    monkeypatch.setattr(token_scratch, "sweep_on_issue", lambda _: None)
+    monkeypatch.setattr(token_service.db_tokens, "create", lambda data: rows.update({data["token_id"]: data}))
+    monkeypatch.setattr(token_service.db_events, "create", lambda _: None)
+    issued = token_service.issue(PROJECT, None, "new", None, "user")
+    assert issued["token_id"] == fresh_id
+    assert marker.read_text(encoding="utf-8") == "earlier owner"
+    assert list(rows) == [fresh_id]
+
+
+def test_issue_collision_exhaustion_is_safe_503(owned, monkeypatch):
+    from fastapi import HTTPException
+    root, _, _ = owned
+    token_id, folder = _scratch(root, 201, old=False)
+    monkeypatch.setattr(token_service, "_next_token_id", lambda: token_id)
+    monkeypatch.setattr(token_service, "_active_pepper", lambda: ("v1", "pepper"))
+    monkeypatch.setattr(token_service, "to_storage_relative", lambda path, _: str(path))
+    with pytest.raises(HTTPException) as error:
+        token_service.issue(PROJECT, None, "new", None, "user")
+    assert error.value.status_code == 503
+    assert "FileExistsError" not in error.value.detail
+    assert folder.exists()
 
 
 def test_startup_sweeps_after_lease_recovery(monkeypatch):

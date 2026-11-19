@@ -53,8 +53,10 @@ def _verify_user_jwt(raw: str):
         try:
             if is_blacklisted(jti):
                 return _fail(401, "Token has been revoked")
-        except Exception:
-            return None
+        except Exception as exc:
+            from modules.flow_gate.db.resilience import auth_unavailable
+            error = auth_unavailable(exc)
+            return _fail(error.status_code, error.detail)
 
     subject = payload.get("sub")
     if not subject:
@@ -88,6 +90,12 @@ def verify_bearer(request: Request):
         if user_token is not None:
             return user_token
         return _fail(exc.status_code, exc.detail)
+    except Exception as exc:
+        from modules.flow_gate.db.resilience import unavailable, auth_unavailable
+        if not unavailable(exc):
+            raise
+        error = auth_unavailable(exc)
+        return _fail(error.status_code, error.detail)
 
     user_id: str = token_rec["issued_to"]
     project: str = token_rec["project"]
