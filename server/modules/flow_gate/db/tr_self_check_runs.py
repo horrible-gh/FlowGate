@@ -450,9 +450,31 @@ def get_active(project_id: str, group_id: str) -> dict | None:
     return _normalize_row(row)
 
 
+def _claim_fence(claim: str | None) -> tuple[str, list[Any]]:
+    """0053 1-B rev2: the WHERE fragment that fences a queue worker's write to its own claim.
+
+    ``claim`` is the token ``claim_next_queued`` stored in ``queue_lease_owner`` for one claim of
+    one worker. A lease that lapsed before any spawn hands the run back to the queue
+    (``release_expired_claims`` clears the token) and a later claim stores a new one, so a
+    worker that resumes after losing its claim matches nothing and writes nothing. None = no
+    fence (a pre-queue run, recovery, cancel, the reaper)."""
+    if claim is None:
+        return "", []
+    return " AND queue_lease_owner = ?", [claim]
+
+
+def claim_held(run_id: str, claim: str) -> bool:
+    """Whether ``claim`` is still the run's current queue claim (``queue_lease_owner``)."""
+    row = get_store()._fetch_one(
+        "SELECT self_check_run_id FROM tr_self_check_runs WHERE self_check_run_id = ?"
+        " AND queue_lease_owner = ? AND status IN ('pending', 'running')", [run_id, claim])
+    return row is not None
+
+
 def mark_running(
     run_id: str,
     *,
+    claim: str | None = None,
     source_lock_holder: str | None = None,
     process_owner_kind: str | None = None,
     target_pid: int | None = None,
@@ -466,12 +488,14 @@ def mark_running(
     source_status_hash_before: str | None = None,
     index_lock_before: int | None = None,
 ) -> dict | None:
-    """Transition run from pending to running and persist process ownership metadata."""
+    """Transition run from pending to running and persist process ownership metadata.
+    ``claim``: a queue worker's claim fence (``_claim_fence``)."""
     store = get_store()
     now = now_iso()
     _validate_hash64(source_refs_hash_before, "source_refs_hash_before")
     _validate_hash64(source_index_hash_before, "source_index_hash_before")
     _validate_hash64(source_status_hash_before, "source_status_hash_before")
+    fence, fence_params = _claim_fence(claim)
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " status = 'running',"
@@ -489,13 +513,13 @@ def mark_running(
         " source_index_hash_before = ?,"
         " source_status_hash_before = ?,"
         " index_lock_before = ?"
-        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'",
+        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'" + fence,
         [
             now, now, source_lock_holder, process_owner_kind,
             target_pid, target_start_identity, supervisor_pid, supervisor_start_identity,
             source_head_before, source_branch_before, source_refs_hash_before,
             source_index_hash_before, source_status_hash_before, index_lock_before,
-            run_id,
+            run_id, *fence_params,
         ],
     )
     if affected == 0:
@@ -503,17 +527,47 @@ def mark_running(
     return get_run(run_id)
 
 
-def mark_spawn_started(run_id: str, process_owner_kind: str) -> bool:
+class SelfCheckQuotaExhausted(Exception):
+    code = "selfcheck_quota_exhausted"
+
+
+def verify_used(stage_key: str, store=None) -> int:
+    row = (store or get_store())._fetch_one(
+        "SELECT COALESCE(SUM(verify_started_count), 0) AS used FROM tr_self_check_runs WHERE verify_stage_key = ?",
+        [stage_key])
+    return int(row["used"])
+
+
+def mark_spawn_started(run_id: str, process_owner_kind: str, claim: str | None = None) -> bool:
     """0080 T#3: the stamp a spawn writes before its first Popen -- ``process_owner_kind``
     on a pending row with no process recorded yet. From then on a missing target record
     means "a process may exist that no record names" (``tr_self_check_proof.tree_state``),
-    not "nothing was spawned". CAS: pending, recovery_state none; False = do not spawn."""
-    return get_store()._execute_affected(
-        "UPDATE tr_self_check_runs SET process_owner_kind = ?"
-        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'"
-        " AND target_pid IS NULL AND supervisor_pid IS NULL",
-        [process_owner_kind, run_id],
-    ) > 0
+    not "nothing was spawned". CAS: pending, recovery_state none, no spawn stamped yet;
+    False = do not spawn.
+
+    0053 1-B rev2: a queue worker passes its ``claim``; the stamp is written only while that
+    claim is the run's current one. The same row is what ``release_expired_claims`` needs
+    unstamped, so the stamp and a lease hand-over exclude each other: either this worker
+    stamps (and the run is never handed over) or the run was handed over (and this worker
+    never spawns)."""
+    fence, fence_params = _claim_fence(claim)
+    store = get_store()
+    with store.transaction():
+        _lock_host_capacity(store)
+        row = store._fetch_one("SELECT * FROM tr_self_check_runs WHERE self_check_run_id = ?", [run_id])
+        if (not row or row["status"] != "pending" or row["cancel_requested"]
+                or row["process_owner_kind"] is not None
+                or (claim is not None and row.get("queue_lease_owner") != claim)):
+            return False
+        if row.get("verify_stage_key") and verify_used(row["verify_stage_key"], store) >= row["verify_max_runs"]:
+            raise SelfCheckQuotaExhausted()
+        return store._execute_affected(
+            "UPDATE tr_self_check_runs SET process_owner_kind = ?,"
+            " verify_started_count = verify_started_count + CASE WHEN verify_stage_key IS NULL THEN 0 ELSE 1 END"
+            " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none' AND cancel_requested = 0"
+            " AND process_owner_kind IS NULL AND target_pid IS NULL AND supervisor_pid IS NULL" + fence,
+            [process_owner_kind, run_id, *fence_params],
+        ) > 0
 
 
 def record_spawn_ownership(
@@ -524,10 +578,13 @@ def record_spawn_ownership(
     target_start_identity: str | None = None,
     supervisor_pid: int | None = None,
     supervisor_start_identity: str | None = None,
+    claim: str | None = None,
 ) -> bool:
     """0080 T#3: what a spawn learnt about the run's processes, stored as soon as it is
     known (right after each Popen, and again when a failed spawn is held) so a later
-    reaper proves the tree from it. Only adds: a recorded value is never cleared."""
+    reaper proves the tree from it. Only adds: a recorded value is never cleared.
+    ``claim``: a queue worker's claim fence (``_claim_fence``)."""
+    fence, fence_params = _claim_fence(claim)
     return get_store()._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " process_owner_kind = COALESCE(?, process_owner_kind),"
@@ -535,30 +592,33 @@ def record_spawn_ownership(
         " target_start_identity = COALESCE(?, target_start_identity),"
         " supervisor_pid = COALESCE(?, supervisor_pid),"
         " supervisor_start_identity = COALESCE(?, supervisor_start_identity)"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')",
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')" + fence,
         [process_owner_kind, target_pid, target_start_identity, supervisor_pid,
-         supervisor_start_identity, run_id],
+         supervisor_start_identity, run_id, *fence_params],
     ) > 0
 
 
-def clear_spawn_started(run_id: str) -> bool:
+def clear_spawn_started(run_id: str, claim: str | None = None) -> bool:
     """Undo ``mark_spawn_started`` when the spawn knows it created no process (Popen
-    raised). Only while no process is recorded."""
+    raised). Only while no process is recorded. ``claim``: a queue worker's claim fence -- a
+    worker that lost its claim never clears the stamp of the worker that took the run over."""
+    fence, fence_params = _claim_fence(claim)
     return get_store()._execute_affected(
-        "UPDATE tr_self_check_runs SET process_owner_kind = NULL"
-        " WHERE self_check_run_id = ? AND status = 'pending'"
-        " AND target_pid IS NULL AND supervisor_pid IS NULL",
-        [run_id],
+        "UPDATE tr_self_check_runs SET process_owner_kind = NULL,"
+        " verify_started_count = CASE WHEN verify_started_count > 0 THEN verify_started_count - 1 ELSE 0 END"
+        " WHERE self_check_run_id = ? AND status = 'pending' AND process_owner_kind IS NOT NULL"
+        " AND target_pid IS NULL AND supervisor_pid IS NULL" + fence,
+        [run_id, *fence_params],
     ) > 0
 
 
 def request_cancel(run_id: str) -> bool:
-    """CAS 0 -> 1 for cancel_requested on active run."""
+    """CAS 0 -> 1 for cancel_requested on an active or queued run."""
     store = get_store()
     now = now_iso()
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET cancel_requested = 1, updated_at = ?"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND cancel_requested = 0",
+        " WHERE self_check_run_id = ? AND status IN ('queued', 'pending', 'running') AND cancel_requested = 0",
         [now, run_id],
     )
     return affected > 0
@@ -581,13 +641,16 @@ def finish_completed(
     worktree_state_changed: bool = False,
     cleanup_pending: bool = False,
     cleanup_error: str | None = None,
+    claim: str | None = None,
 ) -> dict | None:
-    """Atomic terminal transition to completed, clearing active_key."""
+    """Atomic terminal transition to completed, clearing active_key. ``claim``: a queue
+    worker's claim fence (``_claim_fence``)."""
     store = get_store()
     now = now_iso()
     _validate_hash64(source_refs_hash_after, "source_refs_hash_after")
     _validate_hash64(source_index_hash_after, "source_index_hash_after")
     _validate_hash64(source_status_hash_after, "source_status_hash_after")
+    fence, fence_params = _claim_fence(claim)
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " status = 'completed',"
@@ -608,7 +671,7 @@ def finish_completed(
         " cleanup_error = ?,"
         " finished_at = ?,"
         " updated_at = ?"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'" + fence,
         [
             exit_code, 1 if timed_out else 0,
             _truncate_tail(stdout_tail), _truncate_tail(stderr_tail),
@@ -616,7 +679,7 @@ def finish_completed(
             source_index_hash_after, source_status_hash_after, index_lock_after,
             1 if source_changed_during_run else 0, 1 if worktree_state_changed else 0,
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
-            now, now, run_id,
+            now, now, run_id, *fence_params,
         ],
     )
     if affected == 0:
@@ -642,13 +705,16 @@ def finish_failed(
     worktree_state_changed: bool = False,
     cleanup_pending: bool = False,
     cleanup_error: str | None = None,
+    claim: str | None = None,
 ) -> dict | None:
-    """Atomic terminal transition to failed, clearing active_key."""
+    """Atomic terminal transition to failed, clearing active_key. ``claim``: a queue worker's
+    claim fence (``_claim_fence``)."""
     store = get_store()
     now = now_iso()
     _validate_hash64(source_refs_hash_after, "source_refs_hash_after")
     _validate_hash64(source_index_hash_after, "source_index_hash_after")
     _validate_hash64(source_status_hash_after, "source_status_hash_after")
+    fence, fence_params = _claim_fence(claim)
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " status = 'failed',"
@@ -670,7 +736,7 @@ def finish_failed(
         " cleanup_error = ?,"
         " finished_at = ?,"
         " updated_at = ?"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'" + fence,
         [
             error_code, exit_code, 1 if timed_out else 0,
             _truncate_tail(stdout_tail), _truncate_tail(stderr_tail),
@@ -678,7 +744,7 @@ def finish_failed(
             source_index_hash_after, source_status_hash_after, index_lock_after,
             1 if source_changed_during_run else 0, 1 if worktree_state_changed else 0,
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
-            now, now, run_id,
+            now, now, run_id, *fence_params,
         ],
     )
     if affected == 0:
@@ -702,13 +768,16 @@ def finish_cancelled(
     worktree_state_changed: bool = False,
     cleanup_pending: bool = False,
     cleanup_error: str | None = None,
+    claim: str | None = None,
 ) -> dict | None:
-    """Atomic terminal transition to cancelled with the post-run source identity."""
+    """Atomic terminal transition to cancelled with the post-run source identity. ``claim``: a
+    queue worker's claim fence (``_claim_fence``)."""
     store = get_store()
     now = now_iso()
     _validate_hash64(source_refs_hash_after, "source_refs_hash_after")
     _validate_hash64(source_index_hash_after, "source_index_hash_after")
     _validate_hash64(source_status_hash_after, "source_status_hash_after")
+    fence, fence_params = _claim_fence(claim)
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " status = 'cancelled',"
@@ -728,14 +797,14 @@ def finish_cancelled(
         " cleanup_error = ?,"
         " finished_at = ?,"
         " updated_at = ?"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'" + fence,
         [
             exit_code, _truncate_tail(stdout_tail), _truncate_tail(stderr_tail),
             source_head_after, source_branch_after, source_refs_hash_after,
             source_index_hash_after, source_status_hash_after, index_lock_after,
             1 if source_changed_during_run else 0, 1 if worktree_state_changed else 0,
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
-            now, now, run_id,
+            now, now, run_id, *fence_params,
         ],
     )
     if affected == 0:
@@ -759,14 +828,16 @@ def record_result_summary(run_id: str, result_summary: str | None, environment_e
     return get_run(run_id)
 
 
-def mark_recovering(run_id: str) -> dict | None:
-    """CAS none -> recovering on orphan active run."""
+def mark_recovering(run_id: str, claim: str | None = None) -> dict | None:
+    """CAS none -> recovering on orphan active run. ``claim``: a queue worker's claim fence
+    (``_claim_fence``) -- a worker that lost its claim never holds the new claimant's run."""
     store = get_store()
     now = now_iso()
+    fence, fence_params = _claim_fence(claim)
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET recovery_state = 'recovering', updated_at = ?"
-        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
-        [now, run_id],
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'" + fence,
+        [now, run_id, *fence_params],
     )
     if affected == 0:
         return None
@@ -900,9 +971,14 @@ def list_recovery_incomplete_project_ids() -> list[str]:
 
 
 def has_group_recovery_incomplete(project_id: str, group_id: str) -> bool:
-    """Active recovery_incomplete run of this Group (0666 L 2.24.3; idx on project_id, group_id)."""
+    """Active recovery_incomplete run of this Group (0666 L 2.24.3; idx on project_id, group_id).
+
+    0053 1-B: only a run admitted before the queue (``enqueued_at IS NULL``) ran in the Group's
+    worktree under its G, so only such a run keeps the Group closed. A queue run executes in its
+    own snapshot and holds no G: an unproved one keeps its execution slot (its reservation stays
+    in :func:`host_reservations`), never the Group."""
     row = get_store()._fetch_one(
-        "SELECT 1 FROM tr_self_check_runs WHERE project_id = ? AND group_id = ? AND recovery_state = 'incomplete' AND status IN ('pending', 'running') LIMIT 1",
+        "SELECT 1 FROM tr_self_check_runs WHERE project_id = ? AND group_id = ? AND recovery_state = 'incomplete' AND status IN ('pending', 'running') AND enqueued_at IS NULL LIMIT 1",
         [project_id, group_id],
     )
     return row is not None
@@ -957,7 +1033,7 @@ def purge_old_terminal(cutoff_iso: str, batch_size: int = 500) -> int:
 
 # 0146: immutable parent scope is written in create_pending's transaction. Reads do
 # not join tokens/documents, so consuming a token or linking a draft cannot replay it.
-_PROGRESS_RANK = {"pending": 0, "running": 1, "completed": 2, "failed": 2, "cancelled": 2}
+_PROGRESS_RANK = {"queued": 0, "pending": 0, "running": 1, "completed": 2, "failed": 2, "cancelled": 2}
 
 
 def record_effective_progress(run_id: str, *, status: str | None = None,
@@ -1077,7 +1153,7 @@ def owned_cancel_runs(scope_ids: list[str] | None = None) -> list[dict]:
            " AND s.provider_attempt_id = p.provider_attempt_id"
            " AND s.owner_token_id = p.owner_token_id"
            " AND s.project_id = r.project_id AND s.group_id = r.group_id"
-           " WHERE s.cancel_requested = 1 AND r.status IN ('pending', 'running')")
+           " WHERE s.cancel_requested = 1 AND r.status IN ('queued', 'pending', 'running')")
     params = []
     if scope_ids is not None:
         if not scope_ids:
@@ -1097,3 +1173,369 @@ def register_owner_scope(owner: dict) -> None:
     with store.transaction():
         _lock_host_capacity(store)
         _require_progress_owner(store, owner, owner["project_id"], owner["group_id"])
+
+
+# ── 0053 1-B: the Self-check queue (migration 201) ──────────────────────────────
+#
+# A queue run is inserted as ``queued`` (no active_key, no reservation, no G). A queue worker
+# claims it -- ``queued -> pending`` with a lease and its processor reservation, decided under
+# the capacity lock like an admission -- and from then on the run follows the ordinary
+# pending -> running -> terminal path, recovery and reaper included. Order: oldest request
+# first (``queue_order``, microseconds, set once), projects alternating (the project whose last
+# claim, ``queue_claimed_at``, is the oldest goes next). ``enqueued_at`` is the wait clock (the
+# store's ``now_iso`` format); a system re-queue restarts it and keeps the order.
+
+QUEUED = "queued"
+QUEUE_TERMINAL = ("completed", "failed", "cancelled")
+
+
+def create_queued(
+    project_id: str,
+    group_id: str,
+    tr_doc_id: str | None,
+    requested_by: str | None,
+    policy_version: str,
+    program: str,
+    args: list[str],
+    resolved_executable_path: str,
+    resolved_executable_name: str,
+    executable_origin: str,
+    cwd_relative: str,
+    timeout_seconds: int,
+    env_keys: list[str],
+    *,
+    run_id: str,
+    snapshot_path: str,
+    queue_key: str,
+    owner_token_id: str | None = None,
+    draft_doc_ref: str | None = None,
+    attempt_id: str | None = None,
+    input_commit: str | None = None,
+    cpu_share_requested: int | None = None,
+    owner_marker: str | None = None,
+    source_before: dict | None = None,
+    progress_owner: dict | None = None,
+    supersede_code: str | None = None,
+    verify_limits: dict | None = None,
+) -> dict:
+    """Insert a ``queued`` run (0053 1-B). No active_key: a Group may queue any number of runs.
+
+    The draft-owner rule (``_require_open_owner``) and the managed provider scope fence
+    (``_require_progress_owner`` under the capacity lock) are the same as ``create_pending``'s,
+    in the insert's transaction. ``source_before`` is the worktree identity the snapshot was
+    taken from (``tr_self_check_service._probe``); it is stored as the run's *_before fields.
+
+    rev2 -- the same card queuing again: with ``supersede_code`` the card's (``queue_key``)
+    waiting requests OLDER than this one are cancelled with that code in the insert's own
+    transaction. Every enqueue takes the capacity lock first, so enqueues of one card are
+    serialized: the new row's ``queue_order`` is set under the lock above every order the card
+    already has, and only rows below it are cancelled. Two requests of one card racing each
+    other therefore end with exactly the later-committed one queued -- never both cancelled.
+    The cancelled rows are returned in the result's ``superseded_runs`` (for snapshot removal
+    and events; not a stored column)."""
+    if tr_doc_id is None and not (owner_token_id and draft_doc_ref):
+        raise ValueError("a draft self-check run needs owner_token_id and draft_doc_ref")
+    before = source_before or {}
+    for key in ("refs_hash", "index_hash", "status_hash"):
+        _validate_hash64(before.get(key), "source_%s_before" % key)
+    store = get_store()
+    now = now_iso()
+    args_json = json.dumps(list(args), ensure_ascii=False)
+    env_keys_json = json.dumps(sorted(set(env_keys)), ensure_ascii=False)
+    superseded: list[dict] = []
+    with store.transaction():
+        # rev2: every enqueue serializes on the capacity row (the claim takes it too), so the
+        # card's order below and its supersede are decided against committed rows only.
+        _lock_host_capacity(store)
+        if progress_owner is not None:
+            _require_progress_owner(store, progress_owner, project_id, group_id)
+        if verify_limits is not None and verify_used(verify_limits["stage_key"], store) >= verify_limits["max_runs"]:
+            raise SelfCheckQuotaExhausted()
+        order = _card_next_order(store, queue_key)
+        draft = tr_doc_id is None
+        lock_first = store.dialect != _dialect.SQLITE
+        if draft and lock_first:
+            _require_open_owner(store, owner_token_id)
+        store._execute(
+            "INSERT INTO tr_self_check_runs ("
+            " self_check_run_id, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,"
+            " policy_version, program, args_json, resolved_executable_path,"
+            " resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,"
+            " env_keys_json, status, active_key, exit_code, timed_out, cancel_requested,"
+            " source_changed_during_run, worktree_state_changed, recovery_state,"
+            " cleanup_pending, created_at, updated_at, owner_marker, attempt_id, input_commit,"
+            " cpu_share_requested, enqueued_at, snapshot_path, queue_key, queue_requeue_count, queue_order,"
+            " source_head_before, source_branch_before, source_refs_hash_before,"
+            " source_index_hash_before, source_status_hash_before, index_lock_before"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, 0, 0, 0, 0,"
+            " 'none', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                run_id, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,
+                policy_version, program, args_json, resolved_executable_path,
+                resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,
+                env_keys_json, now, now, owner_marker, attempt_id, input_commit,
+                cpu_share_requested, now, snapshot_path, queue_key, order,
+                before.get("head"), before.get("branch"), before.get("refs_hash"),
+                before.get("index_hash"), before.get("status_hash"),
+                None if before.get("index_lock") is None else int(bool(before.get("index_lock"))),
+            ],
+        )
+        if progress_owner is not None:
+            keys = ("scope_id", "ai_run_id", "hop_id", "provider_attempt_id",
+                    "owner_token_id", "project_id", "group_id")
+            store._execute(
+                "INSERT INTO tr_self_check_run_progress (self_check_run_id, "
+                + ", ".join(keys) + ", progress_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [run_id, *(progress_owner[k] for k in keys), _progress_stamp()],
+            )
+        if draft and not lock_first:
+            _require_open_owner(store, owner_token_id)
+        if verify_limits is not None:
+            store._execute(
+                "UPDATE tr_self_check_runs SET verify_stage_key = ?, verify_max_runs = ?, verify_timeout_sec = ? WHERE self_check_run_id = ?",
+                [verify_limits["stage_key"], verify_limits["max_runs"], verify_limits["run_timeout_sec"], run_id])
+        if supersede_code is not None:
+            older = store._fetch_all(
+                "SELECT self_check_run_id FROM tr_self_check_runs WHERE queue_key = ?"
+                " AND status = 'queued' AND self_check_run_id <> ? AND queue_order < ?",
+                [queue_key, run_id, order]) or []
+            for item in older:
+                if store._execute_affected(
+                        "UPDATE tr_self_check_runs SET status = 'cancelled', error_code = ?,"
+                        " cancel_requested = 1, finished_at = ?, updated_at = ?"
+                        " WHERE self_check_run_id = ? AND status = 'queued' AND queue_key = ?"
+                        " AND queue_order < ?",
+                        [supersede_code, now, now, item["self_check_run_id"], queue_key, order]):
+                    superseded.append(item["self_check_run_id"])
+    row = get_run(run_id)
+    if row is not None:
+        row["superseded_runs"] = [r for r in (get_run(rid) for rid in superseded) if r is not None]
+    return row  # type: ignore[return-value]
+
+
+def _card_next_order(store, queue_key: str) -> str:
+    """The ``queue_order`` of a card's new request, under the capacity lock: now (UTC,
+    microseconds), raised above the card's highest order when the clock did not move past it,
+    so a card's requests are strictly ordered by the order they were stored in."""
+    from datetime import datetime, timedelta
+    order = _progress_stamp()
+    top = store._fetch_one(
+        "SELECT MAX(queue_order) AS top FROM tr_self_check_runs WHERE queue_key = ?", [queue_key])
+    highest = (top or {}).get("top")
+    if highest and highest >= order:
+        order = (datetime.fromisoformat(highest) + timedelta(microseconds=1)).isoformat(timespec="microseconds")
+    return order
+
+
+def _end_queued(run_id: str, status: str, error_code: str | None, cancel: bool,
+                detail: str | None = None) -> dict | None:
+    now = now_iso()
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET status = ?, error_code = ?,"
+        " cancel_requested = CASE WHEN ? = 1 THEN 1 ELSE cancel_requested END,"
+        " stderr_tail = COALESCE(?, stderr_tail), finished_at = ?, updated_at = ?"
+        " WHERE self_check_run_id = ? AND status = 'queued'",
+        [status, error_code, 1 if cancel else 0, _truncate_diagnostic(detail), now, now, run_id],
+    )
+    return get_run(run_id) if affected else None
+
+
+def cancel_queued(run_id: str, error_code: str | None = None) -> dict | None:
+    """CAS queued -> cancelled (a waiting request that never started). None = not queued."""
+    return _end_queued(run_id, "cancelled", error_code, True)
+
+
+def fail_queued(run_id: str, error_code: str, detail: str | None = None) -> dict | None:
+    """CAS queued -> failed with ``error_code`` (wait limit, snapshot failure); ``detail`` (the
+    reason) goes to ``stderr_tail``. None = not queued."""
+    return _end_queued(run_id, "failed", error_code, False, detail)
+
+
+def queued_of_card(queue_key: str, *, exclude_run_id: str | None = None) -> list[dict]:
+    """The card's queued (not started) runs, oldest first."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE queue_key = ? AND status = 'queued'"
+        " ORDER BY queue_order ASC, self_check_run_id ASC", [queue_key])
+    return [_normalize_row(r) for r in rows if r and r["self_check_run_id"] != exclude_run_id]
+
+
+def card_runs(queue_key: str, limit: int = 20) -> list[dict]:
+    """The card's queue runs, newest first."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE queue_key = ?"
+        " ORDER BY queue_order DESC, self_check_run_id DESC LIMIT ?", [queue_key, limit])
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def list_queued(limit: int = 500) -> list[dict]:
+    """Every queued run in queue order (oldest request first)."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE status = 'queued'"
+        " ORDER BY queue_order ASC, self_check_run_id ASC LIMIT ?", [limit])
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def queue_position(run_id: str) -> int | None:
+    """1-based place of a queued run in the whole queue's order; None when it is not queued."""
+    row = get_run(run_id)
+    if not row or row["status"] != QUEUED:
+        return None
+    ahead = get_store()._fetch_one(
+        "SELECT COUNT(*) AS n FROM tr_self_check_runs WHERE status = 'queued'"
+        " AND (queue_order < ? OR (queue_order = ? AND self_check_run_id < ?))",
+        [row["queue_order"], row["queue_order"], run_id])
+    return int(ahead["n"]) + 1
+
+
+def _next_queued(store) -> dict | None:
+    """The queue's next run: projects alternate (the project whose last queue claim is the
+    oldest, or that never had one, goes first; ties by its oldest request), oldest request
+    first inside a project. Cancel-requested rows are skipped (their cancel ends them).
+
+    rev2: every project with a waiting request is a candidate however long the queue is --
+    each project's oldest request is taken over the WHOLE queue (one row per project) before
+    the alternation picks a project; nothing cuts the queue to its first N rows."""
+    firsts = store._fetch_all(
+        "SELECT project_id, MIN(queue_order) AS first_order FROM tr_self_check_runs"
+        " WHERE status = 'queued' AND cancel_requested = 0 GROUP BY project_id") or []
+    if not firsts:
+        return None
+    first = {r["project_id"]: r["first_order"] or "" for r in firsts}
+    projects = sorted(first)
+    last: dict[str, str] = {}
+    for at in range(0, len(projects), 500):
+        chunk = projects[at:at + 500]
+        placeholders = ", ".join("?" for _ in chunk)
+        for r in store._fetch_all(
+                "SELECT project_id, MAX(queue_claimed_at) AS last_claim FROM tr_self_check_runs"
+                f" WHERE queue_claimed_at IS NOT NULL AND project_id IN ({placeholders})"
+                " GROUP BY project_id", chunk) or []:
+            last[r["project_id"]] = r["last_claim"]
+    chosen = min(projects, key=lambda p: (last.get(p) is not None, last.get(p) or "", first[p], p))
+    return store._fetch_one(
+        "SELECT * FROM tr_self_check_runs WHERE status = 'queued' AND cancel_requested = 0"
+        " AND project_id = ? ORDER BY queue_order ASC, self_check_run_id ASC LIMIT 1", [chosen])
+
+
+def claim_next_queued(instance_id: str, lease_until: str, host_node_key: str | None,
+                      host_capacity: tuple[int, int]) -> dict | None:
+    """Claim the queue's next run for a worker of ``instance_id``: ``queued -> pending`` with the
+    lease, the owning instance, the host and the processor reservation (decided exactly as an
+    admission does, under the capacity lock, from the host's active and protected runs). None =
+    nothing queued or no processor free -- the request waits; it is never refused.
+
+    rev2: ``queue_lease_owner`` is a token new for every claim (``<instance>/<random>``), not the
+    instance id, so two claims of one run -- even by workers of the same instance after a lease
+    hand-over -- never match each other. The worker passes it as ``claim`` to every write it
+    makes on the run (``_claim_fence``)."""
+    store = get_store()
+    limit, serial_reserve = host_capacity
+    with store.transaction():
+        _lock_host_capacity(store)
+        total, _protected = host_reservations(host_node_key, limit)
+        if limit - total < 1:
+            return None
+        row = _next_queued(store)
+        if row is None:
+            return None
+        desired = min(max(1, int(row.get("cpu_share_requested") or 1)), limit)
+        reservation = decide_reservation(limit, serial_reserve, total, desired)
+        if reservation is None:
+            return None
+        now = now_iso()
+        claim = f"{instance_id}/{uuid.uuid4().hex}"
+        affected = store._execute_affected(
+            "UPDATE tr_self_check_runs SET status = 'pending', queue_lease_owner = ?,"
+            " queue_lease_until = ?, owner_instance_id = ?, host_node_key = ?,"
+            " cpu_reservation = ?, started_at = ?, queue_claimed_at = ?, updated_at = ?"
+            " WHERE self_check_run_id = ? AND status = 'queued' AND cancel_requested = 0",
+            [claim, lease_until, instance_id, host_node_key, reservation, now,
+             _progress_stamp(), now, row["self_check_run_id"]])
+    return get_run(row["self_check_run_id"]) if affected else None
+
+
+def renew_lease(run_id: str, claim: str, lease_until: str) -> bool:
+    """The claiming worker keeps its lease while it drives the run. False = ``claim`` is no
+    longer the run's claim (handed over, ended): the worker must stop driving the run."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET queue_lease_until = ?"
+        " WHERE self_check_run_id = ? AND queue_lease_owner = ? AND status IN ('pending', 'running')",
+        [lease_until, run_id, claim]) > 0
+
+
+_UNSPAWNED = (" status = 'pending' AND enqueued_at IS NOT NULL AND recovery_state = 'none'"
+              " AND process_owner_kind IS NULL AND target_pid IS NULL AND supervisor_pid IS NULL")
+
+
+def release_expired_claims(now: str) -> list[str]:
+    """Claims whose lease lapsed before anything was spawned go back to the queue, keeping their
+    order, so another worker takes them over. A run that may have a process is never touched
+    here: it stays for the recovery / reaper proof (``tr_self_check_service``)."""
+    store = get_store()
+    rows = store._fetch_all(
+        "SELECT self_check_run_id FROM tr_self_check_runs WHERE" + _UNSPAWNED
+        + " AND queue_lease_until IS NOT NULL AND queue_lease_until < ?", [now]) or []
+    released = []
+    for row in rows:
+        if store._execute_affected(
+                "UPDATE tr_self_check_runs SET status = 'queued', queue_lease_owner = NULL,"
+                " queue_lease_until = NULL, owner_instance_id = NULL, cpu_reservation = NULL,"
+                " started_at = NULL, updated_at = ? WHERE self_check_run_id = ? AND" + _UNSPAWNED
+                + " AND queue_lease_until < ?", [now_iso(), row["self_check_run_id"], now]):
+            released.append(row["self_check_run_id"])
+    return released
+
+
+def queued_waiting_since(cutoff: str) -> list[dict]:
+    """Queued runs whose wait clock (``enqueued_at``) started before ``cutoff``."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE status = 'queued' AND enqueued_at < ?"
+        " ORDER BY queue_order ASC", [cutoff])
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def requeue_waited(run_id: str, expected_enqueued_at: str) -> dict | None:
+    """The system's one re-queue of a run that waited past the limit: the wait clock restarts,
+    the order (``queue_order``) is kept, the count goes up. CAS on the clock it read."""
+    now = now_iso()
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET enqueued_at = ?, queue_requeue_count = queue_requeue_count + 1,"
+        " updated_at = ? WHERE self_check_run_id = ? AND status = 'queued' AND enqueued_at = ?",
+        [now, now, run_id, expected_enqueued_at])
+    return get_run(run_id) if affected else None
+
+
+def requeue_recovered(run_id: str, owner_marker: str | None = None) -> dict | None:
+    """A queue run interrupted by a restart, after the recovery proof (owner dead, tree empty)
+    took it into ``recovering``: back to ``queued`` with its snapshot, order and request, the
+    process records cleared and the wait clock restarted. Same CAS as
+    ``finish_recovered_interrupted``; only queue runs (``enqueued_at`` set) move."""
+    now = now_iso()
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET status = 'queued', recovery_state = 'none', recovery_reason = NULL,"
+        " enqueued_at = ?, queue_lease_owner = NULL, queue_lease_until = NULL, owner_instance_id = NULL,"
+        " cpu_reservation = NULL, started_at = NULL, process_owner_kind = NULL, target_pid = NULL,"
+        " target_start_identity = NULL, supervisor_pid = NULL, supervisor_start_identity = NULL,"
+        " cancel_requested = 0, owner_marker = COALESCE(?, owner_marker), updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')"
+        " AND recovery_state = 'recovering' AND enqueued_at IS NOT NULL AND cancel_requested = 0",
+        [now, owner_marker, now, run_id])
+    return get_run(run_id) if affected else None
+
+
+def group_open_runs(project_id: str, group_id: str) -> list[dict]:
+    """The Group's queued, claimed and running runs (legacy G run included), oldest first."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE project_id = ? AND group_id = ?"
+        " AND status IN ('queued', 'pending', 'running')"
+        " ORDER BY created_at ASC, queue_order ASC, self_check_run_id ASC",
+        [project_id, group_id])
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def snapshot_cleanup_pending(limit: int = 50) -> list[dict]:
+    """Ended queue runs whose snapshot removal failed, for the next pass to retry."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE cleanup_pending = 1 AND snapshot_path IS NOT NULL"
+        " AND status IN ('completed', 'failed', 'cancelled') ORDER BY finished_at ASC LIMIT ?", [limit])
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]

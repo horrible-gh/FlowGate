@@ -128,7 +128,7 @@
               <InspectorControlRow v-for="field in gearFields(item.role)" :key="field" :label="advancedLabel(field)" :hint="hintOf(field)">
                 <Select
                   :class="{ 'is-modified': fieldModified(field) }"
-                  :model-value="views[field].value"
+                  :model-value="selectValue(field)"
                   :options="optionsOf(field)"
                   :disabled="locked || (isInstructionReview(field) && instructionHeld) || views[field].disabled"
                   :aria-label="advancedLabel(field)"
@@ -136,6 +136,24 @@
                   :data-field="field"
                   :data-modified="fieldModified(field) ? 'true' : undefined"
                   @update:model-value="(value: string) => onAiChange(field, value)"
+                />
+                <input
+                  v-if="verifyCustomShown(field)"
+                  class="inspector-ai-custom"
+                  type="number"
+                  inputmode="numeric"
+                  step="1"
+                  :min="verifyCustomRange(field)[0]"
+                  :max="verifyCustomRange(field)[1] ?? undefined"
+                  :value="verifyCustomText(field)"
+                  :disabled="locked || views[field].disabled"
+                  :aria-label="advancedLabel(field)"
+                  :aria-invalid="verifyCustomInvalid(field) ? 'true' : undefined"
+                  :data-field="field"
+                  :data-test="`inspector-run-settings-${field}-custom`"
+                  @input="(event: Event) => onVerifyCustomInput(field, (event.target as HTMLInputElement).value)"
+                  @keydown.enter.prevent="commitVerifyCustom(field)"
+                  @change="commitVerifyCustom(field)"
                 />
                 <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
               </InspectorControlRow>
@@ -209,11 +227,15 @@ import {
   cardSettingsFailureText,
   cardSettingsInstructionAiShown,
   cardSettingsIsAiField,
+  cardSettingsIsVerifyField,
   cardSettingsReviewOff,
   cardSettingsSwitchOn,
   cardSettingsText,
   cardSettingsValue,
   cardSettingsValueOf,
+  cardSettingsVerifyCustomValue,
+  VERIFY_CUSTOM,
+  VERIFY_RANGE,
   type CardSettingsField,
 } from './cardSettingsModel'
 import { settingsRowPhase, type SettingsField, type SettingsOption } from './settingsModel'
@@ -317,7 +339,7 @@ function toggleGear(role: string) {
 // flowgate.v02gui.0029 (0003-CH QA): only another card or tab closes the window. Each source is compared on its own:
 // a value saved from the window re-reads the Flow and hands down a new target object for the same card, which the
 // former single getter (a new array every time) took for a card change and so closed the window on every pick.
-watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = null })
+watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = null; verifyCustom.value = {} })
 function onOutside(event: Event) {
   if (gearOpen.value === null) return
   const at = event.target as Element | null
@@ -556,7 +578,7 @@ function failureOf(field: CardSettingsField): string | null {
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
 }
 
-const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted']
+const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted']
 
 function fieldLabel(field: CardSettingsField): string {
   return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
@@ -572,10 +594,13 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
     if (!shown.includes(name)) continue
     if (name === 'after_review_exhausted' && !card.node.value?.fields.after_review_exhausted) continue
     if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
+    // flowgate.v02test.0053 0003-T: a card the server gives no 검증 option (a plan card, a v0.1 sequence row) draws none.
+    if (cardSettingsIsVerifyField(name) && (kind.value !== 'run' || source.value !== 'card' || !card.node.value?.fields[name])) continue
     const view = views.value[name]
     out[name] = {
       value: view.value,
-      options: view.options.map((option) => ({ value: option.value, label: labelOf(option) })),
+      // the legacy block offers the presets only: the number box of 사용자 정의 lives in the AI tab's ⚙ window
+      options: view.options.filter((option) => option.value !== VERIFY_CUSTOM).map((option) => ({ value: option.value, label: labelOf(option) })),
       disabled: view.disabled,
       reason: view.reason ? t(k(view.reason)) : planHint(name),
       failure: failureOf(name),
@@ -622,10 +647,49 @@ function hintOf(field: CardSettingsField): string | null {
   if (reason) return t(k(reason))
   if (field === 'after_review_exhausted') return t(k(`after_review_exhausted.${views.value.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`))
   if (field === 'instruction_review_count') return t(k('after_review_exhausted.instruction_hint'))
+  if (field === 'verify_max_runs') return t(k('verify.max_runs_hint'))
+  if (field === 'verify_run_minutes') return t(k('verify.run_minutes_hint'))
   return field === 'review_count' ? planHint('review_count') : null
 }
 
+/**
+ * flowgate.v02test.0053 0003-T (1-A): a 검증 option's 사용자 정의 — picking that entry of the combo opens a number box beside it
+ * (the typed text per field, closed once a value is saved or another entry is picked). Only a whole number inside the
+ * option's range is sent (count 1 or more, minutes 1..30); anything else keeps the box open, marked, and sends nothing.
+ */
+const verifyCustom = ref<Partial<Record<CardSettingsField, string>>>({})
+const verifyCustomShown = (field: CardSettingsField) => cardSettingsIsVerifyField(field) && field in verifyCustom.value
+const verifyCustomText = (field: CardSettingsField) => verifyCustom.value[field] ?? ''
+const verifyCustomRange = (field: CardSettingsField): readonly [number, number | null] => (cardSettingsIsVerifyField(field) ? VERIFY_RANGE[field] : [0, 0])
+const verifyCustomInvalid = (field: CardSettingsField) => cardSettingsIsVerifyField(field) && verifyCustomText(field) !== '' && cardSettingsVerifyCustomValue(field, verifyCustomText(field)) === undefined
+/** The combo shows 사용자 정의 while its box is open, else the field's value. */
+const selectValue = (field: CardSettingsField) => (verifyCustomShown(field) ? VERIFY_CUSTOM : views.value[field].value)
+function closeVerifyCustom(field: CardSettingsField) {
+  const next = { ...verifyCustom.value }
+  delete next[field]
+  verifyCustom.value = next
+}
+function onVerifyPick(field: CardSettingsField, text: string) {
+  if (text === VERIFY_CUSTOM) {
+    verifyCustom.value = { ...verifyCustom.value, [field]: views.value[field].value }
+    return
+  }
+  closeVerifyCustom(field)
+  onChange(field, text)
+}
+function onVerifyCustomInput(field: CardSettingsField, text: string) {
+  verifyCustom.value = { ...verifyCustom.value, [field]: text }
+}
+function commitVerifyCustom(field: CardSettingsField) {
+  if (!cardSettingsIsVerifyField(field) || !verifyCustomShown(field)) return
+  const value = cardSettingsVerifyCustomValue(field, verifyCustomText(field))
+  if (value === undefined) return
+  closeVerifyCustom(field)
+  onChange(field, String(value))
+}
+
 function onAiChange(field: CardSettingsField, text: string) {
+  if (cardSettingsIsVerifyField(field)) return onVerifyPick(field, text)
   if (instructionHeld.value && (field === 'instruction_review_ai' || field === 'instruction_review_count')) return
   onChange(field, text)
 }
@@ -663,6 +727,23 @@ function reload() {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: help;
+}
+
+/* flowgate.v02test.0053 0003-T: the 사용자 정의 number box of a 검증 option, as tall as the selects. */
+.inspector-ai-custom {
+  flex: none;
+  width: 72px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: #0c1c2e;
+  color: inherit;
+  font-size: 12px;
+}
+
+.inspector-ai-custom[aria-invalid='true'] {
+  border-color: #e5484d;
 }
 
 /* flowgate.v02.0056 F2-1: the 지시 AI select, as tall as the run settings' selects. */

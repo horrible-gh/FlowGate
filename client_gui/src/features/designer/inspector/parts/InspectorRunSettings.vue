@@ -65,7 +65,7 @@ import InspectorBlock from './InspectorBlock.vue'
 import InspectorControlRow from './InspectorControlRow.vue'
 import InspectorFailureIcon from './InspectorFailureIcon.vue'
 
-export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'review_basis' | 'after_review_exhausted'
+export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'verify_max_runs' | 'verify_run_minutes' | 'review_basis' | 'after_review_exhausted'
 
 export interface InspectorRunSettingsValue {
   /** The shown value ('' = none / the placeholder). */
@@ -89,8 +89,10 @@ const RUN_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [
 ]
 /** v7 testSettings: 작성 AI | 검수 AI · 검수 횟수. */
 const SCENARIO_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [['run_ai'], ['review_ai', 'review_count']]
-const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'review_basis', 'after_review_exhausted']
-const advancedFields = computed(() => ADVANCED.filter(name => name !== 'after_review_exhausted' || props.fields[name]))
+// flowgate.v02test.0053 0003-T: the two 검증 options follow the time limit, and only a card that has them draws them.
+const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted']
+const OPTIONAL_ADVANCED: readonly InspectorRunSettingsField[] = ['after_review_exhausted', 'verify_max_runs', 'verify_run_minutes']
+const advancedFields = computed(() => ADVANCED.filter(name => !OPTIONAL_ADVANCED.includes(name) || props.fields[name]))
 
 const props = withDefaults(
   defineProps<{

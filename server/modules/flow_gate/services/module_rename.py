@@ -98,7 +98,8 @@ def busy_reasons(project_id: str, group_ids: list[str]) -> list[dict]:
             reasons.append({"group_id": gid, "reason": "merge_session_open"})
         if test_runs.get_active_by_group(gid):
             reasons.append({"group_id": gid, "reason": "test_run_active"})
-        if tr_self_check_runs.get_active(project_id, gid):
+        # 0053 1-B: queued and running queue runs too (they carry no active_key).
+        if tr_self_check_runs.group_open_runs(project_id, gid):
             reasons.append({"group_id": gid, "reason": "self_check_active"})
         if store._fetch_one(
             "SELECT 1 AS hit FROM operation_job WHERE group_id = ? AND status NOT IN ("

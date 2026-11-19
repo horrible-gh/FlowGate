@@ -1,4 +1,8 @@
-"""Advisory self-check lifecycle on a live managed TR worktree."""
+"""Advisory self-check lifecycle.
+
+0053 1-B: a request is queued (``tr_self_check_queue``) with a snapshot of the managed worktree
+and executes in that snapshot without the Group lock. Runs admitted before the queue (worktree
+runs under G, ``enqueued_at IS NULL``) keep their recovery rules below."""
 from __future__ import annotations
 
 import hashlib
@@ -9,7 +13,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import uuid
 from pathlib import Path
 
 from modules.flow_gate.db import documents as db_documents
@@ -85,7 +88,9 @@ def public(row: dict) -> dict:
             "source_changed_during_run", "worktree_state_changed", "recovery_state", "error_code",
             "created_at", "started_at", "finished_at", "updated_at", "linked_at",
             # 0110 T#3: a Graph attempt run's basis (None for a group worktree run).
-            "attempt_id", "input_commit")
+            "attempt_id", "input_commit",
+            # 0053 1-B: when the request entered the queue (None for a pre-queue run).
+            "enqueued_at")
     result = {key: row.get(key) for key in keep}
     result["stdout_tail"] = _redact(result["stdout_tail"])
     result["stderr_tail"] = _redact(result["stderr_tail"])
@@ -97,6 +102,10 @@ def public(row: dict) -> dict:
     # is limited to cpu_reservation processors (None: a run admitted before the host cap).
     result["cpu_share_requested"] = row.get("cpu_share_requested")
     result["cpu_reservation"] = row.get("cpu_reservation")
+    if row.get("verify_stage_key"):
+        from modules.flow_gate.services import tr_self_check_quota as quota
+        result["verification"] = quota.allowance({"stage_key": row["verify_stage_key"],
+            "max_runs": row["verify_max_runs"], "run_timeout_sec": row["verify_timeout_sec"]})
     return result
 
 
@@ -329,9 +338,13 @@ def is_canonical_run(run: dict) -> bool:
     return bool(doc) and str(doc.get("type_code") or doc.get("type") or "").upper() == "TR"
 
 
+#: 0053 1-B: the probe runs without any lock now; it must not refresh the index (git status).
+_GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0"}
+
+
 def _git(root: Path, *args: str) -> bytes:
     result = subprocess.run(["git", "-C", str(root), *args], shell=False, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=15, check=False)
+                            stderr=subprocess.PIPE, timeout=15, check=False, env={**os.environ, **_GIT_ENV})
     if result.returncode != 0:
         raise SelfCheckError(500, "selfcheck_state_probe_failed")
     return result.stdout
@@ -340,7 +353,8 @@ def _git(root: Path, *args: str) -> bytes:
 def _probe(root: Path) -> dict:
     head = _git(root, "rev-parse", "HEAD").decode("ascii").strip()
     branch_result = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--short", "-q", "HEAD"],
-                                   shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+                                   shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15,
+                                   env={**os.environ, **_GIT_ENV})
     if branch_result.returncode not in (0, 1):
         raise SelfCheckError(500, "selfcheck_state_probe_failed")
     branch = branch_result.stdout.decode("utf-8", "replace").strip() or None
@@ -376,7 +390,7 @@ def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
     args = request.get("args", [])
     cwd = request.get("cwd", ".")
     timeout = request.get("timeout_seconds", 300)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 1800:
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
         raise SelfCheckError(422, "selfcheck_invalid_timeout")
     try:
         policy.validate_program(program)
@@ -392,18 +406,6 @@ def _requested_share(request: dict) -> int:
         return policy.validate_share(request.get("parallel_share"))
     except policy.PolicyError as exc:
         raise SelfCheckError(422, "selfcheck_invalid_share") from exc
-
-
-def _host_capacity_exhausted(exc: "db_runs.SelfCheckHostCapacityError") -> SelfCheckError:
-    """0114 T#4 (D 3.5 (4)): 409, distinct from ``selfcheck_already_running``; no run row exists.
-    No queue: the caller asks again a little later, in the foreground."""
-    details = {"limit": exc.limit, "reserved_total": exc.reserved_total,
-               "reserved_protected": exc.reserved_protected, "requested": exc.requested,
-               "desired_share": exc.desired, "retry": "retry_later"}
-    detail = ("host capacity exhausted: limit=%d reserved_total=%d reserved_protected=%d requested=%d"
-              " -- retry the same request shortly" % (exc.limit, exc.reserved_total,
-                                                       exc.reserved_protected, exc.requested))
-    return SelfCheckError(409, "selfcheck_host_capacity_exhausted", detail, details=details)
 
 
 def _reservation(share: int, granted: int | None, capacity: tuple[int, int]) -> dict:
@@ -623,21 +625,31 @@ _OWNERSHIP_KEYS = ("process_owner_kind", "target_pid", "target_start_identity",
                    "supervisor_pid", "supervisor_start_identity")
 
 
-def _store_ownership(run_id: str, ownership: dict) -> None:
+def _store_ownership(run_id: str, ownership: dict, claim: str | None = None) -> None:
     fields = {key: ownership[key] for key in _OWNERSHIP_KEYS if ownership.get(key) is not None}
-    if fields and not db_runs.record_spawn_ownership(run_id, **fields):
+    if fields and not db_runs.record_spawn_ownership(run_id, claim=claim, **fields):
         raise SelfCheckError(500, "selfcheck_state_conflict")
 
 
-def _record_spawn(run_id: str):
+def _record_spawn(run_id: str, claim: str | None = None, lease_lost: threading.Event | None = None):
     """``executor.spawn``'s ``record`` (0080 T#3): the pre-spawn stamp, then each process as
-    soon as it exists, so the stored row never proves more absent than the spawn knows."""
+    soon as it exists, so the stored row never proves more absent than the spawn knows.
+
+    0053 1-B rev2: a queue run's stamp is fenced to the worker's ``claim``; a worker whose lease
+    keeper already saw the claim lost (``lease_lost``) does not even try. Either way the spawn
+    fails before its first Popen (``OwnershipError(created=False)``)."""
     def record(stage: str, ownership: dict) -> None:
         if stage == "spawning":
-            if not db_runs.mark_spawn_started(run_id, ownership["process_owner_kind"]):
+            if lease_lost is not None and lease_lost.is_set():
+                raise SelfCheckError(409, "selfcheck_state_conflict")
+            try:
+                marked = db_runs.mark_spawn_started(run_id, ownership["process_owner_kind"], claim=claim)
+            except db_runs.SelfCheckQuotaExhausted as exc:
+                raise SelfCheckError(409, exc.code) from exc
+            if not marked:
                 raise SelfCheckError(500, "selfcheck_state_conflict")
             return
-        _store_ownership(run_id, ownership)
+        _store_ownership(run_id, ownership, claim)
 
     return record
 
@@ -648,7 +660,7 @@ LOCK_UNCONFIRMED = "lock_unconfirmed"
 
 def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str,
                     ownership: dict | None = None, reason: str = proof.TREE_UNPROVEN,
-                    attempt_lock: str | None = None) -> None:
+                    attempt_lock: str | None = None, claim: str | None = None) -> None:
     """No finish_* and no release while the tree is not proved empty (L 2.24.2: the Group's
     G stays as a protected row; only this Group is blocked). What the spawn learnt is
     stored first: a later reaper proves the tree from the stored row only.
@@ -659,47 +671,102 @@ def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: s
     both once the tree is proved empty (``lock_manager.selfcheck_release_recovered``)."""
     if ownership:
         try:
-            _store_ownership(run_id, ownership)
+            _store_ownership(run_id, ownership, claim)
         except Exception:
             _log.warning("selfcheck %s: storing the spawn's process records failed", run_id, exc_info=True)
+    # 0053 1-B: a queue run (``ctx`` None) holds no lock; its stored reservation is the one
+    # execution slot that stays taken while recovery_incomplete.
     for key in (attempt_lock, lock_key):
-        if key is not None and ctx.find_held(key) is not None:
+        if ctx is not None and key is not None and ctx.find_held(key) is not None:
             lock_manager.protect(ctx, key, "selfcheck_reap_unconfirmed")
-    recovering = db_runs.mark_recovering(run_id)
+    recovering = db_runs.mark_recovering(run_id, claim=claim)
     if recovering:
         db_runs.mark_recovery_incomplete(run_id, reason)
 
 
-def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root: Path, before: dict,
-            runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
+def _claim_lost(run_id: str, claim: str | None) -> bool:
+    """0053 1-B rev2: whether a queue worker's claim is gone (handed over after its lease lapsed,
+    or the run ended). A worker in that state spawned nothing (the spawn stamp and a hand-over
+    exclude each other) and must not write anything on the run any more."""
+    if claim is None:
+        return False
+    try:
+        return not db_runs.claim_held(run_id, claim)
+    except Exception:
+        _log.warning("selfcheck %s: reading its queue claim failed", run_id, exc_info=True)
+        return False
+
+
+def _watch_lease(control: executor.ProcessControl, cancelled: threading.Event,
+                 lease_lost: threading.Event) -> threading.Event:
+    """0053 1-B rev2: stop this worker's own child when its lease keeper reports the claim lost.
+    Uses the worker's own ``control`` (never the shared ``_controls`` map, which a worker that
+    took the run over may have filled). Returns the stop event the worker sets when done."""
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.is_set():
+            if lease_lost.wait(0.5):
+                if not stop.is_set() and not cancelled.is_set():
+                    cancelled.set()
+                    try:
+                        control.cancel()
+                    except Exception:
+                        _log.warning("selfcheck: stopping a child after its claim was lost failed", exc_info=True)
+                return
+
+    threading.Thread(target=loop, daemon=True, name="selfcheck-lease-watch").start()
+    return stop
+
+
+def _finish(run_id: str, ctx: lock_manager.ExecutionContext | None, lock_key: str | None, root: Path | None,
+            before: dict, runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
             env: dict[str, str], timeout: int, keeper: "_LockKeeper | None" = None,
-            attempt_lock: str | None = None, spawned: threading.Event | None = None) -> None:
+            attempt_lock: str | None = None, spawned: threading.Event | None = None,
+            claim: str | None = None, lease_lost: threading.Event | None = None) -> None:
     """``spawned`` (0110 T#3, a Graph attempt run): set once the spawn is over -- the child
-    exists and the run is marked running, or the spawn failed. ``_start`` keeps the Stop
-    gate's shared hold until then."""
-    holder = ctx.ctx_id
+    exists and the run is marked running, or the spawn failed.
+
+    0053 1-B: a queue run passes ``ctx``/``lock_key``/``root`` as None -- no lock is held and
+    the tree under test is its snapshot, which nothing writes, so its identity after the run is
+    the one recorded when the snapshot was taken (``before``). A forced stop
+    (``tr_self_check_queue.force_stop``) is recorded as ``failed`` with its code.
+
+    rev2: a queue run also passes its ``claim`` (``db.claim_next_queued``) and the lease keeper's
+    ``lease_lost`` event. Every write below -- the spawn stamp and process records, running,
+    the terminal records, the recovery hold -- is fenced to that claim, so a worker that
+    resumes after its lease lapsed and the run was handed over neither spawns nor touches the
+    row of the worker that took it over; it ends without writing (``_claim_lost``)."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
+    holder = ctx.ctx_id if ctx is not None else None
     control = None
     ownership = {}
     row = None
     cancelled = threading.Event()
     terminal = None
     watch = None
+    lease_watch = None
+    abandoned = False
     try:
         try:
+            if _claim_lost(run_id, claim):
+                _log.warning("selfcheck %s: queue claim lost before the spawn; this worker stops", run_id)
+                abandoned = True
+                return
             # 0114 T#4: the reservation stored with the row limits the whole tree (D 3.5 (2)).
             # A pending child cancelled before its worker starts never spawns.
             if db_runs.get_run(run_id)["cancel_requested"]:
                 terminal = db_runs.finish_cancelled(run_id, exit_code=None,
-                                                    stdout_tail="", stderr_tail="")
+                                                    stdout_tail="", stderr_tail="", claim=claim)
                 return
             cpu_limit = _reserved_cpus(run_id)
             limit = {"cpu_limit": cpu_limit} if cpu_limit is not None else {}
             control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
-                                                run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id),
-                                                **limit)
+                                                run_id, job_name=proof.job_name(run_id),
+                                                record=_record_spawn(run_id, claim, lease_lost), **limit)
             with _controls_lock:
                 _controls[run_id] = control, cancelled
-            row = db_runs.mark_running(run_id, source_lock_holder=holder,
+            row = db_runs.mark_running(run_id, claim=claim, source_lock_holder=holder,
                 source_head_before=before["head"], source_branch_before=before["branch"],
                 source_refs_hash_before=before["refs_hash"], source_index_hash_before=before["index_hash"],
                 source_status_hash_before=before["status_hash"], index_lock_before=int(before["index_lock"]), **ownership)
@@ -713,10 +780,12 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             cancelled.set()
             control.cancel()
         watch = _watch_cancel(run_id, control, cancelled)
+        if lease_lost is not None:
+            lease_watch = _watch_lease(control, cancelled, lease_lost)
         control.progress = lambda count: progress.publish(run_id, output_bytes=count)
         result = executor.wait(control, timeout, cancelled)
         if not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock, claim=claim)
             return
         # The tree is empty. A G loss is judged now, and nothing the keeper learns later
         # changes the decision below.
@@ -724,25 +793,29 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if lock == _LockKeeper.UNCONFIRMED:
             _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED, attempt_lock=attempt_lock)
             return
-        after = _probe(root)
+        after = _probe(root) if root is not None else before
         tails = {"stdout_tail": _redact(result.stdout_tail), "stderr_tail": _redact(result.stderr_tail)}
         fields = _source_fields(before, after)
+        forced = queue.forced_code(run_id)
         if lock == _LockKeeper.GONE:
             # G was gone under the run (NR0007 §5 item 7-c): another holder may have entered.
             # Stopped and its tree proved empty above; recorded as a failure, not a result.
             terminal = db_runs.finish_failed(run_id, error_code="selfcheck_lock_lost", exit_code=result.exit_code,
-                                             timed_out=result.timed_out, **tails, **fields)
+                                             timed_out=result.timed_out, claim=claim, **tails, **fields)
         elif getattr(result, "cpu_limit_violated", False):
             # 0114 T#4 (D 3.5 (2), POSIX): a process widened its processor set; the supervisor
             # ended the tree. A failure, never a result.
             terminal = db_runs.finish_failed(run_id, error_code="selfcheck_cpu_limit_violation",
                                              exit_code=result.exit_code, timed_out=result.timed_out,
-                                             **tails, **fields)
+                                             claim=claim, **tails, **fields)
+        elif result.cancelled and not result.timed_out and forced:
+            terminal = db_runs.finish_failed(run_id, error_code=forced, exit_code=result.exit_code,
+                                             timed_out=False, claim=claim, **tails, **fields)
         elif result.cancelled and not result.timed_out:
-            terminal = db_runs.finish_cancelled(run_id, exit_code=result.exit_code, **tails, **fields)
+            terminal = db_runs.finish_cancelled(run_id, exit_code=result.exit_code, claim=claim, **tails, **fields)
         else:
             terminal = db_runs.finish_completed(run_id, exit_code=result.exit_code,
-                                                timed_out=result.timed_out, **tails, **fields)
+                                                timed_out=result.timed_out, claim=claim, **tails, **fields)
             if terminal is not None and not result.timed_out:
                 _record_result_summary(run_id, terminal)
     except Exception as exc:
@@ -758,17 +831,23 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             # comes with the error; the stored row (owner_marker, the spawn's records) covers
             # the rest. Only a spawn that knows it created nothing takes its stamp back.
             ownership = dict(getattr(exc, "ownership", None) or {})
+            if getattr(exc, "created", True) is False and _claim_lost(run_id, claim):
+                # rev2: the claim went away before this worker's stamp (lease handed over):
+                # nothing was spawned and the row is no longer this worker's to write.
+                _log.warning("selfcheck %s: queue claim lost before the spawn; this worker stops", run_id)
+                abandoned = True
+                return
             if getattr(exc, "created", True) is False:
                 ownership = {}
                 try:
-                    db_runs.clear_spawn_started(run_id)
+                    db_runs.clear_spawn_started(run_id, claim=claim)
                 except Exception:
                     _log.warning("selfcheck %s: clearing the spawn stamp failed", run_id, exc_info=True)
         # The target and the supervisor are not the whole run: its group / Job must be
         # empty too, else the failure is not recorded, the run keeps its active_key and G
         # stays protected (recovery_incomplete / tree_unproven).
         if (control is not None and control.proc.poll() is None) or not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock, claim=claim)
             return
         # A confirmed G loss outranks the error, with the same code as the normal path.
         lock = _lock_state(keeper)
@@ -778,43 +857,64 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if lock == _LockKeeper.GONE:
             code = "selfcheck_lock_lost"
         else:
+            cause = exc.__cause__
+            if isinstance(cause, SelfCheckError):
+                exc = cause
             code = exc.code if isinstance(exc, (SelfCheckError, policy.PolicyError)) else (
                 "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
-        terminal = db_runs.finish_failed(run_id, error_code=code)
+        terminal = db_runs.finish_failed(run_id, error_code=code, claim=claim)
     finally:
         if watch is not None:
             watch.set()
+        if lease_watch is not None:
+            lease_watch.set()
         if keeper is not None:
             keeper.stop()
         if control is not None:
             control.close()
         with _controls_lock:
             _controls.pop(run_id, None)
-        if ctx.lock_lost:
-            _log.warning("selfcheck %s lost its Group lock during the run", run_id)
-        # A missing terminal commit keeps the Group lock (protected) for startup recovery.
-        # 0110 T#3: an attempt run's W follows its G -- released only with a terminal write
-        # (made after the tree proof), else protected with it; an unsettled run's W was
-        # protected by _hold_unsettled already.
-        if terminal is not None:
-            if attempt_lock is not None and ctx.find_held(attempt_lock) is not None:
-                lock_manager.release(ctx, attempt_lock)
-            if ctx.find_held(lock_key) is not None:
-                lock_manager.release(ctx, lock_key)
-            if keeper is not None and keeper.state == _LockKeeper.PROTECTED:
-                # release() never deletes a protected row (L 2.5.4). The keeper protected this
-                # run's own G after its heartbeat could not be renewed; the tree was proved
-                # empty before the terminal write, so the holder's row goes now.
-                try:
-                    lock_manager.selfcheck_release_recovered(terminal["project_id"], terminal["group_id"], run_id)
-                except Exception:
-                    _log.warning("selfcheck %s: releasing its protected Group lock failed", run_id, exc_info=True)
-            _emit(terminal)
-            _cleanup_runtime(runtime, run_id)
+        if ctx is None:
+            # 0053 1-B: a queue run -- nothing to release or protect; the terminal write frees
+            # its reservation (slot). An unsettled run keeps it as recovery_incomplete.
+            if terminal is not None:
+                _emit(terminal)
+                _cleanup_runtime(runtime, run_id)
+            elif abandoned:
+                # rev2: the run is another worker's now; only this worker's own scratch goes.
+                _cleanup_runtime(runtime, run_id, tracked=False)
         else:
-            for key in (attempt_lock, lock_key):
-                if key is not None and ctx.find_held(key) is not None:
-                    lock_manager.protect(ctx, key, "selfcheck_terminal_unrecorded")
+            _finish_locks(run_id, ctx, lock_key, runtime, terminal, keeper, attempt_lock)
+
+
+def _finish_locks(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, runtime: Path,
+                  terminal: dict | None, keeper: "_LockKeeper | None", attempt_lock: str | None) -> None:
+    """The end of ``_finish`` for a run that holds its Group's G (a pre-queue worktree run)."""
+    if ctx.lock_lost:
+        _log.warning("selfcheck %s lost its Group lock during the run", run_id)
+    # A missing terminal commit keeps the Group lock (protected) for startup recovery.
+    # 0110 T#3: an attempt run's W follows its G -- released only with a terminal write
+    # (made after the tree proof), else protected with it; an unsettled run's W was
+    # protected by _hold_unsettled already.
+    if terminal is not None:
+        if attempt_lock is not None and ctx.find_held(attempt_lock) is not None:
+            lock_manager.release(ctx, attempt_lock)
+        if ctx.find_held(lock_key) is not None:
+            lock_manager.release(ctx, lock_key)
+        if keeper is not None and keeper.state == _LockKeeper.PROTECTED:
+            # release() never deletes a protected row (L 2.5.4). The keeper protected this
+            # run's own G after its heartbeat could not be renewed; the tree was proved
+            # empty before the terminal write, so the holder's row goes now.
+            try:
+                lock_manager.selfcheck_release_recovered(terminal["project_id"], terminal["group_id"], run_id)
+            except Exception:
+                _log.warning("selfcheck %s: releasing its protected Group lock failed", run_id, exc_info=True)
+        _emit(terminal)
+        _cleanup_runtime(runtime, run_id)
+    else:
+        for key in (attempt_lock, lock_key):
+            if key is not None and ctx.find_held(key) is not None:
+                lock_manager.protect(ctx, key, "selfcheck_terminal_unrecorded")
 
 
 def _record_result_summary(run_id: str, terminal: dict) -> None:
@@ -844,18 +944,18 @@ def start_draft(token: dict, request: dict) -> dict:
 
 
 def _start(target: dict, request: dict, requested_by: str | None) -> dict:
-    """One admission/execution path for TR-bound and draft runs (same policy, worktree, G lock).
+    """One admission path for TR-bound and draft runs (same policy and worktree; 0053 1-B: the
+    request is queued, no G lock).
 
-    0110 T#3: a Graph attempt token's run (``_attempt_target``) runs in its attempt tree and
-    also holds the attempt's W. Its writability (``require_writable``) is judged under the
-    Stop gate's shared hold inside a ``write_session``, and that hold is kept -- through the
-    Group's G and the attempt's W (the gate, then the Git locks), the run row and the
-    worker's spawn -- until the spawn is over (``_await_spawn``). A Stop's ``stopping`` or
-    the runtime's invalidation of the attempt (both take the gate exclusively) therefore
-    commits either before the judgement, which refuses with nothing created, locked or
-    spawned, or after the child exists. The token judged is the caller's (``caller_token``,
-    set by ``start`` / ``start_draft``); a target that already carries an attempt is judged
-    again with its token. An unmapped token holds nothing and does not wait."""
+    0110 T#3: a Graph attempt token's run (``_attempt_target``) is taken from its attempt tree.
+    Its writability (``require_writable``) is judged under the Stop gate's shared hold inside a
+    ``write_session``, and that hold is kept while the snapshot is taken and the queued row is
+    stored (0053 1-B: no G, no attempt W, no spawn here). A Stop's ``stopping`` or the runtime's
+    invalidation of the attempt (both take the gate exclusively) therefore commits either before
+    the judgement, which refuses with nothing created, or after the request is queued (the
+    Stop's scope close then cancels it: ``owned_cancel_runs`` includes queued runs). The token
+    judged is the caller's (``caller_token``, set by ``start`` / ``start_draft``); a target that
+    already carries an attempt is judged again with its token."""
     from modules.flow_gate.services import graph_source_hooks
     token = target.get("caller_token") or target.get("attempt_token")
     with graph_source_hooks.write_session():
@@ -870,132 +970,48 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
             raise SelfCheckError(409, "selfcheck_owner_scope_closed") from exc
 
 
-def _await_spawn(worker: threading.Thread, spawned: threading.Event) -> None:
-    """0110 T#3: the request thread holds the Stop gate until the worker's spawn is over
-    (``_finish`` sets ``spawned``), or the worker is gone."""
-    while not spawned.wait(0.2):
-        if not worker.is_alive():
-            return
-
-
 def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
-    """``_start`` past the attempt judgement. The active-run slot stays one per Group: the
-    run holds its Group's G for its whole length in either case, so a second run of the same
-    Group -- another attempt's too -- could not start meanwhile anyway, and recovery (G
-    protection, recovery_incomplete) is judged per Group."""
-    project_id, group_id = target["project_id"], target["group_id"]
+    """``_start`` past the attempt judgement (0053 1-B): queue the request and return at once.
+
+    The request is checked as before (enabled, request contract, share, managed worktree,
+    program resolution, cwd), then ``tr_self_check_queue.enqueue`` takes the worktree snapshot
+    (uncommitted changes included), stores the ``queued`` row and wakes a queue worker. No Group
+    lock (G) or attempt W is taken: the run executes in its snapshot. There is no "one run per
+    Group" refusal and no host-capacity refusal -- the request waits in the queue. A Graph
+    attempt's snapshot is taken inside ``_start``'s ``write_session``, so it is never taken from
+    an attempt that is already stopping."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
+    project_id = target["project_id"]
     if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
-    if db_runs.has_group_recovery_incomplete(project_id, group_id):
-        raise SelfCheckError(409, "selfcheck_recovery_incomplete")
     program, args, relative_cwd, timeout = _validate_request(request)
+    from modules.flow_gate.services import tr_self_check_quota as quota
+    limits = quota.resolve(target.get("caller_token") or target.get("attempt_token"), target)
+    if quota.allowance(limits)["remaining"] == 0:
+        raise SelfCheckError(409, "selfcheck_quota_exhausted")
+    target = {**target, "verify_limits": limits}
+    timeout = min(request.get("timeout_seconds", limits["run_timeout_sec"]), limits["run_timeout_sec"])
     share = _requested_share(request)
-    first_root = _worktree(target)
-    path_value, _ = policy.controlled_path(first_root, _HOST_PATH)
+    root = _worktree(target)
+    path_value, _ = policy.controlled_path(root, _HOST_PATH)
     try:
-        command = policy.resolve_command(program, args, first_root, path_value)
-        policy.validate_cwd(first_root, relative_cwd)
+        command = policy.resolve_command(program, args, root, path_value)
+        policy.validate_cwd(root, relative_cwd)
     except policy.PolicyError as exc:
         raise SelfCheckError(422, exc.code) from exc
-    existing = db_runs.get_active(project_id, group_id)
-    if existing:
-        raise _already_running(existing["self_check_run_id"], target)
-    run_id = f"scr_{uuid.uuid4().hex[:24]}"
-    # D 3.8 / L 2.24.1: this Group's G for the whole run (long, heartbeated).
-    ctx = lock_manager.new_context("scr", run_id)
-    holder = ctx.ctx_id
-    keeper = _LockKeeper(run_id, ctx, lock_manager.lock_key("G", project_id, group_id))
-    ctx.on_lock_lost = keeper.lost
     try:
-        outcome = lock_manager.acquire("G", project_id, group_id=group_id, holder_kind="selfcheck",
-                                       mode="selfcheck_start", ctx=ctx)
-    except lock_manager.LockProgramError as exc:
-        raise SelfCheckError(500, "selfcheck_internal_error") from exc
-    if not outcome.ok:
-        code = ("selfcheck_recovery_incomplete" if outcome.kind == lock_manager.RECOVERY_REQUIRED
-                else "selfcheck_source_busy")
-        raise SelfCheckError(409, code, details=lock_manager.outcome_details(outcome))
-    lock_key = outcome.lock_key
-    row = None
-    runtime = None
-    attempt_lock = None
-    try:
-        if target.get("attempt_id"):
-            attempt_lock = _attempt_lock(ctx, project_id, target["attempt_id"])
-        root = _worktree(target)
-        if root != first_root:
-            path_value, _ = policy.controlled_path(root, _HOST_PATH)
-            command = policy.resolve_command(program, args, root, path_value)
-        cwd = policy.validate_cwd(root, relative_cwd)
-        existing = db_runs.get_active(project_id, group_id)
-        if existing:
-            raise _already_running(existing["self_check_run_id"], target)
-        before = _probe(root)
-        runtime = Path(tempfile.mkdtemp(prefix=f"flowgate-{run_id}-"))
-        env = policy.scrubbed_env(path_value, runtime)
-        # 0080 T#1: every process of the run inherits the run marker (Linux marker scan).
-        env[proof.MARKER_ENV] = run_id
-        from modules.flow_gate.services.git import instance_registry
-        # 0114 T#4 (D 3.5 (4)-(6)): the reservation is decided, checked against the host's sum
-        # and stored in the insert's transaction; a refusal writes no row (finally below frees
-        # G and the runtime folder, as for "already running").
-        capacity = policy.host_capacity()
-        # Owner instance + run-unit ownership record land before the spawn (NR0007 §5 item 4).
-        row = db_runs.create_pending(project_id, group_id, target["tr_doc_id"], requested_by,
-            policy.POLICY_VERSION, program, args, command.executable, command.name,
-            command.origin, relative_cwd, timeout, [*env, *policy.SLOT_ENV_KEYS], run_id=run_id,
-            source_lock_holder=holder,
-            owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
-            owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id),
-            attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"),
-            host_node_key=instance_registry.node_key(), host_capacity=capacity, cpu_share_requested=share,
-            **({"progress_owner": target["progress_owner"]} if target.get("progress_owner") else {}))
-        spawned = threading.Event() if attempt_lock is not None else None
-        try:
-            # The run's worker slot pool, R slots in its runtime folder, named to every process of
-            # the run (D 3.5 (3)); the processor limit itself is the executor's (D 3.5 (2)). The
-            # row is committed by now and no worker exists yet to end it, so a pool that cannot
-            # be prepared fails the run here like a worker that cannot start: terminal record
-            # (its reservation leaves the host's sum), keeper, G/W and runtime folder released.
-            if row.get("cpu_reservation"):
-                env.update(policy.slot_pool_env(runtime, row["cpu_reservation"]))
-            worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
-                runtime, command, args, cwd, env, timeout, keeper, attempt_lock, spawned), daemon=True,
-                name=f"selfcheck-{run_id}")
-            worker.start()
-        except Exception as exc:
-            failed = db_runs.finish_failed(run_id, error_code="selfcheck_internal_error")
-            if failed is not None:
-                keeper.stop()
-                if attempt_lock is not None:
-                    lock_manager.release(ctx, attempt_lock)
-                lock_manager.release(ctx, lock_key)
-                _emit(failed)
-                _cleanup_runtime(runtime, run_id)
-            raise SelfCheckError(500, "selfcheck_internal_error") from exc
-        if spawned is not None:
-            _await_spawn(worker, spawned)
-        _emit(row)
-        result = public(row)
-        result["reservation"] = _reservation(share, row.get("cpu_reservation"), capacity)
-        return result
-    except db_runs.SelfCheckAlreadyRunningError as exc:
-        raise _already_running(exc.existing_run_id, target) from exc
-    except db_runs.SelfCheckHostCapacityError as exc:
-        raise _host_capacity_exhausted(exc) from exc
+        row = queue.enqueue(target, program=program, args=args, relative_cwd=relative_cwd,
+                            timeout=timeout, share=share, command=command, path_value=path_value,
+                            root=root, requested_by=requested_by)
+    except db_runs.SelfCheckQuotaExhausted as exc:
+        raise SelfCheckError(409, exc.code) from exc
     except db_runs.DraftOwnerClosedError as exc:
         # The TR registered (or the token was revoked) after draft_target admitted it.
         raise SelfCheckError(403, "selfcheck_forbidden", "draft owner token is no longer open") from exc
-    except policy.PolicyError as exc:
-        raise SelfCheckError(422, exc.code) from exc
-    finally:
-        if row is None:
-            keeper.stop()
-            if attempt_lock is not None:
-                lock_manager.release(ctx, attempt_lock)
-            lock_manager.release(ctx, lock_key)
-            if runtime is not None:
-                _cleanup_runtime(runtime, run_id, tracked=False)
+    result = public(row)
+    result["queue"] = {"position": db_runs.queue_position(row["self_check_run_id"]),
+                       "card_key": row.get("queue_key")}
+    return result
 
 
 def _with_baseline(row: dict, baseline_run_id: str | None) -> dict:
@@ -1046,6 +1062,14 @@ def _cancel(run_id: str, lookup) -> dict:
     row = lookup()
     if row is None:
         raise SelfCheckError(404, "selfcheck_run_not_found")
+    if row["status"] == db_runs.QUEUED:
+        # 0053 1-B: a request still waiting in the queue ends here, nothing was spawned.
+        from modules.flow_gate.services import tr_self_check_queue as queue
+        if queue.cancel_waiting(run_id) is not None:
+            row = lookup() or db_runs.get_run(run_id)
+            return {**public(row), "cancel": {"accepted": True, "stopped": True, "state": "stopped",
+                                              "reason": None}}
+        row = lookup() or db_runs.get_run(run_id)   # it started (or ended) meanwhile
     active = row["status"] in _ACTIVE
     db_runs.request_cancel(run_id)
     with _controls_lock:
@@ -1131,10 +1155,7 @@ def _cancel_unowned(row: dict) -> tuple[str, str | None]:
     finished = db_runs.finish_recovered_cancelled(rid)
     if finished is None:
         return "unconfirmed", "state_changed"
-    try:
-        lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
-    except Exception:
-        _log.warning("selfcheck %s: releasing Group lock after cancel failed", rid, exc_info=True)
+    _release_recovered(row, finished)
     return "stopped", None
 
 
@@ -1182,9 +1203,9 @@ def group_run(run_id: str) -> dict | None:
 
 
 def group_active_runs(project_id: str, group_id: str) -> list[dict]:
-    """The run holding the Group's slot, as a summary list (empty or one)."""
-    row = db_runs.get_active(project_id, group_id)
-    return [summary(row)] if row else []
+    """The Group's open runs as summaries (0053 1-B: queued, claimed and running queue runs, and
+    a pre-queue run holding the Group's slot), oldest first."""
+    return [summary(row) for row in db_runs.group_open_runs(project_id, group_id)]
 
 
 def group_project(group_id: str) -> str:
@@ -1277,15 +1298,52 @@ def _recover_row(row: dict, fallback: set[str]) -> None:
     # release_verdict re-proves the server, kills only a verified own tree, re-checks both.
     verdict = proof.release_verdict(current, terminate=True)
     if verdict.decision == proof.RELEASE:
-        finished = db_runs.finish_recovered_interrupted(rid)
-        if finished:
-            try:
-                lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
-            except Exception:
-                _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
-            _emit(finished)
+        if _end_recovered(row, requeue=True) is not None:
             return
     _hold_recovery_incomplete(current, verdict.reason or proof.TREE_UNPROVEN, fallback)
+
+
+def _is_queue_run(row: dict) -> bool:
+    """0053 1-B: a queue run (snapshot, no G); a pre-queue run has no ``enqueued_at``."""
+    return bool(row.get("enqueued_at"))
+
+
+def _release_recovered(row: dict, finished: dict) -> None:
+    """After a recovered terminal write: a pre-queue run's G is deleted; a queue run holds no
+    lock, its snapshot is removed (``cleanup_pending`` when that fails)."""
+    if _is_queue_run(row):
+        from modules.flow_gate.services import tr_self_check_queue as queue
+        queue.cleanup_snapshot(finished)
+        queue.wake()
+        return
+    try:
+        lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], row["self_check_run_id"])
+    except Exception:
+        _log.warning("selfcheck %s: releasing Group lock failed", row["self_check_run_id"], exc_info=True)
+
+
+def _end_recovered(row: dict, *, requeue: bool) -> dict | None:
+    """End a ``recovering`` run whose owner and tree were just proved gone. 0053 1-B: with
+    ``requeue`` (its owning server is gone -- a restart), a queue run whose snapshot is still
+    there and that no one asked to cancel is queued again -- "cleaned up by the recovery rules,
+    then put back". Anything else (a run of this server whose worker is gone, e.g. a failed
+    spawn) ends failed(interrupted_by_restart) as before. None when the CAS lost."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
+    rid = row["self_check_run_id"]
+    if (requeue and _is_queue_run(row) and not row.get("cancel_requested")
+            and queue.snapshot_exists(row)):
+        again = db_runs.requeue_recovered(rid, proof.owner_marker(rid))
+        if again is not None:
+            _log.warning("selfcheck %s: interrupted run queued again from its snapshot", rid)
+            _emit(again)
+            queue.wake()
+            return again
+    finished = db_runs.finish_recovered_interrupted(rid)
+    if finished is None:
+        return None
+    _release_recovered(row, finished)
+    _emit(finished)
+    return finished
 
 
 def _hold_recovery_incomplete(row: dict, reason: str, fallback: set[str]) -> None:
@@ -1293,6 +1351,10 @@ def _hold_recovery_incomplete(row: dict, reason: str, fallback: set[str]) -> Non
     incomplete = db_runs.mark_recovery_incomplete(rid, reason)
     if incomplete:
         _emit(incomplete)
+    if _is_queue_run(row):
+        # 0053 1-B: no Group lock to protect -- only this run's slot (its reservation) stays
+        # taken while recovery_incomplete; the reaper proves it again every tick.
+        return
     if not lock_manager.selfcheck_ensure_protected(project_id, group_id, rid):
         _log.warning("selfcheck %s: G protection not written; recovery_incomplete keeps "
                      "the Group closed", rid)
@@ -1354,15 +1416,10 @@ def _reprove(row: dict) -> tuple[str, str | None]:
             verdict = proof.release_verdict(current, terminate=True)
             ok, reason = verdict.decision == proof.RELEASE, verdict.reason or proof.TREE_UNPROVEN
         if ok:
-            finished = db_runs.finish_recovered_interrupted(rid)
-            if finished is None:
+            # The run is ended (or, a queue run with its snapshot, queued again); a leftover G
+            # of a pre-queue run is a terminal run's, reclaimed by the gate.
+            if _end_recovered(current, requeue=not own) is None:
                 return KEPT, "state_changed"
-            try:
-                lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
-            except Exception:
-                # The run is ended; its leftover G is a terminal run's, reclaimed by the gate.
-                _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
-            _emit(finished)
             return RELEASED, None
         _hold_recovery_incomplete(current, reason, set())
         return PROTECTED, reason
@@ -1425,6 +1482,12 @@ def reap() -> int:
             reaped += int(_reap_terminal_g(lock))
         except Exception:
             _log.warning("selfcheck G %s: reaper failed; kept", lock.get("lock_key"), exc_info=True)
+    # 0053 1-B: the queue's time rules (lapsed claims, wait limit, snapshot cleanup retries).
+    try:
+        from modules.flow_gate.services import tr_self_check_queue as queue
+        queue.maintain()
+    except Exception:
+        _log.warning("selfcheck queue maintenance failed", exc_info=True)
     return reaped
 
 

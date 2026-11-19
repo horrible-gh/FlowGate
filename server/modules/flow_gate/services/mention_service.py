@@ -1969,6 +1969,7 @@ def build_mention(
     rejection_target: Optional[dict] = None,
     parent_revision_no: int = 0,
     parent_content_state: Optional[str] = None,
+    self_check_notice: Optional[str] = None,
     edit_reason: str = "user_comment",
     # flowgate.v02.0117: an edit that writes the FIRST content into an existing empty
     # document (a Graph card's instruction stage writing into its line's empty document,
@@ -2423,15 +2424,9 @@ def build_mention(
             action_scope="review" if review_continuous else action_scope, locale=locale
         )
         if not review_continuous and source_crud_section and str(scope_type or "").upper() == "TR":
-            # 0672 T0004: TR verifies on the live worktree through Self-check.
-            snapshot_policy_section = _section(
-                "TR test responsibility and Self-check",
-                "Write test code, fixtures and mocks and run available self-checks. "
-                "Formal test PASS and its gate belong to the approved TS/TSR stage. "
-                "No approval-based Snapshot is required for TR completion or formal testing. "
-                "Self-checks run against the live group worktree through the TR Self-check contract "
-                "(run_self_check / read_self_check)."
-            )
+            from modules.flow_gate.services import tr_self_check_quota as quota
+            snapshot_policy_section = self_check_notice or quota.notice(
+                {"run_timeout_sec": quota.system_limits().run_timeout_sec}, quota.system_limits().max_runs, locale)
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
@@ -2610,7 +2605,12 @@ def build_mention_from_token_rec(
         )
         head_doc_title = head_context_doc.get("title", "")
 
+    self_check_notice = None
+    if (parent_type if action_scope == "edit" else head_type or "").upper() == "TR" and action_scope != "review":
+        from modules.flow_gate.services import tr_self_check_quota as quota
+        self_check_notice = quota.token_notice(token_rec, locale)
     return build_mention(
+        self_check_notice=self_check_notice,
         project=project,
         module=module,
         group=group,

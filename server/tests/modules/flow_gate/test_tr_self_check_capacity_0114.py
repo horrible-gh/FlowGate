@@ -183,8 +183,10 @@ def test_7a_the_same_share_gets_the_same_reservation_whatever_the_program(store)
 
 @pytest.fixture
 def admission(store, monkeypatch, tmp_path):
-    """``_admit`` on the real store: only the worktree, probe, Group lock and worker are fakes."""
-    released, runtimes, started = [], [], []
+    """``_admit`` on the real store (0053 1-B: it queues). Only the worktree, probe, snapshot copy
+    and program resolution are fakes; any lock acquire fails the test (the queue takes none)."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
+    acquired = []
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: True)
     monkeypatch.setattr(service, "_worktree", lambda _t: tmp_path)
     monkeypatch.setattr(service, "_probe", lambda _root: {"head": "h", "branch": "b", "refs_hash": "0" * 64,
@@ -195,89 +197,85 @@ def admission(store, monkeypatch, tmp_path):
         executable="pytest", name="pytest", origin="host_path", argv_prefix=[]))
     monkeypatch.setattr(service.policy, "validate_cwd", lambda root, rel: tmp_path)
     monkeypatch.setattr(service.policy, "host_capacity", lambda: CAP)
-    real_mkdtemp = service.tempfile.mkdtemp
-    monkeypatch.setattr(service.tempfile, "mkdtemp",
-                        lambda prefix: runtimes.append(Path(real_mkdtemp(prefix=prefix))) or str(runtimes[-1]))
-    monkeypatch.setattr(service.lock_manager, "new_context",
-                        lambda *_: SimpleNamespace(ctx_id="ctx_0114c", on_lock_lost=None))
-    monkeypatch.setattr(service.lock_manager, "acquire", lambda *a, **k: SimpleNamespace(ok=True, lock_key="G:" + k["group_id"]))
-    monkeypatch.setattr(service.lock_manager, "release", lambda ctx, key: released.append(key))
+    monkeypatch.setattr(service.lock_manager, "acquire", lambda *a, **k: acquired.append(k) or pytest.fail("no lock"))
     monkeypatch.setattr(service, "_emit", lambda row: None)
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+
+    def snapshot(root, run_id):
+        base = queue.snapshot_root() / run_id
+        (base / queue.TREE_DIR).mkdir(parents=True)
+        return base
+
+    monkeypatch.setattr(queue, "take_snapshot", snapshot)
     from modules.flow_gate.services.git import instance_registry
     monkeypatch.setattr(instance_registry, "node_key", lambda: HOST)
     monkeypatch.setattr(instance_registry, "current_instance_id", lambda: "inst_a")
-
-    class _Worker:
-        def __init__(self, *, target, args, daemon, name):
-            self.args = args
-
-        def start(self):
-            started.append(self.args)
-
-    monkeypatch.setattr(service.threading, "Thread", _Worker)
 
     def admit(group_id, request):
         target = {"project_id": P, "group_id": group_id, "tr_doc_id": _doc(group_id)}
         return service._admit(target, request, None)
 
-    return SimpleNamespace(admit=admit, released=released, runtimes=runtimes, started=started)
+    def claim():
+        return runs_db.claim_next_queued("inst_a", "2999-01-01T00:00:00+09:00", HOST, CAP)
+
+    return SimpleNamespace(admit=admit, claim=claim, acquired=acquired, queue=queue)
 
 
-def test_7a_a_refused_admission_is_409_with_the_numbers_and_leaves_no_row_lock_or_folder(store, admission):
+def test_7a_a_full_host_queues_requests_and_reserves_when_a_worker_claims_them(store, admission):
+    """0053 1-B: no 409 ``selfcheck_host_capacity_exhausted`` any more -- every request is queued
+    (no reservation yet), and the reservation is decided when a queue worker claims it, by the
+    same D 3.5 (4) rule under the capacity lock. A run that does not fit waits."""
     x = admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 4})
-    assert x["reservation"] == {"requested": 4, "granted": 3, "limit": 4, "serial_reserve": 1, "cpu_limit": 3,
-                                "lowered": "host_capacity"}
-    assert x["cpu_reservation"] == 3 and x["policy_version"] == "tr-selfcheck-v2"
-    env = admission.started[0][9]
-    assert env[policy.SLOTS_ENV] == "3" and Path(env[policy.SLOT_DIR_ENV]).parent == admission.runtimes[0]
-    admission.admit(GROUPS[1], {"program": "pytest"})
-    for group, program in ((GROUPS[2], "pytest"), (GROUPS[3], "mypy")):
-        with pytest.raises(service.SelfCheckError) as caught:
-            admission.admit(group, {"program": program})
-        assert (caught.value.status, caught.value.code) == (409, "selfcheck_host_capacity_exhausted")
-        assert caught.value.details == {"limit": 4, "reserved_total": 4, "reserved_protected": 0, "requested": 1,
-                                        "desired_share": 1, "retry": "retry_later"}
-        assert _rows(store, group) == 0
-        assert admission.released[-1] == "G:" + group                        # the Group lock is let go
-        assert not admission.runtimes[-1].exists()                           # and the runtime folder
-    assert len(admission.started) == 2                                       # no worker for a refusal
-    # (h) the same Group's second request stays "already running", a different code
-    with pytest.raises(service.SelfCheckError) as caught:
-        admission.admit(GROUPS[0], {"program": "pytest"})
-    assert (caught.value.status, caught.value.code) == (409, "selfcheck_already_running")
+    assert (x["status"], x["cpu_reservation"], x["policy_version"]) == ("queued", None, "tr-selfcheck-v2")
+    queued = [admission.admit(group, {"program": program})
+              for group, program in ((GROUPS[1], "pytest"), (GROUPS[2], "pytest"), (GROUPS[3], "mypy"))]
+    assert {q["status"] for q in queued} == {"queued"} and _sum() == (0, 0)
+    first = admission.claim()
+    assert first["self_check_run_id"] == x["self_check_run_id"] and first["cpu_reservation"] == 3
+    second = admission.claim()
+    assert second["self_check_run_id"] == queued[0]["self_check_run_id"] and second["cpu_reservation"] == 1
+    assert admission.claim() is None                                         # the host is full: they wait
+    for waiting in queued[1:]:
+        assert runs_db.get_run(waiting["self_check_run_id"])["status"] == "queued"
+    # the same Group may queue again (no "already running")
+    again = admission.admit(GROUPS[0], {"program": "pytest"})
+    assert again["status"] == "queued"
     _finish(x["self_check_run_id"])
-    again = admission.admit(GROUPS[2], {"program": "pytest"})
-    assert again["cpu_reservation"] == 1
+    third = admission.claim()
+    assert third["self_check_run_id"] == queued[1]["self_check_run_id"] and third["cpu_reservation"] == 1
+    assert admission.acquired == []
 
 
-def test_a_slot_pool_that_cannot_be_prepared_ends_the_committed_run_and_frees_everything(store, admission, monkeypatch):
-    """The row is committed before the pool exists and no worker is there yet to end it: a pool
-    that cannot be made (permission / disk error) fails the run in ``_admit`` itself -- terminal
-    record (the reservation leaves the host's sum), keeper stopped, G released, runtime removed."""
+def test_a_slot_pool_that_cannot_be_prepared_ends_the_claimed_run_and_frees_everything(store, admission, monkeypatch):
+    """The run is claimed (its reservation stored) before the pool exists: a pool that cannot be
+    made (permission / disk error) fails the run in the queue worker itself -- terminal record
+    (the reservation leaves the host's sum), runtime and snapshot removed, nothing spawned."""
+    import tempfile as _tempfile
+    runtimes = []
+    real_mkdtemp = _tempfile.mkdtemp
+    monkeypatch.setattr(admission.queue.tempfile, "mkdtemp",
+                        lambda prefix="", dir=None: runtimes.append(Path(real_mkdtemp(prefix=prefix, dir=dir)))
+                        or str(runtimes[-1]))
     real_pool = policy.slot_pool_env
 
     def broken(run_root, slots):
         raise PermissionError("injected: slot pool cannot be created")
 
-    stopped = []
-    real_stop = service._LockKeeper.stop
-    monkeypatch.setattr(service._LockKeeper, "stop", lambda self: stopped.append(self.run_id) or real_stop(self))
     monkeypatch.setattr(service.policy, "slot_pool_env", broken)
-    with pytest.raises(service.SelfCheckError) as caught:
-        admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 2})
-    assert (caught.value.status, caught.value.code) == (500, "selfcheck_internal_error")
-    rows = store._fetch_all("SELECT * FROM tr_self_check_runs WHERE group_id = ?", [GROUPS[0]])
-    assert len(rows) == 1
-    run = rows[0]
+    monkeypatch.setattr(service.policy, "scrubbed_env", lambda path, runtime: {"PATH": path})
+    monkeypatch.setattr(service.executor, "spawn", lambda *a, **k: pytest.fail("nothing runs"))
+    row = admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 2})
+    claimed = admission.claim()
+    assert claimed["cpu_reservation"] == 2 and _sum() == (2, 0)
+    admission.queue.execute(claimed, "inst_a")
+    run = runs_db.get_run(row["self_check_run_id"])
     assert (run["status"], run["error_code"], run["active_key"]) == ("failed", "selfcheck_internal_error", None)
     assert run["cpu_reservation"] == 2 and _sum() == (0, 0)                  # the reservation is free again
-    assert stopped == [run["self_check_run_id"]]                             # keeper
-    assert admission.released == ["G:" + GROUPS[0]]                          # G
-    assert not admission.runtimes[-1].exists()                               # runtime folder
-    assert admission.started == []                                           # nothing ran
+    assert not [p for p in runtimes if p.name.startswith("flowgate-scr_") and p.exists()]  # runtime folder
+    assert not Path(run["snapshot_path"]).exists()                           # snapshot
     monkeypatch.setattr(service.policy, "slot_pool_env", real_pool)
-    again = admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 4})
-    assert again["cpu_reservation"] == 3                                     # the Group and the host take the next one
+    admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 4})
+    assert admission.claim()["cpu_reservation"] == 3                         # the Group and the host take the next one
 
 
 def test_7h_already_running_comes_first_and_stays_distinct_inside_the_transaction(store):
@@ -298,7 +296,8 @@ def test_a_share_is_part_of_the_request_contract(store, admission):
         service._validate_request({"program": "pytest", "share": 2})
     assert caught.value.code == "selfcheck_invalid_request"
     big = admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 9})
-    assert big["reservation"]["granted"] == 3 and big["cpu_share_requested"] == 9
+    assert big["cpu_share_requested"] == 9
+    assert admission.claim()["cpu_reservation"] == 3                         # lowered to what the cap leaves
 
 
 # ── 9.2-7 (b): the last reservation is taken once ────────────────────────────
@@ -445,20 +444,25 @@ def test_the_tool_schema_help_and_service_share_the_request_fields():
     assert schema["properties"]["parallel_share"] == {"type": "integer", "minimum": 1}
     assert tuple(help_catalog.SELF_CHECK_REQUEST_FIELDS) == tuple(schema["properties"])
     assert service.REQUEST_FIELDS == frozenset(help_catalog.SELF_CHECK_REQUEST_FIELDS)
-    assert "selfcheck_host_capacity_exhausted" in tools.DESCRIPTIONS["run_self_check"]
+    # 0053 1-B: no capacity refusal any more -- the description tells the request is queued.
+    assert "selfcheck_host_capacity_exhausted" not in tools.DESCRIPTIONS["run_self_check"]
+    assert "queued" in tools.DESCRIPTIONS["run_self_check"]
 
 
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])
-def test_help_explains_the_cap_the_share_and_the_retry(locale):
+def test_help_explains_the_cap_the_share_and_the_queue(locale):
     ctx = {"locale": locale, "action_scope": "new", "principal_kind": "worker", "token_rec": None}
     content = help_catalog._content_tr_self_check(ctx)
     parallel = content["parallel"]
     assert parallel["request_field"] == "parallel_share"
-    assert parallel["refusal_code"] == "selfcheck_host_capacity_exhausted"
-    assert set(parallel) >= {"reservation", "guarantee", "pytest", "serial_only", "refusal", "verification"}
-    assert "--dist loadfile" in parallel["pytest"] and "409" in parallel["refusal"]
+    # 0053 1-B: the 409 capacity refusal is gone; the help explains the queue instead.
+    assert "refusal_code" not in parallel and "refusal" not in parallel
+    assert set(parallel) >= {"reservation", "guarantee", "pytest", "serial_only", "queue"}
+    assert content["verification"].startswith("Self-check:")
+    assert "--dist loadfile" in parallel["pytest"] and "queued" in parallel["queue"]
     codes = {row["code"] for row in content["errors"]}
-    assert {"selfcheck_host_capacity_exhausted", "selfcheck_invalid_share", "selfcheck_cpu_limit_violation"} <= codes
+    assert {"selfcheck_invalid_share", "selfcheck_cpu_limit_violation"} <= codes
+    assert "selfcheck_host_capacity_exhausted" not in codes
     field = next(f for f in content["request"]["fields"] if f["name"] == "parallel_share")
     assert (field["type"], field["default"], field["required"]) == ("integer", 1, False)
 

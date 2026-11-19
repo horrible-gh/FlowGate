@@ -33,7 +33,7 @@ export default {
     plan: {
       run_ai: '작업 AI',
       // flowgate.v02.0083 WP-4 — the 검수 횟수 tooltip of a WP card: a person's WP is reviewed once per submission.
-      review_count_hint: '사람이 쓴 WP는 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작',
+      review_count_hint: '사람이 쓴 작업 계획은 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작',
     },
     instruction_ai: {
       label: '지시 AI',
@@ -50,6 +50,13 @@ export default {
       review_default: '기본 검수 AI',
       missing: '{name} (없는 AI)',
       minutes: '{n}분',
+      system_default: '시스템 기본값',
+      custom: '사용자 정의',
+    },
+    // flowgate.v02test.0053 0003-T: the tooltips of the two 검증 options (blank = the system settings' default).
+    verify: {
+      max_runs_hint: '카드별 검증 횟수 · 비우면 시스템 기본값 · 사용자 정의는 1 이상의 정수',
+      run_minutes_hint: '검증 1회 최대 시간(분) · 비우면 시스템 기본값 · 사용자 정의는 1~30분',
     },
     count: {
       until_pass: '통과할 때까지',
@@ -111,6 +118,7 @@ export default {
         invalid_text: '값이 너무 길거나 쓸 수 없는 글자가 있습니다',
         not_a_setting_of_this_card: '이 카드에는 없는 설정입니다',
         not_a_boolean: '켜기 / 끄기 값이 아닙니다',
+        out_of_range: '허용 범위를 벗어난 값입니다',
       },
       forbidden: '권한이 없습니다',
       not_found: '카드를 찾을 수 없습니다',
@@ -128,7 +136,7 @@ export default {
   en: {
     after_review_exhausted: {
       label: 'When reviews run out', continue: 'Approve and continue', stop: 'Stop without passing',
-      continue_hint: 'Approve the final rework and continue. The exhausted review remains on record.',
+      continue_hint: 'Approve the last rework and continue; the review is kept.',
       stop_hint: 'Mark as not passed and stop this card. Following cards wait.',
       instruction_hint: 'The same setting applies when instruction reviews run out.',
       approved: 'Approved after reviews ran out',
@@ -149,7 +157,7 @@ export default {
     },
     plan: {
       run_ai: 'Work AI',
-      review_count_hint: "A person's WP: one review per submission · any count and until it passes work the same",
+      review_count_hint: "A person's work plan is reviewed once per submission",
     },
     instruction_ai: {
       label: 'Instruction AI',
@@ -166,6 +174,12 @@ export default {
       review_default: 'Default review AI',
       missing: '{name} (AI gone)',
       minutes: '{n} min',
+      system_default: 'System default',
+      custom: 'Custom',
+    },
+    verify: {
+      max_runs_hint: 'Verifications · blank: system default · custom: 1 or more',
+      run_minutes_hint: 'Minutes per run · blank: system default · custom 1 to 30',
     },
     count: {
       until_pass: 'Until it passes',
@@ -179,7 +193,7 @@ export default {
       writing: "The scenario is being written",
       forbidden: "Permission denied",
       read_only_conflict: 'Ownership conflict · read only',
-      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
+      read_only_archived: 'Read only. Check the archive or restore the Flow to edit.',
       read_only_revision: 'Confirmed revision view · read only',
       disposed: 'Disposed group',
       ai_running: 'AI running',
@@ -225,6 +239,7 @@ export default {
         invalid_text: 'The value is too long or has characters that cannot be used',
         not_a_setting_of_this_card: 'This card has no such setting',
         not_a_boolean: 'Not an on / off value',
+        out_of_range: 'Outside the allowed range',
       },
       forbidden: 'No permission',
       not_found: 'The card was not found',
@@ -263,7 +278,7 @@ export default {
     },
     plan: {
       run_ai: '作業AI',
-      review_count_hint: '人が書いた WP は提出ごとにレビュー1回 · 1回以上と合格するまでは同じ動作',
+      review_count_hint: '人が書いた作業計画は提出ごとにレビュー1回 · 1回以上と合格するまでは同じ動作',
     },
     instruction_ai: {
       label: '指示AI',
@@ -280,6 +295,12 @@ export default {
       review_default: '既定のレビュー AI',
       missing: '{name}(ない AI)',
       minutes: '{n}分',
+      system_default: 'システム既定値',
+      custom: 'ユーザー定義',
+    },
+    verify: {
+      max_runs_hint: 'カードごとの検証回数 · 空欄はシステム既定値 · ユーザー定義は 1 以上の整数',
+      run_minutes_hint: '検証 1 回の最大時間(分) · 空欄はシステム既定値 · ユーザー定義は 1~30 分',
     },
     count: {
       until_pass: '合格するまで',
@@ -339,6 +360,7 @@ export default {
         invalid_text: '値が長すぎるか使えない文字があります',
         not_a_setting_of_this_card: 'このカードにはない設定です',
         not_a_boolean: 'オン / オフの値ではありません',
+        out_of_range: '許容範囲外の値です',
       },
       forbidden: '権限がありません',
       not_found: 'カードが見つかりません',

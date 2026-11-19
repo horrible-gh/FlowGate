@@ -48,6 +48,8 @@ export type CardSettingsField =
   | 'review_ai'
   | 'review_count'
   | 'time_limit'
+  | 'verify_max_runs'
+  | 'verify_run_minutes'
   | 'review_basis'
   | 'after_review_exhausted'
   | 'pre_instruction_auto'
@@ -56,7 +58,7 @@ export type CardSettingsField =
 
 /** The fields of each kind, in v7 order. */
 export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test' | 'plan', readonly CardSettingsField[]>> = {
-  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
+  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'],
   test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'],
   plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
 }
@@ -68,6 +70,50 @@ export function cardSettingsSwitchOn(value: unknown): boolean {
 
 /** Fields whose value is a number (sent as one). */
 const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'restart', 'review_count', 'time_limit']
+
+/**
+ * flowgate.v02test.0053 0003-T (1-A): the two 검증 options of a work card. Both are blank (null = the system default) until
+ * a person picks a value; the server's `choices` are the combo's presets and any whole number inside the range below
+ * is a value too (the combo's 사용자 정의, the number box beside it).
+ */
+export type CardSettingsVerifyField = 'verify_max_runs' | 'verify_run_minutes'
+export const VERIFY_FIELDS: readonly CardSettingsVerifyField[] = ['verify_max_runs', 'verify_run_minutes']
+/** The value of the combo's 사용자 정의 entry: it opens the number box, it is never sent. */
+export const VERIFY_CUSTOM = '__custom'
+/** The accepted whole numbers of each option (the server's range; `null` = no upper bound): count 1 or more, minutes 1..30 (1800 seconds at most). */
+export const VERIFY_RANGE: Readonly<Record<CardSettingsVerifyField, readonly [number, number | null]>> = {
+  verify_max_runs: [1, null],
+  verify_run_minutes: [1, 30],
+}
+
+export function cardSettingsIsVerifyField(field: string): field is CardSettingsVerifyField {
+  return (VERIFY_FIELDS as readonly string[]).includes(field)
+}
+
+/** The number a custom entry stands for: a whole number inside the option's range, else undefined (nothing is sent). */
+export function cardSettingsVerifyCustomValue(field: CardSettingsVerifyField, text: string): number | undefined {
+  const trimmed = text.trim()
+  if (!/^[0-9]+$/.test(trimmed)) return undefined
+  const number = Number(trimmed)
+  const [low, high] = VERIFY_RANGE[field]
+  return Number.isSafeInteger(number) && number >= low && (high === null || number <= high) ? number : undefined
+}
+
+/**
+ * The combo of a 검증 option: 시스템 기본값 (blank, null), the presets, the stored value when it is none of them (so
+ * the shown value stays the stored one), then 사용자 정의. A preset or stored value is told as `{n}회` / `{n}분`.
+ */
+export function cardSettingsVerifyOptions(field: CardSettingsVerifyField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
+  const key = field === 'verify_max_runs' ? 'count.times' : 'option.minutes'
+  const presets = integers(choices)
+  const shown = typeof current === 'number' && Number.isInteger(current) && !presets.includes(current) ? [...presets, current].sort((a, b) => a - b) : presets
+  return [
+    { value: '', key: 'option.system_default', params: {}, label: null },
+    ...shown.map((n) => ({ value: String(n), key, params: { n }, label: null })),
+    { value: VERIFY_CUSTOM, key: 'option.custom', params: {}, label: null },
+  ]
+}
+
 /** Fields whose value is an AI id; none is null (sent as null, the default). */
 const AI_FIELDS: readonly CardSettingsField[] = ['instruction_ai', 'run_ai', 'review_ai']
 
@@ -107,6 +153,10 @@ export function cardSettingsText(value: unknown): string {
 /** The value a select / segment choice stands for, as the server takes it (undefined: not a value). */
 export function cardSettingsValueOf(field: CardSettingsField, text: string): unknown {
   if (AI_FIELDS.includes(field)) return text === '' ? null : text
+  if (cardSettingsIsVerifyField(field)) {
+    if (text === '') return null                      // blank: the system default again
+    return text === VERIFY_CUSTOM ? undefined : cardSettingsVerifyCustomValue(field, text)
+  }
   if (NUMBER_FIELDS.includes(field)) {
     const number = Number(text)
     return text !== '' && Number.isInteger(number) ? number : undefined
@@ -158,6 +208,8 @@ export function cardSettingsChoiceOptions(field: CardSettingsField, choices: rea
   let options: SettingsOption[]
   if (field === 'restart' || field === 'review_count' || field === 'instruction_review_count') {
     options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field === 'instruction_review_count' ? 'review_count' : field, count), params: { n: count }, label: null }))
+  } else if (cardSettingsIsVerifyField(field)) {
+    options = cardSettingsVerifyOptions(field, choices, current)
   } else if (field === 'time_limit') {
     options = integers(choices).map((minutes) => ({ value: String(minutes), key: 'option.minutes', params: { n: minutes }, label: null }))
   } else {
@@ -205,7 +257,7 @@ export function cardSettingsReviewOff(reviewCount: unknown): boolean {
 export type CardSettingsFailureKind = 'roles_unavailable' | 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 /** 422 reasons a refused value has its own sentence for (O2 0007-TR §4-1). */
-export const CARD_SETTINGS_INVALID_REASONS: readonly string[] = ['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card', 'not_a_boolean']
+export const CARD_SETTINGS_INVALID_REASONS: readonly string[] = ['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card', 'not_a_boolean', 'out_of_range']
 
 /**
  * Message key of a refused change (the tooltip of the field's ! icon). flowgate.v02.0056 F2-1: a refused value

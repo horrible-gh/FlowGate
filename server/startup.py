@@ -143,6 +143,10 @@ def recover_git_sessions():
     Self-check protection lives on the Group's G row (0669 unit 4). A run whose
     protection could not be written there stays recovery_incomplete, which keeps the
     Group's G closed on its own (0669 unit 9c removed the old project lock row).
+
+    0053 1-B: queue runs hold no G. Recovery ends (or re-queues) the runs a dead process
+    left executing; then the Self-check queue workers start and take the requests that
+    stayed queued across the restart.
     """
     try:
         from modules.flow_gate.services import git_service, tr_self_check_service
@@ -151,6 +155,13 @@ def recover_git_sessions():
         git_service.startup_recovery()
     except Exception as exc:
         logger.warning(f"[startup] git session recovery failed: {exc}")
+    try:
+        from modules.flow_gate.services import tr_self_check_queue
+
+        if tr_self_check_queue.autostart_enabled():
+            tr_self_check_queue.start()
+    except Exception as exc:
+        logger.warning(f"[startup] self-check queue start failed: {exc}")
 
 
 def start_attachment_requests():

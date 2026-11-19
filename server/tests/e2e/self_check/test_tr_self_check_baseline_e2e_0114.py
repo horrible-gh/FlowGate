@@ -3,7 +3,8 @@
 
 One work unit, through the real pieces: ``token_service.issue`` records the pre-change anchor
 of a throwaway git repository standing in for the managed group worktree; real Self-check
-runs (policy, Group lock, git probe, worker, child process) execute a small pytest tree that
+runs (policy, git probe, 0053 1-B: the queue -- snapshot, queue worker -- and the child process
+in the snapshot) execute a small pytest tree that
 carries the real result block plugin; ``_finish`` stores the summary; the read path judges a
 named baseline. Then the change is committed, the TR registers (``token_service.consume``) and
 a rework token is issued -- the first baseline keeps serving every final run.
@@ -22,6 +23,7 @@ import pytest
 from modules.flow_gate.db import connection
 from modules.flow_gate.db import tr_self_check_anchors as db_anchors
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import tr_self_check_queue as queue
 from modules.flow_gate.services import tr_self_check_result as result_block
 from modules.flow_gate.services import tr_self_check_service as service
 
@@ -103,10 +105,15 @@ def flow(migrated_sqlite_db, monkeypatch, tmp_path):
     monkeypatch.setattr(token_service, "to_storage_relative", lambda path, project: str(path))
     monkeypatch.setattr(token_service.token_scratch, "create", lambda project, token_id, path: None)
     monkeypatch.setattr(token_service.token_scratch, "sweep_on_issue", lambda project: None)
+    # 0053 1-B: requests are queued; this server's queue worker starts them from their snapshot.
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+    monkeypatch.setattr(service.policy, "host_capacity", lambda host=None: (1, 0))
+    queue.start(1)
     try:
         yield {"store": store, "repo": repo}
     finally:
         _drain(store)
+        queue.shutdown()
         try:
             store._db.close()
         except Exception:
@@ -115,7 +122,7 @@ def flow(migrated_sqlite_db, monkeypatch, tmp_path):
 
 def _drain(store):
     rows = store._fetch_all("SELECT self_check_run_id FROM tr_self_check_runs WHERE project_id = ?"
-                            " AND status IN ('pending', 'running')", [P]) or []
+                            " AND status IN ('queued', 'pending', 'running')", [P]) or []
     for row in rows:
         try:
             service._cancel(row["self_check_run_id"], lambda rid=row["self_check_run_id"]: service.db_runs.get_run(rid))

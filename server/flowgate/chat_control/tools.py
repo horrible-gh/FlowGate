@@ -53,7 +53,7 @@ PLACE_DESCRIPTION = (
     "or a disabled AI is 422 ai_not_selectable and nothing is placed. The answer names each new card's node_key, "
     "instruction line and roles (source chat / default / unset; `defaults_used` lists the roles you left to the "
     "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run. "
-    "Each card may also carry `settings` ({review_count, restart, time_limit}; a TS card only review_count): choose "
+    "Each card may also carry `settings` ({review_count, restart, time_limit, verify_max_runs, verify_run_minutes}; a TS card only review_count): choose "
     "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed."
 )
 TOPOLOGY_GUIDE = """Explicit fork/join: supply links [{source, target}]. References are card:0..card:4 (cards list order),
@@ -101,6 +101,10 @@ _SETTINGS_OBJECT = {
         "review_count": {**_SETTING_INT, "description": "AI reviews of the result: 0 none, -1 until it passes, 1..max."},
         "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (T only)."},
         "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (T only)."},
+        "verify_max_runs": {**_SETTING_INT, "description": "Verifications the card may use: a whole number of 1 or more "
+                                                           "(presets 3, 5, 10); null = the system default (T only)."},
+        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 3, 5, "
+                                                              "10, 20, 30); null = the system default (T only)."},
     },
     "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
 }
@@ -145,7 +149,7 @@ SET_ROLES_DESCRIPTION = (
     "roles: {role: {kind: assigned, provider_id: <an id from get_card_roles options>} or {kind: not_used}}; "
     "from_group: an AI group id (get_ai_options role_groups) whose role profile fills the roles — only when the user "
     "names that group (roles sent with it win); "
-    "settings: {review_count, restart, time_limit} (a value from its get_card_roles `choices`, null = default; a TS "
+    "settings: {review_count, restart, time_limit, verify_max_runs, verify_run_minutes} (a value from its get_card_roles `choices`, null = default; verify_* also take any whole number in their range; a TS "
     "card has only review_count) — roles, settings or both; "
     "expected_settings_version (and expected_context) from get_card_roles. All or nothing. Refusals: 403 "
     "chat_edit_mode_required / chat_card_not_owned, 422 role_not_applicable / ai_not_selectable (another user's or a "
@@ -305,7 +309,8 @@ def cli_mention(api_base, raw_token):
         "`roles` per card is yours to choose (omitted roles take the defaults; `defaults_used` in the answer lists",
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
-        "T only). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
+        "T only), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; both T only, null = the",
+        "system default). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
         "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
@@ -328,7 +333,7 @@ def cli_mention(api_base, raw_token):
         "The instruction / execution / review AI of a work card this chat placed (any mode): each role's state and",
         "selection, settings_version and context (send them back with a change), locked, and `options` (the AIs",
         "you may pick: id, name, kind). Other cards: 403 chat_card_not_owned (lists the node_keys this chat placed).",
-        "`settings`: the card's review_count / restart / time_limit, each with value, default and choices.",
+        "`settings`: the card's review_count / restart / time_limit / verify_max_runs / verify_run_minutes, each with value, default and choices.",
         "",
         f"PATCH {base}/api/v2/chat/flows/{{flow_id}}/nodes/{{node_key}}/roles",
         f"Authorization: Bearer {raw_token}",
@@ -341,7 +346,7 @@ def cli_mention(api_base, raw_token):
         '{"from_group": "<role_groups ai_group_id>", "expected_settings_version": <from GET>} applies that AI',
         "group's role profile to the card: only when the user names the group (roles sent with it win).",
         '{"settings": {"review_count": 2}, "expected_settings_version": <from GET>} changes the run settings',
-        "(review_count, restart, time_limit; a value from its `choices`, null = default; with or without roles, one",
+        "(review_count, restart, time_limit, verify_max_runs, verify_run_minutes; a value from its `choices`, null = default; with or without roles, one",
         "save). 422 setting_not_applicable (a TS card has only review_count) / not_a_choice.",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",

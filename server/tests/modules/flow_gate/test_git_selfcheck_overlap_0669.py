@@ -2,8 +2,9 @@
 
 Real code, real SQLite store, real threads and real child processes:
 
-* ``tr_self_check_service.start`` spawns a real (slow) python child for a Group and keeps that
-  Group's G (holder_kind=selfcheck) for the whole run.
+* ``tr_self_check_service.start`` queues a request for a Group; the queue workers run a real
+  (slow) python child in a snapshot of the Group's worktree. 0053 1-B: the run holds no G, so
+  neither another Group's nor its own Group's Git work waits for it.
 * ``finalize_publish.request`` and ``approval_publish.start`` / the Runner (``job_runner``)
   are the real job paths, with the real ``job_store``, ``lock_manager`` and ``operation_job``.
 
@@ -29,6 +30,7 @@ if str(_SERVER_DIR) not in sys.path:
 
 from modules.flow_gate.db import connection  # noqa: E402
 from modules.flow_gate.db import git_concurrency as gc  # noqa: E402
+from modules.flow_gate.services import tr_self_check_queue as queue  # noqa: E402
 from modules.flow_gate.services import tr_self_check_service as sc  # noqa: E402
 from modules.flow_gate.services.git import approval_freeze as af  # noqa: E402
 from modules.flow_gate.services.git import approval_publish as ap  # noqa: E402
@@ -113,6 +115,9 @@ def env(db_path, tmp_path, monkeypatch):
         5.0 if mode == "selfcheck_start" else budget["interactive"]))
     monkeypatch.setattr(gc, "_current_instance_id", None)
     reg.register()
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+    monkeypatch.setattr(sc.policy, "host_capacity", lambda host=None: (3, 0))
+    queue.start(3)
 
     # job-layer stubs (Git bodies and unrelated services only)
     from modules.flow_gate.services import git_service as gs
@@ -167,8 +172,11 @@ def env(db_path, tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_service, "commit_final_approval", fake_commit)
     monkeypatch.setattr(ap.approval_intent, "find_clean_retry", lambda g: (None, None))
     ap.install()
-    yield SimpleNamespace(store=s, roots=roots, budget=budget, held=held_log, snapshot=snapshot)
-    gc.set_current_instance_id(None)
+    try:
+        yield SimpleNamespace(store=s, roots=roots, budget=budget, held=held_log, snapshot=snapshot)
+    finally:
+        queue.shutdown()
+        gc.set_current_instance_id(None)
 
 
 def _doc(g):
@@ -179,6 +187,15 @@ def _start_check(g):
     t0 = time.monotonic()
     run = sc.start(_doc(g), {"program": "python", "args": ["slow.py"], "timeout_seconds": 30})
     return run, time.monotonic() - t0
+
+
+def _wait_running(g, run_id, limit=30):
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        if sc.read(_doc(g), run_id)["status"] == "running":
+            return
+        time.sleep(0.02)
+    raise AssertionError("self-check did not start")
 
 
 def _wait_check(g, run_id, limit=30):
@@ -206,49 +223,44 @@ def _approval(g):
 
 # ── 1. a running Self-check and another Group's work ─────────────────────────
 
-def test_selfcheck_does_not_block_other_groups_but_blocks_its_own(env):
+def test_a_running_selfcheck_blocks_no_group_not_even_its_own(env):
     run_a, took_a = _start_check("g_a")
     run_b, took_b = _start_check("g_b")
-    obs(f"selfcheck start g_a={took_a:.2f}s g_b={took_b:.2f}s (both admitted while the other runs)")
-    assert _g_rows("g_a")[0][0] == "selfcheck" and _g_rows("g_b")[0][0] == "selfcheck"
-    obs(f"selfcheck holders while running: g_a={_g_rows('g_a')[0]} g_b={_g_rows('g_b')[0]}")
+    assert (run_a["status"], run_b["status"]) == ("queued", "queued")
+    obs(f"selfcheck queued g_a={took_a:.2f}s g_b={took_b:.2f}s")
+    _wait_running("g_a", run_a["self_check_run_id"])
+    _wait_running("g_b", run_b["self_check_run_id"])
+    assert _g_rows("g_a") == [] and _g_rows("g_b") == []
+    obs("selfcheck holders while running: none (0053 1-B: runs hold no G)")
 
-    t0 = time.monotonic()
-    ctx = lm.new_context()
-    other = lm.acquire("G", P, group_id="g_c", holder_kind="source_mutation", ctx=ctx, mode=lm.NO_WAIT)
-    waited = time.monotonic() - t0
-    assert other.ok
-    lm.release(ctx, other.lock_key)
-    obs(f"g_c source_mutation while selfcheck g_a+g_b run: {other.kind} in {waited:.3f}s")
+    for group in ("g_c", "g_a"):                      # another Group, and the running one's own
+        t0 = time.monotonic()
+        ctx = lm.new_context()
+        got = lm.acquire("G", P, group_id=group, holder_kind="source_mutation", ctx=ctx, mode=lm.NO_WAIT)
+        waited = time.monotonic() - t0
+        assert got.ok, got
+        lm.release(ctx, got.lock_key)
+        obs(f"{group} source_mutation while selfcheck g_a+g_b run: {got.kind} in {waited:.3f}s")
 
-    ctx2 = lm.new_context()
-    same = lm.acquire("G", P, group_id="g_a", holder_kind="source_mutation", ctx=ctx2, mode=lm.NO_WAIT)
-    assert same.kind == lm.BUSY and same.blocker["holder_kind"] == "selfcheck"
-    obs(f"g_a source_mutation during its own selfcheck: busy, blocker holder_kind={same.blocker['holder_kind']}")
-
-    with pytest.raises(sc.SelfCheckError) as dup:
-        _start_check("g_a")
-    obs(f"second selfcheck on g_a: {dup.value.code}")
+    second, _ = _start_check("g_a")                   # the same Group queues another run
+    assert second["status"] in ("queued", "pending", "running")
+    obs(f"second selfcheck on g_a: {second['status']}")
 
     row_a = _wait_check("g_a", run_a["self_check_run_id"])
     row_b = _wait_check("g_b", run_b["self_check_run_id"])
-    for g, row in (("g_a", row_a), ("g_b", row_b)):
+    row_2 = _wait_check("g_a", second["self_check_run_id"])
+    for g, row in (("g_a", row_a), ("g_b", row_b), ("g_a", row_2)):
         assert row["status"] == "completed" and row["exit_code"] == 0
         assert not row["source_changed_during_run"]
-        obs(f"selfcheck {g}: status={row['status']} exit={row['exit_code']} "
-            f"source_changed={bool(row['source_changed_during_run'])} stdout={row['stdout_tail'].strip()!r}")
+        obs(f"selfcheck {g}: status={row['status']} exit={row['exit_code']} stdout={row['stdout_tail'].strip()!r}")
     assert gc.list_locks_in_scope(P) == []
-    ctx3 = lm.new_context()
-    again = lm.acquire("G", P, group_id="g_a", holder_kind="source_mutation", ctx=ctx3, mode=lm.NO_WAIT)
-    assert again.ok
-    lm.release(ctx3, again.lock_key)
-    obs("after completion: no locks left, g_a source_mutation acquirable")
 
 
 # ── 2. real finalize job while a Self-check runs ─────────────────────────────
 
 def test_finalize_job_of_another_group_runs_during_selfcheck(env):
     run_a, _ = _start_check("g_a")
+    _wait_running("g_a", run_a["self_check_run_id"])
     t0 = time.monotonic()
     out = fp.request(P, "g_b", "merge", None, None)
     took = time.monotonic() - t0
@@ -261,41 +273,33 @@ def test_finalize_job_of_another_group_runs_during_selfcheck(env):
     _wait_check("g_a", run_a["self_check_run_id"])
 
 
-def test_finalize_job_on_selfcheck_group_waits_then_runs(env):
-    env.budget["interactive"] = 6.0       # longer than the self-check child, so the wait path is what runs
+def test_finalize_job_on_the_selfcheck_group_runs_without_waiting(env):
+    """0053 1-B: the running Self-check holds no G, so its own Group's finalize does not wait
+    for it (it waited out the run before) and the run still ends with its result."""
     run_a, _ = _start_check("g_a")
-    holder = _g_rows("g_a")[0]
+    _wait_running("g_a", run_a["self_check_run_id"])
     t0 = time.monotonic()
-    out = fp.request(P, "g_a", "merge", None, None)       # interactive wait (budget 6s > selfcheck left)
+    out = fp.request(P, "g_a", "merge", None, None)
     took = time.monotonic() - t0
     assert out["result"]["status"] == "merged"
-    obs(f"finalize g_a on the selfcheck Group: waited {took:.2f}s for holder={holder[0]} then succeeded; "
+    obs(f"finalize g_a on the selfcheck Group: no wait, succeeded in {took:.2f}s; "
         f"locks held by the job = {env.held[-1][1]}")
-    assert took >= SLEEP - 1.0
+    assert took < SLEEP
     row = _wait_check("g_a", run_a["self_check_run_id"])
     assert row["status"] == "completed" and row["exit_code"] == 0
 
 
-def test_finalize_job_queues_when_budget_is_short_then_runner_finishes_it(env):
+def test_finalize_job_on_the_selfcheck_group_needs_no_wait_budget(env):
+    """With a wait budget far shorter than the run (0.2s) the finalize used to be queued behind
+    the Self-check's G (409 git_busy, blocker G). Now nothing blocks it."""
     env.budget["interactive"] = 0.2
     run_a, _ = _start_check("g_a")
-    t0 = time.monotonic()
-    with pytest.raises(GitServiceError) as busy:
-        fp.request(P, "g_a", "merge", None, None)
-    took = time.monotonic() - t0
-    d = busy.value.details
-    assert busy.value.status == 409 and d["queued"] and d["blocker"]["domain"] == "G"
-    obs(f"finalize g_a (budget 0.2s): 409 {busy.value.code} after {took:.2f}s, queued job={d['job_id']} "
-        f"blocker={d['blocker']}")
+    _wait_running("g_a", run_a["self_check_run_id"])
+    out = fp.request(P, "g_a", "merge", None, None)
+    assert out["ok"] and out["result"]["status"] == "merged"
+    assert jobs.get_job(out["result"]["job_id"])["status"] == "succeeded"
+    obs(f"finalize g_a (budget 0.2s) during its selfcheck: merged; locks held = {env.held[-1][1]}")
     _wait_check("g_a", run_a["self_check_run_id"])
-    t1 = time.monotonic()
-    cr = runner.try_claim(d["job_id"])
-    assert cr is not None
-    runner.execute(cr)
-    job = jobs.get_job(d["job_id"])
-    assert job["status"] == "succeeded"
-    obs(f"runner then ran the queued finalize: status={job['status']} in {time.monotonic() - t1:.2f}s; "
-        f"locks held = {env.held[-1][1]}")
     assert gc.list_locks_in_scope(P) == []
 
 

@@ -375,6 +375,30 @@ class _DefinitionCollector:
     def in_tree(self, path: Path) -> bool:
         return any(root == path or root in path.parents for root in self.roots)
 
+    def portable(self, value):
+        """flowgate.v02test.0053 1-B: a queued Self-check runs in a snapshot folder that differs per
+        run, so a test-tree path enters a definition relative to its tree root (``<tree0>/...``),
+        never as an absolute path. Paths outside the tree are kept as they are."""
+        if isinstance(value, str):
+            return self._portable_path(value)
+        if isinstance(value, (list, tuple)):
+            return [self.portable(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self.portable(item) for key, item in value.items()}
+        return value
+
+    def _portable_path(self, text: str) -> str:
+        if len(text) < 2 or not os.path.isabs(text):
+            return text
+        try:
+            path = Path(text)
+        except (TypeError, ValueError):
+            return text
+        for index, root in enumerate(self.roots):
+            if path == root or root in path.parents:
+                return f"<tree{index}>/" + path.relative_to(root).as_posix()
+        return text
+
     def is_installed(self, path: Path) -> bool:
         return not self.in_tree(path) and any(base == path or base in path.parents for base in self.installed)
 
@@ -477,8 +501,8 @@ class _DefinitionCollector:
                 except OSError:
                     continue
                 named.update(f for f in self.data_files if f.name in text)
-            self._unattributed = _sha(_canonical([(str(f), self.file_hash(f)) for f in self.data_files
-                                                  if f not in named]))
+            self._unattributed = _sha(_canonical(self.portable([(str(f), self.file_hash(f))
+                                                                for f in self.data_files if f not in named])))
         return self._unattributed
 
     def test_module(self, path: Path) -> _TestModule:
@@ -512,7 +536,7 @@ class _DefinitionCollector:
                 parts[key].append([str(path), self.file_hash(path), closure])
                 sources += [path] + [Path(p) for p, _h in closure]
         parts["data"] = self.data_named(sorted(set(sources)))
-        return _sha(_canonical(parts))
+        return _sha(_canonical(self.portable(parts)))
 
     # item level ------------------------------------------------------------
     def _fixture_part(self, fixturedef, module: Path) -> list:
@@ -585,7 +609,7 @@ class _DefinitionCollector:
                      "markers": markers, "skeleton": test.skeleton, "imports": closure,
                      "fixtures": fixtures, "data": self.data_for(module),
                      "unattributed_data": self.unattributed_data()}
-            return _sha(_canonical(parts))
+            return _sha(_canonical(self.portable(parts)))
         except (_Untraceable, OSError, SyntaxError, ValueError, UnicodeDecodeError):
             return UNTRACEABLE
 
