@@ -68,6 +68,9 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         // flowgate.v02gui.0004 — the §B re-approval block and the direct resolver's chunk split.
         'GitReapproveBlock.vue',
         'conflictChunks.ts',
+        // flowgate.v02test.0052 0008 — the shared [병합 중단] / [강제 정리] confirm and the administrator's "정리 실패" list.
+        'GitAbortFailures.vue',
+        'abortMerge.ts',
         'api.ts',
         'gitCenterDiff.ts',
         'gitPanel.css',
@@ -114,6 +117,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       /^\.\.\/designer\/inspector\/useInspectorResource$/,
       // flowgate.v02.0066 T#6 — the Center Diff reuses the Conversation's pure line diff.
       /^@\/features\/conversation$/,
+      // flowgate.v02test.0052 0008 — who the person is (administrator or not), for the forced cleanup only they may see.
+      /^@\/core\/auth\/currentUser$/,
       /^@shared\/api$/,
       /^@shared\/gitErrors$/,
       /^@shared\/utils\/uuid$/,

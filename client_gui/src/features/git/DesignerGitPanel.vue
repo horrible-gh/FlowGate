@@ -18,6 +18,7 @@
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
     <GitExceptionList v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
+    <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
@@ -79,9 +80,11 @@
 // review / uncommitted Base file) still raise `open-diff`, as before.
 import { computed, onBeforeUnmount, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import './gitPanel.css'
 import type { FlowRef } from '@/features/project'
+import GitAbortFailures from './GitAbortFailures.vue'
 import GitConflictWindow from './GitConflictWindow.vue'
 import GitConnectWindow from './GitConnectWindow.vue'
 import GitExceptionList from './GitExceptionList.vue'
@@ -121,8 +124,13 @@ const props = withDefaults(
     active?: boolean
     readOnly?: boolean
     source?: GitSource
+    /**
+     * flowgate.v02test.0052: a system administrator — the forced cleanup of a merge git refuses to abort is theirs only.
+     * Absent = the signed-in person's own flag (`core/auth/currentUser`, from /auth/me); the server checks it again.
+     */
+    isAdmin?: boolean
   }>(),
-  { active: true, readOnly: false, source: undefined },
+  { active: true, readOnly: false, source: undefined, isAdmin: undefined },
 )
 
 const emit = defineEmits<{
@@ -133,6 +141,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { user: currentUser } = useCurrentUser()
 const session = createGitSession({ source: props.source })
 const gateOperations = useGateOperations(() => props.projectId, () => props.flow?.groupId ?? null, () => props.readOnly)
 provide(GATE_OPERATIONS_CONTEXT, gateOperations)
@@ -305,6 +314,7 @@ function refreshAll(): Promise<void> {
 
 provide(GIT_PANEL_CONTEXT, {
   session,
+  isAdmin: () => props.isAdmin ?? currentUser.value?.isAdmin === true,
   openDiff,
   openSettings,
   confirm: (request) => askConfirm(request, null),

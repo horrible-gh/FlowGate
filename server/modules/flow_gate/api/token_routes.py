@@ -1201,6 +1201,9 @@ def _build_review_conversation_mention(
 _SUPERSEDE_MENTION_SECTION = (
     # 0604 D0005 §3.4 — the one case where the correct result equals one side verbatim.
     # Worded as a narrow exception with server-side evidence, never as a shortcut.
+    "For a target-side move, use companion_candidates from the conflict payload. On the original "
+    "file send companion_files: [{path, content}] with the moved file in full, preserving the "
+    "incoming chunk there, and supersede side=ours with a reason. Unrelated paths are rejected.\n\n"
     "## Superset declaration (`supersede`)\n"
     "---\n"
     "A chunk resolved to exactly one side's text, where BOTH sides changed it, is rejected "
@@ -1286,6 +1289,8 @@ def _build_conflict_mention(
         "chunk_text": "inline" if inline else "omitted",
         "files": chunks_payload,
     }
+    if conflicts.get("companion_candidates"):
+        payload["companion_candidates"] = conflicts["companion_candidates"]
     if resolved_files:
         payload["resolved_files"] = resolved_files
     write_plan_section = (

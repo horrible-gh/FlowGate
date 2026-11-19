@@ -27,7 +27,7 @@
 // that the server did not do.
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { frozenShaOf, useGitGateOperations } from './gateOperations'
+import { abortAndCancelApproval, frozenShaOf, useGitGateOperations } from './gateOperations'
 import { useGitPanel } from './gitSession'
 import { GIT_WORKTREE_CONTEXT } from './gitWorktreeSession'
 
@@ -54,22 +54,17 @@ const lockedText = computed(() => (session.state.readOnly || gateJobs?.readOnly(
 function ask(): void {
   const current = operation.value
   if (!current || locked.value) return
-  const decisionId = current.gate.recovery!.decision_id
   ctx.confirm({
     title: t('gui.git.reapprove.confirm_title'),
     message: t('gui.git.reapprove.confirm_message'),
     confirmLabel: t('gui.git.reapprove.action'),
-    run: () => void run(decisionId),
+    run: () => void run(),
   })
 }
 
-async function run(decisionId: string): Promise<void> {
-  if (!gateJobs) return
-  // ① close the conflict review; a refusal is the card's own notice.
-  if (!(await session.abortForReapproval())) return
-  // ② cancel the parked decision only when the server now allows it.
-  const code = await gateJobs.cancelAfterAbort(decisionId)
-  gateJobs.reapproval.value = { decisionId, code }
-  await session.refresh()
+async function run(): Promise<void> {
+  // ① close the conflict review (a refusal is the card's own notice) → ② cancel the parked decision only when the server
+  // now allows it → the guidance. The same flow as [병합 중단] (flowgate.v02test.0052 0008).
+  await abortAndCancelApproval(session, gateJobs, operation.value)
 }
 </script>

@@ -23,6 +23,7 @@ from modules.flow_gate.db.git_integration import (
     session_project_id as _session_project_id,
 )
 
+from . import conflict_companions
 from . import approval_intent
 from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
@@ -33,6 +34,9 @@ _log = logging.getLogger(__name__)
 
 TR_CONFLICT_REVIEW_OPEN = "open"
 TR_CONFLICT_REVIEW_RESOLVED = "resolved"
+# flowgate.v02test.0052 T0003: ``context.abort_failure.trigger`` of a failed Graph
+# attempt merge give-up (person, sweep or Stop).
+GRAPH_ATTEMPT_ABORT_TRIGGER = "graph_attempt_abort"
 
 _CONFLICT_SEP_RE = re.compile(r"^={7}$")
 _CONFLICT_BASE_RE = re.compile(r"^\|{7}( |$)")
@@ -45,7 +49,9 @@ _SUPERSEDE_CHANGED_LINE_MIN_RATIO = 0.6
 _SUPERSEDE_HINT = (
     "Use a per-file `supersede` declaration ({\"side\": \"ours|theirs\", \"reason\": \"...\"}) "
     "ONLY when the side you kept already contains the other side's changes; otherwise merge "
-    "both sides' changes into the chunk."
+    "both sides' changes into the chunk. For verified target-side moves, submit per-file "
+    "companion_files: [{path, content}] using companion_candidates from the conflict query; "
+    "preserve the incoming chunk in that file and declare supersede side=ours."
 )
 
 
@@ -570,12 +576,28 @@ def _abort_graph_attempt_merge(
     try:
         context = _graph_merge_owned(group_id, merge_id, root)
         if _gs._rev_parse(root, "MERGE_HEAD") is not None:
-            proc = _gs._run_git(["merge", "--abort"], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session
+            # (``ref_operations[].stderr_tail``) and, on failure, marked "정리 실패"
+            # (``context.abort_failure``, trigger ``graph_attempt_abort``) — a person's
+            # abort, the sweep's and a Stop's all come through here.
+            proc = _gs._abort_merge(
+                root, merge_id=merge_id, context=context, reason="graph_attempt_abort",
+                timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
             if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", "Merge abort failed",
-                                      diagnostic=_gs._last_line(proc.stderr))
+                _gs._record_abort_failure(merge_id, GRAPH_ATTEMPT_ABORT_TRIGGER, proc)
+                # The admin force cleanup covers finalize merge sessions only.
+                raise _abort_failed_error(proc, merge_id, recovery=None)
         if _gs._rev_parse(root, "MERGE_HEAD") is not None or _gs._unmerged_paths(root):
-            raise GitServiceError(500, "git_error", "the merge state remains after the abort")
+            remains = subprocess.CompletedProcess(
+                ["git", "merge", "--abort"], 0, "",
+                "error: the merge state remains after the abort",
+            )
+            _gs._record_abort_failure(merge_id, GRAPH_ATTEMPT_ABORT_TRIGGER, remains)
+            raise GitServiceError(500, "git_error", "the merge state remains after the abort",
+                                  details={"reason": "the merge state remains after the abort",
+                                           "merge_id": merge_id},
+                                  params={"reason": "the merge state remains after the abort"})
         _gs.db_git.close_session(merge_id, "aborted")
         _gs._set_status(group_id, context.get("prev_status") or "waiting")
     finally:
@@ -669,11 +691,12 @@ def tr_conflict_review(group_id: str, merge_id: int) -> dict:
     not have is said with the capability flags rather than with a different screen: no
     review conversation and no reject (there is no resolver baseline to re-run a revert
     from — the resolver itself is where a TR resolution is redone), only approve.
-    Opening the review is activity, so it resets the sweep TTL (0205 L §1).
+
+    flowgate.v02test.0052 T0003 할 일 4(c): opening (reading) the review is NOT activity;
+    it never calls ``touch_session`` and leaves ``touched_at`` (the sweep TTL basis) as it is.
     """
     from modules.flow_gate.services import git_service as _gs
     session, context, _root = _tr_review_context(group_id, merge_id)
-    _gs._touch_review_activity(merge_id)
     return {
         "ok": True,
         "result": {
@@ -1151,13 +1174,14 @@ def _supersede_evidence(kept: list[str], dropped: list[str], base: list[str]) ->
     return {"preserved": preserved, "changed": changed, "removed": removed}
 
 
-def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[list[dict], list[dict]]:
+def _supersede_findings(path: str, supersede, violations: list[dict], companions: Optional[list[dict]] = None) -> tuple[list[dict], list[dict]]:
     """Check one file's ``supersede`` declaration against its violating chunks.
 
     Returns ``(problems, records)``: ``problems`` is empty only when the declaration is
     valid for EVERY violating chunk; ``records`` is then the per-chunk evidence to keep.
     A declaration is never a bypass: it can only excuse chunks the checker already
-    rejects, only the side actually kept, and only with in-place evidence.
+    rejects, only the side actually kept, and only with in-place evidence or
+    verbatim relocation into a verified target-side companion.
     """
     if not isinstance(supersede, dict):
         return [{"path": path, "chunk": None, "side": None, "condition": "malformed"}], []
@@ -1183,6 +1207,10 @@ def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[l
             continue
         chunk = violation["entry"]["chunk"]
         evidence = _supersede_evidence(chunk[side], chunk[violation["dropped_side"]], chunk["base"])
+        relocated = conflict_companions.relocated_evidence(chunk, side, companions or [])
+        if relocated is not None:
+            relocated["preserved"] = _chunk_added_lines(chunk[violation["dropped_side"]], chunk["base"])
+            evidence = relocated
         counts = {
             "preserved": len(evidence["preserved"]), "changed": len(evidence["changed"]),
             "removed": len(evidence["removed"]),
@@ -1199,6 +1227,7 @@ def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[l
                 "kept_side": side, "dropped_side": violation["dropped_side"],
                 "preserved_lines": evidence["preserved"],
                 "changed_lines": evidence["changed"],
+                **({"companion_path": evidence["companion_path"]} if "companion_path" in evidence else {}),
             })
     return problems, records
 
@@ -1290,7 +1319,9 @@ def resolve_conflict_src_root(
 def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     from modules.flow_gate.services import git_service as _gs
     session, cfg, _project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
-    _gs.db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
+    # flowgate.v02test.0052 T0003: reading the list is NOT activity. Only a real operation
+    # (a resolution submission, an abort) bumps the sweep TTL; opening the screen used to
+    # restart the 24 h clock every time, so a stuck session could never age out.
     state = (_gs.db_git.get_state(group_id) if group_id else None) or {}
     files = []
     for row in _gs.db_git.session_files(merge_id):
@@ -1327,10 +1358,15 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
         "target_branch": target_branch,
         "files": files,
         "resolved_paths": [row["path"] for row in _gs.db_git.session_files(merge_id) if row["resolved"]],
+        "companion_candidates": conflict_companions.candidates(root, {f["path"] for f in files}),
+        "companion_files": context.get("conflict_companions") or [],
         "checkpoint_recovery": context.get("checkpoint_recovery"),
         # 0608 T0005: session files that differed only in line endings and were already
         # merged on normalised text (apply_eol_separation) — nothing to resolve there.
         "eol_only_paths": list(context.get("eol_only_paths") or []),
+        # flowgate.v02test.0052 T0003 (additive): the last failed abort/cleanup of this
+        # session — {trigger, reason (git's last stderr line), returncode, at} — or None.
+        "abort_failure": context.get("abort_failure"),
         # The two commits a finalize merge joined, for reading either side's whole file
         # (`/remote/read` with `ref`). None for a TR session, which has no MERGE_HEAD.
         "refs": (
@@ -1364,6 +1400,7 @@ def _apply_conflict_resolution_locked(
     resolver_run_id: Optional[str],
     *,
     expected_project_id: str,
+    companion_sources: Optional[dict[str, str]] = None,
 ) -> dict:
     """Apply a validated conflict submission inside the session's workspace lock.
 
@@ -1423,10 +1460,18 @@ def _apply_conflict_resolution_locked(
                 "do not submit a resolution",
             )
 
+        # flowgate.v02test.0052 T0003 (0001-B 1절 8): a merge session whose workspace is no
+        # longer merging (MERGE_HEAD gone) is refused BEFORE any file is written. It used
+        # to write + `git add` + mark "resolved" and only then fail at the freeze, so every
+        # retry just grew the "resolved" count while the session stayed stuck.
+        _raise_if_merge_gone(session, root, merge_id)
+
         session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
+        companion_sources = companion_sources or {}
+        allowed = conflict_companions.candidates(root, session_paths) if companion_sources else {}
         locked_staged: list[tuple[str, Path, str, str]] = []
         for path, _prelock_target, content, original in staged:
-            if path not in session_paths:
+            if path not in session_paths and path not in allowed.get(companion_sources.get(path), []):
                 raise GitServiceError(
                     409, "conflict_session_changed",
                     f"'{path}' is no longer registered in merge session {merge_id}",
@@ -1456,7 +1501,17 @@ def _apply_conflict_resolution_locked(
                     500, "git_error", "Git command failed",
                     diagnostic=_gs._last_line(proc.stderr),
                 )
-            _gs.db_git.mark_file_resolved(merge_id, path)
+            if path in session_paths:
+                _gs.db_git.mark_file_resolved(merge_id, path)
+
+        if companion_sources:
+            context = _gs.db_git.session_context(session)
+            previous_companions = context.get("conflict_companions") or []
+            context["conflict_companions"] = [r for r in previous_companions if r["path"] not in companion_sources] + [
+                {"path": p, "source_path": source} for p, source in companion_sources.items()
+            ]
+            _gs.db_git.set_session_context(merge_id, context)
+            session = _gs.db_git.get_session(merge_id)
 
         if locked_staged:
             context = _gs.db_git.session_context(session)
@@ -1668,6 +1723,35 @@ def resolve_conflicts(
     supersede_invalid: list[dict] = []
     supersedes: list[dict] = []
     evaluated_paths: set[str] = set()
+    companion_sources: dict[str, str] = {}
+    verified_companions: dict[str, list[dict]] = {}
+    if any(not isinstance(f, dict) or not isinstance(f.get("path"), str) for f in files or []):
+        raise GitServiceError(422, "invalid_request", "each file needs a string path")
+    allowed = conflict_companions.candidates(root, session_paths) if any(f.get("companion_files") for f in files or []) else {}
+    submitted_paths = [f.get("path") for f in files or []]
+    if len(set(submitted_paths)) != len(submitted_paths):
+        raise GitServiceError(422, "invalid_request", "duplicate resolution path")
+    for f in files or []:
+        companions = f.get("companion_files") or []
+        if not isinstance(companions, list):
+            raise GitServiceError(422, "invalid_request", "companion_files must be a list")
+        for companion in companions:
+            if not isinstance(companion, dict):
+                raise GitServiceError(422, "invalid_request", "invalid companion file")
+            path, content = companion.get("path"), companion.get("content")
+            if not isinstance(path, str) or not isinstance(content, str) or path not in allowed.get(f.get("path"), []):
+                raise GitServiceError(422, "invalid_request", "companion is not a verified target-side move")
+            if path in companion_sources or path in submitted_paths:
+                raise GitServiceError(422, "invalid_request", "duplicate companion path")
+            target = resolve_in_root(root, path)
+            if target is None:
+                raise GitServiceError(422, "invalid_request", "unsafe companion path")
+            if _gs.has_conflict_markers(content):
+                raise GitServiceError(422, "conflict_markers_remain", f"Conflict markers remain in '{path}'")
+            original = target.read_text(encoding="utf-8", errors="replace")
+            companion_sources[path] = f["path"]
+            verified_companions.setdefault(f["path"], []).append(companion)
+            staged.append((path, target, content, original))
     for f in files or []:
         path = f.get("path")
         content = f.get("content")
@@ -1718,7 +1802,7 @@ def resolve_conflicts(
             # thing that can excuse a violating chunk; it never touches a clean one.
             supersede = f.get("supersede")
             if supersede is not None:
-                problems, records = _supersede_findings(path, supersede, violations)
+                problems, records = _supersede_findings(path, supersede, violations, verified_companions.get(path))
                 if problems:
                     supersede_invalid.extend(problems)
                 else:
@@ -1767,6 +1851,7 @@ def resolve_conflicts(
         evaluated_paths,
         resolver_run_id,
         expected_project_id=project_id,
+        companion_sources=companion_sources,
     )
 
 
@@ -1783,6 +1868,275 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
         return payload.get("provider_id"), payload.get("provider_name")
     except Exception:
         return None, None
+
+
+# ── flowgate.v02test.0052 T0003: abort unblocking ─────────────────────────────────────
+
+# The resolve refusal for a session whose workspace is no longer merging.
+MERGE_NOT_IN_PROGRESS = "merge_not_in_progress"
+# Session kinds whose conflict lives in an in-flight `git merge` (MERGE_HEAD on disk).
+_MERGE_HEAD_SESSION_KINDS = ("merge", "branch_merge", "group_update")
+FORCE_CLEANUP_CODE = "admin_force_cleanup"
+
+
+def _merge_head_observed(root: Path) -> Optional[bool]:
+    """MERGE_HEAD present (True), absent (False) or not observable (None) in ``root`` —
+    the sweep's tri-state reader, so a failed read is never taken for "absent"."""
+    from .cleanup import _observe_merge_head
+    return _observe_merge_head(root)
+
+
+def _abort_failed_error(
+    proc, merge_id: Optional[int], *, recovery: Optional[str] = "force_cleanup",
+) -> GitServiceError:
+    """The abort failure as the client sees it: code stays ``git_error`` (existing
+    screens), git's own one-line reason rides in ``error.details.reason`` and
+    ``error.params.reason``; ``details.recovery = "force_cleanup"`` names the way out
+    (``None`` for a session the admin force cleanup does not cover, e.g. a Graph
+    attempt merge)."""
+    from modules.flow_gate.services import git_service as _gs
+    reason = getattr(proc, "reason", None) or _gs._git_reason_line(getattr(proc, "stderr", ""))
+    return GitServiceError(
+        500, "git_error", "Merge abort failed",
+        details={
+            "reason": reason,
+            "returncode": getattr(proc, "returncode", None),
+            "merge_id": merge_id,
+            "recovery": recovery,
+        },
+        params={"reason": reason},
+        diagnostic=reason,
+    )
+
+
+def _raise_if_merge_gone(session: dict, root: Path, merge_id: int) -> None:
+    """Refuse a resolution for a merge-kind session whose workspace observably has no
+    MERGE_HEAD (0001-B 1절 8). 409 ``merge_not_in_progress`` with a one-line reason and
+    ``next_action="abort"`` — the abort now closes such a session as already cleaned."""
+    from modules.flow_gate.services import git_service as _gs
+    if _gs.db_git.session_kind(session) not in _MERGE_HEAD_SESSION_KINDS:
+        return
+    if _merge_head_observed(root) is not False:
+        return
+    reason = "MERGE_HEAD missing: the workspace is no longer merging"
+    raise GitServiceError(
+        409, MERGE_NOT_IN_PROGRESS,
+        "the merge is no longer in progress; close the session with abort",
+        details={"reason": reason, "merge_id": merge_id, "next_action": "abort",
+                 "recovery": "force_cleanup"},
+        params={"reason": reason},
+        diagnostic=reason,
+    )
+
+
+def _changed_paths(root: Path) -> list[str]:
+    """Tracked paths a reset would discard (staged or unstaged), read-only."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["status", "--porcelain", "--untracked-files=no", "-z"], cwd=root)
+    if proc.returncode != 0:
+        return []
+    paths: list[str] = []
+    entries = (proc.stdout or "").split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in ("R", "C"):
+            i += 1  # the rename/copy source follows as its own NUL field
+    return sorted(set(paths))
+
+
+def _force_cleanup_scope(group_id: str, merge_id: int) -> tuple[dict, Path, object]:
+    """``(session, root, target)`` of a session the administrator force cleanup may touch,
+    or a 4xx. Only an open finalize ``merge`` session whose target is its OWN managed
+    target workspace (the per-target reflection checkout) qualifies: the shared base
+    checkout may hold other groups' work (the 0203 accident) and a group worktree IS the
+    group branch, so neither is ever reset here."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import recovery
+    session = _gs._review_session_of_owner(group_id, merge_id, None)
+    if session.get("status") != "open":
+        raise GitServiceError(409, "invalid_state", f"merge session {merge_id} is not open")
+    if _gs.db_git.session_kind(session) != _gs.db_git.SESSION_KIND_MERGE or _is_branch_merge_session(session):
+        raise GitServiceError(409, "force_cleanup_unsupported_session",
+                              "force cleanup applies to a finalize merge session only")
+    context = _gs.db_git.session_context(session)
+    if recovery.supported(session) and (recovery.needed(context) or recovery.has_preservation(context)):
+        raise GitServiceError(409, "recovery_required", "use the versioned preservation abort",
+                              details={"recovery": recovery.projection(session)})
+    target = merge_target.resolve_session_target(session)
+    if (target.is_project_base or not target.managed_workspace
+            or target.target_kind != "branch" or target.root is None):
+        raise GitServiceError(
+            409, "force_cleanup_unsupported_target",
+            "force cleanup only resets a managed target workspace, never the shared base checkout",
+            details={"target_branch": target.target_branch, "is_project_base": bool(target.is_project_base)},
+        )
+    merge_target.raise_if_not_workspace_owner(target)
+    return session, target.root, target
+
+
+def _force_cleanup_plan(session: dict, root: Path, target) -> dict:
+    """What a force cleanup would do, read-only — the confirmation screen's content."""
+    from modules.flow_gate.services import git_service as _gs
+    context = _gs.db_git.session_context(session)
+    exists = root.exists()
+    head = _gs._rev_parse(root, "HEAD") if exists else None
+    branch_proc = _gs._run_git(["symbolic-ref", "-q", "--short", "HEAD"], cwd=root) if exists else None
+    branch = (branch_proc.stdout or "").strip() if branch_proc is not None and branch_proc.returncode == 0 else None
+    baseline_head = (context.get("resolver_baseline") or {}).get("base_head")
+    unmerged = _gs._unmerged_paths(root) if exists else []
+    return {
+        "merge_id": int(session["merge_id"]),
+        "group_id": session.get("group_id"),
+        "workspace": str(root),
+        "workspace_exists": exists,
+        "target_branch": target.target_branch,
+        "checked_out_branch": branch,
+        "head": head,
+        "baseline_head": baseline_head,
+        "head_matches_baseline": (not baseline_head) or baseline_head == head,
+        "merge_head": _gs._rev_parse(root, "MERGE_HEAD") if exists else None,
+        "unmerged_paths": sorted(unmerged),
+        "discarded_paths": _changed_paths(root) if exists else [],
+        "abort_failure": context.get("abort_failure"),
+        "group_branch_untouched": True,
+    }
+
+
+def force_cleanup_preview(group_id: str, merge_id: int) -> dict:
+    """``GET …/force-cleanup``: what the administrator force cleanup would reset."""
+    session, root, target = _force_cleanup_scope(group_id, merge_id)
+    return {"ok": True, "result": _force_cleanup_plan(session, root, target)}
+
+
+def force_cleanup_merge(group_id: str, merge_id: int, *, actor: Optional[str] = None) -> dict:
+    """Administrator-only way out of a merge session whose ``merge --abort`` fails
+    (0001-B 1절 3, T0003 할 일 5). Under the same session lock as [abort]:
+
+    1. the ordinary abort (index refresh + ``merge --abort``) is tried first;
+    2. only if it fails: the session's own managed target workspace is reset to the
+       target branch HEAD (``reset --hard <HEAD>``, ``merge --quit`` if MERGE_HEAD is
+       still there) and verified (HEAD unchanged, no MERGE_HEAD, no unmerged path);
+    3. the session closes ``aborted`` exactly like an [abort]: parked approval intent
+       discarded, checkpoint invalidated, workspace released, group back to ``waiting``.
+
+    Never touches the group branch, the group's result commits, the approval record or
+    the pinned commit. Refuses when HEAD moved from the recorded merge baseline or the
+    workspace has another branch checked out (nothing is guessed)."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import branch_merge_publish as bmp
+    row = _gs._review_session_of_owner(group_id, merge_id, None)
+    lock, held = bmp.session_lock(row, _gs._session_project(row), holder_kind="review_action", publish=True)
+    try:
+        session, root, target = _force_cleanup_scope(group_id, merge_id)
+        plan = _force_cleanup_plan(session, root, target)
+        if plan["workspace_exists"]:
+            if not plan["head_matches_baseline"]:
+                raise GitServiceError(
+                    409, "force_cleanup_head_moved",
+                    "the target workspace HEAD is not the merge's recorded base; left as it is",
+                    details={"head": plan["head"], "baseline_head": plan["baseline_head"]},
+                )
+            if plan["checked_out_branch"] and plan["checked_out_branch"] != target.target_branch:
+                raise GitServiceError(
+                    409, "force_cleanup_branch_mismatch",
+                    "the target workspace has another branch checked out; left as it is",
+                    details={"checked_out_branch": plan["checked_out_branch"],
+                             "target_branch": target.target_branch},
+                )
+        last_failure = plan.get("abort_failure")
+        abort_reason = last_failure.get("reason") if isinstance(last_failure, dict) else None
+        forced = False
+        if plan["workspace_exists"] and (plan["merge_head"] or plan["unmerged_paths"]):
+            proc = _gs._abort_merge(root, merge_id=merge_id, reason="admin_force_cleanup_abort")
+            if proc.returncode:
+                abort_reason = proc.reason
+                head = plan["head"]
+                reset = _gs._run_session_git(merge_id, None, "reset", FORCE_CLEANUP_CODE,
+                                             ["reset", "--hard", head], cwd=root)
+                if reset.returncode == 0 and _gs._rev_parse(root, "MERGE_HEAD") is not None:
+                    _gs._run_session_git(merge_id, None, "merge", "admin_force_cleanup_quit",
+                                         ["merge", "--quit"], cwd=root)
+                if (reset.returncode != 0 or _gs._rev_parse(root, "MERGE_HEAD") is not None
+                        or _gs._unmerged_paths(root) or _gs._rev_parse(root, "HEAD") != head):
+                    failure = reset if reset.returncode else proc
+                    _gs._record_abort_failure(merge_id, FORCE_CLEANUP_CODE, failure)
+                    reason = _gs._git_reason_line(getattr(failure, "stderr", ""))
+                    raise GitServiceError(
+                        500, "force_cleanup_failed", "the target workspace could not be reset",
+                        details={"reason": reason, "workspace": str(root), "merge_id": merge_id},
+                        params={"reason": reason}, diagnostic=reason,
+                    )
+                forced = True
+        _log.warning(
+            "merge %s force cleanup by %s: workspace %s reset=%s head=%s abort_reason=%s discarded=%s",
+            merge_id, actor, root, forced, plan["head"], abort_reason, plan["discarded_paths"],
+        )
+        _gs.db_git.invalidate_resolution_checkpoint_for_merge(merge_id)
+        discarded = approval_intent.discard_intent(merge_id)
+        closed = merge_target.close_session_attempt(
+            session, merge_target.ATTEMPT_ABORTED,
+            error={"code": FORCE_CLEANUP_CODE, "actor": actor, "forced": forced,
+                   "abort_reason": abort_reason},
+        )
+        if not closed:
+            raise GitServiceError(409, "merge_target_not_owner",
+                                  "the target workspace is not this merge's; session left open")
+        _gs._set_status(group_id, "waiting")
+    finally:
+        bmp.session_unlock(lock, held)
+    return {"ok": True, "result": {
+        "status": "aborted",
+        "group_status": "waiting",
+        "forced": forced,
+        "already_cleaned": not forced and not (plan["merge_head"] or plan["unmerged_paths"]),
+        "workspace": plan["workspace"],
+        "target_branch": plan["target_branch"],
+        "reset_head": plan["head"],
+        "discarded_paths": sorted(set(plan["discarded_paths"]) | set(plan["unmerged_paths"])),
+        "abort_reason": abort_reason,
+        "workspace_released": not root.exists(),
+        "branch_preserved": True,
+        "final_approval_intent_discarded": discarded is not None,
+    }}
+
+
+def list_abort_failures(project_id: str) -> dict:
+    """Open sessions of ``project_id`` marked "정리 실패" (``context.abort_failure``) — the
+    administrator's view of what the sweep or a person could not abort."""
+    from modules.flow_gate.services import git_service as _gs
+    items = []
+    for session in _gs.db_git.list_open_sessions():
+        try:
+            if _gs._session_project(session) != project_id:
+                continue
+        except Exception:
+            continue
+        context = _gs.db_git.session_context(session)
+        failure = context.get("abort_failure")
+        if not isinstance(failure, dict):
+            continue
+        target_branch = None
+        try:
+            if _gs.db_git.session_kind(session) in _MERGE_REVIEW_KINDS:
+                target_branch = merge_target.resolve_session_target(session).target_branch
+        except Exception:
+            target_branch = None
+        items.append({
+            "merge_id": int(session["merge_id"]),
+            "group_id": session.get("group_id"),
+            "kind": _gs.db_git.session_kind(session),
+            "target_branch": target_branch,
+            "abort_failure": failure,
+            "created_at": session.get("created_at"),
+            "touched_at": session.get("touched_at"),
+        })
+    items.sort(key=lambda item: item["merge_id"])
+    return {"ok": True, "result": {"project_id": project_id, "sessions": items}}
 
 
 def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
@@ -1830,16 +2184,38 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
         # root. A workspace whose marker names another owner keeps its MERGE_HEAD,
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
+    already_cleaned = False
     if root.exists():
-        proc = _gs._run_session_git(merge_id, None, "merge", "user_abort",
-                                    ["merge", "--abort"], cwd=root)
-        if proc.returncode:
-            raise GitServiceError(500, "git_error", "Merge abort failed",
-                                  diagnostic=_gs._last_line(proc.stderr))
+        # flowgate.v02test.0052 T0003 (0001-B 1절 2): a workspace that is observably no
+        # longer merging — MERGE_HEAD absent and no unmerged path — has nothing to abort.
+        # It is "already cleaned": the session closes exactly like a successful abort.
+        # An unobservable MERGE_HEAD (a failed read) is never taken as absent.
+        merging = _merge_head_observed(root)
+        if merging is False:
+            already_cleaned = True
+            if _gs._unmerged_paths(root):
+                # MERGE_HEAD is gone but conflict stages remain in the index: undo them
+                # the way `merge --abort` itself does (`reset --merge`, which keeps any
+                # unrelated local change and refuses rather than lose one).
+                _gs._run_git(["update-index", "-q", "--refresh"], cwd=root)
+                proc = _gs._run_session_git(merge_id, None, "merge", "user_abort_reset_merge",
+                                            ["reset", "--merge"], cwd=root)
+                if proc.returncode or _gs._unmerged_paths(root):
+                    proc.reason = _gs._git_reason_line(proc.stderr)
+                    _gs._record_abort_failure(merge_id, "user_abort", proc)
+                    raise _abort_failed_error(proc, merge_id)
+            _log.info("merge %s: MERGE_HEAD already gone in %s — closing as already cleaned",
+                      merge_id, root)
+        else:
+            proc = _gs._abort_merge(root, merge_id=merge_id, reason="user_abort")
+            if proc.returncode:
+                _gs._record_abort_failure(merge_id, "user_abort", proc)
+                raise _abort_failed_error(proc, merge_id)
     if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
         _gs.db_git.close_session(merge_id, "aborted")
         return {"ok": True, "result": {
             "status": "aborted", "branch_preserved": True,
+            "already_cleaned": already_cleaned,
         }}
     # 0555 T0008 §8 (D0005 §3.6 B10): abort ends the Git attempt this final approval
     # was riding on, so its parked intent is discarded — never carried over to a
@@ -1859,4 +2235,5 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
     return {"ok": True, "result": {
         "status": "waiting", "branch_preserved": True,
         "final_approval_intent_discarded": discarded is not None,
+        "already_cleaned": already_cleaned,
     }}

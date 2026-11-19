@@ -732,6 +732,11 @@ def _is_group_disposed(group_id: str) -> bool:
         return False
 
 
+# flowgate.v02test.0052 T0003: ``context.abort_failure.trigger`` when a disposed group's
+# merge could not be aborted.
+DISPOSED_GROUP_ABORT_TRIGGER = "disposed_group_abort"
+
+
 def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Path) -> None:
     """Abort an in-progress merge for a disposed group and release its merge lock.
 
@@ -752,9 +757,23 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
             if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE else None
         )
         root = target.root if target is not None and target.root is not None else base_root
-        if root.exists() and _gs._merge_in_progress(root):
-            _gs._run_git(["merge", "--abort"], cwd=root)
         merge_id = session.get("merge_id")
+        if root.exists() and _gs._merge_in_progress(root):
+            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session; and a
+            # failed abort never closes the DB session over a workspace that is still
+            # merging — it stays open, marked "정리 실패" with git's reason, for a person.
+            proc = _gs._abort_merge(
+                root, merge_id=int(merge_id) if merge_id is not None else None,
+                reason="disposed_group_abort",
+            )
+            if proc.returncode != 0:
+                if merge_id is not None:
+                    _gs._record_abort_failure(int(merge_id), DISPOSED_GROUP_ABORT_TRIGGER, proc)
+                _log.warning(
+                    "disposed group %s: merge --abort failed (%s) — session %s left open",
+                    group_id, proc.reason, merge_id,
+                )
+                return
         if merge_id is not None:
             _gs.db_git.close_session(int(merge_id), "aborted")
         if target is not None:

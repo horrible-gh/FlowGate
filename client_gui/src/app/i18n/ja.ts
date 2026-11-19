@@ -1437,7 +1437,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
-    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "今は再試行できません · サーバー処理待ち", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能"},
+    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "今は再試行できません · サーバー処理待ち", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能", "cancel_approval": "この承認を取消", "closed_note": "この承認は再び反映できません。マージセッションはすでに閉じています。", "closed_next": "[この承認を取消] のあと、確認カードで [承認] → 現在のコミットで反映", "retry_blocked_closed": "再試行が無効な理由: 閉じたマージセッションを読み直すだけで、結果は常に同じです。", "goto_gate": "確認カードへ移動", "retry_same_next": "原因が変わらないため、再度押しても同じです。[!] 詳細で原因を確認するか、[キャンセル] のあと確認カードで再承認してください。", "retry_changed_next": "今回は別の理由で止まりました。[!] 詳細で新しい原因を確認してください。", "retry_closed_next": "マージセッションが閉じているため、やり直しても同じです。[この承認を取消] のあと、確認カードで [承認] を押して現在のコミットで再び反映してください。"},
     header: {
       base: 'プロジェクトベース',
       flow_base: 'フローベース',
@@ -1457,7 +1457,7 @@ export default {
     files_count: '{n} ファイル',
     conflict: {
       title_target: '競合 · {target} への反映停止',
-      count: '未解決 {open} · 解決済み {done}',
+      count: '解決 {done} · 残り {open}（サーバー記録基準）',
       ai_again: '再実行',
       ai_other: '別の AI で',
       ai_pick: '解決する AI',
@@ -1476,9 +1476,19 @@ export default {
       title: 'マージ競合',
       ai: 'AI で解決',
       manual: '手動で解決',
-      abort: '取消',
-      abort_title: 'マージ取消',
-      abort_message: 'マージを中止します。作業ブランチはそのまま残ります。',
+      abort: 'マージを中断',
+      abort_title: 'マージを中断',
+      abort_message: '作業スペースをマージ前に戻します。グループブランチはそのまま残ります。',
+      abort_cancel_approval: 'この承認（{sha} 固定）も取り消します。記録は残ります。',
+      abort_cancel_approval_unknown: 'この承認も取り消します。記録は残ります。',
+      abort_then_approve: '続けて確認カードで [承認] を押すと、現在のコミット（{head}）で再び反映します。',
+      abort_then_approve_unknown: '続けて確認カードで [承認] を押すと、現在のコミットで再び反映します。',
+      abort_failure: 'マージの中断に失敗しました。git が拒否しました:',
+      abort_failure_user: '再度押しても同じです。管理者に [強制整理] を依頼してください。',
+      abort_failure_admin: '再度押しても同じです。[強制整理] で作業スペースを戻せます。',
+      force_cleanup: '強制整理',
+      companions: '一緒に反映された移動ファイル',
+      companion_item: '{path} · 元は {source}',
       abort_bound: '進行中の最終承認の試行も終了します。',
       unsupported: 'この画面では扱わない種類の競合です。',
       // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
@@ -1517,8 +1527,9 @@ export default {
       confirm_message: '競合レビューを閉じて前回の承認を取り消します。元の承認記録と固定コミットはそのまま残ります。その後、確認カードで [承認] を自分で押して現在のコミットを再承認します。',
       title: '再承認',
       ready: '前回の承認を整理済み · 確認カードで [承認] を押して現在のコミットを再承認',
-      cancel_failed: '競合レビューは閉じましたが前回の承認を取り消せませんでした · {reason}',
+      cancel_failed: '競合レビューは閉じましたが前回の承認を取り消せませんでした · {reason} · 下の「Git 処理失敗」カードの [この承認を取消] を押してください',
       dismiss: '閉じる',
+      goto_gate: '確認カードへ移動',
       reason: {
         merge_conflict_open: '競合レビューが開いている',
         gate_conflict: '反映中の競合',
@@ -1542,7 +1553,7 @@ export default {
       resolver_manual: '手動で解決',
       approve: '承認',
       reject: '差し戻し',
-      abort: '取消',
+      abort: 'マージを中断',
       applying: '適用中',
       reconciling: '結果確認中',
       reason: {
@@ -1640,10 +1651,46 @@ export default {
       untracked_changed: '読み込み後に新規ファイルが変わりました。再確認してください。',
       partial_failed: '一部のファイルを処理できませんでした（{n} 件）',
       failed: 'リクエストが失敗しました。（{code}）',
+      failed_reason: 'リクエストが失敗しました。（{code}） · git: {reason}',
+      abort_failed: 'マージの中断に失敗しました。git が拒否しました: {reason} 再度押しても同じです。管理者に [強制整理] を依頼してください。',
+      merge_not_in_progress: 'このマージはすでに整理済みです。解決内容は保存していません。[マージを中断] でセッションを閉じてください。',
+      force_cleanup_head_moved: '反映先の HEAD がマージ開始時と異なるため、強制整理しませんでした。',
+      force_cleanup_branch_mismatch: '反映専用の作業スペースに別のブランチがチェックアウトされているため、強制整理しませんでした。',
+      force_cleanup_unsupported_target: '共用の作業スペースのため強制整理できません。',
     },
+    // flowgate.v02test.0052 0008 (#25): the dialog's two buttons never read the same — [戻る] closes it and the
+    // other button names what it does ([マージを中断] …).
     confirm: {
       ok: '確認',
-      cancel: '取消',
+      cancel: '戻る',
+    },
+    // flowgate.v02test.0052 0008 — the administrator's forced cleanup of a merge whose abort git refuses.
+    force: {
+      title: '作業スペースを強制整理しますか？',
+      workspace: '反映専用の作業スペース {workspace} を {target} の HEAD（{head}）に戻します。',
+      workspace_unknown: '反映専用の作業スペースを {target} の HEAD に戻します。',
+      discarded: '解決作業中の内容 {n} 件は失われます。',
+      discarded_none: '戻す変更はありません。',
+      branch_kept: 'グループブランチとそのコミット、元の承認記録はそのままです。',
+      closes: 'マージセッション {id} を閉じ、この承認も取り消します。',
+      closes_only: 'マージセッション {id} を閉じます。取り消す承認はありません。',
+      closes_unchecked: 'マージセッション {id} を閉じます。このグループの承認はここでは確認できませんでした。残っている場合は、該当 Flow の Git タブで [この承認を取消] を押してください。',
+      action: '強制整理',
+      preview_failed: '強制整理の内容を読み込めませんでした。',
+    },
+    // flowgate.v02test.0052 0008 — administrators only: the open merges marked "cleanup failed".
+    abort_failures: {
+      title: '整理失敗 {n} 件',
+      desc: 'マージの中断を git が拒否したセッションです。管理者にだけ表示されます。',
+      item: '{id} · {group} → {target}',
+      item_unknown_target: '{id} · {group}',
+      at: '最終試行 {at}',
+      force: '強制整理',
+      open_card: '確認カードへ移動',
+      done_cancelled: 'マージセッション {id}（{group}）を閉じ、以前の承認を取り消しました。確認カードで [承認] を押すと現在のコミットで再度反映します。',
+      done_none: 'マージセッション {id}（{group}）を閉じました。取り消す承認はありませんでした。',
+      done_unchecked: 'マージセッション {id}（{group}）を閉じました。このグループの承認はここでは確認できませんでした。残っている場合は、該当 Flow の Git タブで [この承認を取消] を押してください。',
+      done_failed: 'マージセッション {id}（{group}）は閉じましたが、以前の承認を取り消せませんでした（{code}）。該当 Flow の Git タブの [Git 処理失敗] カードで [この承認を取消] を押してください。',
     },
     // flowgate.v02.0065 — Git 未連携 / 状態取得の失敗 / Git 連携モードレス。
     unlinked: {

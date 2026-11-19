@@ -1827,6 +1827,9 @@ from .git.conflict import (
     abort_tr_conflict,
     apply_eol_separation,
     commit_tr_conflict,
+    force_cleanup_merge,
+    force_cleanup_preview,
+    list_abort_failures,
     list_conflicts,
     open_tr_conflict_session,
     resolve_conflict_src_root,
@@ -2899,8 +2902,12 @@ def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) ->
 
 
 def _touch_review_activity(merge_id: int) -> None:
-    """0668 T0004: opening a pending review is activity for the sweep TTL — best-effort,
-    a timestamp write must never fail the screen that reads the review."""
+    """Record a real review operation as activity for the sweep TTL — best-effort, a
+    timestamp write must never fail the operation itself.
+
+    flowgate.v02test.0052 T0003 할 일 4(c): called from operations only (a review
+    conversation turn); the review GET (``get_merge_review`` / ``tr_conflict_review``)
+    no longer calls it — reading is not activity."""
     try:
         db_git.touch_session(merge_id)
     except Exception:
@@ -2924,8 +2931,12 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4).
 
     0668 T0004: a TR conflict session is reviewed on the same screen; its payload comes
-    from ``tr_conflict_review`` in the same shape. Opening a review is activity, so it
-    resets the sweep TTL (``touch_session``) like reading the conflict list does."""
+    from ``tr_conflict_review`` in the same shape.
+
+    flowgate.v02test.0052 T0003 할 일 4(c): opening (reading) a review is NOT activity —
+    a GET never calls ``touch_session``, so a screen left open (or polled) cannot keep
+    pushing the sweep TTL forward. Only real operations count: a resolution submit and a
+    review conversation turn (``send_review_message``)."""
     if _is_tr_conflict_merge(group_id, merge_id, project_id):
         return tr_conflict_review(group_id, merge_id)
     from .git import recovery
@@ -2952,8 +2963,6 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     if not review_state:
         raise GitServiceError(409, "review_not_ready", "this merge has not reached review yet")
     pending = review_state in REVIEW_PENDING_STATES
-    if pending:
-        _touch_review_activity(merge_id)
     return {
         "ok": True,
         "result": {
@@ -2969,6 +2978,7 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
             "conflict_origins": context.get("conflict_origins") or [],
             # 0604 D0005 §4/§6 — resolver `supersede` declarations, shown in full.
             "conflict_supersedes": context.get("conflict_supersedes") or [],
+            "companion_files": context.get("conflict_companions") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
             # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
@@ -3128,8 +3138,8 @@ def _refreeze_for_re_review(
             # resolution — a fresh conflict, not something a push-result
             # reconciler should try to auto-resolve. Park it for a human;
             # automatic re-resolution is out of scope for this retry path.
-            _run_session_git(merge_id, context, "merge", "_refreeze_for_re_review_abort",
-                             ["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            _abort_merge(base_root, merge_id=merge_id, context=context,
+                         reason="_refreeze_for_re_review_abort", timeout=GIT_LOCAL_TIMEOUT_SEC)
             context["review_state"] = REVIEW_STATE_RECONCILING
             context["reconciliation_kind"] = "push_remote_third"
             context["last_error"] = {"code": "conflicts_after_remote_moved"}
@@ -3293,8 +3303,17 @@ def _run_session_git(
     """Audit a session's existing ref-changing call under the caller's lock.
 
     Keep this context object in sync so the caller's later whole-JSON write
-    retains the audit. No argv/output/credentials or extra Git probes are kept.
+    retains the audit. No argv/credentials or extra Git probes are kept.
     Exceptions retain a null result instead of inventing a subprocess exit code.
+
+    flowgate.v02test.0052 T0003: a FAILED local command (non-zero exit) also keeps git's
+    own reason — one stderr line chosen by ``_git_reason_line``, credential-scrubbed and
+    capped — as ``stderr_tail``.
+    merge 457's abort failed five times and nothing anywhere said why; a successful
+    command still keeps no output. A network command (push/fetch/pull/ls-remote/clone,
+    or any call carrying a configured ``secret``) keeps none either: its stderr can hold
+    a credential only the caller's configured secret can mask, and its scrubbed reason
+    already lives in ``last_error.detail`` (0153 T#1).
 
     0153 T#4 (review rej_01M6ZWFPF1E6JE2M): when this thread processes the session under
     its claim, the claim is fenced before the command and again after it, before the audit
@@ -3312,11 +3331,144 @@ def _run_session_git(
     try:
         proc = _run_git(args, **kwargs)
         entry.update(returncode=proc.returncode, status="completed")
+        if proc.returncode and _audit_keeps_stderr(operation, args, kwargs):
+            entry["stderr_tail"] = _git_reason_line(proc.stderr)
         return proc
     finally:
         _session_claim_require(merge_id, f"after_{reason}")
         context["ref_operations"] = [*(context.get("ref_operations") or []), entry][-20:]
         db_git.set_session_context(merge_id, context)
+
+
+# Git subcommands that talk to a remote — their stderr may carry credentials.
+_NETWORK_GIT_COMMANDS = frozenset({"push", "fetch", "pull", "ls-remote", "clone"})
+
+
+def _git_subcommand(args: list[str]) -> Optional[str]:
+    """The git subcommand of ``args`` (skipping ``-c k=v`` / ``-C dir`` and other options)."""
+    it = iter(args or [])
+    for arg in it:
+        if arg in ("-c", "-C"):
+            next(it, None)
+            continue
+        if not arg.startswith("-"):
+            return arg
+    return None
+
+
+def _audit_keeps_stderr(operation: str, args: list[str], kwargs: dict) -> bool:
+    """flowgate.v02test.0052 T0003: whether a failed session command's audit entry may keep
+    git's reason — local commands only (see :func:`_run_session_git`)."""
+    if kwargs.get("secret"):
+        return False
+    return (operation not in _NETWORK_GIT_COMMANDS
+            and _git_subcommand(args) not in _NETWORK_GIT_COMMANDS)
+
+
+# ── flowgate.v02test.0052 T0003: the one way the server aborts a merge ─────────────
+#
+# merge 457 (0036 → feature/v0.2.0): `git merge --abort` exited 128 five times with
+# "Entry '<path>' not uptodate. Cannot merge." although nothing was modified — a staged
+# file had been rewritten with identical bytes, so only the index stat cache was stale
+# (`git update-index -q --refresh` alone let the next abort succeed). Every server abort
+# now refreshes the stat cache first and hands back git's one-line reason.
+
+GIT_REASON_MAX_CHARS = 300
+
+
+def _git_reason_line(stderr: Optional[str]) -> str:
+    """git's own reason for a failure as one display-safe line, credential-scrubbed and
+    capped at ``GIT_REASON_MAX_CHARS``: the first ``error:`` line, else the first
+    ``fatal:`` line, else the last non-empty line. The literal last line is often advice
+    ("…remove the file manually to continue.") or a consequence ("fatal: Could not reset
+    index file to revision 'HEAD'.") while the cause sits above it — 457's was
+    "error: Entry '<path>' not uptodate. Cannot merge."."""
+    lines = [line.strip() for line in _scrub(stderr or "").splitlines() if line.strip()]
+    chosen = (
+        next((line for line in lines if line.lower().startswith("error:")), None)
+        or next((line for line in lines if line.lower().startswith("fatal:")), None)
+        or (lines[-1] if lines else "")
+    )
+    return chosen[:GIT_REASON_MAX_CHARS] or "git command failed"
+
+
+class MergeAbortResult(subprocess.CompletedProcess):
+    """``git merge --abort``'s CompletedProcess plus what callers report: ``reason`` (git's
+    last stderr line, None on success) and ``refresh_returncode`` (the preceding
+    ``update-index -q --refresh``; None when it could not run). Callers that only read
+    ``returncode``/``stderr`` keep working unchanged."""
+
+    def __init__(self, proc, *, refresh_returncode: Optional[int]):
+        returncode = getattr(proc, "returncode", None)
+        super().__init__(
+            getattr(proc, "args", ["git", "merge", "--abort"]),
+            -1 if returncode is None else returncode,
+            getattr(proc, "stdout", "") or "",
+            getattr(proc, "stderr", "") or "",
+        )
+        self.refresh_returncode = refresh_returncode
+        self.reason = None if self.returncode == 0 else _git_reason_line(self.stderr)
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+
+def _abort_merge(
+    root: Path, *, merge_id: Optional[int] = None, context: Optional[dict] = None,
+    reason: str = "merge_abort", operation: str = "merge",
+    timeout: int = GIT_LOCAL_TIMEOUT_SEC,
+) -> MergeAbortResult:
+    """Refresh the index stat cache, then ``git merge --abort`` in ``root``.
+
+    ``update-index -q --refresh`` only re-reads file stats (content-neutral); its failure
+    — e.g. exit 1 for the unmerged entries every conflicted merge has — never blocks the
+    abort. With ``merge_id`` the abort goes through :func:`_run_session_git` (claim fence +
+    ``ref_operations`` audit with ``stderr_tail``); without it, a plain ``_run_git``. A
+    failure is also written to the file log with git's reason."""
+    refresh_returncode: Optional[int] = None
+    try:
+        refresh = _run_git(["update-index", "-q", "--refresh"], cwd=root, timeout=timeout)
+        refresh_returncode = getattr(refresh, "returncode", None)
+    except Exception:
+        _log.warning("index refresh before merge --abort failed in %s", root, exc_info=True)
+    if merge_id is not None:
+        proc = _run_session_git(merge_id, context, operation, reason,
+                                ["merge", "--abort"], cwd=root, timeout=timeout)
+    else:
+        proc = _run_git(["merge", "--abort"], cwd=root, timeout=timeout)
+    result = MergeAbortResult(proc, refresh_returncode=refresh_returncode)
+    if not result.ok:
+        _log.warning("merge --abort failed in %s (merge %s, %s, exit %s): %s",
+                     root, merge_id, reason, result.returncode, result.reason)
+    return result
+
+
+def _record_abort_failure(merge_id: int, trigger: str, result) -> Optional[dict]:
+    """Mark an open session "정리 실패" with git's reason (``context["abort_failure"]``) so
+    the conflict list, the administrator list and the force-cleanup preview can show it.
+    Re-reads the context first (the audit write above changed it). Best-effort."""
+    record = {
+        "trigger": trigger,
+        "reason": getattr(result, "reason", None) or _git_reason_line(getattr(result, "stderr", "")),
+        "returncode": getattr(result, "returncode", None),
+        "at": now_iso(),
+        "instance_id": current_instance_id(),
+    }
+    try:
+        session = db_git.get_session(int(merge_id))
+        if session is None or session.get("status") != "open":
+            return None
+        context = db_git.session_context(session)
+        history = list(context.get("abort_failure_history") or [])
+        if context.get("abort_failure"):
+            history.append(context["abort_failure"])
+        context["abort_failure_history"] = history[-10:]
+        context["abort_failure"] = record
+        db_git.set_session_context(int(merge_id), context)
+    except Exception:
+        _log.warning("abort failure could not be recorded on merge %s", merge_id, exc_info=True)
+    return record
 
 
 def _session_claim_require(merge_id: int, step: str) -> None:
@@ -3751,8 +3903,8 @@ def reject_merge_review(
         if not base_head or not merge_head:
             raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
         if _merge_in_progress(base_root):
-            _run_session_git(merge_id, context, "merge", "reject_merge_review_abort",
-                             ["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            _abort_merge(base_root, merge_id=merge_id, context=context,
+                         reason="reject_merge_review_abort", timeout=GIT_LOCAL_TIMEOUT_SEC)
         current_head = _rev_parse(base_root, "HEAD")
         if current_head != base_head:
             context["review_state"] = REVIEW_STATE_RECONCILING
@@ -4271,6 +4423,9 @@ def send_review_message(
         context["pending_conversation_locale"] = template_provision.normalize_locale(locale)
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
+        # flowgate.v02test.0052 T0003 할 일 4(c): a conversation turn is a real
+        # operation on the review, so it — not opening the screen — is activity.
+        _touch_review_activity(merge_id)
     finally:
         _bmp.session_unlock(lock_ctx, lock_held)
     return {"ok": True, "result": {
@@ -5015,8 +5170,8 @@ def _handoff_to_human(run: _ReconcileRun, remote_tip: str, *, problems: Optional
         except GitServiceError:
             expected = False
     if not expected:
-        _run_session_git(run.merge_id, context, "merge", "reconcile_handoff_merge",
-                         ["merge", "--abort"], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+        _abort_merge(root, merge_id=run.merge_id, context=context,
+                     reason="reconcile_handoff_merge", timeout=GIT_LOCAL_TIMEOUT_SEC)
         head = _rev_parse(root, "HEAD")
         return _enter_local_mismatch(run, "handoff_merge_unexpected", {
             "expected_head": remote_tip, "observed_head": head, "returncode": merge.returncode})

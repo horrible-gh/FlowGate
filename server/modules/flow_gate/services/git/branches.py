@@ -626,8 +626,7 @@ def merge_no_ff(merge_root: Path, source_head: str, message: str,
         # No conflict markers means git never started the merge at all — an
         # untracked collision refuses BEFORE MERGE_HEAD exists. Nothing to keep.
         blockers = _gs._untracked_merge_blockers(merged.stderr)
-        _gs._run_session_git(merge_id, None, "merge", "branch_merge_failed_abort",
-                             ["merge", "--abort"], cwd=merge_root)
+        _gs._abort_merge(merge_root, merge_id=merge_id, reason="branch_merge_failed_abort")
         if blockers is not None:
             raise GitServiceError(
                 409, "branch_merge_untracked_conflict",

@@ -1437,7 +1437,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
-    gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery", "retry_same": "Retry was accepted but failed again for the same reason", "retry_changed": "Retry was accepted but failed for a different reason", "retry_blocked": "Cannot retry now · waiting for the server", "retry_blocked_cancel": "Cannot retry now · cancel from the [!] details"},
+    gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery", "retry_same": "Retry was accepted but failed again for the same reason", "retry_changed": "Retry was accepted but failed for a different reason", "retry_blocked": "Cannot retry now · waiting for the server", "retry_blocked_cancel": "Cannot retry now · cancel from the [!] details", "cancel_approval": "Cancel this approval", "closed_note": "This approval cannot be applied again. Its merge session is already closed.", "closed_next": "After [Cancel this approval], press [Approve] on the check card → applies the current commit", "retry_blocked_closed": "Why retry is off: it only re-reads the closed merge session, so the result is always the same.", "goto_gate": "Go to the check card", "retry_same_next": "The cause is unchanged, so pressing it again gives the same result. Check the cause in the [!] details, or [Cancel] and approve again on the check card.", "retry_changed_next": "It is blocked for another reason this time. Check the new cause in the [!] details.", "retry_closed_next": "The merge session is closed, so trying again gives the same result. After [Cancel this approval], press [Approve] on the check card to apply the current commit."},
     header: {
       base: 'Project base',
       flow_base: 'Flow base',
@@ -1457,7 +1457,7 @@ export default {
     files_count: '{n} files',
     conflict: {
       title_target: 'Conflict · apply to {target} stopped',
-      count: 'Open {open} · resolved {done}',
+      count: 'Resolved {done} · left {open} (server record)',
       ai_again: 'Run again',
       ai_other: 'Another AI',
       ai_pick: 'AI to resolve',
@@ -1476,9 +1476,19 @@ export default {
       title: 'Merge conflict',
       ai: 'Resolve with AI',
       manual: 'Resolve manually',
-      abort: 'Cancel',
-      abort_title: 'Cancel merge',
-      abort_message: 'Stops the merge. The work branch is kept.',
+      abort: 'Abort merge',
+      abort_title: 'Abort merge',
+      abort_message: 'Puts the workspace back to before the merge. The group branch is kept.',
+      abort_cancel_approval: 'This approval (pinned at {sha}) is cancelled too. Its record is kept.',
+      abort_cancel_approval_unknown: 'This approval is cancelled too. Its record is kept.',
+      abort_then_approve: 'Then press [Approve] on the check card to apply again from the current commit ({head}).',
+      abort_then_approve_unknown: 'Then press [Approve] on the check card to apply again from the current commit.',
+      abort_failure: 'Aborting the merge failed. git refused:',
+      abort_failure_user: 'Pressing it again gives the same result. Ask an administrator for [Force cleanup].',
+      abort_failure_admin: 'Pressing it again gives the same result. [Force cleanup] can put the workspace back.',
+      force_cleanup: 'Force cleanup',
+      companions: 'Moved files resolved together',
+      companion_item: '{path} · originally {source}',
       abort_bound: 'The final approval attempt in progress ends with it.',
       unsupported: 'This kind of conflict is not handled on this screen.',
       // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
@@ -1517,8 +1527,9 @@ export default {
       confirm_message: 'Closes the conflict review and cancels the earlier approval. Its record and pinned commit are kept. Then press [Approve] on the check card yourself to approve the current commit.',
       title: 'Re-approval',
       ready: 'Earlier approval cleared · press [Approve] on the check card to approve the current commit',
-      cancel_failed: 'The conflict review was closed but the earlier approval could not be cancelled · {reason}',
+      cancel_failed: 'The conflict review was closed but the earlier approval could not be cancelled · {reason} · press [Cancel this approval] on the \'Git operation failed\' card below',
       dismiss: 'Close',
+      goto_gate: 'Go to the check card',
       reason: {
         merge_conflict_open: 'the conflict review is open',
         gate_conflict: 'conflict while applying',
@@ -1542,7 +1553,7 @@ export default {
       resolver_manual: 'Resolved manually',
       approve: 'Approve',
       reject: 'Reject',
-      abort: 'Cancel',
+      abort: 'Abort merge',
       applying: 'Applying',
       reconciling: 'Checking the result',
       reason: {
@@ -1640,10 +1651,46 @@ export default {
       untracked_changed: 'The new files changed since they were read. Please check again.',
       partial_failed: 'Some files could not be processed ({n})',
       failed: 'The request failed. ({code})',
+      failed_reason: 'The request failed. ({code}) · git: {reason}',
+      abort_failed: 'Aborting the merge failed. git refused: {reason} Pressing it again gives the same result. Ask an administrator for [Force cleanup].',
+      merge_not_in_progress: 'This merge is already cleaned up. The resolution was not saved. Press [Abort merge] to close the session.',
+      force_cleanup_head_moved: 'The target HEAD is not the one the merge started from, so nothing was cleaned up.',
+      force_cleanup_branch_mismatch: 'Another branch is checked out in the apply workspace, so nothing was cleaned up.',
+      force_cleanup_unsupported_target: 'This is a shared workspace, so it cannot be force-cleaned.',
     },
+    // flowgate.v02test.0052 0008 (#25): the dialog's two buttons never read the same — [Back] closes it and the
+    // other button names what it does ([Abort merge] …).
     confirm: {
       ok: 'OK',
-      cancel: 'Cancel',
+      cancel: 'Back',
+    },
+    // flowgate.v02test.0052 0008 — the administrator's forced cleanup of a merge whose abort git refuses.
+    force: {
+      title: 'Force cleanup of the workspace?',
+      workspace: 'The apply workspace {workspace} is put back to the HEAD of {target} ({head}).',
+      workspace_unknown: 'The apply workspace is put back to the HEAD of {target}.',
+      discarded: '{n} files of work in progress are lost.',
+      discarded_none: 'There is no change to put back.',
+      branch_kept: 'The group branch, its commits and the original approval record stay as they are.',
+      closes: 'Merge session {id} is closed and this approval is cancelled too.',
+      closes_only: 'Merge session {id} is closed. There is no approval to cancel.',
+      closes_unchecked: 'Merge session {id} is closed. This group\'s approval could not be checked here. If one remains, press [Cancel this approval] in the Git tab of its Flow.',
+      action: 'Force cleanup',
+      preview_failed: 'Could not read what the cleanup would do.',
+    },
+    // flowgate.v02test.0052 0008 — administrators only: the open merges marked "cleanup failed".
+    abort_failures: {
+      title: '{n} cleanup failures',
+      desc: 'Sessions whose merge abort git refused. Only administrators see this.',
+      item: '{id} · {group} → {target}',
+      item_unknown_target: '{id} · {group}',
+      at: 'Last try {at}',
+      force: 'Force cleanup',
+      open_card: 'Go to the check card',
+      done_cancelled: 'Merge session {id} ({group}) is closed and its earlier approval is cancelled. Press [Approve] on the check card to apply the current commit again.',
+      done_none: 'Merge session {id} ({group}) is closed. There was no approval to cancel.',
+      done_unchecked: 'Merge session {id} ({group}) is closed. This group\'s approval could not be checked here. If one remains, press [Cancel this approval] in the Git tab of its Flow.',
+      done_failed: 'Merge session {id} ({group}) is closed, but its earlier approval could not be cancelled ({code}). Press [Cancel this approval] on the "Git operation failed" card in the Git tab of its Flow.',
     },
     // flowgate.v02.0065 — Git not connected / status read failure / Connect Git modeless.
     unlinked: {

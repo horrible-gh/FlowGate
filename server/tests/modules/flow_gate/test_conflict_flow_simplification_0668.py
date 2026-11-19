@@ -443,7 +443,9 @@ def test_the_sweep_keeps_a_resolved_tr_conflict_under_the_review_ttl(
 
 
 @needs_git
-def test_opening_the_tr_review_counts_as_activity(real_store, git_active, repo):
+def test_opening_the_tr_review_is_not_activity(real_store, git_active, repo):
+    """flowgate.v02test.0052 T0003 할 일 4(c) supersedes 0668 T0004 here: opening (reading)
+    the TR review is not activity — only real operations move ``touched_at``."""
     _row, parked, _out = _resolved_cancel(repo)
     merge_id = parked["merge_id"]
     stale = _iso(23)
@@ -451,9 +453,10 @@ def test_opening_the_tr_review_counts_as_activity(real_store, git_active, repo):
         "UPDATE git_merge_session SET touched_at = ? WHERE merge_id = ?", [stale, merge_id],
     )
 
-    svc.get_merge_review(_GROUP, merge_id)
+    out = svc.get_merge_review(_GROUP, merge_id)
 
-    assert db_git.get_session(merge_id)["touched_at"] != stale
+    assert out["result"]["review_state"] == svc.REVIEW_STATE_PENDING
+    assert db_git.get_session(merge_id)["touched_at"] == stale
 
 
 # ── 3. 청소가 닫은 시도는 abort 와 같이 정리된다 ───────────────────────────────

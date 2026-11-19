@@ -152,14 +152,36 @@ def _run(root: Path) -> None:
 
 
 def _restore(root: Path, originals: dict[str, bytes], keep: set[str]) -> None:
-    with document_write_ports.write_paths([root / name for name in originals if name not in keep]):
-        from modules.flow_gate.storage.safe_path import resolve_in_root
-        for name, raw in originals.items():
-            if name in keep:
+    """Put ``originals`` back on disk, except ``keep``.
+
+    flowgate.v02test.0052 T0003 (the confirmed cause of merge 457's stuck abort): a file
+    whose bytes are already the original is NOT rewritten. ``start_session`` runs right
+    after ``apply_eol_separation`` has staged an EOL-only file, reads it as an "original"
+    and, seconds later (``git rerere`` in between), wrote the identical bytes back — the
+    index entry kept the old stat, so ``git merge --abort`` refused with "Entry '<path>'
+    not uptodate. Cannot merge." although nothing had changed. If a staged file really is
+    rewritten, the index stat cache is refreshed afterwards (content-neutral)."""
+    from modules.flow_gate.services import git_service as gs
+    from modules.flow_gate.storage.safe_path import resolve_in_root
+    pending: list[tuple[Path, bytes]] = []
+    for name, raw in originals.items():
+        if name in keep:
+            continue
+        target = resolve_in_root(root, name)
+        if target is None:
+            continue
+        try:
+            if target.is_file() and target.read_bytes() == raw:
                 continue
-            target = resolve_in_root(root, name)
-            if target is not None:
-                document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(raw))
+        except OSError:
+            pass
+        pending.append((target, raw))
+    if not pending:
+        return
+    with document_write_ports.write_paths([target for target, _raw in pending]):
+        for target, raw in pending:
+            document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(raw))
+    gs._run_git(["update-index", "-q", "--refresh"], cwd=root)
 
 
 def start_session(group_id: str, merge_id: int, root: Path) -> dict | None:
@@ -418,13 +440,19 @@ def hold(group_id: str, merge_id: int) -> dict:
         })
         # No abort can happen before the checkpoint INSERT has committed. If Git
         # refuses the abort, restore the previous active ledger entry atomically.
-        proc = gs._run_git(["merge", "--abort"], cwd=root)
+        # flowgate.v02test.0052 T0003 할 일 3(b): the session's abort is audited
+        # (``ref_operations[].stderr_tail`` on failure) like the user [abort].
+        proc = gs._abort_merge(root, merge_id=merge_id, reason="hold_abort")
         if proc.returncode:
             gs.db_git.rollback_resolution_checkpoint(
                 checkpoint["checkpoint_id"], previous_checkpoint_id,
             )
+            gs._record_abort_failure(merge_id, "hold_abort", proc)
             raise GitServiceError(500, "git_error", "Merge abort failed after checkpoint save",
-                                  diagnostic=gs._last_line(proc.stderr))
+                                  details={"reason": proc.reason, "returncode": proc.returncode,
+                                           "merge_id": merge_id, "recovery": "force_cleanup"},
+                                  params={"reason": proc.reason},
+                                  diagnostic=proc.reason)
         discarded = approval_intent.discard_intent(merge_id)
         merge_target.close_session_attempt(
             session, merge_target.ATTEMPT_ABORTED, error={"code": "user_hold"},

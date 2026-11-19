@@ -21,6 +21,116 @@ export function retryOutcomeText(outcome: RetryOutcome | null, t: (key: string) 
   return `${t(outcome.kind === 'same' ? 'gui.git.gate_job.retry_same' : 'gui.git.gate_job.retry_changed')}${cause ? ` · ${cause}` : ''}`
 }
 /**
+ * The text that says why trying again does not help and where to press next, shown under {@link retryOutcomeText}
+ * (flowgate.v02test.0052 0008 할 일 5): `same` = nothing changed, `changed` = read the new cause, a closed merge session
+ * = cancel this approval and approve again on the check card. Null without an outcome.
+ */
+export function retryNextText(outcome: RetryOutcome | null, t: (key: string) => string): string | null {
+  if (!outcome) return null
+  if (outcome.code === CLOSED_SESSION_CODE) return t('gui.git.gate_job.retry_closed_next')
+  return t(outcome.kind === 'same' ? 'gui.git.gate_job.retry_same_next' : 'gui.git.gate_job.retry_changed_next')
+}
+
+/** The error code of a decision whose merge session was already closed (`publish._merge_outcome`, outcome `conflict_closed`). */
+export const CLOSED_SESSION_CODE = 'merge_conflict_aborted'
+
+/**
+ * flowgate.v02test.0052 (0008 할 일 4): the held decision's merge session is closed (the conflict was aborted). [재시도] and
+ * [다시 반영] only read that closed session again (`publish.py` `_merge_outcome` → `merge_conflict_aborted`), so they can
+ * never succeed — the card turns them off and leads to cancelling this approval and approving again.
+ */
+export function isClosedSessionOperation(gate: RunGateState | null | undefined): boolean {
+  const code = gate?.recovery?.error_code ?? gate?.job?.last_error_code ?? ''
+  return code === CLOSED_SESSION_CODE
+}
+
+/** The window event that asks the Designer to select a card (here: the check card of a Flow). */
+export const SELECT_GATE_NODE_EVENT = 'fg:select_gate_node'
+
+/** [확인 카드로 이동]: the Designer shows the Flow and selects the check card (its Inspector holds [승인]). */
+export function openGateCard(flowId: string | null | undefined, nodeKey: string | null | undefined): void {
+  if (!flowId || !nodeKey || typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(SELECT_GATE_NODE_EVENT, { detail: { flowId, nodeKey } }))
+}
+
+/** What {@link abortAndCancelApproval} needs of the Git session. */
+export interface AbortFlowSession {
+  abortForReapproval(): Promise<boolean>
+  refresh(): Promise<void>
+}
+
+/**
+ * flowgate.v02test.0052 (0008 할 일 1): the conflict card's [병합 중단] ends like [새 커밋으로 다시 승인]: ① close the
+ * conflict review (merge abort), ② cancel the approval parked on it (`cancelAfterAbort`, only when the server now says it
+ * is cancelable), ③ leave the guidance "확인 카드에서 [승인]" in `reapproval` (code = why ② failed, null = done). Steps
+ * run in this order and stop at the first refusal: a refused abort changes nothing; a refused cancel leaves the closed
+ * review and its parked approval, which the "Git 작업 실패" card then offers [이 승인 취소] for. Returns false when ① failed.
+ */
+export async function abortAndCancelApproval(session: AbortFlowSession, gateJobs: GateOperations | null, operation: GateOperation | null): Promise<boolean> {
+  if (!(await session.abortForReapproval())) return false
+  await cancelParkedApproval(session, gateJobs, operation)
+  return true
+}
+
+/**
+ * Steps ② and ③ of {@link abortAndCancelApproval}, also the end of the administrator's forced cleanup: the merge session
+ * is closed, so cancel the approval that was parked on it and leave the "approve again on the check card" guidance.
+ * `operation` is the one read BEFORE the session closed (the conflict card and its approval are gone afterwards).
+ */
+export async function cancelParkedApproval(session: Pick<AbortFlowSession, 'refresh'>, gateJobs: GateOperations | null, operation: GateOperation | null): Promise<void> {
+  if (gateJobs && operation?.gate.recovery) {
+    const decisionId = operation.gate.recovery.decision_id
+    const code = await gateJobs.cancelAfterAbort(decisionId)
+    gateJobs.reapproval.value = { decisionId, code, nodeKey: operation.nodeKey }
+  }
+  await session.refresh()
+}
+
+/**
+ * The approval parked on another group's open merge conflict (the administrator's forced cleanup of a session listed under
+ * "정리 실패" is not always about the Flow shown). `null` = that group holds none; `undefined` = its run could not be read,
+ * so nobody can say. Read BEFORE the session closes — afterwards the conflict is gone.
+ */
+export async function readConflictOperationOf(groupId: string): Promise<GateOperation | null | undefined> {
+  try {
+    const run = await runGateReceiptsRead(await runCurrentRead(groupId))
+    if (!run) return null
+    for (const node of run.nodes) {
+      const gate = node.gate
+      if (gate?.decision_in_progress && gate.recovery && isConflictOperation(gate)) return { runId: run.runId, nodeKey: node.nodeKey, gate }
+    }
+    return null
+  } catch {
+    return undefined
+  }
+}
+
+/** How the cancel of an approval in another group ended: `code` null = cancelled (or already gone), else why it was not. */
+export interface OtherGroupCancel { code: string | null; nodeKey: string | null }
+
+/**
+ * Cancels `operation` (read by {@link readConflictOperationOf}) after its merge session was closed, with the same cancel
+ * [이 승인 취소] sends: the run is read again, and the decision is cancelled only when the server now says it is
+ * cancelable. Never throws; the answer says what happened so the caller can name the button to press next.
+ */
+export async function cancelOperationOfGroup(groupId: string, operation: GateOperation): Promise<OtherGroupCancel> {
+  const nodeKey = operation.nodeKey
+  const decisionId = operation.gate.recovery?.decision_id
+  if (!decisionId) return { code: null, nodeKey }
+  try {
+    const run = await runGateReceiptsRead(await runCurrentRead(groupId))
+    const node = run?.nodes.find(item => item.gate?.recovery?.decision_id === decisionId)
+    const recovery = node?.gate?.recovery
+    if (!run || !node || !node.gate?.decision_in_progress || !recovery) return { code: null, nodeKey }
+    if (!recovery.cancelable) return { code: recovery.error_code ?? 'gate_decision_not_cancelable', nodeKey }
+    await runGateRecover(run.runId, node.nodeKey, decisionId, 'cancel', { request_id: randomUuid(), expected_decision_version: recovery.decision_version })
+    return { code: null, nodeKey }
+  } catch (cause) {
+    return { code: documentErrorOf(cause).code || 'gate_decision_not_cancelable', nodeKey }
+  }
+}
+
+/**
  * flowgate.v02.0132 T#4 (review): whether a held decision is parked again — the server's work on it ended in a failure
  * and waits for a person (decision `failed` / `recovery_required`, its job `recovery_required`, no Git work going on).
  * The accepted retry (202) itself is none of it: the decision is `accepted` with its version raised, the job `pending`
@@ -56,7 +166,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
   const busy = ref(false)
   const notice = ref<string | null>(null)
   /** flowgate.v02gui.0004 §B: how the last "새 커밋으로 다시 승인" ended (code null = ready for the person's approval). */
-  const reapproval = ref<{ decisionId: string; code: string | null } | null>(null)
+  const reapproval = ref<{ decisionId: string; code: string | null; nodeKey?: string } | null>(null)
   /** Accepted retries by decision id: the decision version and error code they were sent at (see `retryOutcomeOf`). */
   const retried = ref<Record<string, { version: number; code: string | null }>>({})
   const operations = computed<GateOperation[]>(() => (run.value?.nodes ?? []).flatMap(node => {
@@ -151,6 +261,8 @@ export function useGateOperations(project: () => string | null, flow: () => stri
         run.value = answer; pending = null; selected.value = null
         // 202: the retry is accepted, the work goes on in the background; remember what it was sent at to tell its end.
         if (request.action === 'retry') retried.value = { ...retried.value, [recovery.decision_id]: { version: recovery.decision_version, code: recovery.error_code } }
+        // flowgate.v02test.0052 (0008 할 일 4·6): a cancelled approval leaves the way on — approve again on the check card.
+        if (request.action === 'cancel') reapproval.value = { decisionId: recovery.decision_id, code: null, nodeKey: operation.nodeKey }
         pruneRetried()
       }
       return true

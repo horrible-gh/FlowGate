@@ -462,8 +462,8 @@ def _join(row, directory, root, branch, marker, group_root):
             raise port.GraphSourceError("graph_worktree_unavailable", reason=reason)
 
     def reset(sha):
-        if git._rev_parse(root, "MERGE_HEAD") is not None:
-            run(["merge", "--abort"], "join_abort_failed")
+        if git._rev_parse(root, "MERGE_HEAD") is not None and git._abort_merge(root).returncode:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="join_abort_failed")
         run(["reset", "--hard", sha], "join_reset_failed")
         if git._rev_parse(root, "HEAD") != sha or git._rev_parse(root, "MERGE_HEAD") is not None:
             raise port.GraphSourceError("graph_worktree_unavailable", reason="join_reset_failed")

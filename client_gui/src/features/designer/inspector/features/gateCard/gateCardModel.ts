@@ -118,7 +118,12 @@ export function gateDecisionReason(
     const gate = node.gate
     if (gate?.decision_in_progress) {
       const conflict = gate.job?.phase_note === 'gate_conflict' || gate.recovery?.status === 'conflict'
-      return conflict ? 'reason.conflict' : 'reason.decision_in_progress'
+      if (conflict) return 'reason.conflict'
+      // flowgate.v02test.0052 0008 할 일 6: the held approval already failed (parked) — it has to be cancelled before approving
+      // again; "in progress" would send the person to wait for something that never finishes.
+      const recovery = gate.recovery
+      const failed = !!recovery && gate.git_active !== true && (['failed', 'recovery_required'].includes(recovery.status) || (!!recovery.error_code && recovery.status !== 'accepted'))
+      return failed ? 'reason.old_approval_failed' : 'reason.decision_in_progress'
     }
     return 'reason.not_open'
   }

@@ -58,6 +58,9 @@ describe('reads', () => {
         { path: 'a/b.ts', conflictCount: 1, content: '<<<<<<< x', resolved: false },
         { path: 'c.ts', conflictCount: 0, content: '', resolved: true },
       ],
+      // flowgate.v02test.0052 0008: the two additive answers (none here)
+      abortFailure: null,
+      companionFiles: [],
     })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/groups/p.m.0001/git/merge/7/conflicts')
   })

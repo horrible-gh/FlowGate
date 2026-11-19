@@ -11,6 +11,8 @@
       <div class="gx-title">{{ t('gui.git.reapprove.title') }}</div>
       <p class="gx-desc">{{ reapproval.code ? t('gui.git.reapprove.cancel_failed', { reason: reapprovalReason }) : t('gui.git.reapprove.ready') }}</p>
       <div class="gx-actions">
+        <!-- flowgate.v02test.0052 (0008 할 일 1·4): the next press is on the check card — take the person there. -->
+        <button v-if="!reapproval.code && reapproval.nodeKey" type="button" class="gx-btn primary" data-test="git-reapprove-goto" @click="openGateCard(session.state.flow?.groupId, reapproval.nodeKey)">{{ t('gui.git.reapprove.goto_gate') }}</button>
         <button type="button" class="gx-btn ghost" data-test="git-reapprove-dismiss" @click="gateJobs!.reapproval.value = null">{{ t('gui.git.reapprove.dismiss') }}</button>
       </div>
     </section>
@@ -29,7 +31,7 @@ import GitDirtyCard from './GitDirtyCard.vue'
 import GitHoldCard from './GitHoldCard.vue'
 import GitPushFailureCard from './GitPushFailureCard.vue'
 import GitReviewCard from './GitReviewCard.vue'
-import { isConflictOperation, useGitGateOperations } from './gateOperations'
+import { isConflictOperation, openGateCard, useGitGateOperations } from './gateOperations'
 import { useGitPanel } from './gitSession'
 
 const gateJobs = useGitGateOperations()
