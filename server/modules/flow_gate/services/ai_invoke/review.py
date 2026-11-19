@@ -17,7 +17,7 @@ it needs back are reached through the `ai_invoke_service` seam.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from modules.flow_gate.db import document_reviews as db_reviews
@@ -1070,7 +1070,10 @@ def _answered_questions_clause(items: list[dict], stage: str) -> str:
             "## Answered questions to check", "---", intro,
             "Check the document against every answer:",
             "- it contradicts an answer: return 'issues', put the question (Q<seq>, item <id>) "
-            "in that finding's locus and say what has to change;",
+            "in that finding's locus and say what has to change; when that finding reports the "
+            "contradiction with the answer and nothing else, also give it \"cause\": \"question\" "
+            "-- a defect of its own is a separate finding without \"cause\", even when it names "
+            "a question;",
             "- it agrees with every answer: judge it on its other merits as usual -- do not ask "
             "for a change no answer requires;",
             "- reconciling them needs a human business decision the answers do not settle: "
@@ -2041,6 +2044,51 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
     return history, (history[0] if history else None)
 
 
+def _document_loop_counted_rounds(current: list[dict], excluded_review_ids) -> int:
+    """How many of the loop's review ROUNDS (``_document_loop_review_view``) count against its review_count.
+
+    flowgate.v02test.0051 T0007 (A2, R A-3 "질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다"): a round whose verdict
+    carries an explicit question-wait cause marker (``db.review_count_exclusions``, written when that verdict's hop
+    ended -- ``question_loop_wait.classify_parked_review`` / ``classify_answer_check_review``) is left out of the COUNT
+    only. It stays in ``current``: it is still its round's verdict for the rejection and the rework, the stall check,
+    the progress check (``check_expected_progress`` keeps ``len(current)``) and ``round_no``. No marker -- every legacy
+    row, every verdict with a defect of its own -- counts exactly as before."""
+    excluded = {int(i) for i in excluded_review_ids or ()}
+    if not excluded:
+        return len(current)
+    return sum(1 for review in current if int(review.get("id") or 0) not in excluded)
+
+
+def loop_question_wait_sec(loop_run_ids, now: datetime) -> int:
+    """Seconds the loop carried by ``loop_run_ids`` (the run's Graph predecessors) waited for its questions -- moved out
+    of its total deadline and stage timeouts (flowgate.v02test.0051 T0007 A2). 0 when unknown (counted as before)."""
+    if not loop_run_ids:
+        return 0
+    try:
+        from flowgate.card_settings import question_loop_wait
+
+        return question_loop_wait.excluded_wait_seconds(loop_run_ids, now)
+    except Exception:  # noqa: BLE001 — never a longer budget on what could not be read
+        logger.warning("loop question wait time unreadable for %s", loop_run_ids, exc_info=True)
+        return 0
+
+
+def _loop_count_exclusions(doc_ref: Optional[str]) -> set[int]:
+    """The ids of ``doc_ref``'s reviews marked question-caused; an unreadable / missing store marks nothing (every
+    round counts, as before -- the loop can only stop earlier, never run past its review_count)."""
+    if not doc_ref:
+        return set()
+    try:
+        from modules.flow_gate.db import review_count_exclusions as db_exclusions
+
+        if not db_exclusions.available():
+            return set()
+        return db_exclusions.review_ids_by_doc(doc_ref)
+    except Exception:  # noqa: BLE001
+        logger.warning("review count exclusions unreadable for %s; every round counts", doc_ref, exc_info=True)
+        return set()
+
+
 def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> bool:
     """Verify the just-finished hop, never progress left by an earlier round."""
     kind = bundle.get("last_hop_kind")
@@ -2119,6 +2167,9 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     if now is not None and bundle.get("deadline_at") is not None and now >= bundle["deadline_at"]:
         return {**common, "current_stage": "stopped", "stop_reason": "total_timeout", "stop_detail": "document review loop deadline reached"}
     rounds_used = len(current)
+    # flowgate.v02test.0051 T0007 (A2): only the limit reads the counted rounds; ``rounds_used`` stays the progress
+    # coordinate (round_no) below.
+    rounds_counted = _document_loop_counted_rounds(current, bundle.get("count_excluded_review_ids"))
     limit = resolve_round_limit(int(bundle["review_count"]))
     doc = bundle.get("doc") or {}
     # A rework whose revision has moved past what the last-seen review (or, when nothing
@@ -2132,8 +2183,11 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
         and bundle.get("last_hop_outcome") == "succeeded"
         and int(doc.get("revision_no") or 0) > int(history_latest.get("revision_no") or bundle.get("baseline_revision_no") or 0)
     ):
-        if limit != REVIEW_ROUNDS_NO_LIMIT and rounds_used >= limit:
-            return {**common, "current_stage": "stopped", "stop_reason": "review_count_exhausted", "stop_detail": f"review count {limit} exhausted"}
+        if limit != REVIEW_ROUNDS_NO_LIMIT and rounds_counted >= limit:
+            detail = f"review count {limit} exhausted"
+            if rounds_counted != rounds_used:
+                detail += f" ({rounds_used - rounds_counted} question-caused review(s) not counted)"
+            return {**common, "current_stage": "stopped", "stop_reason": "review_count_exhausted", "stop_detail": detail}
         return {**common, "current_stage": REVIEW_HOP_KIND, "attempts_used": 0}
     if rounds_used == 0:
         stage = REWORK_HOP_KIND if bundle.get("starts_with_rework") else REVIEW_HOP_KIND
@@ -2160,7 +2214,7 @@ def _loop_deadline(value):
     return None
 
 
-def loop_stage_timeout_sec(loop: dict, stage: str, now: datetime) -> int:
+def loop_stage_timeout_sec(loop: dict, stage: str, now: datetime, *, question_wait_sec: int = 0) -> int:
     """This hop's real execution budget (T0011 §4 / 0486 NR0010 Finding 3).
 
     `rework_timeout_sec` was stored on every document review loop row and offered on the
@@ -2177,11 +2231,15 @@ def loop_stage_timeout_sec(loop: dict, stage: str, now: datetime) -> int:
     that owns it; the floor of 1 keeps a hop the gate already allowed to start (it stops
     the loop itself once remaining reaches zero) from ever receiving a non-positive
     budget from a `now` a few milliseconds later than the gate's own read.
+
+    ``question_wait_sec`` (flowgate.v02test.0051 T0007 A2, ``loop_question_wait_sec``): the time the loop
+    spent parked for its questions moves the deadline by that much -- waiting is not execution time.
     """
     base = int(loop["rework_timeout_sec"]) if stage == REWORK_HOP_KIND else HOP_TIMEOUT_SEC
     deadline = _loop_deadline(loop.get("deadline_at"))
     if deadline is None:
         return base
+    deadline += timedelta(seconds=max(0, int(question_wait_sec or 0)))
     remaining = int((deadline - now).total_seconds())
     return max(1, min(base, remaining))
 
@@ -2225,7 +2283,24 @@ def _restore_document_review_loop(run_id: str) -> dict | None:
 def _checkpoint_document_review_loop(run: dict) -> dict | None:
     """Atomically reject a non-pass review and reserve the durable successor stage."""
     with _svc().get_store().transaction():
-        return _checkpoint_document_review_loop_tx(run)
+        loop = _checkpoint_document_review_loop_tx(run)
+    _classify_question_caused_review(run, loop)
+    return loop
+
+
+def _classify_question_caused_review(run: dict, loop: dict | None) -> None:
+    """flowgate.v02test.0051 T0007 (A2): after the checkpoint committed, the first review of a run resumed from its
+    rework's questions may be question-caused (``question_loop_wait.classify_answer_check_review``). Outside the
+    checkpoint transaction on purpose: a marker that cannot be written leaves the verdict counted, never a failed
+    checkpoint. Only Graph runs resumed from a wait have predecessors to look at; never raises."""
+    if not loop or not run.get("graph_review_run_ids"):
+        return
+    try:
+        from flowgate.card_settings import question_loop_wait
+
+        question_loop_wait.classify_answer_check_review(run, loop)
+    except Exception:  # noqa: BLE001
+        logger.warning("question-caused review classification failed for %s", run.get("run_id"), exc_info=True)
 
 
 def recheck_review_hop_before_retry(run: dict) -> dict | None:
@@ -2251,7 +2326,10 @@ def recheck_review_hop_before_retry(run: dict) -> dict | None:
     and proceeds untouched. Nothing is written in the None case.
     """
     with _svc().get_store().transaction():
-        return _checkpoint_document_review_loop_tx(run, late_recheck=True)
+        loop = _checkpoint_document_review_loop_tx(run, late_recheck=True)
+    if loop is not None:
+        _classify_question_caused_review(run, loop)
+    return loop
 
 
 CHECKPOINT_FAILURE_STOP_DETAIL = "loop checkpoint could not be written"
@@ -2390,6 +2468,9 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
     stage = persisted["current_stage"]
     succeeded = run.get("outcome") == "complete"
     attempts = int(persisted.get("attempts_used") or 0) + 1
+    now = datetime.now(timezone.utc)
+    deadline = _loop_deadline(persisted.get("deadline_at"))
+    question_wait_sec = loop_question_wait_sec(run.get("graph_review_run_ids"), now) if deadline is not None else 0
     if late_recheck:
         if (
             persisted.get("current_stage") != REVIEW_HOP_KIND
@@ -2411,8 +2492,10 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         "last_hop_outcome": "succeeded" if succeeded else "failed",
         "attempts_used": attempts,
         "failure_detail": run.get("last_message") or run.get("end_reason"),
-        "now": datetime.now(timezone.utc),
-        "deadline_at": _loop_deadline(persisted.get("deadline_at")),
+        "now": now,
+        # flowgate.v02test.0051 T0007 (A2): the time the loop spent parked for its questions is not loop time.
+        "deadline_at": (deadline + timedelta(seconds=question_wait_sec)) if deadline is not None else None,
+        "question_wait_sec": question_wait_sec,
         # The review registration snapshots this exact run id into document_reviews, so
         # carrying it here makes "the rows this loop owns" the same set on both sides.
         # `attempt_no` is deliberately NOT carried any more: it never changes inside a run,
@@ -2511,6 +2594,8 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
             if not db_connection.after_commit(_broadcast_reject):
                 _broadcast_reject()
 
+    # flowgate.v02test.0051 T0007 (A2): the verdicts marked question-caused are left out of the review count only.
+    bundle["count_excluded_review_ids"] = _loop_count_exclusions(persisted["doc_ref"])
     resolved = resolve_document_review_loop_gate(bundle)
     updates = {
         "round_no": resolved["round_no"],

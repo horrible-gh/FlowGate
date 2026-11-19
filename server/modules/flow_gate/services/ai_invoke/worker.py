@@ -437,8 +437,12 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 # `timeout_sec` here is enough for the new stage's budget to take effect
                 # from its first attempt onward.
                 stage_started_at = admission.now_iso()
+                stage_now = datetime.fromisoformat(stage_started_at)
+                # flowgate.v02test.0051 T0007 (A2): the time this loop spent parked for its questions (in
+                # the Graph predecessors this run was resumed from) is not loop time.
                 run["timeout_sec"] = review.loop_stage_timeout_sec(
-                    loop, loop["current_stage"], datetime.fromisoformat(stage_started_at)
+                    loop, loop["current_stage"], stage_now,
+                    question_wait_sec=review.loop_question_wait_sec(run.get("graph_review_run_ids"), stage_now),
                 )
                 run["deadline_at"] = admission._deadline_iso(stage_started_at, run["timeout_sec"])
                 current_chain = [selected]

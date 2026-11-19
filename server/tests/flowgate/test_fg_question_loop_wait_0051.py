@@ -136,7 +136,9 @@ def world(monkeypatch):
     conn.executemany("INSERT INTO ai_providers VALUES (?)", [("reviewer",), ("reworker",)])
     conn.commit()
     store = Store(conn)
-    for module in (db_loops, service, service.db_docs, db_reviews, db_waits):
+    from modules.flow_gate.db import review_count_exclusions as db_exclusions_store
+    # T0007 (A2): the exclusion store reads this connection too (no migration 201 here: nothing is marked)
+    for module in (db_loops, service, service.db_docs, db_reviews, db_waits, db_exclusions_store):
         monkeypatch.setattr(module, "get_store", lambda: store)
 
     state = {"asked": {}, "hops": [], "hooks": [], "tokens": 0, "rejects": 0, "act": {}}
@@ -1145,3 +1147,513 @@ def test_e2e_a_restart_resumes_the_answered_wait_once_and_a_lost_cas_rolls_its_r
     assert state["order"] == [parked_run, "aiv2_loop_2"] and len(g["executions"]()) == 2
     assert qlw.resume(FLOW, g["waits"]()[0]) is None                  # the stored row is not resumable again
     assert g["waits"]()[0]["status"] == "resumed" and len(state["hops"]) == 2
+
+
+# ── Part 5 (T0007, A2): question-caused verdicts and the question wait are left out of the loop's budget ─────────────
+#
+# R 0051.0001 A-3: "답이 달리면 그 답을 근거로 이어서 수정한다. 답을 기다린 시간과 질문 때문에 생긴 반려는 검수 횟수에
+# 넣지 않는다." The same real worker hop loop and checkpoint as Part 1, with the review rows' run provenance
+# (``review_run_id`` / ``attempt_no``, so the Graph predecessor ownership of ``_document_loop_review_view`` is the real
+# one), the wait table (migration 200) and the exclusion table (migration 201). A loop is carried across its wait by a
+# successor run exactly as the Graph replay hands it on: the parked loop row's state, the predecessor run ids, the
+# real ``review._insert_document_review_loop`` -> ``question_loop_wait.on_successor_admitted`` hand-off.
+
+from modules.flow_gate.db import review_count_exclusions as db_exclusions  # noqa: E402
+
+RUN2, RUN3 = "aiv2_loop_run_2", "aiv2_loop_run_3"
+
+
+def _exclusion_table(conn):
+    conn.executescript((MIGRATIONS / "sqlite" / "201_review_count_exclusions.sql").read_text(encoding="utf-8"))
+
+
+def _iso(moment):
+    return moment.isoformat()
+
+
+@pytest.fixture
+def budget(monkeypatch):
+    from flowgate.graph_run import execution_store as ledger, fencing
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+    from modules.flow_gate.db import question_items as db_question_items
+    from modules.flow_gate.services import ai_invoke_service as service
+    from modules.flow_gate.services import graph_execution_hooks
+    from modules.flow_gate.services.ai_invoke import finalize, review
+    from modules.flow_gate.services.ai_invoke import worker as worker_module
+
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE ai_invoke_runs(run_id TEXT PRIMARY KEY);
+        CREATE TABLE groups(group_id TEXT PRIMARY KEY);
+        CREATE TABLE documents(id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id TEXT UNIQUE NOT NULL, project_id TEXT,
+            group_id TEXT, revision_no INTEGER NOT NULL, doc_review_status TEXT NOT NULL, meta TEXT,
+            rejection_reason TEXT, rejection_history TEXT, updated_at TEXT);
+        CREATE TABLE ai_providers(provider_id TEXT PRIMARY KEY);
+        CREATE TABLE document_reviews(id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL, reviewer_id TEXT NOT NULL, verdict TEXT NOT NULL, findings TEXT NOT NULL,
+            comment TEXT, reviewed_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            review_run_id TEXT, attempt_no INTEGER);
+    """)
+    for name in ("091_ai_invoke_document_review_loops.sql", "092_ai_invoke_document_review_loop_live_run.sql"):
+        conn.executescript((MIGRATIONS / "sqlite" / name).read_text(encoding="utf-8"))
+    _wait_table(conn)
+    _exclusion_table(conn)
+    conn.execute("INSERT INTO groups VALUES (?)", (FLOW,))
+    conn.execute("INSERT INTO documents(doc_id,project_id,group_id,revision_no,doc_review_status,updated_at) "
+                 "VALUES (?, 'flowgate', ?, 3, 'pending_review', '2026-11-19T00:00:00+00:00')", (DOC, FLOW))
+    conn.executemany("INSERT INTO ai_providers VALUES (?)", [("reviewer",), ("reworker",)])
+    conn.commit()
+    store = Store(conn)
+    for module in (db_loops, service, service.db_docs, db_reviews, db_waits, db_exclusions):
+        monkeypatch.setattr(module, "get_store", lambda: store)
+
+    state = {"asked": {}, "items": {}, "hops": [], "timeouts": [], "rejects": 0, "act": {}}
+    monkeypatch.setattr(finalize, "open_questions_raised_by_run",
+                        lambda group_id, run_id: [dict(i) for i in state["asked"].get(run_id, [])])
+    monkeypatch.setattr(db_question_items, "get_by_pk", lambda pk: state["items"].get(int(pk)))
+    monkeypatch.setattr(ledger, "get", lambda exec_id: {
+        "exec_id": exec_id, "attempt_id": ATTEMPT, "run_id": GRAPH_RUN, "kind": "review", "status": "running",
+        "assignment_stage": "result_review", "assignment_seq": 1, "request_json": "{}"})
+    monkeypatch.setattr(fencing, "attempt_row", lambda attempt_id: {
+        "attempt_id": attempt_id, "node_key": "card", "attempt_status": "active", "run_status": "running"})
+    monkeypatch.setattr(graph_execution_hooks, "call", lambda name, *a, **k: None)
+
+    def execute(run, chain, prompt):
+        stage = db_loops.get(run["run_id"])["current_stage"]
+        state["hops"].append((run["run_id"], stage))
+        state["timeouts"].append(run.get("timeout_sec"))
+        stamp = _iso(datetime.now(timezone.utc))
+        act = state["act"].get(len(state["hops"]), {})
+        if stage == "rework" and act.get("revise", True):
+            conn.execute("UPDATE documents SET revision_no = revision_no + 1, doc_review_status = 'revised' "
+                         "WHERE doc_id = ?", (DOC,))
+        if stage == "review" and act.get("verdict"):
+            revision = conn.execute("SELECT revision_no FROM documents WHERE doc_id = ?", (DOC,)).fetchone()[0]
+            findings = act.get("findings", ["a real defect"] if act["verdict"] == "issues" else [])
+            conn.execute("INSERT INTO document_reviews(doc_id,revision_no,reviewer_id,verdict,findings,comment,"
+                         "reviewed_at,created_at,updated_at,review_run_id,attempt_no) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+                         (DOC, revision, "reviewer", act["verdict"], json.dumps(findings), None, stamp, stamp, stamp,
+                          run["run_id"]))
+        conn.commit()
+        if act.get("ask"):
+            item_id, seq = act["ask"]
+            item = {"id": item_id, "seq": seq, "asker_kind": "ai", "asker_ai_run_id": run["run_id"],
+                    "anchor_doc_id": DOC, "asker_actual_provider_id": run.get("provider_id")}
+            state["items"][item_id] = item
+            state["asked"].setdefault(run["run_id"], []).append(item)
+        return True
+
+    def auto_reject(slot, review_row, ctx):
+        state["rejects"] += 1
+        conn.execute("UPDATE documents SET doc_review_status = 'rejected' WHERE doc_id = ?", (DOC,))
+        conn.commit()
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "_execute_provider_chain", execute)
+    monkeypatch.setattr(service, "_auto_reject", auto_reject)
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
+    monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
+    monkeypatch.setattr(service, "_prepare_retry_token", lambda run: {"mention": "token"})
+    monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
+    monkeypatch.setattr(worker_module, "_start_post_process_recovery", lambda item: (None, None))
+    monkeypatch.setattr(worker_module, "_stop_post_process_recovery", lambda *a, **k: None)
+    monkeypatch.setattr(service, "_broadcast", lambda run, event_type, payload: None)
+    monkeypatch.setattr(service, "_finalize_run", lambda item: item.update(status="finished"))
+    monkeypatch.setattr(service.ai_settings_service, "resolve_effective", lambda project: {
+        "providers": [{"id": "reviewer", "name": "Reviewer"}, {"id": "reworker", "name": "Reworker"}]})
+
+    def _run(run_id, loop_row, exec_id, predecessors):
+        stage = loop_row["current_stage"]
+        provider = "reworker" if stage == "rework" else "reviewer"
+        return {"run_id": run_id, "project_id": "flowgate", "issued_to": "owner",
+                "api_base_url": "http://127.0.0.1/flowgate/api/v1", "group_id": FLOW, "doc_ref": DOC,
+                "mode": "single", "document_review_loop": loop_row, "started_at": loop_row["started_at"],
+                "docs_target": 0, "chain_id": "loop", "chain_docs_target": 0, "chain_docs_reached": 0,
+                "attempts_used": 0, "fallback_history": [], "action_scope": "edit" if stage == "rework" else "review",
+                "hop_kind": stage, "cancel_event": threading.Event(), "graph_exec_id": exec_id,
+                "graph_review_run_ids": list(predecessors), "provider_id": provider}
+
+    def _work(run):
+        provider = run["provider_id"]
+        service._worker(run, [{"id": provider, "name": provider.title()}], "go")
+        return run
+
+    def start(stage="review", started=None, **loop_fields):
+        started = started or datetime.now(timezone.utc)
+        loop = {**LOOP, **loop_fields, "run_id": RUN, "group_id": FLOW, "doc_ref": DOC, "current_stage": stage,
+                "starts_with_rework": stage == "rework", "started_at": _iso(started),
+                "deadline_at": _iso(started + timedelta(seconds=int(loop_fields.get("total_timeout_sec", 3600)))),
+                "stop_reason": None, "stop_detail": None}
+        if stage == "rework":
+            conn.execute("UPDATE documents SET doc_review_status = 'rejected' WHERE doc_id = ?", (DOC,))
+            conn.commit()
+        return _work(_run(RUN, db_loops.insert(loop), EXEC, []))
+
+    def resume(parked_run_id, run_id, predecessors, *, waited=None, exec_id=None):
+        """Answer the parked run's questions and carry the loop on as the Graph replay does (A1's resume ->
+        ``execution.loop_state`` -> admission -> ``review._insert_document_review_loop``)."""
+        wait_row = db_waits.get_by_loop_run(parked_run_id)
+        assert wait_row["status"] == "waiting"
+        if waited is not None:                         # the wait started that long ago
+            conn.execute("UPDATE question_loop_waits SET waited_at = ? WHERE wait_id = ?",
+                         (_iso(datetime.now(timezone.utc) - waited), wait_row["wait_id"]))
+            conn.commit()
+        state["asked"].pop(parked_run_id, None)        # every question answered
+        exec_id = exec_id or "exe_" + run_id
+        assert db_waits.claim_resume(wait_row["wait_id"], exec_id)
+        parked_loop = db_loops.get(parked_run_id)
+        carried = {k: v for k, v in parked_loop.items() if k not in ("created_at", "updated_at")}
+        carried["run_id"] = run_id
+        run = _run(run_id, carried, exec_id, predecessors)
+        review._insert_document_review_loop(run)       # admission: loop row + hand-off (wait resumed)
+        assert db_waits.get(wait_row["wait_id"])["status"] == "resumed"
+        assert db_loops.get(parked_run_id)["stop_detail"].startswith("question_wait_handed_on")
+        run["document_review_loop"] = db_loops.get(run_id)
+        return _work(run)
+
+    yield {"state": state, "start": start, "resume": resume, "conn": conn, "loop": db_loops.get,
+           "exclusions": lambda: db_exclusions.list_by_doc(DOC),
+           "stages": lambda run_id: [s for r, s in state["hops"] if r == run_id]}
+    conn.close()
+
+
+def test_a_question_caused_rejection_is_not_counted_and_the_limit_reads_the_real_rejections(budget):
+    # review_count 2: the reviewer rejects only because of its question (its one finding cites it and declares
+    # "cause": "question"), then two real
+    # rejections. The loop stops after the SECOND real rejection's rework, never after the first one.
+    budget["state"]["act"] = {
+        1: {"verdict": "issues", "ask": (701, 7),
+            "findings": [{"locus": "Q7 (item 701)", "note": "cannot judge before the answer", "cause": "question"}]},
+        3: {"verdict": "issues", "findings": [{"locus": "section 2", "note": "real defect A"}]},
+        5: {"verdict": "issues", "findings": [{"locus": "section 3", "note": "real defect B"}]},
+    }
+    budget["start"]("review")
+    assert budget["stages"](RUN) == ["review"]                                  # parked before its rework
+    [mark] = budget["exclusions"]()
+    assert (mark["cause"], mark["basis"], mark["review_run_id"], mark["question_item_ids"]) == \
+        ("question_wait", "asked_with_verdict", RUN, [701])
+    assert mark["wait_id"] == db_waits.get_by_loop_run(RUN)["wait_id"]
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["stages"](RUN2) == ["rework", "review", "rework", "review", "rework"]
+    loop = budget["loop"](RUN2)
+    assert (loop["current_stage"], loop["stop_reason"]) == ("stopped", "review_count_exhausted")
+    assert loop["stop_detail"] == "review count 2 exhausted (1 question-caused review(s) not counted)"
+    # the verdict is kept: three review rows, three rejections (the question-caused one included)
+    assert budget["conn"].execute("SELECT COUNT(*) FROM document_reviews").fetchone()[0] == 3
+    assert budget["state"]["rejects"] == 3
+
+
+def test_a_rejection_with_a_real_defect_and_a_question_is_counted(budget):
+    budget["state"]["act"] = {
+        1: {"verdict": "issues", "ask": (702, 8),
+            "findings": [{"locus": "section 1", "note": "real defect"}, {"locus": "Q8", "note": "please answer"}]},
+        3: {"verdict": "issues", "findings": [{"locus": "section 2", "note": "real defect A"}]},
+    }
+    budget["start"]("review")
+    assert budget["exclusions"]() == []                                         # no marker: it counts
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["stages"](RUN2) == ["rework", "review", "rework"]
+    loop = budget["loop"](RUN2)
+    assert (loop["stop_reason"], loop["stop_detail"]) == ("review_count_exhausted", "review count 2 exhausted")
+
+
+def test_a_reviewer_that_asks_and_rejects_with_no_finding_is_counted(budget):
+    # no finding declares anything: there is no explicit basis, so the rejection counts as before
+    budget["state"]["act"] = {1: {"verdict": "issues", "findings": [], "ask": (703, 9)}}
+    budget["start"]("review", review_count=1)
+    assert budget["exclusions"]() == []
+
+
+# 0008-TR r1 rejection: citing the question is a reference, not the cause. A real defect that names the wait's question
+# in the same finding -- or every defect finding naming it -- is counted.
+_DEFECT_NAMING_Q7 = {"locus": "server/api.py:42 (Q7, item 701)",
+                     "note": "질문 답변과 무관한 실제 결함: 권한 검사가 없어 다른 사용자의 데이터를 반환한다. "
+                             "Q7의 배포 여부도 확인 필요하다."}
+
+
+@pytest.mark.parametrize("findings", [
+    [_DEFECT_NAMING_Q7],                                                        # one finding: defect + question
+    [{"locus": "Q7 (item 701)", "note": "the endpoint skips the permission check"},
+     {"locus": "section 2, see item 701", "note": "the migration drops a column still read"}],  # every one cites
+], ids=["defect_and_question_in_one_finding", "every_defect_finding_cites_the_question"])
+def test_a_real_defect_that_names_the_reviewers_question_is_counted(budget, findings):
+    budget["state"]["act"] = {
+        1: {"verdict": "issues", "findings": findings, "ask": (701, 7)},
+        3: {"verdict": "issues", "findings": [{"locus": "section 3", "note": "real defect A"}]},
+    }
+    budget["start"]("review")
+    assert budget["exclusions"]() == []                                         # no marker: it counts
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["stages"](RUN2) == ["rework", "review", "rework"]
+    loop = budget["loop"](RUN2)
+    assert (loop["stop_reason"], loop["stop_detail"]) == ("review_count_exhausted", "review count 2 exhausted")
+
+
+@pytest.mark.parametrize("findings", [
+    [{"locus": "server/api.py:42 (Q11, item 801)",
+      "note": "a real defect unrelated to the answer: no permission check. Q11 is also worth a look."}],
+    [{"locus": "Q11", "note": "the endpoint skips the permission check"},
+     {"locus": "item 801", "note": "the migration drops a column still read"}],
+], ids=["defect_and_question_in_one_finding", "every_defect_finding_cites_the_question"])
+def test_a_review_after_the_answer_whose_defects_name_the_question_is_counted(budget, findings):
+    budget["state"]["act"] = {1: {"ask": (801, 11)}, 2: {"verdict": "issues", "findings": findings}}
+    budget["start"]("rework", review_count=1)
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["exclusions"]() == []
+    assert budget["stages"](RUN2) == ["review", "rework"]
+    assert budget["loop"](RUN2)["stop_detail"] == "review count 1 exhausted"
+
+
+def test_a_review_after_the_answer_that_rejects_on_the_answered_question_only_is_not_counted(budget):
+    # the rework AI submitted while asking; the review after the answer rejects because the document contradicts the
+    # answer (every finding cites the question and declares "cause": "question"): that rejection is question-caused.
+    # review_count 1.
+    budget["state"]["act"] = {
+        1: {"ask": (801, 11)},                                                  # rework revises and asks
+        2: {"verdict": "issues",
+            "findings": [{"locus": "Q11 (item 801)", "note": "the answer says B, not A", "cause": "question"}]},
+        4: {"verdict": "issues", "findings": [{"locus": "section 4", "note": "real defect"}]},
+    }
+    budget["start"]("rework", review_count=1)
+    assert budget["stages"](RUN) == ["rework"] and budget["exclusions"]() == []
+    budget["resume"](RUN, RUN2, [RUN])
+    [mark] = budget["exclusions"]()
+    assert (mark["basis"], mark["review_run_id"], mark["question_item_ids"]) == ("answer_contradicted", RUN2, [801])
+    assert budget["stages"](RUN2) == ["review", "rework", "review", "rework"]
+    loop = budget["loop"](RUN2)
+    assert loop["stop_detail"] == "review count 1 exhausted (1 question-caused review(s) not counted)"
+
+
+def test_a_review_after_the_answer_with_a_defect_of_its_own_is_counted(budget):
+    budget["state"]["act"] = {
+        1: {"ask": (802, 12)},
+        2: {"verdict": "issues", "findings": [{"locus": "item 802", "note": "contradicts the answer", "cause": "question"},
+                                              {"locus": "section 5", "note": "real defect"}]},
+    }
+    budget["start"]("rework", review_count=1)
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["exclusions"]() == []
+    assert budget["stages"](RUN2) == ["review", "rework"]
+    assert budget["loop"](RUN2)["stop_detail"] == "review count 1 exhausted"
+
+
+def test_only_the_first_review_after_the_answer_can_be_question_caused(budget):
+    budget["state"]["act"] = {
+        1: {"ask": (803, 13)},
+        2: {"verdict": "issues", "findings": [{"locus": "section 6", "note": "real defect"}]},
+        4: {"verdict": "issues",
+            "findings": [{"locus": "item 803", "note": "still contradicts the answer", "cause": "question"}]},
+    }
+    budget["start"]("rework", review_count=2)
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["exclusions"]() == []                                         # the later one is a real round
+    assert budget["stages"](RUN2) == ["review", "rework", "review", "rework"]
+    assert budget["loop"](RUN2)["stop_detail"] == "review count 2 exhausted"
+
+
+def test_a_hop_that_only_asked_spends_no_retry_and_the_resumed_loop_goes_on(budget):
+    # failure_restart_max_attempts 0: a rework that only asked would have ended the loop as retry_exhausted
+    budget["state"]["act"] = {1: {"ask": (804, 14), "revise": False}, 3: {"verdict": "pass"}}
+    budget["start"]("rework")
+    loop = budget["loop"](RUN)
+    assert (loop["current_stage"], loop["attempts_used"], loop["stop_reason"]) == ("rework", 0, None)
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["stages"](RUN2) == ["rework", "review"]
+    assert budget["loop"](RUN2)["stop_reason"] == "review_passed"
+    assert budget["exclusions"]() == []
+
+
+def _push_back(budget, run_id, *, deadline_ago):
+    """The parked loop's total deadline passed ``deadline_ago`` ago (it was parked long enough)."""
+    budget["conn"].execute("UPDATE ai_invoke_document_review_loops SET deadline_at = ? WHERE run_id = ?",
+                           (_iso(datetime.now(timezone.utc) - deadline_ago), run_id))
+    budget["conn"].commit()
+
+
+def test_the_wait_is_moved_out_of_the_total_deadline_and_the_stage_timeout(budget):
+    # 30 minutes of the hour were left when the rework parked; it waited two hours for its answer. Measured on the
+    # stored deadline the loop would be 90 minutes over it (total_timeout at the next checkpoint, a 1-second stage).
+    budget["state"]["act"] = {1: {"ask": (805, 15)}, 2: {"verdict": "issues"}, 4: {"verdict": "pass"}}
+    budget["start"]("rework", review_count=3)
+    _push_back(budget, RUN, deadline_ago=timedelta(minutes=90))
+    budget["resume"](RUN, RUN2, [RUN], waited=timedelta(hours=2))
+    assert budget["stages"](RUN2) == ["review", "rework", "review"]
+    assert budget["loop"](RUN2)["stop_reason"] == "review_passed"
+    rework_budget = budget["state"]["timeouts"][2]                              # the stage switch inside RUN2
+    assert 1500 < rework_budget <= 1800                                         # the 30 minutes that were left
+
+
+def test_time_outside_the_wait_still_reaches_the_deadline(budget):
+    # the same overdue loop with a 10-minute wait: the time it did not wait is loop time as before
+    budget["state"]["act"] = {1: {"ask": (806, 16)}, 2: {"verdict": "issues"}}
+    budget["start"]("rework", review_count=3)
+    _push_back(budget, RUN, deadline_ago=timedelta(minutes=90))
+    budget["resume"](RUN, RUN2, [RUN], waited=timedelta(minutes=10))
+    assert budget["stages"](RUN2) == ["review"]
+    loop = budget["loop"](RUN2)
+    assert (loop["stop_reason"], loop["stop_detail"]) == ("total_timeout", "document review loop deadline reached")
+
+
+def test_waits_of_every_predecessor_are_summed_and_a_question_caused_round_of_each_is_left_out(budget):
+    # two waits in one loop: RUN parks (reviewer asked, question-only rejection), RUN2 parks again (its rework asked
+    # and submitted), RUN3 carries on. Both waits are moved out of the deadline; both question-caused verdicts out of
+    # the count.
+    budget["state"]["act"] = {
+        1: {"verdict": "issues", "findings": [{"locus": "item 901", "note": "need the answer", "cause": "question"}],
+            "ask": (901, 21)},
+        2: {"ask": (902, 22)},                                                  # RUN2's rework asks and submits
+        3: {"verdict": "issues", "findings": [{"locus": "Q22", "note": "contradicts the answer", "cause": "question"}]},
+        5: {"verdict": "pass"},
+    }
+    budget["start"]("review", review_count=1)
+    budget["resume"](RUN, RUN2, [RUN], waited=timedelta(minutes=40))
+    assert budget["stages"](RUN2) == ["rework"]
+    _push_back(budget, RUN2, deadline_ago=timedelta(minutes=30))
+    budget["resume"](RUN2, RUN3, [RUN, RUN2], waited=timedelta(minutes=20))
+    assert budget["stages"](RUN3) == ["review", "rework", "review"]            # never review_count_exhausted
+    assert budget["loop"](RUN3)["stop_reason"] == "review_passed"
+    assert sorted(m["basis"] for m in budget["exclusions"]()) == ["answer_contradicted", "asked_with_verdict"]
+
+
+# unit level: the counted view, the classification and the wait arithmetic on their own
+
+def _reviews(*rows):
+    return [{"id": i, "revision_no": rev, "verdict": v, "findings": "[]", "review_run_id": RUN, "attempt_no": 1}
+            for i, rev, v in rows]
+
+
+def test_the_count_leaves_out_only_marked_rounds_and_nothing_else_moves():
+    from modules.flow_gate.services.ai_invoke import review
+    reviews = _reviews((3, 6, "issues"), (2, 5, "issues"), (1, 4, "issues"))
+    bundle = {"review_count": 2, "review_run_id": RUN, "reviews": reviews, "doc": {"revision_no": 7},
+              "last_hop_kind": "rework", "last_hop_outcome": "succeeded", "round_no": 3, "baseline_revision_no": 3}
+    current, _ = review._document_loop_review_view(bundle, reviews)
+    assert review._document_loop_counted_rounds(current, set()) == 3
+    assert review._document_loop_counted_rounds(current, {2}) == 2
+    assert review._document_loop_counted_rounds(current, {99}) == 3            # not one of the loop's rounds
+    unmarked = review.resolve_document_review_loop_gate(bundle)                 # legacy / no marker: as before
+    assert (unmarked["stop_reason"], unmarked["stop_detail"]) == ("review_count_exhausted", "review count 2 exhausted")
+    marked = review.resolve_document_review_loop_gate({**bundle, "count_excluded_review_ids": {1, 2}})
+    assert (marked["current_stage"], marked["round_no"]) == ("review", 3)      # one counted round: review again
+    assert review.check_expected_progress({**bundle, "last_hop_kind": "review", "round_no": 3}, {}, reviews)
+
+
+_ASKED = {"cause": "question"}
+
+
+@pytest.mark.parametrize("findings, expected", [
+    ([{"locus": "Q7", "note": "x", **_ASKED}], [701]),
+    ([{"locus": "s1", "note": "see item 701", **_ASKED}], [701]),
+    ([{"locus": "Q 7", "note": "x", "cause": " Question "}], [701]),            # the declaration, loosely spelled
+    ([{"locus": "Q7", **_ASKED}, {"locus": "item 701", "note": "y", **_ASKED}], [701]),
+    # citing is not enough: no declaration, no exclusion (0008-TR r1 rejection)
+    ([{"locus": "Q7", "note": "x"}], None),
+    ([_DEFECT_NAMING_Q7], None),                                                # a defect naming the question
+    ([{"locus": "Q7", "note": "defect A"}, {"locus": "item 701", "note": "defect B"}], None),  # every one cites
+    (["Q 7: unanswered"], None),                                                # a bare string declares nothing
+    ([{"locus": "Q7", **_ASKED}, {"locus": "s2", "note": "a real defect"}], None),
+    ([{"locus": "Q7", **_ASKED}, {"locus": "Q7", "note": "a real defect naming Q7"}], None),
+    ([{"locus": "Q7", "cause": "defect"}], None),                               # another cause
+    # the declaration has to be tied to the wait's own question
+    ([{"locus": "s1", "note": "no question named", **_ASKED}], None),
+    ([{"locus": "Q8", "note": "another question", **_ASKED}], None),
+    ([{"locus": "item 7010", **_ASKED}], None),                                 # a different number
+    ([], None),                                                                 # nothing explicit to rest on
+], ids=["q_seq", "item_id", "loose_spelling", "two_declared", "cited_only", "defect_naming_question",
+        "every_defect_cites", "bare_string", "declared_plus_defect", "declared_plus_defect_naming_question",
+        "other_cause", "declared_without_citation", "other_question", "other_number", "no_findings"])
+def test_a_verdict_rests_on_its_questions_only_when_every_finding_declares_and_cites_one(findings, expected):
+    items = [{"id": 701, "seq": 7}]
+    review_row = {"verdict": "issues", "findings": json.dumps(findings, ensure_ascii=False)}
+    assert qlw.question_only_verdict(review_row, items) == expected
+
+
+def test_only_an_issues_verdict_with_readable_findings_can_be_question_caused():
+    items = [{"id": 701, "seq": 7}]
+    declared = json.dumps([{"locus": "Q7", **_ASKED}])
+    assert qlw.question_only_verdict({"verdict": "issues", "findings": declared}, items) == [701]
+    assert qlw.question_only_verdict({"verdict": "pass", "findings": declared}, items) is None
+    assert qlw.question_only_verdict({"verdict": "hold", "findings": declared}, items) is None
+    assert qlw.question_only_verdict({"verdict": "issues", "findings": "{bad"}, items) is None
+    assert qlw.question_only_verdict({"verdict": "issues", "findings": declared}, []) is None
+
+
+def test_the_review_prompts_tell_the_reviewer_when_a_finding_is_question_only():
+    from modules.flow_gate.services.ai_invoke import review
+    clause = review._answered_questions_clause(
+        [{"id": 701, "seq": 7, "anchor_doc_id": DOC, "body": "A or B?", "answer_body": "B"}], "review")
+    assert '"cause": "question"' in clause and 'without "cause"' in clause
+    assert '"cause"' not in review._answered_questions_clause(
+        [{"id": 701, "seq": 7, "anchor_doc_id": DOC, "body": "A or B?", "answer_body": "B"}], "rework")
+
+
+def test_the_wait_seconds_span_waited_to_resumed_and_skip_cancelled_waits(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _wait_table(conn)
+    store = Store(conn)
+    monkeypatch.setattr(db_waits, "get_store", lambda: store)
+    now = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+    base = {"group_id": FLOW, "doc_ref": DOC, "asked_hop_kind": "rework", "asked_round_no": 1, "resume_stage": "review",
+            "resume_round_no": 1, "question_item_ids": [1]}
+    db_waits.insert({**base, "loop_run_id": "r1", "waited_at": _iso(now - timedelta(hours=3))})
+    conn.execute("UPDATE question_loop_waits SET status='resumed', resumed_at=? WHERE loop_run_id='r1'",
+                 (_iso(now - timedelta(hours=2)),))                             # 1 hour
+    db_waits.insert({**base, "loop_run_id": "r2", "waited_at": _iso(now - timedelta(minutes=30))})
+    conn.execute("UPDATE question_loop_waits SET status='resuming' WHERE loop_run_id='r2'")   # 30 min, up to now
+    db_waits.insert({**base, "loop_run_id": "r3", "waited_at": _iso(now - timedelta(hours=5))})
+    conn.execute("UPDATE question_loop_waits SET status='cancelled' WHERE loop_run_id='r3'")  # never excluded
+    conn.commit()
+    assert qlw.excluded_wait_seconds(["r1"], now) == 3600
+    assert qlw.excluded_wait_seconds(["r1", "r2", "r3", "unknown"], now) == 5400
+    assert qlw.excluded_wait_seconds([], now) == 0
+    monkeypatch.setattr(db_waits, "list_by_loop_runs", lambda ids: (_ for _ in ()).throw(RuntimeError("down")))
+    assert qlw.excluded_wait_seconds(["r1"], now) == 0                          # unreadable: counted as before
+
+
+def test_the_stage_timeout_moves_by_the_wait_and_keeps_its_floor():
+    from modules.flow_gate.services.ai_invoke import review
+    now = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+    loop = {"rework_timeout_sec": 1800, "deadline_at": _iso(now - timedelta(minutes=10))}
+    assert review.loop_stage_timeout_sec(loop, "rework", now) == 1                       # as before
+    assert review.loop_stage_timeout_sec(loop, "rework", now, question_wait_sec=1200) == 600
+    assert review.loop_stage_timeout_sec(loop, "rework", now, question_wait_sec=7200) == 1800
+    assert review.loop_stage_timeout_sec({"rework_timeout_sec": 1800}, "rework", now, question_wait_sec=99) == 1800
+
+
+def test_the_exclusion_table_exists_in_every_dialect_and_is_insert_only(monkeypatch):
+    names = {d: (MIGRATIONS / d / "201_review_count_exclusions.sql").read_text(encoding="utf-8")
+             for d in ("sqlite", "mysql", "postgres")}
+    for text in names.values():
+        for column in ("review_id", "doc_ref", "cause", "wait_id", "basis", "question_item_ids"):
+            assert column in text
+        assert "review_count_exclusions" in text
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _exclusion_table(conn)
+    _exclusion_table(conn)                                                      # re-applied: idempotent
+    monkeypatch.setattr(db_exclusions, "get_store", lambda: Store(conn))
+    first = db_exclusions.insert(review_id=5, doc_ref=DOC, wait_id="qlw_a", basis="asked_with_verdict",
+                                 question_item_ids=[3, 3, 1])
+    again = db_exclusions.insert(review_id=5, doc_ref=DOC, wait_id="qlw_b", basis="answer_contradicted",
+                                 question_item_ids=[9])
+    assert again == first and first["question_item_ids"] == [1, 3] and first["cause"] == "question_wait"
+    assert db_exclusions.review_ids_by_doc(DOC) == {5}
+    with pytest.raises(ValueError):
+        db_exclusions.insert(review_id=6, doc_ref=DOC, wait_id="qlw_c", basis="guessed", question_item_ids=[])
+
+
+def test_a_loop_without_the_exclusion_store_counts_every_round(budget, monkeypatch):
+    # a server whose migration 201 is not applied yet (or a failed read): the marker is not written, every verdict
+    # counts and the loop stops exactly where it stopped before A2
+    monkeypatch.setattr(db_exclusions, "available", lambda: False)
+    budget["state"]["act"] = {
+        1: {"verdict": "issues", "findings": [{"locus": "Q7", "cause": "question"}], "ask": (707, 7)},
+        3: {"verdict": "issues", "findings": [{"locus": "section 2", "note": "real defect A"}]},
+    }
+    budget["start"]("review")
+    budget["resume"](RUN, RUN2, [RUN])
+    assert budget["stages"](RUN2) == ["rework", "review", "rework"]
+    assert budget["loop"](RUN2)["stop_detail"] == "review count 2 exhausted"

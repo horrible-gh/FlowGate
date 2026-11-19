@@ -90,6 +90,18 @@ def list_open_by_group(group_id: str) -> list[dict]:
     return [_decode(r) for r in rows]
 
 
+def list_by_loop_runs(loop_run_ids) -> list[dict]:
+    """Every wait (any status) parked by one of ``loop_run_ids`` -- the runs one review loop was carried by
+    (flowgate.v02test.0051 T0007 A2: the loop's question wait time and its question-caused reviews)."""
+    ids = sorted({str(i) for i in loop_run_ids or () if i})
+    if not ids:
+        return []
+    rows = get_store()._fetch_all(
+        "SELECT * FROM question_loop_waits WHERE loop_run_id IN (" + ",".join("?" for _ in ids) + ") "
+        "ORDER BY waited_at, wait_id", ids) or []
+    return [_decode(r) for r in rows]
+
+
 def claim_resume(wait_id: str, exec_id: str, *, at: Optional[str] = None) -> bool:
     """waiting -> resuming, once: the caller requested ``exec_id`` in the same transaction."""
     stamp = at or now_iso()

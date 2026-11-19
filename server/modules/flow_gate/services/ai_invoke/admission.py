@@ -2141,8 +2141,13 @@ def start_run(
         # the generic per-hop formula for this run's FIRST hop. The in-process stage
         # switch inside worker._worker applies the same formula on every later hop of this
         # single audited chain.
+        # flowgate.v02test.0051 T0007 (A2): a loop resumed after its questions (Graph replay) carries its
+        # deadline; the time it spent parked is moved out of it, so its first hop is not cut short by the wait.
+        loop_now = datetime.fromisoformat(started_at)
         timeout_sec = review.loop_stage_timeout_sec(
-            document_review_loop, document_review_loop["current_stage"], datetime.fromisoformat(started_at)
+            document_review_loop, document_review_loop["current_stage"], loop_now,
+            question_wait_sec=(review.loop_question_wait_sec((graph_loop_state or {}).get("review_run_ids"), loop_now)
+                               if graph_loop_state else 0),
         )
     else:
         timeout_sec = _resolve_timeout_sec(
