@@ -43,6 +43,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from modules.flow_gate.auth.jwt_service import decode_token
+from modules.flow_gate.api.request_observability import current_request_id
 from modules.flow_gate.auth.token_store import is_blacklisted
 from modules.flow_gate.auth.session_store import is_session_active
 from modules.flow_gate.auth import auth_cache as _auth_cache
@@ -183,7 +184,7 @@ def _revocation_reason(ctx: dict) -> Optional[str]:
             return "session_revoked"
         user = _load_user(user_id)
     except Exception as exc:
-        logger.warning(f"[SSE] auth re-check unavailable type={type(exc).__name__}")
+        logger.warning(f"[SSE] auth re-check unavailable type={type(exc).__name__} request_id={current_request_id() or '-'}")
         return "auth_check_failed"
     if not user:
         return "user_not_found"

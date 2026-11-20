@@ -2,6 +2,7 @@
 import logging
 import time
 from types import MethodType
+from modules.flow_gate.api.request_observability import current_request_id
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def unavailable(exc):
 
 def auth_unavailable(exc):
     from fastapi import HTTPException
-    log.warning("database unavailable during authentication type=%s", type(exc).__name__)
+    log.warning("database unavailable during authentication type=%s request_id=%s", type(exc).__name__, current_request_id() or "-")
     return HTTPException(503, "Authentication service temporarily unavailable", headers={"Retry-After": "1"})
 
 def install_checkout_validation(db):
@@ -42,7 +43,7 @@ def _checkout(db):
             conn.rollback()  # No implicit ping transaction may reach the caller.
         except Exception as exc:
             db._discard(conn)
-            log.warning("database checkout failed type=%s attempt=%s", type(exc).__name__, attempt + 1)
+            log.warning("database checkout failed type=%s attempt=%s request_id=%s", type(exc).__name__, attempt + 1, current_request_id() or "-")
             if not unavailable(exc) or attempt == db.pool_max:
                 raise
             continue

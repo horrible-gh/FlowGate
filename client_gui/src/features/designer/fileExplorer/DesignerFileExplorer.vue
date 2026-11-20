@@ -16,7 +16,7 @@
       <FileScopeHeader :group-label="groupLabel" :branch="flow.branch" :readonly="!canMutate" :busy="busy" />
 
       <div class="dfx-body" @contextmenu="onBlankContext">
-        <LoadingState v-if="loading && !nodes.length" size="sm" :label="t('gui.designer.file_explorer.loading')" />
+        <LoadingState v-if="loading && !nodes.length" size="sm" :label="t(reconnecting ? 'gui.designer.file_explorer.reconnecting' : 'gui.designer.file_explorer.loading')" />
         <ErrorState v-else-if="error" compact :title="t('gui.designer.file_explorer.load_failed')" data-test="dfx-load-error">
           <template #action>
             <Button variant="secondary" size="sm" data-test="dfx-retry" @click="reload">{{ t('gui.common.retry') }}</Button>
@@ -110,6 +110,7 @@ import FileScopeHeader from './FileScopeHeader.vue'
 import FileFilter from './FileFilter.vue'
 import FileTree from './FileTree.vue'
 import { useFlowFileExplorer } from './useFlowFileExplorer'
+import { useRequestRecovery } from '@shared/requestRecovery'
 import {
   changedViewNodes, normalizePath, searchNodes,
   type ChangeStatus, type DesignerFileIntent, type ExplorerFilter,
@@ -151,6 +152,12 @@ const flowRef = computed(() => props.flow)
 const {
   nodes, commit, loading, error, refreshError, changes, slotWritable, aiBusy, aiActivityKnown, reload,
 } = useFlowFileExplorer(resolvedProjectId, flowRef)
+
+const reconnecting = useRequestRecovery(
+  () => `${resolvedProjectId.value}:${props.flow?.groupId}`,
+  () => loading.value,
+  notice => notice.path === `/api/v1/projects/${encodeURIComponent(resolvedProjectId.value ?? '')}/git/groups/${encodeURIComponent(props.flow?.groupId ?? '')}/tree`,
+)
 
 const filter = ref<ExplorerFilter>('all')
 const query = ref('')

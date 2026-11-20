@@ -651,6 +651,7 @@ export default {
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
+      reconnecting: '다시 연결하는 중…',
       title: '파일',
       tree_label: '현재 플로우 파일 트리',
       readonly: '읽기 전용',
@@ -1171,6 +1172,7 @@ export default {
       no_flow: '열린 플로우 없음',
       current: '현재',
       yesterday: '어제',
+      reconnecting: '다시 연결하는 중…',
       list_loading: '채팅 목록을 불러오는 중...',
       list_failed: '채팅 목록을 불러오지 못했습니다.',
       list_empty: '이 플로우에 채팅이 없습니다.',

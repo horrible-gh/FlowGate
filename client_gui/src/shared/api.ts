@@ -21,6 +21,8 @@ interface RefreshResponse {
   token_type?: string
 }
 
+import { notifyGetRetry } from './requestRecovery'
+
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
   /** flowgate.v02gui.0017 B4: how many times this GET was already re-sent after a transient failure. */
@@ -747,6 +749,7 @@ api.interceptors.response.use(
     if (originalRequest && shouldRetryGet(error)) {
       const attempt = originalRequest._getRetryCount ?? 0
       originalRequest._getRetryCount = attempt + 1
+      notifyGetRetry(originalRequest.url ?? '', originalRequest.params)
       await sleep(getRetryDelayMs(attempt))
       return api(originalRequest)
     }

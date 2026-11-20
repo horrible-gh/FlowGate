@@ -647,6 +647,7 @@ export default {
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
+      reconnecting: 'Reconnecting…',
       title: 'Files',
       tree_label: 'Current Flow file tree',
       readonly: 'Read-only',
@@ -1160,6 +1161,7 @@ export default {
       no_flow: 'No open flow',
       current: 'Current',
       yesterday: 'Yesterday',
+      reconnecting: 'Reconnecting…',
       list_loading: 'Loading chats...',
       list_failed: 'Could not load the chat list.',
       list_empty: 'This flow has no chats.',
