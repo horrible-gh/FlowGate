@@ -45,8 +45,11 @@ FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
 # flowgate.v02.0056 T#2: the run cards' instruction AI comes right after the instruction it writes.
+# flowgate.v02test.0053 0003-T: the two 검증 options follow the card's review settings (the list also names
+# ``after_review_exhausted``, which the field table already had).
 RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai", "review_count", "time_limit",
-              "review_basis", "instruction_review_ai", "instruction_review_count",
+              "review_basis", "after_review_exhausted", "verify_max_runs", "verify_run_minutes",
+              "instruction_review_ai", "instruction_review_count",
               "instruction_note", "run_note", "run_pre_instruction"]
 
 
@@ -416,7 +419,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
         # 0085 T#1: no usage; flowgate.v02.0098 T#1: the local merge branch next to the remote
         f.CHECK: ["archive", "merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch"],
         f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
-                 "review_basis"],
+                 "review_basis", "after_review_exhausted"],
     }
 
 
@@ -455,6 +458,7 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS + ["hold"])
     assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 3,
                            "review_ai": None, "review_count": 0, "time_limit": 240, "review_basis": "type",
+                           "after_review_exhausted": "continue", "verify_max_runs": None, "verify_run_minutes": None,
                            "instruction_review_ai": None, "instruction_review_count": 0,
                            "instruction_note": "", "run_note": "", "run_pre_instruction": "", "hold": False}
     assert not any(f["stored"] for f in body["fields"].values())
@@ -663,7 +667,9 @@ def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, dec
     call = _start_job(env, monkeypatch, job)
     assert {k: call[k] for k in ("mode", "action_scope", "provider_id", "continuation_step_timeout_sec",
                                  "node_restart_max_attempts")} == {
-        "mode": "single", "action_scope": "new", "provider_id": "aip_card",
+        # 0145 T#1 (``result_slot_binding``): a card's result stage writes into its preallocated result slot, so
+        # the start is an edit of that document (the assertion lagged behind with "new").
+        "mode": "single", "action_scope": "edit", "provider_id": "aip_card",
         "continuation_step_timeout_sec": 7200, "node_restart_max_attempts": 2}
 
 
@@ -827,12 +833,16 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
         "__init__", "fields", "settings", "review_stage", "routes", "repository", "legacy_adapter", "integration",
         "assigned_review", "context", "manual_stage", "question_wait", "report_baseline",
         "stage_assignment", "stage_view",
+        "result_recovery", "review_exhaustion",      # their own files already (the list lagged behind)
+        "verify_limits",                             # flowgate.v02test.0053 0003-T: the one 검증 limits function
         "action_guard"}                     # flowgate.v02gui.0015 T3: the answered step's common guard
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     callers = sorted(p.relative_to(graph).as_posix() for p in graph.rglob("*.py")
                      if "card_settings_ports" in p.read_text(encoding="utf-8") and p.name != "card_settings_ports.py")
-    assert callers == ["services/graph_service.py", "services/node_approval.py", "services/node_dispatch.py",
-                       "services/node_title.py", "services/result_binder.py", "services/run_service.py"]
+    # ai_node_starter / root_start are callers added by later cards (the list lagged behind, like the package files above).
+    assert callers == ["services/ai_node_starter.py", "services/graph_service.py", "services/node_approval.py",
+                       "services/node_dispatch.py", "services/node_title.py", "services/result_binder.py",
+                       "services/root_start.py", "services/run_service.py"]
     tree = ast.parse((graph / "services" / "card_settings_ports.py").read_text(encoding="utf-8"))
     imported = {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
