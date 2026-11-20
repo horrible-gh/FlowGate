@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -33,7 +34,29 @@ def budget_rows(mapping, records):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timings", type=Path, default=ROOT / "tests/timings.json")
+    parser.add_argument("--records-offset", type=int, default=None,
+                        help="Print a page of timing records as JSON instead of the budget report.")
+    parser.add_argument("--records-limit", type=int, default=20,
+                        help="Records per JSON page (1-20; default 20).")
     args = parser.parse_args()
+    if args.records_offset is not None:
+        if args.records_offset < 0 or not 1 <= args.records_limit <= 20:
+            parser.error("records offset must be nonnegative and limit must be 1-20")
+        try:
+            records = load_timings(args.timings)
+            metadata = json.loads(args.timings.read_text(encoding="utf-8"))
+            keys = sorted(records)
+            end = min(args.records_offset + args.records_limit, len(keys))
+            page = {key: records[key] for key in keys[args.records_offset:end]}
+            print(json.dumps({
+                "version": 1, "measured_at": metadata.get("measured_at"),
+                "exitstatus": metadata.get("exitstatus"), "total": len(keys),
+                "offset": args.records_offset,
+                "next_offset": end if end < len(keys) else None, "files": page,
+            }, separators=(",", ":"), sort_keys=True))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            parser.error(str(exc))
+        return
     try:
         mapping = AreaMap(ROOT)
         rows, slow = budget_rows(mapping, load_timings(args.timings))

@@ -134,7 +134,7 @@ python tools/test_budget.py --timings /tmp/flowgate-timings.json
 측정한다. 출력은 매 실행마다 교체하며 이전 측정에 자동 병합하지 않는다.
 
 `server/tests/timings.json`은 version 1, files 객체를 가진 커밋 대상 기준선이다.
-현재 files는 비어 있다(미측정). 각 키는 server 기준 테스트 경로이며 값은 seconds,
+2026-11-20 M1에서 유효한 515개 파일의 분할 직렬 기록을 반영했다. 각 키는 server 기준 테스트 경로이며 값은 seconds,
 seconds_by_marker(auto/fast/standard/full), sha256, eligible이다. 출력에는 측정 시각과
 종료 코드도 들어간다. M1에서 검토한 직렬 결과를 기준선에 반영한다.
 
@@ -146,6 +146,91 @@ seconds_by_marker(auto/fast/standard/full), sha256, eligible이다. 출력에는
 마커로 지정한 시간은 해당 계층에 반영한다. fast 60초와 파일 60초 초과를 표시하며 실패로
 처리하지 않는다. standard의 2-worker 120초 예산은 직렬 합계를 2로 나눠 충족했다고
 판정할 수 없으므로 병렬 wall time을 별도로 확인한다. unknown이 있으면 합계는 불완전하다.
+
+### M1 분할 직렬 측정 — 2026-11-20 (0053)
+
+Windows 11, Python 3.14.2, pytest 8.3.4에서 xdist 없이 실행했다. 채팅 명령의
+1800초 상한 때문에 영역별 실행 후 최대 20개, 이후 10개 파일씩 순차 실행했다.
+파일 내부는 전체 full 선택이다. 전체를 한 프로세스에서 실행한 회귀 결과와는 실행 조건이 다르다.
+측정 구간은 08:38:00–14:16:08(UTC+09), 경과 시간은 **5시간 38분 8초**다.
+
+837개 파일을 대상으로 실행했고 830개 파일에 시간 기록이 생겼다. 유효한 515개 파일만
+`tests/timings.json`의 `files`에 반영했다. 실패·error·skip·xfail 등으로 부적격인 315개와
+기록이 없는 7개는 기준선에서 제외했다. 이 322개는 기존 tier 규칙으로 돌아가며 0초로 취급하지 않는다.
+
+주 측정 결과 합계는 **20,430 passed, 1,829 failed, 453 error, 158 skipped, 1 xfailed**다.
+별도로 6개 파일에 수집 오류가 있었다. 중단된 최초 selfcheck-3/git-3 실행은 재측정으로 대체해
+합계에서 제외했고, 기록기 회귀 검사 19 passed도 이 합계에 더하지 않았다.
+이 수치는 분할 실행의 결과이며 전체 통과를 뜻하지 않는다. 발견된 테스트 실패 수정은 이번 측정에 포함하지 않았다.
+
+시간 기록기는 테스트가 `os.name`을 임시 변경한 상태에서 보고할 때 경로를 다시 생성하다
+내부 오류가 났다. 수집 때 계산한 node id별 경로를 재사용하도록 수정했고,
+플랫폼 변경을 teardown까지 유지하는 회귀 검사 및 기존 직렬·병렬 검증 19건이 통과했다.
+오류가 났던 git-3은 재측정하여 154 passed, 2 failed로 정상 종료했다.
+수정된 기록기 테스트 파일은 검증 실행에서 얻은 최신 해시와 시간으로 교체했다.
+
+아래는 유효 기록만 합산한 **누적 tier의 직렬 작업 시간**이다. import·수집·기동 시간은 제외한다.
+모든 영역에 미확정 파일이 있으므로 실제 영역 실행 예산의 충족 여부는 확정할 수 없다.
+
+| 영역 | 유효/전체 파일 | fast 합계(초) | standard 합계(초) | full 합계(초) | 미확정 파일 |
+|---|---:|---:|---:|---:|---:|
+| ai | 67/127 | 55.556 | 191.311 | 568.451 | 60 |
+| git | 65/102 | 27.454 | 228.186 | 2170.072 | 37 |
+| gate | 27/40 | 4.726 | 136.844 | 1483.001 | 13 |
+| selfcheck | 25/49 | 13.364 | 196.605 | 373.280 | 24 |
+| document | 59/92 | 22.199 | 201.878 | 1410.719 | 33 |
+| conversation | 69/115 | 37.837 | 263.895 | 679.773 | 46 |
+| graph | 84/117 | 31.967 | 331.881 | 1891.805 | 33 |
+| card | 36/78 | 6.534 | 177.238 | 1373.669 | 42 |
+| platform | 59/73 | 54.052 | 142.001 | 353.660 | 14 |
+| db | 8/16 | 4.620 | 25.097 | 129.303 | 8 |
+| guard | 16/28 | 10.478 | 51.476 | 124.674 | 12 |
+
+유효 기록의 fast 합계는 모든 영역에서 60초 이하이나 미확정 파일과 수집 시간이 빠져 있다.
+standard는 conversation의 이상적인 2-worker 하한도 131.948초, graph는 165.940초로
+120초를 넘는다. 다른 영역도 2-worker wall time을 측정하지 않았으므로 예산 통과로 판정하지 않는다.
+
+유효한 **49개 파일이 60초를 초과**했다. 가장 긴 10개는 아래와 같다.
+실패·skip 등이 있는 진단 기록에서도 38개 파일이 60초를 넘었으며 기준선에 섞지 않았다.
+그 목록은 `timings.json`의 `measurement.ineligible_files_over_60s`에 별도로 남겼다.
+
+| 초 | 파일(server 기준) |
+|---:|---|
+| 505.105 | `tests/flowgate/test_card_document_l3_states_0127.py` |
+| 493.723 | `tests/flowgate/test_fg_settings_retry_0126.py` |
+| 357.901 | `tests/flowgate/test_fg_integration_persistence_0156.py` |
+| 346.435 | `tests/test_fg_gate_run_resume_0132.py` |
+| 337.028 | `tests/test_fg_gate_push_sync_0132.py` |
+| 313.544 | `tests/modules/flow_gate/test_review_atomicity_0535.py` |
+| 272.201 | `tests/modules/flow_gate/test_branch_merge_attempt_0630.py` |
+| 260.253 | `tests/flowgate/test_card_document_l3_paths_0127.py` |
+| 207.825 | `tests/modules/flow_gate/test_system_agents_0076.py` |
+| 193.858 | `tests/flowgate/test_fg_document_rejection_0126.py` |
+
+유효한 60초 초과 파일 전체 목록과 영역별 예산은 저장소 루트에서 재현한다.
+
+```text
+python tools/test_budget.py
+```
+
+기록이 없는 파일 7개는 다음과 같다. 독립 수집 재확인에서도 같은 6개 수집 오류를 확인했다.
+
+| 파일(server 기준) | 확인 결과 |
+|---|---|
+| `tests/integration/src_content/test_t509_src_content_routes.py` | Settings 필수값 ALLOWED_ORIGIN·CONTEXT·DB_TYPE 누락 |
+| `tests/modules/flow_gate/test_git_service_error_envelope_0233.py` | 동일한 Settings 필수값 누락 |
+| `tests/modules/flow_gate/test_resolve_conflict_issue_lease_block_0447.py` | 동일한 Settings 필수값 누락 |
+| `tests/modules/flow_gate/test_token_predecessor_parity_0061.py` | 동일한 Settings 필수값 누락 |
+| `tests/test_remote_tool_move_0092.py` | `test_remote_tool_group_worktree_routing_0671` import 실패 |
+| `tests/test_test_card_gui_0094.py` | `test_test_spec_0549` import 실패 |
+| `tests/modules/flow_gate/test_mention_verification.py` | 직접 실행용 main만 있어 pytest 항목 없음 |
+
+큰 측정 파일의 기록을 출력 길이 제한 안에서 읽을 때는 다음처럼 JSON 페이지를 사용한다.
+`next_offset`이 null이 될 때까지 이어 읽는다. 이 옵션은 원본 파일을 변경하지 않는다.
+
+```text
+python tools/test_budget.py --timings <측정 JSON 경로> --records-offset 0 --records-limit 20
+```
 
 ### 클라이언트
 

@@ -64,6 +64,7 @@ class TimingRecorder:
     def __init__(self, config, root, output):
         self.config, self.root, self.output = config, root.resolve(), Path(output)
         self.records = {}
+        self.keys = {}
         self.expected = defaultdict(set)
         self.seen = defaultdict(set)
         self.bad = set()
@@ -76,11 +77,15 @@ class TimingRecorder:
             or any("::" in str(arg) for arg in config.args))
 
     def key(self, nodeid):
-        path = Path(str(self.config.rootpath)) / nodeid.split("::", 1)[0]
-        try:
-            return path.resolve().relative_to(self.root).as_posix()
-        except ValueError:
-            return None
+        # Collection runs before tests can monkeypatch os.name or path handling.
+        # Reports must reuse that stable identity until teardown restores them.
+        if nodeid not in self.keys:
+            path = Path(str(self.config.rootpath)) / nodeid.split("::", 1)[0]
+            try:
+                self.keys[nodeid] = path.resolve().relative_to(self.root).as_posix()
+            except ValueError:
+                self.keys[nodeid] = None
+        return self.keys[nodeid]
 
     def pytest_collection_finish(self, session):
         for item in session.items:

@@ -144,3 +144,16 @@ def test_baseline_eligibility_is_independent_per_file(timing_project):
     assert records["tests/test_sample.py"]["eligible"] is True
     assert records["tests/test_failed.py"]["eligible"] is False
     assert records["tests/test_skipped.py"]["eligible"] is False
+
+
+def test_reports_survive_platform_override_until_teardown(timing_project):
+    path = timing_project.path / "tests/test_sample.py"
+    path.write_text(
+        "import os\ndef test_platform(monkeypatch):\n"
+        "    monkeypatch.setattr(os, 'name', 'posix' if os.name == 'nt' else 'nt')\n",
+        encoding="utf-8",
+    )
+    timing_project.runpytest_subprocess("-q").assert_outcomes(passed=1)
+    record = load_timings(timing_project.path / "out.json")["tests/test_sample.py"]
+    assert record["eligible"] is True
+    assert record["seconds"] > 0
