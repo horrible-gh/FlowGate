@@ -94,9 +94,36 @@ const { t } = useI18n()
   color: var(--fg2-text);
 }
 
+.csm button {
+  position: relative;
+}
+
 .csm button.is-on {
   background: var(--fg2-status-info-bg);
   color: var(--fg2-text);
+}
+
+/* Selected button: icon takes a per-mode colour (theme status tokens) + a short underline as a
+   non-colour cue. The underline sits inside the 26px cell, so the width does not change. */
+.csm button.is-on[data-mode='read_only'] { color: var(--fg2-status-info-fg); }
+.csm button.is-on[data-mode='execute'] { color: var(--fg2-status-warning-fg); }
+.csm button.is-on[data-mode='edit_once'] { color: #b79cff; }
+.csm button.is-on[data-mode='edit'] { color: var(--fg2-status-danger-fg); }
+
+.csm button.is-on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 10px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.csm button.is-on svg {
+  stroke-width: 2.2;
 }
 
 .csm button:disabled {
