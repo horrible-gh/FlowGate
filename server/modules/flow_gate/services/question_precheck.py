@@ -11,12 +11,18 @@ from modules.flow_gate.services import question_search as search
 # same order count as the same question.
 _RISKY = r"[0-9,;\n]|권한|허용|금지|불허|철회|않|아니|기간|부터|까지|대신|반면|\b(?:not|no|allow|deny|permission|revoke)\b"
 SIMILAR_JACCARD = 0.7
+# Closed list of words that only say "I am asking". An added word outside this list may
+# name another target or action (운영 DB 삭제, 롤백 포함) and is never the same question.
+_FILLER = frozenset(
+    "요청 문의 부탁 여부 질문 드립니다 부탁드립니다 요청드립니다 문의드립니다 바랍니다 "
+    "주세요 해주세요 알려주세요 궁금합니다 혹시 please question request".split())
 
 
 def _tokens(value):
     # Only a small closed list of grammatical particles; retain dates, error codes,
     # permissions, negations and target names in the identity itself.
-    words = re.findall(r"[\w%!]+", search.normalized(value))
+    # "!" stays inside a word but an exclamation mark around it is punctuation.
+    words = [w for w in (m.strip("!") for m in re.findall(r"[\w%!]+", search.normalized(value))) if w]
     return [re.sub(r"(?<=[가-힣])(?:에서|으로|에게|은|는|을|를|이|가|의|에)$", "", w) if len(w) > 2 else w for w in words]
 
 
@@ -41,9 +47,9 @@ def match_kind(title, body, options, row):
     a, b = set(left), set(right)
     if sorted(left) == sorted(right):
         return "identical"
-    # One question only adds a few words to the other. A swapped word (another target)
-    # leaves words on both sides and is never similar.
-    if (a <= b or b <= a) and len(a & b) >= 3 and len(a & b) / len(a | b) >= SIMILAR_JACCARD:
+    # One question only adds a few asking-words to the other. A swapped word (another
+    # target) leaves words on both sides, and an added topic word may change the target.
+    if (a <= b or b <= a) and (a ^ b) <= _FILLER and len(a & b) >= 3 and len(a & b) / len(a | b) >= SIMILAR_JACCARD:
         return "similar"
     return None
 
@@ -138,5 +144,7 @@ def response(doc_id, results):
     status = results[0]["status"] if len(results) == 1 else "batch_processed"
     result = {"doc_id": doc_id, "added_item_ids": ids, "status": status, "item_results": results}
     if len(results) == 1:
+        # The single item is spelled out at the top level; do not carry its list twice.
+        result["item_results"] = [{k: v for k, v in results[0].items() if k not in ("candidates", "reused_answer")}]
         result.update({k: v for k, v in results[0].items() if k not in ("index", "fingerprint", "query", "added_item_ids")})
     return result

@@ -166,9 +166,34 @@ def test_long_question_is_reused_without_a_word_cap(store):
     ("테스트 서버 커밋 배포 진행 확인", "운영 서버 커밋 배포 진행 확인", None),
     ("테스트 서버 배포 확인", "테스트 서버 배포 확인 그리고 운영 서버 삭제 승인", None),
     ("테스트서버 배포 확인", "테스트 서버 배포 확인.", "identical"),
+    ("테스트 서버 배포 진행 확인", "테스트 서버 배포 진행 확인!", "identical"),
+    ("테스트 서버 배포 진행 확인", "테스트 서버 배포 진행 여부를 확인 부탁드립니다", "similar"),
+    ("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인", "스테이징 서버 배포를 에이전트가 진행해도 되는지 확인 운영 DB 삭제", None),
+    ("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인", "스테이징 서버 배포를 에이전트가 진행해도 되는지 확인 롤백 포함", None),
+    ("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인", "스테이징 서버 배포를 에이전트가 진행해도 되는지 확인 프로덕션 반영", None),
+    ("스테이징 서버 배포 진행 확인 프로덕션 반영", "스테이징 서버 배포 진행 확인", None),
 ])
 def test_similar_question_adds_words_but_never_swaps_them(left, right, expected):
     assert precheck.match_kind(None, left, [], {"doc_id": DOC, "body": right, "options": []}) == expected
+
+
+def test_added_topic_words_register_and_exclamation_reuses(store):
+    aid = answered("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인", answer="스테이징은 에이전트가 진행합니다.")
+    for tail in ("운영 DB 삭제", "롤백 포함", "프로덕션 반영"):
+        result = add("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인 " + tail)
+        assert result["status"] == "registered" and result["reused_answer"] is None
+        assert result["candidates"][0]["answer_id"] == aid
+    assert add("스테이징 서버 배포를 에이전트가 진행해도 되는지 확인!")["reused_answer"]["answer_id"] == aid
+
+
+def test_single_response_carries_candidates_once(store):
+    aid = answered("테스트 서버 커밋 확인")
+    reused = add("커밋 확인 테스트 서버")
+    assert reused["candidates"] and reused["reused_answer"]["answer_id"] == aid
+    assert "candidates" not in reused["item_results"][0] and "reused_answer" not in reused["item_results"][0]
+    assert reused["item_results"][0]["status"] == "reused_answer"
+    batch = qs.add_questions(DOC, [{"body": "서버 테스트 확인 커밋"}, "다른 대상의 질문"], created_by="u1")
+    assert "candidates" not in batch and batch["item_results"][0]["reused_answer"]["answer_id"] == aid
 
 
 def test_search_terms_drop_particles_punctuation_and_stopwords(store):
