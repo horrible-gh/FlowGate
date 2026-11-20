@@ -596,6 +596,7 @@ also = []
 
 [area."document.edit"]
 source = [
+  "tests/flowgate/l3verify_support_0127.py",
   "db_bootstrap.py",
   "flowgate/card_document_edit/**",
   "flowgate/card_documents/**",
@@ -618,7 +619,6 @@ tests = [
   "tests/flowgate/test_card_document_l3_cost_0127.py",
   "tests/flowgate/test_card_document_l3_handoffs_0127.py",
   "tests/flowgate/test_card_document_l3_paths_0127.py",
-  "tests/flowgate/test_card_document_l3_states_0127.py",
   "tests/flowgate/test_card_document_review_regressions_0127.py",
   "tests/flowgate/test_card_document_user_documents_0157.py",
   "tests/flowgate/test_card_document_write_gate_scan_0135.py",
@@ -1316,6 +1316,7 @@ also = []
 
 [area."card.settings"]
 source = [
+  "tests/flowgate/settings_retry_support_0126.py",
   "db_bootstrap.py",
   "flowgate/card_settings/**",
   "modules/flow_gate/db/connection.py",
@@ -1615,5 +1616,124 @@ tests = [
   "tests/architecture/test_tokens_resolve_conflict_scope_0233.py",
   "tests/architecture/test_user_chat_source_access_114_repair_0568.py",
   "tests/architecture/test_uvicorn_graceful_timeout_0102.py",
+]
+also = []
+
+[area."document.states.assigned"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_document_edit/**",
+  "flowgate/card_documents/**",
+  "flowgate/card_memos/**",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/services/card_memo_hooks.py",
+  "requirements.txt",
+  "sql/migrations/**",
+  "flowgate/card_settings/**",
+  "modules/flow_gate/graph_workflow/services/result_binder.py",
+  "tests/flowgate/l3_states_support_0127.py",
+  "tests/flowgate/l3verify_support_0127.py"
+]
+tests = [
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_ai_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_ai_admission_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_ai_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_api_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_cli_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_d_v2_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_tr2_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_wp_0127.py",
+  "tests/flowgate/test_card_document_l3_states_0127.py"
+]
+also = []
+
+[area."document.states.transitions"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_document_edit/**",
+  "flowgate/card_documents/**",
+  "flowgate/card_memos/**",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/services/card_memo_hooks.py",
+  "requirements.txt",
+  "sql/migrations/**",
+  "flowgate/card_settings/**",
+  "modules/flow_gate/graph_workflow/services/result_binder.py",
+  "tests/flowgate/l3_states_support_0127.py",
+  "tests/flowgate/l3verify_support_0127.py"
+]
+tests = [
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_ai_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_ai_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_ai_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_ai_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_cli_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_api_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_api_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_cli_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_c_cli_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_d_v2_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_d_v2_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_resubmission_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_tr2_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_tr2_legacy_result_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_wp_instruction_0127.py",
+  "tests/flowgate/l3_states_0127/test_card_document_l3_states_wp_legacy_result_0127.py"
+]
+also = []
+
+[area."card.settings.retry_review"]
+source = [
+  "tests/flowgate/settings_retry_support_0126.py",
+  "db_bootstrap.py",
+  "flowgate/card_settings/**",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "requirements.txt",
+  "sql/migrations/**"
+]
+tests = [
+  "tests/flowgate/settings_retry_0126/test_changed_review_to_no_review_drives_completion_without_old_ai.py",
+  "tests/flowgate/settings_retry_0126/test_command_recovers_lost_loop_end_once_and_fences_old_callback.py",
+  "tests/flowgate/settings_retry_0126/test_explicit_card_hold_stays_held_until_its_own_release.py",
+  "tests/flowgate/settings_retry_0126/test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai.py",
+  "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision.py",
+  "tests/flowgate/settings_retry_0126/test_review_abnormal.py",
+  "tests/flowgate/settings_retry_0126/test_review_completion_missing.py",
+  "tests/flowgate/settings_retry_0126/test_review_exhausted.py",
+  "tests/flowgate/settings_retry_0126/test_review_failed_review.py",
+  "tests/flowgate/settings_retry_0126/test_review_verdict_hold.py"
+]
+also = []
+
+[area."card.settings.retry_recovery"]
+source = [
+  "tests/flowgate/settings_retry_support_0126.py",
+  "db_bootstrap.py",
+  "flowgate/card_settings/**",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "requirements.txt",
+  "sql/migrations/**"
+]
+tests = [
+  "tests/flowgate/settings_retry_0126/test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit.py",
+  "tests/flowgate/settings_retry_0126/test_pre_t5_assignment_without_version_keeps_q544_revision_guard.py",
+  "tests/flowgate/settings_retry_0126/test_pre_t5_reviewed_assignment_without_version.py",
+  "tests/flowgate/settings_retry_0126/test_race_approval_refused.py",
+  "tests/flowgate/settings_retry_0126/test_race_review_not_started.py",
+  "tests/flowgate/settings_retry_0126/test_race_review_result_unknown.py",
+  "tests/flowgate/settings_retry_0126/test_race_stage_not_person.py",
+  "tests/flowgate/settings_retry_0126/test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage.py",
+  "tests/flowgate/settings_retry_0126/test_writer_no_result.py",
+  "tests/flowgate/settings_retry_0126/test_writer_provider_failed.py",
+  "tests/flowgate/settings_retry_0126/test_writer_timeout.py"
 ]
 also = []

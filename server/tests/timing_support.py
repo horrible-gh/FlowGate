@@ -195,6 +195,11 @@ class TimingRecorder:
             record["sha256"] = self.hashes.get(key)
         data = {"version": 1, "measured_at": datetime.now(timezone.utc).isoformat(),
                 "exitstatus": int(exitstatus), "files": dict(sorted(self.records.items()))}
+        if str(self.output) == "-":
+            # Remote command callers can retain the measurement without writing
+            # scratch output into the checkout. ASCII JSON survives host consoles.
+            self._stdout_data = data
+            return
         self.output.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=self.output.parent, prefix=".timings-", suffix=".json")
         try:
@@ -207,5 +212,8 @@ class TimingRecorder:
                 os.unlink(name)
 
     def pytest_terminal_summary(self, terminalreporter):
+        if hasattr(self, "_stdout_data"):
+            terminalreporter.write_line("FLOWGATE-TIMINGS " + json.dumps(
+                self._stdout_data, sort_keys=True, separators=(",", ":")))
         count = sum(r.get("eligible", False) for r in self.records.values())
         terminalreporter.write_line(f"timings: {self.output} | {len(self.records)} files, {count} complete serial baselines")

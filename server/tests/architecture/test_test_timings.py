@@ -159,8 +159,9 @@ def test_conftest_measured_tier_and_marker_priority(pytestconfig, monkeypatch, t
 
 
 
+@pytest.mark.parametrize("destination", ["file", "stdout"])
 @pytest.mark.parametrize("args,eligible", [([], True), (["-n", "2", "--dist", "loadfile"], False)])
-def test_real_conftest_option_writes_output(pytester, args, eligible):
+def test_real_conftest_option_writes_output(pytester, args, eligible, destination):
     source = Path(__file__).resolve().parents[1]
     directory = pytester.path / "tests"
     directory.mkdir()
@@ -168,9 +169,17 @@ def test_real_conftest_option_writes_output(pytester, args, eligible):
         (directory / name).write_bytes((source / name).read_bytes())
     (directory / "test_sample.py").write_text("def test_one(): pass\n", encoding="utf-8")
     output = pytester.path / "timings.json"
-    result = pytester.runpytest_subprocess("tests/test_sample.py", "-q", f"--fg-timings-out={output}", *args)
+    target = "-" if destination == "stdout" else str(output)
+    result = pytester.runpytest_subprocess("tests/test_sample.py", "-q", f"--fg-timings-out={target}", *args)
     result.assert_outcomes(passed=1)
-    assert load_timings(output)["tests/test_sample.py"]["eligible"] is eligible
+    if destination == "stdout":
+        lines = [line for line in result.stdout.lines if line.startswith("FLOWGATE-TIMINGS ")]
+        assert len(lines) == 1  # only the controller publishes, even with xdist
+        records = json.loads(lines[0].removeprefix("FLOWGATE-TIMINGS "))["files"]
+        assert not output.exists() and not (pytester.path / "-").exists()
+    else:
+        records = load_timings(output)
+    assert records["tests/test_sample.py"]["eligible"] is eligible
 
 
 def test_baseline_eligibility_is_independent_per_file(timing_project):

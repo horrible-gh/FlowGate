@@ -18,6 +18,11 @@ os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
 # pymysql calls getpass.getuser() at import time; a Self-check host may export no user name.
 os.environ.setdefault("USERNAME", "flowgate-test")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+# API modules import Settings during collection, before any test fixture runs.
+# Individual file/area selection must not depend on another suite seeding these.
+os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("DB_TYPE", "sqlite3")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
@@ -32,6 +37,12 @@ if str(_SERVER_DIR) not in sys.path:
 _FLOWGATE_TESTS_DIR = str(Path(__file__).resolve().parent / "flowgate")
 if _FLOWGATE_TESTS_DIR not in sys.path:
     sys.path.append(_FLOWGATE_TESTS_DIR)
+# Legacy suites import these shared harnesses by module name, including suites
+# outside their directory. Make those imports independent of collection order.
+for _harness_dir in ("modules/flow_gate", "modules/flow_gate/services", "regression/remote_tools"):
+    _harness_path = str(Path(__file__).resolve().parent / _harness_dir)
+    if _harness_path not in sys.path:
+        sys.path.append(_harness_path)
 
 
 # ── 저장소 오염 감시자 (0382 B0001 / NR0003 제안 2-b) ─────────────────────────
@@ -458,7 +469,7 @@ def pytest_unconfigure(config):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--fg-timings-out", default=None, help="Write file setup/call/teardown timings as JSON.")
+    parser.addoption("--fg-timings-out", default=None, help="Write setup/call/teardown timings as JSON; use - for stdout.")
     parser.addoption("--area", default=None, help="Comma-separated test areas (including parent names).")
     parser.addoption("--changed", default=None, help="Comma-separated changed paths relative to server/.")
     parser.addoption(

@@ -138,19 +138,22 @@ def test_verify_still_reports_ok_for_an_uncommitted_file_that_happens_to_match()
     assert label == "OK"
 
 
-def test_committed_in_head_distinguishes_a_tracked_migration_from_an_untracked_probe_file():
-    """A path's HEAD history is still separately observable from worktree state."""
-    tracked_relpath = "server/sql/migrations/postgres/036_tokens_workflow_decide_scope.sql"
+def test_committed_in_head_distinguishes_a_tracked_migration_from_an_untracked_probe_file(
+        tmp_path, monkeypatch):
+    """Check real Git history in an isolated repo, never write a probe into the checkout."""
+    monkeypatch.setattr(R, "REPO_ROOT", tmp_path)
+    tracked_relpath = "server/sql/migrations/postgres/tracked.sql"
+    tracked = tmp_path / tracked_relpath
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("-- tracked migration\n", encoding="utf-8")
+    for args in (["init", "-q"], ["add", tracked_relpath],
+                 ["-c", "user.name=FlowGate Test", "-c", "user.email=test@example.invalid",
+                  "commit", "--no-gpg-sign", "-qm", "seed migration"]):
+        R.subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     assert R._committed_in_head(tracked_relpath) is True
-
-    probe_path = PG_DIR / "_tr0007_rev2_untracked_probe.sql"
-    assert not probe_path.exists(), "stale probe file from a prior failed run -- remove it"
-    probe_path.write_text("-- never committed, must not read as historical\n", encoding="utf-8")
-    try:
-        untracked_relpath = f"server/sql/migrations/postgres/{probe_path.name}"
-        assert R._committed_in_head(untracked_relpath) is False
-    finally:
-        probe_path.unlink()
+    probe = tracked.parent / "untracked.sql"
+    probe.write_text("-- never committed\n", encoding="utf-8")
+    assert R._committed_in_head(probe.relative_to(tmp_path).as_posix()) is False
 
 
 def test_verify_fails_when_a_head_historical_file_is_edited_or_regenerated_in_place():
