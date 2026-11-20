@@ -215,9 +215,28 @@ def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, m
         return project
     from modules.flow_gate.services import question_search
     try:
-        return question_search.search(project, q, limit, before_id, cursor)
+        # A board list: one short row per answer. The bodies are read one at a time below.
+        page = question_search.listing(question_search.search(project, q, limit, before_id, cursor))
     except ValueError as exc:
         return _fail(422, str(exc))
+    page["detail"] = {"method": "GET", "url": f"/flowgate/api/v1/q/{doc_id}/search/{{answer_id}}"}
+    return page
+
+
+@router.get("/q/{doc_id}/search/{answer_id}")
+def search_answer_detail(request: Request, doc_id: str, answer_id: int):
+    # Same binding and read permission as the list; the row must belong to the bound document's project.
+    identity = _resolve_writer(request, doc_id)
+    if isinstance(identity, JSONResponse):
+        return identity
+    project = _doc_project_or_403(doc_id, identity[0], "perm_document_read")
+    if isinstance(project, JSONResponse):
+        return project
+    from modules.flow_gate.services import question_search
+    row = question_search.detail(project, answer_id)
+    if row is None:
+        return _fail(404, "answer_not_found")
+    return {"ok": True, "item": row}
 
 
 # ── Request schemas ──────────────────────────────────────────────────────────

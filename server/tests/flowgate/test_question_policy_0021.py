@@ -261,8 +261,8 @@ def test_search_http_token_binding_and_read_permission(monkeypatch):
     request = _BearerOnlyRequest("fake")
     assert route.search_answers(request, DOC, "term", 10, None).status_code == 403
     monkeypatch.setattr(route, "has_permission", lambda user, project, perm: (user, project, perm) == ("u1", "p", "perm_document_read"))
-    monkeypatch.setattr(question_search, "search", lambda project, *args: {"project": project})
-    assert route.search_answers(request, DOC, "term", 10, None) == {"project": "p"}
+    monkeypatch.setattr(question_search, "search", lambda project, *args: {"project": project, "items": []})
+    assert route.search_answers(request, DOC, "term", 10, None)["project"] == "p"
     assert route.search_answers(request, "p.none.0002.0001-D", "term", 10, None).status_code == 403
 
 

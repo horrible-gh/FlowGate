@@ -126,8 +126,99 @@ def test_search_failure_is_not_zero_candidates(store, monkeypatch):
 def test_identity_precision(left, right, expected):
     row = {"doc_id": DOC, "body": right, "options": []}
     assert precheck.identical(DOC, None, left, [], row) is expected
+    # The same rule holds for an answer of another document of the project.
     row["doc_id"] = "p.none.9999.0001-R"
-    assert not precheck.identical(DOC, None, left, [], row)
+    assert precheck.identical(DOC, None, left, [], row) is expected
+
+
+OTHER = "p.none.0001.0002-D"
+
+
+def other_doc():
+    from modules.flow_gate.db import documents
+    documents.create({"doc_id": OTHER, "project_id": "p", "type_code": "D", "seq": 2, "title": "Doc Two",
+                      "group_id": "p.none.0001", "module": "none", "owner_id": "u1", "file_path": OTHER + ".md", "status": "open"})
+
+
+def test_other_document_answer_is_reused_and_reason_registers(store):
+    aid = answered("테스트 서버 배포를 AI가 진행해도 되는지 확인", answer="AI가 진행합니다")
+    other_doc()
+    payload = [{"body": "테스트 서버 배포를 AI가 진행해도 되는지 확인?"}]
+    result = qs.add_questions(OTHER, payload, created_by="u1")
+    assert result["status"] == "reused_answer" and result["added_item_ids"] == []
+    assert result["decision_reason"] == "project_identical_question"
+    reused = result["reused_answer"]
+    assert (reused["answer_id"], reused["doc_id"], reused["seq"], reused["author_label"]) == (aid, DOC, 1, "u1")
+    assert reused["answer_body"] == "AI가 진행합니다"
+    assert qs.get_qa_detail(OTHER)["items"] == []
+    payload[0].update(rejected_answer_id=aid, reuse_rejection_reason="이 카드는 운영 서버가 대상임")
+    assert len(qs.add_questions(OTHER, payload, created_by="u1")["added_item_ids"]) == 1
+
+
+def test_long_question_is_reused_without_a_word_cap(store):
+    body = " ".join(f"낱말{chr(0xAC00 + i)}" for i in range(20))
+    aid = answered(body)
+    assert add(body + ".")["reused_answer"]["answer_id"] == aid
+
+
+@pytest.mark.parametrize("left,right,expected", [
+    ("테스트 서버 배포 진행 확인", "테스트 서버 배포 진행 확인 요청", "similar"),
+    ("테스트 서버 커밋 배포 진행 확인", "운영 서버 커밋 배포 진행 확인", None),
+    ("테스트 서버 배포 확인", "테스트 서버 배포 확인 그리고 운영 서버 삭제 승인", None),
+    ("테스트서버 배포 확인", "테스트 서버 배포 확인.", "identical"),
+])
+def test_similar_question_adds_words_but_never_swaps_them(left, right, expected):
+    assert precheck.match_kind(None, left, [], {"doc_id": DOC, "body": right, "options": []}) == expected
+
+
+def test_search_terms_drop_particles_punctuation_and_stopwords(store):
+    aid = answered("서버가 응답하지 않음", answer="재시작")
+    assert search.search_terms("The 서버에서, (오류)를 확인?") == ["서버", "오류", "확인"]
+    assert [r["answer_id"] for r in search.search("p", "서버에서")["items"]] == [aid]
+    assert search.search("p", "the and")["total_count"] == 0
+    assert search.query_from_text("서버 " * 500) == "서버"
+    assert len(search.query_from_text(" ".join(f"w{i:04d}" for i in range(200)))) <= 200
+
+
+def test_list_has_no_bodies_and_detail_opens_one(store):
+    aid = answered("테스트 서버 커밋 확인 " + "본문" * 300, answer="답변" * 300)
+    row = search.listing(search.search("p", "커밋"))["items"][0]
+    assert row["answer_id"] == aid and row["doc_id"] == DOC and row["seq"] == 1 and row["author_label"] == "u1"
+    assert "body" not in row and "answer_body" not in row
+    assert len(row["answer_preview"]) == search.PREVIEW_CHARS and row["answer_preview_truncated"]
+    assert len(row["title"]) <= search.TITLE_CHARS
+    full = search.detail("p", aid)
+    assert full["answer_body"] == "답변" * 300 and full["doc_id"] == DOC
+    assert search.detail("other", aid) is None and search.detail("p", aid + 999) is None
+
+
+def test_precheck_candidates_and_answer_prompt_are_lists(store, monkeypatch):
+    from modules.flow_gate.services import q_answer_invoke_service as responder
+    answered("테스트 서버 커밋 확인 " + "본문" * 300, answer="답변" * 300)
+    result = add("서버 커밋 절차 문의")
+    assert result["status"] == "registered" and result["candidates"]
+    assert all("answer_body" not in c and "body" not in c for c in result["candidates"])
+    monkeypatch.setattr(responder, "_source_tool_block", lambda *a: [])
+    monkeypatch.setattr(responder, "_document_lookup_block", lambda *a: [])
+    text = responder.build_answer_mention(doc={"doc_id": DOC, "project_id": "p"},
+        item={"id": 99, "seq": 2, "body": "서버 커밋 절차 문의"}, raw_token="fake", scratch_dir=".",
+        api_base_url="http://test/api/v1", issued_to="u1")
+    assert "답변" * 100 not in text and "본문" * 100 not in text
+    assert f"http://test/api/v1/q/{DOC}/search/<answer_id>" in text
+
+
+def test_detail_route_is_bound_to_the_token_project(store, monkeypatch):
+    from modules.flow_gate.api.v1 import q_tapi_routes as routes
+    aid = answered("테스트 서버 커밋 확인")
+    monkeypatch.setattr(routes, "_resolve_writer", lambda request, doc_id: ("u1", None, None))
+    monkeypatch.setattr(routes, "_doc_project_or_403", lambda *a, **kw: "p")
+    page = routes.search_answers(None, DOC, "커밋", 10, None, None)
+    assert page["view"] == "list" and "answer_body" not in page["items"][0]
+    assert page["detail"]["url"].endswith(f"/q/{DOC}/search/{{answer_id}}")
+    assert routes.search_answer_detail(None, DOC, aid)["item"]["answer_body"] == "테스트 서버에서 확인합니다"
+    assert routes.search_answer_detail(None, DOC, aid + 999).status_code == 404
+    monkeypatch.setattr(routes, "_doc_project_or_403", lambda *a, **kw: "other")
+    assert routes.search_answer_detail(None, DOC, aid).status_code == 404
 
 
 def test_document_accompanied_keeps_document_and_returns_rejection(store):
