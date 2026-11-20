@@ -3,11 +3,10 @@
 // which questions wait for the user, the tab number, the display order, who asked and who answered,
 // and whether answering is possible now.
 //
-// An open AI question (D#1 §10.4, fixed here from the response fields): a question an AI asked
+// Waiting for the user (D#1 §10.4, fixed here from the response fields): a question an AI asked
 // (`asker_kind = 'ai'`) that has no answer yet (`answer_count = 0` and no `answers`). A question a
-// person asked waits for the AI or the team, and an answered question waits for nobody. The tab number
-// is the count of open AI questions, shown only when it is at least one — whose turn it is, is the state chip's
-// job (flowgate.v02test.0051 C, below).
+// person asked waits for the AI or the team, not for the user, and an answered question waits for
+// nobody. The tab number is that count, shown only when it is at least one.
 //
 // Operations (D#1 §8.3 rule 0): reading the questions is a query; answering is a change, so it is
 // disabled with one reason — ownership conflict, disposed group, AI running (the
@@ -27,15 +26,6 @@
 // a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
 // (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
 // the answer time and the run id when there is one. The item's `responder` is never read for this.
-// flowgate.v02test.0051 C — an unanswered question is told by what the server recorded (`responder`), not by who asked:
-//   queued        an AI asked it and no responder was assigned yet (대기 중)
-//   ai_answering  an AI is answering it now (`responder.state = dispatched`)
-//   failed        the responder failed technically (`failed`, with its error code and message) — NOT a person's decision
-//   human_needed  only a person can decide it (`user_decision`, and only that)
-//   open          a person asked it and nothing is recorded yet (미답변)
-// The tab number is unchanged: it counts the open AI questions whatever their state (it never claims a person's turn;
-// the chip does, and `qnaNeedsPerson` is only the person-needed state). The past-answer search record (`searchSummary`) is shown as it is:
-// searched / how many found / the reused answer with its source, and "기록 없음" for a legacy question.
 // flowgate.v02.0070 T#5 (B5) — a question is answered after its context is checked: the Inspector list shows and opens
 // the questions only; the ↗ window shows the document id, the full question, who asked and when, then the answer form.
 // Answering, picking and asking an AI need a body that can be checked (`qnaBodyContext`): the document's card line says
@@ -57,48 +47,6 @@ export interface QnaItemFacts {
   readonly provider: QnaProviderFacts | null
   /** When the question was registered (`created_at`); the API has no time the question changed. */
   readonly createdAt?: string | null
-  /** The automatic responder's record (`responder`); null / absent: none touched the question. */
-  readonly responder?: QnaResponderFacts | null
-  /** The past-answer search record (`search_summary`); absent: no record. */
-  readonly searchSummary?: QnaSearchFacts | null
-}
-
-export interface QnaResponderFacts {
-  readonly state: string
-  readonly errorCode?: string | null
-  readonly errorMessage?: string | null
-  readonly attempts?: number
-}
-
-export interface QnaSearchFacts {
-  readonly recorded: boolean
-  readonly searched: boolean | null
-  readonly status: string | null
-  readonly foundCount: number | null
-  readonly reusedAnswer: QnaReusedFacts | null
-  readonly reuseRejectionReason: string | null
-}
-
-export interface QnaReusedFacts {
-  readonly answerId: number | null
-  readonly docId: string | null
-  readonly seq: number | null
-  readonly answerer: string | null
-  readonly answerBody?: string | null
-}
-
-/**
- * One search record of the document (`search_prechecks[]`, the QaSearchPrecheck). Those with `addedItemIds` empty registered
- * no question, so no question line carries them: the screen lists them on their own.
- */
-export interface QnaPrecheckFacts {
-  readonly precheckId: string | null
-  readonly status: string | null
-  readonly searched: boolean | null
-  readonly foundCount: number | null
-  readonly reusedAnswer: QnaReusedFacts | null
-  readonly reuseRejectionReason: string | null
-  readonly addedItemIds: readonly number[]
 }
 
 export interface QnaAnswerFacts {
@@ -134,214 +82,40 @@ export function qnaAnswered(item: Pick<QnaItemFacts, 'answerCount' | 'answers'>)
   return item.answerCount > 0 || item.answers.length > 0
 }
 
-type StateFacts = Pick<QnaItemFacts, 'askerKind' | 'answerCount' | 'answers' | 'responder'>
-
-/** Where a question stands (see the header): the four unanswered states, open (a person asked), answered. */
-export type QnaItemState = 'human_needed' | 'failed' | 'ai_answering' | 'queued' | 'open' | 'answered'
-
-export function qnaItemState(item: StateFacts): QnaItemState {
-  if (qnaAnswered(item)) return 'answered'
-  switch (item.responder?.state) {
-    case 'user_decision':
-      return 'human_needed'
-    case 'failed':
-      return 'failed'
-    case 'dispatched':
-      return 'ai_answering'
-    default:
-      // No responder record (or one that says nothing now): an AI's question has no answerer assigned yet; a person's is open.
-      return item.askerKind === 'ai' ? 'queued' : 'open'
-  }
-}
-
-/**
- * An open question of an AI: an AI asked it and nobody answered yet. It is the tab number's unit and says nothing about
- * whose turn it is — the state chip does (queued / AI answering / technical failure / person needed).
- */
+/** A question waits for the user: an AI asked it and nobody answered yet. */
 export function qnaWaitingForUser(item: Pick<QnaItemFacts, 'askerKind' | 'answerCount' | 'answers'>): boolean {
   return item.askerKind === 'ai' && !qnaAnswered(item)
 }
 
-/** A question only a person can decide: the responder handed it over (`user_decision`) and nobody answered yet. */
-export function qnaNeedsPerson(item: StateFacts): boolean {
-  return qnaItemState(item) === 'human_needed'
-}
-
-/** How many open AI questions there are; null before the questions are read. */
+/** How many questions wait for the user; null before the questions are read. */
 export function qnaWaitingCount(items: readonly Pick<QnaItemFacts, 'askerKind' | 'answerCount' | 'answers'>[] | null): number | null {
   return items === null ? null : items.filter(qnaWaitingForUser).length
 }
 
-/** The Q&A tab number: the open AI questions when at least one; none otherwise (or not read). */
+/** The Q&A tab number: the waiting count when it is at least one; none otherwise (or not read). */
 export function qnaTabCount(items: readonly Pick<QnaItemFacts, 'askerKind' | 'answerCount' | 'answers'>[] | null): number | null {
   const count = qnaWaitingCount(items)
   return count !== null && count > 0 ? count : null
 }
 
-const STATE_RANK: Readonly<Record<QnaItemState, number>> = { human_needed: 0, failed: 1, ai_answering: 2, queued: 3, open: 4, answered: 5 }
+/** Where a question stands: waiting for the user, open (a person asked, no answer), answered. */
+export type QnaItemState = 'waiting' | 'open' | 'answered'
 
-/** Display order: a person's turn first, then failed, AI answering, queued, open, answered; within each, by seq (then id). */
-export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind' | 'answerCount' | 'answers' | 'responder'>>(items: readonly T[]): T[] {
+export function qnaItemState(item: Pick<QnaItemFacts, 'askerKind' | 'answerCount' | 'answers'>): QnaItemState {
+  if (qnaAnswered(item)) return 'answered'
+  return qnaWaitingForUser(item) ? 'waiting' : 'open'
+}
+
+const STATE_RANK: Readonly<Record<QnaItemState, number>> = { waiting: 0, open: 1, answered: 2 }
+
+/** Display order: waiting first, then open, then answered; within each, by seq (then id). */
+export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind' | 'answerCount' | 'answers'>>(items: readonly T[]): T[] {
   return [...items].sort(
     (a, b) =>
       STATE_RANK[qnaItemState(a)] - STATE_RANK[qnaItemState(b)] ||
       (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER) ||
       a.id - b.id,
   )
-}
-
-/** The responder's failure shown with a failed question: the server's error code and message, never a guess. */
-export interface QnaResponderView {
-  readonly errorCode: string | null
-  readonly errorMessage: string | null
-  readonly attempts: number
-}
-
-export function qnaResponderView(item: Pick<QnaItemFacts, 'responder'>): QnaResponderView | null {
-  const responder = item.responder
-  if (!responder || responder.state !== 'failed') return null
-  return { errorCode: responder.errorCode ?? null, errorMessage: responder.errorMessage ?? null, attempts: responder.attempts ?? 0 }
-}
-
-/**
- * The search line of a question: `no_record` (legacy or older server: "기록 없음"), `failed` (the search itself failed),
- * `not_searched`, `searched` (with the found count, null = not told) and the reused answer's source when there is one.
- */
-export type QnaSearchKind = 'no_record' | 'failed' | 'not_searched' | 'searched'
-
-export interface QnaSearchView {
-  readonly kind: QnaSearchKind
-  readonly foundCount: number | null
-  readonly reused: { readonly docId: string | null; readonly seq: number | null; readonly answerer: string | null; readonly answerBody: string | null } | null
-  readonly rejectionReason: string | null
-}
-
-export function qnaSearchView(item: Pick<QnaItemFacts, 'searchSummary'>): QnaSearchView {
-  const summary = item.searchSummary
-  if (!summary || !summary.recorded) return { kind: 'no_record', foundCount: null, reused: null, rejectionReason: null }
-  const reused = summary.reusedAnswer
-    ? { docId: summary.reusedAnswer.docId, seq: summary.reusedAnswer.seq, answerer: summary.reusedAnswer.answerer, answerBody: summary.reusedAnswer.answerBody ?? null }
-    : null
-  const kind: QnaSearchKind = summary.status === 'search_failed' ? 'failed' : summary.searched === true ? 'searched' : 'not_searched'
-  return { kind, foundCount: kind === 'searched' ? summary.foundCount : null, reused, rejectionReason: summary.reuseRejectionReason }
-}
-
-/**
- * What a search that registered no question came to: `reused_answer` (an existing answer was used instead),
- * `needs_reason` (an offered answer was rejected without a reason: nothing registered, resend with one),
- * `search_failed`, or `not_registered` (any other status without a question, e.g. rolled back).
- */
-export type QnaPrecheckOutcome = 'reused_answer' | 'needs_reason' | 'search_failed' | 'not_registered'
-
-export interface QnaPrecheckView {
-  /** Stable key: the server's precheck id, else the position. */
-  readonly key: string
-  readonly precheckId: string | null
-  readonly outcome: QnaPrecheckOutcome
-  /** Searched / found count / the reused answer's source, as a question's search line. */
-  readonly search: QnaSearchView
-}
-
-function qnaPrecheckOutcome(status: string | null): QnaPrecheckOutcome {
-  if (status === 'reused_answer') return 'reused_answer'
-  if (status === 'existing_answer_requires_reason') return 'needs_reason'
-  if (status === 'search_failed') return 'search_failed'
-  return 'not_registered'
-}
-
-/** One record of the document's searches -> what the screen shows (the same search view a question line has). */
-export function qnaPrecheckView(record: QnaPrecheckFacts, position = 0): QnaPrecheckView {
-  const search = qnaSearchView({
-    searchSummary: {
-      recorded: true,
-      searched: record.searched,
-      status: record.status,
-      foundCount: record.foundCount,
-      reusedAnswer: record.reusedAnswer,
-      reuseRejectionReason: record.reuseRejectionReason,
-    },
-  })
-  return { key: record.precheckId ?? `p${position}`, precheckId: record.precheckId, outcome: qnaPrecheckOutcome(record.status), search }
-}
-
-/**
- * The searches that registered no question, newest first. A search that registered one is that question's own search line,
- * so it is not repeated here.
- */
-export function qnaPrecheckViews(records: readonly QnaPrecheckFacts[] | null | undefined): QnaPrecheckView[] {
-  return (records ?? [])
-    .map((record, position) => ({ record, position }))
-    .filter(({ record }) => record.addedItemIds.length === 0)
-    .map(({ record, position }) => qnaPrecheckView(record, position))
-    .reverse()
-}
-
-/** The lines of a no-question search: what came of it, then the search record (count, source, reason). */
-export function qnaPrecheckLines(view: QnaPrecheckView, text: QnaText): string[] {
-  const lines = [text(`precheck.outcome.${view.outcome}`), ...qnaSearchLines(view.search, text)]
-  const answer = view.search.reused?.answerBody?.trim()
-  // The reused answer itself, so the reuse can be judged against its source (a long answer is cut).
-  if (answer) lines.push(text('precheck.answer', { body: answer.length > 200 ? `${answer.slice(0, 200)}…` : answer }))
-  return lines
-}
-
-/** Message key (under `gui.inspector.qna.`) of a question's state chip; `open` (a person asked) keeps 미답변. */
-export function qnaStateKey(state: QnaItemState): string {
-  return `state.${state === 'open' ? 'unanswered' : state}`
-}
-
-/** Chip tone of a state: a person's turn warns, a technical failure is red, an AI answering runs, done is green. */
-export function qnaStateTone(state: QnaItemState): 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' {
-  switch (state) {
-    case 'answered':
-      return 'success'
-    case 'human_needed':
-      return 'warning'
-    case 'failed':
-      return 'danger'
-    case 'ai_answering':
-      return 'running'
-    case 'queued':
-      return 'info'
-    default:
-      return 'neutral'
-  }
-}
-
-type QnaText = (key: string, params?: Record<string, string | number>) => string
-
-/** The reused answer's source: the document, the Q number and who answered it ("출처 미확인" without any of them). */
-export function qnaReusedSourceText(reused: NonNullable<QnaSearchView['reused']>, text: QnaText): string {
-  if (!reused.docId && reused.seq === null) return text('search.source_unknown')
-  return text('search.source', {
-    doc: reused.docId ?? '?',
-    seq: reused.seq ?? '?',
-    who: reused.answerer ?? text('search.who_unknown'),
-  })
-}
-
-/**
- * The lines the screen shows for a question's search record: searched / how many were found (or "no record" /
- * "not searched" / "search failed"), the reused answer with its source, and the reason an offered answer was not used.
- * `text` renders a message key under `gui.inspector.qna.`.
- */
-export function qnaSearchLines(view: QnaSearchView, text: QnaText): string[] {
-  const lines: string[] = []
-  if (view.kind === 'no_record') return [text('search.no_record')]
-  if (view.kind === 'failed') lines.push(text('search.failed'))
-  else if (view.kind === 'not_searched') lines.push(text('search.not_searched'))
-  else lines.push(view.foundCount === null ? text('search.searched_unknown') : text('search.searched', { found: view.foundCount }))
-  lines.push(view.reused ? text('search.reused', { source: qnaReusedSourceText(view.reused, text) }) : text('search.reused_none'))
-  if (view.rejectionReason) lines.push(text('search.rejection', { reason: view.rejectionReason }))
-  return lines
-}
-
-/** The failure line of a failed question: its error code and message as the server recorded them. */
-export function qnaResponderLines(view: QnaResponderView, text: QnaText): string[] {
-  const lines = [view.errorCode ? text('detail.responder_code', { code: view.errorCode }) : text('detail.responder_unknown')]
-  if (view.errorMessage) lines.push(text('detail.responder_message', { message: view.errorMessage }))
-  if (view.attempts > 0) lines.push(text('detail.responder_attempts', { attempts: view.attempts }))
-  return lines
 }
 
 /**
@@ -412,10 +186,6 @@ export interface QnaItemView {
   readonly title: string | null
   readonly body: string
   readonly state: QnaItemState
-  /** The responder's failure (error code / message) of a `failed` question; null otherwise. */
-  readonly responder: QnaResponderView | null
-  /** The past-answer search record: searched / found count / the reused answer's source, or "no record". */
-  readonly search: QnaSearchView
   readonly asker: QnaSide
   readonly options: readonly { readonly id: string; readonly label: string }[]
   readonly answers: readonly QnaAnswerView[]
@@ -436,8 +206,6 @@ export function qnaItemView(item: QnaItemFacts, docId: string | null = null): Qn
     title: item.title,
     body: item.body,
     state,
-    responder: state === 'failed' ? qnaResponderView(item) : null,
-    search: qnaSearchView(item),
     asker: qnaSide(item.askerKind, item.provider),
     options: item.options,
     answers: item.answers.map((answer, index) => ({
@@ -618,27 +386,21 @@ export function qnaAnswerReady(item: Pick<QnaItemFacts, 'options'>, body: string
 }
 
 /** Kinds of a refused call or a failed read (the `@/features/document` qaErrorOf kinds). */
-export type QnaFailureKind = 'running' | 'no_provider' | 'disposed' | 'reuse_required' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
+export type QnaFailureKind = 'running' | 'no_provider' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
 
 /** Message key of a refused answer; the questions are read again after it is shown. */
 export function qnaFailureKey(kind: QnaFailureKind): string {
-  return kind === 'reuse_required' ? 'failure.other' : `failure.${kind}`
+  return `failure.${kind}`
 }
 
-/**
- * Message key of a refused question (nothing stored). `reuse_required` (409 existing_answer_requires_reason): a past
- * answer fits — use it or give a reason; the same request is never sent again.
- */
+/** Message key of a refused question (nothing stored). */
 export function qnaAskFailureKey(kind: QnaFailureKind): string {
   return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
 }
 
-/** Message key of a question not stored because the server returned an existing answer (200 reused_answer). */
-export const QNA_ASK_REUSED_KEY = 'ask_failure.reused'
-
 /** Message key of a refused AI answer request (the question stays without an answer). */
 export function qnaAiFailureKey(kind: QnaFailureKind): string {
-  return kind === 'invalid' || kind === 'other' || kind === 'reuse_required' ? 'ai_failure.other' : `ai_failure.${kind}`
+  return kind === 'invalid' || kind === 'other' ? 'ai_failure.other' : `ai_failure.${kind}`
 }
 
 /** Message key of a failed read of the questions. */

@@ -90,8 +90,6 @@ interface ServerItem {
 }
 
 const threads = new Map<string, ServerItem[]>()
-/** flowgate.v02test.0051 C: the document's search records (`search_prechecks`), as the server keeps them (registered or not). */
-const prechecks = new Map<string, Record<string, unknown>[]>()
 let running = false
 let disposed = false
 let itemSeq = 30
@@ -121,7 +119,6 @@ function treeOf(docId: string) {
       doc_id: docId,
       status: items.length ? (items.every((entry) => entry.answers.length) ? 'done' : 'pending') : null,
       items: items.map((entry) => ({ ...entry, answer_count: entry.answers.length })),
-      search_prechecks: prechecks.get(docId) ?? [],
     },
   }
 }
@@ -224,7 +221,6 @@ beforeEach(() => {
   pinia = createPinia()
   stream = installProjectEventStream()
   threads.clear()
-  prechecks.clear()
   refusals.clear()
   pendingAi.length = 0
   calls.length = 0
@@ -513,7 +509,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     await flushPromises()
     expect(aiWaiting(w, 10).exists()).toBe(false)
     // Question 10 was asked by an AI: it waits for the user before and after — the request moves nothing else.
-    expect(itemEl(w, 10).attributes('data-state')).toBe('queued')
+    expect(itemEl(w, 10).attributes('data-state')).toBe('waiting')
     expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
@@ -555,7 +551,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     const w = await mountTab(v01Target())
     await requestAi(w, 10)
     // The question stays as it was (asked by an AI, waiting for the user) with no answer and nothing awaited.
-    expect(itemEl(w, 10).attributes('data-state')).toBe('queued')
+    expect(itemEl(w, 10).attributes('data-state')).toBe('waiting')
     expect(itemEl(w, 10).attributes('data-awaiting')).toBe('false')
     expect(aiWaiting(w, 10).exists()).toBe(false)
     expect(iconView(aiFailure(w, 10))).toEqual({ role: 'img', focusable: '0', name: 'AI 답변 요청 실패', description: text, text: '' })
@@ -822,106 +818,5 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
     expect(itemEl(w, 31).attributes('data-state')).toBe('answered')
     expect(inWindow(31).get('[data-test="qna-window-answer"] .inspector-qna-text').text()).toBe('단위 테스트가 모두 통과하면 완료입니다.')
     expect(inWindow(31).get('[data-test="qna-window-answer-side"]').text()).toBe('답: AI · Claude Opus 5.5')
-  })
-})
-
-// --- Asking that registers nothing: 200 reused_answer and the searches no question carries (flowgate.v02test.0051 C) ---
-
-describe('a reused answer and the searches that registered no question (flowgate.v02test.0051 C)', () => {
-  const SOURCE_DOC = 'flowgate.v02test.0036.0007-TR'
-  const REUSED = { answer_id: 5, doc_id: SOURCE_DOC, seq: 2, author_label: 'Claude Opus 5.5', answer_body: '완료 기준은 단위 테스트 통과입니다.' }
-  /** The record the server stores for a reuse, and the 200 body it answers with (question_precheck.response). */
-  const reuseRecord = (overrides: Record<string, unknown> = {}) => ({
-    precheck_id: 'qpc_reuse1', searched: true, status: 'reused_answer', found_count: 3, returned_count: 3,
-    reused_answer: REUSED, reuse_rejection_reason: null, added_item_ids: [], ...overrides,
-  })
-  const reuseResponse = (docId: string, record = reuseRecord()) =>
-    toQaAskResult({ ok: true, doc_id: docId, status: 'reused_answer', added_item_ids: [], item_results: [record], ...record })
-
-  /** The next ask is answered 200 reused_answer; the server keeps the record (`keep`) unless the test says it does not. */
-  function reuseOnNextAsk(keep = true) {
-    qaAskCall.mockImplementationOnce(async (request: { docId: string; body: string }) => {
-      calls.push(`ask ${request.body}`)
-      if (keep) prechecks.set(request.docId, [...(prechecks.get(request.docId) ?? []), reuseRecord()])
-      return reuseResponse(request.docId)
-    })
-  }
-  const precheckEls = (w: VueWrapper<any>) => w.findAll('[data-test="qna-precheck"]')
-  const linesOf = (el: { findAll(selector: string): { text(): string }[] }) => el.findAll('[data-test="qna-precheck-line"]').map((line) => line.text())
-
-  it('a 200 reused_answer shows where the answer came from — document, Q number, answerer — the answer and the found count; no question is added', async () => {
-    const w = await mountTab(emptyTarget())
-    reuseOnNextAsk()
-    await ask(w, '완료 기준은 무엇인가요?')
-    expect(ids(w)).toEqual([])
-    // The text stays (nothing registered) and the red icon says why.
-    expect(inputValue(w)).toBe('완료 기준은 무엇인가요?')
-    expect(iconView(askFailure(w)).description).toBe('같은 질문의 기존 답이 있어 등록하지 않았습니다. 기존 답을 확인하세요.')
-    // The read after the ask carries the same record, so it is listed once, from the server's record.
-    expect(w.find('[data-test="qna-ask-reused"]').exists()).toBe(false)
-    expect(precheckEls(w)).toHaveLength(1)
-    expect(precheckEls(w)[0]!.attributes('data-outcome')).toBe('reused_answer')
-    expect(linesOf(precheckEls(w)[0]!)).toEqual([
-      '기존 답을 재사용함 · 질문 등록 안 됨',
-      '검색함 · 찾은 3건',
-      `재사용한 답: ${SOURCE_DOC} Q2 · 답변자 Claude Opus 5.5`,
-      '재사용한 답 내용: 완료 기준은 단위 테스트 통과입니다.',
-    ])
-  })
-
-  it('shows the reuse at once from the 200 itself when the read after it does not carry the record yet', async () => {
-    const w = await mountTab(emptyTarget())
-    reuseOnNextAsk(false)
-    await ask(w, '완료 기준은 무엇인가요?')
-    expect(precheckEls(w)).toHaveLength(0)
-    const live = w.get('[data-test="qna-ask-reused"]')
-    expect(live.attributes('data-outcome')).toBe('reused_answer')
-    expect(linesOf(live)).toContain(`재사용한 답: ${SOURCE_DOC} Q2 · 답변자 Claude Opus 5.5`)
-    expect(linesOf(live)).toContain('검색함 · 찾은 3건')
-    // The next ask starts clean: a registered question leaves no reuse notice behind.
-    await ask(w, '다른 질문입니다')
-    expect(w.find('[data-test="qna-ask-reused"]').exists()).toBe(false)
-    expect(ids(w)).toEqual([31])
-  })
-
-  it('the searches that registered no question are still there after a reload (a new mount reads them from the server)', async () => {
-    prechecks.set(OTHER_DOC, [
-      reuseRecord(),
-      reuseRecord({ precheck_id: 'qpc_noreason', status: 'existing_answer_requires_reason', reused_answer: null, found_count: 2, returned_count: 2 }),
-      reuseRecord({ precheck_id: 'qpc_failed', status: 'search_failed', reused_answer: null, found_count: null, returned_count: 0 }),
-      // A search that registered a question belongs to that question's line, not to this list.
-      reuseRecord({ precheck_id: 'qpc_registered', status: 'registered', reused_answer: null, found_count: 0, returned_count: 0, added_item_ids: [31] }),
-    ])
-    const first = await mountTab(emptyTarget())
-    // Newest first; the registered one is not repeated.
-    expect(precheckEls(first).map((el) => el.attributes('data-precheck'))).toEqual(['qpc_failed', 'qpc_noreason', 'qpc_reuse1'])
-    first.unmount()
-    wrapper = null
-    const again = await mountTab(emptyTarget())
-    expect(precheckEls(again).map((el) => [el.attributes('data-precheck'), el.attributes('data-outcome')])).toEqual([
-      ['qpc_failed', 'search_failed'],
-      ['qpc_noreason', 'needs_reason'],
-      ['qpc_reuse1', 'reused_answer'],
-    ])
-    expect(linesOf(precheckEls(again)[0]!)).toEqual(['검색 실패 · 질문 등록 안 됨', '검색 실패', '재사용한 답 없음'])
-    expect(linesOf(precheckEls(again)[1]!)).toEqual(['기존 답을 쓰지 않는 사유가 필요함 · 질문 등록 안 됨', '검색함 · 찾은 2건', '재사용한 답 없음'])
-    expect(linesOf(precheckEls(again)[2]!)[2]).toBe(`재사용한 답: ${SOURCE_DOC} Q2 · 답변자 Claude Opus 5.5`)
-    expect(ids(again)).toEqual([])
-  })
-
-  it('a document without such searches (or an older server with no search_prechecks) shows no list', async () => {
-    const w = await mountTab(v01Target())
-    expect(w.find('[data-test="qna-prechecks"]').exists()).toBe(false)
-  })
-
-  it('a reuse of one document is not shown on another', async () => {
-    const w = await mountTab(emptyTarget())
-    reuseOnNextAsk(false)
-    await ask(w, '완료 기준은 무엇인가요?')
-    expect(w.find('[data-test="qna-ask-reused"]').exists()).toBe(true)
-    await w.setProps({ target: v01Target() })
-    await flushPromises()
-    expect(w.find('[data-test="qna-ask-reused"]').exists()).toBe(false)
-    expect(w.find('[data-test="qna-prechecks"]').exists()).toBe(false)
   })
 })

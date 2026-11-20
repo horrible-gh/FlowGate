@@ -121,7 +121,6 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
-    ...('node_running_cause' in raw ? { nodeRunningCause: str(raw.node_running_cause) } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
@@ -503,9 +502,5 @@ export function toRoleRunFields(raw: Raw): RoleRunFields {
 export function toQuestionWait(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.filter((item): item is Raw => !!item && typeof item === 'object' && typeof item.seq === 'number')
-    .map(item => ({
-      seq: item.seq as number, state: str(item.state) ?? 'pending', code: str(item.code), message: str(item.message),
-      // flowgate.v02test.0051 A1: the review loop's wait phase (`loop_wait`), kept only when the server sent it.
-      ...('phase' in item ? { phase: str(item.phase), waitStatus: str(item.wait_status), resumeStage: str(item.resume_stage), waitedAt: str(item.waited_at) } : {}),
-    }))
+    .map(item => ({ seq: item.seq as number, state: str(item.state) ?? 'pending', code: str(item.code), message: str(item.message) }))
 }

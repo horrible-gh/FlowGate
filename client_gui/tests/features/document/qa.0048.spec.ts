@@ -18,7 +18,6 @@ vi.mock('@shared/api', () => ({
 import { qaAnswer, qaErrorOf, qaRead, toQaAnswerResult, toQaThread } from '@/features/document'
 
 const DOC = 'test2.default.0017.0002-N'
-const NO_SEARCH_RECORD = { recorded: false, searched: null, status: null, foundCount: null, reusedAnswer: null, reuseRejectionReason: null }
 
 /** The tree as the dev server returned it (2026-10-09, trimmed bodies). */
 const TREE = {
@@ -114,9 +113,6 @@ describe('GET /q/{doc_id} (flowgate.v02.0048 T#7)', () => {
       answers: [],
       provider: { runId: 'aiv_1', providerId: 'p_claude', providerName: 'Claude Opus 5.5' },
       createdAt: null,
-      // flowgate.v02test.0051 C: a response without the blocks is "no responder" / "no search record", never "searched".
-      responder: null,
-      searchSummary: NO_SEARCH_RECORD,
     })
   })
 
@@ -132,11 +128,11 @@ describe('GET /q/{doc_id} (flowgate.v02.0048 T#7)', () => {
 
   it('missing fields become empty lists / zero / null', () => {
     const smoke = toQaThread(TREE).items[2]
-    expect(smoke).toEqual({ id: 19, seq: 2, title: null, body: 'CLI E2E smoke question', askerKind: 'human', options: [], answerCount: 0, answers: [], provider: null, createdAt: null, responder: null, searchSummary: NO_SEARCH_RECORD })
+    expect(smoke).toEqual({ id: 19, seq: 2, title: null, body: 'CLI E2E smoke question', askerKind: 'human', options: [], answerCount: 0, answers: [], provider: null, createdAt: null })
   })
 
   it('a document without a container is an empty thread', () => {
-    expect(toQaThread({ ok: true, qa: { doc_id: DOC, status: null, items: [] } })).toEqual({ docId: DOC, status: null, items: [], searchPrechecks: [] })
+    expect(toQaThread({ ok: true, qa: { doc_id: DOC, status: null, items: [] } })).toEqual({ docId: DOC, status: null, items: [] })
   })
 
   it('a response without the document id is refused', () => {

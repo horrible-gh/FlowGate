@@ -20,10 +20,6 @@ export interface CardRunFacts {
   readonly approvalWaitReason?: string | null
   /** flowgate.v02.0113 T#1: the card is actually running (the server's `node_running`); absent: not known. */
   readonly nodeRunning?: boolean
-  /** flowgate.v02test.0051 A1: why the card runs (`node_running_cause`); `question_wait:<run>` = a review loop waits for an answer. */
-  readonly nodeRunningCause?: string | null
-  /** flowgate.v02test.0051 A1: the unanswered questions behind the [Q] mark; `phase: 'loop_wait'` holds a review loop. */
-  readonly questionWait?: readonly { readonly phase?: string | null }[]
 }
 
 export const CARD_STATE_KEYS = ['instruction_write_wait', 'result_write_wait', 'waiting', 'manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'needs_intervention', 'system_error', 'approved', 'rejected', 'revised', 'pending', 'closed'] as const
@@ -64,18 +60,6 @@ function executing(run: CardRunFacts): boolean | null {
   if (typeof run.nodeRunning === 'boolean') return run.nodeRunning
   if (run.runningExecutionCount === undefined && run.requestedExecutionCount === undefined) return null
   return (run.runningExecutionCount ?? 0) + (run.requestedExecutionCount ?? 0) > 0
-}
-
-/**
- * flowgate.v02test.0051 C (A1): a review loop is parked at its hop boundary because an AI's question is unanswered. The
- * server keeps the card's running lock (`node_running` stays true, its cause is `question_wait:<run>`), so the card must not
- * read as 실행 중 / 반려됨: it waits for the answer. Only the server's own word counts — the `question_wait` cause, or a
- * question of the card that carries the `loop_wait` phase while the card is marked as asked.
- */
-function questionLoopWait(run: CardRunFacts | null | undefined): boolean {
-  if (!run) return false
-  if (typeof run.nodeRunningCause === 'string' && run.nodeRunningCause.startsWith('question_wait:')) return true
-  return run.question === true && (run.questionWait ?? []).some((item) => item.phase === 'loop_wait')
 }
 
 /** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (지시서 / 결과 작성 대기). */
@@ -124,10 +108,6 @@ function runCardStateView(run: CardRunFacts | null | undefined): CardStateView |
   if ((status === 'open' || status === 'review') && run?.intervention) {
     const error = run.intervention.kind === 'system_error'
     return view(error ? 'system_error' : 'needs_intervention', 'other', error ? 'danger' : 'warning', run.intervention.reason)
-  }
-  // flowgate.v02test.0051 C: a loop parked for an answer is 질문 답변 대기, before 실행 중 / 반려됨 (the lock itself is unchanged).
-  if ((status === 'open' || status === 'review' || status === 'rejected') && questionLoopWait(run)) {
-    return view('waiting_answer', 'awaiting', 'neutral')
   }
   // 0113 labels override presentation only. A 0105 approval remains available with its raw reason.
   // An absent/null/unknown new wait reason takes the unchanged 0083/0105 branches below.
@@ -279,8 +259,7 @@ export function cardNodeRun(canvas: import('./flowGraph').FlowGraphNodeRun | nul
 /** Document review is a display fact, without altering the run's status or wait-reason priority. */
 export function cardStateView(run: CardRunFacts | null | undefined, reviewStatus?: string | null): CardStateView | null {
   const state = runCardStateView(run)
-  // flowgate.v02test.0051 C: 질문 답변 대기 also outranks the document review's 반려됨 / 수정됨 chip (the loop is parked, not rejected).
-  if (state && (state.phase === 'working' || state.phase === 'approved' || ['needs_intervention', 'system_error', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'rejected', 'waiting_answer'].includes(state.key))) return state
+  if (state && (state.phase === 'working' || state.phase === 'approved' || ['needs_intervention', 'system_error', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'rejected'].includes(state.key))) return state
   if (reviewStatus === 'rejected' || reviewStatus === 'revised') return view(reviewStatus, 'other', reviewStatus === 'rejected' ? 'warning' : 'info')
   return state
 }

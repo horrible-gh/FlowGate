@@ -57,7 +57,7 @@ describe('cardStateView — working, waiting and failed are told apart (0083 T#4
 
   it('waiting is never approvable and both waits have ko / en / ja words', () => {
     expect(cardStateView(run('open', idle))!.approvable).toBe(false)
-    expect(ko.designer.center.card_states).toMatchObject({ waiting_writer: '작성 대기', waiting_answer: '질문 답변 대기' })
+    expect(ko.designer.center.card_states).toMatchObject({ waiting_writer: '작성 대기', waiting_answer: '응답 대기' })
     for (const messages of [en, ja]) {
       expect(typeof messages.designer.center.card_states.waiting_writer).toBe('string')
       expect(typeof messages.designer.center.card_states.waiting_answer).toBe('string')

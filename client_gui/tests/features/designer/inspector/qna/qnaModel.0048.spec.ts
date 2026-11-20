@@ -44,7 +44,7 @@ function item(fields: Partial<QnaItemFacts> & Pick<QnaItemFacts, 'id'>): QnaItem
 describe('waiting for the user (flowgate.v02.0048 T#7)', () => {
   it.each([
     // asker_kind, answer_count, answers, answered, waiting, state
-    ['ai', 0, 0, false, true, 'queued'], // flowgate.v02test.0051 C: no responder record -> 대기 중 (queued), not the user's turn
+    ['ai', 0, 0, false, true, 'waiting'],
     ['ai', 1, 1, true, false, 'answered'],
     ['ai', 1, 0, true, false, 'answered'],
     ['ai', 0, 1, true, false, 'answered'],
@@ -207,7 +207,7 @@ describe('keys and wording (flowgate.v02.0048 T#7)', () => {
       ...kinds.map(qnaFailureKey),
       ...kinds.map(qnaErrorKey),
       // 0052 T#1: the tab shows two chips for the three model states (waiting / open -> unanswered).
-      ...['unanswered', 'answered', 'queued', 'ai_answering', 'failed', 'human_needed'].map((state) => `state.${state}`),
+      ...['unanswered', 'answered'].map((state) => `state.${state}`),
       'side.human',
       'side.ai',
       'side.ai_named',

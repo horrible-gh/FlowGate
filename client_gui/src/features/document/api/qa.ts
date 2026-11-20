@@ -33,14 +33,6 @@
 //            AiAnswerRequest body); without one the project's provider chain picks.
 //   `answers/ai-mention` (copy a mention for one's own worker) stays unwrapped.
 //
-// flowgate.v02test.0051 C — what the server records about who answers and whether the past answers were searched:
-//   item.responder       { state: 'dispatched' | 'failed' | 'user_decision' | 'answered', run_id, error_code,
-//                          error_message, attempts, updated_at } | null  (null: no automatic responder touched it)
-//   item.search_summary  { searched, status, found_count, returned_count, reused_answer, reuse_rejection_reason, ... }
-//                          (`status: 'no_record'` for a legacy question)
-//   ask 200 `status: 'reused_answer'` (no question added, the past answer comes back) and 409
-//   `existing_answer_requires_reason` (do not resend as it is: use the existing answer or give a reason).
-//
 // Refusals keep the server's shape and are thrown as they are; qaErrorOf reads them. The q routes
 // answer `{ ok: false, http_status, error_message }` (409 = the group was disposed, 403, 404, 400);
 // the group mutation policy answers 423 `{ error: { code: 'GROUP_AI_RUN_LOCKED' } }` while an AI run
@@ -84,66 +76,6 @@ export interface QaAnswer {
   readonly createdAt: string | null
 }
 
-/**
- * The automatic responder's record of a question (`item.responder`):
- * dispatched = an AI is answering, failed = a technical failure (error_code / error_message), user_decision = only a
- * person can decide it, answered = the responder's answer was stored.
- */
-export interface QaResponder {
-  readonly state: string
-  readonly runId: string | null
-  readonly errorCode: string | null
-  readonly errorMessage: string | null
-  readonly attempts: number
-  readonly updatedAt: string | null
-}
-
-/** Where a reused past answer came from: the document, the Q number and who answered it. */
-export interface QaReusedAnswer {
-  readonly answerId: number | null
-  readonly docId: string | null
-  readonly seq: number | null
-  /** The answerer as the server labelled it (`author_label`); null when it did not say. */
-  readonly answerer: string | null
-  /** The past answer's text (`answer_body`), so the reuse can be checked against its source; null when not sent. */
-  readonly answerBody: string | null
-}
-
-/**
- * What the server recorded about the search of past answers before this question was registered
- * (`item.search_summary`). `recorded` is false for a legacy question (no record): the screen says so.
- */
-export interface QaSearchSummary {
-  readonly recorded: boolean
-  /** The search ran (true), did not (false), or is not known (null). */
-  readonly searched: boolean | null
-  /** The server's status (`registered`, `search_failed`, `no_record`, ...). */
-  readonly status: string | null
-  /** How many past answers matched; null when not known (a failed search too). */
-  readonly foundCount: number | null
-  readonly reusedAnswer: QaReusedAnswer | null
-  /** Why the offered past answer was not used, when the asker gave one. */
-  readonly reuseRejectionReason: string | null
-}
-
-/**
- * One search-before-register record of the document (`search_prechecks[]` of `GET /q/{doc_id}`, and the body of the
- * 200 `reused_answer` / 409 answers). A record whose `addedItemIds` is empty registered no question: the reuse of
- * an existing answer, a refused resend, a failed search. It is the only trace of those searches, so the screen keeps it.
- */
-export interface QaSearchPrecheck {
-  readonly precheckId: string | null
-  /** The server's status: `reused_answer`, `existing_answer_requires_reason`, `search_failed`, `registered`, ... */
-  readonly status: string | null
-  readonly searched: boolean | null
-  /** How many past answers matched; null when not known (a failed search too). */
-  readonly foundCount: number | null
-  readonly reusedAnswer: QaReusedAnswer | null
-  readonly reuseRejectionReason: string | null
-  /** The questions this search registered; empty: no question was registered. */
-  readonly addedItemIds: readonly number[]
-}
-
 export interface QaItem {
   readonly id: number
   readonly seq: number | null
@@ -157,10 +89,6 @@ export interface QaItem {
   readonly answers: readonly QaAnswer[]
   readonly provider: QaProvider | null
   readonly createdAt: string | null
-  /** The automatic responder's record; null when none touched the question (or an older server). */
-  readonly responder: QaResponder | null
-  /** The search record; `recorded: false` when the server has none (legacy / older server). */
-  readonly searchSummary: QaSearchSummary
 }
 
 /** The questions of one document. */
@@ -169,8 +97,6 @@ export interface QaThread {
   /** The container status ('pending' / 'done'), null without a container. */
   readonly status: string | null
   readonly items: readonly QaItem[]
-  /** The search records of the document (`search_prechecks`), questions registered or not; empty from an older server. */
-  readonly searchPrechecks: readonly QaSearchPrecheck[]
 }
 
 function toQaProvider(raw: unknown): QaProvider | null {
@@ -200,66 +126,6 @@ function toQaAnswer(raw: unknown): QaAnswer {
   }
 }
 
-export function toQaResponder(raw: unknown): QaResponder | null {
-  const row = record(raw)
-  const state = text(row.state)
-  if (state === null) return null
-  return {
-    state,
-    runId: text(row.run_id),
-    errorCode: text(row.error_code),
-    errorMessage: text(row.error_message),
-    attempts: integer(row.attempts) ?? 0,
-    updatedAt: text(row.updated_at),
-  }
-}
-
-function toQaReusedAnswer(raw: unknown): QaReusedAnswer | null {
-  const row = record(raw)
-  const answerId = integer(row.answer_id)
-  const docId = text(row.doc_id)
-  if (answerId === null && docId === null) return null
-  const provider = record(row.author_provider)
-  return {
-    answerId,
-    docId,
-    seq: integer(row.seq),
-    answerer: text(row.author_label) ?? text(provider.ai_provider_name) ?? text(row.author_name),
-    answerBody: text(row.answer_body),
-  }
-}
-
-/** One `search_prechecks[]` record (or the body of an add-questions answer) -> QaSearchPrecheck. */
-export function toQaSearchPrecheck(raw: unknown): QaSearchPrecheck {
-  const row = record(raw)
-  return {
-    precheckId: text(row.precheck_id),
-    status: text(row.status),
-    searched: typeof row.searched === 'boolean' ? row.searched : null,
-    foundCount: integer(row.found_count),
-    reusedAnswer: toQaReusedAnswer(row.reused_answer),
-    reuseRejectionReason: text(row.reuse_rejection_reason),
-    addedItemIds: list(row.added_item_ids).flatMap((id) => integer(id) ?? []),
-  }
-}
-
-const NO_SEARCH_RECORD: QaSearchSummary = { recorded: false, searched: null, status: null, foundCount: null, reusedAnswer: null, reuseRejectionReason: null }
-
-/** `item.search_summary` -> QaSearchSummary; an absent block or `status: 'no_record'` is "no record" (never "searched"). */
-export function toQaSearchSummary(raw: unknown): QaSearchSummary {
-  const row = record(raw)
-  const status = text(row.status)
-  if (Object.keys(row).length === 0 || status === 'no_record') return NO_SEARCH_RECORD
-  return {
-    recorded: true,
-    searched: typeof row.searched === 'boolean' ? row.searched : null,
-    status,
-    foundCount: integer(row.found_count),
-    reusedAnswer: toQaReusedAnswer(row.reused_answer),
-    reuseRejectionReason: text(row.reuse_rejection_reason),
-  }
-}
-
 /** One question item; null when it has no id (it could not be answered). */
 function toQaItem(raw: unknown): QaItem | null {
   const row = record(raw)
@@ -276,8 +142,6 @@ function toQaItem(raw: unknown): QaItem | null {
     answers: list(row.answers).map(toQaAnswer),
     provider: toQaProvider(row.asker_provider),
     createdAt: text(row.created_at),
-    responder: toQaResponder(row.responder),
-    searchSummary: toQaSearchSummary(row.search_summary),
   }
 }
 
@@ -286,12 +150,7 @@ export function toQaThread(raw: unknown): QaThread {
   const qa = record(record(raw).qa)
   const docId = text(qa.doc_id) ?? text(qa.q_id)
   if (docId === null) throw new Error('Q&A response without doc_id')
-  return {
-    docId,
-    status: text(qa.status),
-    items: list(qa.items).flatMap((item) => toQaItem(item) ?? []),
-    searchPrechecks: list(qa.search_prechecks).map(toQaSearchPrecheck),
-  }
+  return { docId, status: text(qa.status), items: list(qa.items).flatMap((item) => toQaItem(item) ?? []) }
 }
 
 /** Reads the questions of a document. Transport errors are thrown as they are. */
@@ -348,28 +207,12 @@ export interface QaAskResult {
   readonly docId: string | null
   /** The ids of the questions the server added (one per question sent). */
   readonly itemIds: readonly number[]
-  /**
-   * The server found the same answer already (200 `status: 'reused_answer'`, no question added): the past answer
-   * and where it came from. Null when the question was registered.
-   */
-  readonly reusedAnswer: QaReusedAnswer | null
-  /**
-   * The search record of a reuse (id, found count, source): set with `reusedAnswer`, null when the question was
-   * registered. The same record comes back in `search_prechecks` of the next read, which is what survives a reload.
-   */
-  readonly precheck: QaSearchPrecheck | null
 }
 
 /** The add-questions response -> QaAskResult. */
 export function toQaAskResult(raw: unknown): QaAskResult {
   const row = record(raw)
-  const reused = text(row.status) === 'reused_answer' ? toQaReusedAnswer(row.reused_answer) : null
-  return {
-    docId: text(row.doc_id),
-    itemIds: list(row.added_item_ids).flatMap((id) => integer(id) ?? []),
-    reusedAnswer: reused,
-    precheck: reused ? toQaSearchPrecheck(row) : null,
-  }
+  return { docId: text(row.doc_id), itemIds: list(row.added_item_ids).flatMap((id) => integer(id) ?? []) }
 }
 
 /** Registers one question on the document as the signed-in person (asker_kind 'human'). */
@@ -412,11 +255,10 @@ export async function qaRequestAiAnswer(docId: string, itemId: number, providerI
  * running = an AI run owns the group (423 GROUP_AI_RUN_LOCKED, or the ai-request admission's 409
  * run_in_progress / run_still_live); no_provider = no AI provider can take the ai-request
  * (no_enabled_provider, no_provider_registered, provider_unavailable / disabled); disposed = the
- * group was disposed (a 409 without a code); reuse_required = a 409 `existing_answer_requires_reason` (a past
- * answer fits: use it, or resend with a reason — never the same request again); forbidden 403; not_found
+ * group was disposed (a 409 without a code, the only one of the q routes); forbidden 403; not_found
  * 404 (the document or the question is gone); invalid 400 / 422; network = no answer.
  */
-export type QaErrorKind = 'running' | 'no_provider' | 'disposed' | 'reuse_required' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
+export type QaErrorKind = 'running' | 'no_provider' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
 
 const QA_RUNNING_CODES = new Set(['GROUP_AI_RUN_LOCKED', 'run_in_progress', 'run_still_live'])
 const QA_PROVIDER_CODES = new Set(['no_enabled_provider', 'no_provider_registered', 'provider_unavailable', 'provider_disabled'])
@@ -439,7 +281,6 @@ export function qaErrorOf(error: unknown): QaError {
   if (normalized.network) kind = 'network'
   else if (status === 423 || (code !== null && QA_RUNNING_CODES.has(code))) kind = 'running'
   else if (code !== null && QA_PROVIDER_CODES.has(code)) kind = 'no_provider'
-  else if (code === 'existing_answer_requires_reason') kind = 'reuse_required'
   else if (status === 409) kind = code === null || code === 'group_disposed' ? 'disposed' : 'other'
   else if (status === 403) kind = 'forbidden'
   else if (status === 404) kind = 'not_found'
