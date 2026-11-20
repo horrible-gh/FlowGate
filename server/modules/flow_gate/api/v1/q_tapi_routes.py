@@ -26,7 +26,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from modules.flow_gate.auth.middleware import get_current_user, verify_token
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import graph_source_hooks, q_answer_invoke_service, q_service, token_service
+from modules.flow_gate.services import ai_text_guard, graph_source_hooks, q_answer_invoke_service, q_service, token_service
 from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
@@ -190,6 +190,11 @@ def _resolve_writer(
                 graph_source_hooks.require_writable(token_rec, operation)
             except graph_source_hooks.GraphSourceError as exc:
                 return _fail(409, exc.message, error={"code": exc.code, "details": exc.details})
+        try:
+            # The verified record, for the encoding gate below (its probe is per token).
+            request.state.fg_worker_token = token_rec
+        except Exception:
+            pass
         return token_rec["issued_to"], "ai", token_rec.get("ai_run_id")
 
     # 2) login session JWT (human via [+query])
@@ -198,6 +203,32 @@ def _resolve_writer(
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
     return user["user_id"], None, None
+
+
+def _encoding_gate(
+    request: Request, fields: dict, probe_fields: tuple = (),
+) -> Tuple[Optional[JSONResponse], dict]:
+    """flowgate.v02test.0051: the shared worker-text encoding verdict (``ai_text_guard``) for this request.
+
+    Returns ``(rejection, cleaned_fields)``. Only a worker token is checked — ``_resolve_writer`` left its
+    verified record on the request; a login session posts UTF-8 from the browser. A rejection is a 422
+    sent before anything is stored or searched, with the cause and the way to resend.
+    """
+    token_rec = getattr(getattr(request, "state", None), "fg_worker_token", None)
+    if not token_rec:
+        return None, dict(fields)
+    locale = token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
+    violation, cleaned = ai_text_guard.check(token_rec, fields, probe_fields, locale)
+    if violation is None:
+        return None, cleaned
+    return _fail(422, violation["message"], error={k: violation[k] for k in ("code", "field", "signal")}), cleaned
+
+
+def _gate_answer_body(request: Request, body: "RegisterAnswerRequest") -> Optional[JSONResponse]:
+    rejected, cleaned = _encoding_gate(request, {"body": body.body}, ("body",))
+    if rejected is None:
+        body.body = cleaned["body"]
+    return rejected
 
 
 @router.get("/q/{doc_id}/search")
@@ -213,6 +244,10 @@ def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, m
     project = _doc_project_or_403(doc_id, identity[0], "perm_document_read")
     if isinstance(project, JSONResponse):
         return project
+    # A damaged query finds nothing and reads as "no precedent": refuse it instead.
+    rejected, _ = _encoding_gate(request, {"q": q})
+    if rejected is not None:
+        return rejected
     from modules.flow_gate.services import question_search
     try:
         # A board list: one short row per answer. The bodies are read one at a time below.
@@ -503,6 +538,22 @@ def post_add_questions(
             "decision is genuinely required.",
         )
     if forced_kind is not None:
+        fields: dict = {}
+        for index, question in enumerate(body.questions):
+            prefix = f"questions[{index}]."
+            fields[prefix + "title"] = question.title
+            fields[prefix + "body"] = question.body
+            fields[prefix + "reuse_rejection_reason"] = question.reuse_rejection_reason
+            for at, option in enumerate(question.options):
+                fields[f"{prefix}options[{at}]"] = option if isinstance(option, str) else option.label
+        rejected, cleaned = _encoding_gate(
+            request, fields, tuple(f"questions[{index}].body" for index in range(len(body.questions))))
+        if rejected is not None:
+            return rejected
+        for index, question in enumerate(body.questions):
+            question.body = cleaned[f"questions[{index}].body"]
+            if not question.body.strip():
+                return _fail(422, "body must not be empty")
         body.asker_kind = forced_kind
         # B0001 / NR0003 (group 0059): the worker token is bound to the workflow spine
         # (the sequence-owning R/B), so a clarifying question would otherwise land on
@@ -536,6 +587,9 @@ def post_register_answer_by_path(
         return auth
     user_id, forced_kind, ai_run_id = auth
     _force_session_author_human(body, forced_kind)
+    rejected = _gate_answer_body(request, body)
+    if rejected is not None:
+        return rejected
     return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
@@ -556,6 +610,9 @@ def post_register_answer(
         return auth
     user_id, forced_kind, ai_run_id = auth
     _force_session_author_human(body, forced_kind)
+    rejected = _gate_answer_body(request, body)
+    if rejected is not None:
+        return rejected
     return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
@@ -589,9 +646,14 @@ def post_escalate_to_user(
     project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
         return project_id
+    rejected, cleaned = _encoding_gate(request, {"reason": body.reason}, ("reason",))
+    if rejected is not None:
+        return rejected
+    if not cleaned["reason"].strip():
+        return _fail(422, "reason must not be empty")
     try:
         result = q_service.escalate_to_user(
-            doc_id, item_id, body.reason,
+            doc_id, item_id, cleaned["reason"],
             writer_ai_run_id=ai_run_id, actor_user_id=user_id, notify_audience=user_id,
         )
     except HTTPException as exc:

@@ -18,7 +18,8 @@ TITLE_CHARS = 80
 DETAIL_CHARS = 20000
 
 _EDGE = " \t\r\n.,?!;:\"'()[]{}<>~“”‘’…·、。？！「」『』"
-# Substring matching makes stripping a trailing particle recall-only: "서버" still finds "서버가".
+# Substring matching makes stripping a trailing particle recall-only: the bare noun still
+# finds the noun followed by a particle.
 _PARTICLE = re.compile(r"(?<=[가-힣]{2})[)\]\"'”’」』>]*(?:에서|으로|에게|까지|부터|은|는|을|를|이|가|의|에|로|와|과|도|만)$")
 # Closed list of words that say nothing about the topic. Negations (no, not, 않, 없) stay.
 STOPWORDS = frozenset(

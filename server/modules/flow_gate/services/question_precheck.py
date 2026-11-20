@@ -4,6 +4,7 @@ import json
 import re
 from fastapi import HTTPException
 from modules.flow_gate.db import question_search_audits as audits
+from modules.flow_gate.services import ai_text_guard
 from modules.flow_gate.services import question_search as search
 
 # Bag-of-words cannot bind a permission/negation/date to its target, and a compound
@@ -12,7 +13,8 @@ from modules.flow_gate.services import question_search as search
 _RISKY = r"[0-9,;\n]|권한|허용|금지|불허|철회|않|아니|기간|부터|까지|대신|반면|\b(?:not|no|allow|deny|permission|revoke)\b"
 SIMILAR_JACCARD = 0.7
 # Closed list of words that only say "I am asking". An added word outside this list may
-# name another target or action (운영 DB 삭제, 롤백 포함) and is never the same question.
+# name another target or action ("delete the production DB", "including rollback") and is
+# never the same question.
 _FILLER = frozenset(
     "요청 문의 부탁 여부 질문 드립니다 부탁드립니다 요청드립니다 문의드립니다 바랍니다 "
     "주세요 해주세요 알려주세요 궁금합니다 혹시 please question request".split())
@@ -30,12 +32,45 @@ def identity_tokens(value):
     return sorted(_tokens(value))
 
 
+def _question_text(title, body):
+    """The text that identifies a question: the body alone when the title only shortens it.
+
+    An AI usually adds a title that repeats the body in fewer words ("nightly staging deploy:
+    go ahead?" for "confirm the agent may go ahead with the nightly staging server deploy").
+    Such a title names nothing new: every word of it is an asking-word or the start of a body
+    word. A title with a word of its own ("staging deploy permission") may name another target
+    and stays part of the identity.
+    """
+    body = body or ""
+    words = _tokens(title or "")
+    if not words:
+        return body
+    body_words = _tokens(body)
+    for word in words:
+        if word in _FILLER or word in body_words:
+            continue
+        if len(word) < 2 or not any(other.startswith(word) for other in body_words):
+            return (title or "") + " " + body
+    return body
+
+
+def stored_text_damaged(row):
+    """A stored question or answer that reads as lost in transit (``?? ????``, U+FFFD, mojibake).
+
+    Rows saved before the registration gate existed stay in the database and in the board list,
+    but one is never handed out as the settled answer.
+    """
+    return any(ai_text_guard.corruption_signal(row.get(field)) for field in ("title", "body", "answer_body"))
+
+
 def match_kind(title, body, options, row):
     """'identical', 'similar' or None for one answered candidate from any document of the project."""
     if row.get("body_truncated") or options != row.get("options", []):
         return None
-    source = (title or "") + " " + body
-    candidate = (row.get("title") or "") + " " + row.get("body", "")
+    if stored_text_damaged(row):
+        return None
+    source = _question_text(title, body)
+    candidate = _question_text(row.get("title"), row.get("body", ""))
     left, right = _tokens(source), _tokens(candidate)
     if len(left) < 3:
         return None

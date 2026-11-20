@@ -423,8 +423,10 @@ def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str
         "en": "\nThe server also runs word OR search before registration. For HTTP 200 status=reused_answer, check the source and continue with the existing answer. On HTTP 409 existing_answer_requires_reason, do not resend unchanged: use the existing answer or resubmit the item with reuse_rejection_reason and rejected_answer_id. Use next_cursor for relevance pagination."
               "\nSearch results and candidates are a list (title, document number, Q number, answerer, first line of the answer) without bodies. Open only the rows you need with GET {detail}. reused_answer may come from another document of the same project and carries the full text. Only when it does not fit the current instruction, register again with its answer_id as rejected_answer_id and the reason in reuse_rejection_reason.",
     }
+    # flowgate.v02test.0051: the route refuses damaged text; say how to send before the first try.
+    from modules.flow_gate.services import ai_text_guard
     return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10") + contract[loc].replace(
-        "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>")
+        "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>") + "\n" + ai_text_guard.transport_rule(loc)
 
 
 # Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.

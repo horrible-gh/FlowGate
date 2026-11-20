@@ -263,6 +263,15 @@ FILE_LINE_CAPS: dict[str, int] = {
     # New file (flowgate.v02.0053 T#1): SLOT_TITLES["ko"], the title suffix of the documents a
     # Designer card creates. Locale-dictionary (A) Korean next to its en table, not a comment.
     "flowgate/card_documents/slots.py": 2,
+    # New files (flowgate.v02test.0051), measured with _korean_lines. No comment or docstring Korean.
+    # ai_text_guard: the ko half of _COPY (the 422 text a worker gets for damaged text) and of
+    # TRANSPORT_RULE (the send rule in the Q guides), each with complete en/ja siblings.
+    "modules/flow_gate/services/ai_text_guard.py": 9,
+    # question_precheck / question_search: the Korean the matching itself runs on -- particle
+    # patterns, the closed asking-word and stopword lists, the risky-word pattern, and the
+    # "unconfirmed" author label. Lexical data, not prose.
+    "modules/flow_gate/services/question_precheck.py": 4,
+    "modules/flow_gate/services/question_search.py": 5,
 }
 
 

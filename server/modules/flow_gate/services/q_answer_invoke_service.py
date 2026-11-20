@@ -297,6 +297,9 @@ def build_answer_mention(
         "author_kind 는 서버가 'ai' 로 고정하므로 보내지 않아도 됩니다. "
         "이 토큰은 이 문서에만 쓸 수 있습니다."
     )
+    # flowgate.v02test.0051: an answer typed on a Windows command line was stored as "?? ????".
+    from modules.flow_gate.services import ai_text_guard
+    lines.append(ai_text_guard.transport_rule("ko"))
     # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
     # The normal path is to answer; this is the exception path, and the conditions are
     # spelled out so uncertainty, a failed tool call or a thin context never become a
