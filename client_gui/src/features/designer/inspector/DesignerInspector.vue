@@ -121,7 +121,7 @@ import {
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
-import { toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
+import { inspectorSettingsKind, toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
 import {
   cardLinesWritten,
   forgetDocumentIo,
@@ -290,6 +290,8 @@ const headerMemo = computed(() => contributions.value.find((entry) => entry.head
 
 const tabs = computed(() => {
   if (!target.value || props.unselected) return []
+  // A 확인 card (check settings) shows the settings tab only; its documents and Q&A tabs are not drawn.
+  if (inspectorSettingsKind(target.value) === 'check') return ['settings'] as InspectorTabKey[]
   const requirement = ['R', 'B'].includes(target.value.cardDocType ?? '')
   return INSPECTOR_TABS.filter(key => {
     if (key === 'ai' || (key === 'settings' && requirement)) {
