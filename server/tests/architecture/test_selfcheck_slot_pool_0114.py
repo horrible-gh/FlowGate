@@ -106,7 +106,10 @@ def _env(out: Path, pool: dict | None = None, **extra) -> dict:
 
 
 def _pytest_argv(*args: str) -> list[str]:
-    return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "xdist.plugin", *args, "tests"]
+    # --tier=slow: these throwaway trees have no timings, so a test file that shells out is
+    # classified heavy and the default tier (standard) would skip the nested run under test.
+    return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "xdist.plugin",
+            "--tier=slow", *args, "tests"]
 
 
 def _summarize(stdout: str, returncode: int) -> tuple[dict, dict]:

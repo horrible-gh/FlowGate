@@ -1,4 +1,5 @@
 """Pytest configuration for FlowGate tests — shared fixtures and setup."""
+import argparse
 import os
 import shutil
 import sqlite3
@@ -106,9 +107,9 @@ def repo_pollution_guard():
 #
 # So the capabilities are named in one place and reported in two directions: the header
 # says up front what this host can do, and the summary says afterwards what that cost in
-# tests. And because a report nobody reads is not a gate, FLOWGATE_REQUIRE_FULL_SUITE=1
-# turns any missing capability into a failure — that is what a release/Full run sets, so
-# "green" there means the whole suite actually ran.
+# tests. And because a report nobody reads is not a gate, --install-check (or
+# FLOWGATE_REQUIRE_FULL_SUITE=1) turns any missing capability into a failure, so "green"
+# there means the whole suite actually ran.
 
 def _git_available() -> bool:
     return shutil.which("git") is not None
@@ -175,44 +176,43 @@ def _classify_skip(reason: str) -> str:
     return "other"
 
 
-# ── 실행 계층 Fast / Standard / Full ──────────────────────────────────────────
+# ── 실행 계층 veryfast / fast / standard / heavy / slow ──────────────────────
 #
-# flowgate.default.0394 T0004 (R0001 §6, NR0003 §10.4 / §13-12).
+# flowgate.default.0394 T0004 (R0001 §6, NR0003 §10.4 / §13-12), 다시 나눈 것은
+# flowgate.v02test.0053.
 #
-# NR0003 §10.1 measured where the 474 seconds go: the 40 slowest tests together are 15%
-# of it, and the other 85% is spread thinly across 3,223 cases. Deleting slow tests
-# therefore buys nothing, which is why R0001 §6 asks for tiers instead — and why this is
-# a selection mechanism, not a cleanup.
+# 계층은 싼 것부터 쌓인다. `--tier=standard` 는 veryfast·fast·standard 를 모두 돌린다.
+# `--tier` 를 주지 않으면 standard 다. "전부" 를 뜻하는 계층은 없다 — 전체 실행은 처음
+# 설치한 사람이 한 번 확인하는 용도라서 `--install-check` 로 따로 뺐다.
 #
-# A test's tier is decided in three steps:
+#   veryfast  파일당 1초 이하    코드를 고치는 중에 수시로
+#   fast      파일당 5초 이하    한 덩어리를 고친 직후
+#   standard  파일당 15초 이하   카드를 끝낼 때 (기본값)
+#   heavy     파일당 30초 이하   그 영역을 크게 고쳤을 때
+#   slow      파일당 120초 이하  DB 마이그레이션·git 통합 같은 위험한 변경을 했을 때만
+#   (install) 120초 초과 · e2e   어느 계층에도 없다. `--install-check` 에서만 돈다
 #
-#   1. An explicit `@pytest.mark.fast` / `.standard` / `.full` (on the test, its class or
-#      the module's `pytestmark`) always wins. That is the escape hatch for anything the
-#      rule below gets wrong, and the only thing a new test has to know about.
-#   2. A complete serial timing with the same file hash: <=5s fast, <=30s standard.
-#   3. Otherwise the tier is derived from what the module's source actually does, using
-#      the classification NR0003 §10.2 measured:
-#        fast      — no TestClient, no subprocess/git, no sleep
-#        standard  — everything except git/subprocess work and e2e/dialect/migration files
-#        full      — the rest
+# A test's tier is decided in three steps (tests/timing_support.py holds the numbers):
+#
+#   1. An explicit `@pytest.mark.<tier>` or `@pytest.mark.install` (on the test, its
+#      class or the module's `pytestmark`) always wins.
+#   2. A complete serial timing with the same file hash decides by the limits above.
+#   3. Otherwise the file is standard — never lower, so an unmeasured file cannot slip
+#      into the tiers that run all the time. git/subprocess/dialect/migration files start
+#      at heavy, e2e files at install, and a file that was seen running long while failing
+#      (no baseline, only a hint) is moved up to where that time puts it.
 #
 # Deriving rather than keeping a list is the point. NR0003 §10.4 warned that a list of
 # files leaves new files in no tier at all; here a new file is classified the moment it
-# is written, by the same rule as everything else, and a file that needs to say otherwise
-# says so in one line at the top of itself.
-#
-# `--tier=full` (the default) selects everything, so nothing about an ordinary run changes.
+# is written, and re-classified by its own measurement the next time it is timed.
 
-_TIER_ORDER = ("fast", "standard", "full")
-
-# Level 1 excludes anything that starts a server, shells out, or waits on the clock.
-_NOT_FAST = ("TestClient", "subprocess", "sleep(", '"git"', "'git'")
-# Level 2 additionally excludes the git/worktree/e2e/dialect families.
-_NOT_STANDARD_TEXT = ("subprocess", '"git"', "'git'")
-_NOT_STANDARD_NAME = ("_e2e", "dialect", "migration", "worktree", "git_")
+_TIER_ORDER = ("veryfast", "fast", "standard", "heavy", "slow")
+_INSTALL_TIER = "install"
+_DEFAULT_TIER = "standard"
 
 _tier_cache: dict[str, str] = {}
 _measured_timings = {}
+_slow_hints = {}
 
 # 유예된 테스트가 달고 가는 skip 사유의 꼬리표. 요약이 이 문자열로 유예 건수를 세므로
 # 아래 marker 문구와 반드시 같이 움직여야 한다.
@@ -230,42 +230,55 @@ _tier_deferred = 0
 
 def _tier_for_module(path: Path) -> str:
     """Derived tier for a test module — see the note above for the rule."""
-    if _measured_timings:
-        from timing_support import measured_tier
-        measured = measured_tier(_measured_timings, path, _SERVER_DIR)
-        if measured is not None:
-            return measured
+    try:
+        from timing_support import module_tier
+    except ImportError:
+        # Synthetic conftest-only trees have no timing helper and nothing measured.
+        return _DEFAULT_TIER
+    tier, _seconds, basis = module_tier(_measured_timings, _slow_hints, path, _SERVER_DIR)
+    if basis == "measured":
+        return tier   # not cached: it follows the file hash
     key = str(path)
     cached = _tier_cache.get(key)
     if cached:
         return cached
-
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        text = ""
-    name = path.name
-
-    if not any(needle in text for needle in _NOT_FAST):
-        tier = "fast"
-    elif (
-        not any(needle in text for needle in _NOT_STANDARD_TEXT)
-        and not any(needle in name for needle in _NOT_STANDARD_NAME)
-    ):
-        tier = "standard"
-    else:
-        tier = "full"
-
     _tier_cache[key] = tier
     return tier
 
 
 def _declared_tier(item) -> "str | None":
     """An explicit marker, if the test (or its class/module) carries one."""
-    for tier in _TIER_ORDER:
+    for tier in (*_TIER_ORDER, _INSTALL_TIER):
         if item.get_closest_marker(tier) is not None:
             return tier
     return None
+
+
+def _tier_option(value: str) -> str:
+    if value == "full":
+        raise argparse.ArgumentTypeError(
+            "full 계층은 없어졌습니다. 설치 검증은 --install-check 를 쓰십시오."
+        )
+    if value not in _TIER_ORDER:
+        raise argparse.ArgumentTypeError(
+            f"알 수 없는 계층 {value!r}. 고를 수 있는 값: {', '.join(_TIER_ORDER)}"
+        )
+    return value
+
+
+def _install_check(config) -> bool:
+    """True when this run is the install check: every tier, e2e included, nothing deferred.
+
+    FLOWGATE_REQUIRE_FULL_SUITE=1 is the same switch from the environment, so a script
+    that already sets it keeps running everything.
+    """
+    if os.environ.get("FLOWGATE_REQUIRE_FULL_SUITE", "").strip() in ("1", "true", "TRUE"):
+        return True
+    return bool(getattr(getattr(config, "option", None), "install_check", False))
+
+
+def _requested_tier(config) -> str:
+    return config.getoption("--tier", default=_DEFAULT_TIER) or _DEFAULT_TIER
 
 
 # ── 병렬 실행은 파일을 쪼개지 않는 방식으로만 ────────────────────────────────
@@ -461,21 +474,29 @@ def pytest_addoption(parser):
     parser.addoption(
         "--tier",
         action="store",
-        default="full",
-        choices=list(_TIER_ORDER),
-        help="Execution tier: fast (development) / standard (task completion) / full (release).",
+        default=_DEFAULT_TIER,
+        type=_tier_option,
+        help="Execution tier, cumulative: " + " < ".join(_TIER_ORDER)
+             + f" (default {_DEFAULT_TIER}). Everything: --install-check.",
+    )
+    parser.addoption(
+        "--install-check",
+        action="store_true",
+        default=False,
+        help="Install check: run every test, including e2e and files over the slow limit. "
+             "Missing host capabilities fail the run.",
     )
 
 
 def pytest_collection_modifyitems(config, items):
-    requested = config.getoption("--tier")
-    if requested == "full":
-        return   # the default: run everything, exactly as before this option existed
+    if _install_check(config):
+        return   # the install check runs everything; no tier is consulted
 
+    requested = _requested_tier(config)
     ceiling = _TIER_ORDER.index(requested)
     for item in items:
         tier = _declared_tier(item) or _tier_for_module(Path(str(item.fspath)))
-        if _TIER_ORDER.index(tier) > ceiling:
+        if tier == _INSTALL_TIER or _TIER_ORDER.index(tier) > ceiling:
             item.add_marker(
                 pytest.mark.skip(
                     reason=f"tier {tier} > requested {requested} {_TIER_SKIP_MARK}"
@@ -484,13 +505,15 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_configure(config):
-    global _measured_timings
-    _measured_timings = {}
+    global _measured_timings, _slow_hints
+    _measured_timings, _slow_hints = {}, {}
+    _tier_cache.clear()
     # Synthetic conftest-only contract tests have no timing helper.
     if (_SERVER_DIR / "tests/timing_support.py").is_file():
-        from timing_support import load_timings, TimingRecorder
+        from timing_support import load_slow_hints, load_timings, TimingRecorder
         try:
             _measured_timings = load_timings(_SERVER_DIR / "tests/timings.json")
+            _slow_hints = load_slow_hints(_SERVER_DIR / "tests/timings.json")
         except (OSError, ValueError, TypeError, AttributeError) as exc:
             raise pytest.UsageError(f"test timings: {exc}") from exc
         output = getattr(config.option, "fg_timings_out", None)
@@ -553,13 +576,14 @@ def pytest_report_header(config):
     if missing:
         line += (
             f"\n  ⚠ missing: {', '.join(missing)} — the tests that need them will be skipped,"
-            " NOT run. Set FLOWGATE_REQUIRE_FULL_SUITE=1 to make that a failure."
+            " NOT run. --install-check makes that a failure."
         )
-    requested = config.getoption("--tier", default="full")
-    if requested != "full":
+    if _install_check(config):
+        line += "\nexecution tier: install check — 계층과 관계없이 전부 돕니다."
+    else:
         line += (
-            f"\nexecution tier: {requested} — 이 실행은 전체가 아닙니다. release 전에는 "
-            f"--tier 없이(=full) 한 번 돌리십시오."
+            f"\nexecution tier: {_requested_tier(config)} — 이 실행은 전체가 아닙니다. "
+            f"전부 돌리는 설치 검증은 --install-check 입니다."
         )
     return line
 
@@ -609,7 +633,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "것까지 함께 사라집니다."
         )
 
-    requested = config.getoption("--tier", default="full")
+    requested = _requested_tier(config)
     workers = getattr(config.option, "numprocesses", None)
     if _tier_deferred:
         # 소리 내어 말한다. 계층 실행의 "실패 0" 은 전부 통과가 아니고,
@@ -644,7 +668,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         ok = _capability_state.get(name, True)
         skipped = _skips_by_capability.get(name, 0)
         mark = "✓" if ok else "✗"
-        note = "" if required else "  (full 실행 요건 아님)"
+        note = "" if required else "  (설치 검증 요건 아님)"
         terminalreporter.write_line(
             f"  {mark} {name:<16} {label:<45} skipped={skipped}{note}"
         )
@@ -661,13 +685,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def require_full_suite_when_asked():
-    """Fail the run when a Full-level run lands on a host that cannot do everything.
+def require_full_suite_when_asked(request):
+    """Fail the install check when it lands on a host that cannot do everything.
 
-    Off by default so a developer laptop keeps skipping quietly-but-visibly; on for the
-    Full tier, where the whole point is that nothing was left out.
+    Off for tier runs so a developer laptop keeps skipping quietly-but-visibly; on for
+    --install-check (or FLOWGATE_REQUIRE_FULL_SUITE=1), where the whole point is that
+    nothing was left out.
     """
-    if os.environ.get("FLOWGATE_REQUIRE_FULL_SUITE", "").strip() not in ("1", "true", "TRUE"):
+    if not _install_check(request.config):
         yield
         return
 
@@ -677,7 +702,7 @@ def require_full_suite_when_asked():
     ]
     if missing:
         pytest.fail(
-            "FLOWGATE_REQUIRE_FULL_SUITE=1 인데 이 호스트가 갖추지 못한 능력이 있습니다: "
+            "설치 검증(--install-check / FLOWGATE_REQUIRE_FULL_SUITE=1)인데 이 호스트가 갖추지 못한 능력이 있습니다: "
             f"{', '.join(missing)}. 이대로 돌리면 해당 테스트가 조용히 빠진 채 '실패 0' 이 "
             "나옵니다 (NR0003 §5.2). 능력을 갖춘 호스트에서 돌리거나, 이 실행이 전체 "
             "검증이 아님을 인정하고 변수를 끄십시오.",

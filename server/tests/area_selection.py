@@ -3,7 +3,8 @@
 No test module is imported to find its owner. A module-level literal
 pytestmark = pytest.mark.area("name") (also inside a list) overrides the map.
 Patterns use fnmatch on POSIX paths; * may span directories. Dotted names
-are flat TOML keys, not nested tables. `also` expands one hop at standard/full.
+are flat TOML keys, not nested tables. `also` expands one hop from standard upward
+(not at veryfast/fast, which stay inside the changed sub-area).
 """
 from __future__ import annotations
 
@@ -122,7 +123,7 @@ class AreaMap:
                 if not matches:
                     raise ValueError(f"changed path has no area: {key}")
                 selected.update(matches)
-        if tier != "fast":
+        if tier not in ("veryfast", "fast"):
             for name in tuple(selected):
                 for other in self.areas[name].get("also", []):
                     selected.update(self.expand(other))
@@ -133,8 +134,11 @@ class AreaSelection:
     def __init__(self, config, root: Path):
         try:
             self.mapping = AreaMap(root)
+            # The install check runs every tier, so it expands `also` like the top tier.
+            self.tier = ("install-check" if getattr(config.option, "install_check", False)
+                         else config.getoption("--tier"))
             self.selected = self.mapping.select(config.getoption("--area"),
-                config.getoption("--changed"), config.getoption("--tier"))
+                config.getoption("--changed"), self.tier)
         except (OSError, ValueError, KeyError, SyntaxError) as exc:
             raise pytest.UsageError(f"test area selection: {exc}") from exc
         self.allowed = {key for key, area in self.mapping.owners.items() if area in self.selected}
@@ -184,7 +188,7 @@ class AreaSelection:
 
     def pytest_terminal_summary(self, terminalreporter, exitstatus, config):
         terminalreporter.write_line(
-            f"area: {','.join(sorted(self.selected))} | tier: {config.getoption('--tier')} | "
+            f"area: {','.join(sorted(self.selected))} | tier: {self.tier} | "
             f"selected {len(self.allowed)} files / excluded {len(self.mapping.files)-len(self.allowed)} files | "
             f"collected {len(self.collected)} files (before tier skips); not the full suite")
 

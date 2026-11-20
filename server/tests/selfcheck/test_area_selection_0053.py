@@ -36,7 +36,9 @@ def test_parent_multi_area_and_changed_union(suite):
     assert mapping.select("a", "src/b.py", "fast") == {"a.one", "b"}
     assert mapping.select(None, "tests\\test_a.py", "fast") == {"a.one"}
     assert mapping.select(None, "./src/a.py", "fast") == {"a.one"}
-    assert mapping.select("a", None, "standard") == {"a.one", "b"}
+    assert mapping.select("a", None, "veryfast") == {"a.one"}
+    for tier in ("standard", "heavy", "slow", "install-check"):
+        assert mapping.select("a", None, tier) == {"a.one", "b"}
 
 
 @pytest.mark.parametrize("area,changed", [
@@ -83,7 +85,7 @@ def run_pytest(suite, *args):
         "def pytest_addoption(parser):\n"
         "    parser.addoption('--area', default=None)\n"
         "    parser.addoption('--changed', default=None)\n"
-        "    parser.addoption('--tier', default='full')\n"
+        "    parser.addoption('--tier', default='standard')\n"
         "def pytest_configure(config):\n"
         "    register(config, Path(__file__).parent)\n", encoding="utf-8")
     env = dict(os.environ)

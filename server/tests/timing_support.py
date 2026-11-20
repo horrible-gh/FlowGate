@@ -1,4 +1,8 @@
-"""File timings: diagnostic runs stay separate from complete serial baselines."""
+"""File timings: diagnostic runs stay separate from complete serial baselines.
+
+Tiers are cumulative and cheapest first. A file slower than the last tier, an e2e file
+and anything marked `install` belong to no tier: they run only under --install-check.
+"""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -12,11 +16,77 @@ import tempfile
 
 import pytest
 
-TIERS = ("fast", "standard", "full")
+TIERS = ("veryfast", "fast", "standard", "heavy", "slow")
+INSTALL = "install"
+DEFAULT_TIER = "standard"
+# Per-file ceiling in seconds for each tier.
+FILE_LIMITS = {"veryfast": 1, "fast": 5, "standard": 15, "heavy": 30, "slow": 120}
+# Target wall time in seconds for one sub-area run with 2 workers, tiers below included.
+AREA_TARGETS = {"veryfast": 10, "fast": 30, "standard": 60, "heavy": 120, "slow": 300}
+AREA_FILE_LIMIT = 40
+
+# Unmeasured files: never below standard. Git/subprocess families start one tier up.
+_HEAVY_TEXT = ("subprocess", '"git"', "'git'")
+_HEAVY_NAME = ("dialect", "migration", "worktree", "git_")
+_INSTALL_NAME = ("_e2e",)
 
 
 def duration_tier(seconds):
-    return "fast" if seconds <= 5 else "standard" if seconds <= 30 else "full"
+    for tier in TIERS:
+        if seconds <= FILE_LIMITS[tier]:
+            return tier
+    return INSTALL
+
+
+def fallback_tier(path):
+    """Tier for a file with no usable measurement, from its name and source text."""
+    path = Path(path)
+    if "e2e" in path.parts or any(needle in path.name for needle in _INSTALL_NAME):
+        return INSTALL
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        text = ""
+    if (any(needle in text for needle in _HEAVY_TEXT)
+            or any(needle in path.name for needle in _HEAVY_NAME)):
+        return "heavy"
+    return DEFAULT_TIER
+
+
+def load_slow_hints(path):
+    """Seconds seen for files that ran too long but failed, so have no baseline.
+
+    A hint can only move a file up from its fallback tier, never down.
+    """
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    hints = {}
+    for entry in (data.get("measurement") or {}).get("ineligible_files_over_60s") or []:
+        seconds = entry.get("seconds")
+        if (isinstance(entry.get("path"), str) and isinstance(seconds, (int, float))
+                and not isinstance(seconds, bool) and math.isfinite(seconds) and seconds >= 0):
+            hints[entry["path"]] = seconds
+    return hints
+
+
+def module_tier(records, hints, path, root):
+    """(tier, seconds or None, basis) with basis measured / hint / fallback."""
+    try:
+        key = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        key = None
+    record = records.get(key) if key else None
+    if record is not None and usable(record, path):
+        return duration_tier(record["seconds"]), record["seconds"], "measured"
+    tier = fallback_tier(path)
+    seconds = hints.get(key) if key else None
+    if seconds is not None:
+        order = (*TIERS, INSTALL)
+        hinted = duration_tier(seconds)
+        if order.index(hinted) > order.index(tier):
+            return hinted, None, "hint"
+    return tier, None, "fallback"
 
 
 def load_timings(path):
@@ -36,7 +106,7 @@ def load_timings(path):
             raise ValueError(f"missing eligibility: {key}")
         buckets = record.get("seconds_by_marker", {})
         if not isinstance(buckets, dict) or any(
-            k not in (*TIERS, "auto") or isinstance(v, bool)
+            k not in (*TIERS, INSTALL, "auto") or isinstance(v, bool)
             or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
             for k, v in buckets.items()
         ):
@@ -50,14 +120,8 @@ def usable(record, path):
 
 
 def measured_tier(records, path, root):
-    try:
-        key = path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return None
-    record = records.get(key)
-    if record is not None and usable(record, path):
-        return duration_tier(record["seconds"])
-    return None
+    tier, _seconds, basis = module_tier(records, {}, path, root)
+    return tier if basis == "measured" else None
 
 
 class TimingRecorder:
@@ -70,10 +134,11 @@ class TimingRecorder:
         self.bad = set()
         self.hashes = {}
         option = config.option
+        # No tier condition: a file with any tier-skipped test is not a baseline anyway,
+        # because every outcome other than passed disqualifies it below.
         self.eligible = not (getattr(option, "numprocesses", None)
             or getattr(option, "workerinput", None)
             or getattr(option, "keyword", "") or getattr(option, "markexpr", "")
-            or config.getoption("--tier") != "full"
             or any("::" in str(arg) for arg in config.args))
 
     def key(self, nodeid):
@@ -102,7 +167,7 @@ class TimingRecorder:
     def pytest_runtest_makereport(self, item, call):
         outcome = yield
         report = outcome.get_result()
-        marker = next((t for t in TIERS if item.get_closest_marker(t)), "auto")
+        marker = next((t for t in (*TIERS, INSTALL) if item.get_closest_marker(t)), "auto")
         report.user_properties.append(("fg_timing_marker", marker))
 
     def pytest_runtest_logreport(self, report):

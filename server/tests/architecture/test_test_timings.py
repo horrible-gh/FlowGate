@@ -5,12 +5,16 @@ import json
 from pathlib import Path
 
 import pytest
-from timing_support import duration_tier, load_timings, measured_tier
+from timing_support import (duration_tier, fallback_tier, load_slow_hints, load_timings,
+                            measured_tier, module_tier)
 
 pytest_plugins = ["pytester"]
 
 
-@pytest.mark.parametrize("seconds,tier", [(0, "fast"), (5, "fast"), (5.01, "standard"), (30, "standard"), (30.01, "full")])
+@pytest.mark.parametrize("seconds,tier", [
+    (0, "veryfast"), (1, "veryfast"), (1.01, "fast"), (5, "fast"), (5.01, "standard"),
+    (15, "standard"), (15.01, "heavy"), (30, "heavy"), (30.01, "slow"), (120, "slow"),
+    (120.01, "install")])
 def test_boundaries(seconds, tier):
     assert duration_tier(seconds) == tier
 
@@ -21,13 +25,34 @@ def test_baseline_requires_complete_unchanged_file(tmp_path):
     path.write_text("import subprocess", encoding="utf-8")
     record = {"seconds": 1, "eligible": True, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
     records = {"tests/test_git.py": record}
-    assert measured_tier(records, path, tmp_path) == "fast"
+    assert measured_tier(records, path, tmp_path) == "veryfast"
     record["eligible"] = False
     assert measured_tier(records, path, tmp_path) is None
     record["eligible"] = True
     path.write_text("changed", encoding="utf-8")
     assert measured_tier(records, path, tmp_path) is None
     assert load_timings(tmp_path / "absent.json") == {}
+
+
+def test_unmeasured_file_falls_back_and_hints_only_move_up(tmp_path):
+    tests = tmp_path / "tests"
+    (tests / "e2e").mkdir(parents=True)
+    plain, shell, e2e = tests / "test_plain.py", tests / "test_shell.py", tests / "e2e/test_flow.py"
+    plain.write_text("def test_a(): pass\n", encoding="utf-8")
+    shell.write_text("import subprocess\n", encoding="utf-8")
+    e2e.write_text("def test_b(): pass\n", encoding="utf-8")
+    assert [fallback_tier(p) for p in (plain, shell, e2e)] == ["standard", "heavy", "install"]
+    assert module_tier({}, {}, plain, tmp_path) == ("standard", None, "fallback")
+    # Seen running 90s while failing: no baseline, but it must not sit in standard.
+    assert module_tier({}, {"tests/test_plain.py": 90}, plain, tmp_path) == ("slow", None, "hint")
+    assert module_tier({}, {"tests/test_plain.py": 500}, plain, tmp_path) == ("install", None, "hint")
+    assert module_tier({}, {"tests/test_shell.py": 2}, shell, tmp_path) == ("heavy", None, "fallback")
+    baseline = tmp_path / "timings.json"
+    baseline.write_text(json.dumps({"version": 1, "files": {}, "measurement": {
+        "ineligible_files_over_60s": [{"path": "tests/test_plain.py", "seconds": 90},
+                                      {"path": "tests/test_bad.py", "seconds": "x"}]}}), encoding="utf-8")
+    assert load_slow_hints(baseline) == {"tests/test_plain.py": 90}
+    assert load_slow_hints(tmp_path / "absent.json") == {}
 
 
 @pytest.mark.parametrize("seconds", [-1, float("nan"), True])
@@ -45,13 +70,13 @@ def timing_project(pytester):
         "import sys\nfrom pathlib import Path\n"
         + f"sys.path.insert(0, {str(helper.parent)!r})\n"
         + "from timing_support import TimingRecorder\n"
-        + "def pytest_addoption(parser):\n    parser.addoption('--tier', default='full')\n"
+        + "def pytest_addoption(parser):\n    parser.addoption('--tier', default='standard')\n"
         + "def pytest_configure(config):\n    config.pluginmanager.register(TimingRecorder(config, Path(__file__).parent, Path(__file__).parent / 'out.json'), 'timings')\n"
     )
     directory = pytester.path / "tests"
     directory.mkdir()
     (directory / "test_sample.py").write_text(
-        "import pytest\n@pytest.mark.full\ndef test_one(): pass\ndef test_two(): pass\n", encoding="utf-8")
+        "import pytest\n@pytest.mark.install\ndef test_one(): pass\ndef test_two(): pass\n", encoding="utf-8")
     return pytester
 
 
@@ -64,7 +89,7 @@ def test_real_reports(timing_project, args, eligible, passed):
     assert record["eligible"] is eligible
     assert record["seconds"] > 0
     assert sum(record["seconds_by_marker"].values()) == pytest.approx(record["seconds"])
-    assert "full" in record["seconds_by_marker"]
+    assert "install" in record["seconds_by_marker"]
 
 
 def test_skipped_file_is_not_baseline(timing_project):
@@ -82,11 +107,22 @@ def test_budget_uses_marker_overrides_and_reports_unknown(tmp_path):
     spec.loader.exec_module(budget)
     path = tmp_path / "test_one.py"
     path.write_text("# file", encoding="utf-8")
-    records = {"one": {"seconds": 70, "eligible": True, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "seconds_by_marker": {"fast": 2, "auto": 68}}}
-    mapping = SimpleNamespace(areas={"git": {}}, owners={"one": "git", "two": "git"}, files={"one": path, "two": path})
+    records = {"test_one.py": {"seconds": 70, "eligible": True, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "seconds_by_marker": {"fast": 2, "auto": 68}}}
+    other = tmp_path / "test_two.py"
+    other.write_text("# unmeasured", encoding="utf-8")
+    mapping = SimpleNamespace(areas={"git": {}}, owners={"test_one.py": "git", "test_two.py": "git"},
+                              files={"test_one.py": path, "test_two.py": other}, root=tmp_path)
     rows, slow = budget.budget_rows(mapping, records)
-    assert rows["git"] == {"fast": 2, "standard": 2, "full": 70, "unknown": 1}
-    assert slow == [(70, "one")]
+    row = rows["git"]
+    # The explicit fast bucket counts from fast up; the rest follows the 70s file (slow).
+    assert [row[t] for t in ("veryfast", "fast", "standard", "heavy", "slow")] == [0, 2, 2, 2, 70]
+    assert row["files"]["slow"] == 1 and row["files"]["standard"] == 1
+    assert row["unknown"] == 1
+    assert row["unknown_at"] == {"veryfast": 0, "fast": 0, "standard": 1, "heavy": 1, "slow": 1, "install": 1}
+    assert slow == [(70, "test_one.py")]
+    assert budget.flags(row) == []
+    row["standard"] = 130.0
+    assert budget.flags(row) == ["standard 65s>60s"]
 
 
 def test_conftest_measured_tier_and_marker_priority(pytestconfig, monkeypatch, tmp_path):
@@ -99,22 +135,27 @@ def test_conftest_measured_tier_and_marker_priority(pytestconfig, monkeypatch, t
     monkeypatch.setattr(conf, "_SERVER_DIR", tmp_path)
     monkeypatch.setattr(conf, "_measured_timings", {"tests/test_git.py": {
         "seconds": 1, "eligible": True, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}})
-    assert conf._tier_for_module(path) == "fast"
+    assert conf._tier_for_module(path) == "veryfast"
     class Item:
         fspath = path
         marks = []
         def get_closest_marker(self, name):
-            return object() if name == "full" else None
+            return object() if name == "slow" else None
         def add_marker(self, mark):
             self.marks.append(mark)
     class Config:
-        def getoption(self, name):
+        def getoption(self, name, default=None):
             return "fast"
+    monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
     item = Item()
     conf.pytest_collection_modifyitems(Config(), [item])
-    assert item.marks  # explicit full wins over measured fast
+    assert item.marks  # explicit slow wins over measured veryfast
     monkeypatch.setattr(conf, "_measured_timings", {})
-    assert conf._tier_for_module(path) == "full"  # legacy fallback
+    monkeypatch.setattr(conf, "_tier_cache", {})
+    assert conf._tier_for_module(path) == "heavy"  # unmeasured subprocess file
+    monkeypatch.setattr(conf, "_slow_hints", {"tests/test_git.py": 400})
+    monkeypatch.setattr(conf, "_tier_cache", {})
+    assert conf._tier_for_module(path) == "install"  # seen far over the slow limit
 
 
 
