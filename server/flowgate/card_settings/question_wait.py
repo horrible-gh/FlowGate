@@ -55,11 +55,22 @@ and nothing is approved — the card is ``needs_intervention`` (``action_require
 (an explicit command reopens an open card; a card in review is moved by a Stop). The chat AI's outlook tells it
 (``action_required``).
 
-flowgate.v02test.0032: a review loop's rework AI may ask inside the loop; the loop does not wait and may end without
-passing (``review_count_exhausted``), and ``assigned_review.consume_loop_verdict`` then holds the verdict for the answers.
-Such a loop is a waiting ``review`` step too (``_verdict_held_for_answers``: its assignment still current, an AI's, no
-verdict), so its questions go to a responder and the answers let the verdict be consumed. The asking role of a loop's
-question is the role of the invocation whose actual AI asked (``_asking_role``), not the loop's last hop.
+flowgate.v02test.0032: a loop that ended without passing (``review_count_exhausted``, …) while its questions were open
+had ``assigned_review.consume_loop_verdict`` hold the verdict for the answers. Such a loop is a waiting ``review`` step
+(``_verdict_held_for_answers``: its assignment still current, an AI's, no verdict), so its questions go to a responder
+and the answers let the verdict be consumed — kept as the last safety net for a loop that ended so. The asking role of
+a loop's question is the role of the invocation whose actual AI asked (``_asking_role``), not the loop's last hop.
+
+flowgate.v02test.0051 T0005 (A1): the 0032 rule "the loop does not wait" is gone. A Graph loop whose AI asked stops at
+the hop boundary before its next hop (``question_loop_wait.park``) and returns its run and lease; its step is the
+``loop_wait`` phase here (``_waiting``: the parked wait, even though the loop row stays unstopped and the card locked),
+its questions go to the card's responder through the same ``_dispatch``, and once all are answered — a person's, the
+responder's or a chat AI's answer, or the run read's ``reconcile`` after a lost event / restart — ``_answered`` wakes
+the run (never a paused, stopping or stopped one; never when an answer requires a new attempt, ``action_guard``) and
+``question_loop_wait.resume`` requests the loop's next execution exactly once. That middle-of-the-loop resume never
+consumes the loop's verdict (the ``review`` phase is not taken for a parked run). An answer that comes between the
+park and the run's own end (its execution not ended yet) never cancels the wait: ``resume`` leaves it ``waiting`` and
+the run's end takes it again (``follow_parked_end``).
 """
 from __future__ import annotations
 
@@ -69,6 +80,7 @@ from typing import Optional
 
 from flowgate.card_settings import action_guard
 from flowgate.card_settings import legacy_adapter as legacy
+from flowgate.card_settings import question_loop_wait
 from flowgate.card_settings import repository
 
 _log = logging.getLogger(__name__)
@@ -76,6 +88,7 @@ _log = logging.getLogger(__name__)
 PASSED = "review_passed"
 EXITED = "exited"
 QUESTION_PENDING = "question_pending"
+LOOP_WAIT = question_loop_wait.PHASE              # v02test.0051 T0005: a review loop parked at its hop boundary
 SOURCE_REVIEW_AI = "card_review_ai"
 CHAT_SCOPE = "chat"
 
@@ -264,6 +277,9 @@ def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict
     if loop:
         instruction = legacy.instruction_node_of_document(flow_id, run.get("doc_ref"))
         node = instruction[0] if instruction else legacy.node_of_result(flow_id, run.get("doc_ref"))
+        parked, waiting = question_loop_wait.waiting_phase(flow_id, run, node)
+        if parked:
+            return waiting                      # v02test.0051 T0005: parked mid-loop — never the loop-end review step
         if node is None or legacy.review_loop_active(run.get("doc_ref")):
             return None
         if loop.get("stop_reason") != PASSED and not _verdict_held_for_answers(run):
@@ -327,7 +343,10 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
     try:
         # 0111 T#3 (T-A2): every phase's step under ``legacy.person_hold`` with ``idle_ok`` — a run judged idle since the
         # wake (a run read's settle) takes it too, and its request takes the run back to running
-        if phase == "review":
+        if phase == LOOP_WAIT:
+            # v02test.0051 T0005: the loop goes on from its stored stage, once (``question_loop_wait.resume``)
+            question_loop_wait.resume(flow_id, row)
+        elif phase == "review":
             review_stage._after_review(flow_id, run, answered=True)
         elif phase == "instruction":
             # 0111 T-A1: never the ended run judged again (an asking end would fail the stage): the step goes on
@@ -383,6 +402,7 @@ def reconcile(flow_id: str) -> None:
             return
         with _lock:
             _dispatch_waiting(flow_id)
+            question_loop_wait.resume_answered(flow_id)     # v02test.0051 T0005: a lost answer event / restart
     except Exception:
         _log.warning("question recovery failed flow=%s", flow_id, exc_info=True)
 
@@ -416,6 +436,24 @@ def follow(run: dict) -> None:
         _log.warning("card question follow-up failed flow=%s run=%s", flow_id, run.get("run_id"), exc_info=True)
 
 
+def follow_parked_end(run: dict) -> None:
+    """v02test.0051 T0005: a review loop run that parked for its questions has ended (``review_stage.on_run_ended``,
+    after its execution's end and lease release). Answers that came while it was still finishing found its execution
+    not ended and left the wait ``waiting`` (``question_loop_wait.resume``); once every question is answered the loop
+    goes on now, exactly as an answer event takes it (``_answered``; the wait's CAS keeps it to once)."""
+    flow_id, run_id = run.get("group_id"), run.get("run_id")
+    if not flow_id or not run_id:
+        return
+    try:
+        if not question_loop_wait.parked(run):
+            return
+        with _lock:
+            if open_questions(flow_id, run_id) == []:
+                _answered(flow_id, run_id)
+    except Exception:  # noqa: BLE001 — the run's own end is not failed by it; the run read reconciles it later
+        _log.warning("parked loop end follow-up failed flow=%s run=%s", flow_id, run_id, exc_info=True)
+
+
 def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> dict:
     """flowgate.v02gui.0010: read only — what a chat AI's answer to a question ``asker_run_id`` asked means for its card.
 
@@ -447,7 +485,7 @@ def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> 
                                              legacy.attempt_of_ai_run(run))
         if reason is not None:
             return {"state": OUTLOOK_ACTION_REQUIRED, "reason": reason,
-                    "next_action": action_guard.NEXT_ACTION["review" if phase == "work" else "open"]}
+                    "next_action": action_guard.NEXT_ACTION["review" if phase in ("work", LOOP_WAIT) else "open"]}
         found = legacy.graph_run_state(flow_id)
         if found is None:
             return {"state": OUTLOOK_RUN_NOT_RESUMABLE, "run_status": None}

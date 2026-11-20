@@ -604,8 +604,8 @@ def review_loop_owner(loop_row: dict, *, now=None) -> Optional[str]:
 
 def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
                                remote_settled: bool = False) -> Optional[str]:
-    """Read-only evidence: foreign, live_run, handoff, remote_hold, group_lease, graph_lease,
-    recent, or None. Never misidentify a normal execution as an orphan.
+    """Read-only evidence: foreign, live_run, question_wait, handoff, remote_hold, group_lease,
+    graph_lease, recent, or None. Never misidentify a normal execution as an orphan.
 
     before=None disables the startup-only recent check (also reusable by the TTL sweep).
     remote_settled is only for the supervisor's confirmed-settled hold release: its
@@ -619,6 +619,15 @@ def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
         return "foreign"
     if _svc().is_run_live(run_id):
         return "live_run"
+    try:
+        # flowgate.v02test.0051 T0005: a loop parked at its hop boundary for its questions has no live run, lease or
+        # hand-off by design; its open wait (attempt still active) owns it until the answers resume it.
+        from flowgate.card_settings import question_loop_wait
+        if question_loop_wait.owns(run_id):
+            return "question_wait"
+    except Exception:
+        logger.warning("review-loop question wait ownership unreadable for %s", run_id, exc_info=True)
+        return "question_wait"
     try:
         from flowgate.card_settings import review_stage
         from flowgate.graph_run import execution_store as ledger
@@ -2132,8 +2141,13 @@ def start_run(
         # the generic per-hop formula for this run's FIRST hop. The in-process stage
         # switch inside worker._worker applies the same formula on every later hop of this
         # single audited chain.
+        # flowgate.v02test.0051 T0007 (A2): a loop resumed after its questions (Graph replay) carries its
+        # deadline; the time it spent parked is moved out of it, so its first hop is not cut short by the wait.
+        loop_now = datetime.fromisoformat(started_at)
         timeout_sec = review.loop_stage_timeout_sec(
-            document_review_loop, document_review_loop["current_stage"], datetime.fromisoformat(started_at)
+            document_review_loop, document_review_loop["current_stage"], loop_now,
+            question_wait_sec=(review.loop_question_wait_sec((graph_loop_state or {}).get("review_run_ids"), loop_now)
+                               if graph_loop_state else 0),
         )
     else:
         timeout_sec = _resolve_timeout_sec(

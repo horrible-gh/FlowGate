@@ -5210,12 +5210,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             new_questions = body.get("questions")
             if new_questions:
                 from modules.flow_gate.services import q_service
-                q_service.add_questions(
+                created_doc["question_precheck"] = q_service.add_questions(
                     doc_id=canonical_doc_id,
                     questions=new_questions,
                     asker_kind="ai",
                     project_id=project,
                     notify_audience=actor_user_id,
+                    asker_provenance={"ai_run_id": _origin_run_id, "actual_provider_name": _origin_provider_name},
+                    document_accompanied=True,
                 )
             if wp_plan is not None:
                 # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
@@ -5505,6 +5507,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         import LogAssist.log as logger
         logger.warning(f"[inbox new] continuation self-chain failed (ignored): {_chain_exc}")
 
+    if created_doc.get("question_precheck") is not None:
+        resp_content["question_precheck"] = created_doc["question_precheck"]
     return JSONResponse(content=resp_content, status_code=201)
 
 

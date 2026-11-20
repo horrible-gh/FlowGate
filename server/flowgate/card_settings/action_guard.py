@@ -12,7 +12,9 @@ around it:
 - ``instruction`` (``review_stage.continue_instruction_after_answers``: the instruction written again, or approved with
   the result stage's start),
 - ``work`` (``review_stage._after_work``: the result's review start or its automatic approval),
-- ``no_result`` (``question_wait._retry_result``: the result writer run again).
+- ``no_result`` (``question_wait._retry_result``: the result writer run again),
+- ``loop_wait`` (flowgate.v02test.0051 T0005, ``question_loop_wait.resume``: a review loop parked at its hop boundary for
+  its own questions goes on with its next hop).
 
 The run-end step of a run whose questions were answered before it ended (``_after_instruction`` / ``_after_work``) and the
 run read's reconciliation of a lost step (``review_stage.reconcile``) take the same guard. The existing duplicate and late
@@ -42,7 +44,7 @@ NEW_ATTEMPT = "new_attempt"
 REQUIREMENTS = (NEW_ATTEMPT,)
 REASON_PREFIX = "action_required:"
 NEW_ATTEMPT_REASON = REASON_PREFIX + NEW_ATTEMPT
-PHASES = ("instruction", "work", "no_result")
+PHASES = ("instruction", "work", "no_result", "loop_wait")
 # The next action told with the guard's record and the chat's answer outlook (the card's own sentence is the screen's).
 NEXT_ACTION = {
     "open": "explicit_command_opens_new_attempt",       # a step / full command: the open card is opened as a new attempt
@@ -90,7 +92,7 @@ def blocks(flow_id: str, run: dict, node_key: Optional[str], phase: str) -> bool
     _log.info("card step held flow=%s node=%s run=%s attempt=%s phase=%s: %s", flow_id, node_key, run.get("run_id"),
               attempt_id, phase, reason)
     legacy.record_action_required(flow_id, node_key, attempt_id, run.get("run_id"), phase, reason,
-                                  NEXT_ACTION["review" if phase == "work" else "open"])
+                                  NEXT_ACTION["review" if phase in ("work", "loop_wait") else "open"])
     return True
 
 

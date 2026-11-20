@@ -39,13 +39,18 @@ def slot(pid):
     return NS(source="card_explicit", value=role_store.RoleValue(kind="assigned", provider_id=pid, provider_name=None))
 
 
-def test_same_model_different_roles_and_asking_role_excluded(routing):
+def test_review_ai_first_then_independent_default_never_the_askers_provider(routing):
+    # flowgate.v02test.0051 T0005 (A1): the asking ROLE no longer decides — the actual asker's provider does. A review AI
+    # that is the asker's own provider is skipped for an independent enabled default; the instruction role never answers.
     routing["slots"] = {"review": slot("A"), "instruction": slot("A")}
-    assert qa.candidates("f", NODE, "A", "execution")[0] == [("A", "card_review_role"), ("A", "card_instruction_role")]
-    assert qa.candidates("f", NODE, "A", "review")[0] == [("A", "card_instruction_role")]
-    assert qa.candidates("f", NODE, "A", "instruction")[0] == [("A", "card_review_role")]
+    for role in ("execution", "review", "instruction", None):
+        assert qa.candidates("f", NODE, "A", role)[0] == [("B", "default"), ("C", "default")]
+    routing["slots"] = {"review": slot("B"), "instruction": slot("A")}
+    assert qa.candidates("f", NODE, "A", "execution")[0] == [("B", "card_review_role"), ("C", "default")]
     routing["chain"] = [{"id": "C"}]
-    assert qa.candidates("f", NODE, "A", "execution")[0] == []
+    assert qa.candidates("f", NODE, "A", "execution")[0] == [("C", "default")]
+    routing["chain"] = [{"id": "A"}]
+    assert qa.candidates("f", NODE, "A", "execution")[:2] == ([], "no_independent_responder")
 
 
 @pytest.mark.parametrize("failure", ["fast_fail", "content_failure", "zero_output"])
@@ -144,8 +149,11 @@ def test_search_keywords_across_fields_codes_and_pagination(store):
     assert [r["item_id"] for r in page["items"]] == [ids[1]]
     page2 = question_search.search("p", "not_tool_artifact Git", 1, page["next_before_id"])
     assert [r["item_id"] for r in page2["items"]] == [ids[0]]
-    assert page2["next_before_id"] is None
-    assert question_search.search("p", "Git absent")["items"] == []
+    assert page2["next_before_id"] is not None
+    page3 = question_search.search("p", "Git not_tool_artifact", 1, page2["next_before_id"])
+    assert [r["item_id"] for r in page3["items"]] == [ids[2]]
+    assert page3["next_before_id"] is None
+    assert len(question_search.search("p", "Git absent")["items"]) == 3
     assert question_search.search("other", "Git not_tool_artifact")["items"] == []
     assert question_search.search("p", "' OR 1=1 --")["items"] == []
 
@@ -253,8 +261,8 @@ def test_search_http_token_binding_and_read_permission(monkeypatch):
     request = _BearerOnlyRequest("fake")
     assert route.search_answers(request, DOC, "term", 10, None).status_code == 403
     monkeypatch.setattr(route, "has_permission", lambda user, project, perm: (user, project, perm) == ("u1", "p", "perm_document_read"))
-    monkeypatch.setattr(question_search, "search", lambda project, *args: {"project": project})
-    assert route.search_answers(request, DOC, "term", 10, None) == {"project": "p"}
+    monkeypatch.setattr(question_search, "search", lambda project, *args: {"project": project, "items": []})
+    assert route.search_answers(request, DOC, "term", 10, None)["project"] == "p"
     assert route.search_answers(request, "p.none.0002.0001-D", "term", 10, None).status_code == 403
 
 

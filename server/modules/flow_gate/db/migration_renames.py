@@ -207,6 +207,13 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # carries no IF NOT EXISTS, so a checkout that already ran this branch under 118 (the
     # preview slot, a developer database) would fail to boot without this line.
     ("118_group_work_base_ref.sql", "119_group_work_base_ref.sql"),
+    # flowgate.v02test.0051: this group authored its three migrations as 200/200/201 while
+    # feature/v0.2.0 meanwhile claimed 200_server_logs, 201 (two files) and 202. The later
+    # arrival takes the next free ordinals (203-205) and keeps its own relative order. A
+    # checkout that already ran this branch under the old numbers is carried by these lines.
+    ("200_question_loop_waits.sql", "203_question_loop_waits.sql"),
+    ("200_question_search_audits.sql", "204_question_search_audits.sql"),
+    ("201_review_count_exclusions.sql", "205_review_count_exclusions.sql"),
 )
 
 

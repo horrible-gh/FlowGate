@@ -365,6 +365,7 @@ def add_questions(
     project_id: Optional[str] = None,
     notify_audience: Optional[str] = None,
     asker_provenance: Optional[dict] = None,
+    document_accompanied: bool = False,
 ) -> dict:
     """Add N queries to the document's container (creating the container if absent).
 
@@ -392,38 +393,53 @@ def add_questions(
             ),
         )
 
-    container = ensure_container(doc_id, project_id=project_id, created_by=created_by)
-    qpk: int = container["id"]
-    max_seq = db_question_items.get_max_seq(qpk)
+    from modules.flow_gate.services import question_precheck as precheck
+    project = (target_doc or {}).get("project_id") or project_id
+    if not project:
+        raise HTTPException(404, "Document project not found")
+    results = precheck.prepare(doc_id, project, questions, normalized, _provenance, created_by)
+    blocked = any(r["status"] == "existing_answer_requires_reason" for r in results)
+    # Batch contract: reason rejection blocks every pending insert. Reuse evidence is
+    # still returned for each item; no partial batch of new questions is committed.
+    if blocked:
+        for record in results:
+            if record["status"] == "pending_registration":
+                record["status"] = "batch_blocked"
+            precheck.persist(record, doc_id, project, _provenance)
+        result = precheck.response(doc_id, results)
+        if document_accompanied:
+            return result
+        raise HTTPException(409, {"code": "existing_answer_requires_reason", **result})
 
+    pending = [r for r in results if r["status"] == "pending_registration"]
     store = get_store()
     with store.transaction():
-        for offset, (title, body, options) in enumerate(normalized, start=1):
-            db_question_items.insert(
-                question_pk=qpk, seq=max_seq + offset, body=body,
-                title=title, asker_kind=asker_kind, options=_dump_json(options),
-                asker_ai_run_id=_provenance.get("ai_run_id"),
-                asker_actual_provider_id=_provenance.get("actual_provider_id"),
-                asker_actual_provider_name=_provenance.get("actual_provider_name"),
-            )
-        # Re-query: revert done → pending (consistent with D0005 §4 "re-query = new item")
-        if container.get("status") == "done":
-            db_questions.update_status(doc_id, "pending")
-
-    all_items = db_question_items.list_by_question(qpk)
-    added_ids = [it["id"] for it in all_items if it["seq"] > max_seq]
-
-    if asker_kind == "ai":
+        if pending:
+            container = ensure_container(doc_id, project_id=project_id, created_by=created_by)
+            qpk = container["id"]
+            max_seq = db_question_items.get_max_seq(qpk)
+            for offset, record in enumerate(pending, start=1):
+                title, body, options = normalized[record["index"]]
+                db_question_items.insert(
+                    question_pk=qpk, seq=max_seq + offset, body=body,
+                    title=title, asker_kind=asker_kind, options=_dump_json(options),
+                    asker_ai_run_id=_provenance.get("ai_run_id"),
+                    asker_actual_provider_id=_provenance.get("actual_provider_id"),
+                    asker_actual_provider_name=_provenance.get("actual_provider_name"),
+                )
+                item = next(it for it in db_question_items.list_by_question(qpk) if it["seq"] == max_seq + offset)
+                record.update(status="registered", added_item_ids=[item["id"]], next_action="await_answer")
+            if container.get("status") == "done":
+                db_questions.update_status(doc_id, "pending")
+        for record in results:
+            precheck.persist(record, doc_id, project, _provenance)
+    if asker_kind == "ai" and pending:
         _notify_q_registered(
-            audience=notify_audience or container.get("pm_id"),
-            doc_id=doc_id,
+            audience=notify_audience or container.get("pm_id"), doc_id=doc_id,
             project_id=container.get("project_id"),
-            # Options are deliberately absent from the notice — it announces only that a
-            # query was registered, never the choices themselves (D0006 §3, 0022 rule A).
-            titles=[t or b[:40] for t, b, _ in normalized],
+            titles=[normalized[r["index"]][0] or normalized[r["index"]][1][:40] for r in pending],
         )
-
-    return {"doc_id": doc_id, "added_item_ids": added_ids}
+    return precheck.response(doc_id, results)
 
 
 # ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
@@ -1118,11 +1134,15 @@ def get_qa_detail(doc_id: str) -> dict:
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
-        return {"doc_id": doc_id, "status": None, "items": []}
+        from modules.flow_gate.db import question_search_audits as audits
+        return {"doc_id": doc_id, "status": None, "items": [], "search_prechecks": audits.for_doc(doc_id)}
 
     items = db_question_items.list_by_question(container["id"])
     result = dict(container)
     result["doc_id"] = doc_id
+    from modules.flow_gate.db import question_search_audits as audits
+    search_records = audits.for_doc(doc_id)
+    result["search_prechecks"] = search_records
     result["items"] = []
     all_answers: list[dict] = []
     for item in items:
@@ -1134,6 +1154,8 @@ def get_qa_detail(doc_id: str) -> dict:
             item_dict.pop("asker_actual_provider_name", None),
         )
         item_dict["responder"] = _responder_view(item_dict)
+        record = next((r for r in search_records if item["id"] in r.get("added_item_ids", [])), None)
+        item_dict["search_summary"] = audits.summary(record)
         answers = []
         for answer in db_answers.list_by_question_item(item["id"]):
             answer_dict = dict(answer)
@@ -1204,7 +1226,15 @@ def open_item_snapshot(project_id: Optional[str] = None) -> list[dict]:
 def project_open_items(rows: list[dict]) -> list[dict]:
     """Project a snapshot to the stable public /q item shape."""
     keys = ("doc_id", "seq", "title", "type_code")
-    return [{key: row.get(key) for key in keys} for row in rows]
+    from modules.flow_gate.db import question_search_audits as audits
+    records = {doc_id: audits.for_doc(doc_id) for doc_id in {r.get("doc_id") for r in rows} if doc_id}
+    result = []
+    for row in rows:
+        item = {key: row.get(key) for key in keys}
+        record = next((r for r in records.get(row.get("doc_id"), []) if row.get("item_id") in r.get("added_item_ids", [])), None)
+        item["search_summary"] = audits.summary(record)
+        result.append(item)
+    return result
 
 
 def list_open_items(project_id: Optional[str] = None) -> list[dict]:

@@ -429,7 +429,18 @@ _QUESTION_PRECHECK_TEXT: dict[str, str] = {
 def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
     """The check-before-asking steps with the token-specific past Q&A search address (flowgate.v02gui.0028)."""
     loc = template_provision.normalize_locale(locale)
-    return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10")
+    contract = {
+        "ko": "\n서버도 등록 전에 낱말 OR 검색을 합니다. HTTP 200 status=reused_answer면 출처를 확인해 기존 답으로 진행하십시오. HTTP 409 existing_answer_requires_reason이면 같은 요청을 그대로 재전송하지 마십시오. 기존 답을 쓰거나 항목에 reuse_rejection_reason과 rejected_answer_id를 적어 재전송하십시오. next_cursor로 관련도 페이지를 이어갑니다."
+              "\n검색 결과와 candidates는 목록(제목·문서 번호·Q 번호·답변자·답의 첫 줄)이며 본문이 없습니다. 읽을 건만 GET {detail} 로 전문을 여십시오. reused_answer는 같은 프로젝트의 다른 문서 답일 수 있고 전문이 함께 옵니다. 현재 지시에 맞지 않을 때만 그 answer_id를 rejected_answer_id로, 이유를 reuse_rejection_reason으로 적어 다시 등록하십시오.",
+        "ja": "\n登録前にサーバーも単語OR検索を行います。200 reused_answer は出典を確認して既存回答を使用。409 existing_answer_requires_reason は同じ要求を再送せず、既存回答を使うか項目に reuse_rejection_reason と rejected_answer_id を記入して再送してください。next_cursor は関連度順の次ページです。"
+              "\n検索結果と candidates は一覧(タイトル・文書番号・Q番号・回答者・回答の先頭)で本文を含みません。必要な行だけ GET {detail} で全文を開いてください。reused_answer は同じプロジェクトの別文書の回答の場合があり、全文が付きます。現在の指示に合わない場合のみ、その answer_id を rejected_answer_id に、理由を reuse_rejection_reason に書いて再登録してください。",
+        "en": "\nThe server also runs word OR search before registration. For HTTP 200 status=reused_answer, check the source and continue with the existing answer. On HTTP 409 existing_answer_requires_reason, do not resend unchanged: use the existing answer or resubmit the item with reuse_rejection_reason and rejected_answer_id. Use next_cursor for relevance pagination."
+              "\nSearch results and candidates are a list (title, document number, Q number, answerer, first line of the answer) without bodies. Open only the rows you need with GET {detail}. reused_answer may come from another document of the same project and carries the full text. Only when it does not fit the current instruction, register again with its answer_id as rejected_answer_id and the reason in reuse_rejection_reason.",
+    }
+    # flowgate.v02test.0051: the route refuses damaged text; say how to send before the first try.
+    from modules.flow_gate.services import ai_text_guard
+    return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10") + contract[loc].replace(
+        "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>") + "\n" + ai_text_guard.transport_rule(loc)
 
 
 # Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.
@@ -3181,7 +3192,13 @@ def build_review_mention(
         "- issues : defects found; list each one in findings (locus + note)\n"
         "- hold   : cannot decide yet (missing context / blocked)\n"
         "\n"
-        "findings is a list of {locus, note}. The server counts them — do not write counts yourself."
+        "findings is a list of {locus, note}. The server counts them — do not write counts yourself.\n"
+        "\n"
+        "A finding whose only reason is a question (one you asked in this review, or an answered "
+        "question you were given) and no defect of its own may add \"cause\": \"question\" and "
+        "names that question (Q<seq> or item <id>) in its locus. Never put \"cause\" on a finding "
+        "that reports a defect, even when it also names a question: report the defect as a finding "
+        "without \"cause\"."
     )
 
     # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
