@@ -8,7 +8,7 @@ are opened here, and nothing else (hold, merge, assignee, instruction use, revie
 - ``FIELDS``: ``review_count``, ``restart``, ``time_limit``, ``verify_max_runs``, ``verify_run_minutes``. A card has those
   of its kind (``fields.fields_of``): a work card (T, run kind) all five, a test card (TS) only ``review_count``. Another
   one is 422 ``setting_not_applicable``. The two 검증 options take any whole number inside their range (``fields``), their
-  ``choices`` are the screen combo's presets; ``null`` takes the system default back.
+  ``choices`` are the screen combo's presets; ``null`` takes the card default (3 runs / 2 minutes) back.
 - The values are the person's screen's (``fields.check_value`` with ``legacy.repeat_choices()`` / the time limit
   minutes): a value the screen cannot pick is 422 with the field's ``choices``. ``null`` takes the default back (no
   stored row), as the person's PATCH does.

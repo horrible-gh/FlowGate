@@ -2943,12 +2943,23 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     row = _review_session_of_owner(group_id, merge_id, project_id)
     ctx = db_git.session_context(row)
     if recovery.supported(row) and recovery.needed(ctx):
+        if ctx.get("review_state") == REVIEW_STATE_COMPLETED and ctx.get("pending_conversation_run_id"):
+            # Approval can finish before its conversation worker. Preserve the
+            # late answer, but never apply its stale write plan or require the
+            # completed attempt's workspace to still exist.
+            _materialize_pending_conversation_run(
+                group_id, merge_id, _session_project(row), None, None, stale_only=True,
+            )
+            row = db_git.get_session(merge_id)
+            ctx = db_git.session_context(row)
         return {"ok": True, "result": {
             "group_id": group_id, "merge_id": merge_id,
             "review_state": ctx.get("review_state"), "review_fingerprint": ctx.get("review_fingerprint"),
             "approval_attempt_id": ctx.get("approval_attempt_id"),
             "changes": ctx.get("changes") or [], "conflict_origins": ctx.get("conflict_origins") or [],
-            "conversation": [], "held_test_operations": [], "pending_conversation": None,
+            "conversation": ctx.get("conversation") or [],
+            "held_test_operations": ctx.get("held_test_operations") or [],
+            "pending_conversation": _pending_conversation_view(ctx),
             "can_approve": False, "can_reject": False, "can_send": False,
             "reconciliation_kind": ctx.get("reconciliation_kind"),
             "last_error": recovery.clean(ctx.get("last_error")), "recovery": recovery.projection(row, probe=True),
@@ -4070,7 +4081,7 @@ def _pending_conversation_view(context: dict) -> Optional[dict]:
 
 
 def _materialize_pending_conversation_run(
-    group_id: str, merge_id: int, project_id: str, base_root: Path, base_branch: str,
+    group_id: str, merge_id: int, project_id: str, base_root: Optional[Path], base_branch: Optional[str], *, stale_only: bool = False,
 ) -> None:
     """Lazily folds a finished conversation run's answer into ``conversation`` the
     next time the review screen is read (L0007 §2.9 — this process starts runs
@@ -4168,6 +4179,9 @@ def _materialize_pending_conversation_run(
             or context.get("review_fingerprint") != start_fingerprint
             or int(context.get("instruction_generation") or 0) != start_generation
         )
+
+        if stale_only and not stale_run:
+            return  # a concurrent state change must not turn this read into an apply
 
         write_requested = bool(context.get("pending_conversation_write_requested"))
         succeeded = bool(detail.get("succeeded"))

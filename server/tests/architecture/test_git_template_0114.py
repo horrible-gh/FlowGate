@@ -104,3 +104,27 @@ def test_failed_original_is_never_published_or_retried(tmp_path):
 
 def test_fixture_uses_requested_mode(pytestconfig, git_repositories):
     assert git_repositories.mode == pytestconfig.getoption("--fg-git-mode")
+
+
+@pytest.mark.parametrize("shape,filename,initial,branches", [
+    ("merge-target-0594", "shared.txt", "line1", {"main", "develop", "release"}),
+    ("git-integration-0115", "shared.py", '"line1"', {"main"}),
+    ("gate-publish-0085", "shared.txt", "base", {"main"}),
+])
+def test_merge_seed_preserves_topology_and_copy_isolation(tmp_path, shape, filename, initial, branches):
+    direct = GitRepositoryFactory(tmp_path / "unused", mode="direct")
+    factory = GitRepositoryFactory(tmp_path / "originals")
+    db, ds = direct(shape, _destination(tmp_path, "direct"))
+    cb, cs = factory(shape, _destination(tmp_path, "copy"))
+    assert _topology(db) == _topology(cb)
+    assert _topology(ds) == _topology(cs)
+    assert set(_topology(cb)) == {"refs/heads/" + branch for branch in branches}
+    assert _git_cmd(["symbolic-ref", "HEAD"], cs) == "refs/heads/main"
+    assert _git_cmd(["remote", "get-url", "origin"], cs) == str(cb)
+    before = _files(factory.root)
+    (cs / filename).write_text("copy-only\n", encoding="utf-8")
+    _git_cmd(["commit", "-am", "copy-only"], cs)
+    _git_cmd(["push", "origin", "main"], cs)
+    other, _ = factory(shape, _destination(tmp_path, "other"))
+    assert _git_cmd(["show", "main:" + filename], other) == initial
+    assert _files(factory.root) == before

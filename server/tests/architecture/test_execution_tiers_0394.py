@@ -77,7 +77,7 @@ def _write_module(directory: Path, name: str, body: str) -> Path:
 
 
 class TestTierConfigurationExists:
-    def test_pytest_ini_exists_and_registers_three_tiers(self):
+    def test_pytest_ini_exists_and_registers_every_tier(self):
         """NR0003 §10.4: 저장소에 설정 파일이 하나도 없어 계층을 붙일 자리부터 없었다."""
         assert _PYTEST_INI.is_file(), (
             "server/pytest.ini 가 없다. 계층 마커를 등록할 자리가 사라지면 "
@@ -86,22 +86,56 @@ class TestTierConfigurationExists:
         text = _PYTEST_INI.read_text(encoding="utf-8")
         assert "[pytest]" in text
         markers = text.split("markers", 1)[-1]
-        for tier in ("fast", "standard", "full"):
-            assert f"{tier}:" in markers, f"pytest.ini 에 {tier} 마커 등록이 없다"
+        for tier in ("veryfast", "fast", "standard", "heavy", "slow", "install"):
+            assert f"\n    {tier}:" in markers, f"pytest.ini 에 {tier} 마커 등록이 없다"
+        assert "\n    full:" not in markers, "없어진 full 계층의 마커가 남아 있다"
 
-    def test_tier_option_defaults_to_full(self, conf):
-        """기본값이 full 이 아니면, 아무 것도 모르는 실행이 조용히 덜 돈다."""
+    def test_tier_option_defaults_to_standard(self, conf):
+        """기본값은 카드를 끝낼 때 도는 standard 다. '전부' 를 뜻하는 계층은 없다."""
         parser = _RecordingParser()
         conf.pytest_addoption(parser)
 
         registered = {args[0]: kwargs for args, kwargs in parser.options}
         assert "--tier" in registered, "--tier 옵션이 등록되지 않았다"
         option = registered["--tier"]
-        assert option["default"] == "full"
-        assert list(option["choices"]) == ["fast", "standard", "full"]
+        assert option["default"] == "standard"
+        for tier in conf._TIER_ORDER:
+            assert option["type"](tier) == tier
 
     def test_tier_order_is_cheapest_first(self, conf):
-        assert conf._TIER_ORDER == ("fast", "standard", "full")
+        assert conf._TIER_ORDER == ("veryfast", "fast", "standard", "heavy", "slow")
+
+    def test_full_is_refused_with_the_way_out(self, conf):
+        """예전 습관대로 --tier=full 을 치면 조용히 덜 돌지 않고, 갈 곳을 알려 주며 멈춘다."""
+        import argparse
+
+        with pytest.raises(argparse.ArgumentTypeError) as raised:
+            conf._tier_option("full")
+        assert "--install-check" in str(raised.value)
+        with pytest.raises(argparse.ArgumentTypeError):
+            conf._tier_option("everything")
+
+    def test_install_check_is_a_separate_switch(self, conf, monkeypatch):
+        parser = _RecordingParser()
+        conf.pytest_addoption(parser)
+        registered = {args[0]: kwargs for args, kwargs in parser.options}
+        assert registered["--install-check"]["action"] == "store_true"
+        assert registered["--install-check"]["default"] is False
+
+        class _Option:
+            install_check = False
+
+        class _Config:
+            option = _Option()
+
+        monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
+        assert conf._install_check(_Config()) is False
+        _Option.install_check = True
+        assert conf._install_check(_Config()) is True
+        _Option.install_check = False
+        # 이미 이 변수를 켜고 전체를 돌리던 스크립트는 그대로 전체를 돈다.
+        monkeypatch.setenv("FLOWGATE_REQUIRE_FULL_SUITE", "1")
+        assert conf._install_check(_Config()) is True
 
 
 # ── 2. 계층 판정은 규칙에서 나온다 ───────────────────────────────────────────
@@ -110,15 +144,16 @@ class TestTierConfigurationExists:
 class TestTierIsDerivedNotListed:
     """NR0003 §10.4: 목록으로 관리하면 새 파일이 어느 계층에도 안 들어간다."""
 
-    def test_plain_module_is_fast(self, conf, tmp_path):
+    def test_unmeasured_module_is_never_below_standard(self, conf, tmp_path):
+        """재 본 적 없는 파일이 수시로 도는 계층에 끼어들면 그 계층이 느려진다."""
         module_file = _write_module(
             tmp_path,
             "test_plain.py",
             "def test_one():\n    assert 1 + 1 == 2\n",
         )
-        assert conf._tier_for_module(module_file) == "fast"
+        assert conf._tier_for_module(module_file) == "standard"
 
-    def test_testclient_module_is_not_fast(self, conf, tmp_path):
+    def test_testclient_module_is_standard(self, conf, tmp_path):
         module_file = _write_module(
             tmp_path,
             "test_api.py",
@@ -126,13 +161,13 @@ class TestTierIsDerivedNotListed:
         )
         assert conf._tier_for_module(module_file) == "standard"
 
-    def test_subprocess_module_is_full(self, conf, tmp_path):
+    def test_subprocess_module_starts_at_heavy(self, conf, tmp_path):
         module_file = _write_module(
             tmp_path,
             "test_shells_out.py",
             "import subprocess\n\n\ndef test_three():\n    assert subprocess\n",
         )
-        assert conf._tier_for_module(module_file) == "full"
+        assert conf._tier_for_module(module_file) == "heavy"
 
     def test_dialect_family_stays_out_of_standard(self, conf, tmp_path):
         module_file = _write_module(
@@ -140,7 +175,15 @@ class TestTierIsDerivedNotListed:
             "test_dialect_shapes.py",
             "from fastapi.testclient import TestClient\n\n\ndef test_four():\n    assert TestClient\n",
         )
-        assert conf._tier_for_module(module_file) == "full"
+        assert conf._tier_for_module(module_file) == "heavy"
+
+    def test_e2e_module_is_install_only(self, conf, tmp_path):
+        module_file = _write_module(
+            tmp_path,
+            "test_flow_e2e_0001.py",
+            "def test_five():\n    pass\n",
+        )
+        assert conf._tier_for_module(module_file) == "install"
 
     def test_a_brand_new_file_always_lands_somewhere(self, conf, tmp_path):
         """어느 계층에도 안 들어가는 파일은 존재할 수 없어야 한다."""
@@ -152,23 +195,54 @@ class TestTierIsDerivedNotListed:
             )
         ):
             module_file = _write_module(tmp_path, f"test_new_{index}.py", body)
-            assert conf._tier_for_module(module_file) in conf._TIER_ORDER
+            assert conf._tier_for_module(module_file) in (*conf._TIER_ORDER, "install")
 
     def test_explicit_marker_beats_the_rule(self, conf):
         """규칙이 틀린 파일을 위한 탈출구 — 마커 한 줄이 이긴다."""
-        assert conf._declared_tier(_FakeItem({"fast"})) == "fast"
-        assert conf._declared_tier(_FakeItem({"full"})) == "full"
+        assert conf._declared_tier(_FakeItem({"veryfast"})) == "veryfast"
+        assert conf._declared_tier(_FakeItem({"slow"})) == "slow"
+        assert conf._declared_tier(_FakeItem({"install"})) == "install"
         assert conf._declared_tier(_FakeItem(set())) is None
 
-    def test_full_tier_changes_nothing_about_an_ordinary_run(self, conf):
-        """기본 실행에 손대지 않는다 — 수집 훅이 즉시 돌아 나와야 한다."""
+    def test_install_check_runs_everything(self, conf, monkeypatch):
+        """설치 검증은 계층을 보지 않는다 — 수집 훅이 즉시 돌아 나와야 한다."""
+        monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
+
+        class _Option:
+            install_check = True
+
         class _Config:
+            option = _Option()
+
             def getoption(self, name, default=None):
-                assert name == "--tier"
-                return "full"
+                raise AssertionError("설치 검증이 계층을 읽었다")
 
         items = [_FakeItem(set())]
         conf.pytest_collection_modifyitems(_Config(), items)   # 마커를 못 달아도 통과해야 한다
+
+    def test_install_only_tests_are_deferred_at_every_tier(self, conf, monkeypatch, tmp_path):
+        """가장 높은 계층(slow)에서도 설치 검증 몫은 돌지 않는다."""
+        monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
+        module_file = _write_module(tmp_path, "test_plain.py", "def test_one():\n    pass\n")
+
+        class _Item(_FakeItem):
+            fspath = module_file
+
+            def __init__(self, markers):
+                super().__init__(markers)
+                self.added = []
+
+            def add_marker(self, mark):
+                self.added.append(mark)
+
+        class _Config:
+            def getoption(self, name, default=None):
+                return "slow" if name == "--tier" else default
+
+        install_only, heavy = _Item({"install"}), _Item({"heavy"})
+        conf.pytest_collection_modifyitems(_Config(), [install_only, heavy])
+        assert install_only.added, "install 표시가 붙은 테스트가 slow 계층에서 돌았다"
+        assert not heavy.added, "slow 계층이 그 아래 heavy 를 건너뛰었다"
 
 
 # ── 3. 계층 유예는 능력 부족 skip 과 섞이지 않는다 ───────────────────────────
@@ -176,7 +250,7 @@ class TestTierIsDerivedNotListed:
 
 class TestTierSkipsAreAccountedSeparately:
     def test_tier_reason_is_classified_as_tier(self, conf):
-        reason = f"tier full > requested fast {conf._TIER_SKIP_MARK}"
+        reason = f"tier slow > requested fast {conf._TIER_SKIP_MARK}"
         assert conf._classify_skip(reason) == "tier"
 
     def test_capability_reasons_still_classify(self, conf):
@@ -307,7 +381,7 @@ class TestParallelExecutionIsFileWise:
         assert problem, f"--dist {dist} 는 한 파일을 여러 워커로 찢는데 통과했다"
         assert "loadfile" in problem, "거절 메시지가 올바른 사용법을 알려 주지 않는다"
 
-    def test_configure_refuses_an_unsafe_parallel_run(self, conf):
+    def test_configure_refuses_an_unsafe_parallel_run(self, conf, pytestconfig):
         """문서가 아니라 실행이 막아야 한다 — `-n auto` 만 친 사람은 문서를 안 읽는다."""
         state_before = dict(conf._capability_state)
         try:
@@ -316,6 +390,7 @@ class TestParallelExecutionIsFileWise:
                 dist = "load"
 
             class _Config:
+                pluginmanager = pytestconfig.pluginmanager
                 option = _Option()
 
             with pytest.raises(pytest.UsageError) as raised:
@@ -325,7 +400,7 @@ class TestParallelExecutionIsFileWise:
             conf._capability_state.clear()
             conf._capability_state.update(state_before)
 
-    def test_configure_leaves_workers_alone(self, conf):
+    def test_configure_leaves_workers_alone(self, conf, pytestconfig):
         """워커는 자기 몫을 순차로 돈다. 거기서 dist 를 따지면 실행이 통째로 죽는다."""
         state_before = dict(conf._capability_state)
         try:
@@ -334,6 +409,7 @@ class TestParallelExecutionIsFileWise:
                 dist = "load"
 
             class _Config:
+                pluginmanager = pytestconfig.pluginmanager
                 option = _Option()
                 workerinput = {"workerid": "gw0"}
 
@@ -392,7 +468,8 @@ class TestWorkerObservationsReachTheController:
 class TestUsageIsWrittenDown:
     def test_testing_md_documents_both_tiers_and_parallel(self):
         text = _TESTING_MD.read_text(encoding="utf-8")
-        for needle in ("--tier=fast", "--tier=standard", "--dist loadfile"):
+        for needle in ("--tier=veryfast", "--tier=fast", "--tier=standard", "--tier=heavy",
+                       "--tier=slow", "--install-check", "--dist loadfile"):
             assert needle in text, f"TESTING.md 에 {needle} 사용법이 없다"
 
 

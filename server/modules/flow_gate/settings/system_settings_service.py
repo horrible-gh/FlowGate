@@ -10,19 +10,9 @@ from modules.flow_gate.db import system_settings as _db
 from modules.flow_gate.db import connection as _connection
 from modules.flow_gate.settings import scratch_retention as _scratch_retention
 from modules.flow_gate.settings import ai_execution_policy_service as _ai_execution_policy_service
-from modules.flow_gate.settings import verify_policy as _verify_policy
 from modules.flow_gate.storage.paths import get_storage_root
 
 _JST = timezone(timedelta(hours=9))
-
-# flowgate.v02test.0053 0003-T: the refusals of the two 검증 defaults (the router maps them to stable codes).
-VERIFY_RUNS_ERROR = (
-    f"{_verify_policy.RUNS_KEY} must be an integer of {_verify_policy.MAX_RUNS_MIN} or more"
-)
-VERIFY_TIMEOUT_ERROR = (
-    f"{_verify_policy.TIMEOUT_KEY} must be whole minutes in seconds, "
-    f"between {_verify_policy.TIMEOUT_MIN_SEC} and {_verify_policy.TIMEOUT_MAX_SEC}"
-)
 
 ALLOWLIST: set[str] = {
     "storage_root",
@@ -42,8 +32,6 @@ ALLOWLIST: set[str] = {
     "token_blacklist",
     "source_mode",
     "ai_repeat_count_max",
-    _verify_policy.RUNS_KEY,
-    _verify_policy.TIMEOUT_KEY,
     _scratch_retention.VALUE_KEY,
     _scratch_retention.UNIT_KEY,
 }
@@ -66,8 +54,6 @@ _VALUE_TYPES: dict[str, str] = {
     "token_blacklist": "boolean",
     "source_mode": "string",
     "ai_repeat_count_max": "integer",
-    _verify_policy.RUNS_KEY: "integer",
-    _verify_policy.TIMEOUT_KEY: "integer",
     _scratch_retention.VALUE_KEY: "integer",
     _scratch_retention.UNIT_KEY: "string",
 }
@@ -86,11 +72,6 @@ def _apply_effective_defaults(row: dict | None) -> dict | None:
         row.get("setting_value")
     ):
         return {**row, "setting_value": str(_ai_execution_policy_service.get_repeat_count_max())}
-    # flowgate.v02test.0053 0003-T: a corrupt verification default shows the effective one, as the repeat ceiling does.
-    if row.get("setting_key") in _verify_policy.KEYS and not _verify_policy.valid_value(
-        row["setting_key"], row.get("setting_value")
-    ):
-        return {**row, "setting_value": _verify_policy.effective_row(row["setting_key"])["setting_value"]}
     return row
 
 
@@ -119,9 +100,6 @@ def get_all() -> list[dict]:
             "updated_at": "",
             "updated_by": None,
         })
-    for key in _verify_policy.KEYS:
-        if not any(row.get("setting_key") == key for row in rows):
-            rows.append(_verify_policy.effective_row(key))
     for key, value, value_type, description in (
         (_scratch_retention.VALUE_KEY, _scratch_retention.DEFAULT_VALUE, "integer", "Scratch retention amount"),
         (_scratch_retention.UNIT_KEY, _scratch_retention.DEFAULT_UNIT, "string", "Scratch retention unit"),
@@ -155,8 +133,6 @@ def get_one(key: str) -> dict | None:
             "updated_at": "",
             "updated_by": None,
         }
-    if row is None and key in _verify_policy.KEYS:
-        return _verify_policy.effective_row(key)
     if row is None and key in {_scratch_retention.VALUE_KEY, _scratch_retention.UNIT_KEY}:
         is_value = key == _scratch_retention.VALUE_KEY
         return {
@@ -182,12 +158,6 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
         updates["ai_repeat_count_max"]
     ):
         raise ValueError("ai_repeat_count_max must be an integer between 1 and 30")
-    if _verify_policy.RUNS_KEY in updates and not _verify_policy.valid_max_runs(updates[_verify_policy.RUNS_KEY]):
-        raise ValueError(VERIFY_RUNS_ERROR)
-    if _verify_policy.TIMEOUT_KEY in updates and not _verify_policy.valid_run_timeout_sec(
-        updates[_verify_policy.TIMEOUT_KEY]
-    ):
-        raise ValueError(VERIFY_TIMEOUT_ERROR)
 
     if _scratch_retention.VALUE_KEY in updates or _scratch_retention.UNIT_KEY in updates:
         value = updates.get(_scratch_retention.VALUE_KEY)

@@ -2,10 +2,11 @@
 
 On the card settings harness (real SQLite DB with every migration, real Graph draft saves, the card settings routes):
 
-- the two options exist on a run card only, default to "the system default" (None), offer their presets as
-  ``choices`` and take any whole number inside their range (counts 1..999, minutes 1..30);
-- ``resolve_verify_limits(flow_id, node_key)``: the card's value, else the system default; the 1800-second ceiling; a
-  test card (TS) is never read, whatever a row says;
+- the two options exist on a run card only, default to 3 runs / 2 minutes (0002-CH turn 68: managed per card only,
+  no system setting), offer their presets as ``choices`` and take any whole number inside their range (counts 1 or
+  more, minutes 1..30);
+- ``resolve_verify_limits(flow_id, node_key)``: the card's value, else the card default; the 1800-second ceiling; a
+  test card (TS) is never read, whatever a row says; a value an older server left in the system settings is ignored;
 - migration 201: the chat's settings audit accepts the two new fields (and still refuses an unknown one).
 """
 from __future__ import annotations
@@ -23,7 +24,8 @@ pytestmark = pytest.mark.usefixtures("legacy_cards")      # the harness's pre-AI
 RUNS, MINUTES = "verify_max_runs", "verify_run_minutes"
 
 
-def _system(runs=None, timeout=None):
+def _old_system_rows(runs=None, timeout=None):
+    """Rows an older server stored in the system settings (no longer read by anything)."""
     from modules.flow_gate.db import system_settings as db
 
     if runs is not None:
@@ -56,12 +58,12 @@ def test_only_a_run_card_has_the_two_verify_options():
     for kind in (f.TEST, f.PLAN, f.CHECK, f.REQUIREMENT):
         assert RUNS not in [x.name for x in f.fields_of(kind)] and MINUTES not in [x.name for x in f.fields_of(kind)]
     runs, minutes = f.field_of(f.RUN, RUNS), f.field_of(f.RUN, MINUTES)
-    assert (runs.default, minutes.default) == (None, None)                 # no value = the system default
-    assert (f.choices_of(runs, ()), f.choices_of(minutes, ())) == ([3, 5, 10], [3, 5, 10, 20, 30])
+    assert (runs.default, minutes.default) == (3, 2)                       # no value = the card default 3 runs / 2 minutes
+    assert (f.choices_of(runs, ()), f.choices_of(minutes, ())) == ([3, 5, 10], [2, 3, 5, 10, 20, 30])
 
 
 @pytest.mark.parametrize("field, value", [
-    (RUNS, 1), (RUNS, 3), (RUNS, 7), (RUNS, 999), (RUNS, 1000), (RUNS, 123456), (MINUTES, 1), (MINUTES, 3), (MINUTES, 17), (MINUTES, 30),
+    (RUNS, 1), (RUNS, 3), (RUNS, 7), (RUNS, 999), (RUNS, 1000), (RUNS, 123456), (MINUTES, 1), (MINUTES, 2), (MINUTES, 3), (MINUTES, 17), (MINUTES, 30),
 ])
 def test_a_whole_number_in_range_is_a_value_presets_or_custom(field, value):
     from flowgate.card_settings import fields as f
@@ -96,8 +98,8 @@ def test_the_run_plan_does_not_turn_the_verify_options_into_an_execution_budget(
 def test_a_run_card_reads_the_options_unset_with_their_presets_and_saves_each_at_once(env):
     key = placed(env, FB, "T")
     body = get_settings(env, FB, key)
-    assert body["fields"][RUNS] == {"value": None, "stored": False, "default": None, "choices": [3, 5, 10]}
-    assert body["fields"][MINUTES] == {"value": None, "stored": False, "default": None, "choices": [3, 5, 10, 20, 30]}
+    assert body["fields"][RUNS] == {"value": 3, "stored": False, "default": 3, "choices": [3, 5, 10]}
+    assert body["fields"][MINUTES] == {"value": 2, "stored": False, "default": 2, "choices": [2, 3, 5, 10, 20, 30]}
     version = body["settings_version"]
 
     one = setting(env, FB, key, RUNS, 5)
@@ -106,8 +108,8 @@ def test_a_run_card_reads_the_options_unset_with_their_presets_and_saves_each_at
     custom = setting(env, FB, key, MINUTES, 17)                                # a custom value outside the presets
     assert custom["fields"][MINUTES]["value"] == 17
     assert stored_rows(env, FB, key) == {(key, MINUTES): "17", (key, RUNS): "5"}
-    back = setting(env, FB, key, RUNS, None)                                   # blank = the system default again
-    assert back["fields"][RUNS]["stored"] is False and back["fields"][RUNS]["value"] is None
+    back = setting(env, FB, key, RUNS, None)                                   # null = the card default again
+    assert back["fields"][RUNS]["stored"] is False and back["fields"][RUNS]["value"] == 3
     assert stored_rows(env, FB, key) == {(key, MINUTES): "17"}
 
 
@@ -134,34 +136,29 @@ def test_a_test_card_and_a_gate_have_no_such_setting(env):
 
 # ── resolve_verify_limits ────────────────────────────────────────────────────
 
-def test_the_card_value_wins_else_the_system_default(env):
+def test_the_card_value_wins_else_the_card_default(env):
     key = placed(env, FB, "T")
-    assert _limits(FB, key) == (3, 180)                                         # shipped defaults: 3 runs, 180 seconds
-    _system(runs=7, timeout=300)
-    assert _limits(FB, key) == (7, 300)                                         # the system default moves every unset card
+    assert _limits(FB, key) == (3, 120)                                         # card defaults: 3 runs, 2 minutes
+    _old_system_rows(runs=7, timeout=300)
+    assert _limits(FB, key) == (3, 120)                                         # old system rows are not read any more
     setting(env, FB, key, RUNS, 5)
-    assert _limits(FB, key) == (5, 300)                                         # only the count is the card's
-    setting(env, FB, key, MINUTES, 10)
-    assert _limits(FB, key) == (5, 600)
+    assert _limits(FB, key) == (5, 120)                                         # only the count is the card's
+    setting(env, FB, key, MINUTES, 3)
+    assert _limits(FB, key) == (5, 180)                                         # 3 minutes picked from the combo
     setting(env, FB, key, RUNS, None)
     setting(env, FB, key, MINUTES, None)
-    assert _limits(FB, key) == (7, 300)                                         # blank = the system default again
+    assert _limits(FB, key) == (3, 120)                                         # null = the card default again
     from flowgate.card_settings import verify_limits
-    assert verify_limits.resolve_verify_limits(FB, key) == verify_limits.VerifyLimits(max_runs=7, run_timeout_sec=300)
+    assert verify_limits.resolve_verify_limits(FB, key) == verify_limits.VerifyLimits(max_runs=3, run_timeout_sec=120)
+    assert verify_limits.default_limits() == verify_limits.VerifyLimits(max_runs=3, run_timeout_sec=120)
 
 
 def test_one_verification_never_exceeds_1800_seconds(env):
-    first = put_draft(env, FB, 0, [node("tmp_a", "T"), node("tmp_b", "T")])
-    a, b = first["key_map"]["tmp_a"], first["key_map"]["tmp_b"]
-    setting(env, FB, a, MINUTES, 30)
-    assert _limits(FB, a)[1] == 1800                                            # the card's largest pick is the ceiling
-    _put(FB, a, MINUTES, 31)                                                    # a hand-edited row above it is not read
-    assert _limits(FB, a)[1] == 180
-    _system(timeout=1800)
-    assert _limits(FB, b)[1] == 1800                                            # the system default may be the ceiling too
-    from modules.flow_gate.db import system_settings as db
-    db.set_value("verify_run_timeout_sec", "99999", "integer")                  # a corrupt system value: the shipped default
-    assert _limits(FB, b)[1] == 180
+    key = placed(env, FB, "T")
+    setting(env, FB, key, MINUTES, 30)
+    assert _limits(FB, key)[1] == 1800                                          # the card's largest pick is the ceiling
+    _put(FB, key, MINUTES, 31)                                                  # a hand-edited row above it is not read
+    assert _limits(FB, key)[1] == 120
 
 
 def test_a_value_that_is_not_valid_is_not_set(env):
@@ -169,38 +166,37 @@ def test_a_value_that_is_not_valid_is_not_set(env):
     for field, bad in ((RUNS, 0), (RUNS, -1), (RUNS, "5"), (RUNS, True), (RUNS, None),
                        (MINUTES, 0), (MINUTES, 31), (MINUTES, "10"), (MINUTES, 2.5), (MINUTES, False)):
         _put(FB, key, field, bad)
-    assert _limits(FB, key) == (3, 180)
+    assert _limits(FB, key) == (3, 120)
     _put(FB, key, RUNS, 12)
-    assert _limits(FB, key) == (12, 180)                                        # the valid one still counts
+    assert _limits(FB, key) == (12, 120)                                        # the valid one still counts
 
 
 def test_a_count_above_999_is_a_value_not_a_fallback(env):
     key = placed(env, FB, "T")
     assert setting(env, FB, key, RUNS, 1000)["fields"][RUNS]["value"] == 1000   # 0003-T: 'a whole number of 1 or more'
-    assert _limits(FB, key) == (1000, 180)                                      # and the resolver answers it as it is
+    assert _limits(FB, key) == (1000, 120)                                      # and the resolver answers it as it is
     _put(FB, key, RUNS, 100000)
-    assert _limits(FB, key) == (100000, 180)
+    assert _limits(FB, key) == (100000, 120)
 
 
-def test_a_test_card_is_never_read_and_an_unknown_card_has_the_system_default(env):
+def test_a_test_card_is_never_read_and_an_unknown_card_has_the_card_default(env):
     first = put_draft(env, FB, 0, [node("tmp_ts", "TS"), node("tmp_g", None, "gate"), node("tmp_x", None, "custom")])
     ts, gate, custom = (first["key_map"][k] for k in ("tmp_ts", "tmp_g", "tmp_x"))
-    _system(runs=4, timeout=240)
     for key in (ts, gate):                                                      # rows a TS / gate card cannot have by the API
         _put(FB, key, RUNS, 9)
         _put(FB, key, MINUTES, 20)
-        assert _limits(FB, key) == (4, 240)
-    assert _limits(FB, "no_such_card") == (4, 240) and _limits("no.such.flow", ts) == (4, 240)
+        assert _limits(FB, key) == (3, 120)
+    assert _limits(FB, "no_such_card") == (3, 120) and _limits("no.such.flow", ts) == (3, 120)
     setting(env, FB, custom, RUNS, 2)                                           # a palette [+] card works like a work card
-    assert _limits(FB, custom) == (2, 240)
+    assert _limits(FB, custom) == (2, 120)
 
 
 def test_the_card_value_is_per_flow_and_per_card(env):
     a = placed(env, FA, "T")
     b = placed(env, FB, "T")
     setting(env, FA, a, RUNS, 8)
-    assert _limits(FA, a) == (8, 180) and _limits(FB, b) == (3, 180)
-    assert _limits(FB, a) == (3, 180)                                           # the same key in another flow is another card
+    assert _limits(FA, a) == (8, 120) and _limits(FB, b) == (3, 120)
+    assert _limits(FB, a) == (3, 120)                                           # the same key in another flow is another card
 
 
 # ── migration 201: the chat's settings audit ─────────────────────────────────

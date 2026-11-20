@@ -64,26 +64,48 @@ def _target_names(target: ast.AST) -> list[str]:
     return []
 
 
+def _scope_nodes(tree):
+    """Walk one lexical scope; a different function's locals are unrelated."""
+    yield tree
+    for child in ast.iter_child_nodes(tree):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        yield from _scope_nodes(child)
+
+
 def _derives_from_file(expr: ast.AST, known: set[str]) -> bool:
-    for node in ast.walk(expr):
-        if isinstance(node, ast.Name) and (node.id == "__file__" or node.id in known):
-            return True
-    return False
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+        if expr.func.attr in {"read_text", "read_bytes", "read", "readline", "readlines"}:
+            return False  # file contents are values, not filesystem locations
+    if isinstance(expr, ast.Name):
+        return expr.id == "__file__" or expr.id in known
+    return any(_derives_from_file(child, known) for child in ast.iter_child_nodes(expr))
 
 
-def _repo_derived_names(tree: ast.AST) -> set[str]:
-    """``__file__`` 에서 유도된 경로에 묶인 이름들(전이적으로 닫는다)."""
-    known: set[str] = set()
+def _repo_derived_names(tree: ast.AST, inherited=None) -> set[str]:
+    nodes = list(_scope_nodes(tree))
+    known = set(inherited or ())
+    if isinstance(tree, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        # Python locals (including parameters) shadow names in the outer scope.
+        for node in nodes:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                known.discard(node.id)
+        for arg in (*tree.args.posonlyargs, *tree.args.args, *tree.args.kwonlyargs):
+            known.discard(arg.arg)
+        for arg in (tree.args.vararg, tree.args.kwarg):
+            if arg is not None:
+                known.discard(arg.arg)
     changed = True
     while changed:
         changed = False
-        for node in ast.walk(tree):
-            value = None
-            targets: list[ast.AST] = []
+        for node in nodes:
+            value, targets = None, []
             if isinstance(node, ast.Assign):
-                value, targets = node.value, list(node.targets)
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value, targets = node.value, node.targets
+            elif isinstance(node, ast.AnnAssign):
                 value, targets = node.value, [node.target]
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                value, targets = node.iter, [node.target]
             if value is None or not _derives_from_file(value, known):
                 continue
             for target in targets:
@@ -105,13 +127,16 @@ def _root_name(expr: ast.AST) -> str | None:
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             node = node.left
         elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {
+                    "read_text", "read_bytes", "read", "readline", "readlines"}:
+                return None
             node = node.func
         else:
             return None
 
 
-def _is_write_mode(call: ast.Call) -> bool:
-    args = list(call.args[1:]) + [kw.value for kw in call.keywords if kw.arg == "mode"]
+def _is_write_mode(call: ast.Call, *, method=False) -> bool:
+    args = list(call.args[0 if method else 1:]) + [kw.value for kw in call.keywords if kw.arg == "mode"]
     for arg in args:
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             if any(flag in arg.value for flag in _WRITE_MODES):
@@ -120,27 +145,41 @@ def _is_write_mode(call: ast.Call) -> bool:
 
 
 def _violations(source: str, known_extra: set[str] | None = None) -> list[str]:
-    tree = ast.parse(source)
-    known = _repo_derived_names(tree) | (known_extra or set())
-    if not known:
-        return []
     found: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in _WRITING_METHODS:
-            if _root_name(func.value) in known:
-                found.append(f"line {node.lineno}: .{func.attr}() on a repo path")
-        elif isinstance(func, ast.Attribute) and func.attr == "open" and _is_write_mode(node):
-            if _root_name(func.value) in known:
-                found.append(f"line {node.lineno}: .open(write mode) on a repo path")
-        elif isinstance(func, ast.Attribute) and func.attr in _WRITING_FUNCS:
-            if node.args and _root_name(node.args[0]) in known:
-                found.append(f"line {node.lineno}: {func.attr}() on a repo path")
-        elif isinstance(func, ast.Name) and func.id == "open" and _is_write_mode(node):
-            if node.args and _root_name(node.args[0]) in known:
-                found.append(f"line {node.lineno}: open(write mode) on a repo path")
+
+    def scan(tree, inherited):
+        known = _repo_derived_names(tree, inherited)
+        for node in _scope_nodes(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in _WRITING_METHODS:
+                if _root_name(func.value) in known:
+                    found.append(f"line {node.lineno}: .{func.attr}() on a repo path")
+            elif isinstance(func, ast.Attribute) and func.attr == "open" and _is_write_mode(node, method=True):
+                if _root_name(func.value) in known:
+                    found.append(f"line {node.lineno}: .open(write mode) on a repo path")
+            elif isinstance(func, ast.Attribute) and func.attr in _WRITING_FUNCS:
+                # copy reads src and writes dst; move mutates both paths.
+                positions = (0, 1) if func.attr == "move" else (
+                    (1,) if func.attr in {"copy", "copy2", "copyfile", "copytree"} else (0,))
+                targets = [node.args[i] for i in positions if len(node.args) > i]
+                targets += [kw.value for kw in node.keywords if kw.arg in ("dst", "name", "path")]
+                if any(_root_name(target) in known for target in targets):
+                    found.append(f"line {node.lineno}: {func.attr}() on a repo path")
+            elif isinstance(func, ast.Name) and func.id == "open" and _is_write_mode(node):
+                if node.args and _root_name(node.args[0]) in known:
+                    found.append(f"line {node.lineno}: open(write mode) on a repo path")
+        # Inspect each nested scope separately, including definitions under if/try.
+        def nested(node):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    scan(child, known)
+                else:
+                    nested(child)
+        nested(tree)
+
+    scan(ast.parse(source), known_extra or set())
     return found
 
 
@@ -235,13 +274,19 @@ def test_pollution_guard_fails_a_session_that_leaves_ignored_scratch(tmp_path):
     # the parent release gate, or capability validation masks the guard failure this
     # subprocess exists to assert.
     env.pop("FLOWGATE_REQUIRE_FULL_SUITE", None)
+    env.pop("PYTEST_ADDOPTS", None)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    # The assertion below checks Korean text. Windows redirected stdout otherwise
+    # escapes it to ASCII under a non-Korean locale, even though the guard fired.
+    env["PYTHONIOENCODING"] = "utf-8"
 
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "test_leak.py", "-q"],
         cwd=str(tests_dir),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        timeout=60,
         env=env,
     )
 
@@ -268,3 +313,25 @@ def test_known_offenders_now_use_the_shared_scratch(spec):
     )
     assert ".test-tmp-" not in code
     assert "_scratch_t509_src" not in code
+
+
+@pytest.mark.parametrize("source", [
+    "ROOT = Path(__file__).parent\n(ROOT / 'x').read_text().replace('a', 'b')\n",
+    "ROOT = Path(__file__).parent\ntext = (ROOT / 'x').read_text()\ntext.replace('a', 'b')\n",
+    "ROOT = Path(__file__).parent\nshutil.copyfile(ROOT / 'x', tmp_path / 'x')\n",
+    "ROOT = Path(__file__).parent\ndef read():\n    path = ROOT / 'x'\n    return path.read_text()\ndef write(tmp_path):\n    path = tmp_path / 'x'\n    path.write_text('ok')\n",
+    "ROOT = Path(__file__).parent\ndef write(ROOT):\n    ROOT.mkdir()\n",
+])
+def test_detector_keeps_contents_copy_sources_and_local_scopes_separate(source):
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("operation", [
+    "ROOT.mkdir()", "ROOT.write_text('x')", "ROOT.open('w')",
+    "shutil.copyfile(tmp_path / 'x', ROOT / 'x')",
+    "shutil.copyfile(src=tmp_path / 'x', dst=ROOT / 'x')",
+    "shutil.move(ROOT / 'x', tmp_path / 'x')",
+    "open(ROOT / 'x', 'w')",
+])
+def test_detector_still_rejects_repository_mutations(operation):
+    assert _violations("ROOT = Path(__file__).parent\ndef mutate(tmp_path):\n    " + operation + "\n")

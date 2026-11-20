@@ -215,6 +215,8 @@ def _build_store(migrated_sqlite_db, monkeypatch):
     s = object.__new__(connection.FlowGateStore)
     s._db = SQLiteWrapper(migrated_sqlite_db("group_lock_stub.db"))
     s._sq = None
+    # Lazy imports must see the same store as modules loaded before setup.
+    monkeypatch.setattr(connection, "STORE", s)
     from modules.flow_gate.db import operation_job, tr_history_recovery  # noqa: F401
     for name, module in list(sys.modules.items()):
         if name.startswith("modules.flow_gate.") and hasattr(module, "get_store"):

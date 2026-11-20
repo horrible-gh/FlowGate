@@ -4,6 +4,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from migration_contracts import shared_migration_files
+
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "sql" / "migrations"
 
@@ -15,11 +17,13 @@ def _apply(conn: sqlite3.Connection, through: str | None = None) -> None:
         conn.executescript(path.read_text(encoding="utf-8"))
 
 
-def test_all_migrations_create_21_column_token_and_conversation_schema():
+def test_089_preserves_the_23_column_token_and_conversation_schema():
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys=ON")
-    _apply(conn)
+    _apply(conn, "089_tokens_revoke_claim.sql")
     columns = [row[1] for row in conn.execute("PRAGMA table_info(tokens)")]
+    # This exact historical column count belongs to migration 089, not every
+    # future schema. The latest-schema FK test below still applies the full chain.
     # 0352 T0004 §3.1 / migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
     # 0447 T0007 review rev1 / migration 089 added revoke_claim (22 -> 23).
     assert len(columns) == 23
@@ -83,11 +87,8 @@ def test_chat_scope_and_foreign_key_delete_actions_are_declared():
 
 
 def test_generated_dialects_stay_complete_and_turn_insert_is_fail_loud():
-    counts = {
-        dialect: len(list((MIGRATIONS / dialect).glob("*.sql")))
-        for dialect in ("sqlite", "mysql", "postgres")
-    }
-    assert len(set(counts.values())) == 1
+    sets = shared_migration_files(MIGRATIONS)
+    assert sets["sqlite"] == sets["postgres"] == sets["mysql"]
     for dialect in ("sqlite", "mysql", "postgres"):
         sql = (MIGRATIONS / dialect / "074_conversation_turns.sql").read_text(encoding="utf-8")
         assert "conversation_turns" in sql

@@ -8,6 +8,104 @@ flowgate.default.0394 — R0001 "테스트 코드 정리" §6·§7, NR0003 §12�
 
 ---
 
+## 0. 영역을 골라 실행하기 (0053 A1·A2)
+
+서버에서 바꾼 기능만 검증할 때는 `server/`에서 실행한다.
+
+```text
+python -m pytest tests -q -rEf --changed=flowgate/gate_decisions/service.py --tier=veryfast
+python -m pytest tests -q -rEf --changed=flowgate/gate_decisions/service.py --tier=fast
+python -m pytest tests -q -rEf -n 2 --dist loadfile --changed=flowgate/gate_decisions/service.py
+python -m pytest tests -q -rEf -n 2 --dist loadfile --area=git.merge --tier=heavy
+```
+
+### 카드 작업자 규칙 (0053)
+
+카드에서 서버 소스를 고쳤으면 아래 순서만 따른다. 전체 실행은 하지 않는다.
+
+1. **고치는 중**: `--changed=<고친 경로들> --tier=veryfast`. 한 덩어리를 끝냈으면 `--tier=fast`.
+2. **카드를 끝낼 때**: `--changed=<고친 경로들>` 만 준다(= standard). `-n 2 --dist loadfile` 과
+   `parallel_share 2` 를 함께 쓴다. 이 결과를 TR 의 검증 근거로 적는다.
+3. **heavy·slow 는 다음 변경일 때만**, 고친 소영역을 `--area` 로 지정해 한 번 돌린다.
+   - heavy: 한 소영역의 소스를 여러 파일에 걸쳐 고쳤다.
+   - slow: `sql/migrations/**`, `db_bootstrap.py`, `modules/flow_gate/db/connection.py`·`dialect.py`,
+     `modules/flow_gate/services/git/**` 를 고쳤다.
+4. `--changed` 에는 **고친 파일을 전부** 쉼표로 넘긴다(server 기준 상대 경로). 고친 테스트 파일도 넣는다.
+   경로를 줄여서 넘기면 그만큼 검증이 빠진다.
+5. `--install-check` 와 영역 옵션 없는 `python -m pytest tests` 는 카드에서 쓰지 않는다.
+6. 클라이언트를 고쳤으면 `npm run test:related -- <고친 파일들>` 과 `npm run typecheck` 를 돌린다.
+
+Self-check 요청으로는 이렇게 보낸다(셸 연산자 없이 `python` 하나).
+
+```json
+{"program": "python",
+ "args": ["-m", "pytest", "tests", "-q", "-rEf", "-n", "2", "--dist", "loadfile",
+          "--changed=modules/flow_gate/services/git/branch_merge.py,tests/modules/flow_gate/test_x.py"],
+ "cwd": "server", "parallel_share": 2}
+```
+
+병렬 실행은 기존 지침대로 `parallel_share`도 맞춘다. 상위 영역 이름은 `ai`, `git`,
+`gate`, `selfcheck`, `document`, `conversation`, `graph`, `card`, `platform`, `db`, `guard`다.
+큰 영역 7개는 소영역으로 나뉘어 있다(0053, 모두 36개).
+
+| 상위 | 소영역 |
+|---|---|
+| ai | `ai.roles` `ai.run` `ai.invoke` `ai.agent` `ai.provider` |
+| git | `git.remote` `git.merge` `git.recovery` `git.worktree` `git.core` |
+| document | `document.edit` `document.tr2` `document.attach` `document.core` |
+| conversation | `conversation.question` `conversation.command` `conversation.chat` `conversation.mention` `conversation.turn` |
+| graph | `graph.attempt` `graph.run` `graph.definition` `graph.root` `graph.workflow` |
+| card | `card.workplan` `card.review` `card.settings` `card.completion` |
+| platform | `platform.auth` `platform.scratch` `platform.settings` `platform.api` |
+
+`--area`는 쉼표로 여러 영역을 받는다. 상위 이름(`--area=ai`)은 그 소영역을 모두 고른다.
+`--changed`는 고친 소스에 맞는 **소영역만** 고른다. 한 소영역에만 속한다고 정할 수 없는 소스
+(공통 DB 기반)는 여러 소영역을 함께 고른다.
+`services/git/**` 과 `graph_workflow/**` 는 `git.core`·`graph.definition` 이 통째로 받되, 그 안의
+**공통 부품**(`command.py`, `lock_manager.py`, `refs.py`, `graph_model.py`, `flow_guard.py`,
+`errors.py` 등)은 그 파일을 직접 import 하는 형제 소영역의 `source` 에도 적어 두었다. 그래서
+`git/command.py` 를 고치면 git.core 와 함께 merge·recovery·worktree 가 돌고, `git/branch_merge.py`
+를 고치면 git.core·git.merge 만 돈다. 형제 소영역이 공통 부품을 새로 import 하면 그 파일을
+그 소영역 `source` 에 추가한다(`also` 로 묶으면 git 소스 전부가 git 전체를 돌리게 되어 쓰지 않았다).
+소영역 목표는 테스트 파일 40개 이하, standard 까지 2-worker 60초 이내다.
+`--changed`는 **server 기준 상대 경로**를 받는다. 여러 경로와 `--area`를 함께 주면 합집합이다.
+테스트 파일 경로는 그 파일의 영역을 고른다. 알 수 없는 경로·영역은 실행 전에 오류로 끝난다.
+공통 DB 기반 변경은 여러 영역을 선택하므로 작은 작업 예산을 넘으면 TS에서 검증한다.
+
+`tests/areas.toml`의 `tests` 목록이 파일의 주 영역을 정한다. 새 `test_*.py`를 추가하면 지도에도
+등록한다. 예외는 모듈 맨 위의 `pytestmark = pytest.mark.area("gate")`처럼 문자열로 명시한다
+(마커 목록 안에서도 사용 가능). 영역은 파일 단위이며 함수별 area 표시는 선택 기준이 아니다.
+TOML 하위 영역 이름은 `[area."conversation.chat"]`처럼 따옴표로 묶는다.
+`also`는 함께 검증할 영역 이름 목록이며 standard 이상에서 한 단계만 확장한다(veryfast·fast 는 확장하지 않는다).
+`source` 패턴은 여러 영역에 겹칠 수 있다. 패턴은 POSIX 경로에 fnmatch로 적용하며 `*`도 `/`를 포함한다.
+매핑 누락·중복과 빈 패턴은 `tests/architecture/test_test_areas.py`가 검사한다.
+
+영역 밖 파일은 import 전에 제외한다. 요약의 selected/excluded는 지도상 파일 수이고,
+collected는 이번 명령에서 실제 수집한 파일 수다(tier로 건너뛴 테스트가 포함될 수 있음).
+영역 옵션을 생략하면 전체를 수집한다(그래도 계층은 standard 까지만 돈다). tier는 아래 A3 실측 규칙을 따른다. 아래 과거 실측표를 새 영역의 실행 시간으로 해석하지 않는다.
+
+클라이언트는 `client_gui/`에서 실행한다.
+
+```text
+npm run test:related -- src/features/git/api.ts
+npm run test:area -- git
+npm run test:area -- designer
+npm run test:areas:check
+npm run typecheck
+```
+
+`test:related`는 Vitest의 import 관계로 관련 spec을 고른다. 파일을 텍스트로 읽는 구조 검사나
+동적 의존성은 놓칠 수 있으므로 그런 변경은 `test:area`로 영역 전체를 검증한다.
+`test:area`는 쉼표 또는 공백으로 여러 영역을 받으며 상위 이름 `designer`는 하위 3개를 선택한다.
+영역은 `shell`, `ai`, `conversation`, `document`, `git`, `project`, `settings`, `workplan`,
+`designer.inspector`, `designer.run`, `designer.canvas`다. 인자가 없거나 모르는 영역이면 실패한다.
+`tests/areas.json` 경로는 client_gui 기준이며 `*`는 하위 경로도 포함한다(서버 지도와 동일).
+새 spec은 정확히 한 영역에 등록한다. designer.canvas의 나머지 파일은 명시 목록으로 관리하므로
+추가할 때 목록도 갱신한다. source는 변경 영역 참고용이고 test:related는 이 지도가 아닌 import를 쓴다.
+전체 지도에서 누락·중복·빈 패턴을 발견하면 영역 실행도 실패한다. `test:areas:check`와 서버의
+`tests/architecture/test_test_areas.py`가 같은 소유권 규칙을 검사한다.
+`npm test`는 기존처럼 전체를 실행한다. 클라이언트 실행 시간 예산은 아직 측정하지 않았다.
+
 ## 1. 실행 계층
 
 ### 왜 계층인가
@@ -23,15 +121,35 @@ flowgate.default.0394 — R0001 "테스트 코드 정리" §6·§7, NR0003 §12�
 ```bash
 cd server
 
-python -m pytest tests --tier=fast       # 개발 중 빠른 회귀 확인
-python -m pytest tests --tier=standard   # 작업 완료 검증
-python -m pytest tests                   # release / 대규모 리팩터링 (= full, 기본값)
+python -m pytest tests --changed=<경로> --tier=veryfast   # 고치는 중에 수시로
+python -m pytest tests --changed=<경로> --tier=fast       # 한 덩어리를 고친 직후
+python -m pytest tests --changed=<경로>                   # 카드를 끝낼 때 (= --tier=standard)
+python -m pytest tests --area=<영역> --tier=heavy         # 그 영역을 크게 고쳤을 때
+python -m pytest tests --area=<영역> --tier=slow          # 마이그레이션·git 통합 등 위험한 변경
+python -m pytest tests --install-check                    # 설치 검증: 전부
 ```
 
-`--tier` 를 안 주면 전부 돈다. 기본값을 full 로 둔 것은 의도적이다 — 기존 명령이나
-스크립트가 어느 날 조용히 더 적게 돌기 시작하는 일이 없어야 한다.
+계층은 5단계이고 **누적**이다. 위 계층을 고르면 그 아래 계층도 함께 돈다(0053, 2026-11-20).
 
-| 계층 | 목적 | 선택되는 테스트 | 실측 시간 |
+| 계층 | 파일당 시간 | 소영역 하나 목표 (2-worker) | 언제 |
+|---|---:|---:|---|
+| veryfast | 1초 이하 | 10초 | 코드를 고치는 중에 수시로 |
+| fast | 5초 이하 | 30초 | 한 덩어리를 고친 직후 |
+| standard | 15초 이하 | 60초 | 카드를 끝낼 때 (기본값) |
+| heavy | 30초 이하 | 120초 | 그 영역을 크게 고친 카드를 끝낼 때 |
+| slow | 120초 이하 | 300초 | DB 마이그레이션·git 통합처럼 위험한 변경을 했을 때만 |
+
+`--tier` 를 안 주면 **standard** 다. "전부"를 뜻하는 full 계층은 없앴다. `--tier=full` 은
+"설치 검증은 `--install-check` 를 쓰십시오" 라는 안내와 함께 오류로 끝난다.
+
+**설치 검증**(`--install-check`)은 계층과 관계없이 전부 돌린다. 파일 합계 120초 초과, e2e,
+`@pytest.mark.install` 은 어느 계층에도 들어가지 않고 여기서만 돈다. 처음 설치한 사용자가
+확인하는 용도이며 카드나 일상 작업에서는 쓰지 않는다. 환경변수 `FLOWGATE_REQUIRE_FULL_SUITE=1`
+도 같은 스위치다. 설치 검증에서는 호스트 능력이 빠지면 실패한다.
+
+아래 표는 예전 3단계(fast/standard/full) 때의 **2026-08 측정값**이며 지금 계층의 시간이 아니다.
+
+| 예전 계층 | 목적 | 선택되는 테스트 | 실측 시간 |
 |---|---|---:|---:|
 | fast | 개발 중 | 1,614 | ~110초 |
 | standard | 작업 완료 검증 | 2,822 | ~340초 |
@@ -55,16 +173,138 @@ python -m pytest tests                   # release / 대규모 리팩터링 (= f
 
 계층 판정은 `server/tests/conftest.py` 의 `_tier_for_module` 이 한다. 순서는 이렇다.
 
-1. `@pytest.mark.fast` / `.standard` / `.full` 을 직접 붙였으면 그것이 이긴다.
-   테스트·클래스·모듈(`pytestmark`) 어디에 붙여도 된다.
-2. 안 붙였으면 모듈 소스를 보고 기계적으로 정한다.
-   * fast — `TestClient`, `subprocess`/git, `sleep(` 을 쓰지 않는다
-   * standard — git/subprocess 를 쓰지 않고 파일명이 e2e·dialect·migration·worktree·git 계열이 아니다
-   * full — 나머지
+1. `@pytest.mark.veryfast` / `.fast` / `.standard` / `.heavy` / `.slow` / `.install` 을 직접
+   붙였으면 그것이 이긴다. 테스트·클래스·모듈(`pytestmark`) 어디에 붙여도 된다.
+2. `tests/timings.json`의 유효한 직렬 기록이 있으면 파일 합계로 정한다: 1초 이하 veryfast,
+   5초 이하 fast, 15초 이하 standard, 30초 이하 heavy, 120초 이하 slow, 그 밖은 설치 검증 몫.
+3. 기록이 없거나 불완전하거나 파일 해시가 달라지면 **standard** 다. 재 본 적 없는 파일이
+   수시로 도는 veryfast·fast 에 끼어들지 않게 하기 위해서다. 다만
+   * `subprocess`/git 을 쓰거나 파일명이 dialect·migration·worktree·git 계열이면 heavy,
+   * e2e 파일은 설치 검증 몫,
+   * 실패해서 기준선은 없지만 M1 에서 60초 넘게 돈 것이 관측된 파일(`timings.json` 의
+     `measurement.ineligible_files_over_60s`)은 그 시간에 맞는 계층(slow 또는 설치 검증)으로 올린다.
+   측정되면 2번 규칙으로 제자리를 찾는다.
 
 목록이 아니라 규칙인 이유가 있다. 계층을 파일 목록으로 관리하면 **새로 만든 파일이 어느
 계층에도 안 들어가는 사고**가 난다. 규칙이면 새 파일도 쓰는 순간 같은 기준으로 분류되고,
 예외가 필요한 파일만 맨 위에 한 줄 적으면 된다.
+
+### 파일별 시간 기록과 예산 보고 (0053 A3)
+
+`server/`에서 `--fg-timings-out=<저장소 밖 경로>`를 붙이면 setup/call/teardown의 합을
+파일별 JSON으로 쓴다. xdist는 컨트롤러 한 곳에서 보고를 합산한다. 기동·import·수집 시간은
+포함하지 않으며 병렬 합계는 직렬 실측값이 아니다.
+
+```text
+python -m pytest tests -q --fg-timings-out=/tmp/flowgate-timings.json
+python tools/test_budget.py --timings /tmp/flowgate-timings.json
+```
+
+첫 명령은 server 기준, 둘째는 저장소 루트 기준이다. Windows에서는 저장소 밖의 실제
+임시 경로를 사용한다. 전체 측정은 M1 측정 카드에서 수행한다. 작업 검증에서는 해당 파일만
+측정한다. 출력은 매 실행마다 교체하며 이전 측정에 자동 병합하지 않는다.
+
+`server/tests/timings.json`은 version 1, files 객체를 가진 커밋 대상 기준선이다.
+2026-11-20 M1에서 유효한 515개 파일의 분할 직렬 기록을 반영했다. 각 키는 server 기준 테스트 경로이며 값은 seconds,
+seconds_by_marker(auto 또는 명시 마커 이름), sha256, eligible이다. 출력에는 측정 시각과
+종료 코드도 들어간다. M1에서 검토한 직렬 결과를 기준선에 반영한다.
+
+병렬, `-k`/`-m`, node id 지정, skip/실패/중단 등 불완전한 기록은 기준선으로 쓰지 않는다.
+계층 때문에 한 건이라도 건너뛴 파일도 skip 이 있으므로 기준선이 되지 않는다. heavy·slow·설치
+검증 몫까지 재려면 `--install-check` 를 붙인다. 파일별 모든 수집 항목의 3단계 보고가 있어야 한다. 파일 해시가
+바뀌면 이전 기록은 무시한다. 명시 tier 마커는 항상 시간 기록보다 우선한다.
+
+예산 보고(`python tools/test_budget.py`)는 소영역별로 계층 누적 직렬 작업 시간, 그 합계에
+빠져 있는 미측정 파일 수(`+N`), 설치 검증 몫 파일 수를 표시한다. 마커로 지정한 시간은 해당
+계층에 반영한다. 파일 수가 40개를 넘거나 어느 계층의 직렬 합계 ÷ 2 가 그 계층 목표를 넘으면
+`SPLIT:` 뒤에 "나눌 대상"으로 표시하며 실패로 처리하지는 않는다. 직렬 합계 ÷ 2 는 이상적인
+하한이지 wall time 이 아니므로 목표 충족은 병렬 실측으로 확인한다. 미측정 파일이 있으면
+합계는 불완전하다.
+
+### M1 분할 직렬 측정 — 2026-11-20 (0053)
+
+Windows 11, Python 3.14.2, pytest 8.3.4에서 xdist 없이 실행했다. 채팅 명령의
+1800초 상한 때문에 영역별 실행 후 최대 20개, 이후 10개 파일씩 순차 실행했다.
+파일 내부는 계층 제한 없이 전부 실행했다(당시 full). 전체를 한 프로세스에서 실행한 회귀 결과와는 실행 조건이 다르다.
+측정 구간은 08:38:00–14:16:08(UTC+09), 경과 시간은 **5시간 38분 8초**다.
+
+837개 파일을 대상으로 실행했고 830개 파일에 시간 기록이 생겼다. 유효한 515개 파일만
+`tests/timings.json`의 `files`에 반영했다. 실패·error·skip·xfail 등으로 부적격인 315개와
+기록이 없는 7개는 기준선에서 제외했다. 이 322개는 측정 기록이 없을 때의 규칙(위 3번)으로 분류되며 0초로 취급하지 않는다.
+
+주 측정 결과 합계는 **20,430 passed, 1,829 failed, 453 error, 158 skipped, 1 xfailed**다.
+별도로 6개 파일에 수집 오류가 있었다. 중단된 최초 selfcheck-3/git-3 실행은 재측정으로 대체해
+합계에서 제외했고, 기록기 회귀 검사 19 passed도 이 합계에 더하지 않았다.
+이 수치는 분할 실행의 결과이며 전체 통과를 뜻하지 않는다. 발견된 테스트 실패 수정은 이번 측정에 포함하지 않았다.
+
+시간 기록기는 테스트가 `os.name`을 임시 변경한 상태에서 보고할 때 경로를 다시 생성하다
+내부 오류가 났다. 수집 때 계산한 node id별 경로를 재사용하도록 수정했고,
+플랫폼 변경을 teardown까지 유지하는 회귀 검사 및 기존 직렬·병렬 검증 19건이 통과했다.
+오류가 났던 git-3은 재측정하여 154 passed, 2 failed로 정상 종료했다.
+수정된 기록기 테스트 파일은 검증 실행에서 얻은 최신 해시와 시간으로 교체했다.
+
+아래는 유효 기록만 합산한 **누적 tier의 직렬 작업 시간**이며, 측정 당시의 11개 영역·3단계 계층(fast 5초 이하, standard 30초 이하, full 전부) 기준이다. 지금의 소영역·5단계 값은 `python tools/test_budget.py` 로 본다. import·수집·기동 시간은 제외한다.
+모든 영역에 미확정 파일이 있으므로 실제 영역 실행 예산의 충족 여부는 확정할 수 없다.
+
+| 영역 | 유효/전체 파일 | fast 합계(초) | standard 합계(초) | full 합계(초) | 미확정 파일 |
+|---|---:|---:|---:|---:|---:|
+| ai | 67/127 | 55.556 | 191.311 | 568.451 | 60 |
+| git | 65/102 | 27.454 | 228.186 | 2170.072 | 37 |
+| gate | 27/40 | 4.726 | 136.844 | 1483.001 | 13 |
+| selfcheck | 25/49 | 13.364 | 196.605 | 373.280 | 24 |
+| document | 59/92 | 22.199 | 201.878 | 1410.719 | 33 |
+| conversation | 69/115 | 37.837 | 263.895 | 679.773 | 46 |
+| graph | 84/117 | 31.967 | 331.881 | 1891.805 | 33 |
+| card | 36/78 | 6.534 | 177.238 | 1373.669 | 42 |
+| platform | 59/73 | 54.052 | 142.001 | 353.660 | 14 |
+| db | 8/16 | 4.620 | 25.097 | 129.303 | 8 |
+| guard | 16/28 | 10.478 | 51.476 | 124.674 | 12 |
+
+유효 기록의 fast 합계는 모든 영역에서 60초 이하이나 미확정 파일과 수집 시간이 빠져 있다.
+standard는 conversation의 이상적인 2-worker 하한도 131.948초, graph는 165.940초로
+120초를 넘는다. 다른 영역도 2-worker wall time을 측정하지 않았으므로 예산 통과로 판정하지 않는다.
+
+유효한 **49개 파일이 60초를 초과**했다. 가장 긴 10개는 아래와 같다.
+실패·skip 등이 있는 진단 기록에서도 38개 파일이 60초를 넘었으며 기준선에 섞지 않았다.
+그 목록은 `timings.json`의 `measurement.ineligible_files_over_60s`에 별도로 남겼다.
+
+| 초 | 파일(server 기준) |
+|---:|---|
+| 505.105 | `tests/flowgate/test_card_document_l3_states_0127.py` |
+| 493.723 | `tests/flowgate/test_fg_settings_retry_0126.py` |
+| 357.901 | `tests/flowgate/test_fg_integration_persistence_0156.py` |
+| 346.435 | `tests/test_fg_gate_run_resume_0132.py` |
+| 337.028 | `tests/test_fg_gate_push_sync_0132.py` |
+| 313.544 | `tests/modules/flow_gate/test_review_atomicity_0535.py` |
+| 272.201 | `tests/modules/flow_gate/test_branch_merge_attempt_0630.py` |
+| 260.253 | `tests/flowgate/test_card_document_l3_paths_0127.py` |
+| 207.825 | `tests/modules/flow_gate/test_system_agents_0076.py` |
+| 193.858 | `tests/flowgate/test_fg_document_rejection_0126.py` |
+
+유효한 60초 초과 파일 전체 목록과 영역별 예산은 저장소 루트에서 재현한다.
+
+```text
+python tools/test_budget.py
+```
+
+기록이 없는 파일 7개는 다음과 같다. 독립 수집 재확인에서도 같은 6개 수집 오류를 확인했다.
+
+| 파일(server 기준) | 확인 결과 |
+|---|---|
+| `tests/integration/src_content/test_t509_src_content_routes.py` | Settings 필수값 ALLOWED_ORIGIN·CONTEXT·DB_TYPE 누락 |
+| `tests/modules/flow_gate/test_git_service_error_envelope_0233.py` | 동일한 Settings 필수값 누락 |
+| `tests/modules/flow_gate/test_resolve_conflict_issue_lease_block_0447.py` | 동일한 Settings 필수값 누락 |
+| `tests/modules/flow_gate/test_token_predecessor_parity_0061.py` | 동일한 Settings 필수값 누락 |
+| `tests/test_remote_tool_move_0092.py` | `test_remote_tool_group_worktree_routing_0671` import 실패 |
+| `tests/test_test_card_gui_0094.py` | `test_test_spec_0549` import 실패 |
+| `tests/modules/flow_gate/test_mention_verification.py` | 직접 실행용 main만 있어 pytest 항목 없음 |
+
+큰 측정 파일의 기록을 출력 길이 제한 안에서 읽을 때는 다음처럼 JSON 페이지를 사용한다.
+`next_offset`이 null이 될 때까지 이어 읽는다. 이 옵션은 원본 파일을 변경하지 않는다.
+
+```text
+python tools/test_budget.py --timings <측정 JSON 경로> --records-offset 0 --records-limit 20
+```
 
 ### 클라이언트
 
@@ -246,10 +486,10 @@ Self-check 상한(1800초)은 올리지 않는다. 19~21개 파일 회귀가 상
 `test_git_integration_0115.py` 는 107 건이다. git 이 없는 호스트에서는 **107 건이 통째로
 사라지고도 결과는 "실패 0"** 으로 나온다 — 전부 통과한 실행과 글자가 같다. 그래서
 서버 테스트는 호스트 능력(git·심볼릭 링크·api 소스 트리·run.bat)과 그것 때문에 건너뛴
-건수를 실행 끝에 보고한다. release 검증처럼 **정말로 전부 돌았어야 하는 실행**은
+건수를 실행 끝에 보고한다. 설치 검증처럼 **정말로 전부 돌았어야 하는 실행**은
 
 ```bash
-FLOWGATE_REQUIRE_FULL_SUITE=1 python -m pytest tests
+python -m pytest tests --install-check
 ```
 
 로 돌린다. 능력이 없는 호스트면 조용히 건너뛰는 대신 실패한다.

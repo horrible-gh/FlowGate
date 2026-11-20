@@ -58,7 +58,15 @@ _RECORDING_TEST = textwrap.dedent('''
         (out / f"{os.getpid()}-{__name__}.json").write_text(json.dumps({
             "pid": os.getpid(), "worker": os.environ.get("PYTEST_XDIST_WORKER"), "cpus": _affinity(),
             "tree": os.environ.get("SLOT_TEST_TREE", "outer")}))
-        time.sleep(float(os.environ.get("SLOT_TEST_SLEEP", "0.3")))
+        if os.environ.get("SLOT_WAIT_NESTED") and os.environ.get("SLOT_TEST_TREE", "outer") == "outer":
+            # Keep the sibling worker's slot occupied until the nested session
+            # finishes. A fixed sleep let fast workers exit before nested startup.
+            deadline = time.monotonic() + 60
+            while not (out / "nested.json").exists():
+                assert time.monotonic() < deadline, "nested session did not finish"
+                time.sleep(0.02)
+        else:
+            time.sleep(float(os.environ.get("SLOT_TEST_SLEEP", "0.3")))
 ''')
 
 _NESTED_TEST = textwrap.dedent('''
@@ -106,7 +114,10 @@ def _env(out: Path, pool: dict | None = None, **extra) -> dict:
 
 
 def _pytest_argv(*args: str) -> list[str]:
-    return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "xdist.plugin", *args, "tests"]
+    # --tier=slow: these throwaway trees have no timings, so a test file that shells out is
+    # classified heavy and the default tier (standard) would skip the nested run under test.
+    return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "xdist.plugin",
+            "--tier=slow", *args, "tests"]
 
 
 def _summarize(stdout: str, returncode: int) -> tuple[dict, dict]:
@@ -181,7 +192,7 @@ def test_7e_a_nested_pytest_finds_no_free_slot_and_runs_serially_without_waiting
     started = time.monotonic()
     proc = subprocess.run(_pytest_argv("-n", "2", "--dist", "loadfile"), cwd=str(outer), capture_output=True,
                           text=True, encoding="utf-8", errors="replace",
-                          env=_env(out, pool, SLOT_INNER_SERVER=str(inner)), timeout=300)
+                          env=_env(out, pool, SLOT_INNER_SERVER=str(inner), SLOT_WAIT_NESTED="1"), timeout=300)
     assert proc.returncode == 0, proc.stdout[-3000:]
     assert time.monotonic() - started < 240
     summary, environment = _summarize(proc.stdout, proc.returncode)
@@ -321,7 +332,7 @@ def test_7e_7f_every_process_of_a_limited_run_stays_on_its_two_processors(tmp_pa
     inner = _repo(tmp_path / "inner", {"test_inner_a.py": _RECORDING_TEST, "test_inner_b.py": _RECORDING_TEST})
     outer = _repo(tmp_path / "outer", {"test_outer_record.py": _RECORDING_TEST, "test_outer_nested.py": _NESTED_TEST})
     runtime, out = tmp_path / "runtime", tmp_path / "out"
-    env = _env(out, policy.slot_pool_env(runtime, 2), SLOT_INNER_SERVER=str(inner))
+    env = _env(out, policy.slot_pool_env(runtime, 2), SLOT_INNER_SERVER=str(inner), SLOT_WAIT_NESTED="1")
     control, ownership = executor.spawn(_pytest_argv("-n", "2", "--dist", "loadfile"), outer, env, 300,
                                         "scr_0114_slot_tree", cpu_limit=2)
     try:
@@ -359,7 +370,7 @@ def test_7e_the_original_0382_case_passes_inside_a_run_of_share_one_and_two(tmp_
     env.update(pool)
     started = time.monotonic()
     control, _ownership = executor.spawn([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA",
-                                          _GUARD_0382], server, env, 300, f"scr_0114_guard_{size}", cpu_limit=size)
+                                          "--tier=slow", _GUARD_0382], server, env, 300, f"scr_0114_guard_{size}", cpu_limit=size)
     try:
         result = executor.wait(control, 300, threading.Event())
     finally:

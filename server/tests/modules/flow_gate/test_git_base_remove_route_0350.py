@@ -1,6 +1,6 @@
 """flowgate.default.0350 — route boundary for POST …/git/base-remove.
 
-`test_git_integration_0115.py::TestBaseRemoveAndRetry0350` exercises
+`git_integration_0115/test_base_remove_and_retry0350*.py` exercises
 `git_service.base_remove` directly, so the *service* is well covered. The HTTP
 route that TR0005 added alongside it was not: nothing asserted the path string,
 the request-body field name, the RBAC dependency, or that a `GitServiceError`

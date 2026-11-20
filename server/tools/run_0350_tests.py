@@ -2,7 +2,7 @@
 
 Run from ``server/`` as::
 
-    python tools/run_0350_tests.py                    # the whole 0115 suite
+    python tools/run_0350_tests.py                    # the 0350 integration and route cases
     python tools/run_0350_tests.py <extra pytest args>
 
 Modelled on ``tools/run_0295_tests.py`` (same host-portability reasons), plus a
@@ -59,8 +59,18 @@ except ImportError:  # pragma: no cover - surfaced as a plain sentence, not a tr
     raise SystemExit(1)
 
 
-_SUITE = "tests/test_git_integration_0115.py"
-_SUITES = [_SUITE, "tests/test_git_base_remove_route_0350.py"]
+_SUITE = "tests/modules/flow_gate/test_git_integration_0115.py"
+_SUITES = [
+    str(path.relative_to(_SERVER_DIR)).replace("\\", "/")
+    for pattern in (
+        "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350*.py",
+        "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350*.py",
+        "tests/modules/flow_gate/test_git_base_remove_route_0350.py",
+    )
+    for path in sorted(_SERVER_DIR.glob(pattern))
+]
+
+sys.path.insert(0, str(_SERVER_DIR / "tests"))
 
 
 def _check_capability() -> int:
@@ -142,7 +152,7 @@ if "--check-capability" in sys.argv:
 
 gate = _Gate()
 # -p no:cacheprovider keeps .pytest_cache out of the checked-out source root.
-exit_code = pytest.main([*_SUITES, *sys.argv[1:], "-q", "-p", "no:cacheprovider"], plugins=[gate])
+exit_code = pytest.main([*_SUITES, "--tier=slow", *sys.argv[1:], "-q", "-p", "no:cacheprovider"], plugins=[gate])
 
 tally: dict[str, int] = {}
 for outcome in gate.outcomes.values():

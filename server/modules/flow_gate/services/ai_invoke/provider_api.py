@@ -275,16 +275,17 @@ def _api_help_prompt(prompt: str) -> str:
 def _api_conflict_guidance(tool_names: list[str]) -> str:
     """0608 T0007: how a resolve_conflict API run reaches what its (CLI-shaped) mention
     addresses over HTTP. Same contract, tool names instead of URLs."""
+    # Tool schemas already enumerate names and parameters. Keep only the
+    # transport mapping and read/submit contract here; do not repeat that list.
     return (
-        "Here the mention's HTTP addresses are tools; make no HTTP requests: `POST .../remote/read` "
-        "is `read_source_file` (path, start_line/end_line, ref), the other remote source tools are "
-        "the `*_source` tools, the bound resolve endpoint is `resolve_git_conflict`. Tools: "
-        + ", ".join(f"`{name}`" for name in tool_names) + ".\n"
-        "Read only the lines you need; a result over 16,000 characters is refused. Send each file "
-        "as `chunks`, a few files per call with complete=false; the result lists "
-        "remaining_conflicts, and complete=true ends the job. If a read fails, fix it or stop -- "
-        "never resolve a chunk you could not read."
+        "Use tools, not HTTP: remote/read maps to `read_source_file` (path, "
+        "start_line/end_line, ref); other remote operations map to `*_source`; "
+        "resolve-token maps to `resolve_git_conflict`. Read only needed lines "
+        "(16,000-character result limit). Never resolve unread chunks; fix failed "
+        "reads or stop. Submit each file as `chunks`, a few files per call with "
+        "complete=false. Check remaining_conflicts; complete=true ends the job."
     )
+
 
 
 def _is_glm_openai_provider(provider: dict) -> bool:

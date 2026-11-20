@@ -81,9 +81,10 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
-# flowgate.v02test.0053 0003-T (1-A): the two 검증 (self-check) options of a run card. Both are ``None`` ("the system
-# default") until a person picks a value; the field's ``choices`` are the combo's presets, and any whole number inside
-# the range below is also a value (the combo's 사용자 정의).
+# flowgate.v02test.0053 0003-T (1-A): the two 검증 (self-check) options of a run card. They are managed per card only
+# (0002-CH turn 68: no system setting): a card with no stored value runs with the fixed defaults below (3 runs,
+# 2 minutes); the field's ``choices`` are the combo's presets, and any whole number inside the range below is also a
+# value (the combo's 사용자 정의).
 VERIFY_RUNS, VERIFY_MINUTES = "verify_runs", "verify_minutes"
 # flowgate.v02.0098 T#1: an exact local branch name with no repository context (no BRANCH pattern, no choices).
 LOCAL_BRANCH = "local_branch"
@@ -99,7 +100,8 @@ LIMIT_MIN, LIMIT_MAX = 1, 999
 # self-check run's own ceiling of 1800 seconds, ``tr_self_check_service``).
 VERIFY_RUN_CHOICES = (3, 5, 10)
 VERIFY_RUNS_MIN = 1                     # no upper bound: 0003-T 'a whole number of 1 or more'
-VERIFY_MINUTE_CHOICES = (3, 5, 10, 20, 30)
+VERIFY_MINUTE_CHOICES = (2, 3, 5, 10, 20, 30)
+DEFAULT_VERIFY_MAX_RUNS, DEFAULT_VERIFY_RUN_MINUTES = 3, 2
 VERIFY_MINUTES_MIN, VERIFY_MINUTES_MAX = 1, 30
 TEXT_MAX_LEN = 191
 # The v0.1 document review loop names of the two review bases.
@@ -148,10 +150,10 @@ _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
-# flowgate.v02test.0053 0003-T (1-A): a run card's 검증 options (the 실행 AI's advanced ⚙). No stored value = the system default
-# (``verify_limits.resolve_verify_limits``), so the default shown here is None, never a number.
-VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, None, VERIFY_RUN_CHOICES)
-VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, None, VERIFY_MINUTE_CHOICES)
+# flowgate.v02test.0053 0003-T (1-A): a run card's 검증 options (the 실행 AI's advanced ⚙). No stored value = the card
+# default 3 runs / 2 minutes (``verify_limits.resolve_verify_limits`` reads the same constants).
+VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, DEFAULT_VERIFY_MAX_RUNS, VERIFY_RUN_CHOICES)
+VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, DEFAULT_VERIFY_RUN_MINUTES, VERIFY_MINUTE_CHOICES)
 # flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
 # pre-instruction by itself today, so storing nothing and storing off mean the same.
 PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)

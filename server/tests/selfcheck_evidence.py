@@ -368,6 +368,11 @@ class _DefinitionCollector:
         self._tests: dict[Path, _TestModule] = {}
         self._confs: dict[Path, _Conftest] = {}
         self._closure: dict[Path, tuple[tuple, bool]] = {}
+        # Collection is a single source snapshot. Reuse module/fixture work across
+        # thousands of items, but never retain it across collector instances.
+        self._item_paths: dict[Path, Path] = {}
+        self._fixture_parts: dict[tuple, list] = {}
+        self._module_data: dict[Path, list] = {}
         self.functions = list(self.config.getini("python_functions") or ["test"])
         self.classes = list(self.config.getini("python_classes") or ["Test"])
         self.data_files = self._scan_data()
@@ -472,7 +477,9 @@ class _DefinitionCollector:
 
     def data_for(self, path: Path) -> list:
         """Test-tree data files the module (or a test-tree module it imports) names."""
-        return self.data_named([path] + [Path(p) for p, _h in self.closure(path)[0]])
+        if path not in self._module_data:
+            self._module_data[path] = self.data_named([path] + [Path(p) for p, _h in self.closure(path)[0]])
+        return self._module_data[path]
 
     def loaded_unreached(self) -> list[Path]:
         """Test-tree modules loaded now that no static analysis so far has reached: not a test
@@ -540,6 +547,14 @@ class _DefinitionCollector:
 
     # item level ------------------------------------------------------------
     def _fixture_part(self, fixturedef, module: Path) -> list:
+        # The same fixture can be local to one module and imported by another.
+        # Keep that context in the key; caching only by fixture would lose inputs.
+        key = (fixturedef, module)
+        if key not in self._fixture_parts:
+            self._fixture_parts[key] = self._build_fixture_part(fixturedef, module)
+        return self._fixture_parts[key]
+
+    def _build_fixture_part(self, fixturedef, module: Path) -> list:
         func = fixturedef.func
         getter = getattr(func, "_get_wrapped_function", None)   # pytest >= 8.4 fixture objects
         if callable(getter):
@@ -580,7 +595,10 @@ class _DefinitionCollector:
     def item_fingerprint(self, item) -> str:
         if not isinstance(item, pytest.Function) or getattr(item, "path", None) is None:
             return UNTRACEABLE
-        module = Path(str(item.path)).resolve()
+        raw_path = Path(str(item.path))
+        if raw_path not in self._item_paths:
+            self._item_paths[raw_path] = raw_path.resolve()
+        module = self._item_paths[raw_path]
         if not self.in_tree(module):
             return UNTRACEABLE
         try:

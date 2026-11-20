@@ -193,7 +193,7 @@ FlowGate/
 │   └── docker-entrypoint.sh   # container init: secrets, DB wait, admin seed
 ├── setup.sh                   # one-shot staging deploy (Linux)
 ├── setup.ps1                  # one-shot staging deploy (Windows)
-└── TESTING.md                 # how to run the suites (Fast/Standard/Full) and when to add a test
+└── TESTING.md                 # how to run the suites (areas, 5 tiers, install check) and when to add a test
 ```
 
 ---

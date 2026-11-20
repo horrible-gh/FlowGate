@@ -45,8 +45,9 @@ def test_the_read_answers_the_run_settings_with_their_choices(env, decided, guar
     assert answer["applicable_settings"] == ["review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"]
     assert set(answer["settings"]) == {"review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
     # flowgate.v02test.0053 0003-T: the two 검증 options show no value of their own (the system default stands) and the presets
-    assert answer["settings"]["verify_max_runs"] == {"value": None, "stored": False, "default": None, "choices": [3, 5, 10]}
-    assert answer["settings"]["verify_run_minutes"]["choices"] == [3, 5, 10, 20, 30]
+    assert answer["settings"]["verify_max_runs"] == {"value": 3, "stored": False, "default": 3, "choices": [3, 5, 10]}
+    assert answer["settings"]["verify_run_minutes"] == {"value": 2, "stored": False, "default": 2,
+                                                        "choices": [2, 3, 5, 10, 20, 30]}
     assert set(answer["settings"]["review_count"]) == {"value", "stored", "default", "choices"}
     assert answer["settings"]["time_limit"]["choices"] == list(fields.TIME_LIMIT_MINUTES)
     assert answer["settings"]["restart"]["default"] == fields.DEFAULT_RESTART_COUNT

@@ -3387,13 +3387,6 @@ export default {
         lower_impact: '保存・一時停止された実行の繰り返し選択は、以後の実行/再開時に現在の上限で再評価されます。上限を超えた既存の選択は「レビューなし」または既定の再開回数として扱われることがあります。',
         lower_no_rewrite: 'この画面は実行ごとの保存値を変更したり、実行を再開したりしません。',
       },
-      // flowgate.v02test.0053 0003-T (1-A): the two 검증 defaults (verify_max_runs, verify_run_timeout_sec).
-      verify: {
-        title: '検証',
-        card_hint: 'カードで個別に決めていない場合はこの値に従います',
-        runs: { label: '検証 最大回数', hint: 'カード 1 枚が使える検証回数です。1 以上、既定値は 3 回です。', unit: '回', invalid: '{min} 以上の整数を入力してください。' },
-        minutes: { label: '検証 1回の最大時間', hint: '検証 1 回が動ける最大時間(分)です。1〜30、既定値は 3 分(180 秒)です。', unit: '分', invalid: '{min}〜{max} 分の整数を入力してください。' },
-      },
       leave: {
         title: '保存していない変更があります',
         unsaved: 'この画面を離れると、保存していない Scratch 保持期間 · AI 繰り返し上限の入力は失われます。',
@@ -3577,8 +3570,6 @@ export default {
       unknown_key: '不明な設定です。',
       invalid_value: '許可されていない値です。',
       ai_repeat_count_out_of_range: '繰り返し上限は 1〜30 の整数のみ保存できます。',
-      verify_max_runs_out_of_range: '検証 最大回数は 1 以上の整数のみ保存できます。',
-      verify_run_timeout_out_of_range: '検証 1回の最大時間は 1〜30 分の整数(分)のみ保存できます。',
       action_failed: 'リクエストを処理できませんでした。',
       agent_not_found: 'Agent が見つかりません。',
       enrollment_not_allowed: '使用中のリモート Agent のみ登録トークンを発行できます。',
