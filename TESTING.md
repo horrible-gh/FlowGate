@@ -19,9 +19,30 @@ python -m pytest tests -q -rEf -n 2 --dist loadfile --changed=flowgate/gate_deci
 python -m pytest tests -q -rEf -n 2 --dist loadfile --area=git.merge --tier=heavy
 ```
 
-고치는 중에는 `--changed` 와 `--tier=veryfast`(또는 fast)를, 카드를 끝낼 때는 `--changed` 만
-(= standard) 준다. heavy·slow 는 그 영역을 크게 고쳤거나 마이그레이션·git 통합·DB 연결을
-건드렸을 때만 영역을 지정해 돌린다.
+### 카드 작업자 규칙 (0053)
+
+카드에서 서버 소스를 고쳤으면 아래 순서만 따른다. 전체 실행은 하지 않는다.
+
+1. **고치는 중**: `--changed=<고친 경로들> --tier=veryfast`. 한 덩어리를 끝냈으면 `--tier=fast`.
+2. **카드를 끝낼 때**: `--changed=<고친 경로들>` 만 준다(= standard). `-n 2 --dist loadfile` 과
+   `parallel_share 2` 를 함께 쓴다. 이 결과를 TR 의 검증 근거로 적는다.
+3. **heavy·slow 는 다음 변경일 때만**, 고친 소영역을 `--area` 로 지정해 한 번 돌린다.
+   - heavy: 한 소영역의 소스를 여러 파일에 걸쳐 고쳤다.
+   - slow: `sql/migrations/**`, `db_bootstrap.py`, `modules/flow_gate/db/connection.py`·`dialect.py`,
+     `modules/flow_gate/services/git/**` 를 고쳤다.
+4. `--changed` 에는 **고친 파일을 전부** 쉼표로 넘긴다(server 기준 상대 경로). 고친 테스트 파일도 넣는다.
+   경로를 줄여서 넘기면 그만큼 검증이 빠진다.
+5. `--install-check` 와 영역 옵션 없는 `python -m pytest tests` 는 카드에서 쓰지 않는다.
+6. 클라이언트를 고쳤으면 `npm run test:related -- <고친 파일들>` 과 `npm run typecheck` 를 돌린다.
+
+Self-check 요청으로는 이렇게 보낸다(셸 연산자 없이 `python` 하나).
+
+```json
+{"program": "python",
+ "args": ["-m", "pytest", "tests", "-q", "-rEf", "-n", "2", "--dist", "loadfile",
+          "--changed=modules/flow_gate/services/git/branch_merge.py,tests/modules/flow_gate/test_x.py"],
+ "cwd": "server", "parallel_share": 2}
+```
 
 병렬 실행은 기존 지침대로 `parallel_share`도 맞춘다. 상위 영역 이름은 `ai`, `git`,
 `gate`, `selfcheck`, `document`, `conversation`, `graph`, `card`, `platform`, `db`, `guard`다.
@@ -39,7 +60,13 @@ python -m pytest tests -q -rEf -n 2 --dist loadfile --area=git.merge --tier=heav
 
 `--area`는 쉼표로 여러 영역을 받는다. 상위 이름(`--area=ai`)은 그 소영역을 모두 고른다.
 `--changed`는 고친 소스에 맞는 **소영역만** 고른다. 한 소영역에만 속한다고 정할 수 없는 소스
-(예: `services/git/**` 의 나머지, 공통 DB 기반)는 여러 소영역을 함께 고른다.
+(공통 DB 기반)는 여러 소영역을 함께 고른다.
+`services/git/**` 과 `graph_workflow/**` 는 `git.core`·`graph.definition` 이 통째로 받되, 그 안의
+**공통 부품**(`command.py`, `lock_manager.py`, `refs.py`, `graph_model.py`, `flow_guard.py`,
+`errors.py` 등)은 그 파일을 직접 import 하는 형제 소영역의 `source` 에도 적어 두었다. 그래서
+`git/command.py` 를 고치면 git.core 와 함께 merge·recovery·worktree 가 돌고, `git/branch_merge.py`
+를 고치면 git.core·git.merge 만 돈다. 형제 소영역이 공통 부품을 새로 import 하면 그 파일을
+그 소영역 `source` 에 추가한다(`also` 로 묶으면 git 소스 전부가 git 전체를 돌리게 되어 쓰지 않았다).
 소영역 목표는 테스트 파일 40개 이하, standard 까지 2-worker 60초 이내다.
 `--changed`는 **server 기준 상대 경로**를 받는다. 여러 경로와 `--area`를 함께 주면 합집합이다.
 테스트 파일 경로는 그 파일의 영역을 고른다. 알 수 없는 경로·영역은 실행 전에 오류로 끝난다.
