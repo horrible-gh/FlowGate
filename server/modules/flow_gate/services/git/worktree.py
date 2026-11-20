@@ -1,6 +1,6 @@
 """Group worktree creation, synchronization, and disposal lifecycle.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 
@@ -267,8 +267,8 @@ def _ensure_worktree_locked(
     try:
         # flowgate.default.0361 NR0003 §5.2/§8.1: without this, a new group worktree
         # created straight after a repo_url change (no manual fetch in between)
-        # fetches the OLD remote — B0001 §4's "신규 group worktree가 오래된 base에서
-        # 생성될 수 있음" scenario.
+        # fetches the OLD remote — B0001 §4's "a new group worktree may be created
+        # from an outdated base" scenario.
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
     except GitServiceError as exc:
         _gs._fail_worktree(project_id, group_id, branch, exc.code)
@@ -759,7 +759,7 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
         root = target.root if target is not None and target.root is not None else base_root
         merge_id = session.get("merge_id")
         if root.exists() and _gs._merge_in_progress(root):
-            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session; and a
+            # flowgate.v02test.0052 T0003 task 3(b): audited on the session; and a
             # failed abort never closes the DB session over a workspace that is still
             # merging — it stays open, marked "정리 실패" with git's reason, for a person.
             proc = _gs._abort_merge(

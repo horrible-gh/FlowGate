@@ -207,7 +207,7 @@ let longTaskObserver: PerformanceObserver | null = null
 // PerformanceObserver longtask entries are the primary signal (Chrome/Edge). Where the
 // browser does not support the entry type, callers still get equivalent coverage from the
 // explicit performance.now() duration measurements taken around ai-refresh / persist /
-// markdown-parse below, which double as the "보조 지표" duration fallback T0004 §4 asks for.
+// markdown-parse below, which double as the "secondary metric" duration fallback T0004 §4 asks for.
 export function startLongTaskObserver(): void {
   if (typeof window === 'undefined' || longTaskObserver) return
   try {
@@ -247,7 +247,7 @@ export function recordReconnectOpened(reason: string, waitMs: number): void {
 }
 
 // One logical screen-refresh transaction per flush. The epoch is intentionally a loose,
-// best-effort correlator (T0004 §7 "가능하면") rather than a strict per-event id: fan-out
+// best-effort correlator (T0004 §7 "if possible") rather than a strict per-event id: fan-out
 // recorders elsewhere read `getCurrentRefreshEpoch()` whenever their own watcher fires.
 let refreshEpoch = 0
 export function getCurrentRefreshEpoch(): number {

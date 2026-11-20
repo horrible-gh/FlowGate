@@ -1,4 +1,4 @@
-"""Group 0372 set 3 — 전 문서 타입 멘트 축소 (D-0003 §3-2, L-0005 §2-10).
+"""Group 0372 set 3 — mention reduction across document types (D-0003 §3-2, L-0005 §2-10).
 
 The worker mention now carries only what D-0003 §3-1 says must stay inline —
 token-specific values, prohibitions, and the submission address/credential —
@@ -134,7 +134,7 @@ def test_help_block_points_at_the_document_attachments_item(build, locale):
     assert f"GET {_BASE}/help/items/document_attachments" in out
 
 
-# ── 2. doc_type guide absorbed into the index (D-0003 §3-2 "뺌") ─────────────
+# ── 2. doc_type guide absorbed into the index (D-0003 §3-2 "removed") ─────────────
 
 @pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])
 def test_standalone_doc_type_guide_section_is_gone(build):
@@ -158,7 +158,7 @@ def test_clarification_guide_keeps_address_drops_json(locale):
     assert f"POST {_BASE}/q/R0001/questions" in out
     assert '"asker_kind"' not in out
     assert f"GET {_BASE}/help/items/question" in out
-    # The no-choices guard itself is untouched (D-0003 §3-2 "남김").
+    # The no-choices guard itself is untouched (D-0003 §3-2 "retained").
     assert "Do NOT present choices" in out
     assert "register a Q" in out
 

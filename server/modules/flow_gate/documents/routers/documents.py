@@ -3560,14 +3560,14 @@ def _save_write_checks(doc: dict) -> None:
             status_code=409,
             detail="Use the TR2 document endpoint with expected_revision.",
         )
-    # 0344 TR0008 후속 — 이관이 끝난 대화(CH)는 전체 본문 교체를 받지 않는다
-    # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR 이 이 마무리를 시도했다가
-    # 반려된 뒤 후속이 없어 방치돼 있었다. 화면의 [편집] 진입점을 지우는 것만으로는
-    # 옛 즐겨찾기와 직접 호출이 같은 일을 계속할 수 있다. 이관된 대화의 파일은 아무도
-    # 읽지 않는 껍데기라서(위 get_document_content 는 턴에서 만든 projection 을 준다)
-    # 여기를 열어 두면 "저장 성공" 응답을 받고도 대화는 하나도 바뀌지 않는다.
-    # 이관되지 않은 대화(pending/in_progress/failed)는 아직 파일이 정본이라 그대로 저장된다.
-    # 봉투는 세션 계열 HTTPException(detail) 그대로 — 0344.0004-P §0-5.
+    # 0344 TR0008 follow-up: migrated conversations (CH) do not accept full-body replacements
+    # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR attempted this final step,
+    # but it remained unfinished after rejection. Removing only the UI's [편집] entry point still lets
+    # old bookmarks and direct calls perform the same action. A migrated conversation's file is an unused
+    # shell (get_document_content above returns a projection of turns), so leaving this entry open
+    # would return a successful-save response without changing the conversation at all.
+    # Unmigrated conversations (pending/in_progress/failed) still use the file as their source of truth and save normally.
+    # Keep the session-family HTTPException(detail) envelope — 0344.0004-P §0-5.
     if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc["doc_id"]):
         raise HTTPException(
             status_code=409,

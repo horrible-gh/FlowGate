@@ -565,7 +565,7 @@ describe('test section — the guard and the TS state (flowgate.v02.0048 T#11)',
     expect(reasonOf(w)).toBe('폐기된 그룹이라 테스트를 실행할 수 없습니다.')
   })
 
-  // flowgate.v02.0094 #8: written (지시서 · 시나리오 작성 완료) but awaiting its review and never run — nothing on the v0.2
+  // flowgate.v02.0094 #8: written (instruction · Scenario writing complete) but awaiting its review and never run — nothing on the v0.2
   // card approves a TS on its own, so ▶ is open and approves it; the approval queues the run.
   it.each(['draft', 'pending_review', 'revised', 'rejected'])('a written TS (%s, never run) starts without a document approval', async (review) => {
     ts().review = review

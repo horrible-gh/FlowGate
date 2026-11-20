@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0042 — the card's '병합 · 충돌' Inspector tab (시안 v7, 0005-CH turns 38-40): shown only with merge work,
+ * flowgate.v02test.0042 — the card's '병합 · 충돌' Inspector tab (mockup v7, 0005-CH turns 38-40): shown only with merge work,
  * always last, blue while it only shows progress and red while a person must choose; ① catching up, ② could not
  * reconcile (the mockup's framed box: files with how each overlaps, [AI로 해결] beside its AI select, the two buttons, the
  * waiting cards), ③ per-file pick (segmented) and [이대로 맞추고 병합], ④ merged, failed ([다시 시도]) and the waiting

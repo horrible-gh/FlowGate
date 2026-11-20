@@ -8,17 +8,17 @@
 // command is the event boundary a later Feature group wires (0001-R §8). No keyboard shortcut is
 // assigned or shown here — shortcuts are decided in a later step (0001-R §6.7, 0007-T §7).
 //
-// flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 is a submenu of the Edit menu and the Toolbar's
-// 정렬 / 배치 ▾ drop-down, both listing the same commands — six 정렬 and two 균등 분배 of the selected cards
-// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, 자동 배치.
+// flowgate.v02.0059 T#2 (0011-CH contract D): alignment / layout is a submenu of the Edit menu and the Toolbar's
+// alignment / layout ▾ drop-down, both listing the same commands — six alignment and two equal distribution of the selected cards
+// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, auto-layout.
 //
 // flowgate.v02.0059 0017-T: the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
-// its numbers live); 자율형 forces none. It never lays cards out and never starts or stops 자동 배치.
+// its numbers live); freeform forces none. It never lays cards out and never starts or stops auto-layout.
 //
-// flowgate.v02.0061 T#14 (R §실행 제어, 0002-CH turn 8 §2.3): the run commands follow the open Flow's run phase —
-// idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: 중지 다시 시도 (0156 D8: the server's repeated Stop goes on with the stop).
+// flowgate.v02.0061 T#14 (R §run control, 0002-CH turn 8 §2.3): the run commands follow the open Flow's run phase —
+// idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: Retry stop (0156 D8: the server's repeated Stop goes on with the stop).
 // No standing button is added (the Toolbar shows the two of the phase in place). The Run menu's 다음 단계 실행 · 전체
-// 실행 · 실행 중지 · Flow 검증 follow the same rule and 재실행 is never available (Q7: no reset / forced rerun in a
+// 실행 · 실행 중지 · Flow verification follow the same rule and 재실행 is never available (Q7: no reset / forced rerun in a
 // Graph Flow). While one run command is answered (`runBusy`) every run command waits.
 // TR0031 rev1: so does every run command while the open Flow's run status is not confirmed (`runUnknown`) — a run being
 // read, or whose read failed, is not idle.
@@ -41,9 +41,9 @@ export type DesignerTopCommand =
   | 'edit.copy'
   | 'edit.paste'
   | 'edit.delete'
-  /** flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the selected cards (DESIGNER_ARRANGE_GROUPS). */
+  /** flowgate.v02.0059 T#2: alignment / equal distribution of the selected cards (DESIGNER_ARRANGE_GROUPS). */
   | DesignerArrangeCommand
-  /** flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 (DESIGNER_AUTO_LAYOUT_COMMANDS). */
+  /** flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 (DESIGNER_AUTO_LAYOUT_COMMANDS). */
   | DesignerAutoLayoutCommand
   | 'edit.select-all'
   /** flowgate.v02.0059 T#1: the Toolbar's [선택] toggle (area / click multi-selection on the Canvas). */
@@ -68,7 +68,7 @@ export type DesignerTopCommand =
   | 'header.settings'
   | 'header.user'
 
-/** flowgate.v02.0059 T#2: the 정렬 / 분배 commands (the Center's arrange kinds after `edit.`). */
+/** flowgate.v02.0059 T#2: the alignment / distribution commands (the Center's arrange kinds after `edit.`). */
 export type DesignerArrangeCommand =
   | 'edit.align-left'
   | 'edit.align-center'
@@ -79,7 +79,7 @@ export type DesignerArrangeCommand =
   | 'edit.distribute-horizontal'
   | 'edit.distribute-vertical'
 
-/** The 정렬 / 배치 submenu in display order, one group per separator: horizontal, vertical, 균등 분배. */
+/** The alignment / layout submenu in display order, one group per separator: horizontal, vertical, equal distribution. */
 export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[])[] = [
   ['edit.align-left', 'edit.align-center', 'edit.align-right'],
   ['edit.align-top', 'edit.align-middle', 'edit.align-bottom'],
@@ -87,8 +87,8 @@ export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[
 ]
 
 /**
- * flowgate.v02.0068 T#2 (0004-D §6.3): 자동정렬 by direction — the former single 자동 배치 is these two, after the
- * 정렬 / 분배 groups in the Toolbar's 정렬 / 배치 ▾ and in the Edit menu. The direction is the command's only: no last
+ * flowgate.v02.0068 T#2 (0004-D §6.3): auto-layout by direction — the former single auto-layout is these two, after the
+ * alignment / distribution groups in the Toolbar's alignment / layout ▾ and in the Edit menu. The direction is the command's only: no last
  * direction is kept or shown.
  */
 export type DesignerAutoLayoutCommand = 'edit.auto-layout-horizontal' | 'edit.auto-layout-vertical'
@@ -98,13 +98,13 @@ export const DESIGNER_AUTO_LAYOUT_COMMANDS: readonly DesignerAutoLayoutCommand[]
 /** Shared order for Edit > Arrange and the Toolbar dropdown. */
 export const DESIGNER_LAYOUT_GROUPS: readonly (readonly DesignerTopCommand[])[] = [...DESIGNER_ARRANGE_GROUPS, DESIGNER_AUTO_LAYOUT_COMMANDS]
 
-/** The direction a 자동정렬 command lays the Flow out in, or null for any other command. */
+/** The direction a auto-layout command lays the Flow out in, or null for any other command. */
 export function autoLayoutDirectionOf(cmd: DesignerTopCommand): 'horizontal' | 'vertical' | null {
   if (cmd === 'edit.auto-layout-horizontal') return 'horizontal'
   return cmd === 'edit.auto-layout-vertical' ? 'vertical' : null
 }
 
-/** How many selected cards a 정렬 (2) / 균등 분배 (3) command needs. */
+/** How many selected cards a alignment (2) / equal distribution (3) command needs. */
 export function arrangeSelectionMinimum(cmd: DesignerTopCommand): number | null {
   if (cmd === 'edit.distribute-horizontal' || cmd === 'edit.distribute-vertical') return 3
   return cmd.startsWith('edit.align-') ? 2 : null
@@ -129,8 +129,8 @@ export interface DesignerRecentRequest {
 }
 
 /**
- * Canvas layout density, widest first (0001-R §3.4): 넓게 / 보통 / 좁게 / 자율형. flowgate.v02.0059 0018-TR rev2
- * (rejection: the terms are 넓게, 보통, 좁게): the three stepped densities were renamed — the steps stay 40 / 20 / 10.
+ * Canvas layout density, widest first (0001-R §3.4): wide / normal / narrow / freeform. flowgate.v02.0059 0018-TR rev2
+ * (rejection: the terms are wide, normal, narrow): the three stepped densities were renamed — the steps stay 40 / 20 / 10.
  */
 export type DesignerDensity = 'wide' | 'normal' | 'narrow' | 'free'
 
@@ -141,7 +141,7 @@ export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['wide', 'normal',
  * first, coarse to fine. 0018-TR rework: the step is a lattice — the dragged card lands on the nearest Graph
  * point whose x and y are whole steps, the other dragged cards keep their offset to it (canvasView.ts
  * stepGroupMove), so a dragged selection keeps its relative layout — and the Canvas dot grid draws exactly that
- * lattice (canvasView.ts canvasDotGrid), so a density shows its own dot spacing. 자율형 (`null`) forces no step
+ * lattice (canvasView.ts canvasDotGrid), so a density shows its own dot spacing. freeform (`null`) forces no step
  * and shows no grid: a card stays exactly where it is dropped. Choosing a density moves nothing by itself.
  *
  * Unit: the server's auto placement (auto_layout.py) puts every card on a 20 lattice — its column step 260,
@@ -206,7 +206,7 @@ export type DesignerMenuEntry =
   | { kind: 'command'; command: DesignerTopCommand; label: string }
   | { kind: 'recent'; recent: DesignerRecentKind; label: string }
   | { kind: 'density'; label: string }
-  /** flowgate.v02.0059 T#2: the 정렬 / 배치 submenu (DESIGNER_ARRANGE_GROUPS). */
+  /** flowgate.v02.0059 T#2: the alignment / layout submenu (DESIGNER_ARRANGE_GROUPS). */
   | { kind: 'arrange'; label: string }
   | { kind: 'panel'; panel: DesignerWindowPanel }
   | { kind: 'tab'; tab: DesignerWindowTab }
@@ -332,12 +332,12 @@ export function runCommandHold(run: DesignerRunHoldFacts | null | undefined): bo
   return run?.status === 'idle' && run.qaResponding === true
 }
 
-/** flowgate.v02.0143 T#1: the run commands an automatic Q&A responder's hold keeps waiting (Flow 검증 starts nothing). */
+/** flowgate.v02.0143 T#1: the run commands an automatic Q&A responder's hold keeps waiting (Flow verification starts nothing). */
 const HELD_RUN_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>(['run.next', 'run.all'])
 
 /**
  * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
- * a newly created Project's too — starts at the density 보통 (flowgate.v02.0059 0018-TR rev2).
+ * a newly created Project's too — starts at the density normal (flowgate.v02.0059 0018-TR rev2).
  */
 export interface DesignerTopState {
   runPhase: DesignerRunPhase
@@ -418,7 +418,7 @@ export function runBandView(run: DesignerRunFacts | null | undefined): DesignerR
 
 /**
  * flowgate.v02.0083 T#4 — the band's colour, by the server's run status and idle reason only: a running run (its AI
- * executions are counted beside it) is `info`; an idle run waiting for a person (사람 작성·승인 대기, 개입 필요, Hold) or a paused
+ * executions are counted beside it) is `info`; an idle run waiting for a person (Human writing·승인 대기, 개입 필요, Hold) or a paused
  * run is `warning`; one stopped by an error, a rejection or a merge conflict is `danger`; a completed run is
  * `success`; anything else (다음 단계 완료, 실행할 카드 없음, 중지됨, an unknown reason) is `neutral`.
  */
@@ -445,10 +445,10 @@ export function runBandTone(band: Pick<DesignerRunBand, 'phase' | 'idleReason'>)
 
 /**
  * What the Designer holds for the menus to act on. `flow` is the work target of 0042 — an open
- * Flow — behind the Edit / Run / View commands, the layout density and Flow 닫기. `project` is
+ * Flow — behind the Edit / Run / View commands, the layout density and Flow Close. `project` is
  * the Project context (the Project opened with 열기, 0040) behind the Group / Flow commands,
- * their recent lists and Project 닫기. `group` is a Group row chosen in the Project Explorer,
- * behind Group 닫기. The File menu follows each command's own precondition (0043 0001-R §3),
+ * their recent lists and Project Close. `group` is a Group row chosen in the Project Explorer,
+ * behind Group Close. The File menu follows each command's own precondition (0043 0001-R §3),
  * not the work target alone: without it a first Flow could never be opened from the menu.
  */
 export interface DesignerMenuTargets {
@@ -462,7 +462,7 @@ export interface DesignerMenuTargets {
    */
   canUndo?: boolean
   canRedo?: boolean
-  /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (정렬 2+, 균등 분배 3+). */
+  /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (alignment 2+, equal distribution 3+). */
   selectedCount?: number
   /** flowgate.v02.0061 T#14: a run command of the open Flow is being answered (every run command waits). */
   runBusy?: boolean
@@ -508,7 +508,7 @@ const PROJECT_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCom
 
 /**
  * Whether a menu command can be chosen. ALWAYS_COMMANDS always can; PROJECT_COMMANDS need the
- * Project context, Group 닫기 a chosen Group, Flow 닫기 an open Flow; everything else needs the
+ * Project context, Group Close a chosen Group, Flow Close an open Flow; everything else needs the
  * open Flow and then the run phase decides (flowgate.v02.0061 T#14: the run commands of each phase).
  */
 export function isMenuCommandEnabled(
@@ -535,8 +535,8 @@ export function isMenuCommandEnabled(
 }
 
 /**
- * Whether a submenu entry can be opened: 최근 Project always, 최근 Group / Flow with the Project
- * context, the layout density and 정렬 / 배치 with an open Flow.
+ * Whether a submenu entry can be opened: Recent Project always, Recent Group / Flow with the Project
+ * context, the layout density and alignment / layout with an open Flow.
  */
 export function isSubmenuEnabled(entry: DesignerMenuEntry, targets: DesignerMenuTargets = ALL_MENU_TARGETS): boolean {
   if (entry.kind === 'density' || entry.kind === 'arrange') return targets.flow

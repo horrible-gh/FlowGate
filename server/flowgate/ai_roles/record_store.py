@@ -74,7 +74,7 @@ _FINISH_ORPHANS = (
     "WHERE ai_run_id = ? AND result = 'running'"
 )
 
-# The provider fingerprint's key (DB-1 [DEFERRED] "지문 키 출처", decided here): derived from the AI-key
+# The provider fingerprint's key (DB-1 [DEFERRED] "fingerprint key source", decided here): derived from the AI-key
 # encryption master key of ``utils.api_key_crypto`` (FLOWGATE_AI_ENCRYPT_KEY, else the storage key file) under
 # its own label, so the fingerprint is a keyed hash nobody without the server key can reproduce, the API keys'
 # cipher key itself is never used as an HMAC key, and no new secret has to be provisioned. Without a readable

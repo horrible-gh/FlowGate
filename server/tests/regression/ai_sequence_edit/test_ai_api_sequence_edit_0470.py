@@ -119,7 +119,7 @@ def test_api_sequence_edit_failure_is_recorded_and_returned_for_retry(monkeypatc
     assert run["last_tool_error"] is None
 
 
-# ── 0007-T 완료기준 (d): the real PATCH route, the real store, the real verdict ──
+# ── 0007-T acceptance criterion (d): the real PATCH route, the real store, the real verdict ──
 #
 # The three tests above pin the wiring INSIDE the worker (which tool is exposed, what body
 # the handler builds, how a failure is recorded) and stub the transport to do it. That is
@@ -381,7 +381,7 @@ def test_api_sequence_edit_that_replaces_the_tail_lands_in_the_store_and_is_comp
     assert oracle_world[1]["note"] == "실제 저장 확인"
     assert svc._probe_sequence_max_item(ORACLE_ROOT) == 4 > 2  # baseline was 2
 
-    # 0007-T 완료기준 (d): the same verdict the CLI path gets in 0268.
+    # 0007-T acceptance criterion (d): the same verdict the CLI path gets in 0268.
     assert run["docs_target"] == 0, "a sequence edit registers no document"
     assert run["outcome"] == "complete"
     assert run["oracle_mismatch"] is False

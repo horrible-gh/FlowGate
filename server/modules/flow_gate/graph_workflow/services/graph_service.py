@@ -1,4 +1,4 @@
-"""Graph definition service (D0004 §2.2 그래프 정의 서비스, P0008 §5 S3, L0009 §2.1.5 / §2.5).
+"""Graph definition service (D0004 §2.2 graph definition service, P0008 §5 S3, L0009 §2.1.5 / §2.5).
 
 Draft save and validation run inside the Flow guard: the ownership judgement, the
 ``draft_version`` comparison and the write are one unit. A draft save replaces the Flow's draft
@@ -241,7 +241,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
 
 def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],
                 registered: set[str], locale: Optional[str] = None) -> dict:
-    """The draft save inside the caller's Flow guard of ``group`` (flowgate.v02.0074 T#4, D0006 §2 초안 저장 내부 함수).
+    """The draft save inside the caller's Flow guard of ``group`` (flowgate.v02.0074 T#4, D0006 §2 internal draft-save function).
 
     ``save_draft`` runs it in a guard of its own; the work plan deploy runs it in the guard that also writes its
     cards' settings and instructions, so the draft, the card lines and those writes commit together or not at all.

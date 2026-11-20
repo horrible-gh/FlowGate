@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B, §9.5) — the context menu's 11 existing server commands in the
- * real Designer Shell: 그룹 / 플로우 이름 변경, 플로우 삭제 (= the existing dispose, DC), 새 폴더 / 새 파일, 폴더 다운로드 /
- * 업로드 / 삭제, 파일 다운로드 / Git › 수정 확인 / 삭제. Each through its window (confirmation, re-check right before the
+ * real Designer Shell: 그룹 / Rename Flow, Delete Flow (= the existing dispose, DC), New folder / 새 파일, Download folder /
+ * 업로드 / 삭제, Download file / Git › Review changes / 삭제. Each through its window (confirmation, re-check right before the
  * request, the server's refusal shown and nothing changed) and the existing server contract (features/project →
  * `@shared/api`, mocked here: the request each sends is checked), then the existing refresh paths (Project tree, recent
  * lists, tab names / close, File Explorer tree). Scaffold as contextMenuAttachShell.0060.
@@ -90,7 +90,7 @@ let diffBase: string | null = null
 let fileNodes: Array<Record<string, unknown>> = FILE_NODES
 /** What the File Explorer tree read throws once the explorer has read it (null = it answers `fileNodes`). */
 let fileTreeError: unknown = null
-/** What the 수정 확인 diff read throws instead of answering, and the two texts it answers. */
+/** What the Review changes diff read throws instead of answering, and the two texts it answers. */
 let diffError: unknown = null
 const DIFF_OLD = 'const a = 1\nexport { a }\n'
 const DIFF_NEW = 'const a = 2\nexport { a }\n'
@@ -235,7 +235,7 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    // v02gui.0027: the Shell also connects 그룹 아카이브 and 그룹 삭제 (each after its separator).
+    // v02gui.0027: the Shell also connects Archive Group and Delete Group (each after its separator).
     expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', ''], ['group.delete', 'false', '']])
     await choose('group.rename')
     expect(dialog()?.dataset.kind).toBe('group.rename')
@@ -457,7 +457,7 @@ describe('2-B in the Shell — 이름 변경 re-checks its row right before the 
   })
 })
 
-// ── Flow 삭제 = the existing dispose (DC), 0006-D §9.5 ─────────────────────────────────────────
+// ── Flow Delete = the existing dispose (DC), 0006-D §9.5 ─────────────────────────────────────────
 
 describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (0006-D §9.5)', () => {
   async function openDispose(w: VueWrapper<any>, label = 'Canvas') {
@@ -475,7 +475,7 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
-    // v02gui.0029 (0003-CH, 시안 tfi2zm20): the Group delete's look — the red badge above the title, one sentence, the
+    // v02gui.0029 (0003-CH, mockup tfi2zm20): the Group delete's look — the red badge above the title, one sentence, the
     // Flow in its box (identifier faint), two points; still no standing help under the input.
     expect(q('dma-badge')!.dataset.icon).toBe('trash')
     expect(document.querySelector('.dma-head')!.getAttribute('data-look')).toBe('hero')
@@ -801,7 +801,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     await choose('folder.delete')
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('src')
-    // v02gui.0029: titled 폴더 삭제; the folder in a red-edged box; what goes with it and "cannot be undone" as red points.
+    // v02gui.0029: titled Delete folder; the folder in a red-edged box; what goes with it and "cannot be undone" as red points.
     expect(document.querySelector('.dma-title')!.textContent).toBe('폴더 삭제')
     expect(submitButton().textContent).toContain('폴더 삭제')
     expect(q('dma-fact-target')!.classList.contains('is-danger')).toBe(true)
@@ -841,7 +841,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     rightClick(file(w, 'src/util.ts'))
     await settle()
     await choose('file.delete')
-    // v02gui.0029: titled 파일 삭제; the file's name large, its folder faint, the whole path as the box's tooltip.
+    // v02gui.0029: titled Delete file; the file's name large, its folder faint, the whole path as the box's tooltip.
     expect(document.querySelector('.dma-title')!.textContent).toBe('파일 삭제')
     expect(q('dma-fact-target')!.dataset.path).toBe('src/util.ts')
     expect(q('dma-fact-target')!.querySelector('.dma-target-name')!.textContent).toBe('util.ts')
@@ -872,7 +872,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     expect(dialog()).not.toBeNull()
   })
 
-  // T 4항: right before the request the window builds the menu again from now — another open Flow runs nothing.
+  // T 4 item: right before the request the window builds the menu again from now — another open Flow runs nothing.
   it.each([
     ['folder.newFile', true],
     ['folder.upload', false],
@@ -939,7 +939,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     expect(q('dma-diff-lines')).toBeNull()
   })
 
-  // T 3항: the server overwrites a same-named file without asking, and the tree read is no full list of what is
+  // T 3 item: the server overwrites a same-named file without asking, and the tree read is no full list of what is
   // there (it leaves out ignored and unreadable files, and it can fail) — so every upload asks the confirmation.
   it.each([
     ['an ignored file the tree read leaves out', () => {}, ['local.env'], 'dma-no-known'],
@@ -1034,7 +1034,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     expect(submitButton().disabled).toBe(false)
   })
 
-  // T 4항: a refusal of the diff read reaches the window through the existing loader (its `cause`), as the server said it.
+  // T 4 item: a refusal of the diff read reaches the window through the existing loader (its `cause`), as the server said it.
   it.each([
     ['403', axiosError(403, { ok: false, error: { code: 'forbidden', message: 'Forbidden' } }), 'forbidden', '403', '권한이 없습니다'],
     ['404', axiosError(404, { ok: false, error: { code: 'not_found', message: "path 'src/app.ts' not found" } }), 'not_found', '404', '대상이 없습니다'],
@@ -1183,7 +1183,7 @@ describe('2-B — the 수정 확인 line diff keeps how each line ends and folds
   })
 })
 
-// ── v02gui.0027: 그룹 아카이브 / 복원 (display-only Group archive) ─────────────────────────────────────────
+// ── v02gui.0027: Archive Group / 복원 (display-only Group archive) ─────────────────────────────────────────
 
 describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from the ⋯ button and the right-click menu', () => {
   /** The server's tree: the "ui" Group (with its Flows) only in an include_archived read while it is archived. */
@@ -1278,7 +1278,7 @@ describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from 
   })
 })
 
-// ── v02gui.0027 (0008-T): 그룹 삭제 — empty Groups only, 대신 아카이브 otherwise ──────────────────────────────
+// ── v02gui.0027 (0008-T): Delete Group — empty Groups only, Archive instead otherwise ──────────────────────────────
 
 describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대신 아카이브', () => {
   /**

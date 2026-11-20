@@ -7,7 +7,7 @@
 // - Version order (L0006 2.8 accept_title_state): a title state bundle replaces the one the screen shows only when its
 //   version is above it — a save answer and every Graph read alike, whatever order they arrive in. Nothing is shown
 //   before the server answered (no optimistic title), so nothing is ever rolled back.
-// - Who may edit (D0005 §3.2 잠금 표): a card with a title state (a v0.2 Graph node; never a v0.1 free document / slot
+// - Who may edit (D0005 §3.2 locking table): a card with a title state (a v0.2 Graph node; never a v0.1 free document / slot
 //   card or an older server's), on a Graph or unassigned Flow, not in a past revision view, and not while it runs. The
 //   running lock is the server's own (`node_running` of the node run: the card settings' lock a title save is refused by —
 //   open, or in review while the card's AI review works), never the approval state: a review card waiting only for its

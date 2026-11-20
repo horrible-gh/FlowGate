@@ -14,7 +14,7 @@
 //            step_execution_status[] { step_key, card_id, started }, assignment_summary[] { provider_id,
 //            display_name, step_count }, unassigned_step_count, totals { design_sheets, work_sets, steps }, … }
 // Only reading is wrapped. Editing (`PUT …/work-plan`), revision restore, suggestions, the apply history and
-// apply / preview / sequence candidates (WP 전개) stay in the v0.1 WorkPlanEditor (↗ 열기, D#1 §10.2 T#13
+// apply / preview / sequence candidates (WP deployment) stay in the v0.1 WorkPlanEditor (↗ 열기, D#1 §10.2 T#13
 // row, §8.4).
 //
 // Refusals keep the server's shape and are thrown as they are; workPlanErrorOf reads them. The route answers

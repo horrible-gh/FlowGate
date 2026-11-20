@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0056 (0017-CH) — the card memo windows (useCardMemoWindows): one form per memo — title · body · [AI가
+  <!-- flowgate.v02.0056 (0017-CH) — the card memo windows (useCardMemoWindows): one form per memo — title · body · [AIa
        참조] — with [삭제] · [저장] · [닫기]. The header names the memo (a new one: 새 메모) with the AI 참조 chip when
        the AI refers to it; no hint text. A read-only view of the window's card keeps the form but changes nothing.
        A written memo opened to read (the line's 열기) shows its body with [삭제] · [편집] · [닫기]; [편집] or the

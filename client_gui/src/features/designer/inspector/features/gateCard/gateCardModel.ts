@@ -114,12 +114,12 @@ export function gateDecisionReason(
   if (node?.status !== 'open') return 'reason.not_open'
   if (busy) return 'reason.busy'
   if (node.gate?.can_decide !== true) {
-    // flowgate.v02gui.0004 (0001-B §B, 관찰 6): an earlier approval still held — say that, not "wait for your turn".
+    // flowgate.v02gui.0004 (0001-B §B, observation 6): an earlier approval still held — say that, not "wait for your turn".
     const gate = node.gate
     if (gate?.decision_in_progress) {
       const conflict = gate.job?.phase_note === 'gate_conflict' || gate.recovery?.status === 'conflict'
       if (conflict) return 'reason.conflict'
-      // flowgate.v02test.0052 0008 할 일 6: the held approval already failed (parked) — it has to be cancelled before approving
+      // flowgate.v02test.0052 0008 task 6: the held approval already failed (parked) — it has to be cancelled before approving
       // again; "in progress" would send the person to wait for something that never finishes.
       const recovery = gate.recovery
       const failed = !!recovery && gate.git_active !== true && (['failed', 'recovery_required'].includes(recovery.status) || (!!recovery.error_code && recovery.status !== 'accepted'))

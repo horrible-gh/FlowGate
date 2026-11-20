@@ -342,7 +342,7 @@ export interface ProviderList {
 /**
  * flowgate.v02test.0025 — the signed-in user's settings of one chat (GET/PATCH
  * /documents/{doc_id}/conversation/settings): the AI picked in that chat (null = my default AI) and its context
- * checkpoint (null = none). The checkpoint applies only while the context setting is 체크포인트 사용.
+ * checkpoint (null = none). The checkpoint applies only while the context setting is "체크포인트 사용".
  */
 export interface ChatDocSettings {
   timeoutMinutes?: number | null

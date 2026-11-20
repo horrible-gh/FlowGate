@@ -209,10 +209,10 @@ function documentIcon(doc: CardDocumentButton): string {
   return doc.scenario ? CARD_DOCUMENT_ICONS.scenario : doc.report ? CARD_DOCUMENT_ICONS.report : CARD_DOCUMENT_ICONS.instruction
 }
 
-/** flowgate.v02test.0044: the integration / 미인계 marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
+/** flowgate.v02test.0044: the integration / Not handed over marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
  * with a cross — never the card state 오류's circled cross, so the two stay apart. */
 const CARD_MARK_ICONS = {
-  // flowgate.v02test.0042 (시안 v7): a waiting merge is an hourglass; its tooltip names the card it waits for.
+  // flowgate.v02test.0042 (mockup v7): a waiting merge is an hourglass; its tooltip names the card it waits for.
   pending: 'M6 3h12 M6 21h12 M7 3c0 5 10 6 10 9s-10 4-10 9 M17 3c0 5-10 6-10 9s10 4 10 9',
   integrating: 'M21 12a9 9 0 1 1-3-6.7 M21 4v5h-5',
   failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
@@ -253,7 +253,7 @@ const headerTitle = computed(() => {
   return reason ? `${label} (${reason})` : label
 })
 
-/** v02gui.0015 T2: the 미인계 mark's name and its hover sentence (a count that could not be read is said so). */
+/** v02gui.0015 T2: the Not handed over mark's name and its hover sentence (a count that could not be read is said so). */
 const uncarriedLabel = computed(() => {
   const value = props.data.uncarried
   if (!value) return ''
@@ -327,7 +327,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
     0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
-/* flowgate.v02test.0042 (시안 v7): a card whose merge conflicts waits for a person — a red ring, also when selected. */
+/* flowgate.v02test.0042 (mockup v7): a card whose merge conflicts waits for a person — a red ring, also when selected. */
 .flow-node-card.has-conflict {
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--fg2-status-danger-fg) 35%, transparent),
@@ -468,7 +468,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   margin-left: 4px;
 }
 
-/* flowgate.v02test.0044: 병합 대기 · 병합 중 · 병합 실패 and 미인계 — the head row's 18px box / 16px glyph, shown only. */
+/* flowgate.v02test.0044: 병합 대기 · 병합 중 · 병합 실패 and Not handed over — the head row's 18px box / 16px glyph, shown only. */
 .flow-node-mark {
   position: relative;
   display: grid;

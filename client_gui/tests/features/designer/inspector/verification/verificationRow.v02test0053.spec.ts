@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0053 1-D — the work card's `검증` line (시안 v15): drawn only while the server says so (a run past
+ * flowgate.v02test.0053 1-D — the work card's `검증` line (mockup v15): drawn only while the server says so (a run past
  * last launch + time limit + 1 minute, or this card's request waiting behind one); name · badge · buttons only, times in
  * the badge tooltip; [강제 종료] / [취소] confirm in place; [종료됨] / [취소됨] stay briefly and the next read hides them;
  * [종료 실패] offers [다시 종료]; [→] shows the card ahead; refusals read again; 403 hides the line without asking again.

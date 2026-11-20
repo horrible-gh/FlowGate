@@ -9,7 +9,7 @@ and [제출] is the v0.1 ``review_transitions/mark_revised`` route, which hands 
 Nothing here calls ``v01_contact`` itself: every step is a real HTTP route (the T#4 suite told the binder directly and
 missed that no route reached it — 0014-CH turn 8 §1).
 
-Covered (0020-T 검증 2·3·4·5 and 8, on the server):
+Covered (0020-T checks 2·3·4·5 and 8, on the server):
 1. saved -> submitted -> reviewed once (or review 'none') -> approved -> the next card opens; the line keeps its one plan;
 2. another card's AI working in the same Flow neither refuses the save nor the submission (no group lease is held);
    an AI run holding the Flow's group lease still refuses the save (423, the mutation policy is not changed);

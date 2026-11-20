@@ -1,5 +1,5 @@
 """flowgate.v02.0083 T#3 (WP-3) — a person's approval on an idle run moves the run on to the next card, with no further
-resume (the flowgate.v02.0056 T#1 contract restored; 0061 T#2 개정, revised).
+resume (the flowgate.v02.0056 T#1 contract restored; 0061 T#2 revised).
 
 0061 T#2 kept every propagation of a run that is not ``running`` waiting (``frontier.defers``: paused, idle) until the next
 command, so a person's approval on an idle run — the exception path of a card: a review that did not pass or spent its
@@ -152,7 +152,7 @@ def _person_waits(env, cards, mode=None, wait="command_chain"):
 WAITS = pytest.mark.parametrize("wait", ["command_chain", "reported"])
 
 
-# ── a person's approval on an idle run moves on (0061 T#2 개정) ───────────────────
+# ── a person's approval on an idle run moves on (0061 T#2 revised) ───────────────────
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
@@ -314,7 +314,7 @@ def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
         return RunState(status, {"a": NodeRun("a", "review", "d")}, approval_wakes=wakes)
 
     assert defers(state("running")) is False
-    assert defers(state("idle", wakes=True)) is False                   # 0061 T#2 개정
+    assert defers(state("idle", wakes=True)) is False                   # 0061 T#2 revised
     assert defers(state("idle")) is True                                # stopped / Time Machine / a command
     assert defers(state("paused")) is True and defers(state("paused", wakes=True)) is True
     assert virtual(state("idle", wakes=True), Decision()).approval_wakes is True

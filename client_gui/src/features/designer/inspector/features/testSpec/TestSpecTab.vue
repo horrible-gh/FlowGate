@@ -107,7 +107,7 @@ const lines = computed<Line[]>(() => {
   const own = (slot: string) => props.target.cardDocuments.find((line) => line.slot === slot)
   const tsId = v?.tsDocId ?? own('scenario')?.docId ?? own('instruction')?.docId ?? (props.target.docType === 'TS' ? props.target.docId : null)
   const reportId = v?.tsrDocId ?? own('report')?.docId ?? null
-  // flowgate.v02.0094: the 지시서 · 시나리오 lines show their state badge only (no instruction text or case tally).
+  // flowgate.v02.0094: the instruction · 시나리오 lines show their state badge only (no instruction text or case tally).
   const intro = v?.details?.intro?.trim() ?? ''
   const counts = card.value?.test.counts.value
   const reportSummary = state.stage === 6 ? t(k('card.confirmed_counts'), { pass: counts?.pass ?? 0, total: v?.cases.length ?? 0 })

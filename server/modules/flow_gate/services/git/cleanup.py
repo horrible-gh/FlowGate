@@ -1,6 +1,6 @@
 """Stale-session cleanup and startup recovery.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ def _review_pending_ttl_expired(session: dict) -> bool:
     not abandonment by itself. One that holds the base checkout keeps the ordinary
     activity TTL — real operations only (a resolution submit, a review conversation
     turn); opening the review screen is not activity (flowgate.v02test.0052 T0003
-    할 일 4(c)) — under a hard cap from creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
+    task 4(c)) — under a hard cap from creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
     (hold) stays the explicit way to park longer.
 
     0683 T0004 §5: a session on a managed non-base target workspace is not harmless to
@@ -609,7 +609,7 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
         return
     if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
         return
-    # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session like every
+    # flowgate.v02test.0052 T0003 task 3(b): audited on the session like every
     # other session abort (``ref_operations[].stderr_tail`` on failure).
     proc = _gs._abort_merge(root, merge_id=merge_id, reason="group_update_sweep_abort")
     if proc.returncode == 0:

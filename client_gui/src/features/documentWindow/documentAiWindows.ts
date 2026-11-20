@@ -22,7 +22,7 @@ export interface DocumentAiRequest {
   readonly groupId: string
   /** The project the AI choices belong to. */
   readonly projectId: string
-  /** The line's name (지시서 · 레포트 …) and the document's title, for the window's title line. */
+  /** The line's name (instruction · report …) and the document's title, for the window's title line. */
   readonly name: string
   /** flowgate.v02.0088 F15: the i18n key of `name` (UI only, as SlotWriteRequest.nameKey; windows stay keyed by docId). */
   readonly nameKey?: string | null

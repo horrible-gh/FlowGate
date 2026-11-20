@@ -13,7 +13,7 @@ registered as ``startup`` does):
 - [다음 단계] stop is not "awaiting approval": the card's automatic approval while the run is stopped makes the node
   done at once and only its propagation waits.
 
-0083 WP-3 (0061 T#2 개정, revised): a person's approval on an idle run propagates at once again (``frontier.defers``,
+0083 WP-3 (0061 T#2 revised): a person's approval on an idle run propagates at once again (``frontier.defers``,
 ``test_fg_idle_approval_0083``), and a run's states are 0061 T#2's (migration 151): a done run is ``idle`` with the
 idle reason ``completed`` and keeps its Flow.
 
@@ -24,7 +24,7 @@ flowgate.v02.0119 T#3 (T-2): no person approves a card any more. A card in revie
 ``needs_intervention`` (or a ``system_error``, ``node_approval.intervention``) and ``awaiting_approval`` is always false.
 The T-2 contract itself is ``test_fg_card_intervention_0119`` / ``test_fg_auto_approval_0105``.
 
-flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 · seq 11 교체 3): the card approval is removed — its package
+flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 · seq 11 replacement 3): the card approval is removed — its package
 (``flowgate.card_approval``), its Graph port (``card_approval_ports``) and its route (``POST /runs/{run}/nodes/{node}/approval``,
 now 404). What was not a person's approval moved to the v0.2 completion (``flowgate.card_completion``):
 
@@ -295,7 +295,7 @@ def test_an_instruction_approval_refuses_an_empty_body_and_a_moved_revision(env,
 
 
 def test_a_complete_result_waits_for_the_instruction_its_card_uses_and_follows_it_once(env, decided, monkeypatch):
-    """0119 T-3 (필수 산출물): with its instruction used, a complete result (here the engine suites' stand-in reads the
+    """0119 T-3 (required artifacts): with its instruction used, a complete result (here the engine suites' stand-in reads the
     approved result as complete) waits in review while the instruction is not approved; once the instruction is
     approved — by the completion's own approval, which tells the Graph nothing — the next read's reconciliation makes
     the node done once (no contact is needed)."""
@@ -561,7 +561,7 @@ def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, deci
 
 
 def test_0056_T1_개정_rejected_root_is_input_and_its_card_is_done(env, decided):
-    """0056 T#1 개정: Run accepts rejected root input; its document stays rejected."""
+    """0056 T#1 revised: Run accepts rejected root input; its document stays rejected."""
     from modules.flow_gate.db import documents as db_documents
 
     _admin_and_reviewer(env)

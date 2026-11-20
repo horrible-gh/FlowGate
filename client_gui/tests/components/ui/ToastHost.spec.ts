@@ -57,8 +57,8 @@ describe('components/ui/ToastHost (T0008 §12)', () => {
   // Regression for the rework rejection: a dependency-free `computed` only allocated a
   // z-index once, so a Modal opened after the host was already showing would render
   // above it forever, and a later toast never recovered the top spot. Host -> Modal ->
-  // new Toast must land the host above the Modal again (T0008 §6/§10 shared "나중에 뜬
-  // 것이 위" counter, core/overlay/zIndex.ts).
+  // new Toast must land the host above the Modal again (T0008 §6/§10 shared "Later windows
+  // appear on top" counter, core/overlay/zIndex.ts).
   it('reallocates its z-index above a later-opened ModalShell once a new toast is added', async () => {
     const hostWrapper = mount(ToastHost, { props: { toasts: [{ id: 1, message: 'First', duration: 0 }] } })
     const hostBefore = document.querySelector('.ui-toast-host') as HTMLElement

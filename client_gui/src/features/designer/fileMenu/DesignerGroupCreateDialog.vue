@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0043 — File › 새 Group: the v0.1 module create (features/project createGroup)
+  <!-- flowgate.v02.0043 — File › New Group: the v0.1 module create (features/project createGroup)
        with the two fields that contract reads — display name and key — and the existing key
        suggestion (POST /slug/romanize), as the v0.1 create modal and the Project create child
        offer them. Emits the created Group; the Shell re-reads the tree and opens it. -->

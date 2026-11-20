@@ -8,7 +8,7 @@ import { getRequest } from '@shared/api'
 // extra request.
 //
 // flowgate.v02.0076 T#1: `status` tells "the /auth/me answer is still out" apart from "there
-// is no administrator". Screens that only an administrator may see (환경 설정 프로젝트/시스템)
+// is no administrator". Screens that only an administrator may see (Settings: Project/System)
 // wait while it is `loading` and treat every other state without `isAdmin` as not allowed.
 
 export interface CurrentUser {

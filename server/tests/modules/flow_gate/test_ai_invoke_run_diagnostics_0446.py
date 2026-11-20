@@ -1383,7 +1383,7 @@ class TestGetStatusExposesWatchdogProgress:
 
     def test_the_finished_payload_contract_does_not_grow_the_new_keys(self, live_db,
                                                                        finalize_env):
-        # T0004 완료 조건: "finished 상태의 기존 응답 contract도 불필요하게 변경하지 않는다"
+        # T0004 acceptance criterion: preserve the existing finished-response contract.
         # -- `finished_payload` is a different shape from the live branch above, and these
         # fields must not leak onto it.
         run = _live_run(finalize_env, run_id="aiv_20260907_000104",

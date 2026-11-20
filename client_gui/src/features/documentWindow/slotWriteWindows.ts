@@ -24,7 +24,7 @@ export interface SlotWriteRequest {
   readonly slot: string
   /** The line's document type, when the card line names it. */
   readonly docType: string | null
-  /** The line's name as the documents tab shows it (지시서 · 레포트 …). */
+  /** The line's name as the documents tab shows it (instruction · report …). */
   readonly name: string
   /**
    * flowgate.v02.0088 F14: the i18n key of that name, when the opener has one. The window shows the key in the

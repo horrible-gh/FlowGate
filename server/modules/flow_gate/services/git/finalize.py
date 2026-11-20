@@ -1,6 +1,6 @@
 """Finalize state machine, group updates, push, and reopen operations.
 
-Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 
@@ -197,8 +197,8 @@ def _group_has_changes(
             caller must then keep the conservative awaiting_choice gate — never
             discard on doubt.
 
-    flowgate.default.0548 T0004 §2 (revision 3 rejection): "Git으로 변경 유무를
-    확인할 수 없음"을 "변경이 있음"으로 취급하지 말라. Absence used to fold into the
+    flowgate.default.0548 T0004 §2 (revision 3 rejection): "Git cannot determine whether changes exist"
+    must not be treated as "changes exist". Absence used to fold into the
     blanket ``None``, which parked phantom slots — no branch at all, or a ledger
     row naming a branch whose ref and worktree are both already gone — in the
     finalize gate with nothing to finalize. Those two are now answers. Everything
@@ -343,7 +343,7 @@ def _resolve_pending_noop(
     none→awaiting_choice *transition*, so a slot that entered the gate before that
     guard existed (or entered it while divergence was briefly unmeasurable) keeps
     showing a finalize gate forever with nothing to finalize: the reviewer's
-    "머지할게 없는데 … 문서에 머지 섹션이 그대로 뜬다". The emptiness proof and the
+    "there is nothing to merge, but the document still shows a merge section". The emptiness proof and the
     teardown are exactly the ones 0199 B0001 already blessed for the transition —
     this only widens *when* they are applied, from "on entry" to "whenever the gate
     would be shown".
@@ -367,7 +367,7 @@ def _resolve_pending_noop(
 def group_finalize_is_noop(group_id: str) -> bool:
     """True when this group provably has NOTHING to merge or push.
 
-    flowgate.default.0548 T0004 §3/§4 — one server-side answer to "머지할게 없다"
+    flowgate.default.0548 T0004 §3/§4 — one server-side answer to "nothing to merge"
     that every finalize surface reads, so the approval toast, the Git panel
     auto-open, the AC approval dialog's choice block and the document's Git card
     can never disagree with each other (T0004 §8 forbids the client re-deriving it).
@@ -508,7 +508,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
                 "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
             }}
     # 0548 T0004 §3 — an ALREADY-pending slot with nothing to merge must lose the
-    # gate too, not just a slot entering it now ("문서에 머지 섹션이 그대로 뜬다").
+    # gate too, not just a slot entering it now ("the document still shows a merge section").
     elif _gs._resolve_pending_noop(project_id, cfg, state, group_id, status) != status:
         return {"ok": True, "state": {
             "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
@@ -546,7 +546,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # 0548 T0004 §3 — but only when the group actually has something to
         # finalize. Faking the gate unconditionally is what put a merge/push
         # choice block into the AC approval dialog of a group with no work at all
-        # ("머지할게 없는데 … 머지 다이얼로그가 그대로 뜬다"), and then rode that stale
+        # ("there is nothing to merge, but the merge dialog still appears"), and then rode that stale
         # choice into an approval whose finalize could only fail: by the time it
         # ran, the approval's own no-work auto-discard had already unregistered
         # the slot, so the operator got "Git integration is not active" as a
@@ -1279,7 +1279,7 @@ def _finalize_execute(
     # job whether the runner is alive (T0012 §7 asked the project lock table).
     attempt_owner = uuid.uuid4().hex
     if approval_context is None and job_holder is None:
-        # 0669 unit 9a (D §7 "finalize 일반(비승인)"): no project mutex. A base_publish
+        # 0669 unit 9a (D §7 "ordinary finalize (non-approval)"): no project mutex. A base_publish
         # job (action finalize) takes G, then B or W for a merge, then R, and runs this
         # same function with ``job_holder``; it runs once here, and a busy domain leaves
         # it queued (git_busy + job id) for the Runner.

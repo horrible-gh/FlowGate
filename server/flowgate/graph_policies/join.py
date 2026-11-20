@@ -1,4 +1,4 @@
-"""AND join execution policy — flowgate.v02.0061 (R §2.5 합류, 0002-CH turns 3 / 11).
+"""AND join execution policy — flowgate.v02.0061 (R §2.5 join, 0002-CH turns 3 / 11).
 
 The ``join`` slot (L0009 §2.6.1, D0004 §8 Q-4) gets its decided implementation here, for the structure the
 validator reports as ``join`` (several incoming edges into one node):

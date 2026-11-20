@@ -287,7 +287,7 @@ describe('components/ui/ResizablePane (T0010)', () => {
     wrapper.unmount()
   })
 
-  // rev2 / T0010 §6.3 "viewport/parent 경계 고려": clamp/End only ever looked at
+  // rev2 / T0010 §6.3 "Respect viewport/parent boundaries": clamp/End only ever looked at
   // `window.innerWidth`/`innerHeight`, never the pane's own screen position or its
   // parent's boundary, so an offset pane inside a narrower parent could still grow past
   // the parent (and past its own container) even while staying under the viewport bound.

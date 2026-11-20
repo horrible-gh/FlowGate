@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0113 T#5 (0030-M §5-1·2, D 개정 §3.14-2 / §6.5) — the 1st run result window: shown only when a command
+// flowgate.v02.0113 T#5 (0030-M §5-1·2, D revision §3.14-2 / §6.5) — the 1st run result window: shown only when a command
 // ended completed or failed (runResultWatch). Its state icon and name, the scope, the cards it processed (by step or
 // branch, a few lines), the done / failed counts, the next state, the failure's one line, [상세] and [닫기]. No long output
 // or log here and no fixed sentence — the 2nd window holds the messages. ModelessShell: dragged, the clicked window

@@ -2,7 +2,7 @@
  * flowgate.v02.0051 — the v7 header line on every card (InspectorHeader): the 읽기 전용 tag from the
  * target, the ✎ 메모 button shown but disabled (no memo API yet), the ● state pill, and the ⋯ menu
  * with ID 복사 — enabled with a document and the clipboard, copying the bound document's id.
- * flowgate.v02.0052 묶음 A — the single status pill: one user-facing label (the Canvas state first),
+ * flowgate.v02.0052 batch A — the single status pill: one user-facing label (the Canvas state first),
  * a `· sub` only for a server state that says something else, never an internal value as text, the
  * server values in the tooltip and the data attributes.
  * flowgate.v02.0070 T#4 (B4) — one kind display (flowNodeKindView) for the Canvas card head and the header: a requirement
@@ -103,7 +103,7 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(writeText).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0052 묶음 A — the v7 single status pill.
+  // flowgate.v02.0052 batch A — the v7 single status pill.
   describe('the status pill', () => {
     const pill = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill')
     const label = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill-label').text()

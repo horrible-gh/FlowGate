@@ -1,4 +1,4 @@
-"""Fork (branch) execution policies — flowgate.v02.0061 (R §2.4 분기, 0002-CH turns 3 / 7 / 9 / 11).
+"""Fork (branch) execution policies — flowgate.v02.0061 (R §2.4 fork, 0002-CH turns 3 / 7 / 9 / 11).
 
 Two of the nine slots (L0009 §2.6.1) get a decided implementation here, both for the structure the
 validator reports as ``branch`` (several outgoing edges from one node):

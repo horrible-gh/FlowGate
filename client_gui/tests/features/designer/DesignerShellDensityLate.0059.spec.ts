@@ -1,11 +1,11 @@
 /**
  * flowgate.v02.0059 0017-T (was 0016-TR rev2) — on the real Shell (project store, Center session, server Graph
  * source, real Vue Flow Canvas; only `@shared/api` is mocked, lateLayoutServer.ts): the density is the card drag
- * step and has no part in 자동 배치.
- * - choosing any density — from the Toolbar radios or from the View menu — on a Flow whose 자동 배치 would read
+ * step and has no part in auto-layout.
+ * - choosing any density — from the Toolbar radios or from the View menu — on a Flow whose auto-layout would read
  *   (the whole Flow of a Flow with a hidden conversation, or the root document of a replaced v0.1 root) starts no
  *   read, moves no card, saves nothing and adds no 실행 취소;
- * - a 자동 배치 (Toolbar ▾ / Edit menu) still reading is neither cancelled nor rescaled by densities chosen
+ * - a auto-layout (Toolbar ▾ / Edit menu) still reading is neither cancelled nor rescaled by densities chosen
  *   meanwhile: when the read answers the cards are laid out at the server's spacing, one 실행 취소.
  * jsdom setup as DesignerShellArrange.0059.
  */
@@ -180,7 +180,7 @@ async function shownDensity(w: VueWrapper<any>) {
   return [radio, menu]
 }
 
-/** 자동 배치 from the Toolbar's 정렬 / 배치 ▾ or from the Edit menu (flowgate.v02.0068 T#2: 가로 자동정렬). */
+/** auto-layout from the Toolbar's alignment / layout ▾ or from the Edit menu (flowgate.v02.0068 T#2: 가로 자동정렬). */
 async function autoLayoutCommand(w: VueWrapper<any>, from: 'toolbar' | 'menu') {
   if (from === 'toolbar') {
     await w.get('[data-tool="arrange"]').trigger('click')

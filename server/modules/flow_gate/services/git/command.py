@@ -1,7 +1,7 @@
 """Raw git subprocess execution: prompt-free auth injection, secret scrubbing,
 and the one-shot ASKPASS helper.
 
-Extracted from git_service.py (flowgate.default.0550 T0009, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0009, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 

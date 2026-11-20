@@ -1,4 +1,4 @@
-"""The one place that tells a card's 검증 limits — flowgate.v02test.0053 0003-T (1-A).
+"""The one place that tells a card's verification limits — flowgate.v02test.0053 0003-T (1-A).
 
 ``resolve_verify_limits(flow_id, node_key) -> VerifyLimits(max_runs, run_timeout_sec)``: the card's own value, else the
 system default (``legacy_adapter.verify_defaults`` -> ``modules.flow_gate.settings.verify_policy``: 3 runs, 180 seconds

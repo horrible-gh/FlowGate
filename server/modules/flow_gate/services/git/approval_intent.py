@@ -22,7 +22,7 @@ those are different facts with different lifetimes (§3.8).
 ``db_git`` is reached through the ``git_service`` facade inside each function rather
 than imported at module scope: a top-level binding would shadow the name the test
 corpus patches on ``git_service`` and silently exempt this module from it (0550
-NR0025 권고2, enforced by ``test_git_facade_seam_scope_0550``).
+NR0025 recommendation 2, enforced by ``test_git_facade_seam_scope_0550``).
 """
 from __future__ import annotations
 

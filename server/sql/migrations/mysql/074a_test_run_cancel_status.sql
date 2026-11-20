@@ -2,7 +2,7 @@ SET FOREIGN_KEY_CHECKS=0;
 -- 074_test_run_cancel_status.sql
 -- flowgate.default.0358 T0004: add 'cancelling'/'cancelled' to test_runs.status so a
 -- user-initiated cancel is tracked distinctly from passed/failed and never mistaken for
--- an INFRA failure by the auto-recovery loop (NR0003 상태 어휘와 스키마 결정, option A).
+-- an INFRA failure by the auto-recovery loop (NR0003 status vocabulary and schema decision, option A).
 --
 -- MySQL's inline CHECK gets an auto-generated name, so rebuild the table exactly like
 -- 052 created it, this time with the 5-value status list AND preserving the

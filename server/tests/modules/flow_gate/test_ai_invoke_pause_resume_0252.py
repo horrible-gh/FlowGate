@@ -1,4 +1,4 @@
-"""flowgate.default.0252 T: 실행 미니플레이어 — 경계 정지/재개/전역 활성 목록.
+"""flowgate.default.0252 T: run miniplayer: boundary pause/resume and global active-run list.
 
 Covers the server half of D0007/P0008/L0009/DB0010:
   * pause_run admission (§2.1): continuous-only 422 guard, snapshot upsert, idempotency,

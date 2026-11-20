@@ -115,7 +115,7 @@ export interface SlotCardLine {
 export type SlotFill = 'missing' | 'blank' | 'filled'
 
 /**
- * Line types whose `has_body` is always true (O3 §4-1): M (전개 · AI 위임 records — auto-completing by the v0.1
+ * Line types whose `has_body` is always true (O3 §4-1): M (deployment · AI delegation records — auto-completing by the v0.1
  * approval rule) and WP (an empty plan still has its JSON body). Such a line is never "비어 있음"; it is decided
  * here by type too, so an older answer cannot draw one blank either.
  */
@@ -132,8 +132,8 @@ export function slotFill(line: SlotCardLine | null | undefined): SlotFill {
 }
 
 /**
- * Card line slots [작성] writes (O3 §4-2 `slot`). The test card's 시나리오 line shares its 지시서's document
- * (422 slot_shares_a_document), so it is written through the 지시서 line.
+ * Card line slots [작성] writes (O3 §4-2 `slot`). The test card's 시나리오 line shares its instruction's document
+ * (422 slot_shares_a_document), so it is written through the instruction line.
  */
 export const SLOT_WRITABLE_SLOTS: readonly string[] = ['requirement', 'delegation', 'plan', 'deploy', 'instruction', 'report']
 

@@ -4,7 +4,7 @@
  *   (never a draft save), in the order the actions were made; `tmp_` key remap and revived keys rename it;
  *   a new action empties redo, a fresh read / reset empties both, a refused (conflict) save stops it; an
  *   editor without save keeps moves only.
- * - the Center session: one drop / one group drop / 정렬 / 자동 배치 = one entry; undo / redo put the cards back
+ * - the Center session: one drop / one group drop / alignment / auto-layout = one entry; undo / redo put the cards back
  *   through the move path (Graph + layout save queue); mixed with add / connect; a Flow with no editable draft.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#2 rework (0030-M §2, 0002-D 개정 §3.1-6 / §3.2 / §3.2-A / §3.3-6 / §3.4, 0031-CH turn 6 #4): the
+"""flowgate.v02.0113 T#2 rework (0030-M §2, 0002-D revision §3.1-6 / §3.2 / §3.2-A / §3.3-6 / §3.4, 0031-CH turn 6 #4): the
 account's first AI setup, saved and applied to the Flow it was asked from, in one transaction.
 
     POST /api/v1/flows/{flow_id}/ai-roles/first-setup   {"request_id": <text>, "roles": {instruction, execution, review}}

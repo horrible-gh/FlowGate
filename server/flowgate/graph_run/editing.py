@@ -60,7 +60,7 @@ def chat_source_refusal(group_id, locale=None) -> None:
 
 
 def require_settings_editable(flow_id: str) -> None:
-    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13): a card's settings — its AI roles and [고급] included — follow
+    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D revision §3.13): a card's settings — its AI roles and [고급] included — follow
     the card's own running lock (``card_settings.legacy_adapter.node_running``: an AI works on it now), not the run's
     status (``LOCKED``) nor the node's protected state (``PROTECTED``): a card that waits (ready, a person's writing, AI
     setup needed / unavailable, a question, an approval), is done or in error takes its settings. Only an unfinished

@@ -416,7 +416,7 @@ def _review_item_seq_key(key) -> int:
 
 
 def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
-    """P0007 정규화 규칙 1·2·4 for the per-step review COUNT map.
+    """P0007 normalization rules 1·2·4 for the per-step review COUNT map.
 
     Keys unify to strings and explicit 0 is preserved. Absence means "use the durable
     sequence baseline"; 0 means "disable review for this run", so collapsing them would
@@ -452,7 +452,7 @@ REVIEWER_DEFAULT_KEY = "*"
 def normalize_continuation_reviewer_overrides(
     raw, review_count_overrides: Optional[dict] = None, *, allow_default: bool = False
 ) -> Optional[dict]:
-    """P0007 정규화 규칙 1·3·4 for the per-step REVIEWER map.
+    """P0007 normalization rules 1·3·4 for the per-step REVIEWER map.
 
     Values are validated independently of the runtime count map. A reviewer-only override
     is meaningful when the sequence baseline enables review, so it must survive even when the
@@ -482,7 +482,7 @@ def validate_continuation_review_item_seqs(
     auto_approve_item_seqs: Optional[list] = None,
     reject_already_done: bool = True,
 ) -> None:
-    """422-worthy semantic validation against doc_id's decided sequence (P0007 실패 시나리오).
+    """422-worthy semantic validation against doc_id's decided sequence (P0007 failure scenarios).
 
     Rejects, in ascending item_seq order, stopping at the FIRST violation:
       - a step that has no worker output to review — absent from the sequence, a server

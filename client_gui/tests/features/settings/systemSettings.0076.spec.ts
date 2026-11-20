@@ -15,7 +15,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 // server that keeps the system_settings rows, the storage-root answer, the users and a paused run's
 // stored picks, and that answers the way the real routes do (422 texts/codes, 409 codes, the
 // Scratch pair written all-or-nothing). Every call is recorded with its body, so "PATCH 1건",
-// "두 키만", "요청 0건" and "재조회값" are read off the request list and the server state.
+// "only two keys", "zero requests" and "re-read values" are read off the request list and the server state.
 // The server's own behaviour on the real routers/auth/RBAC/store is pinned separately by
 // server/tests/test_system_general_users_0076.py.
 

@@ -1,9 +1,9 @@
 /**
- * flowgate.v02.0059 T#2 (0016-TR rev2) — a 자동 배치 whose extra read (the whole Flow, or a root document of a
- * v0.1 Flow) answers late moves nothing when, meanwhile, it was cancelled (the Shell's 자율형), the session was
+ * flowgate.v02.0059 T#2 (0016-TR rev2) — a auto-layout whose extra read (the whole Flow, or a root document of a
+ * v0.1 Flow) answers late moves nothing when, meanwhile, it was cancelled (the Shell's freeform), the session was
  * disposed, or a read replaced the Graph it was asked for (a retry, a change elsewhere, the re-read of an
  * ignored / failed save, a reset). No card moves, no layout save goes out and no undo entry is made; the next
- * 자동 배치 lays the Graph now shown out from its own input.
+ * auto-layout lays the Graph now shown out from its own input.
  * The real read path as autoLayoutServerRead.0059: the project store's Canvas loader / saver -> the server Graph
  * source -> the Center session; only `@shared/api` is mocked (lateLayoutServer.ts), and the server source's
  * change reports are a handle the test calls.
@@ -141,7 +141,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(center.undoEdit(flowId)).toBe(true)
     expect(positions()).toEqual(serverShown(server.flows[flowId]))
     expect(center.undoEdit(flowId)).toBe(false)
-    // A 자동정렬 asked afterwards still lays the cards out.
+    // A auto-layout asked afterwards still lays the cards out.
     expect(scatter()).toBe(true)
     expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
     expect(positions()).toEqual(laidOut)
@@ -216,7 +216,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     // The re-read reset the history; the late answer added nothing to it.
     expect(center.undoEdit(flowId)).toBe(false)
 
-    // The next 자동정렬 reads the new Flow whole: D 0004 back at (520, 0).
+    // The next auto-layout reads the new Flow whole: D 0004 back at (520, 0).
     expect(scatter()).toBe(true)
     expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
     expect(positions()).toEqual(replaced)

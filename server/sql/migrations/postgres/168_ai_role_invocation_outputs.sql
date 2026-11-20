@@ -1,4 +1,4 @@
--- 168_ai_role_invocation_outputs.sql — flowgate.v02.0113 T#5 (0030-M §5, 0002-D 개정 §3.14-3: each launch's own message and full error) (PostgreSQL)
+-- 168_ai_role_invocation_outputs.sql — flowgate.v02.0113 T#5 (0030-M §5, 0002-D revision §3.14-3: each launch's own message and full error) (PostgreSQL)
 -- Additive only.
 --   ai_role_invocation_outputs  one row per role invocation record (inv_id, a launch or an admission refusal), added once
 --                               when the launch ended: the AI's last message of that launch (body), its stderr / stdout

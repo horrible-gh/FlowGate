@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#13 — the WP summary rules as tables (D#1 §8.5, §10.1 WP 요약 column, §10.2 T#13 row):
+ * flowgate.v02.0048 T#13 — the WP summary rules as tables (D#1 §8.5, §10.1 WP summary column, §10.2 T#13 row):
  * the Step summary (one row per card: pairs joined, providers, review count, server-assembled, started), the
  * progress tally, where the plan is edited, the operation classes (queries only), availability across card
  * kind × ownership × view with the read-only row of §8.5 for a Model without change operations, the keys of
@@ -158,7 +158,7 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
 
   // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): an undecided feature may be worded and drawn inactive;
   // the deploy strings exist with the reason they are inactive, and nothing names a replan or a memo.
-  // flowgate.v02.0074 T#5: the deploy is connected — no `deploy.unconnected`; the 재전개 ▾ items, the reasons (no target,
+  // flowgate.v02.0074 T#5: the deploy is connected — no `deploy.unconnected`; the redeployment ▾ items, the reasons (no target,
   // deployed, not deployed and the common ones), the blockers, the failures and the cleanup dialog are worded.
   it.each(['ko', 'en', 'ja'] as const)('%s wording: ⇉ 전개 / 재전개 are worded with their inactive reason; no replan, delegation or memo wording', (locale) => {
     const messages = workPlanMessages[locale] as Record<string, unknown>

@@ -1,9 +1,9 @@
 """Remote tool patch / read offset / stat — pipeline tests (group 0347 R0001).
 
 Covers P0004 (message format) · L0005 (processing logic) · DB0006 (op enum):
-  patch  — exact match, 0건 404 / 2건 이상 409, all-or-nothing, CRLF 2단계, strict decode
+  patch  — exact match, zero matches: 404 / multiple matches: 409, all-or-nothing, two-phase CRLF handling, strict decode
   read   — offset/length byte window, character-boundary correction, legacy compatibility
-  stat   — metadata only, 부재는 200(exists=false), 비변이 op
+  stat   — metadata only, absence returns 200(exists=false), non-mutating operation
 
 The op_log assertions double as the DB0006/073 migration check: `_log` swallows a
 failed insert, so a `patch`/`stat` row that is actually present is the proof that

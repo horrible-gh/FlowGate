@@ -296,7 +296,7 @@ def build_answer_mention(
     # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
     # The normal path is to answer; this is the exception path, and the conditions are
     # spelled out so uncertainty, a failed tool call or a thin context never become a
-    # hand-off (T0004 "자동답변 우선 계약"). flowgate.v02.0063: only infrastructure, a
+    # hand-off (T0004 "automatic-answer-first contract"). flowgate.v02.0063: only infrastructure, a
     # permission or an instruction whose intent cannot be told goes to a person; a logic
     # question never does (the user operates through AI and cannot answer it).
     escalate_url = f"{api_base_url}/q/{doc_id}/items/{item_id}/escalate"

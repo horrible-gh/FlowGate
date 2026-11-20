@@ -1,4 +1,4 @@
-"""System security policy (flowgate.v02.0020, 시안 14 시스템 › 보안).
+"""System security policy (flowgate.v02.0020, draft 14 시스템 › 보안).
 
 The values live in system_settings under `security.*` and are enforced where they act:
 

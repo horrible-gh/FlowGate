@@ -1,4 +1,4 @@
-"""flowgate.default.0550 T0030 (NR0025 권고3): every facade-attribute patch a test in
+"""flowgate.default.0550 T0030 (NR0025 recommendation 3): every facade-attribute patch a test in
 this corpus performs on `git_service.<name>` must actually be reachable from inside the
 `git/` package -- not shadowed by a module that bound its own early copy at import time,
 and not read as a bare name inside the very module that defines it.
@@ -61,7 +61,7 @@ _GIT_MODULE_PATHS = tuple(
 _FACADE_DOTTED_PREFIX = "modules.flow_gate.services.git_service."
 
 
-# ─────────────────────────── A면: 시험이 패치하는 이름 ───────────────────────────
+# A: names patched by tests.
 
 def _git_service_aliases(tree: ast.AST) -> set[str]:
     """Every local name this file's imports bind to the `git_service` module.
@@ -250,7 +250,7 @@ def _scan_facade_seam() -> tuple[set[str], dict, list, list]:
     return test_names | operational_names, sites, test_unresolved, operational_unresolved
 
 
-# ───────────────────── B면: 파사드 패치가 닿지 않는 자리 ─────────────────────────
+# B: places unreachable through a facade patch.
 
 def _default_value_name_positions(tree: ast.AST) -> set[tuple[int, int]]:
     """(lineno, col_offset) of every `Name` node inside a function's default-value
@@ -378,7 +378,7 @@ def _format_locations(locations) -> str:
     return ", ".join(f"{loc[0]}:{loc[1]}" for loc in locations) or "(none)"
 
 
-# ──────────────────────────────── 시험 ────────────────────────────────────────
+# Tests.
 
 def test_no_facade_patch_target_is_early_bound_in_a_git_module():
     patched, sites, _test_unresolved, _operational_unresolved = _scan_facade_seam()
@@ -490,7 +490,7 @@ def test_the_seam_scan_itself_is_not_vacuous():
         )
 
     # 3. No dynamic patch this scanner cannot resolve to a literal name (§3.4.1's
-    #    "해석 불가능한 동적 패치" list). The baseline for this corpus is 0; a nonzero
+    #    "unresolvable dynamic patch" list). The baseline for this corpus is 0; a nonzero
     #    count means some test patches a `git_service` alias with a computed attribute
     #    name that this scanner -- and therefore §3.4's whole guarantee -- cannot see.
     assert test_unresolved == [], (

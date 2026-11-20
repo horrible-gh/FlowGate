@@ -123,7 +123,7 @@
 //   window in import mode (off while locked or while a Step window holds edits), [JSON 내보내기] saves the draft as a
 //   .json file (the body the save would send), [JSON 원문 보기] opens the JSON window read only. One JSON window per
 //   plan window; it closes with it. Not the Inspector's document upload / download (DocumentIoGroup, 0068).
-// - flowgate.v02.0074 T#1 (R §2.2): the title bar shows no totals and no r{n}; the totals are the 작업 순서 line's
+// - flowgate.v02.0074 T#1 (R §2.2): the title bar shows no totals and no r{n}; the totals are the task order line's
 //   (wp-edit-step-totals) only. The revision still drives the save (base_revision_no, 409) and the newer-version banner.
 // - flowgate.v02.0074 T#2: the document [업로드] of the plan (any DocumentIoGroup) is this window's [JSON 가져오기]: a request
 //   with initialMode 'import' opens the import window once the plan is read; the window tells its dirty state for the

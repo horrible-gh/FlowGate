@@ -32,7 +32,7 @@
 // the Sidebar and the Dashboard open. If the move does not happen, the Dialog's one-shot
 // explicit-open signal is dropped so it cannot reach a later, unrelated Designer entry.
 //
-// flowgate.v02.0043: the Designer's File › Designer 닫기 leaves the Designer for the Dashboard.
+// flowgate.v02.0043: the Designer's File › Designer "닫기" leaves the Designer for the Dashboard.
 // The Designer Shell is router-free as well, so it emits `close-designer` and the move happens
 // here, on the routed screen.
 //

@@ -65,7 +65,7 @@ _REQUIRED_DISCOVERY = {
     "services/ai_invoke/review.py",
     "services/ai_invoke/worker.py",
     "services/engine_recipe_service.py",
-    # 0578 T0006 §3 작업 7-1: the merge-review turn renderer is a locale map by
+    # 0578 T0006 §3 task 7-1: the merge-review turn renderer is a locale map by
     # construction -- the AI-history surface's ko/en/ja copy for the nine stored
     # `message_code`s. Its en/ja branches must be discovered and scanned, or a Korean
     # sentence could reach a worker running in en/ja with nothing failing.

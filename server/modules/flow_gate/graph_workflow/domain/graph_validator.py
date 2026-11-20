@@ -1,4 +1,4 @@
-"""Graph structure validator (D0004 §2.2 그래프 검증기, L0009 §2.5, P0008 S3-5 issue table).
+"""Graph structure validator (D0004 §2.2 graph validator, L0009 §2.5, P0008 S3-5 issue table).
 
 Every problem is reported at once, ordered by L0009 §2.5.2. A structure whose execution rule is
 still undecided (D0004 §8) is neither allowed nor forbidden: it is reported as ``rule_undecided``

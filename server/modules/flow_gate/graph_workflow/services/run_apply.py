@@ -8,7 +8,7 @@ flowgate.v02.0061 T#2: opening a node starts its attempt (``run_store.open_attem
 node's token is mapped to it) and its approval (``done``) ends it. After a decision, ``settle_run`` asks whether the
 run goes on (``run_state_ports.settle``): the running / idle judgement, the idle reason and the candidates a command
 may still open are v0.2 rules in ``flowgate.graph_run``; this module only writes what a step decides.
-0083 WP-3 (0061 T#2 개정): whether a person's decision on an idle run opens the next cards (``RunState.approval_wakes``)
+0083 WP-3 (0061 T#2 revision): whether a person's decision on an idle run opens the next cards (``RunState.approval_wakes``)
 and the run's wake before those openings are asked the same way (``graph_execution_hooks`` ``approval_wakes`` /
 ``wake_approval``; none when no handler is registered: the propagation waits as before).
 
@@ -105,7 +105,7 @@ def read_run_state(ctx: RunContext) -> RunState:
         held |= {bound}             # 0061 T#11: never an ordinary opening of the bound node
     if status == "running" and graph_execution_hooks.call("propagation_held", ctx.run_id):
         status = "paused"           # 0061 T#9: a run holding for its integrations: a result's propagation waits
-    # 0083 WP-3 (0061 T#2 개정): may a person's decision on this idle run open the next cards (``frontier.defers``)?
+    # 0083 WP-3 (0061 T#2 revision): may a person's decision on this idle run open the next cards (``frontier.defers``)?
     wakes = status == "idle" and bool(graph_execution_hooks.call("approval_wakes", ctx))
     return RunState(status, nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
                     mode=ctx.run.get("run_mode") or "full",
@@ -184,12 +184,12 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
     integration is requested after the commit) and only whether the run goes on is judged.
 
-    0083 WP-3 (0061 T#2 개정): a decision that opens nodes on an idle run is a person's decision the run may be taken
+    0083 WP-3 (0061 T#2 revision): a decision that opens nodes on an idle run is a person's decision the run may be taken
     back to running for (``RunState.approval_wakes``, ``frontier.defers``): the run goes running first
     (``wake_approval``, the existing wake: cause ``work_resumed``), so the openings and their dispatch find it running;
     the settlement after them makes it idle again when no work goes on (the next card a person's).
 
-    0083 WP-3 rework (0061 T#2 개정): such a decision held back for its code result's merge (``defer_done``) wakes the
+    0083 WP-3 rework (0061 T#2 revision): such a decision held back for its code result's merge (``defer_done``) wakes the
     run the same way at once — its propagation was judged ``done`` (``approval_wakes``), not ``pending`` — so the
     integration runs on a running run, not under the idle run's integration hold (``result_merge._wake``, whose
     propagation waits for the next command), and the merge's end applies the decision again, opening the next cards

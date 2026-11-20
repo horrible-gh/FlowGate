@@ -21,7 +21,7 @@ records it through here:
   wait for the next command (0053: a target's propagation waits, ``frontier.RunState.in_command``), a full command's
   follow as its cards finish.
 
-0083 WP-3 (0061 T#2 개정, revised): a person's approval is the exception path of a card (a review that did not pass or
+0083 WP-3 (0061 T#2 revision, revised): a person's approval is the exception path of a card (a review that did not pass or
 spent its count, a card a person writes) and moves the node on with no further resume (the flowgate.v02.0056 T#1
 contract). ``approval_wakes`` judges whether a person's decision on an idle run may open the next cards — the
 conditions of ``card_settings.legacy_adapter.wake_graph_run`` (the Flow's active run, idle, not ``stopped``, no Time
@@ -121,7 +121,7 @@ def resume_approval(ctx, decision) -> bool:
     Keep the run, revision, mode and step targets. A deferred code approval still goes through
     its existing integration before becoming done; a failed/rejected approval never gets here.
 
-    0083 WP-3 (0061 T#2 개정): only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
+    0083 WP-3 (0061 T#2 revision): only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
     are not woken here either (their propagation waits for the next command), as ``wake_graph_run``.
     0119 T-2: only a run idle ``waiting_confirm`` (its reason as read: a stored ``waiting_approval`` with a gate open for
     its decision) — never ``needs_intervention``.
@@ -153,7 +153,7 @@ def _confirm_waits() -> tuple:
 
 
 def approval_wakes(ctx) -> bool:
-    """0083 WP-3 (0061 T#2 개정): may a person's decision on this idle run open its next cards at once
+    """0083 WP-3 (0061 T#2 revision): may a person's decision on this idle run open its next cards at once
     (``frontier.defers``)? ``wake_graph_run``'s conditions, judged on the guarded context: idle, the Flow's active run,
     not stopped, no Time Machine operation unfinished; and not inside an explicit command, nor a step with no targets."""
     run = ctx.run
@@ -171,7 +171,7 @@ def approval_wakes(ctx) -> bool:
 
 
 def wake_approval(ctx) -> None:
-    """0083 WP-3 (0061 T#2 개정): before a person's decision opens the next cards of an idle run, the run goes running
+    """0083 WP-3 (0061 T#2 revision): before a person's decision opens the next cards of an idle run, the run goes running
     in the same guard (cause ``work_resumed``, reason ``approval``, as ``resume_approval``), so an AI card's dispatch
     requests its execution on a running run; the settlement after the openings judges it idle again when nothing
     works. Only a run ``approval_wakes`` admits gets here (the decision deferred otherwise)."""

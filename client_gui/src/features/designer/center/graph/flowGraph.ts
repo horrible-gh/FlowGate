@@ -7,11 +7,11 @@
 // Edge condition and Flow metadata are deliberately absent until the server Graph contract
 // needs them (0003-D DEFERRED); they are added as optional fields.
 //
-// flowgate.v02.0045 S1+S2 (D0004 §2.3 "Graph 모델 확장"): optional meaning fields (edge class,
+// flowgate.v02.0045 S1+S2 (D0004 §2.3 "Graph model extensions"): optional meaning fields (edge class,
 // ownership) and layout fields (position source, movable, saved viewport) from the server
 // Canvas read. A source that does not know them (the sample source) simply leaves them out.
 //
-// flowgate.v02.0045 S3+S4 (D0004 §2.3 "의미와 레이아웃 필드는 구분"): meaning fields of the
+// flowgate.v02.0045 S3+S4 (D0004 §2.3 "Separate semantic and layout fields"): meaning fields of the
 // Graph definition — a node's `definition` (what the draft / revision node is) and
 // `structureEditable`, an edge's `editable`, and the Flow's `draft` state. Layout fields stay
 // x / y / positionSource / movable / viewport.
@@ -24,9 +24,9 @@
 // flowgate.v02.0053 T#5: a Graph / draft node's card document lines (`cardDocuments`), for the
 // Inspector's documents tab; also a meaning field the Canvas card does not read.
 //
-// flowgate.v02.0059 T#2: the Canvas read's `projection` (layout field), so 자동 배치 follows the server's
+// flowgate.v02.0059 T#2: the Canvas read's `projection` (layout field), so auto-layout follows the server's
 // auto placement of that projection; with it the v0.1 sequence root document and how many Nodes the read
-// left out (collapse), so 자동 배치 knows when the shown Graph is not the server's whole input.
+// left out (collapse), so auto-layout knows when the shown Graph is not the server's whole input.
 //
 // flowgate.v02.0056 F2-1: the node run also carries whether the card waits for its approval and the AI
 // card's step (O1 / O2); the Canvas card now reads the node run for its state chip (graph/cardStateView.ts).
@@ -262,7 +262,7 @@ export interface FlowGraph {
   readonly viewRevisionNo?: number | null
   /**
    * Layout (flowgate.v02.0059 T#2): how the server laid the Nodes out — `documents` | `sequence` | `graph`
-   * (P0008 §3 `projection`, open key); 자동 배치 places them by the same rules. Absent: unknown.
+   * (P0008 §3 `projection`, open key); auto-layout places them by the same rules. Absent: unknown.
    */
   readonly projection?: string | null
   /**

@@ -27,7 +27,7 @@
 // of the mode Nodes are mapped as before and are never `selected` for the library (it keeps a Node's
 // earlier fields on a redraw, so a selection left from the mode is cleared explicitly).
 //
-// flowgate.v02.0056 F2-1: a Graph node with a run carries its card state (graph/cardStateView.ts — 작업 중 ·
+// flowgate.v02.0056 F2-1: a Graph node with a run carries its card state (graph/cardStateView.ts — Working ·
 // 승인 대기 · 승인됨 …) for the card's state chip, and whether the chip offers [승인] now (`approvable`: the
 // card waits for its approval, this Canvas may approve and the Flow is not an ownership conflict).
 //

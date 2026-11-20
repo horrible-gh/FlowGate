@@ -1,4 +1,4 @@
-"""The required outputs of a card's completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 교체 3).
+"""The required outputs of a card's completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 replacement 3).
 
 A node's ``review -> done`` looks at the card's required outputs only: its result — the node's completion record
 (``completion``) — and, when the card uses an instruction, that instruction, approved. Any other document of the card's
@@ -21,7 +21,7 @@ card's history. This replaces the removed card approval's ``pending_documents`` 
                       attempt's plan, else the card's stored instruction use), or None
 
 ``card_lines_of`` / ``is_target`` / the ``stale`` lines are the removed card approval's line reads, moved here unchanged
-(approval-free reads; T-3: "승인 무관 함수는 삭제하지 않고 이전").
+(approval-free reads; T-3: "move approval-independent functions without deleting them").
 """
 from __future__ import annotations
 

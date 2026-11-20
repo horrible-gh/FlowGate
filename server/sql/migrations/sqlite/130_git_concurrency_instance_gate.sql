@@ -1,10 +1,10 @@
 -- 130_git_concurrency_instance_gate.sql
--- flowgate.default.0669 (단위 1a) / 0666 0010-DB §2.4·§2.5·§3 (#129 → 130: 129 는 0665 가 선점).
--- server_instance       — 서버 프로세스 생존 신호. 잠금·구 잠금 행의 stale/dead 판정 근거(L 2.8).
---                         touch_seq 는 heartbeat CAS 가 MySQL/MariaDB 에서도 매치=영향 행이 되게
---                         하는 전용 단조 카운터(DB §2.0 matched 대 changed 함정).
--- legacy_admission_gate — 전환기 동안 구 Project mutex 경로와 신규 domain 잠금 경로의 상호 배제(L 2.6).
--- 가산형. 시각은 now_iso() 25자 고정폭 문자열.
+-- flowgate.default.0669 (unit 1a) / 0666 0010-DB §2.4·§2.5·§3 (#129 → 130: 0665 already took 129).
+-- server_instance       — server-process liveness signal; basis for stale/dead lock and legacy-lock decisions (L 2.8).
+--                         touch_seq is a dedicated monotonic counter ensuring heartbeat CAS has matched=affected rows
+--                         on MySQL/MariaDB as well (DB §2.0 matched-versus-changed pitfall).
+-- legacy_admission_gate — mutual exclusion between legacy Project mutexes and new domain locks during transition (L 2.6).
+-- Additive. Timestamps are fixed-width, 25-character now_iso() strings.
 
 CREATE TABLE server_instance (
     instance_id        VARCHAR(37)  NOT NULL PRIMARY KEY,

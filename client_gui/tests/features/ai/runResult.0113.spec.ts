@@ -10,7 +10,7 @@ import RunResultWindow from '@/features/ai/runResult/RunResultWindow.vue'
 import RunResultDetailWindow from '@/features/ai/runResult/RunResultDetailWindow.vue'
 import { prepareInspectorI18n } from '../designer/inspector/support/inspectorSupport'
 
-// flowgate.v02.0113 T#5 — the run result windows (0030-M §5, D 개정 §3.14 / §6.5): the command result read, when the 1st
+// flowgate.v02.0113 T#5 — the run result windows (0030-M §5, D revision §3.14 / §6.5): the command result read, when the 1st
 // window opens (completed / failed only, also when a waiting command later completes or fails), its content, and the 2nd
 // window's messages (Markdown, many and long, each launch's own output, copy all).
 const i18n = prepareInspectorI18n()
@@ -139,7 +139,7 @@ describe('a command that waits and may still go on (review rework: P1)', () => {
     const load = vi.fn(async () => toFlowCommandResult(answers.shift()))
     const watch = createRunResultWatch({ load })
     watch.arm('f', { runId: 'run_1', status: 'idle', lastEventSeq: 4 })
-    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 6 })     // [전체 실행] -> 수동 작성 대기
+    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 6 })     // [전체 실행] -> waiting for manual writing
     await flushPromises()
     expect(watch.state.resultOpen).toBe(false)
     expect(Object.keys(watch.pending)).toEqual(['f'])

@@ -125,7 +125,7 @@ const syncDocumentLanguage = () => {
 }
 watch(locale, syncDocumentLanguage)
 
-// flowgate.v02.0020: an invitation link from 시스템 › 사용자 (/login?invite=<token>) opens the
+// flowgate.v02.0020: an invitation link from "시스템" › "사용자" (/login?invite=<token>) opens the
 // password step.
 onMounted(() => {
   syncDocumentLanguage()

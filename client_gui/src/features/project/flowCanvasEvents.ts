@@ -15,12 +15,12 @@ import { PROJECT_STREAM_RETRY_MS, subscribeProjectEvents, type ProjectEventFrame
  * Event types that mean "read this Flow's Canvas again" (P0008 §8.2; ownership arrives with S4).
  * flowgate.v02.0053 T#9: a run's status and node state changes too — the Canvas read carries each card's
  * run state (its colour dot) and the top band its run. They carry no `origin_client_id`, so this tab's own
- * 실행 / 중지 is read again as well.
+ * "실행" / "중지" is read again as well.
  */
 export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_changed', 'graph_run_status_changed', 'graph_node_state_changed'] as const
 
 /**
- * flowgate.v02.0056 F2-1 (O1 / O2 0005·0007-TR §4-2): a card's step (지시서 작성 중 → 결과 작성 중) and its wait for
+ * flowgate.v02.0056 F2-1 (O1 / O2 0005·0007-TR §4-2): a card's step (Writing instruction → Writing result) and its wait for
  * approval move without a node event — the instruction is approved (`doc_review_status_changed`), the result AI
  * starts (`ai_invoke_started`), an AI run ends and leaves the card to a person (`ai_invoke_finished`). A Flow's
  * frames of these read its Canvas again too, once per burst (CANVAS_CARD_STEP_COALESCE_MS), so every card's chip

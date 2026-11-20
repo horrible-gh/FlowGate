@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#10 — the R↔B kind switch's availability rules (D#1 §8, §10.2 종류 전환 row as
+// flowgate.v02.0048 T#10 — the R↔B kind switch's availability rules (D#1 §8, §10.2 kind switch row as
 // D#2 §3.5 rewrote it, D#2 §3.4). Pure functions: card kind × document type × ownership / read only
 // × AI running × group disposed × a switch in flight -> visible / enabled / reason, the kind a root
 // switches to, and a refused switch -> the reason shown and whether the Canvas is read again.
@@ -9,7 +9,7 @@
 //            a v01 Flow has a sequence and the converter always refuses it (D#2 E1); a Graph or
 //            conflict Flow is refused by the server's v0.1 contact (D#2 E2, §3.3 C). A place that
 //            always fails is not drawn (DS0007 §5), so those Flows show nothing — not even under
-//            a Graph revision view (D#2 §3.5: 종류 전환 leaves D#1 §8.3 rule 5's "shown disabled" list).
+//            a Graph revision view (D#2 §3.5: kind switch leaves D#1 §8.3 rule 5's "shown disabled" list).
 // Whether child documents already reference the root is not known here for sure; the server
 // refuses it (409) and the refusal is shown (D#2 §3.4). Permissions are the server's (403).
 // flowgate.v02.0064 T#4 (P0006 §6.1): a root with children is succeeded instead of refused, and the

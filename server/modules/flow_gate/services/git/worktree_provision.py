@@ -17,7 +17,7 @@ until then. Phases (L 2.28):
   with the phase: how b comes to be (existing local branch / origin branch / fork) and
   its expected SHA s.
 * registered: ``worktree add --no-checkout`` under M, always from the recorded SHA s,
-  judged against the 2.23 "worktree 등록" table in M before and after.
+  judged against the 2.23 "worktree registration" table in M before and after.
 * populated: ``reset --hard`` under G inside P (HEAD = b = s checked first, a clean
   status checked after).
 * done: ledger register + provision-failure clear + terminal write, one transaction.
@@ -476,7 +476,7 @@ def _fetch(ctx: store.JobContext, s: _Slot) -> None:
 
 
 def _judge_registration(s: _Slot):
-    """2.23 "worktree 등록" against the fetched record. Returns 'applied', or the add
+    """2.23 "worktree registration" against the fetched record. Returns 'applied', or the add
     argv to run, or raises (_Stop) for a mismatch / an unreadable state."""
     plan = s.plan
     if not plan.get("sha"):
@@ -652,7 +652,7 @@ def _decide_not_applied(job: dict) -> "runner.Decision":
 
 
 def _decide_fetched(job: dict) -> "runner.Decision":
-    """decide_m on 2.23 "worktree 등록"; a partial add (branch only) re-runs."""
+    """decide_m on 2.23 "worktree registration"; a partial add (branch only) re-runs."""
     s = _slot_of(job)
     try:
         verdict = _judge_registration(s)

@@ -287,8 +287,8 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
   })
 
   // flowgate.v02.0043: the File menu follows each command's own precondition — with the entered
-  // Project context the Group / Flow commands and Project 닫기 are available, Group 닫기 waits for a
-  // chosen Group and Flow 닫기 for an open Flow (DesignerFileMenu.0043.spec.ts). Edit / Run / View
+  // Project context the Group / Flow commands and Project Close are available, Group Close waits for a
+  // chosen Group and Flow Close for an open Flow (DesignerFileMenu.0043.spec.ts). Edit / Run / View
   // still wait for the work target.
   it('enables only the confirmed menu items', async () => {
     const w = await mountShell()
@@ -395,7 +395,7 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(toolbarButtons.filter((b) => !waiting.includes(b.attributes('data-command') ?? '')).some(isDisabled)).toBe(false)
 
     const file = await openMenu(w, 'file')
-    // The chosen row is the Flow, not a Group: only Group 닫기 has nothing to act on.
+    // The chosen row is the Flow, not a Group: only Group Close has nothing to act on.
     expect(commandStates(file).disabled).toEqual(['group.close'])
     const run = await openMenu(w, 'run')
     expect(commandStates(run).disabled).toEqual(['run.stop'])

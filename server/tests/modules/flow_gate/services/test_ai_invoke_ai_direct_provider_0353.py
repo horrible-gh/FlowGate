@@ -331,7 +331,7 @@ def test_provider_override_and_note_resolve_the_same_item_seq(run_env, instructi
 # ── (0352 T0004 §2/§3.5) per-item_seq N/T auto-approve selection within ai_direct ─────
 
 def test_ai_direct_selected_item_seq_folds_report_row_for_provider_and_note(run_env):
-    # §4 완료기준 2: a selected ai_direct N/T item_seq folds to its paired report row for
+    # §4 acceptance criteria 2: a selected ai_direct N/T item_seq folds to its paired report row for
     # BOTH provider override and note resolution, exactly like auto_approved's default fold
     # — the selected step is excluded from provider/note targeting the same way.
     run_env["wfseq"].items = [
@@ -395,7 +395,7 @@ def test_ai_direct_selected_item_seq_folds_provider_resolution(run_env, monkeypa
 
 
 def test_docs_target_excludes_only_the_selected_ai_direct_item(run_env):
-    # §4 완료기준 3: _continuation_docs_target excludes ONLY the selected N/T item_seq(s);
+    # §4 acceptance criteria 3: _continuation_docs_target excludes ONLY the selected N/T item_seq(s);
     # an ai_direct N/T that was NOT selected stays counted as a real worker document.
     run_env["wfseq"].items = [
         {"item_seq": 1, "type": "N", "result_doc_id": None},

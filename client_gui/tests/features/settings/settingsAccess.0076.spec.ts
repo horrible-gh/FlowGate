@@ -11,8 +11,8 @@ import type { SystemUsersResponse } from '@/features/settings/types'
 
 // flowgate.v02.0076 T#1 (D §1.2, §5.2 V01–V04): the real /app router — its settings routes,
 // installAuthGuard and installSettingsAccessGuard — with SettingsLayout and the real settings
-// views. Only the transport (@shared/api) is replaced, and it records every request, so "API
-// 요청 0" is checked on the request list itself rather than on a mocked view.
+// views. Only the transport (@shared/api) is replaced, and it records every request, so "zero API
+// requests" is checked on the request list itself rather than on a mocked view.
 
 const net = vi.hoisted(() => ({
   requests: [] as string[],
@@ -116,7 +116,7 @@ async function enterDirectly(url: string): Promise<VueWrapper> {
 const location = () => window.location.pathname + window.location.search + window.location.hash
 const hrefs = (w: VueWrapper) => w.findAll('a[href]').map((a) => a.attributes('href') ?? '')
 const settingsRequests = () => net.requests.filter((r) => r !== 'GET /auth/me')
-/** flowgate.v02.0077: an administrator's overview reads the Agent list once for 확인 필요 (시안 ⑩). */
+/** flowgate.v02.0077: an administrator's overview reads the Agent list once for 확인 필요 (mockup ⑩). */
 const HUB_ADMIN_READ = ['GET /api/v1/system/agents']
 
 function expectNoManagementDom(w: VueWrapper): void {
@@ -192,7 +192,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'project', 'system'])
     expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
-    // flowgate.v02.0077 (시안 ⑩): the four pages under their group headings — headings only, no extra entry.
+    // flowgate.v02.0077 (mockup ⑩): the four pages under their group headings — headings only, no extra entry.
     expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '실행 자원', '계정 · 프로젝트'])
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
     for (const key of ['storage', 'environment', 'logs', 'security', 'info', 'workspace']) {

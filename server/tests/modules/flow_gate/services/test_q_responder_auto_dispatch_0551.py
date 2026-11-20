@@ -1,6 +1,6 @@
 """flowgate.default.0551 T#1: auto-dispatch the Q responder for a `question_pending` stop.
 
-NR0003 §11 제안 1/2 found two missing connections and nothing else: a responder-priority
+NR0003 §11 proposal 1/2 found two missing connections and nothing else: a responder-priority
 resolver (reviewer -> independent header/default -> independent enabled provider;
 no eligible provider means human wait) and the wiring between a `question_pending` park and the existing
 `q_answer_invoke_service.dispatch_answer_run` — the same dispatch a human's own
@@ -132,7 +132,7 @@ def _run(**overrides):
 
 
 class TestDispatchQuestionResponder:
-    """finalize._dispatch_question_responder — the wiring itself (NR0003 제안 2), called
+    """finalize._dispatch_question_responder — the wiring itself (NR0003 proposal 2), called
     directly with every function-local-imported collaborator monkeypatched at its own
     source module (exactly what a `from x import y` inside the function body re-reads on
     every call)."""
@@ -265,7 +265,7 @@ class TestDispatchQuestionResponder:
         assert self.failed == [(201, "no_independent_responder")]
 
     def test_a_dispatch_admission_failure_is_swallowed_not_raised(self, monkeypatch):
-        # Stand-in for "responder 실행 불가" (NR0003 §10): no_enabled_provider /
+        # Stand-in for "responder unavailable" (NR0003 §10): no_enabled_provider /
         # provider_unavailable / run_in_progress all arrive as HTTPException from
         # dispatch_answer_run's own admission path -- a successful question_pending stop
         # must never become an unhandled exception because of it.
@@ -291,7 +291,7 @@ class TestDispatchQuestionResponder:
 
 
 class TestDispatchQuestionResponderRealExecution:
-    """T#1's boundary conditions provider "실행불가" and "timeout" (WP0004 T#1 note),
+    """T#1's boundary conditions provider "unavailable" and "timeout" (WP0004 T#1 note),
     driven through the REAL `q_answer_invoke_service.dispatch_answer_run` ->
     `ai_invoke_service.start_run` admission/execution path — unlike
     `test_a_dispatch_admission_failure_is_swallowed_not_raised` above, neither
@@ -300,7 +300,7 @@ class TestDispatchQuestionResponderRealExecution:
     production code, with only the CLI subprocess itself faked (`base._scripted_worker`,
     exactly as every other real-engine test in this suite does).
 
-    Each test also proves the REQUIRED fallback/recovery policy (NR0003 §11 제안2's own
+    Each test also proves the REQUIRED fallback/recovery policy (NR0003 §11 proposal 2's own
     words): the question stays exactly as unanswered as it was before the failed/timed-out
     attempt (nothing here can mark it answered), and a subsequent dispatch on the same,
     unmodified code path is admitted and runs for real — the failure left no stuck

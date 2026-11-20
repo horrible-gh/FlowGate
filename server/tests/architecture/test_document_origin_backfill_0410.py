@@ -1,20 +1,17 @@
-"""flowgate.default.0410 TR0009 rev2 — 082_document_origin_backfill.sql 회귀 테스트.
+"""flowgate.default.0410 TR0009 rev2: regressions for 082_document_origin_backfill.sql.
 
-081 은 `documents.origin_provider_name` / `origin_ai_run_id` 두 열을 더하기만 했다.
-그래서 열이 생긴 뒤에 만들어진 문서만 작성 AI 를 갖고, 이미 있던 문서는 계속 NULL
-이라 화면의 [작성자] 칸에는 등록 계정 이름(개발기에서는 'test')만 보였다.
+081 only added documents.origin_provider_name and origin_ai_run_id. Older
+documents retained NULL, so the author column showed their registered account
+(test in development) rather than the authoring AI.
 
-082 는 이미 저장된 실행 기록(`ai_invoke_runs.reached_doc_ids` = 그 실행이 만들어 낸
-문서 목록)에서 같은 행의 provider_name / run_id 를 그대로 옮겨 적는다. 이 파일은 그
-UPDATE 문 자체를 파일에서 읽어 실행하며 다음을 고정한다:
-
-  1. 실행이 만든 legacy 문서는 그 실행의 공급자 이름과 run_id 로 채워진다.
-  2. 이미 스냅샷이 찍힌 문서는 덮어쓰지 않는다(한쪽 열만 차 있어도 손대지 않는다).
-  3. 어떤 실행도 만들지 않은 문서(사람 작성)는 NULL 로 남는다.
-  4. provider_name 이 비었거나 NULL 인 실행은 후보가 아니다(이름을 추측하지 않는다).
-  5. 한 문서를 여러 실행이 신고하면 먼저 마감된 실행이 이긴다.
-  6. 두 번 돌려도 아무 행도 더 바뀌지 않는다(idempotent).
-  7. 세 방언 파일이 같은 규칙을 담는다(mysql 만 CONCAT, 나머지는 '||').
+082 copies provider_name/run_id from existing ai_invoke_runs records whose
+reached_doc_ids list the created documents. Execute the actual UPDATE from the
+file and verify: legacy AI documents gain their provider/run snapshots; existing
+snapshots are not overwritten even if only one column is populated; human-authored
+documents remain NULL; empty/NULL provider names are ineligible and never guessed;
+the earliest completed run wins when multiple runs claim a document; repeat
+execution is idempotent; and all three dialects use the same rule (MySQL CONCAT,
+otherwise ||).
 """
 from __future__ import annotations
 
@@ -67,7 +64,7 @@ def conn():
     for migration_file in sorted(_SQLITE_DIR.glob("*.sql")):
         try:
             connection.executescript(migration_file.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001 — 이전 방언 잔재 파일은 건너뛴다
+        except Exception:  # noqa: BLE001 - Skip leftover files from older dialect layouts.
             pass
     connection.execute(
         "INSERT OR IGNORE INTO projects (project_id, project_name, created_at, updated_at) "
@@ -145,7 +142,7 @@ class TestOriginBackfill:
         assert _origin(conn, doc) == ("Codex GPT-5.6 Sol", "aiv_original")
 
     def test_half_filled_row_is_left_alone(self, conn):
-        """run_id 만 있고 이름이 없는 행은 '미상'으로 남는다 — 이름을 추측하지 않는다."""
+        """A row with run_id but no name stays unknown; never invent a name."""
         doc = _add_doc(conn, "bf410.default.0001.0004-T", 4, run_id="aiv_partial")
         _add_run(conn, "aiv_bf_3", "Claude Opus 5",
                  '["bf410.default.0001.0004-T"]', "2026-08-12T19:10:00+09:00")
@@ -154,7 +151,7 @@ class TestOriginBackfill:
         assert _origin(conn, doc) == (None, "aiv_partial")
 
     def test_document_no_run_reached_stays_null(self, conn):
-        """사람이 만든 문서는 그대로 NULL — 사람 작성을 AI 로 오표시하지 않는다."""
+        """Human-authored documents retain NULL rather than being mislabeled as AI work."""
         doc = _add_doc(conn, "bf410.default.0001.0005-WP", 5)
         _add_run(conn, "aiv_bf_4", "Claude Opus 5", "[]", "2026-08-12T19:20:00+09:00")
 
@@ -202,7 +199,7 @@ class TestOriginBackfill:
 
 
 class TestDialectParity:
-    """세 방언이 같은 규칙을 담는지. 병합 뒤 한 방언만 고쳐지는 사고를 막는다."""
+    """All dialects share the same rules, preventing one-sided post-merge fixes."""
 
     def test_all_three_dialects_ship_the_migration(self):
         for dialect in ("sqlite", "postgres", "mysql"):
@@ -213,7 +210,7 @@ class TestDialectParity:
 
     def test_mysql_differs_only_in_string_concatenation(self):
         mysql = _backfill_statement("mysql")
-        # MySQL 은 기본 모드에서 '||' 를 OR 로 읽는다 — 그래서 CONCAT 이어야 한다.
+        # MySQL's default mode interprets || as OR, so CONCAT is required.
         assert "CONCAT('%\"', documents.doc_id, '\"%')" in mysql
         assert "||" not in mysql
         rejoined = mysql.replace(

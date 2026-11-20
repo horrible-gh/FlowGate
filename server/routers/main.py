@@ -207,10 +207,10 @@ async def workflow_slot_conflict_exception_handler(request: Request, exc: Workfl
 
 
 app.add_middleware(SlowAPIMiddleware)
-# 0291 P3-1 / 4-8: 요청 하나 = DB 읽기 캐시 하나 + 쿼리 계측 하나.
-# add_middleware 는 스택을 바깥쪽으로 쌓으므로 **나중에 추가된 것이 먼저 실행된다.**
-# 이 줄이 SlowAPIMiddleware 뒤에 오는 덕에 스코프가 바깥에 서고, 레이트리밋에 걸려
-# 거절되는 요청까지 계측에 잡힌다. 스코프가 안쪽에 있으면 그 요청은 통계에서 사라진다.
+# 0291 P3-1 / 4-8: one request = one DB read cache + one query measurement scope.
+# add_middleware wraps the stack outward, so **the last middleware added runs first.**
+# Placing this after SlowAPIMiddleware makes the scope outermost, measuring even requests
+# rejected by rate limiting. An inner scope would omit those requests from statistics.
 app.add_middleware(RequestScopeMiddleware)
 # 0378: the durable group lease is the authoritative write boundary for every route.
 app.add_middleware(GroupMutationPolicyMiddleware)

@@ -20,7 +20,7 @@
     </ErrorState>
 
     <template v-else-if="detail">
-      <!-- ── 멤버 ── -->
+      <!-- ── Members ── -->
       <section v-if="tab === 'members'" class="fgs-panel" data-panel="members">
         <div class="fgs-phead">
           <span class="fgs-tico teal"><SettingsIcon name="users" size="lg" /></span>
@@ -141,7 +141,7 @@
         </div>
       </section>
 
-      <!-- ── 프로젝트 접근 ── -->
+      <!-- ── Project access ── -->
       <section v-else-if="tab === 'projects'" class="fgs-panel" data-panel="projects">
         <div class="fgs-phead">
           <span class="fgs-tico"><SettingsIcon name="folder" size="lg" /></span>
@@ -232,7 +232,7 @@
         </div>
       </section>
 
-      <!-- ── 공용 정책 ── -->
+      <!-- ── Shared policy ── -->
       <section v-else class="fgs-panel" data-panel="policy">
         <div class="fgs-phead">
           <span class="fgs-tico"><SettingsIcon name="shield" size="lg" /></span>
@@ -306,7 +306,7 @@
       </section>
     </template>
 
-    <!-- 멤버 추가 -->
+    <!-- Add member -->
     <ModalShell :open="addOpen" size="sm" :aria-label="t('gui.settings.detail.add_member')" @close="addOpen = false">
       <template #header><h2 class="fgs-modal-title">{{ t('gui.settings.detail.add_member') }}</h2></template>
       <div class="fgs-formfield">
@@ -358,7 +358,7 @@
       </template>
     </ModalShell>
 
-    <!-- 멤버 메뉴 -->
+    <!-- Member menu -->
     <ModalShell :open="!!memberMenu" size="sm" :aria-label="memberMenu?.username" @close="memberMenu = null">
       <template #header>
         <div class="member-head"><div class="fgs-av">{{ initials(memberMenu?.username) }}</div><h2 class="fgs-modal-title" style="padding: 0">{{ memberMenu?.username }}</h2></div>
@@ -410,7 +410,7 @@
       @cancel="confirmRemove = false"
     />
 
-    <!-- AI / Agent 추가 -->
+    <!-- Add AI / Agent -->
     <ModalShell :open="!!pickerKind" size="sm" :aria-label="t('gui.settings.detail.add')" @close="pickerKind = null">
       <template #header><h2 class="fgs-modal-title">{{ pickerKind === 'agent' ? 'Agent' : 'AI' }} · {{ t('gui.settings.detail.add') }}</h2></template>
       <p class="fgs-muted">{{ t('gui.settings.detail.picker_hint') }}</p>
@@ -439,7 +439,7 @@
 </template>
 
 <script setup lang="ts">
-// 시안 12 워크스페이스 상세. 멤버: role/state/project counts, add (existing users), change role,
+// mockup 12 Workspace details. 멤버: role/state/project counts, add (existing users), change role,
 // remove (also leaves every project of the workspace). 프로젝트 접근: role default access and
 // per-person exceptions per project — saved at once and materialised by the server into the
 // project roles. 공용 정책: AI usable in the workspace (모두 / 선택한 것만 + allowlist) and who may

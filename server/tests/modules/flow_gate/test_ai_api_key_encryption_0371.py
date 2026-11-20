@@ -76,7 +76,7 @@ class TestApiKeyCrypto:
         assert crypto.decrypt_api_key("") == ""
 
     def test_a_base64_shaped_plaintext_is_not_mistaken_for_ciphertext(self, crypto):
-        """NR0007 §3 권고 2: real API keys are often base64-shaped, so "looks like
+        """NR0007 §3 recommendation 2: real API keys are often base64-shaped, so "looks like
         base64" can never be the encrypted/plaintext discriminator."""
         looks_like_b64 = base64.b64encode(b"a real key that happens to be base64").decode()
         assert crypto.is_encrypted(looks_like_b64) is False
@@ -110,7 +110,7 @@ class TestApiKeyCrypto:
     def test_no_configured_key_provisions_one_under_the_storage_root(self, crypto, monkeypatch, tmp_path):
         """An install that predates this change has no FLOWGATE_AI_ENCRYPT_KEY. It must
         keep working (git_service's key-file precedent) — storing plaintext instead is
-        never the fallback (NR0007 §3 권고 5)."""
+        never the fallback (NR0007 §3 recommendation 5)."""
         from config import settings as cfg
 
         monkeypatch.delenv("FLOWGATE_AI_ENCRYPT_KEY", raising=False)

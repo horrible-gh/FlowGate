@@ -7,7 +7,7 @@ exercised the endpoint at all (NR0003 "테스트 공백").
 
 What is defended here:
   1. the route calls ai_invoke_service.start_run exactly ONCE (the missing link itself),
-  2. the response carries the run handle and NO secret (P0005 표기 규칙 — the old response
+  2. the response carries the run handle and NO secret (P0005 notation rules — the old response
      leaked raw_token/scratch_dir to the browser),
   3. the token handed to the run stays edit-scoped and doc_ref-bound, so the receiving
      route (_resolve_writer) still admits it,

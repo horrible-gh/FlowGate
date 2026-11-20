@@ -81,7 +81,7 @@ def update_settings(body: SettingsPatch, user=Depends(require_permission("system
                 status_code=422,
                 detail={"code": "ai_repeat_count_out_of_range", "params": {"min": 1, "max": 30}},
             )
-        # flowgate.v02test.0053 0003-T: the two 검증 defaults get a stable code the client keys its i18n off of.
+        # flowgate.v02test.0053 0003-T: the two verification defaults get a stable code the client keys its i18n off of.
         if str(exc) == VERIFY_RUNS_ERROR:
             raise HTTPException(
                 status_code=422,

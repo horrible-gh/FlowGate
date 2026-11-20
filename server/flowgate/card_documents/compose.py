@@ -257,7 +257,7 @@ def _reserve_plan(node: dict, slot: cs.CardSlot, running: dict, user_id: str, pa
     flow_id = params["flow_id"]
     row, doc = _line(flow_id, node, slot)
     if doc is None or legacy.work_sets(doc) < 1:
-        raise _invalid("content", "empty_body")               # 작업 0세트: nothing to approve
+        raise _invalid("content", "empty_body")               # Zero work sets: nothing to approve
     token_id = running["token_id"]
     if not token_id:
         raise _refused(409, "node_token_unavailable", params, "The card's run token is already used.")

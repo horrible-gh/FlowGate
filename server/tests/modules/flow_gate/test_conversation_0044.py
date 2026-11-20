@@ -144,7 +144,7 @@ def test_serialize_still_emits_canonical_emoji_form():
 
 # ── 0293 R0001: provider slot in the AI label ─────────────────────────────────
 def test_ai_label_with_provider_still_keys_to_ai():
-    # THE regression this feature can cause (NR0004 발견 2): a provider-bearing label that
+    # THE regression this feature can cause (NR0004 finding 2): a provider-bearing label that
     # does not normalize to "ai" still renders as an AI bubble but stops being COUNTED as
     # one, and the chat surface then reports every successful reply as "no reply".
     parsed = conv.parse_conversation(
@@ -193,7 +193,7 @@ def test_provider_bearing_header_in_a_body_is_escaped():
     assert conv.parse_conversation(text)["turns"][0]["body"] == sneaky
 
 
-# ── 0306 NR0003 발견 1: localized user header (multi-read, locale write) ───────
+# ── 0306 NR0003 finding 1: localized user header (multi-read, locale write) ───────
 def test_localized_user_headers_all_key_to_user():
     # Every ko/en/ja user label — emoji or emoji-less — normalizes to the logical role.
     for label in ("🧑 사용자", "사용자", "🧑 User", "User", "🧑 ユーザー", "ユーザー"):
@@ -286,15 +286,16 @@ def test_ch_in_type_sets():
 
 
 def test_ch_inbox_process_tuple_in_db_documents(monkeypatch):
-    """CH 문서가 inbox 처리 질의의 대상에 실제로 실려 나가야 한다.
+    """CH documents must actually be included in the inbox-processing query.
 
-    0394 T0016 항목 4 (NR0003 §6.2-라): 예전에는 `inspect.getsource(...)` 로 함수 소스를
-    읽어 '"CH"' 라는 글자가 있는지만 봤다. 그 글자는 주석에 있어도, 죽은 분기에 있어도
-    통과하고, 반대로 튜플을 상수로 빼내 재사용하면 글자가 사라져 무고하게 빨개진다.
-    질의에 실제로 실려 나가는 파라미터를 보는 것이 같은 것을 훨씬 곧게 확인한다.
+    0394 T0016 item 4 (NR0003 §6.2-d): previously inspect.getsource(...) checked
+    only whether the function contained the text '"CH"'. A comment or dead branch
+    could satisfy that check, while extracting the tuple into a shared constant
+    could cause a false failure. Inspecting the actual query parameters verifies
+    the intended behavior directly.
 
-    같은 목록이 `db/__init__.py` 의 INBOX_PROCESS_TYPES 로 한 벌 더 있으므로, 두 벌이
-    어긋나면 한쪽 화면에서만 문서가 사라진다 — 그래서 두 목록이 같은지도 함께 못박는다.
+    db/__init__.py also defines INBOX_PROCESS_TYPES. If the two lists diverge,
+    documents disappear from only one screen, so pin equality between them too.
     """
     from modules.flow_gate.db import INBOX_PROCESS_TYPES
     from modules.flow_gate.db import documents as db_docs

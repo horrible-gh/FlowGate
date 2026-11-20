@@ -53,7 +53,7 @@ const props = withDefaults(
     bottomHeight: number
     placing?: boolean
     unselected?: boolean
-    /** flowgate.v02.0059 0017-T: the density's card drag step (the Shell's), for the Canvas; null = 자율형. */
+    /** flowgate.v02.0059 0017-T: the density's card drag step (the Shell's), for the Canvas; null = freeform. */
     moveStep?: number | null
   }>(),
   { unselected: false, placing: false, moveStep: null },
@@ -71,7 +71,7 @@ const emit = defineEmits<{
 // intents (inspector/inspectorHost.ts) are carried out here, about the active Flow — or, for a
 // refresh-flow naming its Flow (T#10), that open Flow even when another tab is active. Provided
 // (the Dock injects the same key) so the Dock's props and events stay as they are.
-// flowgate.v02test.0042 (시안 v7): "open this card's '병합 · 충돌' tab" — the Canvas card's 병합 충돌, a notification's [열기],
+// flowgate.v02test.0042 (mockup v7): "open this card's '병합 · 충돌' tab" — the Canvas card's 병합 충돌, a notification's [열기],
 // the Git panel's [카드로 이동] and the tab's own [‘…’ 카드로 이동] send one window event; here the card's Flow is shown
 // (opened when it is not), the card selected and the Inspector asked for the tab. A Git session names its merge id
 // instead of a card: the card is the one whose node run's integration reason is that session (`merge_session:<id>`).
@@ -123,7 +123,7 @@ watchEffect(() => {
   pendingMerge.value = null
 })
 
-// flowgate.v02test.0052 (0008 할 일 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and
+// flowgate.v02test.0052 (0008 task 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and
 // select its check card, whose Inspector holds [승인]. Same event name as `SELECT_GATE_NODE_EVENT` of the Git part (its gateOperations).
 function onSelectGateNode(event: Event): void {
   const detail = (event as CustomEvent<{ flowId?: unknown; nodeKey?: unknown; flowName?: unknown }>).detail ?? {}
@@ -217,7 +217,7 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
   if (!node) return
   const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId && !!item.scenario === !!requested.scenario)
   if (!doc) return
-  // The 시나리오 button opens the shared TS document through its owner line, the 지시서 (as the Inspector does).
+  // The 시나리오 button opens the shared TS document through its owner line, the instruction (as the Inspector does).
   const ownerSlot = doc.scenario ? 'instruction' : doc.ownerSlot
   const card = node.definition && ownerSlot ? {
     projectId: props.center.state.projectId!, flowId, nodeKey: node.id,

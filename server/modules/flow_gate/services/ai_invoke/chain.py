@@ -190,7 +190,7 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # 0443 T0002 (R0001): the "재시작 횟수" pick is exactly as perishable — write it
             # here too or a resumed chain silently falls back to the default retry count.
             continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
-            # 0414 P0007 [정상] 일시정지→재개 왕복: the pause is where the run object's memory
+            # 0414 P0007 [normal] pause→resume round trip: the pause is where the run object's memory
             # of the [검수] selection ends, so this row is the only thing that can hand it
             # back to resume_chain.
             continuation_review_count_overrides=run.get("continuation_review_count_overrides"),
@@ -393,7 +393,7 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
         # silently falls back to RESTART_MAX_ATTEMPTS_DEFAULT.
         "restart_max_attempts": _carry(pending, "restart_max_attempts",
                                        run, "continuation_restart_max_attempts"),
-        # 0414 P0007 전달 지점 3·4: the two [검수] maps join the durable bundle. DB0009 §5-3
+        # 0414 P0007 handoff point 3·4: the two [검수] maps join the durable bundle. DB0009 §5-3
         # calls omitting them the worst of the I3 violations — a lost provider means a
         # pricier resume, a lost review selection means "approved with nobody reviewing it".
         "review_count_overrides": _carry(pending, "review_count_overrides",
@@ -889,7 +889,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     pending = queued
     # Carry the session override map AND the header default pin forward so the re-spawned hop
     # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
-    # base pin is what an override-less step resolves to (0317 T0013 결함 ③).
+    # base pin is what an override-less step resolves to (0317 T0013 defect ③).
     # 0414: _carry, not a bare overwrite. A review/rework hop is mode="single", so its run
     # holds None for every continuous-only field — clobbering the queued bundle with those
     # would drop the provider pin, the notes, the budget AND the review selection the moment
@@ -912,8 +912,8 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         "provider_pinned": _carry(pending, "provider_pinned",
                                   run, "continuation_provider_pinned"),
         # 0346 T0005: carry the [전달멘트] note bundle forward the same way — the first-hop-only
-        # gap is the exact regression shape this fix is guarding against (D0004 구현 시 반드시
-        # 지켜야 할 제약 4).
+        # gap is the exact regression shape this fix is guarding against (D0004 mandatory implementation
+        # constraint 4).
         "note_overrides": _carry(pending, "note_overrides",
                                  run, "continuation_note_overrides"),
         "default_note": _carry(pending, "default_note", run, "continuation_default_note"),
@@ -926,7 +926,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # silently falls back to RESTART_MAX_ATTEMPTS_DEFAULT.
         "restart_max_attempts": _carry(pending, "restart_max_attempts",
                                        run, "continuation_restart_max_attempts"),
-        # 0414 P0007 전달 지점 5 / L0008 §2.9 지점 10.
+        # 0414 P0007 handoff point 5 / L0008 §2.9 point 10.
         "review_count_overrides": _carry(pending, "review_count_overrides",
                                          run, "continuation_review_count_overrides"),
         "reviewer_overrides": _carry(pending, "reviewer_overrides",
@@ -976,7 +976,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     if _park_on_own_open_question(run, pending):
         return
     try:
-        # 0414 L0008 §2.1 진입점 2: the gate decides what the next hop IS — review, rework,
+        # 0414 L0008 §2.1 entry point 2: the gate decides what the next hop IS — review, rework,
         # approve-and-continue, or stop. With no review selection it resolves to "work" and
         # calls the same _spawn_auto_resume this line used to call directly.
         parent_context = terminal.handoff_parent.set(run)
@@ -1096,7 +1096,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     chain_docs_target = pending.get("chain_docs_target")
     chain_docs_reached = pending.get("chain_docs_reached")
     auto_approve_item_seqs = pending.get("auto_approve_item_seqs")
-    # 0414 P0007 전달 지점 6: the next WORK hop re-reads the same two maps and resolves them
+    # 0414 P0007 handoff point 6: the next WORK hop re-reads the same two maps and resolves them
     # against ITS own worker item_seq.
     review_count_overrides = pending.get("review_count_overrides")
     reviewer_overrides = pending.get("reviewer_overrides")
@@ -2192,7 +2192,7 @@ def _resume_chain_locked(
                 db_paused.load_json_list(row.get("continuation_auto_approve_item_seqs"))
             )
         )
-        # 0414 P0007 [엣지] 재개 시 검수자 소멸: load_json_map degrades corrupt or non-object
+        # 0414 P0007 [edge] reviewer missing on resume: load_json_map degrades corrupt or non-object
         # text to None, so one damaged row loses its selection instead of blocking the resume.
         # A reviewer that has since been switched off is dropped from the map — and ONLY from
         # the map: the review COUNT survives, so that step is still reviewed, by the project

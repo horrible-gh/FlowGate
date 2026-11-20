@@ -116,8 +116,8 @@ def _await_handoff_gate(run: dict) -> bool:
     call or admission's own commit-failure path is the one that actually won the CAS),
     or a timeout this call itself turns into an ABORT it wins. In every False case the
     caller (``_worker``) must return immediately without running any real work: nothing
-    below this gate may touch ``run``'s token/prompt (T0009 §10 "worker는 OPEN 전
-    token/prompt 사용 금지").
+    below this gate may touch ``run``'s token/prompt (T0009 §10 "workers must not use the token/prompt
+    before OPEN").
 
     A run with no gate at all (defensive: only reachable if some future caller starts a
     worker thread outside admission.start_run) is treated as already open, so this can
@@ -131,7 +131,7 @@ def _await_handoff_gate(run: dict) -> bool:
     if state == _GATE_PENDING:
         # T0009 §10.1 (a)/(b): admission never called seal()/open_direct() in time --
         # possibly because it died before reaching that line. Claim ABORT ourselves; if
-        # we win, we are the one that runs cleanup (§10.1 "CAS 승자만 cleanup한다").
+        # we win, we are the one that runs cleanup (§10.1 "only the CAS winner cleans up").
         if gate.abort():
             admission._abort_handoff(run, "pending_timeout")
         return False
@@ -271,7 +271,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
 
     0515 T0009 §10/§11: the handoff gate is awaited BEFORE the try block below -- in
     particular before the `ai_invoke_started` broadcast, which must never fire ahead of
-    OPEN (§11 "ai_invoke_started broadcast는 gate OPEN 전 발생하면 실패다"). A gate that
+    OPEN (§11 "broadcasting ai_invoke_started before the gate is OPEN is a failure"). A gate that
     never opens ends this function here, with no broadcast, no provider call, and no use
     of `run`'s token/prompt at all.
     """

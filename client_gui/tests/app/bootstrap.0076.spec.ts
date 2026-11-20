@@ -167,7 +167,7 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
     expect(managementRequests()).toEqual(['GET /api/v1/system/users'])
   }, 15000)
 
-  // flowgate.v02.0076 T#4 registered 시스템 Agent: like 사용자, its view and its one GET start only now.
+  // flowgate.v02.0076 T#4 registered System Agent: like 사용자, its view and its one GET start only now.
   it('/settings/system/agents, answer A → the view mounts and starts its GET only after the answer', async () => {
     const router = await startApp('/settings/system/agents')
     expectStartupLoadingOnly(router, '/settings/system/agents')

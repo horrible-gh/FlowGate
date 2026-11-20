@@ -2,7 +2,7 @@
   <p v-if="hasMore || (total != null && total > items.length)" class="notification-context" data-test="notification-truncated">{{ t('gui.designer.top.notifications.truncated', { shown: items.length, total: total ?? '—' }) }}</p>
   <p v-if="!items.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_ai') }}</p>
   <ul v-else class="notification-list ai-list">
-    <!-- 0016-CH B안 card row: the whole row opens the detail; the outcome is the status box's line icon. -->
+    <!-- 0016-CH option B card row: the whole row opens the detail; the outcome is the status box's line icon. -->
     <li v-for="item in items" :key="item.run_id" class="notification-card ai-card" data-test="notification-ai">
       <button type="button" class="ai-row" :aria-label="`${title(item)} · ${t(k(state(item)))}`" @click="openAiNotificationDetail(item)">
         <span class="notification-status" :class="TONES[state(item)]" :title="t(k(state(item)))" :data-state="state(item)" aria-hidden="true"><LineIcon :name="ICONS[state(item)]" /></span>

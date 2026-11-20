@@ -109,7 +109,7 @@
 
 <script setup lang="ts">
 // flowgate.v02gui.0030 — one floating attachment window per Flow, drawn after the final mockup
-// (mirageglass rph76zwu): header with the Flow chip, search + 파일 추가, count, selection bar
+// (mirageglass rph76zwu): header with the Flow chip, search + Add file, count, selection bar
 // (ZIP / 🗑 or the numbered ↶), rows with a type tile, source tag and time, and an in-window name conflict card.
 // flowgate.v02test.0036 T#1 (R1): the delete queue, the file list and its error live in the Flow work manager
 // (operations.ts), not here. This window draws them and forwards the presses; closing or unmounting it only detaches

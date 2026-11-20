@@ -15,7 +15,7 @@ from modules.flow_gate.storage.paths import get_storage_root
 
 _JST = timezone(timedelta(hours=9))
 
-# flowgate.v02test.0053 0003-T: the refusals of the two 검증 defaults (the router maps them to stable codes).
+# flowgate.v02test.0053 0003-T: the refusals of the two verification defaults (the router maps them to stable codes).
 VERIFY_RUNS_ERROR = (
     f"{_verify_policy.RUNS_KEY} must be an integer of {_verify_policy.MAX_RUNS_MIN} or more"
 )

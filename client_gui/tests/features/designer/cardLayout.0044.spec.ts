@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0044 (mockup v4): every card is a fixed 176x92; 병합 대기 · 병합 중 · 병합 실패 and 미인계 are head-row
+ * flowgate.v02test.0044 (mockup v4): every card is a fixed 176x92; 병합 대기 · 병합 중 · 병합 실패 and Not handed over are head-row
  * icons; the footer holds the buttons only (documents left; 병합 충돌 and [승인] as 22x22 icon buttons at the right end).
  */
 import { readFileSync } from 'node:fs'
@@ -73,7 +73,7 @@ describe('0044 card layout: footer buttons', () => {
     expect(conflict.text()).toBe('')
     expect(conflict.attributes('aria-label')).toBe(`${t('gui.designer.center.integration.conflict')} · ${t('gui.designer.center.integration.open_conflict')}`)
     expect(conflict.attributes('title')).toBe(conflict.attributes('aria-label'))
-    // flowgate.v02test.0042 (시안 v7): the head carries the red conflict mark too (shown only), and the card a red ring
+    // flowgate.v02test.0042 (mockup v7): the head carries the red conflict mark too (shown only), and the card a red ring
     const mark = w.get('.flow-node-head [data-test="designer-canvas-node-integration"]')
     expect(mark.attributes('data-integration')).toBe('conflict')
     expect(mark.classes()).toContain('flow-node-mark--danger')

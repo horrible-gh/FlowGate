@@ -4,7 +4,7 @@ import { toFlowCommandResult } from '@/features/project/commandResultApi'
 import { parseDesignerSession } from '@/features/project/designerSessionStorage'
 import { createRunResultWatch, readFailureKind, runResultKey, RUN_RESULT_RETRY } from '@/features/ai/runResult/runResultWatch'
 
-// flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §7 격리 시나리오, T §3 R1~R7) — the real createRunResultWatch driven by a
+// flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §7 isolation scenarios, T §3 R1~R7) — the real createRunResultWatch driven by a
 // stand-in load (the server's command result) and a stand-in timer (`schedule`): when the result window opens, a read
 // that fails, a past result read while the run went on again, another command's answer and an F5.
 

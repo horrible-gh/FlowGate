@@ -17,7 +17,7 @@
 // each consumer derives its own display shape and keeps its own view state (expansion,
 // selection, search) locally.
 //
-// flowgate.v02.0043 adds what the Designer File menu needs: the 최근 Project / Group / Flow
+// flowgate.v02.0043 adds what the Designer File menu needs: the Recent Project / Group / Flow
 // lists (recentStorage.ts), closing the current Project, opening a recent Project the way the
 // Dialog's "열기" does, a Dialog open that asks for the create child, and the Group / Flow
 // creates (api.ts) that invalidate the cached group tree of their Project.
@@ -143,7 +143,7 @@ import {
 } from './recentStorage'
 
 export interface OpenDialogOptions {
-  /** Open the create child right away (the Designer's File › 새 Project). Admin-only downstream. */
+  /** Open the create child right away (the Designer's File › New Project). Admin-only downstream. */
   create?: boolean
 }
 
@@ -404,7 +404,7 @@ export const useProjectStore = defineStore('project', () => {
     recordRecentProject({ id: project.id, name: project.name })
   }
 
-  // flowgate.v02.0043: File › 최근 Project. The same "열기" as the Dialog's — the Project becomes
+  // flowgate.v02.0043: File › Recent Project. The same "열기" as the Dialog's — the Project becomes
   // current and the one-shot explicit-open signal below is raised, so the Project Explorer
   // selects it (0040) — without needing the active list to be loaded.
   function openRecentProject(entry: RecentProject): void {
@@ -413,7 +413,7 @@ export const useProjectStore = defineStore('project', () => {
     recordRecentProject(entry)
   }
 
-  // flowgate.v02.0043: File › Project 닫기. The Designer loses its Project context (its Explorers
+  // flowgate.v02.0043: File › Project Close. The Designer loses its Project context (its Explorers
   // and Center clear); the stored id goes too, as when a current Project leaves the active list.
   function closeCurrentProject(): void {
     applyCurrentProjectId(null)
@@ -457,7 +457,7 @@ export const useProjectStore = defineStore('project', () => {
   // later Designer entry from the Sidebar/Dashboard card (which never raises it) still starts
   // unselected (0039 T#3). Not persisted: it only bridges the Dialog -> Designer move.
   // flowgate.v02.0043: readable, so an Explorer already showing that Project can react to a
-  // "열기" of the same Project (File › Project 열기… / 최근 Project from inside the Designer).
+  // "열기" of the same Project (File › Project Open… / Recent Project from inside the Designer).
   const explicitOpenProjectId = ref<string | null>(null)
 
   function requestExplicitOpen(projectId: string): void {
@@ -736,12 +736,12 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   // flowgate.v02.0053 T#9: the Graph run of a Flow (P0008 §7 S5). Stateless like the loaders above: which
-  // run the top band shows, and the 다음 단계 / 전체 실행 / 중지 sequences, belong to the Center session.
+  // run the top band shows, and the "다음 단계" / "전체 실행" / "중지" sequences, belong to the Center session.
   function loadFlowRun(flowId: string): Promise<FlowRun | null> {
     return fetchCurrentFlowRun(flowId)
   }
 
-  // flowgate.v02.0061 T#14: the step / full command (다음 단계 / 전체 실행) and Pause.
+  // flowgate.v02.0061 T#14: the step / full command ("다음 단계" / "전체 실행") and Pause.
   function startFlowRun(flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunAnswer> {
     return startFlowRunApi(flowId, mode, commandRequestId)
   }

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02test.0053 1-D (시안 v15): the work card's `검증` line under its 지시서 · 레포트 lines, drawn only when a
+  <!-- flowgate.v02test.0053 1-D (mockup v15): the work card's `검증` line under its instruction · report lines, drawn only when a
        verification run is past its time (last launch + run time limit + 1 minute) or this card's request waits behind
        one. Name · state badge · buttons only; times and the card ahead are the badge's tooltip, what a button does is
        its own tooltip. [강제 종료] and [취소] turn into [확인] [취소] in place (no dialog). -->

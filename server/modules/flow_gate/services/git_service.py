@@ -2304,7 +2304,7 @@ def _validate_review_changed_paths(
 
     ``"reject"`` (the default, and what `_apply_write_plan_locked` passes) is
     L0007 §2.7 as written: the scope of that rule is the WRITE PLAN's own target
-    files (`syntax_validation_scope` = "변경되거나 생성된 모든 **plan** 대상 파일"),
+    files (`syntax_validation_scope` = "all changed or newly created **plan** target files"),
     so a plan that asks to write a file type we cannot syntax-check is rejected
     whole. There is no fallback that lets an unvalidated AI-written file reach
     approval.
@@ -2315,7 +2315,7 @@ def _validate_review_changed_paths(
     it never said: any merge carrying a `.md`, `.txt`, `.lock`, `.png` or (the
     reviewer's actual case) a `.tsbuildinfo` was permanently unapprovable, and
     [승인] could only ever answer `pre_commit_validation_failed`. That is the
-    "머지는 되지도 않음" rejection of 2026-09-08 10:33, reproduced on a copy of
+    "the merge does not even happen" rejection of 2026-09-08 10:33, reproduced on a copy of
     the reviewer's own base checkout. Nothing is lost by skipping here: a
     plan-written path with an unregistered extension can never be in the
     candidate in the first place, because the apply gate above already refused
@@ -2746,8 +2746,8 @@ def _apply_write_plan_locked(
         # 0009-TR rev3 (AI review finding 2): a plan whose only content is
         # held test edits touches nothing — there is no tree to build or
         # apply. Persist the held operations onto the session so the review
-        # screen can show them (L0007 §2.7's "이유와 예상 검증을 화면에
-        # 표시") instead of silently discarding them, and leave
+        # screen can show them (L0007 §2.7's "show the reasons and expected verification
+        # on screen") instead of silently discarding them, and leave
         # review_state/review_fingerprint exactly where they were: nothing
         # changed, so nothing needs re-review.
         context["held_test_operations"] = held_test_operations
@@ -2885,8 +2885,8 @@ def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) ->
     direct [해결 제출], with THAT request's checkbox value; a worker token's own
     resolve submission never reaches this function.
 
-    A TR revert/reapply conflict silently ignores this call — "TR 세션에는 적용되지
-    않는다" (D0006 §3.2) is modeled as a no-op here, not an error, because the
+    A TR revert/reapply conflict silently ignores this call — "does not apply to
+    TR sessions" (D0006 §3.2) is modeled as a no-op here, not an error, because the
     generic [AI 호출] start path calls this unconditionally for every
     resolve_conflict invocation and must not regress the pre-existing,
     already-working TR conflict AI-call flow (T0008 completion criteria: no
@@ -2905,7 +2905,7 @@ def _touch_review_activity(merge_id: int) -> None:
     """Record a real review operation as activity for the sweep TTL — best-effort, a
     timestamp write must never fail the operation itself.
 
-    flowgate.v02test.0052 T0003 할 일 4(c): called from operations only (a review
+    flowgate.v02test.0052 T0003 task 4(c): called from operations only (a review
     conversation turn); the review GET (``get_merge_review`` / ``tr_conflict_review``)
     no longer calls it — reading is not activity."""
     try:
@@ -2933,7 +2933,7 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     0668 T0004: a TR conflict session is reviewed on the same screen; its payload comes
     from ``tr_conflict_review`` in the same shape.
 
-    flowgate.v02test.0052 T0003 할 일 4(c): opening (reading) a review is NOT activity —
+    flowgate.v02test.0052 T0003 task 4(c): opening (reading) a review is NOT activity —
     a GET never calls ``touch_session``, so a screen left open (or polled) cannot keep
     pushing the sweep TTL forward. Only real operations count: a resolution submit and a
     review conversation turn (``send_review_message``)."""
@@ -4423,7 +4423,7 @@ def send_review_message(
         context["pending_conversation_locale"] = template_provision.normalize_locale(locale)
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
-        # flowgate.v02test.0052 T0003 할 일 4(c): a conversation turn is a real
+        # flowgate.v02test.0052 T0003 task 4(c): a conversation turn is a real
         # operation on the review, so it — not opening the screen — is activity.
         _touch_review_activity(merge_id)
     finally:
@@ -5290,10 +5290,10 @@ def reconcile_due_merge_review_sessions(
 
 # ── Auto-recovery sweep (flowgate.default.0205 P scenario 6 / L §2.5) ─────────
 
-# 0550 NR0025 §9/권고4 — 스윕 데몬 기동 플래그. 분해 전 이 칸은 git_service 의 전역이었고
-# 밖에서 `git_service._sweep_daemon_started = False` 로 되돌려 데몬을 다시 무장시킬 수 있었다.
-# 재노출(import)은 import 시점 값의 스냅샷이라 그 계약을 되살리지 못한다 — 칸을 여기 두고
-# git/cleanup.py 가 `_gs.` 로 읽고 쓴다.
+# 0550 NR0025 §9/recommendation 4 — sweep-daemon startup flag. Before decomposition this was a git_service global,
+# and callers could re-arm the daemon with `git_service._sweep_daemon_started = False`.
+# Re-exporting by import only snapshots the value at import time and cannot restore that contract. Keep it here;
+# git/cleanup.py reads and writes it through `_gs.`.
 _sweep_daemon_started = False
 
 from .git.cleanup import (

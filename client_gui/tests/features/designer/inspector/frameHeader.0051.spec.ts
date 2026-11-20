@@ -123,7 +123,7 @@ describe('the Frame lays out the kind badge and the ⋯ menu items', () => {
 describe('the header line (flowgate.v02.0051 stage 2)', () => {
   const none = fixtureRegistry([])
 
-  // flowgate.v02.0052 묶음 A: one label (the Canvas state) in its tone; server states that say the same
+  // flowgate.v02.0052 batch A: one label (the Canvas state) in its tone; server states that say the same
   // are not repeated; the raw values stay in hidden spans and the tooltip.
   it('the states sit in one pill that takes the Canvas state tone and says each thing once', () => {
     const w = mountFrame(SELECTIONS.graph, none)
@@ -217,7 +217,7 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     // flowgate.v02.0053 T#6: no "no linked document" sentence on Q&A.
     expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
-    // flowgate.v02.0053 T#7: a Graph gate has the v7 확인 settings (용도 · Git 반영), not an empty state.
+    // flowgate.v02.0053 T#7: a Graph gate has the v7 확인 settings (purpose · Git apply), not an empty state.
     await clickTab(w, '설정')
     expect(sections(w)).toEqual(['checkSettings'])
     expect(w.find('[data-test="designer-inspector-tab-state"]').exists()).toBe(false)

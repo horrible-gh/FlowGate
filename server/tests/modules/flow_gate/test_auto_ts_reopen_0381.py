@@ -340,8 +340,8 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="cod
 def test_2_manual_code_red_emits_post_rework_refresh(monkeypatch):
     # A manual/UI run carries no consumed chain token, so the real
     # engine_recipe_service.handle_run_failure returns "skip" here — CODE reds outside an
-    # unmanned chain still reopen immediately (T0009 §6, "manual/UI 실행은 기존 동작을 그대로
-    # 보존한다"), unlike the continuous "code" path covered by test_11 below.
+    # Unmanned chains still reopen immediately (T0009 §6 preserves manual/UI behavior),
+    # unlike the continuous code path covered by test_11 below.
     emitted = _drive_code_red_broadcasts(monkeypatch, continuation_token=None, recovery="skip")
     assert [kind for kind, _ in emitted] == [
         "test_run_finished", "group_view_refresh", "group_view_refresh"
@@ -699,18 +699,18 @@ def test_10_full_worker_pipeline_real_code_red_reopens_ts_end_to_end(auto_store,
 # ── production-shape replay (R0001 0381 — the rewind must fire on REAL runs) ──
 #
 # Tests 1-11 build a synthetic group. The rejections said the opposite of what those
-# tests assert: "실제로 테스트를 돌려보면 여전히 승인 완료로 남는다". The three tests
+# The reported symptom was that actual test runs still left the instruction approved.
 # below are seeded from rows read out of the live database instead, so a shape that
 # only exists in production cannot pass here and fail there.
 
 _PROD_DOCS = [
     # (seq, type_code, review_status, status, has_file) — timeweaver.agent.0003, read live.
-    (1, "B", "wf_done", "open", True),          # the root is a B(버그), not an R
+    (1, "B", "wf_done", "open", True),          # The root is a B (bug), not an R.
     (2, "N", "approved", "open", True),
     (3, "NR", "approved", "open", True),
     (4, "T", "approved", "open", True),
     (5, "TR", "approved", "open", True),
-    (6, "TS", "approved", "open", True),        # <- the failing 테스트시나리오지시
+    (6, "TS", "approved", "open", True),        # <- the failing test-scenario instruction
     (7, "TSR", "approved", "open", True),
     (8, "AC", "approved", "draft", False),      # file-less, status 'draft'
 ]
@@ -840,7 +840,7 @@ def _run_production_red(monkeypatch, tmp_path, ids, cases, setup=None):
 
 def test_12_production_group_shape_red_sends_the_ts_back(auto_store, monkeypatch, tmp_path):
     """A live group's real shape — B root at wf_done, an approved TSR behind the TS, and a
-    file-less AC — must still put the 테스트시나리오지시 back to 승인이전.
+    file-less AC — must still put the test-scenario instruction back to its pre-approval state.
     """
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_return_points as db_rp
@@ -872,7 +872,7 @@ def test_13_real_red_whose_case_log_names_a_missing_module_still_rewinds(
     INFRA. But a test case that ran and printed ModuleNotFoundError is the product's own
     missing import — a real RED. Replaying the 30 most recent failed runs in production
     through the old rule mislabelled 3 of the 27 genuine REDs, and for those the rewind
-    silently never fired: the TS stayed 승인 완료 exactly as reported.
+    silently never fired: the TS stayed approved exactly as reported.
     """
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.services import engine_recipe_service as svc
@@ -927,11 +927,11 @@ def test_14_missing_module_from_a_setup_step_is_still_infra_and_never_rewinds(
 # ── the workflow SEQUENCE itself, not just the document row ───────────────────
 #
 # Everything above proves documents.doc_review_status flips. The rejection is about the
-# other half: "워크플로 시퀀스가 [테스트레포트]에서 가만히 있는 게 아니라 [테스트시나리지시]가
-# 승인되기 전으로 되돌리라고". The strip's current step is derived, never stored — it is
+# The other half of the requirement: rewind from the test report to before the
+# test-scenario instruction was approved. The current step is derived, never stored — it is
 # workflow_sequences.get_effective_head (linked-but-unapproved slot wins over the first
 # unlinked slot) and the workflow_head_index that DocHeader renders. A RED assembles no
-# 테스트레포트, so before the rewind the head sits on the empty TSR slot; that is the state
+# test report, so before the rewind the head sits on the empty TSR slot; that is the state
 # being reported. These two tests pin the head MOVING OFF it, through the real worker.
 
 
@@ -985,7 +985,7 @@ def _run_red_on_seeded_group(monkeypatch, tmp_path, ids):
 def test_15_sequence_head_leaves_the_tsr_slot_and_returns_to_the_ts(
     auto_store, monkeypatch, tmp_path
 ):
-    """워크플로 시퀀스가 [테스트레포트]에 머무르지 않고 [테스트시나리지시]로 돌아온다.
+    """The workflow sequence returns from [테스트레포트] to [테스트시나리지시].
 
     Asserted on both surfaces the UI reads: get_effective_head (the sequence strip's
     single source of truth) and workflow_head_index/-_type (what DocHeader renders as
@@ -996,8 +996,8 @@ def test_15_sequence_head_leaves_the_tsr_slot_and_returns_to_the_ts(
 
     ids = _seed_group(auto_store, "seqhead")
 
-    # Before: the TS is 승인 완료, the RED produced no 테스트레포트, so the sequence is
-    # parked on the empty TSR slot — the reported "테스트레포트에서 가만히 있는" state.
+    # Before: the TS is approved and RED produced no test report, so the sequence is
+    # parked on the empty TSR slot, matching the reported stalled-report state.
     before = _sequence_head(ids)
     assert before is not None and before["type"] == "TSR"
     assert before["result_doc_id"] is None
@@ -1056,8 +1056,8 @@ def test_16_production_shape_sequence_head_returns_to_the_ts(auto_store, monkeyp
 # Everything above proves the DATABASE moved. None of it proves the SCREEN moved:
 # the workflow strip's colour and the action bar's buttons are computed in the
 # browser from the document-detail payload, so a server assertion can be green while
-# the strip still paints [테스트시나리오지시] 녹색(완료) and the action bar still shows
-# no 승인/반려. This test pins the exact payload the browser receives. (The v0.1 client
+# The strip still paints [테스트시나리오지시] green (complete), and the action bar shows
+# no 승인/반려. Pin the exact payload the browser receives. (The v0.1 client
 # spec that rendered the real components from the same fixture went away with client/ in
 # flowgate.v02gui.0024; the fixture now lives with the server tests.)
 
@@ -1110,15 +1110,15 @@ def test_17_ui_contract_payload_matches_the_checked_in_fixture(
     assert _ui_contract_payload(ids["TS"]) == fixture["after"]
 
 
-# ── the failure the reporter actually ran: the 준비(setup) 단계 aborts ──────────
+# ── The reported failure: the setup phase aborts ──
 #
 # Read out of the preview server's own database (flowgate_test): 15 consecutive runs of
 # test.test.0042.0006-TS between 06:54 and 09:38 on 2026-08-03, every one of them
 #   status=failed, error='setup_failed', triggered_via='ui', case_passed=0, case_failed=0
 # with SETUP-1 exiting 1 on "The system cannot find the path specified." Not one test case
 # ever ran, so nothing above this line could fire: error='setup_failed' is in
-# _INFRA_ERROR_CODES, and the setup branch never called the rewind at all. The 테스트시나리오
-# 지시 stayed 승인 완료 through all 15 attempts — precisely what was reported.
+# _INFRA_ERROR_CODES, and the setup branch never called rewind. The test-scenario
+# instruction stayed approved through all 15 attempts, exactly as reported.
 
 _LIVE_SETUP_CMD = (
     r"cd server && python -m venv .venv && .venv\Scripts\python -m pip install -q -r "
@@ -1129,7 +1129,7 @@ _LIVE_SETUP_TAIL = "The system cannot find the path specified.\r\n"
 
 
 def _run_setup_abort(monkeypatch, tmp_path, ids, *, triggered_via="ui"):
-    """Real `_execute_run_inner` whose 준비 단계 aborts, exactly like the live rows."""
+    """Real `_execute_run_inner` whose setup phase aborts, exactly like the live rows."""
     from modules.flow_gate.db import test_runs as db_runs
     from modules.flow_gate.services import test_run_service
     from modules.flow_gate.services import workflow_rework_service as rework
@@ -1168,13 +1168,13 @@ def _run_setup_abort(monkeypatch, tmp_path, ids, *, triggered_via="ui"):
 def test_18_manual_setup_abort_sends_the_scenario_back_to_pre_approval(
     auto_store, monkeypatch, tmp_path
 ):
-    """The reported case, replayed end to end: 준비 단계 실패도 [테스트시나리지시]로 되돌린다."""
+    """The reported case, replayed end to end: setup failures also return to [테스트시나리지시]."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import test_runs as db_runs
     from modules.flow_gate.db import workflow_return_points as db_rp
 
     ids = _seed_production_group(auto_store, "setupabort")
-    assert _sequence_head(ids) is None                      # 최종승인 대기, 시퀀스가 멈춰 있다
+    assert _sequence_head(ids) is None                      # Waiting for final approval; the sequence is stalled.
     assert db_docs.get_by_id(ids["TS"])["doc_review_status"] == "approved"
 
     finished = _run_setup_abort(monkeypatch, tmp_path, ids)
@@ -1205,7 +1205,7 @@ def test_18_manual_setup_abort_sends_the_scenario_back_to_pre_approval(
 
 
 def test_19_unmanned_setup_abort_still_belongs_to_the_repair_loop(monkeypatch):
-    """Do not steal the 0157 INFRA loop's failure (T0004 완료기준 3)."""
+    """Do not steal the 0157 INFRA loop's failure (T0004 acceptance criteria 3)."""
     from modules.flow_gate.services import engine_recipe_service
     from modules.flow_gate.services import test_run_service
     from modules.flow_gate.services import workflow_rework_service as rework
@@ -1234,7 +1234,7 @@ _LIVE_0042_DOCS = [
     (3, "NR", "approved", "open"),
     (4, "T", "approved", "open"),
     (5, "TR", "approved", "open"),
-    (6, "TS", "approved", "draft"),          # 승인 완료인데 status 는 draft
+    (6, "TS", "approved", "draft"),          # Approved review state, but lifecycle status is draft.
 ]
 _LIVE_0042_SEQUENCE = [
     (1, "N", "調査指示"), (2, "NR", "調査レポート"), (3, "T", "タスク指示"),
@@ -1309,7 +1309,7 @@ def test_20_the_reported_group_and_run_end_up_where_the_reporter_asked(
     before = _ui_contract_payload(ids["TS"])
     assert before == fixture["reported_before"]
     assert before["doc_review_status"] == "approved"
-    assert before["workflow_head_type"] == "TSR"        # parked on the empty 테스트레포트 slot
+    assert before["workflow_head_type"] == "TSR"        # Parked on the empty test-report slot.
     assert before["workflow_head_status"] == "pending"
     assert before["workflow_head_index"] == 5
     assert before["workflow_self_index"] == 4          # the TS sits BEHIND the head → 'done'

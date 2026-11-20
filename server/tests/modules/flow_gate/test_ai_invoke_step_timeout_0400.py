@@ -30,7 +30,7 @@ Covers:
     stop_reason sentence — the hole T0008 §3-6 / TR0009 §7-4 explicitly left to R5.
   * _maybe_auto_resume_hop / _spawn_auto_resume: the pick rides the run forward across a hop
     re-spawn — the "first hop only" shape is the easiest way to get a session-scoped field
-    wrong (0317 T0013 재발 방지 shape, mirrored from the provider-override/note coverage).
+    wrong (0317 T0013 regression prevention shape, mirrored from the provider-override/note coverage).
 
 Pause/resume persistence (the paused-chain row round trip) is covered in
 test_ai_invoke_pause_resume_0252.py, which already owns that fixture and pattern.

@@ -117,7 +117,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   function release(selected: (() => InspectorTarget | null) | null = null) {
     consumers = Math.max(0, consumers - 1)
     // A tab change unmounts the part and mounts the next tab's parts in one render. After that render the card is kept
-    // while a part shows it or the Frame still selects it (설정 -> Q&A / 첨부 / 문서); otherwise it was left.
+    // while a part shows it or the Frame still selects it (설정 -> Q&A / Attachments / 문서); otherwise it was left.
     if (consumers === 0) void nextTick(() => {
       if (consumers > 0 || selectedHold) return
       if (selected && gateOf(selected()) === key) holdWhileSelected(selected)

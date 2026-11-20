@@ -66,7 +66,7 @@ import { useI18n } from 'vue-i18n'
 import type { TotpSetupInfo } from '../stores/auth'
 import StepIcon from './StepIcon.vue'
 
-// flowgate.v02.0020 (시스템 › 보안 › 2단계 인증): enrolment the policy requires at sign-in.
+// flowgate.v02.0020 ("시스템" › "보안" › Two-factor authentication): enrolment the policy requires at sign-in.
 // The page has no QR renderer, so the key is shown in full for manual entry and the
 // otpauth:// link opens an authenticator on devices that handle it.
 const props = defineProps<{

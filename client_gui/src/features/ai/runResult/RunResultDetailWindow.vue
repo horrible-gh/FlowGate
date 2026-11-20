@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0113 T#5 (0030-M §5-3, D 개정 §3.14-3 / §6.5) — the 2nd run result window, opened from [상세]: the summary
+// flowgate.v02.0113 T#5 (0030-M §5-3, D revision §3.14-3 / §6.5) — the 2nd run result window, opened from [상세]: the summary
 // line (state · steps · scope), the instruction / execution / review AIs the command used, "메시지 N개" with [전체 복사],
 // and one card per message — its role, card, model (requested → confirmed) and time over its body, which is Markdown
 // rendered by the document viewer's renderer (headings, lists, code blocks, line breaks and paragraphs kept; raw HTML in an

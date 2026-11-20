@@ -49,7 +49,7 @@ def _env_int(name: str, default: int) -> int:
 
 if __name__ == "__main__":
     import uvicorn
-    # 0275 T0007 (NR0003 원인 5): reload=True ran the dev file-watcher in
+    # 0275 T0007 (NR0003 cause 5): reload=True ran the dev file-watcher in
     # production — deploy/flowgate.service runs this file. Reload is now opt-in
     # (FLOWGATE_RELOAD=true for dev; import-string form kept so it still works)
     # and the worker count is configurable via FLOWGATE_WORKERS. Keep workers=1

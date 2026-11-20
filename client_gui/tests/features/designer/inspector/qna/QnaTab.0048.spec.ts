@@ -7,8 +7,8 @@
  * real hub (only for the target document), a failed read with retry, and a Node change. Last, the
  * real registry: the Q&A tab with its number in the Frame (the number follows the events and the
  * answers), and no tab on a Node without a document.
- * flowgate.v02.0052 묶음 A — the v7 shape: one line per question with the last answer in its small
- * line, the inline answer line (field + 보내기) under every question without an answer, the folded
+ * flowgate.v02.0052 batch A — the v7 shape: one line per question with the last answer in its small
+ * line, the inline answer line (field + Send) under every question without an answer, the folded
  * 완료 group (open when nothing is pending), and the ↗ modeless window with the full form.
  * flowgate.v02.0070 T#5 (B5) — the list only shows and opens (question, state, who asked, 열기): every answer is
  * written in the ↗ window, under the document id, who asked and when, and the full question. The targets carry the
@@ -264,7 +264,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       [12, 'open'],
       [11, 'answered'],
     ])
-    // 0052 T#1: the response proves only answered or not — every unanswered question is 미답변
+    // 0052 T#1: the response proves only answered or not — every unanswered question is Unanswered
     // (neutral) whoever asked it; the asker kind is never shown as a team review or a hand-off.
     for (const id of [10, 13, 12]) {
       expect(itemEl(w, id).find('[data-test="qna-item-state"]').text(), String(id)).toBe('미답변')
@@ -319,7 +319,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(qaAnswerCall).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0052 묶음 A — v7 ↗ (0035 insp.js openQA): the question in a modeless window.
+  // flowgate.v02.0052 batch A — v7 ↗ (0035 insp.js openQA): the question in a modeless window.
   describe('the ↗ window', () => {
 
     // flowgate.v02.0053 T#5 (0053 CH): the button that opens a question's window is the same document icon as

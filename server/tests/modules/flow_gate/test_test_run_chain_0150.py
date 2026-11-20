@@ -276,7 +276,7 @@ def test_chain_auto_approve_tsr_requires_continuation_token(monkeypatch):
 
 
 def test_cancelled_chain_run_never_triggers_auto_approve_repair_notify_or_next_token(monkeypatch, tmp_path):
-    """flowgate.default.0358 T0004 완료 기준 / 위험 1: a cancelled run inside an
+    """flowgate.default.0358 T0004 acceptance criteria / risk 1: a cancelled run inside an
     unmanned chain must not silently resurrect the chain. _maybe_chain_auto_approve_tsr
     (the only path to the next chain token, via advance_workflow's TSR-head wiring) is
     reachable only from assemble_tsr's own tail call (:1679) — this pins that a

@@ -1,5 +1,5 @@
 <template>
-  <!-- 0016-CH (시안 basodrr4 B안) card row: [state icon] [Q# question / state · type · Flow · document] [time / actions].
+  <!-- 0016-CH (mockup basodrr4 option B) card row: [state icon] [Q# question / state · type · Flow · document] [time / actions].
        The three actions are line icons (open window, answer, ask an AI) in place of the ↗ ✎ 🤖 glyphs. -->
   <li v-for="row in rows" :key="row.seq" class="question-row notification-card" data-test="notification-question" :data-state="itemOf(row.seq) ? stateOf(itemOf(row.seq)!) : 'loading'">
     <template v-if="itemOf(row.seq)">

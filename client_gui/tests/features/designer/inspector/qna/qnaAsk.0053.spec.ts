@@ -4,7 +4,7 @@
  * flowgate.v02.0056 F1 (0056 CH §3) — registering a question and asking an AI are two steps:
  *
  * - the question line (field + [+]) is at the top of the tab, always; a document without questions shows
- *   only the line, no sentence; [+] is an icon whose name / tooltip is 질문 등록, closed while blank;
+ *   only the line, no sentence; [+] is an icon whose name / tooltip is Submit question, closed while blank;
  * - [+] or Enter registers the question (asker 'human', trimmed) and reads the questions and the guard
  *   again — no AI is asked by itself; the line clears; Enter ending an IME composition does not send;
  * - every open question has its AI line: a picker of the project's AIs (the project default picked first)

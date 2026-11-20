@@ -6,7 +6,7 @@ external documents). Positions, viewport and collapse are applied by the canvas 
 - ``sequence`` projection (ownership v01 / conflict): root document + one node per slot,
   execution edges between adjacent slots, plus every other live document as a free node.
   Only live documents (P0008 §2.4) are drawn or bound: a superseded root is shown as the live
-  end of its supersede chain, a cancelled root is not drawn (D0004 §3.7 "root 문서"), and a slot
+  end of its supersede chain, a cancelled root is not drawn (D0004 §3.7 "root document"), and a slot
   whose result document is no longer alive keeps its slot node without the document.
 - ``documents`` projection (unassigned): one node per live document, no execution edges. A
   Graph draft of the Flow is added on top by ``graph_projector.add_draft``.

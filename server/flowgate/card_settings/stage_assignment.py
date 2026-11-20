@@ -16,7 +16,7 @@ and every later step reads that record instead of the card settings:
 - ``needs_dispatch`` (§2.10): what an explicit command does with an open node of an assigned attempt.
 - ``stage_plan`` / ``is_legacy_attempt`` / ``current_stage_assignment``: what the other consumers read.
 
-0038-T T#3 (0030-M §3.1, 0002-D 개정 §3.6-0 / §3.5.1-8):
+0038-T T#3 (0030-M §3.1, 0002-D revision §3.6-0 / §3.5.1-8):
 
 - the next stage follows the card's documents the same way for an AI and a person: a result stage whose report is
   already written (``written_result``: its line's report with a body, submitted or approved alike, never the attempt's
@@ -760,7 +760,7 @@ _NOT_WRITTEN_STATES = ("rejected",)                 # judged not to pass: its re
 
 
 def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[str]) -> Optional[dict]:
-    """0038-T T#3 A (D 개정 §3.6-0-1 ~ 3): the card's report that satisfies its result stage — the result line's live
+    """0038-T T#3 A (D revision §3.6-0-1 ~ 3): the card's report that satisfies its result stage — the result line's live
     document of the card with a body ("있음": the saved body, blank is none), whether still a draft, submitted or
     approved, never a cancelled or rejected one, nor the attempt's report baseline (A-2), nor a result an earlier
     attempt of the run had bound (a Stop's or a reopening's history, 0061 T#7) — or None. A plan with an instruction
@@ -958,7 +958,7 @@ def _same_assignment(a: dict, now: dict) -> bool:
 
 
 def reinterpret_due(ctx, node: dict, row: dict, a: dict) -> bool:
-    """0038-T T#3 B-5 / B-6 (D 개정 §3.5.1-3·4·8): a waiting write stage (the instruction or the result stage, waiting:
+    """0038-T T#3 B-5 / B-6 (D revision §3.5.1-3·4·8): a waiting write stage (the instruction or the result stage, waiting:
     a person's manual write, an AI setup wait, an unavailable AI's wait) with no document in it is resolved again by
     the first command after its role changed — True when the stage's role resolves now (the card's values, read only:
     nothing initialized, nothing written) to another assignment (actor, AI) than the recorded one. A role that did not

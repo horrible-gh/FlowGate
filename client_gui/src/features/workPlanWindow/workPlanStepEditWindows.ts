@@ -8,7 +8,7 @@ import type { WorkPlanStepDraft } from './workPlanEditModel'
 import type { WorkPlanStepEditSession, WorkPlanStepEditTarget } from './useWorkPlanEditor'
 import { setWorkPlanStepEditHandler } from './workPlanEditWindows'
 
-/** The Step window edits a pre-instruction: an instruction Step, or a design card's 설계서 (its own editing text). */
+/** The Step window edits a pre-instruction: an instruction Step, or a design card's design document (its own editing text). */
 export const workPlanStepHasEditor = (target: WorkPlanStepEditTarget | null | undefined) =>
   !!target && (target.pairRole !== 'result' || ['D', 'P', 'L', 'DB'].includes(target.type))
 

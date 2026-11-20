@@ -83,7 +83,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // flowgate.v02.0051: the v7 header line (header), the `disabled` pane state and the strings of
     // the common display parts (slot · review · origin · lock · run_settings).
     // flowgate.v02.0051 stage 2: the card parts' common wordings (unconnected · slot_state · menu).
-    // flowgate.v02.0052 묶음 A: the header pill's plain words — the workflow states (wf_*), the node run
+    // flowgate.v02.0052 batch A: the header pill's plain words — the workflow states (wf_*), the node run
     // status (run_status) and the pill tooltip (header.state_tip).
     expect(Object.keys(inspector).sort()).toEqual(
       ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'run_status', 'pane', 'header', 'slot', 'review', 'origin', 'lock', 'run_settings', 'unconnected', 'slot_state', 'menu'].sort(),
@@ -97,7 +97,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
     // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the wording of a line without a
     // document. flowgate.v02.0056 F1: the history button of a line (history / history_count).
-    // flowgate.v02.0056 F2-1: `author` — the instruction line's 지시 AI 또는 사람 (O2 0007-TR §4-3).
+    // flowgate.v02.0056 F2-1: `author` — the instruction line's 지시 AI or a person (O2 0007-TR §4-3).
     // flowgate.v02.0056 F2-2: a document without a body (blank), the row actions and the history split.
     expect(Object.keys(inspector.slot).sort()).toEqual(['actions', 'author', 'blank', 'edit', 'history', 'history_count', 'history_detail', 'none', 'open', 'progress'])
     expect(Object.keys(inspector.slot.actions).sort()).toEqual(['ai_invoke', 'ai_invoke_running', 'write'])

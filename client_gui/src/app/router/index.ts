@@ -32,7 +32,7 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
 // a system administrator is shown (the access guard also treats every /settings/project… and
 // /settings/system… path that way). 내 설정's me/account and me/security (T#2) are open to every
-// signed-in person. 시스템 › 일반 (system/general, T#3), 시스템 Agent (system/agents, T#4), 사용자 and
+// signed-in person. 시스템 › 일반 (system/general, T#3), System Agent (system/agents, T#4), 사용자 and
 // 전체 프로젝트 (system/projects, T#5) are administrator screens, and so is 프로젝트 (T#5): the
 // selection area `project` (ProjectSettingsLayout, which reads the project list once) with its
 // read-only sections project/:projectId/{general,paths,git} as children. The retired

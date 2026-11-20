@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#10 — the R↔B kind switch (D#1 §10.2 종류 전환 row, D#2 §3.4): on an unassigned
+  <!-- flowgate.v02.0048 T#10 — the R↔B kind switch (D#1 §10.2 kind switch row, D#2 §3.4): on an unassigned
        Flow's requirement / bug root, the root turns into the other kind (the doc_id
        changes; no confirmation since 0070, below). A thin container: useKindSwitch reads and calls, kindSwitchModel decides what is shown
        and usable. A refused switch shows why and the state is read again.

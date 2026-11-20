@@ -9,8 +9,8 @@ document type).
 - The AI invoke service mints the run's own token through ``issue_builder`` so the token carries
   the AI run id (its group lease admits only that token). The node executor's token stays valid
   for a person (L0009 E-23); the AI token is recorded with ``map_token`` in a new guard before the
-  worker can submit (L0009 §2.6.6 "호출이 돌려준 token_id 를 커밋 뒤 새 가드 구간에서
-  map_token"). The result binder accepts either token, first result only.
+  worker can submit (L0009 §2.6.6 "map_token the returned token_id after commit
+  in a new guard scope"). The result binder accepts either token, first result only.
 - Any refusal (no root document to work from, no provider, a group AI run already in progress,
   the node no longer open) raises; ``node_dispatch.start_ai`` then records ``ai_invoke_failed``.
 - flowgate.v02.0053 T#2: the card's run settings ride the job (``node_dispatch``): its time limit is

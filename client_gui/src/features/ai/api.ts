@@ -143,7 +143,7 @@ export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]>
   return data.items ?? []
 }
 
-// ── Owned AI lists: 시스템 AI (administrator) / 내 AI (the signed-in user) ────────
+// ── Owned AI lists: "시스템 AI" (administrator) / "내 AI" (the signed-in user) ────────
 
 export async function fetchSystemAi(): Promise<SystemAiSettings> {
   return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'gui.ai.request_failed.system_load')
@@ -178,7 +178,7 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
   )
 }
 
-// Read-only system AI for users who are not administrators (the AI 관리 list shows both owners).
+// Read-only system AI for users who are not administrators (the "AI 관리" list shows both owners).
 export async function fetchVisibleSystemAi(): Promise<VisibleSystemAi> {
   return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'gui.ai.request_failed.system_load')
 }
@@ -192,7 +192,7 @@ export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSetting
   return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers: wire }), 'gui.ai.request_failed.my_save', wire)
 }
 
-// flowgate.v02test.0025: one order over system AI and my AI (AI 관리 list, every AI selection list).
+// flowgate.v02test.0025: one order over system AI and my AI ("AI 관리" list, every AI selection list).
 export async function fetchMyAiOrder(): Promise<UserAiOrder> {
   return call(() => getRequest<UserAiOrder>('/api/v1/me/ai-order'), 'gui.ai.request_failed.order_load')
 }

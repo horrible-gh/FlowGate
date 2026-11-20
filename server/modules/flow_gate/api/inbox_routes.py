@@ -2466,16 +2466,16 @@ def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONR
 def _conversation_full_body_edit_fail(doc: Optional[dict]) -> Optional[JSONResponse]:
     """Return a 409 _fail when doc is an already-migrated conversation (CH), else None.
 
-    0344 TR0008 후속. 대화의 정본은 ``conversation_turns`` 표로 옮겨졌는데(0432.0003-NR §3)
-    본문을 통째로 덮어쓰는 옛 인박스 edit 경로가 남아 있었다. 0344.0008-TR 이 그 마무리를
-    시도했다가 "신고한 파일과 실제 변경 파일 불일치"로 반려된 뒤 후속이 없어 방치돼 있었다
-    (NR §4·§7-1). 판정과 문구는 0344.0005-L §2-16 원문 그대로이고, 봉투는 이 계열의 현행
-    워커 봉투(``_fail``)다 — 0344.0004-P §0-5 가 계열별 현행 형식을 그대로 쓰라고 못박았다.
+    0344 TR0008 follow-up. Conversations moved to the authoritative ``conversation_turns`` table (0432.0003-NR §3),
+    but the obsolete inbox edit path could still replace the entire body. 0344.0008-TR attempted to finish this,
+    but was rejected because reported and actually changed files differed, with no subsequent follow-up
+    (NR §4·§7-1). The decision and wording follow 0344.0005-L §2-16 exactly, using this API family's existing
+    worker envelope (``_fail``), as explicitly required for each API family by 0344.0004-P §0-5.
 
-    이관되지 않은 대화(``pending`` / ``in_progress`` / ``failed``)에는 걸지 않는다: 아직
-    파일이 정본이다. 판정은 읽기만 하므로 ``dry_run`` 으로 물어도 같은 409 가 나온다.
+    Do not apply this to unmigrated conversations (``pending`` / ``in_progress`` / ``failed``): their
+    file remains authoritative. The check is read-only, so ``dry_run`` returns the same 409.
     """
-    # 3953행의 기존 지연 import 와 같은 방식 — 라우터 임포트 시점의 순환을 피한다.
+    # Like the existing deferred import at line 3953, avoid circular imports while loading the router.
     from modules.flow_gate.services import conversation_turn_service
 
     doc_id = str((doc or {}).get("doc_id") or "")
@@ -3928,7 +3928,7 @@ def settle_completed_step(
     flag; by the time the engine gets here the hop that carried it has already finished, so
     it reads the durable paused row instead. The ORDER — pause checked after approval and
     before the next hop — is identical either way, which is the part that matters
-    ("진행 중 단계는 끝까지" includes its approval, P0008 S4/S5).
+    ("finish the in-progress step" includes its approval, P0008 S4/S5).
 
     Returns {"outcome": "completed" | "paused" | "continue" | "stopped", "stop_code", ...}.
     Never raises: the submitted document is already saved, and only the CONTINUATION stops.
@@ -4090,8 +4090,8 @@ def settle_completed_step(
         except Exception:
             import LogAssist.log as logger
             logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
-        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
-        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
+        # R0001 group 0125 / NR0003 recommendation  1: record the explicit "연속작업 종료" signal that the
+        # system previously lacked entirely (NR0003 §finding 3). State-board aggregation only —
         # never a notification-feed event. Best-effort: a logging failure must not turn the
         # already-saved continuous run's clean stop into an error.
         try:

@@ -14,10 +14,10 @@ export interface Project {
   color: string | null
   // Archive/active flag (backend `is_active`). This is NOT "is this the current project" —
   // that meaning lives entirely in currentProjectId/currentProjectStorage (NR0003 §5 row
-  // "is_active", T#1 §2 "is_active는 archive/active 여부이고 current project 의미가 아님").
+  // "is_active", T#1 §2 "is_active indicates archived/active status, not the current project").
   isActive: boolean
   createdAt: string | null
-  // "최종 수정" 의미만 허용된다 — 최근 사용/최근 열기 의미로 쓰지 않는다 (D0004 §2.3).
+  // Only the "last modified" meaning is allowed; do not use it for last used or last opened (D0004 §2.3).
   updatedAt: string | null
   modules: ProjectModule[]
 }
@@ -283,8 +283,8 @@ export interface MergeReviewFileDiff {
 }
 
 // ── Recent items and Group / Flow creation (flowgate.v02.0043) ─────────────────────────
-// What the Designer File menu needs from this feature: the 최근 Project / Group / Flow lists
-// (recentStorage.ts) and the two creates the menu's 새 Group / 새 Flow dialogs call. Ids follow
+// What the Designer File menu needs from this feature: the Recent Project / Group / Flow lists
+// (recentStorage.ts) and the two creates the menu's New Group / New Flow dialogs call. Ids follow
 // the group tree: a Group id is its tree node id (`module:<project>:<name>`), a Flow id is the
 // v0.1 group id.
 
@@ -807,7 +807,7 @@ export interface FlowGraphDefinition {
 }
 
 // flowgate.v02.0053 T#9 — the Graph run of a Flow (P0008 §7 S5: start / current / stop / resume). The top
-// band's 다음 단계 · 전체 실행 · 중지 drive it; the Canvas shows the node states it causes.
+// band's "다음 단계" · "전체 실행" · "중지" drive it; the Canvas shows the node states it causes.
 // flowgate.v02.0061 T#14 — one run per Flow (`running` | `paused` | `stopping` | `idle`): the step / full command,
 // Pause, Stop and Resume (T#2 / T#7), with the idle reason, the execution counts and each node's integration / Hold.
 
@@ -887,7 +887,7 @@ export interface FlowRun {
   viewerCanApprove?: boolean
   /**
    * flowgate.v02.0143 T#1 (W1): an automatic Q&A responder answers a question of the idle run's card now (`qa_responding`,
-   * the server's word; the header holds 다음 단계 / 전체 실행 on it). Absent when not sent (an older server).
+   * the server's word; the header holds "다음 단계" / "전체 실행" on it). Absent when not sent (an older server).
    */
   qaResponding?: boolean
 }

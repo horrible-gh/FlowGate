@@ -148,7 +148,7 @@ watch(
     }
     searchQuery.value = ''
     selectedId.value = null
-    // flowgate.v02.0043: the Designer's File › 새 Project opens this Dialog asking for the create
+    // flowgate.v02.0043: the Designer's File › New Project opens this Dialog asking for the create
     // child right away. The entry point stays admin-only (D0004 §3.6), so for anyone else the
     // request is dropped and the Dialog opens as it always does.
     createDialogOpen.value = store.takeCreateRequest() && isAdmin.value

@@ -157,7 +157,7 @@ const props = withDefaults(
     toolsDisabled?: boolean
     /**
      * flowgate.v02.0043 — the Designer's File menu asks this part to select a row and open /
-     * close rows (Group / Flow 열기, Group 닫기). Applied once per request (`seq`); the
+     * close rows (Group / Flow Open, Group Close). Applied once per request (`seq`); the
      * selection it sets is reported upward like a click.
      */
     request?: ExplorerStateRequest | null
@@ -219,8 +219,8 @@ const isSearching = computed(() => query.value.trim().length > 0)
 // click / key on a row sets this, and a Project change clears it again.
 // flowgate.v02.0040: the one exception is the user's own "열기" in the Project Dialog — that
 // is an explicit choice, handed over once through the store (see the Project watch below).
-// flowgate.v02.0043: the Designer's File menu (Group / Flow 열기, 최근 항목, a new Group / Flow,
-// Group 닫기) sets it too, through the `request` prop — also the user's own choice.
+// flowgate.v02.0043: the Designer's File menu (Group / Flow Open, recent items, a new Group / Flow,
+// Group Close) sets it too, through the `request` prop — also the user's own choice.
 const selection = ref<ExplorerSelection>(null)
 
 // Reported upward so the Designer can tell "nothing chosen yet" from a chosen target
@@ -307,8 +307,8 @@ function isShownUnderSearch(target: NonNullable<ExplorerSelection>): boolean {
   return project.groups.some((group) => group.flows.some((flow) => flow.id === target.id))
 }
 
-// flowgate.v02.0043: an explicit open from the Designer's File menu (Project 열기 / 최근 Project of
-// the shown Project, Group / Flow 열기, 최근 Group / Flow, a new Group / Flow) must be seen in this
+// flowgate.v02.0043: an explicit open from the Designer's File menu (Project Open / Recent Project of
+// the shown Project, Group / Flow Open, Recent Group / Flow, a new Group / Flow) must be seen in this
 // tree. A search that hides the opened row is cleared — the same reset a Project change makes —
 // and the tree returns to what it was before the search; a search that still shows the row stays.
 function clearSearchHiding(target: NonNullable<ExplorerSelection>) {
@@ -367,8 +367,8 @@ function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'
   const target: ContextRowRef = row.kind === 'project'
     ? { kind: 'project', projectId: pid }
     : row.kind === 'group'
-      // v02gui.0027: the Group's archive state as this row shows it (the menu offers 그룹 아카이브 or 그룹 복원).
-      // v02gui.0027 (0008-T): and its server Flow count, which the 그룹 삭제 item says ahead of a delete.
+      // v02gui.0027: the Group's archive state as this row shows it (the menu offers Archive Group or Restore Group).
+      // v02gui.0027 (0008-T): and its server Flow count, which the Delete Group item says ahead of a delete.
       ? { kind: 'group', projectId: pid, groupId: row.group.id, archived: !!row.group.archived,
           ...(typeof row.group.flowTotal === 'number' ? { flowTotal: row.group.flowTotal } : {}) }
       : { kind: 'flow', projectId: pid, groupId: row.flow.groupId, flowId: row.flow.id }
@@ -472,7 +472,7 @@ watch(
   },
 )
 
-// flowgate.v02.0043: 열기 of the Project this part already shows (File › Project 열기… / 최근
+// flowgate.v02.0043: 열기 of the Project this part already shows (File › Project Open… / Recent
 // Project from inside the Designer) changes no Project, so the Project watch above never
 // runs; the one-shot signal is taken here instead and selects the Project root the same way.
 // A signal for another Project is not touched: the Project watch takes it when it switches.

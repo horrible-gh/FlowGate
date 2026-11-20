@@ -195,7 +195,7 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    # T0004 작업 7: 한국어 문구를 직접 단언하는 테스트라 ko 로케일을 명시한다.
+    # T0004 task 7: explicitly select ko because this test asserts Korean wording.
     response = post_inbox(
         _new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64),
         headers={"x-locale": "ko"},
@@ -203,8 +203,8 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    # 0545 T0021: force 우회 안내는 지문 불일치 메시지에서 제거했다 -- force는
-    # corruption heuristic만 우회하고 지문 불일치는 force와 무관하게 거부된다.
+    # 0545 T0021: remove force-bypass guidance from fingerprint-mismatch messages.
+    # Force bypasses only corruption heuristics; fingerprint mismatches always fail.
     assert "force_encoding_reason" not in payload["error_message"]
 
 
@@ -713,7 +713,7 @@ def test_review_receipt_service_issue_refuses_corrupted_validation_directly():
 
 
 # ── inbox_routes._encoding_validation_result: force_used after the reorder (0545 T0021
-# 작업 항목 4) ──────────────────────────────────────────────────────────────────────
+# ── Task item 4 ──
 # The premise the reorder establishes: by the time _encoding_validation_result runs,
 # _encoding_guard() has already passed, so a fingerprint (if supplied) is guaranteed to
 # have matched -- a mismatch would already have returned 422 before dry-run/real-submit
@@ -822,7 +822,7 @@ def test_decide_workflow_rejects_corrupted_label_with_an_actionable_message(monk
 
     message = str(excinfo.value)
     assert message.startswith("corrupted_label:")
-    # §5-6: (가) what is wrong, (다) how to get through anyway.
+    # §5-6: (a) what is wrong, (c) how to get through anyway.
     assert "깨진 글자" in message
     assert "force_encoding_reason" in message
     assert inserted.get("rows") is None  # nothing inserted
@@ -887,7 +887,7 @@ def test_reject_helper_is_not_used_on_the_read_path(monkeypatch):
 
 
 # ── T0004: submission validation errors follow the requested locale ─────────────
-# NR0003 발견 2-5: _encoding_guard(), the Step 5.8 workflow-head 409, and the
+# NR0003 finding 2-5: _encoding_guard(), the Step 5.8 workflow-head 409, and the
 # new/edit TR-scope empty-notice fallback used to ignore locale entirely and always
 # answer in Korean. These pin the en/ja no-leak contract plus the continuation_locale
 # > x-locale priority and the ko default's preserved meaning.
@@ -914,8 +914,8 @@ def _assert_no_korean(payload):
     assert not leaks, f"Korean syllable leak(s): {leaks}"
 
 
-# 선택된 로케일의 문구가 실제로 돌아왔는지까지 확인한다 — "한글만 없으면 통과"는
-# 로케일 맵을 잘못 골라도 초록이라 T0004 완료 기준을 증명하지 못한다.
+# Assert the selected locale wording, not merely the absence of Korean:
+# the wrong locale map could otherwise pass without proving T0004 acceptance criteria.
 _LOCALE_SNIPPETS = {
     "corrupted": {"en": "looks like corrupted characters", "ja": "文字化け"},
     "fingerprint": {
@@ -952,7 +952,7 @@ def test_new_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
     assert response.status_code == 422
     _assert_no_korean(payload)
     assert _LOCALE_SNIPPETS["fingerprint"][locale] in payload["error_message"]
-    assert "0" * 64 in payload["error_message"]  # 지문 세부가 로케일과 무관하게 남는다
+    assert "0" * 64 in payload["error_message"]  # Fingerprint details remain independent of locale
 
 
 @pytest.mark.parametrize("locale", ["en", "ja"])
@@ -987,7 +987,7 @@ def test_review_corrupted_comment_locale_has_no_korean(monkeypatch, locale):
     assert response.status_code == 422
     _assert_no_korean(payload)
     assert _LOCALE_SNIPPETS["corrupted"][locale] in payload["error_message"]
-    # 필드 식별자도 로케일 중립 내부 키라 en/ja 응답에 한글 라벨이 섞이지 않는다.
+    # Field identifiers are locale-neutral internal keys, with no Korean labels in en/ja.
     assert "comment" in payload["error_message"]
 
 
@@ -1005,7 +1005,7 @@ def test_review_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
 
 
 def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch):
-    """T0004 작업 2 / NR0003 발견 2: the token's continuation_locale (unmanned worker)
+    """T0004 task 2 / NR0003 finding 2: the token's continuation_locale (unmanned worker)
     must win over the request's x-locale header, matching every other locale
     resolution in this file (0355 L0007 §2-1)."""
     from modules.flow_gate.api import inbox_routes
@@ -1039,8 +1039,8 @@ def test_new_ko_response_preserves_existing_meaning(monkeypatch):
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    # 지문 세부(기대/실제 sha256)는 ko 에서도 그대로 남는다. 0545 T0021: force 우회 안내는
-    # 지문 불일치 메시지에서 뺐다 -- force는 corruption heuristic만 우회한다.
+    # Expected/actual SHA256 details remain in ko too. 0545 T0021 removes force guidance
+    # from fingerprint-mismatch messages because force bypasses only corruption heuristics.
     assert "sha256" in payload["error_message"]
     assert "0" * 64 in payload["error_message"]
     assert "force_encoding_reason" not in payload["error_message"]
@@ -1150,8 +1150,8 @@ def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, l
 
 
 def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
-    """T0004 작업 5: 폴백은 서비스가 빈 notice 를 줬을 때만 쓰인다 — 비어 있지 않은
-    notice 는 로케일 폴백보다 먼저 이긴다(`or` 의 좌변)."""
+    """T0004 task 5: use fallback only when the service notice is empty; a nonempty
+    notice takes precedence over the locale fallback, as the left operand of or."""
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.services import tr_scope_service
 

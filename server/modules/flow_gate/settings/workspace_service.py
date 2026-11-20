@@ -1,4 +1,4 @@
-"""Workspace service (flowgate.v02.0020, 시안 11 워크스페이스 / 12 워크스페이스 상세).
+"""Workspace service (flowgate.v02.0020, draft 11 워크스페이스 / 12 워크스페이스 상세).
 
 A workspace is the membership / project-access / policy boundary above projects:
 

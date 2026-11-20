@@ -6,10 +6,10 @@
 // empty report becomes what the window shows (`shown`). A window is found by either id, and two windows
 // never show the same document (followDocumentWindow).
 // flowgate.v02.0056 F1 — the review history windows (0056 CH §2) are a second list kept the same way: one
-// 검수·반려 이력 window per document, opened from the history button of a document line, cascaded apart
+// review·rejection history window per document, opened from the history button of a document line, cascaded apart
 // from the document windows so both stay visible.
 // flowgate.v02.0070 T#4 (B4) — an exact window (`exact`): the document of that very id, as history — it never follows
-// the supersede chain and is read only (no 편집 / 본문 다시 입력 / 복구). The 「전환 전 문서」 link opens the document an
+// the supersede chain and is read only (no "편집" / "본문 다시 입력" / "복구"). The 「전환 전 문서」 link opens the document an
 // R↔B succession came from this way, so the old id is shown instead of the new document it was succeeded by. An exact
 // window is a window of its own (`id` = `exact:<docId>`): a usual open of the same document opens the usual window, and
 // an exact open never brings back a usual one. Its opener may put a part under the body (`aside`, e.g. the old

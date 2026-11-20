@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// T0011 §5/§6/§9/§11/§15 "구조": source-level guards for the v0.2 boundaries that a DOM
+// T0011 §5/§6/§9/§11/§15 "Structure": source-level guards for the v0.2 boundaries that a DOM
 // test cannot see.
 const SRC = resolve(__dirname, '../../src')
 

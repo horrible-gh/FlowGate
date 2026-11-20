@@ -263,7 +263,7 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
         expect(typeof value, `${locale} ${key}`).toBe('string')
       }
     }
-    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 row 지시서 사용 / 생략 is worded;
+    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 row use instruction / omit is worded;
     // restart / time limit / review criteria are the Frame's run settings strings, not this feature's.
     // flowgate.v02.0053 T#7: a v0.1 step's off reason is no_place. flowgate.v02.0056 F2-1: the progress-after-review
     // row and its strings are removed (O1 0005-TR §4-3); the RUN card's 지시 AI row is worded.

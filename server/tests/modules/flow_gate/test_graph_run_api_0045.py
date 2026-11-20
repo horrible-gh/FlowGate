@@ -362,7 +362,7 @@ def test_start_binds_the_root_and_opens_the_next_node(env, decided):
 
 
 def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
-    """0056 T#1 개정: root input bypasses review without changing the rejected document."""
+    """0056 T#1 revised: root input bypasses review without changing the rejected document."""
     run = start(env, FH).json()["run"]
     root = nodes_of(run)["gn_r"]
     assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("done", False, ["gn_d"])
@@ -512,7 +512,7 @@ def test_a_lost_delegation_is_recovered_before_a_run_read(env, decided, monkeypa
 # ── dispatch (L0009 §2.6.6, E-22 / E-23) ─────────────────────────────────────
 
 def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decided):
-    # flowgate.v02.0083 T#1 (0056 T#1 개정): the rejected bound root is the run's input, done at start;
+    # flowgate.v02.0083 T#1 (0056 T#1 revised): the rejected bound root is the run's input, done at start;
     # gn_d opens at once and its token issue to u_ghost (no users row) fails. No root revision is needed.
     res = start(env, FH)
     assert res.status_code == 201

@@ -1,4 +1,4 @@
-"""flowgate.default.0359 T0012 (2번 묶음): 헛돈 홉을 다시 시도하게 만들기.
+"""flowgate.default.0359 T0012 (set 2): retry hops that produced no useful result.
 
 NR0003 §3 found the hop loop had exactly ONE edge — "a document was registered" — and no
 branch at all for "the hop ran and produced nothing". A worker that hit an environment fault,
@@ -279,7 +279,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
     monkeypatch.setattr(svc.db_reviews, "list_by_doc", reviews.list_by_doc)
-    # No question ever pending by default (NR0003 후속 조치 제안 1) — individual tests
+    # No question ever pending by default (NR0003 follow-up proposal 1) — individual tests
     # override this to exercise the pending-question guard. The anchor mock defaults to
     # identity; the guard tests below supply their own anchor + container fakes to prove
     # the reanchored lookup is what actually gets queried, not the raw spine doc_ref.
@@ -360,7 +360,7 @@ def _start(env, *, target=2, provider_id=None, provider_pinned=None,
 
 
 def _start_rework(env, **kw):
-    """A 반려 재작업 run exactly as `ai_invoke_routes` starts one (0446 T0008).
+    """A rejected-document rework run exactly as `ai_invoke_routes` starts one (0446 T0008).
 
     `_TOKEN_SCOPE` folds rework / vr_correction / work_plan_fill / plain edit all into the
     `edit` token scope (T0008 §3-9), so from the engine's side there is one shape and this
@@ -519,7 +519,7 @@ def _scripted_rework_worker(env, monkeypatch, script):
     return launches
 
 
-# ── The fix: a wasted lap becomes another attempt (L0007 §2.1 / P0006 [핵심]) ──
+# ── The fix: a wasted lap becomes another attempt (L0007 §2.1 / P0006 [core]) ──
 
 class TestNoOutputRetry:
     def test_same_provider_retry_gets_the_hop_and_saves_the_chain(self, env, monkeypatch):
@@ -533,7 +533,7 @@ class TestNoOutputRetry:
         assert launches == ["aip_1", "aip_1"]      # the selected provider owns both attempts
         assert run["attempts_used"] == 2
         assert (run["outcome"], run["docs_reached"]) == ("complete", 1)
-        # Same run, same identity — P0006 [핵심] 1: a retry must not look like a second run.
+        # Same run, same identity — P0006 [core] 1: a retry must not look like a second run.
         assert run["run_id"] == res["run_id"]
 
         switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
@@ -542,7 +542,7 @@ class TestNoOutputRetry:
         assert switches[0]["retry_kind"] == "no_output"
         assert switches[0]["token_reissued"] is False   # the dead hop's token was still good
         assert "실행환경 장애" in switches[0]["detail"]
-        # started fires once per RUN, not once per attempt (P0006 부록 D).
+        # started fires once per RUN, not once per attempt (P0006 appendix D).
         assert len([t for t, _ in env["events"] if t == "ai_invoke_started"]) == 1
 
         history = run["fallback_history"]
@@ -654,7 +654,7 @@ class TestNoOutputRetry:
         assert run["last_message_received"] is True
 
 
-# ── What must NOT be retried (L0007 §2.4 / P0006 [엣지]) ─────────────────────
+# ── What must NOT be retried (L0007 §2.4 / P0006 [edge]) ─────────────────────
 
 JUDGED_RUN_ID = "run_judged_0359"
 
@@ -1040,7 +1040,7 @@ class TestUnpinnedHeaderKeepsTheStartupTail:
 
 class TestHopBudget:
     def test_continuous_hop_is_a_flat_hour(self):
-        # The old formula gave the LAST hop the SMALLEST budget (min(3600 × 남은 슬롯, 14400)).
+        # The old formula gave the LAST hop the SMALLEST budget (min(3600 × remaining slots, 14400)).
         assert svc._resolve_timeout_sec("continuous", 1, False) == svc.HOP_TIMEOUT_SEC == 3600
         assert svc._resolve_timeout_sec("continuous", 5, True) == 3600
 
@@ -1055,7 +1055,7 @@ class TestHopBudget:
         assert res["deadline_at"] > res["started_at"]
 
 
-# -- NR0003 후속 조치 제안 1~3: a Q registered mid-hop is not a silent failure ----
+# -- NR0003 follow-up proposal 1~3: a Q registered mid-hop is not a silent failure ----
 
 class TestReviewModeDocsTarget:
     def test_review_mode_hop_targets_zero_documents(self, env, monkeypatch):
@@ -1259,7 +1259,7 @@ class TestPendingQuestionEndToEnd:
         assert (row["stop_kind"], row["stop_code"]) == ("system", "question_pending")
 
 
-# -- 0446 T0008 (NR0003 R2~R4): 반려 재작업(single/edit) gets the recovery machinery ----
+# -- 0446 T0008 (NR0003 R2~R4): rejected-document rework(single/edit) gets the recovery machinery ----
 #
 # NR0003 measured 27 of 242 rework runs registering nothing at all, and the 15 that ended
 # cleanly all shared one record shape: attempts_used 1, stop_code NULL, zero notifications.

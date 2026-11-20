@@ -311,7 +311,7 @@ class TestRouteContract:
         assert set(body) == {"data"}
         # 0454 T0007 rev3 review fix: rev2 had added `overview_summary` here UNCONDITIONALLY,
         # which changed the `include_terminal=true` (default) response for every pre-existing
-        # caller — exactly what T0006 §1.1 ("그대로 반환한다") rules out (review finding on rev2).
+        # caller — exactly what T0006 §1.1 ("return unchanged") rules out (review finding on rev2).
         # rev5 folds the aggregate back into this same envelope, but ONLY behind the opt-in
         # `include_summary` flag — see TestOverviewSummary below.
         assert set(body["data"]) == {"nodes"}

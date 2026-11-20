@@ -250,7 +250,7 @@ class TestStopCodeOnEveryBranch:
         assert svc.is_resumable(code) is resumable
 
     def test_existing_reason_prose_is_not_removed(self, env):
-        # P0006 부록 D: additive only. 0226's assertion reads continuation_reason.
+        # P0006 appendix D: additive only. 0226's assertion reads continuation_reason.
         env.completed_seq = None
         e = _chain(doc_type="M")
         assert "did not fill the current workflow head slot" in e["continuation_reason"]
@@ -370,7 +370,7 @@ class TestHumanSignal:
 
     @pytest.mark.parametrize("case", ["handoff", "completed", "review", "paused", "advanced"])
     def test_intended_stops_stay_quiet(self, env, monkeypatch, case):
-        # P0006: 알림에 올리는 것은 사람이 의도하지 않은 정지뿐. An intended stop that pages a
+        # P0006: notify only for unintended stops. An intended stop that pages a
         # human is how the old notification flood came back.
         if case == "handoff":
             monkeypatch.setattr(svc, "has_active_run", lambda _g: True)

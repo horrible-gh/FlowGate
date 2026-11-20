@@ -1,9 +1,9 @@
 -- 134_group_git_state_approval_freeze.sql
--- flowgate.default.0669 (단위 6a) / 0666 0010-DB §2.7·§3·§4(q) (설계 번호 133 → 134), 0009-L §2.11.
--- group_git_state 에 승인 동결 claim(approval_freeze_job_id/state/at)과 CAS 전용 touch_seq 를 더한다.
--- Group 당 claim 은 최대 1개(PK group_id 가 구조적으로 보장). state: freezing(F1~F4) / publish_wait(F5 이후).
--- FK 는 ON DELETE SET NULL: job 행이 운영 정리로 지워져도 claim 이 고아로 남지 않는다(DB §2.7).
--- 가산형, 백필 없음(NULL = 동결 claim 없음). touch_seq 는 NOT NULL DEFAULT 0 이라 기존 행은 0 으로 채워진다.
+-- flowgate.default.0669 (unit 6a) / 0666 0010-DB §2.7·§3·§4(q) (design number 133 → 134), 0009-L §2.11.
+-- Add approval-freeze claims (approval_freeze_job_id/state/at) and CAS-only touch_seq to group_git_state.
+-- At most one claim per Group (structurally guaranteed by PK group_id). State: freezing (F1–F4) / publish_wait (F5 onward).
+-- FK uses ON DELETE SET NULL so operational job cleanup cannot orphan a claim (DB §2.7).
+-- Additive, no backfill (NULL = no freeze claim). touch_seq is NOT NULL DEFAULT 0, filling existing rows with zero.
 
 ALTER TABLE group_git_state ADD COLUMN approval_freeze_job_id VARCHAR(30) NULL
     REFERENCES operation_job(job_id) ON DELETE SET NULL;

@@ -104,7 +104,7 @@ describe('features/designer/top structure (flowgate.v02.0038)', () => {
         expect(top.items, entry.label).toHaveProperty(entry.label)
       }
     }
-    // flowgate.v02.0059 T#2: every 정렬 / 분배 command has its label (the command after `edit.`).
+    // flowgate.v02.0059 T#2: every alignment / distribution command has its label (the command after `edit.`).
     expect(Object.keys(top.arrange)).toEqual(DESIGNER_ARRANGE_GROUPS.flat().map((command) => command.slice('edit.'.length)))
     expect(messages.designer.shell).not.toHaveProperty('top_label')
     expect(messages.designer.shell).not.toHaveProperty('top_parts')

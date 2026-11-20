@@ -102,7 +102,7 @@ async function mountCenter() {
   await settle()
 }
 
-/** Places a 구현 card from the Palette at (x, y); returns its `tmp_` id. */
+/** Places a Implementation card from the Palette at (x, y); returns its `tmp_` id. */
 async function placeCard(x: number, y: number): Promise<string> {
   const item = DEFAULT_PALETTE_ITEMS.find((i) => i.id === 'task')!
   const transfer = { getData: (type: string) => (type === 'application/x-flowgate-palette-item' ? JSON.stringify(paletteItemDefinition(item, '구현')) : '') }

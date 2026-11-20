@@ -31,7 +31,7 @@ const emit = defineEmits<{ dismiss: [] }>()
 
 // A strong/danger toast is announced immediately (role="alert", assertive live region);
 // every other tone waits for a pause in speech (role="status", polite) -- T0008 §5.3's
-// "정보성 status / 강한 오류 alert" split, mirrored on aria-live so screen readers get the
+// "Informational status / strong error alert" split, mirrored on aria-live so screen readers get the
 // same urgency signal through two independent AT mechanisms.
 const toastRole = computed(() => (props.tone === 'danger' ? 'alert' : 'status'))
 const ariaLive = computed(() => (props.tone === 'danger' ? 'assertive' : 'polite'))

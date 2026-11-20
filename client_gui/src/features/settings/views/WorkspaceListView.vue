@@ -112,7 +112,7 @@
       </div>
     </section>
 
-    <!-- 새 워크스페이스 -->
+    <!-- New workspace -->
     <ModalShell :open="createOpen" size="sm" :aria-label="t('gui.settings.workspaces.create')" @close="createOpen = false">
       <template #header><h2 class="fgs-modal-title">{{ t('gui.settings.workspaces.create') }}</h2></template>
       <div class="fgs-formfield">
@@ -136,7 +136,7 @@
       </template>
     </ModalShell>
 
-    <!-- 더보기: 이름 변경 / 비활성화 / 삭제 -->
+    <!-- More: rename / deactivate / delete -->
     <ModalShell :open="!!menuFor" size="md" :aria-label="menuFor?.name" @close="closeMenu">
       <template #header><h2 class="fgs-modal-title">{{ menuFor?.name }}</h2></template>
       <div v-if="menuFor" class="fgs-actlist">
@@ -196,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-// 시안 11 워크스페이스 목록: cards with state, member/project counts, AI policy and owner; create
+// mockup 11 Workspace list: cards with state, member/project counts, AI policy and owner; create
 // (system administrator), rename / disable / delete (owner) from the "더보기" menu. Deleting is
 // only possible once no project and no member besides the owner is left.
 import { computed, onMounted, ref } from 'vue'

@@ -18,7 +18,7 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   (``settings.write`` -> ``merge_target.judge_check_target``). ``merge_target`` keeps its remote meaning;
 - work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
   v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis).
-  flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): the run block is no longer values only. A plan card whose writer is
+  flowgate.v02.0083 T#1 — 0072 T#3 revision (revised): the run block is no longer values only. A plan card whose writer is
   an AI (``settings.uses_ai``: an explicit person assignee -> a person; else the card's work AI ``run_ai`` -> AI; else
   an explicit AI assignee -> AI; else a person, the default) runs as one AI run of its own: ``run_plan`` hands on its
   work AI, time limit and restarts (no instruction stage, no result type: the AI writes the WP itself, the type the
@@ -81,7 +81,7 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
-# flowgate.v02test.0053 0003-T (1-A): the two 검증 (self-check) options of a run card. Both are ``None`` ("the system
+# flowgate.v02test.0053 0003-T (1-A): the two verification (self-check) options of a run card. Both are ``None`` ("the system
 # default") until a person picks a value; the field's ``choices`` are the combo's presets, and any whole number inside
 # the range below is also a value (the combo's 사용자 정의).
 VERIFY_RUNS, VERIFY_MINUTES = "verify_runs", "verify_minutes"
@@ -148,7 +148,7 @@ _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
-# flowgate.v02test.0053 0003-T (1-A): a run card's 검증 options (the 실행 AI's advanced ⚙). No stored value = the system default
+# flowgate.v02test.0053 0003-T (1-A): a run card's verification options (the 실행 AI's advanced ⚙). No stored value = the system default
 # (``verify_limits.resolve_verify_limits``), so the default shown here is None, never a number.
 VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, None, VERIFY_RUN_CHOICES)
 VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, None, VERIFY_MINUTE_CHOICES)
@@ -198,7 +198,7 @@ class InvalidValue(ValueError):
 
 def card_kind(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str]:
     """The settings kind of a card, or None (an unknown type has no settings). flowgate.v02.0072 T#3: a work plan
-    card keeps the plan settings (flowgate.v02.0083 T#1, 0072 T#3 개정: its run block runs an AI writer, see the head
+    card keeps the plan settings (flowgate.v02.0083 T#1, 0072 T#3 revision: its run block runs an AI writer, see the head
     of this module)."""
     if node_type == "custom":
         return RUN                               # a palette [+] card works like research / work
@@ -385,7 +385,7 @@ def _count(value: Any) -> Optional[int]:
 def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
     """What follows a node's AI result: the card's AI review (``REVIEW``: review count not 0), else an
     approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides).
-    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card's AI result too; requirement and check cards stay None."""
+    flowgate.v02.0083 T#1 (0072 T#3 revision): a work plan card's AI result too; requirement and check cards stay None."""
     if kind not in (RUN, TEST, PLAN):
         return None
     if _count(stored.get("review_count")) not in (None, 0):
@@ -448,7 +448,7 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
     Stored values are handed on, with the run/plan execution defaults when those fields are absent.
     The two stages of instruction use (flowgate.v02.0056 T#2) are also the default: ``instruction``
     (the instruction stage's type and AI) and the report as ``result_doc_type``.
-    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card hands on its work AI, time limit and restarts as a run card
+    flowgate.v02.0083 T#1 (0072 T#3 revision): a work plan card hands on its work AI, time limit and restarts as a run card
     does; it has no instruction stage and no result type of its own (``instruction_stage`` / ``result_doc_type`` are
     None for WP), so its AI runs the result stage alone and writes the WP the result binder binds.
     """

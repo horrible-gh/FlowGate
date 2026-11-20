@@ -1,4 +1,4 @@
-"""Work-state signals + dashboard state-board aggregation (R0001 group 0125, NR0003 권고 1~4).
+"""Work-state signals + dashboard state-board aggregation (R0001 group 0125, NR0003 recommendation 1~4).
 
 Covers the four NR0003 follow-up recommendations implemented as this work order's deliverable:
   1. New explicit backend signals work_started / continuous_work_ended exist.
@@ -133,7 +133,7 @@ def _add_event(store, event_type, doc_pk, when, metadata=None):
     )
 
 
-# ── NR0003 권고 1 & 4: new signals exist and stay OFF the notification whitelist ──────
+# ── NR0003 recommendation 1 & 4: new signals exist and stay OFF the notification whitelist ──────
 
 def test_new_signal_constants_defined():
     assert event_logger.EVT_WORK_STARTED == "work_started"
@@ -141,11 +141,11 @@ def test_new_signal_constants_defined():
 
 
 def test_work_started_excluded_but_terminal_completion_promoted():
-    # NR0003 권고 4: per-transition / present-tense state signals must never leak into the past-tense
+    # NR0003 recommendation 4: per-transition / present-tense state signals must never leak into the past-tense
     # feed (0118 noise regression). work_started is a per-start present-tense signal → stays out.
     assert event_logger.EVT_WORK_STARTED not in dashboard_service._NOTIFICATION_EVENT_TYPES
     # R0001 group 0135 / N0008: the ONE terminal completion signal IS now promoted to the feed — it
-    # fires exactly once per unmanned run, so it gives a distinct "연속작업 완료" alarm without the 폭증.
+    # fires exactly once per unmanned run, so it gives a distinct "연속작업 완료" alarm without flooding notifications.
     assert (
         event_logger.EVT_CONTINUOUS_WORK_ENDED
         in dashboard_service._NOTIFICATION_EVENT_TYPES
@@ -171,7 +171,7 @@ def test_work_started_absent_but_terminal_completion_present_in_feed(store):
     assert "continuous_work_completed" in activity_types
 
 
-# ── NR0003 권고 2 & 3: state-board aggregation counts ────────────────────────────────
+# ── NR0003 recommendation 2 & 3: state-board aggregation counts ────────────────────────────────
 
 def test_work_state_summary_counts_status(store):
     summary = dashboard_service.get_work_state_summary("flowgate")
@@ -207,7 +207,7 @@ def test_work_state_query_budget_scales_and_refreshes_after_mutation(store):
 
 
 def test_work_state_summary_unifies_copied_sources(store):
-    # NR0003 권고 3: a doc copied via the per-user state table AND a doc copied via the
+    # NR0003 recommendation 3: a doc copied via the per-user state table AND a doc copied via the
     # prompt_copied event both count, deduped to distinct documents.
     r_pk = _doc_pk(store, "flowgate.default.0125.0001-R")
     t_pk = _doc_pk(store, "flowgate.default.0125.0004-T")
@@ -260,7 +260,7 @@ def test_work_state_summary_resilient_without_optional_tables(monkeypatch):
     assert summary["continuous_ended"] == 0
 
 
-# ── NR0003 권고 2: active-workflow stage reports 'done' when the head is approved ─────
+# ── NR0003 recommendation 2: active-workflow stage reports 'done' when the head is approved ─────
 
 def test_active_workflow_stage_done_when_head_approved(store):
     # A head step whose own document is finished (wf_done) surfaces as 'done'. (An 'approved'

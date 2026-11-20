@@ -660,7 +660,7 @@ def test_a_stopped_run_finishes_both_stages_of_a_card_it_opened(env, decided, mo
 
 def test_an_issuer_without_document_approve_still_has_the_instruction_and_result_approved_automatically(
         env, decided, monkeypatch):
-    """flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3: 0083 T#4 개정). Before,
+    """flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3: 0083 T#4 revised). Before,
     an issuer without ``document.approve`` left the instruction unapproved and the card waiting for a person's approval.
     An AI card's automatic approvals now take the server's automatic approval authority: the instruction and the result
     are approved, the card never awaits approval, the issuer stays the approval's actor and the system's authority is

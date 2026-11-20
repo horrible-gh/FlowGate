@@ -88,11 +88,11 @@ export interface AttributionEvidence {
   overlappingIntervals?: boolean
   sameChangeInBothSummaries?: boolean
   reEdit?: boolean
-  /** (가) the row's doc_id is another chat, or the anchored turn's source_run_id stays different after a re-read. */
+  /** (a) the row's doc_id is another chat, or the anchored turn's source_run_id stays different after a re-read. */
   wrongLinkPersisted?: boolean
   /** (나) the row's times / trees contradict the run's own record, or a full copy of another run with no change. */
   rowContradictsRun?: boolean
-  /** (다) a server log / event shows the save or notice for a wrong run / doc. */
+  /** (c) a server log / event shows the save or notice for a wrong run / doc. */
   wrongTargetLogged?: boolean
 }
 

@@ -28,7 +28,7 @@ export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
 export type CardStateTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
-/** The three states the user is told apart (작업 중 · 승인 대기 · 승인됨), and the rest (0083 T#4: 응답 · 작성 대기 is awaiting). */
+/** The three states the user is told apart (Working · 승인 대기 · 승인됨), and the rest (0083 T#4: Response · 작성 대기 is awaiting). */
 export type CardStatePhase = 'working' | 'awaiting' | 'approved' | 'other'
 
 export interface CardStateView {
@@ -62,7 +62,7 @@ function executing(run: CardRunFacts): boolean | null {
   return (run.runningExecutionCount ?? 0) + (run.requestedExecutionCount ?? 0) > 0
 }
 
-/** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (지시서 / 결과 작성 대기). */
+/** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (instruction / 결과 작성 대기). */
 const WRITE_WAIT_LABELS: Readonly<Record<string, CardStateKey>> = { instruction: 'instruction_write_wait', execution: 'result_write_wait' }
 
 /** flowgate.v02.0121 T#4: the short causes of a failed AI call (an `incomplete` card's reason, the node wire's

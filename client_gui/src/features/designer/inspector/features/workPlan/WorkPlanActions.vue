@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 stage 2 — the 작업계획 card's header actions (0035 v7 plan.m.*: ⇉ 전개 on a plan
+  <!-- flowgate.v02.0051 stage 2 — the 작업계획 card's header actions (0035 v7 plan.m.*: ⇉ deployment on a plan
        not deployed yet, ⇉ 재전개 ▾ on a deployed plan).
        flowgate.v02.0074 T#5 (D#1 §6.1) — they deploy the plan onto the Flow's Graph draft (T#4 API). Two icon buttons
        of the ⋯ button's kind (IconButton sm, secondary) with no text label: [전개], and [재전개 ▾] opening its two items

@@ -696,7 +696,7 @@ def raise_if_retarget(group_id: str, requested: Optional[str]) -> Optional[Merge
 
 def set_project_default_target(project_id: str, requested: Optional[str]) -> dict:
     """Directly set/clear the project's suggested finalize target (T0016 §3.2's
-    "merge target 지정/변경" action, distinct from actually running a branch
+    "set/change merge target" action, distinct from actually running a branch
     merge). Reuses the same server-side allow-list a finalize attempt is
     checked against — never trusts the UI's filtered branch list alone."""
     from modules.flow_gate.services import git_service as _gs
@@ -2236,7 +2236,7 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     root = ctx.root
     if ownership == OWN_OWNED and root is not None and root.exists():
         if _gs._merge_in_progress(root):
-            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the attempt's session.
+            # flowgate.v02test.0052 T0003 task 3(b): audited on the attempt's session.
             proc = _gs._abort_merge(
                 root, merge_id=ctx.merge_id, reason="interrupted_recovery_abort",
             )

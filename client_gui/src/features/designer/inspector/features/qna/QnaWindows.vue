@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0052 묶음 A — v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the
+  <!-- flowgate.v02.0052 batch A — v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the
        full question, every answer and the full answer form; several may be open at once.
        flowgate.v02.0070 T#5: the only place a question is answered, after its context above the form.
        flowgate.v02.0150 — the windows of ONE document, drawn apart from the Q&A tab: `target` is the target the windows
@@ -61,7 +61,7 @@
         </ul>
 
         <div v-if="windowItem(win.itemId)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
-          <!-- 0016-CH: the options are a stacked radio list (시안 A안); the rest of the window follows B안. -->
+          <!-- 0016-CH: the options are a stacked radio list (mockup option A); the rest of the window follows option B. -->
           <div v-if="windowItem(win.itemId)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
             <button
               v-for="option in windowItem(win.itemId)!.options"
@@ -85,7 +85,7 @@
             data-test="qna-window-body-input"
             @update:model-value="(value: string) => setBody(win.itemId, value)"
           />
-          <!-- The form's last row: the ask-an-AI controls on the left, 답변 on the right. -->
+          <!-- The form's last row: the ask-an-AI controls on the left, Answer on the right. -->
           <div class="inspector-qna-foot">
           <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
             <LineIcon name="bot" class="inspector-qna-ai-icon" />
@@ -315,7 +315,7 @@ function firstLine(body: string): string {
   return body.split(/\r?\n/, 1)[0] ?? ''
 }
 
-/** The response proves only answered or not: both unanswered states read 미답변. */
+/** The response proves only answered or not: both unanswered states read Unanswered. */
 function stateKey(state: QnaItemState): string {
   return state === 'answered' ? 'state.answered' : 'state.unanswered'
 }
@@ -326,7 +326,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 </script>
 
 <style scoped>
-/* 0016-CH (시안 basodrr4 B안, 선택지만 A안): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
+/* 0016-CH (mockup basodrr4 option B, choices only option A): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
    colours; the question body sits in an inset block, the options are a stacked radio list, and the form ends with the
    ask-an-AI controls on the left and 답변 on the right. */
 .inspector-qna-answers {
@@ -470,7 +470,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   color: var(--fg2-text-2);
 }
 
-/* The question body: an inset block, one step larger than the rest (B안 .qbody). */
+/* The question body: an inset block, one step larger than the rest (option B .qbody). */
 .inspector-qna-qbody {
   padding: 12px 14px;
   border: 1px solid var(--fg2-line);

@@ -118,7 +118,7 @@ const props = defineProps<{
   readOnly?: boolean
   /**
    * flowgate.v02test.0025: the chat's context checkpoint (message seq, kind) and whether it can be changed here. The
-   * panel passes null while the context setting is not 체크포인트 사용 (nothing is drawn then).
+   * panel passes null while the context setting is not "체크포인트 사용" (nothing is drawn then).
    */
   checkpointSeq?: number | null
   checkpointKind?: CheckpointKind | null

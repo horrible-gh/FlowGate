@@ -38,25 +38,25 @@ def confirm_revision(group: dict, user_id: str, draft_version: int, base_revisio
 
     def body() -> dict:
         require_writable(flow_id)
-        own = read_ownership(flow_id)                                            # 1 담당
+        own = read_ownership(flow_id)                                            # 1 assignment
         require_graph_editable(flow_id, own)
         run_state_ports.require_editable(flow_id)
-        latest = definition_store.latest_revision_no(flow_id)                    # 2 기준 개정
+        latest = definition_store.latest_revision_no(flow_id)                    # 2 base revision
         if base_revision_no != latest:
             raise GraphApiError(409, "revision_conflict", {
                 "flow_id": flow_id, "base_revision_no": base_revision_no, "latest_revision_no": latest,
             })
-        draft = definition_store.draft(flow_id)                                  # 3 초안
+        draft = definition_store.draft(flow_id)                                  # 3 draft
         if draft is None:
             raise GraphApiError(404, "draft_not_found", {"flow_id": flow_id})
         if draft["draft_version"] != draft_version:
             raise version_conflict(flow_id, draft_version, draft)
         run_state_ports.protect_definition(flow_id, draft["nodes"], draft["edges"])
-        issues, binding = check_draft(flow_id, own, draft)                       # 4 구조·결합
+        issues, binding = check_draft(flow_id, own, draft)                       # 4 structure and binding
         if issues:
             raise GraphApiError(422, "graph_validation_failed",
                                 {"flow_id": flow_id, "draft_version": draft_version, "issues": issues})
-        revision_no = (latest or 0) + 1                                          # 5 한 단위 기록
+        revision_no = (latest or 0) + 1                                          # 5 atomic record
         confirmed_at = definition_store.insert_revision_from_draft(
             flow_id, revision_no, draft_version, base_revision_no, user_id)
         record = assignment_store.root_binding(flow_id)

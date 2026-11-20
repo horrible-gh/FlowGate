@@ -552,7 +552,7 @@ def refuse_server_run_results(cases: list[dict], normalized: list[dict]) -> tupl
     """Split a submission into the results it may record and the ones it may not.
 
     A result for an automated Case -- runnable by the server or not -- is refused item by
-    item, with its reason; the rest of the submission still records (D#1 §3-8 "그 항목만 거절").
+    item, with its reason; the rest of the submission still records (D#1 §3-8 "reject only that item").
     """
     server_run = _automated_case_keys(cases)
     kept: list[dict] = []

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown'
 
 // R0001 (group 0460) — the leading next-document header must not appear in the
-// rendered document at all: "당장 이 문서만 봐도 헤더가 문서에 그대로 드러나잖아".
+// rendered document at all: "Even in this document, the headers appear verbatim in the body".
 //
 // rev1-rev4 wrapped the seven fields in a fenced `text` block, which still put
 // them on screen. rev5 removes them before the body reaches the renderer, the
@@ -19,8 +19,8 @@ import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown
 //     JS `.` never matches CR and a non-multiline `$` only matches the very end
 //     of the string.
 //
-// REJECTION_DOC is the byte-for-byte content of the document the "헤더 보정
-// 안되는데?" rejection was filed against: test.test.0010.0001-R on the
+// REJECTION_DOC is the byte-for-byte content of the document the "Header correction
+// is not working?" rejection was filed against: test.test.0010.0001-R on the
 // flowgate.test deployment (CRLF, frontmatter, one blank line, seven fields).
 
 const HEADER_FIELDS = [

@@ -82,7 +82,7 @@ function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id) })
 }
 
-/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window (flowgate.v02.0056 F1). */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

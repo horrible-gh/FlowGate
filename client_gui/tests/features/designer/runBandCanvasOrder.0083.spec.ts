@@ -4,7 +4,7 @@
  * - the Canvas read's `run` block carries the band's facts of the same read (command, idle reason, AI executions, waiting
  *   cards); flowCanvasApi / serverFlowGraphSource keep each only when sent.
  * - the Center session: a Canvas read newer than the run read (event sequence) tells the run as of itself — an idle
- *   reason that changed (사람 작성·승인 대기 → 완료) and a run that completed (실행 1/4 → none) are the Canvas read's, also
+ *   reason that changed (Human writing·승인 대기 → 완료) and a run that completed (실행 1/4 → none) are the Canvas read's, also
  *   when a run read answered before it or an older run response comes after it; an older Canvas read never hides a newer
  *   run read; a Canvas read of an older server (no band facts) shows no older read's reason or executions either.
  * - the older run read's node runs stay only for nodes the Canvas read sends none of (a draft view).

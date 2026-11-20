@@ -15,8 +15,8 @@
 // restart and review count are the server's repeat choices (-1 until done / until it passes, 0 none, n);
 // the time limit is minutes; the review basis is type / last.
 //
-// flowgate.v02.0072 T#3 — plan: a Graph work plan (WP) card's settings — the AI 사전 지시서 작성 switch
-// (`pre_instruction_auto`, true / false, off by default) and the same run block (run_ai shown as 작업 AI, restart,
+// flowgate.v02.0072 T#3 — plan: a Graph work plan (WP) card's settings — the AI pre-instruction writing switch
+// (`pre_instruction_auto`, true / false, off by default) and the same run block (run_ai shown as task AI, restart,
 // review_ai, review_count, time_limit, review_basis). They are the card's values only: not the plan's Steps' AI /
 // review AI inside the WP document, nothing runs from them yet, and the switch deletes no Step's pre-instruction.
 import type { InspectorReadOnly } from '../../inspectorTarget'
@@ -100,7 +100,7 @@ export function cardSettingsVerifyCustomValue(field: CardSettingsVerifyField, te
 }
 
 /**
- * The combo of a 검증 option: 시스템 기본값 (blank, null), the presets, the stored value when it is none of them (so
+ * The combo of a 검증 option: system defaults (blank, null), the presets, the stored value when it is none of them (so
  * the shown value stays the stored one), then 사용자 정의. A preset or stored value is told as `{n}회` / `{n}분`.
  */
 export function cardSettingsVerifyOptions(field: CardSettingsVerifyField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
@@ -126,7 +126,7 @@ export function cardSettingsIsAiField(field: CardSettingsField): field is CardSe
 
 /**
  * flowgate.v02.0056 F2-1 (O2 0007-TR §4-1, 0056 CH turn 6 §3): the 지시 AI is a RUN card's, shown only while its
- * instruction is used — an omitted instruction has no 지시서 step, so the server does not read it. Before the
+ * instruction is used — an omitted instruction has no instruction step, so the server does not read it. Before the
  * card is read (a card just placed, a read on its way) the value is unknown and the row is drawn with the rest of
  * the form (off), as the server default is `use`.
  */

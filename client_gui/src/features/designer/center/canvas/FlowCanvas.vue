@@ -159,7 +159,7 @@
 // the Graph or handles tabs. flowgate.v02.0049: `canvas-resize` — the Canvas area size Vue Flow
 // measured (it watches the resize itself), when shown and on every change, for the MiniMap.
 // flowgate.v02.0068 T#2: `node-sizes` — the size Vue Flow measured for each card (the size nodeRect gives the
-// Edges), when measured and on every change, for 자동정렬 and the MiniMap's lines.
+// Edges), when measured and on every change, for auto-layout and the MiniMap's lines.
 //
 // flowgate.v02.0045 S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
 // Graph coordinates — what was dropped is for the session to tell), `node-connect` (a connection
@@ -196,7 +196,7 @@
 // cards are dragged they are shown in whole steps from where the drag started, the same offset for each
 // (canvasView.ts stepGroupMove), so the Edges follow the stepped cards and a selection keeps its layout; the
 // drop reports the stepped positions.
-// No step (자율형) leaves the drag as Vue Flow makes it. A new step moves no card.
+// No step (freeform) leaves the drag as Vue Flow makes it. A new step moves no card.
 //
 // 0018-TR rework — the step is a lattice: the card under the pointer lands on the whole-step Graph point nearest
 // to the pointer (the others keep their offset to it), a drop pushed back inside the origin moves in whole steps,
@@ -260,7 +260,7 @@ const props = withDefaults(
     /** Connection pre-check (edit/connectionRules.ts through the session). */
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
-    /** flowgate.v02.0059 0017-T: the step a card drag moves in (Graph units); null = 자율형 (none). */
+    /** flowgate.v02.0059 0017-T: the step a card drag moves in (Graph units); null = freeform (none). */
     moveStep?: number | null
     /** flowgate.v02.0056 F2-1: a card waiting for its approval offers [승인] (a `node-approve` event). */
     canApprove?: boolean
@@ -408,7 +408,7 @@ let nodesMeasured = false
 
 /**
  * 0018-TR rework: the move step's dot grid on the Viewport Vue Flow draws the cards with (its own transform, which
- * also holds a first view it constrained without reporting it); none for 자율형.
+ * also holds a first view it constrained without reporting it); none for freeform.
  */
 const grid = computed(() => canvasDotGrid(flow.value?.viewport.value ?? liveViewport.value, props.moveStep))
 // Each dot is drawn in the middle of its background tile, so the tiles start half a tile before the Graph origin:

@@ -1,7 +1,7 @@
 """flowgate.default.0670 T0004 -- chat (CH) command execution and run change summaries.
 
 Covers NR0003 §15:
-  15.1 the command path never touches the 1회 편집 claim/commit/rollback;
+  15.1 the command path never touches the one-time edit claim/commit/rollback;
   15.2 policy (default user_approval / always_approve / reject), approve/reject flow,
        results returned to the same run, exit code / stdout / stderr / timeout, cwd and
        worktree binding;
@@ -124,7 +124,7 @@ def bound(repo, monkeypatch):
 
 @pytest.fixture
 def no_source_access(monkeypatch):
-    """15.1: any 1회 편집 claim/commit/rollback from the command path is a failure."""
+    """15.1: any one-time edit claim/commit/rollback from the command path is a failure."""
     from modules.flow_gate.db import user_chat_source_access as sa
 
     for name in ("claim", "commit", "rollback"):
@@ -590,7 +590,7 @@ class TestLifecycle:
                 svc.authorize_token(bad, run)
 
 
-# ── 4. API loop continuation (15.2 "같은 run에서 결과 반환 후 AI loop 계속") ─────
+# ── 4. API loop continuation (15.2 "continue the AI loop after returning results to the same run") ─────
 
 def test_api_chat_runs_command_then_keeps_going_in_the_same_run(monkeypatch, store, bound, live, repo):
     from modules.flow_gate.services import ai_invoke_service as ai

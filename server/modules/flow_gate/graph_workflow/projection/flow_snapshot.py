@@ -1,4 +1,4 @@
-"""Read-only snapshot of one Flow's v0.1 data (D0004 §4.1 '읽기' rows). Never writes v0.1 tables."""
+"""Read-only snapshot of one Flow's v0.1 data (D0004 §4.1 'read' rows). Never writes v0.1 tables."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

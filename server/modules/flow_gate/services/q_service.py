@@ -796,8 +796,8 @@ def register_answer(
 
 # ── Automatic responder outcomes (flowgate.default.0661 T0004 F3/F5) ────────────────
 #
-# Three outcomes of a responder run are kept apart on purpose (T0004 "실패 ≠ 정상 답변 ≠
-# 사용자 판단 필요"): an answer row (register_answer above), a TECHNICAL failure
+# Three outcomes of a responder run are kept apart on purpose (T0004 "failure ≠ normal answer ≠
+# human judgment needed"): an answer row (register_answer above), a TECHNICAL failure
 # (mark_responder_failed — the item stays open and can be re-dispatched from the panel),
 # and the responder's EXPLICIT hand-off to a person (escalate_to_user — nothing retries
 # it; a human answers). None of them touches the container status or the parked chain:

@@ -460,7 +460,7 @@ export default {
         action_required_new_attempt: 'Q&Aの回答で新しい attempt が必要とされましたが、まだ開かれていないためカードを再呼び出ししていません。`次のステップ`または`全体実行`で新しい attempt として開き直します。レビュー中のカードは停止してから実行してください。',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
-      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
         needs_intervention: '介入が必要',
         system_error: 'システムエラー',
@@ -470,7 +470,7 @@ export default {
         recovery_required: '復旧が必要',
         confirmed: '確認完了',
 
-        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        // flowgate.v02.0113 T#1 (0002-D revision §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
         instruction_write_wait: '指示書作成待ち',
         result_write_wait: '結果作成待ち',
         waiting: '待機',
@@ -770,7 +770,7 @@ export default {
         author: {
           instruction_ai_or_human: '指示AIまたは人',
         },
-        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        // flowgate.v02.0056 F1 — the history button of a document line: its review·rejection history window.
         history: 'レビュー・差し戻し履歴',
         history_count: 'レビュー・差し戻し履歴 {n}件',
         // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
@@ -2747,7 +2747,7 @@ export default {
       ai_group_validation_failed: '入力が正しくありません。',
     },
   },
-  // flowgate.v02.0020 환경 설정 (시안 11~14).
+  // flowgate.v02.0020 환경 설정 (mockup 11~14).
   settings: {
     title: '環境設定',
     breadcrumb_aria: '現在地',
@@ -3412,7 +3412,7 @@ export default {
       paths: '保存パス',
       git: 'Git',
     },
-    // flowgate.v02.0076 T#5: 프로젝트 조회 · 시스템 › 전체 프로젝트 (read only).
+    // flowgate.v02.0076 T#5: Project lookup · 시스템 › 전체 프로젝트 (read only).
     projects: {
       refresh: '再読み込み',
       picker: 'プロジェクト',

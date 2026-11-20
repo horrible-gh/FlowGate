@@ -34,7 +34,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
       expect(source, file).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|defineStore|localStorage|sessionStorage)\b|\bimport\s*\(/)
     }
   })
-  // flowgate.v02.0060 T#2: attached (2단계-A). Only the Designer Shell imports the menu (its view and the connector);
+  // flowgate.v02.0060 T#2: attached (2 step-A). Only the Designer Shell imports the menu (its view and the connector);
   // the five areas inject it and import nothing of it, so mounted elsewhere they keep their old behaviour.
   it('is installed by the Designer Shell only; the five areas reach it through inject and import nothing of it', () => {
     const injecting: string[] = []
@@ -74,7 +74,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
         /^(?:vue|vue-i18n|\.\.\/[A-Za-z]+|\.\/(?:DesignerMenuActions\.vue|menuActions|actionMessages)|\.\.\/\.\.\/\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue|\.\.\/\.\.\/center\/(?:designerCenterSession|graph\/flowGraph|graph\/edgeProgress|run\/flowRunLock|run\/flowCardMenu)|\.\.\/\.\.\/palette\/paletteCatalog)$/,
       )
       expect(source, file).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|defineStore|localStorage|sessionStorage|postRequest|getRequest|axios)\b|\bimport\s*\(|@\/features\/project|\/api\/v1/)
-      // Git 되돌리기 has no path here: no Base or group restore route is reachable from the menu.
+      // Git Revert has no path here: no Base or group restore route is reachable from the menu.
       expect(source, file).not.toMatch(/dispose\(|base-revert|revertAll|untracked|git\/branches/)
     }
   })
@@ -100,7 +100,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
     expect(shell).toMatch(/server: menuServer/)
     expect(shell.match(/<component :is="contextMenu\.dialogs"/g)).toHaveLength(1)
   })
-  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1차 11 + 정렬 · 배치 / 정렬; T#2 adds the 11 2-B commands (24).
+  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1 phase 11 + alignment · layout / alignment; T#2 adds the 11 2-B commands (24).
   it('connects 24 commands: the 11 first-step ones, the two 정렬 (T#1) and the 11 2-B server ones (T#2)', () => {
     expect([...FIRST_STEP_COMMANDS].sort()).toEqual([...firstConnected].sort())
     expect([...ARRANGE_COMMANDS].sort()).toEqual([...arrangeConnected].sort())
@@ -116,7 +116,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
       const other = readFileSync(join(attachRoot, file), 'utf8')
       for (const command of unimplementedCommands) expect(other, `${file} ${command}`).not.toContain(`'${command}'`)
     }
-    // 정렬 runs the Edit menu path lent by the Shell; the connector has no arrange logic and does not import the top menu.
+    // alignment runs the Edit menu path lent by the Shell; the connector has no arrange logic and does not import the top menu.
     expect(source).not.toMatch(/arrangeSelection|arrangeNodes\(|from '\.\.\/\.\.\/top\//)
     const shell = readFileSync(join(root, 'features/designer/shell/DesignerShell.vue'), 'utf8')
     expect(shell).toMatch(/groups: DESIGNER_ARRANGE_GROUPS/)

@@ -118,7 +118,7 @@ def test_required_policies_by_structure():
     only_root = graph([doc_node("gn_r", "R")], [])
     # 0061 run scope: an isolated root is no run start, so a run targets nothing of it
     assert rp.required_policies(only_root, "gn_r") == rp.required_policies(only_root) == {"start_node", "completion"}
-    # flowgate.v02.0083 T#1 (0056 T#1 개정): the bound root is a done input whatever its review status (no status
+    # flowgate.v02.0083 T#1 (0056 T#1 revised): the bound root is a done input whatever its review status (no status
     # input); the rejection path is asked for the cards after it, which a bound run start always has
     assert rp.required_policies(LINEAR, "gn_r") == rp.required_policies(LINEAR) == {
         "start_node", "completion", "rejection_path"}

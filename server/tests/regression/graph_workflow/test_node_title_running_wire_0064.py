@@ -1,4 +1,4 @@
-"""0064 T#4 (0062 D0005 set 2 §3.2 잠금 표, L0006 2.7 step 4) — the running lock a card's title edit follows on screen.
+"""0064 T#4 (0062 D0005 set 2 §3.2 lock table, L0006 2.7 step 4) — the running lock a card's title edit follows on screen.
 
 Every node run of the run read (and so of the Canvas read, which carries the run's node runs) tells ``node_running``:
 the card settings' running lock (``legacy_adapter.node_running``), the very judgement a title save is refused by
@@ -60,7 +60,7 @@ def in_review(env, key, number):
 
 
 def test_an_open_card_no_ai_works_on_is_not_running_and_its_title_saves(env, decided):
-    """flowgate.v02.0113 T#1 (0002-D 개정 §3.13): open alone is not running — a person's card waits, its title saves."""
+    """flowgate.v02.0113 T#1 (0002-D revision §3.13): open alone is not running — a person's card waits, its title saves."""
     from flowgate.card_settings import legacy_adapter
 
     key = _run_one_card(env, HUMAN)

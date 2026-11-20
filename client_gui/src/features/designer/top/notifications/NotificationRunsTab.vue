@@ -1,7 +1,7 @@
 <template>
   <p class="notification-context">{{ t('gui.designer.top.notifications.project_only', { name: projectName }) }}</p>
   <p v-if="!rows.length && !mergeItems.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_runs') }}</p>
-  <!-- flowgate.v02test.0042 (시안 v7 item 3): card result merges — a red-framed row with the conflict mark when a person
+  <!-- flowgate.v02test.0042 (mockup v7 item 3): card result merges — a red-framed row with the conflict mark when a person
        must choose, a blue hourglass while it waits (a spinner while it catches up); [열기] opens the card's '병합 · 충돌' tab. -->
   <ul v-if="mergeItems.length" class="notification-list" data-test="notification-merges">
     <li v-for="item in mergeItems" :key="`${item.flowId}:${item.nodeKey}`" class="notification-card notification-merge" :class="{ 'is-choice': choice(item) }" data-test="notification-merge" :data-state="item.state">
@@ -18,7 +18,7 @@
     </li>
   </ul>
   <ul v-if="rows.length" class="notification-list">
-    <!-- 0016-CH B안 card row: [phase icon] [Flow / phase · progress · mode · AI (reason)] [open · stop]. -->
+    <!-- 0016-CH option B card row: [phase icon] [Flow / phase · progress · mode · AI (reason)] [open · stop]. -->
     <li v-for="run in rows" :key="run.key" class="notification-card" data-test="notification-run" :data-phase="run.phase">
       <span class="notification-status" :class="phaseTone(run.phase)" :title="label('phases', run.phase)" aria-hidden="true"><LineIcon :name="phaseIcon(run.phase)" /></span>
       <div class="notification-main">
@@ -80,7 +80,7 @@ function phaseIcon(phase: string): LineIconName {
 </script>
 
 <style scoped>
-/* flowgate.v02test.0042 (시안 v7): merge rows — red frame when a person must choose; a text [열기] button. */
+/* flowgate.v02test.0042 (mockup v7): merge rows — red frame when a person must choose; a text [열기] button. */
 .notification-list .notification-card.notification-merge.is-choice { border-color: rgba(255, 100, 120, 0.55); }
 .notification-status.is-spinning svg { animation: notification-merge-spin 1s linear infinite; }
 @keyframes notification-merge-spin { to { transform: rotate(360deg); } }

@@ -122,7 +122,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
   })
 
   it('direct access to /settings renders the Environment Settings hub with that section active', async () => {
-    // flowgate.v02.0020: /settings is no longer a placeholder (시안 11 #hub).
+    // flowgate.v02.0020: /settings is no longer a placeholder (mockup 11 #hub).
     const { wrapper, router } = await mountAt('/settings')
     mounted = wrapper
 

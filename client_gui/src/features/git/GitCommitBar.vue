@@ -56,8 +56,8 @@
 // dialogs are bound to the context they were opened in (the snapshot / draft ticket).
 //
 // flowgate.v02.0067 T#2 — the bottom of the `파일 관리` tab (0067-R §4-5): with no Stage, or while the
-// commit cannot run for any reason but an empty message, the message, 🤖 and 커밋 are all disabled;
-// an empty message blocks 커밋 only. No Stage is not worth a line of its own (the button tooltip
+// commit cannot run for any reason but an empty message, the message, 🤖 and "커밋" are all disabled;
+// an empty message blocks "커밋" only. No Stage is not worth a line of its own (the button tooltip
 // still says it); other reasons keep their short line. The shared reasons stay as they are; this
 // area alone lets a commit block (empty message aside) close 🤖 too, with the commit's reason.
 import { computed } from 'vue'

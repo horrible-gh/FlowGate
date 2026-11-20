@@ -560,7 +560,7 @@ class AgentJobService:
             touched += self._scrub(ts)
         return touched
 
-    # -- settlement (D0005 §3-4 "종결"): terminal AND, for an unconfirmed end, fenced --
+    # -- settlement (D0005 §3-4 "settlement"): terminal AND, for an unconfirmed end, fenced --
 
     _UNSETTLED_SQL = ("(status IN ('NEW','CLAIMED','STARTED') OR (terminal_cause='" + CAUSE_SERVER_EXPIRED
                       + "' AND fenced_at IS NULL))")
@@ -706,7 +706,7 @@ class AgentJobService:
                            "lease_token": token, "lease_expires_at": expiry}
                     if row.get("ai_run_id"):
                         # Delivered exactly once (one claim only): the token-bearing input
-                        # is not kept after this hand-off (D0005 §3-6 "수신 시").
+                        # is not kept after this hand-off (D0005 §3-6 "on receipt").
                         self.s._execute_affected(
                             """UPDATE agent_jobs SET stdin_text='',command_line='',updated_at=?
                                WHERE job_id=? AND attempt_id=?""",

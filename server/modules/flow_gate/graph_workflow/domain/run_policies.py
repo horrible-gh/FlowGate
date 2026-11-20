@@ -35,7 +35,7 @@ RULE_REF = {
     "report_pair": "Q-5", "rejection_path": "Q-6", "completion": "Q-10",
     "gate_node": "Q-11", "custom_node": "Q-11",
 }
-# L0009 §2.0 지시 타입 (AUTO_REPORT_MAP keys).
+# L0009 §2.0 instruction types (AUTO_REPORT_MAP keys).
 INSTRUCTION_DOC_TYPES = frozenset({"N", "T", "T2", "TS"})
 
 
@@ -106,7 +106,7 @@ def policies_of(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
 def required_policies(revision: Graph, bound_node_key: Optional[str] = None) -> set[str]:
     """L0009 §2.6.3 ``required_policies`` for one revision and its root binding.
 
-    flowgate.v02.0083 T#1 (0056 T#1 개정): the bound root is the run's input and is done at start whatever its
+    flowgate.v02.0083 T#1 (0056 T#1 revision): the bound root is the run's input and is done at start whatever its
     document's review status, so it never takes the rejection path; only the other cards need ``rejection_path``."""
     targets = run_scope(revision).targets
     nodes = [n for n in revision.nodes if n.key in targets]

@@ -1,4 +1,4 @@
-"""Mention tool section after the 0349 shrink — TR-2 (D0004 D-3/D-4/D-5/D-6, P0005 [참고]).
+"""Mention tool section after the 0349 shrink — TR-2 (D0004 D-3/D-4/D-5/D-6, P0005 [reference]).
 
 TR-1 built the registry and /help/tools without touching a single mention. This is the
 other half: every mention now asks the registry which tools to name, names only those, and

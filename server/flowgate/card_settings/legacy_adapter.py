@@ -44,7 +44,7 @@ flowgate.v02.0098 T#1 (D0004 §3.1 / §3.2): the check card's merge target branc
 view (``merge_target.check_target_view``) and its invalidation for the settings response. Both are scoped by the
 authenticated group alone: its ``group_id`` and its own ``project_id``.
 
-flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-1 / B-3 / B-4, Q #511 o3 — 0083 T#4 개정): an AI card's automatic
+flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-1 / B-3 / B-4, Q #511 o3 — 0083 T#4 revision): an AI card's automatic
 approval is made under the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``: ``document.approve``
 alone), not the run issuer's permissions; the issuer stays the record's actor (a real user) and an empty issuer approves
 nothing. A person's work plan result keeps the issuer's authority (0083 WP-4). Why an automatic approval was not made
@@ -1164,7 +1164,7 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
     twice, a retried job) finds the record its key already has and changes nothing.
 
     - Authority: ``authority`` ``AUTOMATION`` (an AI card's result, flowgate.v02.0105 T#2 B-4, Q #511 o3 — 0083 T#4
-      개정): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
+      revision): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
       permissions; an empty issuer approves nothing (``issuer_missing``) and the system's authority is recorded beside
       the completion. None (a person's work plan result, 0083 WP-4): the run issuer's own permissions, resolved as the
       approve button resolves them; without ``document.approve`` nothing is attempted (``issuer_lacks_approve``).

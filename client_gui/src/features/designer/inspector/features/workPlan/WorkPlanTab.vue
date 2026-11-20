@@ -66,7 +66,7 @@ function openLine(line: InspectorSlotView) {
   if (line.id) openWorkPlan(props.target, line.id, host)
 }
 
-/** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the line's review·rejection history window (flowgate.v02.0056 F1). */
 function historyLine(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }
@@ -88,7 +88,7 @@ function stateOf(reviewStatus: string | null, docStatus: string | null) {
 /**
  * The plan line: the card's plan document (made when the card was placed, flowgate.v02.0053 T#5), else the bound
  * plan; a line without a document says why. flowgate.v02.0072 T#3: the one document line (R0001 §1.2, 0005-NR §1 —
- * the 전개 line is not shown).
+ * the deployment line is not shown).
  */
 const lines = computed<InspectorSlotView[]>(() => {
   const target = props.target

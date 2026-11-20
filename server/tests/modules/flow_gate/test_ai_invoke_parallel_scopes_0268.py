@@ -195,7 +195,7 @@ class TestPerfectWorkerSucceeds:
 
 
 class TestNoWorkStillFails:
-    """The fix must judge the work, not rename the verdict (0259 B0001의 규칙)."""
+    """The fix must judge the work, not rename the verdict (the 0259 B0001 rule)."""
 
     def test_test_run_worker_that_starts_nothing_is_none(self, world):
         run = _run(world, "test_run", work=None)

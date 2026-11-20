@@ -386,7 +386,7 @@ def _finalize_run(run: dict) -> None:
     # question forward -- one item, strictly after this run's own lease release above,
     # and only while the original chain is still parked on question_pending.
     _continue_question_responder_chain(run)
-    # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
+    # NR0003 §11 proposal 1/2 (T#1): the responder dispatch below starts a brand-new run through
     # the ordinary admission path, which refuses a second concurrent run for this group
     # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
     # strictly after the release directly above, never before it.
@@ -751,7 +751,7 @@ def _auto_resume_answered_question_chain(run: dict) -> None:
 
 # ── Automatic Q responder: dispatch · settle · continue (0551 T#1 → 0661 T0004) ────────
 #
-# Safety boundaries (T0004 "자동실행 안전 경계", which outrank F1~F6):
+# Safety boundaries (T0004 "automatic-execution safety boundaries", which outrank F1~F6):
 #   1. a responder is dispatched only for an open item THIS parked chain's own hop
 #      registered (asker_kind='ai', asker_ai_run_id == the run that stopped on
 #      question_pending) — never for an older Q, a human's Q or another run's Q that

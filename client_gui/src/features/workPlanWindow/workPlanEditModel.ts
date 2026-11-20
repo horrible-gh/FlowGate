@@ -689,7 +689,7 @@ export function applyStepDraft(draft: WorkPlanDraft, rowId: string, values: Work
   return { status: 'applied', draft: replaceStep(draft, row, step) }
 }
 
-// --- 지시 생략 (flowgate.v02.0074 T#5, D#1 §3.7 · §6.2) ----------------------------------------------------------
+// --- Omit instruction (flowgate.v02.0074 T#5, D#1 §3.7 · §6.2) ----------------------------------------------------------
 // One click on a row puts the fixed text 「승인 되었습니다」 in its Step's pre-instruction (the parent draft, as a person's
 // edit), saves the plan once and deploys it (first / add): the card's instruction line — the 「설계 지시」 (DS) line of a
 // design card — gets that text, and the run approves it without an instruction AI (approve_instruction or the card

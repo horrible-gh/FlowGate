@@ -106,7 +106,7 @@ const draftTimeout = ref('none')
 const draftTimeoutText = ref('120')
 const timeoutValid = computed(() => draftTimeout.value !== 'custom' || (/^\d+$/.test(draftTimeoutText.value) && Number(draftTimeoutText.value) >= 1 && Number(draftTimeoutText.value) <= 10080))
 const draftSendAction = ref<SendAction>('none')
-// A preset's number as text, 'custom' (사용자 입력), 'all' or 'checkpoint' (체크포인트 사용).
+// A preset's number as text, 'custom' ("사용자 입력"), 'all' or 'checkpoint' ("체크포인트 사용").
 const draftRange = ref('20')
 // The typed "last N turns", used only while 'custom' is selected. It is raw text on
 // purpose: 0, -3, 1.5, "abc", "" and anything over the server cap are rejected as
@@ -133,7 +133,7 @@ function toggleSettings(): void {
   draftTimeout.value = minutes == null ? 'none' : [30, 60, 120, 240].includes(minutes) ? String(minutes) : 'custom'
   draftTimeoutText.value = String(minutes ?? 120)
   draftSendAction.value = props.settings.sendAction
-  // A saved number that is not a preset reopens as 사용자 입력 with that number filled in.
+  // A saved number that is not a preset reopens as "사용자 입력" with that number filled in.
   draftRange.value =
     props.settings.contextMode === 'all' || props.settings.contextMode === 'checkpoint' || props.settings.contextMode === 'checkpoint_recent'
       ? props.settings.contextMode
@@ -145,7 +145,7 @@ function toggleSettings(): void {
   open.value = true
 }
 
-// Only a person's own pick runs this (not the reopen redraw): choosing 사용자 입력 right
+// Only a person's own pick runs this (not the reopen redraw): choosing "사용자 입력" right
 // after a preset starts the input from that preset's number.
 function onRangeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value

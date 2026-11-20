@@ -372,7 +372,7 @@ def test_feed_degrades_only_open_questions_section(feed_store, monkeypatch):
 
 
 def test_feed_badge_count_after_seen_still_includes_open_questions(feed_store, monkeypatch):
-    """badge_count formula + 'seen 불변': catching up on the general feed (unread_count -> 0)
+    """badge_count formula + 'seen unchanged': catching up on the general feed (unread_count -> 0)
     must not also clear the open_questions total baked into badge_count."""
     monkeypatch.setattr(
         dashboard_service.db_questions,
@@ -390,7 +390,7 @@ def test_feed_open_questions_real_sql_enforces_pending_status_and_group_exclusio
     """Runs the actual `questions.list_open_items_by_project` SQL registered in queries.json
     (not a python stub) against the test sqlite store, proving the pending/answer_count WHERE
     clause and the terminal-group exclusion are enforced by the query itself. Covers T0017 5-1's
-    'pending/answer_count 조건'과 '종료·폐기 그룹 제외' for the open_questions path specifically —
+    'pending/answer_count conditions' and 'exclude closed/discarded groups' for the open_questions path specifically —
     the pre-existing exclusion tests at the top of this file only exercise the general activity feed."""
     store = feed_store
     monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", _REAL_LIST_OPEN_ITEMS)

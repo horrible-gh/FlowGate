@@ -1,7 +1,7 @@
 """Git ref/tree/blob reads: name-status parsing, dirty/untracked detection,
 ahead/behind + unpushed-commit accounting.
 
-Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 

@@ -7,7 +7,7 @@ What remained were four places where a resource had no ceiling: a queue that blo
 when full, a query with no LIMIT, a cache with no eviction, and a cache that pinned a
 failure forever. None of them misbehave on a small, fresh instance — all of them
 degrade as the instance accumulates history, which is why R0001 reported a stall that
-appeared *gradually* ("초반보다는 많이 빨라지긴 했지만 간혹 …멈춢떄가 있다") rather than
+appeared *gradually* ("much faster than before, but still occasionally stalls") rather than
 from day one.
 
 The rule this guard encodes:
@@ -145,21 +145,21 @@ def test_normal_delivery_is_unchanged():
     asyncio.run(scenario())
 
 
-# 0394 T0016 항목 4 (NR0003 §5.3): "가득 찬 asyncio.Queue 에 await put 하지 않는다"는
-# publisher.py 만의 규칙이 아니다 — 어떤 모듈이든 큐를 하나 만드는 순간 같은 교착이
-# 성립한다. 그런데 검사는 publisher.py 한 파일만 보고 있었다. 범위를 flow_gate 트리에서
-# asyncio.Queue 를 실제로 쓰는 모든 모듈로 넓힌다.
+# 0394 T0016 item 4 (NR0003 section 5.3): never await put on a full asyncio.Queue.
+# This is not specific to publisher.py; any module creating a queue can
+# deadlock the same way. Expand the former single-file check to every module
+# in flow_gate that actually uses asyncio.Queue.
 #
-# 왜 "asyncio.Queue 를 쓰는 모듈"로 한정하는가: `await client.put(url)` 은 HTTP PUT 이고
-# 이 규칙과 아무 상관이 없다. 큐를 만들지 않는 모듈까지 훑으면 그런 호출을 오탐한다.
+# Restrict the scope to queue users: await client.put(url) is an HTTP PUT,
+# unrelated to this rule, and scanning modules without queues would misreport it.
 _QUEUE_PUT_EXEMPT: dict[str, str] = {
-    # 경로 -> 사유. 비어 있고, 비어 있는 채로 두는 것이 맞다. 넣을 때는 날짜와 사유,
-    # 그리고 후속 T 번호를 함께 적어라 — 조용히 범위를 좁히는 것과 구분되어야 한다.
+    # Path -> reason. This should remain empty. Any exception must include its date,
+    # reason, and follow-up T number, distinguishing it from silently reduced coverage.
 }
 
 
 def _queue_owning_sources() -> list[Path]:
-    """flow_gate 안에서 asyncio.Queue 를 직접 만드는 모듈들."""
+    """Modules in flow_gate that directly construct asyncio.Queue."""
     owners: list[Path] = []
     for path in sorted(_FG.rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -170,7 +170,7 @@ def _queue_owning_sources() -> list[Path]:
 
 
 def test_queue_scan_actually_reaches_the_publisher():
-    """범위가 좁아지면 아래 검사가 '볼 게 없어서' 통과한다. 그 무증상 통과를 막는 앵커다."""
+    """Anchor coverage so a narrowed scope cannot pass merely by finding no targets."""
     owners = _queue_owning_sources()
     assert _PUBLISHER in owners, "publisher.py 가 큐 소유 모듈 목록에서 빠졌다"
     assert len(owners) >= 1
@@ -208,7 +208,7 @@ def test_no_blocking_queue_put_anywhere():
 
 
 def test_queue_put_exemptions_still_exist():
-    """면제 목록의 항목은 실재하는 파일이어야 한다 — 낡은 면제가 구멍을 열어 두지 않도록."""
+    """Exemptions must name existing files, preventing stale exemptions from opening gaps."""
     for rel in sorted(_QUEUE_PUT_EXEMPT):
         assert (_SERVER_DIR / rel).is_file(), f"_QUEUE_PUT_EXEMPT 가 없는 파일을 가리킨다: {rel}"
 

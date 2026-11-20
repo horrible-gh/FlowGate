@@ -1,4 +1,4 @@
-"""The result of one step / full command (flowgate.v02.0113 T#5, 0030-M §5, 0002-D 개정 §3.14 / §6.5).
+"""The result of one step / full command (flowgate.v02.0113 T#5, 0030-M §5, 0002-D revision §3.14 / §6.5).
 
 ``GET /api/v1/runs/{run_id}/command-result[?command_seq=N]`` (``payload``): what one [다음 단계] / [전체 실행] command did,
 read from what the run already records — every existing trace stays.
@@ -25,7 +25,7 @@ read from what the run already records — every existing trace stays.
   of the record's attempt / stage / seq — inside the command's event range: never by a rounded time. Only a record
   with neither (a record of no Graph execution) falls back to its time, given to exactly one command (the latest one
   started at or before it, and not after that command's end); such a message says so (``attribution: "time"``).
-- Its failures (the errors this command made, D 개정 §3.14-1): an AI start or call that failed (a role invocation record
+- Its failures (the errors this command made, D revision §3.14-1): an AI start or call that failed (a role invocation record
   ``admission_refused`` / ``start_failed`` / ``call_failed`` with no later success of the same node and role), a failed
   stage (``stage_failed``), an AI that cannot run (a ``wait_unavailable`` stage assignment), an automatic approval not
   made (B-1 ``auto_approval_skipped``: a review not passed / exhausted, a refusal, …; a person's work plan result waiting

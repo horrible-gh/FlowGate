@@ -494,10 +494,10 @@ def inject_hop_note(*, mode="auto_approved", overrides=None, default=None, fold=
     [("auto_approved", "NR step note|MENTION"), ("ai_direct", "N step note|MENTION")],
 )
 def test_each_mode_delivers_the_note_of_the_row_it_actually_runs(monkeypatch, mode, expected):
-    """0408 M0019 재반려 2 — 홉은 자기가 도는 줄의 멘트를 싣는다.
+    """0408 M0019 repeated rejection 2: each hop carries its own row's message.
 
-    [자동 승인]에서 도는 줄은 NR이고 [지시서 작성 후 진행]에서 도는 줄은 N이다. 두 줄은
-    계획이 따로 적어 준 서로 다른 문장을 갖는다.
+    [자동 승인] executes the NR row, while [지시서 작성 후 진행] executes the N row.
+    The plan assigns different sentences to those two rows.
     """
     rows = [
         {"item_seq": 1, "type": "N", "note": "N step note"},
@@ -564,7 +564,7 @@ def test_tsr_is_not_a_note_candidate_for_ts(monkeypatch):
     assert inject_hop_note() == "MENTION"
 
 
-# 0408 M0019 재반려 3 — "문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"
+# 0408 M0019 repeated rejection 3: why are document message/provider edits not reflected in the dialog?
 # The dialog reads the plan's projection onto the live sequence. L0010 §2.5 counted "the Nth
 # row of type X" over the whole sequence, so a finished N/NR pair from an earlier round stole
 # the mapping from the pair this plan actually poured.

@@ -15,7 +15,7 @@
 </template>
 
 <script lang="ts">
-// v02gui.0027 0016-CH (UI 통일, 시안 basodrr4 B안) — the one set of line icons of the Designer's popups and dialogs,
+// v02gui.0027 0016-CH (consistent UI, mockup basodrr4 option B) — the one set of line icons of the Designer's popups and dialogs,
 // drawn like the header's bell (24px grid, 1.75 stroke, currentColor). Emoji and letter glyphs (↗ ✎ 🤖 💬 ⚙ ✕ ● ⌄)
 // are replaced by these so every surface reads as one app. Shape only: size and colour come from the caller's CSS.
 // v-html only ever receives the static path strings below, never user text.

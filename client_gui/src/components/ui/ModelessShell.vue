@@ -133,8 +133,8 @@ function setMinimized(value: boolean): void {
 }
 
 // Keeps at least this many px of the titlebar reachable so a panel dragged toward an
-// edge can never fully leave the viewport (T0006 §6 "viewport 밖으로 완전히 사라지지
-// 않도록 최소 제약").
+// edge can never fully leave the viewport (T0006 §6 "Minimum constraints to prevent disappearing
+// completely outside the viewport").
 const MIN_VISIBLE = 80
 
 function clamp(value: number, min: number, max: number): number {
@@ -236,8 +236,8 @@ function onEscape(): void {
 }
 
 /* ───────────────────────────── open / close ─────────────────────────────── */
-// No focus trap and no forced initial focus (T0006 §6 "focus trap 금지" /
-// "focus 정책 명확화"): opening never steals focus from whatever the user is doing on
+// No focus trap and no forced initial focus (T0006 §6 "No focus trap" /
+// "Explicit focus policy"): opening never steals focus from whatever the user is doing on
 // the base screen. Closing returns focus to the trigger only as a courtesy, and only
 // if focus was still inside this panel — if the user had already moved on, forcing
 // focus back to the trigger would undo their own navigation.

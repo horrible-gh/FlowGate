@@ -1,4 +1,4 @@
-// flowgate.v02test.0053 1-D — what the card's `검증` line draws (시안 v15). Pure: no Vue, no i18n, no API.
+// flowgate.v02test.0053 1-D — what the card's `검증` line draws (mockup v15). Pure: no Vue, no i18n, no API.
 // The line has a name, a state badge and buttons only; times and the card ahead live in the badge's tooltip.
 import type { CardVerification, CardVerificationAction, CardVerificationState } from '@/features/document'
 import type { SlotStateTone } from '../../parts/slotStateView'

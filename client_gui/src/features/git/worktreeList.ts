@@ -16,7 +16,7 @@ export type WorktreeSectionKey = 'changes' | 'staged'
 export type WorktreeFilter = 'all' | 'M' | 'A' | '?' | 'D' | 'locked'
 export const WORKTREE_FILTERS: readonly WorktreeFilter[] = ['all', 'M', 'A', '?', 'D', 'locked']
 
-/** default = only the first folder open; open / closed = the file menu's 모든 폴더 열기 / 접기. */
+/** default = only the first folder open; open / closed = the file menu's Expand all folders / 접기. */
 export type WorktreeFolderMode = 'default' | 'open' | 'closed'
 
 /** What a row shows in one section: its file and the letter of that section. */

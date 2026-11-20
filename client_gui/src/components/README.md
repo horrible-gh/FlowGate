@@ -1,50 +1,52 @@
 # components
 
-도메인 의미가 없는 공용 UI만 이 디렉터리에 둡니다 (T0005 §4).
-특정 기능/화면에서 1회만 쓰이는 UI는 이곳이 아니라 해당 features/* 또는 app/*가 소유합니다.
+Only shared, domain-independent UI belongs here (T0005 §4). UI used by a single
+feature or screen belongs to that features/* or app/* owner.
 
 ## ui/
 
-T0004에서 구현한 1차 App Shell 전역 UI Primitive입니다: `Button`, `IconButton`, `Input`,
-`Textarea`, `Select`, `Toggle`, `Tabs`, `Badge`, `Tooltip`, `Dropdown`. 각 컴포넌트는 시각/
-interaction 계약만 소유하며, API·store·라우터·도메인 상태를 직접 참조하지 않습니다. 도메인
-상태 → 색상/라벨 매핑(예: Git 충돌 상태, 승인 상태)은 이 디렉터리가 아니라 그 상태를 아는
-feature가 소유합니다.
+T0004 introduced the first App Shell primitives: `Button`, `IconButton`, `Input`,
+`Textarea`, `Select`, `Toggle`, `Tabs`, `Badge`, `Tooltip`, and `Dropdown`. They
+own visual/interaction contracts only, with no direct API, store, router, or
+domain-state dependencies. Features that understand domain state own mappings
+to colors/labels, such as Git conflict or approval status.
 
-T0006에서 구현한 2차 Overlay Shell입니다: `ModalShell`(차단형, Teleport+backdrop+ESC+focus
-trap/return), `ModelessShell`(비차단형, drag/resize/minimize, backdrop 없음, focus trap
-없음), `ConfirmDialog`와 `AlertDialog`(둘 다 ModalShell 위에 구축). 네 컴포넌트 모두 Git/AI/
-Project/Workflow 같은 실제 기능 Dialog가 아니라 domain-agnostic 기반만 제공하며, 업무
-문구는 호출 측(title/message/label prop)이 소유합니다. `../core/overlay/`에는 둘 이상이
-실제로 중복하는 z-index 할당과 focus 복귀만 공유 기반으로 뺐습니다(focus trap은
-ModalShell만 쓰므로 내부에 남아있습니다).
+T0006 introduced overlay shells: `ModalShell` (blocking, Teleport, backdrop, ESC,
+focus trap/return), `ModelessShell` (nonblocking, drag/resize/minimize, no backdrop
+or focus trap), and `ConfirmDialog`/`AlertDialog` built on ModalShell. These are
+domain-independent foundations, not Git/AI/Project/Workflow dialogs. Callers own
+business copy through title/message/label props. `../core/overlay/` shares only
+the z-index allocation and focus restoration actually duplicated across shells;
+the focus trap stays inside ModalShell, its only user.
 
-T0008에서 구현한 3차 상태/피드백 Primitive입니다: `Toast`(비차단 일시 피드백, `duration`이
-지나면 자동으로 `dismiss`를 emit하거나 사용자가 직접 닫을 수 있음), `ToastHost`(여러 Toast를
-겹치지 않게 쌓아 보여주는 공용 stacking region — 메시지 큐/전역 store는 호출 측이 소유),
-`Alert`(화면에 남아 있는 inline/banner 경고·정보, AlertDialog와 달리 blocking이 아님),
-`EmptyState`(정상 상태지만 표시할 데이터가 없음), `LoadingState`(결과를 기다리는 중),
-`ErrorState`(화면/패널 단위 오류 상태). 다섯 컴포넌트 모두 문구·발생 조건·retry 로직을
-전혀 모르며(Feature가 title/message/slot으로 채움), API·store·router를 직접 참조하지
-않습니다. 색상은 Badge(T0004)가 이미 쓰던 info/success/warning/danger tone 값을
-`--fg2-status-*` 공유 토큰으로 옮겨 Badge 자신과 Toast가 fg+border+bg 전체를, Alert가
-border만, ErrorState가 fg만 함께 재사용합니다(`../app/styles/theme.css`, T0008 §11).
-Badge의 neutral tone은 dashed/투명 칩 모양이 이 체계와 달라 토큰화하지 않았습니다.
+T0008 added status/feedback primitives: `Toast` (temporary nonblocking feedback,
+emitting `dismiss` after `duration` or closing manually), `ToastHost` (a shared
+stacking region; the caller owns its message queue/global store), `Alert`
+(persistent inline/banner warning or information, nonblocking unlike AlertDialog),
+`EmptyState` (healthy but no data), `LoadingState` (awaiting results), and
+`ErrorState` (screen/panel errors). They know no copy, trigger conditions, or retry
+logic: features supply title/message/slots. They do not access APIs/stores/routers.
+Badge's existing info/success/warning/danger tones moved to shared
+`--fg2-status-*` tokens. Badge and Toast reuse foreground/border/background;
+Alert reuses borders and ErrorState foreground (`../app/styles/theme.css`,
+T0008 §11). Badge's neutral dashed/transparent style remains outside this token set.
 
-T0010에서 구현한 4차(마지막) 공통부품입니다: `SplitPane`(두 영역 사이 경계를 드래그/화살표키로
-움직이는 레이아웃 primitive, `#first`/`#second` 슬롯, `direction="horizontal|vertical"`),
-`ResizablePane`(단일 패널의 한쪽 edge만 움직이는 독립 primitive, 상대 영역의 의미를 모름),
-`ContextMenu`(우클릭/키보드로 포인터 위치에 여는 비차단 메뉴, Dropdown과 달리 trigger element가
-아니라 pointer 좌표 기준). 셋 다 어떤 pane/menu 항목이 Designer Explorer인지 Git history인지
-알지 못하며, 자기 크기/위치를 localStorage나 API에 저장하지 않습니다. SplitPane과
-ResizablePane의 드래그+키보드 스텝+min/max clamp+listener 수명주기는 실제로 동일한 코드였으므로
-`../core/interaction/axisResize.ts`로 뺐고(둘의 API 자체는 T0010 §7에 따라 하나로 합치지
-않았습니다), 드래그 핸들의 두께/hover/active 색도 `--fg2-splitter-*` 공유 토큰으로 뺐습니다
-(`../app/styles/theme.css`). ContextMenu는 `core/overlay/zIndex.ts`의 `allocateOverlayZIndex()`를
-그대로 재사용합니다 — 이 과정에서 `ModalShell`이 surface z-index를 `overlayZIndex + 1`로
-로컬 계산만 하고 공유 카운터를 실제로 두 번 소비하지 않던 것을 발견해, ModalShell도 surface에
-대해 카운터를 한 번 더 호출하도록 최소 수정했습니다(그 전에는 Modal 내부에서 연 ContextMenu가
-같은 값으로 계산되어 surface와 동일 z-index로 겹칠 수 있었습니다). 같은 이유로 ModalShell의
-document `focusin` 트랩도, 포커스 대상이 이 모달보다 높은 z-index 아래에 있으면(=이 모달이
-열린 뒤에 allocateOverlayZIndex()로 할당된 무언가, 즉 Modal 안에서 연 ContextMenu) 다시
-끌어오지 않도록 예외를 추가했습니다.
+T0010 added the final shared primitives: `SplitPane` (a boundary moved by dragging
+or arrow keys, `#first`/`#second` slots, `direction="horizontal|vertical"`),
+`ResizablePane` (one independent panel edge, with no knowledge of its neighbor),
+and `ContextMenu` (nonblocking pointer-position menu opened by right-click or
+keyboard, unlike Dropdown's trigger-element positioning). They do not know
+whether their contents are Designer Explorer or Git history, and do not persist
+size/position to localStorage or APIs. SplitPane and ResizablePane shared actual
+drag/keyboard-step/min-max-clamp/listener-lifecycle code, extracted to
+`../core/interaction/axisResize.ts`; their APIs stay separate per T0010 §7.
+Handle thickness and hover/active colors use shared `--fg2-splitter-*` tokens
+in `../app/styles/theme.css`.
+
+ContextMenu reuses `allocateOverlayZIndex()` from `core/overlay/zIndex.ts`.
+This revealed that ModalShell calculated surface z-index as `overlayZIndex + 1`
+without consuming the second shared allocation. ModalShell was minimally changed
+to allocate again for its surface, preventing a menu opened inside it from
+receiving the same z-index. Its document `focusin` trap likewise permits focus
+under an element with a higher z-index, allocated after the modal opened, such
+as a ContextMenu inside it.

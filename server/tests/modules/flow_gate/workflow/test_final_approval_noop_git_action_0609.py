@@ -119,7 +119,7 @@ def test_case_b_already_applied_worktree_unregistered_approves_without_git_actio
     """Case B: git-active + already-applied (worktree already unregistered) + no
     git_action -> final approval succeeds, matching pre-existing behavior for
     unregistered slots, WITHOUT running any Git finalize/cleanup/rollback side
-    effect (T0004 §3: "기존 반영 상태 유지" / "불필요한 cleanup/rollback 없음").
+    effect (T0004 §3: "preserve the applied state" / "no unnecessary cleanup/rollback").
 
     The legacy path-shaped endpoint has no git_action field and, per the guard
     at workflow.py just above the group_finalize_is_noop() check, must never

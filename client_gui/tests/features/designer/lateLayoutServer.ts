@@ -1,5 +1,5 @@
 // flowgate.v02.0059 T#2 (0016-TR rev2) — a mocked `@shared/api` server whose layout reads the test can hold
-// back, for the tests of a 자동 배치 answer that comes late (autoLayoutLateAnswer.0059 /
+// back, for the tests of a auto-layout answer that comes late (autoLayoutLateAnswer.0059 /
 // DesignerShellDensityLate.0059). It answers GET /api/v1/flows/{flowId}/canvas (with and without
 // collapse=conversation), the v0.1 GET /api/v1/documents/{docId} and the layout save PUT in the server's shapes.
 //

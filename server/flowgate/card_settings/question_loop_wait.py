@@ -2,7 +2,7 @@
 
 flowgate.v02test.0032 let a review loop go on while its rework (or review) AI's questions were open: the loop is one AI
 run under one group lease, so the card's responder could not start and the next hop never waited. That exception is
-gone (R 0051.0001 "작업자가 질문하면 검수자가 답한다. 답이 달릴 때까지 다음 단계로 가지 않는다"):
+gone (R 0051.0001 "when the worker asks, the reviewer answers; do not proceed until the answer arrives"):
 
 - park (``worker._worker``, right after the hop's checkpoint and before any effect of the next hop — the Graph
   ``transition``, the next token, the next provider): a Graph loop whose run still has questions it asked open stops
@@ -28,7 +28,7 @@ gone (R 0051.0001 "작업자가 질문하면 검수자가 답한다. 답이 달�
 
 Only Graph loops park: a loop with no execution ledger has no way to be resumed and keeps its earlier behaviour.
 
-flowgate.v02test.0051 T0007 (A2, R A-3 "답을 기다린 시간과 질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다"):
+flowgate.v02test.0051 T0007 (A2, R A-3 "waiting time and rejections caused by questions do not count toward the review budget"):
 
 - question-caused verdicts: a review verdict that a question wait caused gets an explicit cause marker
   (``db.review_count_exclusions``, migration 201: ``question_wait`` + the wait row) and the loop leaves it out of its

@@ -10,15 +10,15 @@ import { issueAgentEnrollment, revokeAgentCredential, updateSystemAgent } from '
 import SystemAgentSettingsView from '@/features/settings/views/SystemAgentSettingsView.vue'
 import AgentEditDialog from '@/features/settings/components/AgentEditDialog.vue'
 
-// flowgate.v02.0076 T#4 (D §2.6, §5.2 V16·V17): 시스템 › 시스템 Agent on the real /app router
+// flowgate.v02.0076 T#4 (D §2.6, §5.2 V16·V17): 시스템 › System Agent on the real /app router
 // (installAuthGuard + installSettingsAccessGuard + SettingsLayout) with the real view. Only the
 // transport is replaced: @shared/api's request helpers talk to an in-memory server that keeps the
 // Agents the way services/agent_registry.py does — credential history, one pending enrollment per
 // Agent, detail() for every answer (online only with enabled + an active credential + compatible
 // protocol + a fresh heartbeat; local = not_applicable), the route models (extra fields → 422, the
 // Empty body required, location immutable) and the route's error envelope
-// {"ok":false,"error":{"code"}}. Every call is recorded with its body, so "요청 0건", "1건", "바꾼
-// 필드만" and "재조회값" are read off the request list and the server state. The real routers /
+// {"ok":false,"error":{"code"}}. Every call is recorded with its body, so "zero requests", "one request", "changed
+// fields only" and "re-read values" are read off the request list and the server state. The real routers /
 // auth / RBAC / store are exercised separately by server/tests/test_system_agents_0076.py.
 
 type Caps = { ai_cli: boolean; ai_api: boolean; storage: boolean }
@@ -369,7 +369,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  // D §2.6 / T#4 지시 1·6: only the /system/agents management family, never the Agent runtime
+  // D §2.6 / T#4 instruction 1·6: only the /system/agents management family, never the Agent runtime
   // (/agent/enrollments, /agent/heartbeat), no other registry or personal-Agent API, and no PATCH
   // ever carries location / connection_mode.
   for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/users')) {

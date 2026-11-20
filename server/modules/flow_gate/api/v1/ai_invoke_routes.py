@@ -122,7 +122,7 @@ class AiInvokeStartRequest(BaseModel):
     # like the field above; omitted or unrecognized falls back to the engine's own
     # default (ai_invoke_service.RESTART_MAX_ATTEMPTS_DEFAULT).
     continuation_restart_max_attempts: Optional[int] = None
-    # 0414 P0007 [검수] 탭: item_seq (string or int keys) -> review count, and -> reviewer
+    # 0414 P0007 [검수] tab: item_seq (string or int keys) -> review count, and -> reviewer
     # provider_id. Session-scoped like the maps above. Deliberately NOT narrowed to
     # dict[str, int] / dict[str, str]: a narrowed type would make pydantic emit FastAPI's own
     # error envelope for a bad value while every other failure here emits validation_failed,
@@ -651,7 +651,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }])
 
     # 0414 P0007: the sequence-aware half of the [검수] validation. Needs the DB, so it runs
-    # after the cheap checks (0242 NR0003 권고 3) and after the auto-approve selection is
+    # after the cheap checks (0242 NR0003 recommendation  3) and after the auto-approve selection is
     # normalized — eligibility reads BOTH, because which steps have worker output depends on
     # the instruction mode this very request is asking for.
     if body.mode == "continuous" and body.action_scope != "workflow_decide":

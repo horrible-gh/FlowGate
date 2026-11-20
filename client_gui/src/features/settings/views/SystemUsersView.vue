@@ -138,7 +138,7 @@
       </div>
     </section>
 
-    <!-- 사용자 상세 드로어 -->
+    <!-- User details drawer -->
     <div class="drawerback" :class="{ on: !!selected }" @click="closeDrawer" />
     <aside class="drawer" :class="{ on: !!selected }" :aria-hidden="!selected" :aria-label="t('gui.settings.users.detail_aria')" data-testid="user-drawer">
       <template v-if="selected">
@@ -223,7 +223,7 @@
       </template>
     </aside>
 
-    <!-- 확인: 결과를 아이콘 칩으로 -->
+    <!-- Confirmation: display the result as an icon chip -->
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="pending = null">
       <div v-if="pending" class="confirm">
         <div class="conf-ico" :class="pending.tone"><SettingsIcon :name="pending.icon" size="xl" /></div>
@@ -240,7 +240,7 @@
       </template>
     </ModalShell>
 
-    <!-- 사용자 만들기 -->
+    <!-- Create user -->
     <ModalShell :open="createOpen" size="sm" :aria-label="t('gui.settings.users.create')" @close="createOpen = false">
       <template #header><h2 class="fgs-modal-title">{{ t('gui.settings.users.create') }}</h2></template>
       <div class="fgs-formfield">
@@ -277,7 +277,7 @@
       </template>
     </ModalShell>
 
-    <!-- 전달할 자격 (초대 링크 / 임시 비밀번호) -->
+    <!-- Credentials to deliver (invitation link / temporary password) -->
     <ModalShell :open="!!credential" size="sm" :aria-label="t('gui.settings.users.credential_title')" @close="credential = null">
       <template #header><h2 class="fgs-modal-title">{{ t('gui.settings.users.credential_title') }}</h2></template>
       <template v-if="credential">
@@ -295,7 +295,7 @@
 </template>
 
 <script setup lang="ts">
-// 시안 13 시스템 › 사용자: every system user with state, 2FA and last sign-in; filters and summary
+// mockup 13 시스템 › 사용자: every system user with state, 2FA and last sign-in; filters and summary
 // tiles; a detail drawer for system-admin on/off (the last administrator cannot lose it), 2FA
 // reset, password reset / new invitation, disable / cancel invitation / enable; and user creation
 // by invitation link or temporary password. The server has no mail transport, so the one-time link

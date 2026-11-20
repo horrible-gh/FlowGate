@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     DB_LOG: bool = False
     DB_PATH: str = ""
 
-    # 0288 NR0003 발견 4 / 권고 2 — connection-pool sizing for the MySQL and
+    # 0288 NR0003 finding 4 / recommendation  2 — connection-pool sizing for the MySQL and
     # PostgreSQL backends. Endpoints are declared with sync `def`, so FastAPI
     # runs them on the AnyIO thread pool (40 threads by default) while sqloader
     # defaulted to max_parallel_queries=5 / pool_min=1 / pool_max=5. Nothing was
@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     FLOWGATE_PORT: int = 8089
     FLOWGATE_BIND_HOST: str = "0.0.0.0"
 
-    # 0275 T0007 (NR0003 원인 5): stg.py launch knobs. Reload is dev-only (the
+    # 0275 T0007 (NR0003 cause 5): stg.py launch knobs. Reload is dev-only (the
     # file-watcher used to run unconditionally in production); keep workers at 1
     # while SSE matters — the publisher is in-process and does not span workers.
     # Declared for the same extra_forbidden reason as FLOWGATE_PORT above;
@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     FLOWGATE_RELOAD: bool = False
     FLOWGATE_WORKERS: int = 1
 
-    # 0275 T0007 (NR0003 원인 5): run schema migrations + backfill scan at every
+    # 0275 T0007 (NR0003 cause 5): run schema migrations + backfill scan at every
     # boot. Set false on remote-DB deployments where boot latency matters and
     # migrations are applied at deploy time instead.
     AUTO_MIGRATION: bool = True
@@ -254,7 +254,7 @@ for _env_key in (
 
 
 def _pool_settings(pooled: bool) -> dict:
-    """Connection-pool keys handed to sqloader's database_init (0288 권고 2).
+    """Connection-pool keys handed to sqloader's database_init (0288 recommendation  2).
 
     ``pooled=False`` (MySQL) emits only the two keys sqloader reads for that
     backend; sending the postgres-only keys there would be dead config.
@@ -334,7 +334,7 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
-                    # 0288 NR0003 권고 2. MySqlWrapper opens a connection per
+                    # 0288 NR0003 recommendation  2. MySqlWrapper opens a connection per
                     # transaction rather than pooling, so only the two
                     # concurrency knobs sqloader accepts here apply.
                     **_pool_settings(pooled=False),
@@ -385,7 +385,7 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
-                    # 0288 NR0003 발견 4 / 권고 2: without these the pool stayed
+                    # 0288 NR0003 finding 4 / recommendation  2: without these the pool stayed
                     # at sqloader's 5/1/5 defaults regardless of .env — the
                     # 40-thread-vs-5-slot mismatch behind B0001's exhaustion.
                     **_pool_settings(pooled=True),
@@ -447,7 +447,7 @@ class DatabaseSetting:
             logger.error(traceback.format_exc())
 
         try:
-            # 0358 R0001 4번째 반려: sqloader applies pending migrations inside
+            # 0358 R0001 fourth rejection: sqloader applies pending migrations inside
             # database_init(), which leaves no seam to fix the migrations table
             # before files run. Take the connection config without the migration
             # block, then drive the migrator here — repair renamed filenames
@@ -515,7 +515,7 @@ class DatabaseSetting:
         ahead of it: sqloader recognises an applied migration only by its exact
         filename, so a file that was applied under an older name looks pending
         and gets executed a second time. See migration_rename_repair for what
-        that did to the dev deployment (0358 R0001 4번째 반려).
+        that did to the dev deployment (0358 R0001 fourth rejection).
         """
         migration_path = (migration_config or {}).get("migration_path")
         if not migration_path:

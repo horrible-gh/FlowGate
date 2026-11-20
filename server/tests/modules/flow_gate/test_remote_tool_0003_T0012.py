@@ -796,7 +796,7 @@ def test_router_envelope_and_status(env):
     assert r2.json()["error"]["code"] == "unauthorized"
 
 
-# ── Step-type resolution (0334 R0001 / NR0003 발견 7) ─────────────────────────
+# ── Step-type resolution (0334 R0001 / NR0003 finding 7) ─────────────────────────
 
 def _step_type_for(monkeypatch, *, doc_type, head_type):
     """Resolve a doc_ref's step type against a stubbed sequence + document store."""

@@ -185,7 +185,7 @@ export interface GitSession {
   abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
   /**
-   * flowgate.v02test.0052 (0008 할 일 3): the administrator's forced cleanup of an open merge whose abort git refuses.
+   * flowgate.v02test.0052 (0008 task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
    * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
    * the session. `target` names another group's session (the admin list); default is the shown group's conflict.
    */
@@ -465,7 +465,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
     if (err.code && NOTICE_CODES.includes(err.code)) return setNotice(card, { code: err.code })
     if (err.code?.startsWith('merge_target_')) return setNotice(card, { code: 'merge_target' })
-    // flowgate.v02test.0052 (0001-B 1절 완료 기준 1): git's own reason line is shown, never `git_error` alone. A failed
+    // flowgate.v02test.0052 (0001-B section 1, completion criterion 1): git's own reason line is shown, never `git_error` alone. A failed
     // abort that the administrator's forced cleanup can get out of (`details.recovery`) says so.
     const reason = gitReasonOf(err)
     const code = err.code ?? String(err.status ?? '')
@@ -772,7 +772,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
   function abortMerge(): Promise<void> {
     const target = activeConflict()
     if (!target) return Promise.resolve()
-    // The review card's 취소 needs no conflicts answer; the conflict card's does (§3.7).
+    // The review card's "취소" needs no conflicts answer; the conflict card's does (§3.7).
     if (groupCard.value !== 'review' && !conflictActionable.value) return Promise.resolve()
     const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
     // The conflicts answer is read again either way: a refused abort leaves "정리 실패" (`abort_failure`) on the session.
@@ -832,7 +832,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     return ok
   }
 
-  // §B (0001-B 결정 사항): step 1 of "새 커밋으로 다시 승인" — close the conflict review with the
+  // §B (0001-B decisions): step 1 of "새 커밋으로 다시 승인" — close the conflict review with the
   // existing abort. The decision cancel and the new approval stay with the gate (and the person).
   async function abortForReapproval(): Promise<boolean> {
     const target = activeConflict()

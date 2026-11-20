@@ -5,7 +5,7 @@
  * Center session reads the Flow's Canvas again quietly and the header shows the new state. The
  * Frame keeps no server state of its own. The real hub runs on the support module's fake stream.
  * flowgate.v02.0056 F2-1: the Canvas reads its Flow again on a burst of card step frames too (a document review
- * change, an AI run starting or ending — a card's 지시서 / 결과 step and its wait for approval move without a node
+ * change, an AI run starting or ending — a card's instruction / 결과 step and its wait for approval move without a node
  * event, flowCanvasEvents CANVAS_CARD_STEP_EVENTS), once per burst; so a review change of the target is two reads
  * again (the Canvas' own and the Frame's request), and another document of the same Flow is one (the Canvas').
  */

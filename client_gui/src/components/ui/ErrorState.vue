@@ -10,7 +10,7 @@
 <script setup lang="ts">
 // Domain-free screen/panel-level error state (T0008 §9). Displays only what the caller
 // already resolved -- it never parses an axios error, maps an HTTP status, retries a
-// request, navigates the router or mutates a store (T0008 §9 금지 list). `action` is
+// request, navigates the router or mutates a store (T0008 §9 prohibited actions). `action` is
 // wherever the caller puts its own retry Button; this component only shows it.
 export type ErrorStateTone = 'danger' | 'warning'
 

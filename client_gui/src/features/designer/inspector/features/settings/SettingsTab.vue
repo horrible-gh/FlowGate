@@ -277,7 +277,7 @@ const card = {
 }
 const resultFields = ['result_cause', 'follow_scope'] as const
 const instructionReviewFields = computed(() => AI_ADVANCED_FIELDS.instructionReview.filter(field => aiFieldOf(field)))
-/** flowgate.v02gui.0032: a written 지시서 shows its 지시 AI as 사용하지 않음 (held). */
+/** flowgate.v02gui.0032: a written instruction shows its 지시 AI as 사용하지 않음 (held). */
 const instructionHasBody = computed(() => instructionWritten(props.target.cardDocuments))
 const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value, instructionHasBody.value))
 function roleLabel(role: string): string {
@@ -292,7 +292,7 @@ function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role'
   if (field === 'instruction_role' && (instructionHeld.value || instructionHasBody.value)) return
   if (!roleDisabled(field)) void card.change(field, value)
 }
-/** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and 지시서 검수 values, off. */
+/** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and instruction review values, off. */
 const instructionHeld = computed(() => cardSettingsValue(card.node.value, card.pending.value, 'instruction') === 'omit')
 /** flowgate.v02.0113 T#4: a field the card's kind puts on the AI tab and the card has. */
 function aiFieldOf(field: CardSettingsField): boolean {
@@ -300,7 +300,7 @@ function aiFieldOf(field: CardSettingsField): boolean {
 }
 type GearRole = keyof typeof AI_GEAR_FIELDS
 /**
- * flowgate.v02gui.0029 (0003-CH C안): the advanced items each AI row's ⚙ opens, for the fields the card has (a 테스트
+ * flowgate.v02gui.0029 (0003-CH Coff): the advanced items each AI row's ⚙ opens, for the fields the card has (a 테스트
  * card has none, so no ⚙). An item whose AI row the server does not give stays reachable under the 실행 AI's ⚙ (else
  * the last row's), so no setting drops off the tab.
  */
@@ -436,7 +436,7 @@ const errorKey = computed(() => {
 })
 
 /**
- * flowgate.v02.0113 T#1 (0002-D 개정 §3.13): a Graph card is locked only while it actually runs — the server's card lock
+ * flowgate.v02.0113 T#1 (0002-D revision §3.13): a Graph card is locked only while it actually runs — the server's card lock
  * (`locked`) or its node run's `node_running` (an AI execution of it requested / running, or its AI review), the same
  * judgement — never because its Flow's run is running or the node is merely open (a person's or a setup wait). Until
  * the run status is confirmed (`editLock` `unknown`) it still waits.
@@ -527,7 +527,7 @@ const views = computed(() => {
   return out
 })
 
-/** flowgate.v02.0072 T#3 — the WP card's AI 사전 지시서 작성 switch: its value, whether it may change, its tooltip. */
+/** flowgate.v02.0072 T#3 — the WP card's AI pre-instruction writing switch: its value, whether it may change, its tooltip. */
 const preInstruction = computed(() => {
   const view = views.value.pre_instruction_auto
   const on = cardSettingsSwitchOn(cardSettingsValue(card.node.value, card.pending.value, 'pre_instruction_auto'))
@@ -558,7 +558,7 @@ const instructionAiShown = computed(() => {
 })
 
 /**
- * flowgate.v02.0144 T-B (0003-NR §4.2a(6)(7)): the older AI form (지시 AI row, 실행 설정 block, 지시서 검수 block) is
+ * flowgate.v02.0144 T-B (0003-NR §4.2a(6)(7)): the older AI form (지시 AI row, 실행 설정 block, instruction review block) is
  * drawn only for a Graph card whose settings answer has come without AI roles (`ai_roles` null or missing). Before
  * the answer (loading, a card just placed) none of it is drawn. flowgate.v02test.0048: a re-read after the settings
  * context moved keeps the last answer drawn until the new one comes (useCardSettings `identity`).
@@ -584,7 +584,7 @@ function fieldLabel(field: CardSettingsField): string {
   return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
 }
 
-/** flowgate.v02.0072 T#3 — the WP card names its run AI 작업 AI; the other cards keep the common names. */
+/** flowgate.v02.0072 T#3 — the WP card names its run AI task AI; the other cards keep the common names. */
 const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}) }))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
@@ -627,7 +627,7 @@ function onChange(field: CardSettingsField, text: string) {
 
 /**
  * flowgate.v02.0113 T#4 — a select's options on the AI tab. flowgate.v02gui.0007 B: the two review counts offer the
- * server's choices up to its effective maximum (안 함 · 1회 … n회), without "until it passes" (-1); a stored value
+ * server's choices up to its effective maximum (안 함 · 1 time … n times), without "until it passes" (-1); a stored value
  * outside them stays shown so nothing is changed by opening the card.
  */
 function optionsOf(field: CardSettingsField) {
@@ -639,7 +639,7 @@ function optionsOf(field: CardSettingsField) {
 
 /**
  * Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. flowgate.v02gui.0029 (0003-CH): what
- * 검수 횟수 소진 시 does (for the chosen value) and that 지시서 검수 follows it are their labels' tooltips — never a line
+ * when the review limit is exhausted does (for the chosen value) and that instruction review follows it are their labels' tooltips — never a line
  * drawn in the ⚙ window.
  */
 function hintOf(field: CardSettingsField): string | null {
@@ -752,13 +752,13 @@ function reload() {
   font-size: 12px;
 }
 
-/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings'. */
+/* flowgate.v02.0113 T#4 (0029-TR mockup): the AI tab — selects as tall as the run settings'. */
 .inspector-settings :deep(.ui-select) {
   height: 32px;
   font-size: 12px;
 }
 
-/* flowgate.v02gui.0029 (0003-CH C안): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
+/* flowgate.v02gui.0029 (0003-CH Coff): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
    under the row. The block of an open ⚙ is lifted over the blocks below it (each block is its own stacking context);
    the ⚙ and its window still take a click on a locked card (its values are seen, its selects stay off). */
 .inspector-ai-role.is-gear-open {

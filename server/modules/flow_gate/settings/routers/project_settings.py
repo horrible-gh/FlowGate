@@ -280,7 +280,7 @@ def _doc_type_to_view(row: dict) -> dict:
 
 
 def _work_plan_countable_view(entry: dict) -> dict:
-    """0429 T0004 작업 2: the work-plan-only sort/dedup registry, additive to `data`.
+    """0429 T0004 task 2: the work-plan-only sort/dedup registry, additive to `data`.
 
     Field names mirror _doc_type_to_view (code/label/category/unit/pair_code) so the
     client can read both shapes the same way, without hardcoding the type order itself.
@@ -307,7 +307,7 @@ def list_doc_types(
     from modules.flow_gate.services import work_plan_service
 
     types = list_document_types(project_id, locale=locale)
-    # 0429 T0004 작업 2: additive — the existing `data` shape/order (series, sort_order,
+    # 0429 T0004 task 2: additive — the existing `data` shape/order (series, sort_order,
     # type_code) stays exactly as settings screens expect it. This second array is the
     # sole work-plan-scope sort/dedup registry (list_countable_types), so the create
     # dialog / editor / proposal dialog never re-derive it by hand from `data`.

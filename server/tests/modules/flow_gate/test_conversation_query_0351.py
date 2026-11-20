@@ -132,7 +132,7 @@ def _seed(count: int, body: str = "hello", speaker: str = "user", key: str = "us
         )
 
 
-# ── 커서 검증 (P0003 시나리오 21 / L0004 §4-2) ────────────────────────────────
+# ── Cursor validation (P0003 scenario 21 / L0004 §4-2) ──
 
 def test_after_and_before_are_mutually_exclusive(store, doc):
     with pytest.raises(append_service.ConversationTurnError) as exc:
@@ -177,7 +177,7 @@ def test_non_conversation_document_is_400_and_missing_is_404(store, monkeypatch)
     assert missing.value.status_code == 404
 
 
-# ── 정방향 / 역방향 페이지 (P0003 시나리오 1·2·7) ─────────────────────────────
+# ── Forward / reverse pagination (P0003 scenarios 1·2·7) ──
 
 def test_forward_page_reports_next_cursor_and_stops_when_exhausted(store, doc):
     _seed(5)
@@ -198,7 +198,7 @@ def test_forward_page_reports_next_cursor_and_stops_when_exhausted(store, doc):
 def test_backward_page_is_seq_ascending_and_carries_prev_cursor(store, doc):
     _seed(6)
     page = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, before_seq=5, limit=3)
-    # Rows are read newest-first but the wire is always ascending (P0003 시나리오 2).
+    # Rows are read newest-first but the wire is always ascending (P0003 scenario 2).
     assert [t["seq"] for t in page["turns"]] == [2, 3, 4]
     assert page["prev_before_seq"] == 2
     assert page["next_after_seq"] is None
@@ -226,7 +226,7 @@ def test_missing_cursor_resumes_from_the_remembered_read_position(store, doc):
     assert [t["seq"] for t in page["turns"]] == [3, 4]
 
 
-# ── 분량 판정 (L0004 §2-9 apply_budget) ───────────────────────────────────────
+# ── Budget checks (L0004 §2-9 apply_budget) ──
 
 def test_byte_budget_cuts_before_the_count_limit_and_says_so(store, doc):
     big = "x" * 100_000  # 3 of these blow past the 256 KiB response budget
@@ -324,7 +324,7 @@ def test_unknown_participant_reads_from_zero_without_being_recorded(store, doc):
     assert turns.get_participant(DOC_ID, "user:u1") is None
 
 
-# ── 읽음 커서 (L0004 §2-8, P0003 시나리오 5·9) ────────────────────────────────
+# ── Read cursor (L0004 §2-8, P0003 scenarios 5·9) ──
 
 def test_worker_read_advances_delivered_only_to_the_last_turn_actually_sent(store, doc):
     _seed(5)
@@ -397,7 +397,7 @@ def test_delivered_then_a_late_viewed_keeps_viewed_below_read(store, doc):
     assert row["last_viewed_seq"] == 3
 
 
-# ── 실시간 단건 전달 (P0003 시나리오 6, L0004 §2-11) ──────────────────────────
+# ── Real-time single-turn delivery (P0003 scenario 6, L0004 §2-11) ──
 
 def test_appended_turn_is_broadcast_as_one_turn_not_a_document_refresh():
     result = {
@@ -439,7 +439,7 @@ def test_document_explorer_refresh_remains_a_separate_event_type():
     assert EventType.DOCUMENT_EXPLORER_REFRESH.value == "document_explorer_refresh"
 
 
-# ── 라우트 등록 (P0003 §0-1 경로표) ───────────────────────────────────────────
+# ── Route registration (P0003 §0-1 route table) ──
 
 def test_session_and_worker_query_paths_are_registered_exactly_once():
     from modules.flow_gate.api.v1 import conversation_routes
@@ -454,7 +454,7 @@ def test_session_and_worker_query_paths_are_registered_exactly_once():
     assert worker.count("/api/v1/conversation/{doc_id}/turn") == 1
 
 
-# ── HTTP 수용 (P0003 §0-5 오류 봉투) ──────────────────────────────────────────
+# ── HTTP acceptance (P0003 §0-5 error envelope) ──
 
 def _session_client():
     from fastapi import FastAPI
@@ -571,12 +571,12 @@ def test_worker_query_without_a_bearer_header_is_401():
 def test_worker_read_route_is_async_and_offloads_blocking_work():
     """Reading hits the DB synchronously, so it must not run on the event loop.
 
-    0394 T0016 항목 4 (NR0003 §5.3): 예전에는 이 함수의 소스에 'anyio.to_thread.run_sync'
-    라는 글자가 있는지만 봤다. 주석에 있어도 통과하고, 오프로드를 실제로 걷어내도 다른 줄에
-    글자가 남아 있으면 통과한다. 같은 규칙 — "async 라우트 핸들러는 동기 DB/파일 작업에
-    닿지 않는다" — 을 소스 트리 전체에 강제하는 가드가 이미 있으므로
-    (test_event_loop_blocking_0279), 그 판정기를 그대로 불러 이 파일에 적용한다.
-    규칙을 두 벌 쓰지 않으면서, 이 라우터가 그 규칙 안에 있다는 사실도 함께 고정된다.
+    0394 T0016 item 4 (NR0003 §5.3): previously this checked only whether this
+    function's source contained 'anyio.to_thread.run_sync'. A comment could satisfy
+    that check, as could an unrelated occurrence after actual offloading was removed.
+    The existing test_event_loop_blocking_0279 guard enforces the same rule across
+    the source tree: async route handlers must not reach synchronous DB/file work.
+    Reuse that checker here to pin this router's coverage without duplicating the rule.
     """
     from pathlib import Path
 

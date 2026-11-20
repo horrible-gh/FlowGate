@@ -41,7 +41,7 @@
           @click="copyBody"
         >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
         <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
-        <!-- flowgate.v02test.0025: the ⋯ menu (체크포인트 사용 only, a stored message only): send from this message /
+        <!-- flowgate.v02test.0025: the ⋯ menu ("체크포인트 사용" only, a stored message only): send from this message /
              from the next message / clear. -->
         <TimelineMessageMenu
           v-if="(canCheckpoint || canMutate) && turn.seq > 0 && !pending"

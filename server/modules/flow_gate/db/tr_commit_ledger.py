@@ -326,7 +326,7 @@ def blocks_by_group(group_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
 def latest_by_doc(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     """``doc_id -> the newest row that actually made a commit``, for the strip marker.
 
-    One query for the whole strip (the N+1 lesson of 0282 NR0003 발견 1). Ascending
+    One query for the whole strip (the N+1 lesson of 0282 NR0003 finding 1). Ascending
     order makes the last write per doc_id win, i.e. the highest id.
 
     ``no_commit`` rows are filtered out **in the query**, not after it. Taking the
@@ -380,7 +380,7 @@ def list_by_groups(group_ids: Iterable[str], limit: int = 400) -> list[dict[str,
     """Same rows as :func:`list_by_group`, for several groups in ONE query.
 
     The Git status panel asks for every active slot at once; a per-slot call here is
-    the N+1 that 0282 NR0003 발견 1 pulled out of this very screen.
+    the N+1 that 0282 NR0003 finding 1 pulled out of this very screen.
     """
     ids = [g for g in group_ids if g]
     if not ids:
@@ -405,7 +405,7 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
 
     ``no_commit`` rows are filtered in the query: the preview draws a step line per
     *commit*, and a round that changed no source is drawn from the absence of a row
-    ("소스 변경 없음"), not from a row saying so (P0006 §2 서두).
+    ("소스 변경 없음"), not from a row saying so (P0006 §2 introduction).
 
     Ordered by the document's ``seq`` because the dialog lists steps in workflow order,
     not in commit order — the cancel loop is the one that needs ``id DESC``
@@ -440,7 +440,7 @@ def group_commit_evidence(group_id: str) -> list[dict[str, Any]]:
     )
 
 
-# ── cancel-side writes (DB0008 §4.3~§4.5, L0007 §4.3 "행마다 즉시") ─────────────
+# ── cancel-side writes (DB0008 §4.3~§4.5, L0007 §4.3 "immediately per row") ─────────────
 
 def is_canceled(row_id: int) -> bool:
     """Has this row already been canceled? Checked per row inside the revert loop.

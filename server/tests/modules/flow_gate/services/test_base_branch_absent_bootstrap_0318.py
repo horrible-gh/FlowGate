@@ -30,10 +30,10 @@ import pytest
 from scratch_support import remove_tree, session_scratch
 
 _SERVER_DIR = Path(__file__).resolve().parents[4]
-# 0382 B0001: 기본값이 `_SERVER_DIR / ".test-tmp-0318"` 이었다. FLOWGATE_TEST_SCRATCH 는
-# FlowGate 가 직접 돌릴 때만 채워지므로, 사람이나 AI 가 손으로 pytest 를 돌리면 저장소
-# **안에** 폴더가 생겼고(수집만 해도 생긴다 — 이 줄은 모듈 최상단이다) 마무리 커밋의
-# `git add -A` 가 그걸 통째로 삼켰다. 기본값은 이제 저장소 밖이다.
+# 0382 B0001: the old default was _SERVER_DIR / ".test-tmp-0318".
+# FLOWGATE_TEST_SCRATCH is set only for FlowGate-managed runs. Manual pytest runs
+# created directories inside the repository even during collection, and final
+# git add -A absorbed them. The default now resides outside the repository.
 _TEST_SCRATCH = session_scratch("0318")
 
 os.environ["TESTING"] = "1"
@@ -53,7 +53,7 @@ needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 def scratch_path():
     """Per-case directory under this spec's scratch root — never inside the repo
     (mirrors test_empty_remote_bootstrap_0313 — Python 3.14 / Windows ACL, and the
-    0382 제안 7 cleanup that makes keeping the directory unnecessary)."""
+    0382 proposal 7 cleanup that makes keeping the directory unnecessary)."""
     path = _TEST_SCRATCH / f"case-{uuid.uuid4().hex}"
     path.mkdir(parents=True)
     yield path

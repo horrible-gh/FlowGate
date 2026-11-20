@@ -104,7 +104,7 @@
 // This component owns the create request itself (via the Project store) and its own
 // dirty/duplicate-submit guards; it never decides what the caller does with the created
 // Project or with `open` -- it only emits `created`/`close` and lets ProjectDialog own
-// both (T#1 §5 "Dialog-local 상태는 store에 없다" extends to "child open/close state is
+// both (T#1 §5 "Dialog-local state does not belong in the store" extends to "child open/close state is
 // the parent's").
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -189,8 +189,8 @@ function resetForm(): void {
 // createProject() call already started is not cancelled by that. `generation` bumps on
 // every open-state change so a stale submit's eventual resolution can recognize it no
 // longer belongs to the session now on screen and never emits `created`/shows its error/
-// touches `submitting` for it (T#2 §9 "child ... Dialog lifecycle이 바뀐 뒤 늦게 도착한
-// 응답이 최신 selection/current/open 상태를 덮어쓰지 않음").
+// touches `submitting` for it (T#2 §9 "child ... a late response after the Dialog lifecycle changes
+// must not overwrite the latest selection/current/open state").
 const generation = ref(0)
 
 // Every suggestProjectSlug() call -- whether the 400ms auto-suggest debounce fired it or
@@ -198,7 +198,7 @@ const generation = ref(0)
 // applies id/idTouched if its ticket is still the latest one taken, so two overlapping
 // calls (auto vs manual, or two names typed in quick succession) always resolve in
 // request order, never in whichever order their network responses happen to land (T#2 §9
-// "이전 요청보다 최신 요청의 결과가 우선"). `cancelPendingSuggest` both clears any debounce
+// "Results from newer requests take precedence over older requests"). `cancelPendingSuggest` both clears any debounce
 // timer that has not fired yet and burns a fresh ticket so an already in-flight call's
 // eventual resolution is recognized as stale too.
 let suggestTicketSeq = 0
@@ -254,7 +254,7 @@ function onNameChange(value: string): void {
 // A direct id edit always wins over whatever suggestion request (auto or manual "제안")
 // is still outstanding -- without cancelling it here first, that request's own ticket is
 // still the latest one when it resolves, and its eventual response would overwrite the
-// value just typed by hand (T#2 §9 최신 요청/상태 우선 계약).
+// value just typed by hand (T#2 §9 latest-request/state precedence contract).
 function onIdChange(value: string): void {
   cancelPendingSuggest()
   idTouched.value = true

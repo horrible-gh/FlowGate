@@ -1,6 +1,6 @@
 /**
  * flowgate.v02.0048 T#13 — the WP summary with `@/features/document` mocked as a small server that also refuses
- * (D#1 §12.1), as flowgate.v02.0056 F1 (0056 CH §5) left it: the two slot lines (작업계획 · 전개) without the
+ * (D#1 §12.1), as flowgate.v02.0056 F1 (0056 CH §5) left it: the two slot lines (작업계획 · deployment) without the
  * `rev · Step` summary, and under them only what an operator acts on — the progress (cards the workflow
  * started) and the warning when Steps have no AI; the 0048 details (rev, totals, provider assignment, one row
  * per card, "Step 편집은 …", the details' open button) are gone. Still here: the refusals — 409 wp_unreadable
@@ -11,7 +11,7 @@
  * dropped). Last, the real registry: the summary on WP cards in the documents tab in every ownership, none
  * on other cards or a WP Node without a document (same tab row), a failed read leaves the documents tab as it
  * is, and no undecided wording.
- * flowgate.v02.0072 T#3: the documents area is the one 「작업계획」 line (no 전개 line), and the line opens the plan in the
+ * flowgate.v02.0072 T#3: the documents area is the one 「작업계획」 line (no deployment line), and the line opens the plan in the
  * v0.2 work plan edit window (features/workPlanWindow) — not the document window; `wpOpened()` lists those windows.
  * flowgate.v02.0074 T#2: the plan line's [업로드] stays and opens that window's [JSON 가져오기] (no file pick, no PATCH);
  * off with the window's reason in a read-only Flow.
@@ -550,8 +550,8 @@ describe('WP summary in the Frame (real registry)', () => {
 
   const tabLabels = (w: W) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((tab) => tab.text())
 
-  // flowgate.v02.0051 stage 2: plan cards with or without a document; the documents tab and the ⇉ 전개 header
-  // actions (drawn disabled). flowgate.v02.0074 T#1 (R §1.2): no header meta (the 작성 사람 badge is gone).
+  // flowgate.v02.0051 stage 2: plan cards with or without a document; the documents tab and the ⇉ deployment header
+  // actions (drawn disabled). flowgate.v02.0074 T#1 (R §1.2): no header meta (the human writer badge is gone).
   it('registers key workPlan, order 410, plan cards with or without a document: documents tab and header action, no meta', () => {
     const entry = inspectorRegistry.entries.find((candidate) => candidate.key === 'workPlan')!
     expect(entry).toMatchObject({ key: 'workPlan', order: 410, cardKinds: ['plan'], requiresDocument: false })
@@ -634,7 +634,7 @@ describe('WP summary in the Frame (real registry)', () => {
     // document icon — and nothing after the lines. flowgate.v02.0074 T#1 (R §1.3): no ✎ (one way in).
     // flowgate.v02.0068 T#1 (D §0-1 / §6.1): the plan's document line has [업로드][다운로드] before its buttons.
     expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'document-io-upload', 'document-io-download', 'inspector-slot-history', 'inspector-slot-open'])
-    // flowgate.v02.0051 stage 2: the v7 lines — the plan with its state; flowgate.v02.0072 T#3: the 전개 line is gone.
+    // flowgate.v02.0051 stage 2: the v7 lines — the plan with its state; flowgate.v02.0072 T#3: the deployment line is gone.
     // flowgate.v02.0053 T#5: no type code in a name.
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획'])
     expect(section.findAll('[data-test="inspector-slot-state"]').map((state) => state.text())).toEqual(['승인됨'])

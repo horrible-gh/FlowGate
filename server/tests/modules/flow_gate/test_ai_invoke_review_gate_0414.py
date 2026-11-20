@@ -1,4 +1,4 @@
-"""flowgate.default.0414 T0010: 연속 작업 [검수] 게이트 — 요청 계약 · 상태 도출 · 지속성.
+"""flowgate.default.0414 T0010: continuous-work [검수] gate: request contract, state derivation, persistence.
 
 Covers the server half of P0007 / L0008 / DB0009:
 
@@ -8,7 +8,7 @@ Covers the server half of P0007 / L0008 / DB0009:
   * gate derivation (L0008 §2.3): every branch of resolve_review_gate, derived from
     document_reviews + revision_no + doc_review_status with nothing persisted.
   * automatic rejection (§2.6): permission refusal, transition failure, the reason text.
-  * carriers (P0007 전달 지점 1~7 + L0008 §2.9 8~10 / DB0009 I3): the two maps survive
+  * carriers (P0007 propagation points 1~7 + L0008 §2.9 8~10 / DB0009 I3): the two maps survive
     pause, system stop, hop settlement, resume and a failed resume's row restore — with an
     AST guard that no paused-row upsert caller can quietly omit them again.
   * the omitted-maps control group: a request that sends neither map behaves EXACTLY as
@@ -620,7 +620,7 @@ class TestGateDerivation:
             "I2: reaching this branch IS the proof the complaint was rejected and fixed")
 
     def test_count_three_runs_three_review_rework_pairs_then_advances(self, world):
-        """검수1 → 수정1 → 검수2 → 수정2 → 검수3 → 수정3 → 다음 단계 (M0020 / CH0019)."""
+        """review1 → rework1 → review2 → rework2 → review3 → rework3 → next step (M0020 / CH0019)."""
         counts = {"5": 3}
         world.fill(5, "doc-5")
         for round_no in (1, 2, 3):
@@ -661,7 +661,7 @@ class TestGateDerivation:
         assert len(world.history("doc-5")) == 2
 
     def test_unbounded_never_stops_on_a_round_count(self, world):
-        """0414 0022-TR 반려: -1 이면 통과 할때까지 무한으로 돌아야 한다.
+        """0414 0022-TR rejection: -1 must keep looping without a cap until a pass.
 
         Thirty review+rework rounds in — three times the ceiling this used to have — the
         gate is still running the loop and has never once handed the chain to a human."""
@@ -707,7 +707,7 @@ class TestGateDerivation:
         assert gate["stop_code"] == svc.REVIEW_STALLED_STOP_CODE
 
     def test_the_target_slot_is_reviewed_like_any_other(self, world):
-        """L0008 §2.7 마지막 칸도 검수한다 — the target check comes after approval, and
+        """L0008 §2.7 review the final slot too — the target check comes after approval, and
         approval comes after the pass."""
         world.fill(8, "doc-8")
         gate = svc.resolve_review_gate(
@@ -1040,7 +1040,7 @@ class TestStopCodesAndMention:
             assert (svc._stop_reason_text(code, {}) or "").strip()
 
     def test_the_ai_review_mode_stop_keeps_its_own_name(self):
-        """L0008 §1.2 재사용 금지: review_hold is [AI 검토 모드]'s stop; a reviewer's hold
+        """L0008 §1.2 no reuse: review_hold is [AI 검토 모드]'s stop; a reviewer's hold
         VERDICT is a different event and gets its own code."""
         assert svc.REVIEW_VERDICT_HOLD_STOP_CODE != "review_hold"
         assert svc._stop_reason_text("review_hold", {}) == "Review mode: waiting for the human go."
@@ -1671,7 +1671,7 @@ class TestResumeReviewGateDispatch0466:
             self, world, paused, monkeypatch):
         """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
         bundle exactly like the plain 'new' resume path already proves in TestCarriers —
-        including the disabled-reviewer-degrades-but-count-survives edge (P0007 [엣지])."""
+        including the disabled-reviewer-degrades-but-count-survives edge (P0007 [edge])."""
         world.fill(5, "doc-5", status="revised", revision_no=1)
         world.review("doc-5", "issues", revision_no=0)
         run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
@@ -2299,7 +2299,7 @@ def gate_exec(monkeypatch, world):
 
 class TestGateExecution:
     def test_a_review_is_queued_before_it_is_launched(self, world, gate_exec):
-        """§2.4 큐잉 순서: _finalize_run reads that queue to decide between begin_handoff and
+        """§2.4 queue ordering: _finalize_run reads that queue to decide between begin_handoff and
         releasing the group lease. Launch first and the successor dies on 409."""
         world.fill(5, "doc-5")
         assert svc.run_review_gate(GROUP, bundle(), _run()) is True
@@ -2591,7 +2591,7 @@ class TestOneRejectionPerReviewRow:
     # ── R9 ────────────────────────────────────────────────────────────────────
     def test_r9_three_rounds_leave_three_reviews_and_three_rejections(
             self, world, gate_exec):
-        """검수 N회 = 검수+수정 N쌍, every landing through the real transition."""
+        """N review rounds = N review/rework pairs, every landing through the real transition."""
         counts = {"5": 3}
         world.fill(5, "doc-5")
         for round_no in (1, 2, 3):
@@ -2914,19 +2914,19 @@ class TestHopLaunchContract:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0501 T0004 필수1 -- the mandatory GOOD/BAD sentinel, through the real
+# flowgate.default.0501 T0004 required item 1 -- the mandatory GOOD/BAD sentinel, through the real
 # gate dispatch (svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run), not
 # resolve_step_executor() called in isolation.
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestBaselineLockGoodBadSentinel0501:
-    """0501 T0004 필수1's mandatory integration test: work provider = GOOD, stored
+    """0501 T0004 required item 1's mandatory integration test: work provider = GOOD, stored
     sequence provider = BAD, review provider = REVIEWER, verdict = issues, and the
     automatic rework must run as GOOD with BAD never invoked -- asserted through the real
     svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run dispatch (worker chain
     captured, not executed), not a bare svc.resolve_step_executor() call.
 
-    T0004's rework priority has no separate force-all tier ("review issues 이후 rework:
+    T0004's rework priority has no separate force-all tier ("rework after review issues:
     step override -> current request selection -> stored sequence provider -> project
     default") -- CURRENT SELECTION must outrank stored, pinned or not. This class proves
     both tiers through that same real gate dispatch:
@@ -3244,7 +3244,7 @@ class TestReviewModePriority:
         assert consulted == [], "the gate must not run while the chain is not allowed to advance"
 
     def test_the_selection_still_reaches_the_paused_row_in_review_mode(self, paused):
-        """§4.3 근거 3: turning review mode off and resuming must start reviewing, so the
+        """§4.3 rationale 3: turning review mode off and resuming must start reviewing, so the
         maps are stored on a review_hold row too."""
         svc._write_handoff_row(GROUP, {**_pending(), "review_mode": True}, _run(),
                                stop_code="review_hold")
@@ -3252,7 +3252,7 @@ class TestReviewModePriority:
             paused.rows[GROUP]["continuation_review_count_overrides"]) == {"5": 2, "7": 3}
 
     def test_a_copy_mention_chain_is_never_gated(self, monkeypatch):
-        """L0008 §2.8 조건 3: with no engine run there is nobody to launch a review hop, so
+        """L0008 §2.8 condition 3: with no engine run there is nobody to launch a review hop, so
         the old path is kept rather than silently deciding to review and then not."""
         monkeypatch.setattr(svc, "_runs", {})
         assert svc.has_active_run(GROUP) is False
@@ -3365,7 +3365,7 @@ def _history_of(world, doc_id):
 
 
 class TestT0005ReviewIdAnchor:
-    """A1-A9 (T0005 3항)."""
+    """A1-A9 (T0005 item 3)."""
 
     def test_a1_one_rejection_per_review_row_then_round_two_after_rework(
             self, world, real_gate_exec):

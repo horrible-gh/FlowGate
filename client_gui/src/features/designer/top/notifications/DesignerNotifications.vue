@@ -1,6 +1,6 @@
 <template>
   <section ref="panel" id="designer-notifications" class="designer-notifications" :style="position" role="dialog" :aria-label="t('gui.designer.top.header.notifications')" @keydown.esc.stop.prevent="close(true)">
-    <!-- 0016-CH (시안 basodrr4 B안): one head row — the three tabs as a segmented control (icon, label, count; the
+    <!-- 0016-CH (mockup basodrr4 option B): one head row — the three tabs as a segmented control (icon, label, count; the
          selected one filled), then refresh / close as small icon buttons. -->
     <div class="notification-head">
       <div role="tablist" :aria-label="t('gui.designer.top.header.notifications')" class="notification-tabs" @keydown="tabKey">
@@ -170,7 +170,7 @@ onMounted(() => { place(); void focusTab(); window.addEventListener('resize', pl
 onBeforeUnmount(() => { disposed = true; generation++; unsubscribe?.(); clearInterval(timer); window.removeEventListener('resize', place); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape) })
 </script>
 <style scoped>
-/* 0016-CH (시안 basodrr4 B안): the raised card popover; type sizes and text colours come from theme.css only. */
+/* 0016-CH (mockup basodrr4 option B): the raised card popover; type sizes and text colours come from theme.css only. */
 .designer-notifications { position: fixed; z-index: 100; width: min(480px, calc(100vw - 16px)); max-height: calc(100dvh - 70px); overflow: auto; box-sizing: border-box; padding: 12px 10px 10px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-pop-radius); background: var(--fg2-pop-surface); color: var(--fg2-text); box-shadow: var(--fg2-pop-shadow); font-size: var(--fg2-fs-body); line-height: 1.45; overflow-wrap: anywhere; }
 .notification-head { display: flex; align-items: center; gap: 6px; margin: 0 2px 10px; }
 .notification-tabs { display: flex; flex: 1; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-inset-radius); background: var(--fg2-inset-bg); }

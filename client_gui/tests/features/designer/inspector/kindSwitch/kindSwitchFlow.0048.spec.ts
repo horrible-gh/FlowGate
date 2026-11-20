@@ -1,6 +1,6 @@
 /**
  * flowgate.v02.0048 T#10 — the kind switch through the real Center session (D#2 §3.4 / §3.5 WP0006 T#10
- * 완료 조건): the Center column (session on a server Graph source answering the Canvas read P0008 §3) with
+ * completion criteria): the Center column (session on a server Graph source answering the Canvas read P0008 §3) with
  * the bottom Inspector and the real registry; only the document calls and the Canvas read are mocked.
  *
  * - unassigned: R -> B. The switch asks `refresh-flow`; the session reads the Canvas again; the old node
@@ -264,7 +264,7 @@ async function activate(center: Center, flowId: string) {
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
 
-/** flowgate.v02.0051 stage 2: the switch is the header 종류 배지 ▾ — open its menu and pick the other kind (0015-T T2: no confirmation). */
+/** flowgate.v02.0051 stage 2: the switch is the header kind badge ▾ — open its menu and pick the other kind (0015-T T2: no confirmation). */
 async function pickOther() {
   await find('kind-switch-open').trigger('click')
   await flushPromises()

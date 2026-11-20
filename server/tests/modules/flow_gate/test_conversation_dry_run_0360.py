@@ -198,22 +198,22 @@ def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
     the threshold exactly like the long document bodies NR0004 measured (0.404 on the
     reporting document's own body, under the 0.5 cut).
 
-    0394 T0016 항목 4 (NR0003 §6.2-라): 예전에는 두 모듈의 소스를 읽어 상수 정의 횟수를 세고
-    'workflow_decision_service._text_is_corrupted' 라는 호출 문자열이 있는지 확인했다.
-    그 방식은 정작 문제를 못 잡는다 — 상수를 채팅 쪽에 복사해 놓고 이름만 다르게 두면
-    (`_CHAT_RATIO = 0.5`) 셋 다 통과하면서 임계값은 두 벌이 된다. 그래서 판정 그 자체를
-    본다: 같은 입력에 대해 채팅 경로의 판정이 문서 경로의 판정과 일치해야 한다.
+    0394 T0016 item 4 (NR0003 §6.2-d): previously this counted constant definitions
+    in both modules and searched for a workflow_decision_service._text_is_corrupted
+    call. Copying the constant into chat under a different name (_CHAT_RATIO = 0.5)
+    would pass all three checks while duplicating the threshold. Assert behavior
+    instead: chat and document paths must classify identical inputs identically.
     """
     long_clean_tail = "\n".join("정상적인 한국어 문장입니다." for _ in range(200))
     cases = {
-        # 한 줄만 깨진 긴 본문 — 전체 비율로는 임계 아래, 줄 단위로는 위. NR0004 의 실물 모양.
-        # 0474 T0007 §1.2: 연속 '?' 4개 이상은 그 자체로 corruption 신호라 _label_is_corrupted
-        # 를 전체 문자열에 대해 바로 트립시킨다 — 이 줄의 모양은 그 신호를 건드리지 않도록
-        # (최대 연속 3개) 실제 mojibake 관측치(NR0003, CORRUPT 상수)와 같은 형태로 고른다.
+        # A long body with one corrupt line: below the whole-body threshold but above the line threshold (NR0004).
+        # 0474 T0007 §1.2: four or more consecutive '?' characters are themselves a corruption signal
+        # that immediately trips _label_is_corrupted on the entire string. Avoid that signal here
+        # (at most three in a row), matching observed mojibake (NR0003, CORRUPT constant).
         "one corrupted line in a long clean body": "??? ?? ? ??\n" + long_clean_tail,
         "all corrupted": "?????? ??????",
         "clean korean": long_clean_tail,
-        # '?' 로 끝나는 평범한 영문 — 잡으면 안 되는 쪽.
+        # Ordinary English ending in '?': this must not trigger detection.
         "ordinary question": "Done?\nAll good?",
         "empty": "",
     }
@@ -229,8 +229,8 @@ def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
             "임계값이 두 벌이 됐다는 뜻이다"
         )
 
-    # 그리고 이 사례가 실제로 '줄 단위라야만 잡히는' 것인지 못박는다. 아니라면 위의 일치
-    # 확인은 통과하면서도 0391 이 고친 것을 하나도 지키지 못한다.
+    # Pin that this case really requires line-based detection; otherwise the equality check
+    # above could pass without protecting any behavior fixed by 0391.
     diluted = cases["one corrupted line in a long clean body"]
     assert workflow_decision_service._text_is_corrupted(diluted) is True
     assert workflow_decision_service._label_is_corrupted(diluted) is False

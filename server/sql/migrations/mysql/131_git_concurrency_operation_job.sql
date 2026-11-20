@@ -1,8 +1,8 @@
 -- 131_git_concurrency_operation_job.sql
--- flowgate.default.0669 (단위 1a) / 0666 0010-DB §2.3·§3 (설계 번호 130 → 131).
--- durable job 대기열(operation_job). 0669 범위는 job 을 쓰지 않는다 — resource_lock.job_id 의
--- FK 대상이라 DB 설계 그대로 테이블만 만들어 둔다(0669 대화 seq 18, 단위 1a).
--- 가산형. JSON 컬럼은 TEXT 에 UTF-8 JSON(DB §2.0).
+-- flowgate.default.0669 (unit 1a) / 0666 0010-DB §2.3·§3 (design number 130 → 131).
+-- Durable job queue (operation_job). 0669 does not use jobs; create only the table as designed
+-- because resource_lock.job_id references it (0669 conversation seq 18, unit 1a).
+-- Additive. JSON columns hold UTF-8 JSON in TEXT (DB §2.0).
 
 CREATE TABLE operation_job (
     job_id              VARCHAR(30)  NOT NULL PRIMARY KEY,

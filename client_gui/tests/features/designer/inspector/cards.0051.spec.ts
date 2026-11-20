@@ -5,9 +5,9 @@
  * blocks drawn inactive with the reason. None of these parts reaches the server; a Node without a
  * document still shows the card's structure.
  * flowgate.v02.0053 T#5: the lines are `name · state dot · [document icon] · ✎` with no type code, no
- * "아직 없음" and no ＋; the 설계 card is 지시서 · 레포트 without the "설명 대기" note; a Custom card is 지시서 ·
- * 레포트. The cards built from card lines are checked in cardLines.0053.spec.ts.
- * flowgate.v02.0074 T#3 (R §3): the 설계 card's two lines are named 설계 지시 · 설계서; 조사 · 작업 keep 지시서 · 레포트.
+ * "아직 없음" and no ＋; the 설계 card is instruction · report without the "설명 대기" note; a Custom card is instruction ·
+ * report. The cards built from card lines are checked in cardLines.0053.spec.ts.
+ * flowgate.v02.0074 T#3 (R §3): the 설계 card's two lines are named 설계 지시 · design document; 조사 · 작업 keep instruction · report.
  * flowgate.v02.0074 T#5: the 작업계획 card's header buttons deploy the plan (workPlanDeployActions over the status read; the
  * status read is mocked here, the deploy flow itself is checked in workPlan/workPlanDeploy.0074.spec.ts).
  */
@@ -332,7 +332,7 @@ describe('card documents tab parts', () => {
   })
 
   // flowgate.v02.0074 T#3 (R §3): the 설계 card names its two documents as the work plan edit window does; the
-  // 조사 · 작업 cards keep 지시서 · 레포트, in every locale.
+  // 조사 · 작업 cards keep instruction · report, in every locale.
   it.each([
     ['ko', ['설계 지시', '설계서'], ['지시서', '레포트']],
     ['en', ['Design instruction', 'Design document'], ['Instruction', 'Report']],
@@ -407,7 +407,7 @@ describe('card settings parts', () => {
     expect(w.text()).toBe('')
   })
 
-  // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 시나리오 작성 are the settings feature's, in
+  // flowgate.v02.0053 T#7: the 실행 block only (instruction · 시나리오 작성 are the settings feature's, in
   // v7 order before it); no code on screen (TSC / TSR, automated / manual / external).
   it('v8 test settings omit the former per-case execution block, including fixture previews', () => {
     for (const view of [null, { modes: { automated: 49, manual: 6, external: 2 } }]) {

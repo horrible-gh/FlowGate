@@ -5,7 +5,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { DesignerGitPanel } from '@/features/git'
 import { G, P, createFakeGitSource, gitError, networkError, row, status } from './fakeGitSource'
 
-// flowgate.v02.0065 — the Git tab with Git off (미연동), with a failed status read and with Git
+// flowgate.v02.0065 — the Git tab with Git off (Disconnected), with a failed status read and with Git
 // on: exactly one of them shows; `Git 연결` opens the connect modeless next to the 0033 parts.
 registerAppMessages(i18n)
 

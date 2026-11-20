@@ -217,7 +217,7 @@ def test_rc8_a_saved_plan_with_no_registration_is_registered_once_by_the_next_re
     assert one(env, key, "result_review", 1)["actor"] == "no_review"
 
 
-# ── 폴백 금지: a start failure fails the assignment; only an explicit command reopens it, with the same AI ──
+# ── No fallback: a start failure fails the assignment; only an explicit command reopens it, with the same AI ──
 
 def test_a_start_failure_fails_the_assignment_and_an_explicit_command_reopens_it_with_the_same_ai(env, decided,
                                                                                                    monkeypatch):

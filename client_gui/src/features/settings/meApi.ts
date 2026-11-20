@@ -1,4 +1,4 @@
-// 내 설정 API adapter (flowgate.v02.0076 T#2, D §2.1/§2.2). Only the existing self-service
+// "내 설정" API adapter (flowgate.v02.0076 T#2, D §2.1/§2.2). Only the existing self-service
 // contracts are called — GET/PATCH /api/v1/me/ui-settings and the /auth session and password
 // routes. The administrator routes (/users/{uid}, /system/users/{id}/tfa-reset) and
 // /auth/totp/setup are never called from here.
@@ -71,7 +71,7 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
   }
 }
 
-// ── 계정 · 화면: 완료 카드 유지 시간 ─────────────────────────────────────────────
+// ── Account and display: completed card retention time ─────────────────────────────────────────────
 
 export const getUiSettings = () => call(() => getRequest<UiSettingsResponse>(UI_SETTINGS_PATH), 'load_failed')
 
@@ -97,7 +97,7 @@ export function retentionIn(body: UiSettingsResponse | null | undefined): number
   return typeof value === 'number' && (RETENTION_DOMAIN_MINUTES as readonly number[]).includes(value) ? value : null
 }
 
-// ── 보안 · 세션 ───────────────────────────────────────────────────────────────
+// ── "보안" · "세션" ───────────────────────────────────────────────────────────────
 
 /** A body without a session list is a failure, not an empty list. */
 export async function listSessions(): Promise<AuthSession[]> {

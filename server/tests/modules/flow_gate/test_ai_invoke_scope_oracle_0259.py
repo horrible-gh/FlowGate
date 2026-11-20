@@ -158,7 +158,7 @@ def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", group_id
 # ── The bug: success was unreachable, not merely unlikely ────────────────────
 
 class TestPerfectWorkerSucceeds:
-    """NR0003 회귀 방어: 스코프별로 '완벽한 워커 → complete'를 고정한다."""
+    """NR0003 regression guard: pin a perfect worker reaching complete for every scope."""
 
     def test_edit_run_that_revises_the_document_is_complete(self, world):
         run = _run(world, "edit", work=world.do_edit)

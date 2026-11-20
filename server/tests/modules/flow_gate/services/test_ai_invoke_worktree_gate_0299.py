@@ -1,12 +1,11 @@
-"""AI 실행 워크트리 게이트 (flowgate.default.0299 — R0001, TR0008 §5-2 후속).
+"""AI execution worktree gate (flowgate.default.0299, follow-up to R0001 / TR0008 §5-2).
 
-TR 작업범위 검증(D0004)은 잘못된 위치에서 이루어진 작업을 *보고 시점*에 잡는다.
-이 게이트는 같은 사고를 *실행 시점*에 막는다 — 그룹 워크트리를 확인할 수 없으면
-AI 실행을 아예 시작하지 않으므로, 원본 체크아웃(main)에 남을 작업 자체가 없다.
+TR scope validation detects work in the wrong location at reporting time. This gate
+prevents it at execution time: without a verified group worktree, AI execution never
+starts and cannot leave changes in the main checkout.
 
-원격 CRUD 는 0205 부터 같은 방식으로 막혀 있었고 CLI cwd 경로만 열려 있었다.
-그래서 이 테스트는 그 두 경로가 같은 규칙을 따르는지에 초점을 맞춘다:
-연동 안 된 프로젝트는 그대로 통과, 연동된 프로젝트는 self-heal 한 번 뒤 409.
+Remote CRUD enforced this since 0205, but CLI cwd still allowed fallback. Pin parity:
+unlinked projects pass; linked projects attempt self-healing once, then return 409.
 """
 from __future__ import annotations
 
@@ -45,8 +44,8 @@ def _wire(monkeypatch, *, enabled=True, branch="grp_branch", worktree=None,
 
     def _resolve(project_id, fallback_branch, group_id=None):
         calls.append(1)
-        # 두 번째 호출(= self-heal 이후)에만 워크트리를 돌려주는 시나리오를 위해
-        # resolved 를 리스트로도 받는다.
+        # Support returning the worktree only on the second call, after self-healing.
+        # Also accept resolved as a list.
         if isinstance(resolved, list):
             return resolved[min(len(calls), len(resolved)) - 1]
         return resolved
@@ -57,11 +56,11 @@ def _wire(monkeypatch, *, enabled=True, branch="grp_branch", worktree=None,
 
 def test_passes_when_the_run_lands_in_the_group_worktree(monkeypatch, wt):
     _wire(monkeypatch, worktree=wt, resolved=wt)
-    aiv._require_group_worktree("p", "default", "g", "main")  # 예외 없음
+    aiv._require_group_worktree("p", "default", "g", "main")  # No exception
 
 
 def test_blocks_when_resolution_fell_back_to_the_base_tree(monkeypatch, wt, tmp_path):
-    """폴백된 main 경로는 '해결됨'이 아니다 — 여기가 원래 뚫려 있던 구멍이다."""
+    """A fallback main path is not resolved; this was the original gap."""
     base = tmp_path / "proj" / "main"
     base.mkdir(parents=True)
     _wire(monkeypatch, worktree=wt, resolved=base)
@@ -73,16 +72,16 @@ def test_blocks_when_resolution_fell_back_to_the_base_tree(monkeypatch, wt, tmp_
 
 
 def test_self_heal_retry_rescues_a_recoverable_group(monkeypatch, wt, tmp_path):
-    """원격 쓰기 게이트와 같은 모양 — ensure_worktree 한 번은 시도하고 통과시킨다."""
+    """Match the remote-write gate: try ensure_worktree once, then allow the recovered tree."""
     base = tmp_path / "proj" / "main"
     base.mkdir(parents=True)
     calls = _wire(monkeypatch, worktree=wt, resolved=[base, wt], ensure_result="ok")
     aiv._require_group_worktree("p", "default", "g", "main")
-    assert len(calls) == 2  # 최초 해석 + self-heal 이후 재해석
+    assert len(calls) == 2  # Initial resolution plus resolution after self-healing
 
 
 def test_non_integrated_project_is_untouched(monkeypatch):
-    """연동이 없는 프로젝트에는 요구할 워크트리 자체가 없다."""
+    """An unlinked project has no required worktree."""
     _wire(monkeypatch, enabled=False, resolved=None)
     aiv._require_group_worktree("p", "default", "g", "main")
 
@@ -93,7 +92,7 @@ def test_group_less_run_is_untouched(monkeypatch):
 
 
 def test_blocking_cause_is_reported(monkeypatch, wt, tmp_path):
-    """원인 없는 '워크트리 없음'은 사후에 고칠 수 없다 (0280 NR0003 §4-B)."""
+    """A missing-worktree error without a cause cannot guide recovery (0280 NR0003 §4-B)."""
     base = tmp_path / "proj" / "main"
     base.mkdir(parents=True)
     _wire(monkeypatch, worktree=wt, resolved=base, provision_error="clone timed out")
@@ -109,7 +108,7 @@ def test_blocking_cause_is_reported(monkeypatch, wt, tmp_path):
 
 
 def test_config_lookup_failure_does_not_block_a_run(monkeypatch):
-    """위반 탐지가 정상 실행을 막는 것이 원래 사고보다 나쁘다."""
+    """A detector blocking valid runs would be worse than the incident it prevents."""
     def _boom(pid):
         raise RuntimeError("db down")
 
@@ -129,8 +128,8 @@ def test_is_group_worktree_is_false_when_the_ledger_has_no_branch(monkeypatch, w
     assert aiv._is_group_worktree("p", "g", wt) is False
 
 
-# ── T0004 작업 6/8: worktree_unavailable 409 follows the requested locale ────────
-# NR0003 발견 6: this 409 used to be a fixed Korean f-string with no locale parameter
+# ── T0004 task 6/8: worktree_unavailable 409 follows the requested locale ────────
+# NR0003 finding 6: this 409 used to be a fixed Korean f-string with no locale parameter
 # at all -- invisible to 0355's locale-branch scanner because nothing about it looked
 # like a locale branch. These pin the en/ja no-leak contract, the preserved dynamic
 # cause + ko meaning, and the continuation_locale wiring from start_run().
@@ -154,9 +153,9 @@ def test_blocked_response_is_localized_and_has_no_korean(
     message = exc.value.detail["message"]
     assert not re.search(r"[가-힣]", message)
     assert blocked_snippet in message
-    assert recovery_snippet in message  # 복구 안내가 로케일마다 보존된다
-    assert "worktree_missing" in message  # 동적 cause 가 문장에 그대로 들어간다
-    # 구조화 payload 와 상태코드는 로케일과 무관하게 그대로다.
+    assert recovery_snippet in message  # Preserve recovery guidance in every locale
+    assert "worktree_missing" in message  # Include the dynamic cause unchanged
+    # Structured payload and status code remain independent of locale.
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "worktree_unavailable"
     assert exc.value.detail["cause"] == "worktree_missing"
@@ -202,7 +201,7 @@ def test_non_integrated_and_group_less_stay_unblocked_with_a_locale(monkeypatch)
 
 def test_start_run_wires_continuation_locale_into_the_worktree_gate(monkeypatch):
     """start_run() already carried continuation_locale for token/mention plumbing but
-    never forwarded it to _require_group_worktree until T0004 작업 6. Pin the wiring
+    never forwarded it to _require_group_worktree until T0004 task 6. Pin the wiring
     directly rather than trusting the two functions independently."""
     captured = {}
 

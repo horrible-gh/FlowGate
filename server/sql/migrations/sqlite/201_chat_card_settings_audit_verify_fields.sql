@@ -1,4 +1,4 @@
--- 201_chat_card_settings_audit_verify_fields.sql (sqlite) — flowgate.v02test.0053 0003-T (1-A): a chat may now also change a run card's two 검증 options
+-- 201_chat_card_settings_audit_verify_fields.sql (sqlite) — flowgate.v02test.0053 0003-T (1-A): a chat may now also change a run card's two verification options
 -- (flowgate.chat_control.run_settings: verify_max_runs, verify_run_minutes), so chat_card_setting_audit (191) must accept
 -- them as its `field`. SQLite cannot alter a CHECK in place: rebuild the 191 shape (data, foreign key, index kept) with
 -- only that one CHECK widened. The trigger on groups goes first and comes back last: ALTER TABLE ... RENAME re-parses

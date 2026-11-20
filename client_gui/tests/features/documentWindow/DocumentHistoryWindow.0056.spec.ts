@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F1 — a document's 검수·반려 이력 window (0056 CH §2): the v0.1 '검수·반려 전체보기' dialog
+ * flowgate.v02.0056 F1 — a document's review·rejection history window (0056 CH §2): the v0.1 '검수·반려 전체보기' dialog
  * brought to v0.2 on ModelessShell, mounted by DocumentWindows beside the document windows, with
  * `@/features/document` mocked. One timeline of rejections (the AI response under each) and AI reviews,
  * newest first; the 전체 / 반려 / AI 검수 filter with its counts; every entry folds to a short preview; a

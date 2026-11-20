@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useSettingsMenu } from '../settingsMenu'
 import type { SubnavItem } from './SettingsSubnav.vue'
 
-/** 내 설정 sub-navigation (flowgate.v02.0076 T#2, D §1.1): 계정 · 화면 and 보안 · 세션, taken from
+/** 내 설정 sub-navigation (flowgate.v02.0076 T#2, D §1.1): Account · 화면 and 보안 · 세션, taken from
  *  the shared settings menu (../settingsMenu) like the 시스템 one, so both follow the routes. */
 export function useMeNav() {
   const { t } = useI18n()

@@ -963,7 +963,7 @@ def touch_session(merge_id: int) -> None:
 
     Called on session creation (via create_session's touched_at), resolve submission
     and a review conversation turn. Reads (the conflict list, the review screen) never
-    call it (flowgate.v02test.0052 T0003 할 일 4(c)). A quiet session (no touch for the TTL window)
+    call it (flowgate.v02test.0052 T0003 task 4(c)). A quiet session (no touch for the TTL window)
     is what the auto-recovery sweep reclaims."""
     get_store()._execute(
         "UPDATE git_merge_session SET touched_at = ? WHERE merge_id = ?",

@@ -1,7 +1,7 @@
 """Git credential handling: master-key encryption, secret masking, and
 commit-author env resolution.
 
-Extracted from git_service.py (flowgate.default.0550 T0007, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0007, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 

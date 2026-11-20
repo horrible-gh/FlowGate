@@ -89,7 +89,7 @@ describe('DesignerGitPanel — cards', () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
     // flowgate.v02gui.0004: the title says where the apply stopped; the count splits open / resolved.
     expect(text('git-conflict-card')).toContain('충돌 · main 반영 중단')
-    // flowgate.v02test.0052 0008 할 일 7: counted from the server's record — "해결 N · 남음 M"
+    // flowgate.v02test.0052 0008 task 7: counted from the server's record — "해결 N · 남음 M"
     expect(text('git-conflict-count')).toBe('해결 0 · 남음 5 (서버 기록 기준)')
     expect(qa('[data-test="git-conflict-card"] .gx-file')).toHaveLength(3)
     expect(text('git-conflict-more')).toBe('외 2개 보기')

@@ -906,7 +906,7 @@ class TestMentionSections:
 
     def test_section_4_absent_when_no_docs(self):
 
-        """Recent documents in group — REMOVED (D-0003 §3-2 "뺌"): absent with no docs."""
+        """Recent documents in group — REMOVED (D-0003 §3-2 "removed"): absent with no docs."""
 
         mention = self._build_mention(group_recent_docs=[])
 
@@ -1377,7 +1377,7 @@ class TestMentionSections:
 
     def test_section_7_doc_type(self):
 
-        """group 0372 set 3 (D-0003 §3-2 "뺌"): the standalone doc_type guide section is
+        """group 0372 set 3 (D-0003 §3-2 "removed"): the standalone doc_type guide section is
         gone — the always-visible `doc_type` entry of the help index (taught by the
         central Help block) absorbs it."""
 
@@ -1430,7 +1430,7 @@ class TestMentionSections:
 
         # B0001/NR0003: the sanctioned alternative is the query POST address aligned
         # with the live mechanism — not a "Q document". group 0372 set 3 (D-0003 §3-2
-        # "질의 등록 예시는 도움말로"): the placeholder JSON body moved behind the
+        # "move question-submission examples to help"): the placeholder JSON body moved behind the
         # `question` help item; the address + credential stay inline.
 
         assert "/q/" in mention and "/questions" in mention

@@ -1,4 +1,4 @@
--- 166_ai_role_first_setup.sql — flowgate.v02.0113 T#2 (0030-M §2, 0002-D 개정 §3.2-A: the first AI setup's bulk apply) (MySQL/MariaDB)
+-- 166_ai_role_first_setup.sql — flowgate.v02.0113 T#2 (0030-M §2, 0002-D revision §3.2-A: the first AI setup's bulk apply) (MySQL/MariaDB)
 -- Additive only. graph_node_role_slots.source admits 'first_setup' (a role marker of the first AI setup's bulk apply);
 -- ai_role_setup_requests keeps the answer of each applied first-setup request (account, request id) so a request sent
 -- again answers once more and writes nothing. No foreign key on the new table (a history row).

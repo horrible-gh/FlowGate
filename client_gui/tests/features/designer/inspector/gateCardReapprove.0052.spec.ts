@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0052 0008 할 일 6 — the check card with an earlier approval still held: [승인] is off and says the
+ * flowgate.v02test.0052 0008 task 6 — the check card with an earlier approval still held: [승인] is off and says the
  * earlier approval has to be cancelled first (in the Git tab); a decision that is merely running keeps its old reason.
  */
 import { describe, expect, it } from 'vitest'

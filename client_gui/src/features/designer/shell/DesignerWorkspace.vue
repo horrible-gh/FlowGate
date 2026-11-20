@@ -22,7 +22,7 @@ withDefaults(
     placing?: boolean
     /** No work target yet (0039 T#3): show the empty frame instead of the Designer Center. */
     unselected?: boolean
-    /** flowgate.v02.0059 0017-T: the density's card drag step, passed to the Canvas; null = 자율형. */
+    /** flowgate.v02.0059 0017-T: the density's card drag step, passed to the Canvas; null = freeform. */
     moveStep?: number | null
   }>(),
   { unselected: false, placing: false, moveStep: null },

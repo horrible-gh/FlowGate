@@ -163,10 +163,10 @@ def _seed_active_tsr(env, *, slot_bound=True, review_status="approved"):
         )
 
 
-# ── NR0003 필수 회귀 (a)/(b): 연속 두 번 통과 → 활성 TSR 슬롯 1개 ────────────────────
+# ── NR0003 required regressions (a)/(b): two successful runs, one active TSR slot ──
 
 def test_rerun_revises_active_tsr_instead_of_reserving_a_second_number(env):
-    """B0001의 주 증상: 재테스트가 TSR 문서를 두 번째로 만들어내던 경로."""
+    """Main B0001 symptom: rerunning tests created a second TSR document."""
     _seed_active_tsr(env)
 
     tsr_doc_id = env["svc"].assemble_tsr(TS_DOC, _run(), CASES)
@@ -178,7 +178,7 @@ def test_rerun_revises_active_tsr_instead_of_reserving_a_second_number(env):
 
 
 def test_rerun_rewrites_the_active_report_file_with_the_new_run(env, tmp_path):
-    """활성 TSR의 본문과 file_path가 이번 회차 결과로 갱신된다(고아 미리보기 방지)."""
+    """Refresh the active TSR body and file_path with this run, preventing orphan previews."""
     _seed_active_tsr(env)
 
     env["svc"].assemble_tsr(TS_DOC, _run(run_id="trun_second"), CASES)
@@ -192,7 +192,7 @@ def test_rerun_rewrites_the_active_report_file_with_the_new_run(env, tmp_path):
 
 
 def test_first_run_still_creates_the_report(env):
-    """대조군: 활성 TSR이 없으면 지금까지처럼 새 문서를 만든다."""
+    """Control: create a new document when no active TSR exists."""
     tsr_doc_id = env["svc"].assemble_tsr(TS_DOC, _run(run_id="trun_1"), CASES)
 
     assert tsr_doc_id == "flowgate.default.0257.0101-TSR"
@@ -200,7 +200,7 @@ def test_first_run_still_creates_the_report(env):
     assert len(env["rec"].created) == 1
 
 
-# ── 0441 T0004: 수동 TSR 차단이 공식 조립 경로에는 닿지 않는다 ──────────────────────
+# ── 0441 T0004: blocking manual TSR creation must preserve official assembly ──
 
 def test_manual_tsr_ban_does_not_reach_the_official_assembly(env):
     """0441 T0004 item 3 — TSR is now refused at every MANUAL creation gate
@@ -221,11 +221,11 @@ def test_manual_tsr_ban_does_not_reach_the_official_assembly(env):
     assert tsr_doc_id == "flowgate.default.0257.0101-TSR"
     assert len(env["rec"].created) == 1
     assert env["rec"].created[0]["type_code"] == "TSR"
-    # 번호도 문서도 하나뿐 — 수동 생성이 깨뜨렸던 바로 그 유일성이다.
+    # Exactly one number and document: the uniqueness manual creation used to break.
     assert len(env["rec"].reserved) == 1
 
 
-# ── NR0003 필수 회귀 (c): 동일 run 완료 재호출은 새 번호를 소비하지 않는다 ──────────
+# ── NR0003 regression (c): repeating completion for one run consumes no new number ──
 
 def test_same_run_completion_retry_reuses_the_recorded_report(env):
     run = _run(run_id="trun_1", tsr_doc_id=ACTIVE_TSR_ID)
@@ -235,10 +235,10 @@ def test_same_run_completion_retry_reuses_the_recorded_report(env):
     assert env["rec"].created == []
 
 
-# ── NR0003 §3: 재실행 보고서가 슬롯에 연결된다(고아 방지) ────────────────────────
+# ── NR0003 §3: link rerun reports to their slot, preventing orphans ──
 
 def test_rerun_binds_the_report_to_its_own_slot_when_the_head_moved_on(env):
-    """첫 보고서가 슬롯을 소비한 뒤에도 재실행 보고서는 슬롯에 연결되어야 한다."""
+    """Link rerun reports to the slot even after the first report consumed it."""
     _seed_active_tsr(env, slot_bound=False)
     env["monkeypatch"].setattr(
         env["wfseq"], "get_sequence_for_member_doc", lambda _doc_id: {"id": 7}
@@ -265,7 +265,7 @@ def test_rerun_binds_the_report_to_its_own_slot_when_the_head_moved_on(env):
 
 
 def test_reused_report_is_not_registered_twice_on_its_own_slot(env):
-    """이미 같은 슬롯에 연결된 보고서를 재조립해도 결과 등록은 중복되지 않는다."""
+    """Reassembling a report already linked to its slot must not duplicate result registration."""
     _seed_active_tsr(env, slot_bound=False)
     env["monkeypatch"].setattr(
         env["wfseq"], "get_sequence_for_member_doc", lambda _doc_id: {"id": 7}
@@ -284,7 +284,7 @@ def test_reused_report_is_not_registered_twice_on_its_own_slot(env):
 
 
 def test_report_awaiting_review_is_not_resubmitted(env):
-    """pending_review인 보고서 재사용은 submit 전이를 시도하지 않는다(무효 전이 방지)."""
+    """Reusing a pending_review report must not attempt an invalid submit transition."""
     _seed_active_tsr(env, review_status="pending_review")
 
     env["svc"].assemble_tsr(TS_DOC, _run(), CASES)
@@ -293,7 +293,7 @@ def test_report_awaiting_review_is_not_resubmitted(env):
 
 
 def test_approved_report_is_resubmitted_for_re_review(env):
-    """승인 상태였던 보고서는 새 결과가 들어오면 다시 검토 대기로 돌아간다."""
+    """New results return an approved report to pending review."""
     _seed_active_tsr(env, review_status="approved")
 
     env["svc"].assemble_tsr(TS_DOC, _run(), CASES)
@@ -302,7 +302,7 @@ def test_approved_report_is_resubmitted_for_re_review(env):
     assert env["rec"].transitions[0]["doc_id"] == ACTIVE_TSR_ID
 
 
-# ── NR0003 §2 / 필수 회귀 (d): 리포트 조립 실패는 terminal ────────────────────────
+# ── NR0003 §2 / regression (d): report assembly failure is terminal ──
 
 @pytest.fixture
 def exec_env(monkeypatch, tmp_path):
@@ -356,7 +356,7 @@ def exec_env(monkeypatch, tmp_path):
 
 
 def test_report_assembly_failure_is_terminal_and_skips_the_recovery_loop(exec_env):
-    """모든 케이스가 통과한 run을 INFRA 실패로 오인해 재실행 루프에 태우면 안 된다."""
+    """Do not misclassify an all-passing run as INFRA and enter a rerun loop."""
     def boom(*_a, **_kw):
         raise RuntimeError("disk full")
 
@@ -374,7 +374,7 @@ def test_report_assembly_failure_is_terminal_and_skips_the_recovery_loop(exec_en
 
 
 def test_report_assembly_failure_still_reflects_verified_commands(exec_env):
-    """케이스는 실제로 통과했으므로 명령 학습(0152/0157)은 의도적으로 유지한다."""
+    """Preserve command learning (0152/0157) deliberately because the cases really passed."""
     exec_env["monkeypatch"].setattr(
         exec_env["svc"], "assemble_tsr", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("x"))
     )
@@ -385,10 +385,10 @@ def test_report_assembly_failure_still_reflects_verified_commands(exec_env):
 
 
 def test_real_test_failure_still_enters_the_recovery_loop(exec_env):
-    """대조군: 진짜 RED는 지금까지처럼 0157 자동복구 경로를 탄다(수정 전에도 통과).
+    """Control: genuine RED still uses the 0157 recovery path, as before the fix.
 
-    .get("error")로 읽는 이유는 수정 전 코드가 finish_run에 error를 아예 넘기지 않아서다.
-    이 테스트가 지키려는 것은 error 키가 아니라 '조립 실패가 아닌 RED는 복구 경로로 간다'는 배선이다.
+    Read error with .get because the old finish_run call omitted it entirely.
+    Pin recovery routing for non-assembly RED failures, not the presence of that key.
     """
     failing = [{**CASES[0], "result": "fail", "exit_code": 1}]
     exec_env["monkeypatch"].setattr(exec_env["svc"].db_test_runs, "list_cases", lambda _r: failing)

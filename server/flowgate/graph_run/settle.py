@@ -34,7 +34,7 @@ person must act on comes before the Hold, which a person chose; a run with a hel
 (the completion policy needs every target done). ``no_targets`` means nothing was there to run: an empty run scope, a
 step that opened no target, or a full command with no run candidate left.
 
-0083 WP-2 (0061 T#2 개정, idle reason only): ``waiting_approval`` also covers an open card a person writes (its token
+0083 WP-2 (0061 T#2 revision, idle reason only): ``waiting_approval`` also covers an open card a person writes (its token
 issued, no dispatch failure, not an AI card) — it was ``no_targets`` before. No new idle reason value is added.
 
 flowgate.v02.0111 T#2 (T-A1, idle reason only): an AI card whose writer ended asking (``question_pending``) waits for its
@@ -157,7 +157,7 @@ def _system_error(ctx, row: dict) -> bool:
 def _needs_intervention(ctx, row: dict) -> bool:
     """0119 T-2 ``needs_intervention`` (a general card a person must act on): a card in review that nothing completes
     after its automatic rework, an assigned stage in review that waits for a person; an open card a person writes (0083
-    WP-2 / 0061 T#2 개정), an assigned stage that waits for a person, an AI question nobody answered (0113 T#3)."""
+    WP-2 / 0061 T#2 revision), an assigned stage that waits for a person, an AI question nobody answered (0113 T#3)."""
     node_type = _node_type(ctx, row["node_key"])
     if node_type == engine.GATE_NODE_TYPE:
         return False

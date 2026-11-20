@@ -251,7 +251,7 @@ function firstLine(body: string): string {
   return body.split(/\r?\n/, 1)[0] ?? ''
 }
 
-/** The response proves only answered or not: both unanswered states read 미답변. */
+/** The response proves only answered or not: both unanswered states read Unanswered. */
 function stateKey(state: QnaItemState): string {
   return state === 'answered' ? 'state.answered' : 'state.unanswered'
 }

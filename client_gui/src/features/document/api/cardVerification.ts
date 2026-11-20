@@ -1,4 +1,4 @@
-// flowgate.v02test.0053 1-D — a work card's `검증` line (시안 v15, http://mirageglass.stg/v/qxzmvtjk/v15/selfcheck.html):
+// flowgate.v02test.0053 1-D — a work card's `검증` line (mockup v15, http://mirageglass.stg/v/qxzmvtjk/v15/selfcheck.html):
 // the card's verification (self-check) run that went past its time, or this card's request waiting behind such a run.
 // User JWT only, the Graph envelope; every call needs the card Flow's write permission.
 //

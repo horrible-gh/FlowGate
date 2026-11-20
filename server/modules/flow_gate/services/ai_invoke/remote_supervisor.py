@@ -3,7 +3,7 @@
 The executor (``provider_remote.execute``) watches its own Job while it runs. This module
 covers everything that must keep happening without it:
 
-* **Settlement** ("종결"): a remote Job is settled when it is terminal and, if the server
+* **Settlement** ("settlement"): a remote Job is settled when it is terminal and, if the server
   expired it without an Agent report, the run token it carried is revoked (``fenced_at``).
   Until then the run that created it counts as alive: Graph launch, Graph recovery, Stop
   and terminal cleanup all ask :func:`run_has_unsettled_job`.

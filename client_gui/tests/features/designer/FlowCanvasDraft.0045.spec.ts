@@ -3,9 +3,9 @@
  * Flow: the draft bar (label, validate / confirm, issues), a Palette drop that becomes a draft
  * node, a connection between draft nodes (Vue Flow's connect event, as its handle drag would
  * emit it), Delete on the selected draft node, Ctrl+Z, and a v0.1 Flow that offers no editing.
- * flowgate.v02.0045 TR0020 rev2: the bar is only an edit note (no 초안 name / 되돌리기 / 검증 /
- * 확정); 검증 is the Toolbar's (the session's validateDraft), and 실행 confirms the draft first.
- * TR0020 rev3: no 편집 / 편집 마치기 — a Graph Flow's run view is edited right on the Canvas and a
+ * flowgate.v02.0045 TR0020 rev2: the bar is only an edit note (no draft name / 되돌리기 / 검증 /
+ * confirmation); 검증 is the Toolbar's (the session's validateDraft), and 실행 confirms the draft first.
+ * TR0020 rev3: no 편집 / Finish editing — a Graph Flow's run view is edited right on the Canvas and a
  * stored draft is shown without asking.
  * TR0020 rev4 (rejection item 1): nothing is laid over the Canvas at all — no saving note, no
  * refused-save note, no 검증 result box; a problem only marks its card and names itself on hover.

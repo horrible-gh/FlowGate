@@ -335,7 +335,7 @@ def _invoke_client(monkeypatch, captured):
     monkeypatch.setattr(air, "has_permission", lambda *a: True)
     monkeypatch.setattr(air.db_projects, "get_by_id", lambda pid: {"project_id": pid})
     # 0242: /ai-invoke/start now checks continuation_target_seq against the real sequence
-    # (NR0003 권고 3). These tests are about first-hop routing, so give it a decided sequence
+    # (NR0003 recommendation 3). These tests are about first-hop routing, so give it a decided sequence
     # whose target (item_seq 6) is a remaining step — otherwise the check is what they'd be
     # exercising. Coverage of the check itself lives in test_ai_invoke_continuation_target_0242.
     monkeypatch.setattr(db_wfseq, "get_sequence_for_member_doc", lambda doc_id: {"id": 1})

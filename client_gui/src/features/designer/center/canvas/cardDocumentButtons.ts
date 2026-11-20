@@ -6,7 +6,7 @@ export interface CardDocumentButton {
   title: string
   ownerSlot: string | null
   report: boolean
-  /** The test card's 시나리오 button: it opens the same TS document as the 지시서 button (the scenario lives inside it). */
+  /** The test card's 시나리오 button: it opens the same TS document as the instruction button (the scenario lives inside it). */
   scenario?: boolean
   /** flowgate.v02test.0044: the server says the document has no body yet (`has_body` false; never M / WP). The button
    * looks disabled but still opens the document, so a person can start writing it from the card. */
@@ -18,12 +18,12 @@ const ALWAYS_FILLED_TYPES = ['M', 'WP']
 function emptyLine(line: { docType: string | null; hasBody?: boolean }): boolean {
   return line.hasBody === false && !ALWAYS_FILLED_TYPES.includes(line.docType?.trim().toUpperCase() ?? '')
 }
-/** `scenario` tells the 시나리오 button from the 지시서 button of the same shared TS document. */
+/** `scenario` tells the 시나리오 button from the instruction button of the same shared TS document. */
 export interface CardDocumentOpen { nodeId: string; docId: string; scenario?: boolean }
-/** Stable key of a button: a shared TS document has two (지시서 and 시나리오) with one doc id. */
+/** Stable key of a button: a shared TS document has two (instruction and 시나리오) with one doc id. */
 export const cardDocumentButtonKey = (doc: Pick<CardDocumentButton, 'docId' | 'scenario'>): string => doc.scenario ? `${doc.docId}#scenario` : doc.docId
 
-/** Live graph metadata only: a shared TS document yields its 지시서 button plus a 시나리오 button right after it (flowgate.v02test.0041),
+/** Live graph metadata only: a shared TS document yields its instruction button plus a 시나리오 button right after it (flowgate.v02test.0041),
  * blank slots yield none. */
 export function cardDocumentButtons(node: Pick<FlowGraphNode, 'cardDocuments' | 'document'>): CardDocumentButton[] {
   const docs = new Map<string, CardDocumentButton>()

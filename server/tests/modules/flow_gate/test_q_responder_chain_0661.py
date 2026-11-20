@@ -11,7 +11,7 @@ reimplementation of them. Two harnesses:
   * a real sqlite file with EVERY migration applied (incl. 142) for q_service / routes,
     because the CAS writes (`_execute_affected`) and the migration columns are the point.
 
-T0004 "이관 오동작 방지 필수 테스트" and "필수 비발동 회귀 테스트" map onto the classes below:
+T0004 "required handoff safety tests" and "required non-trigger regression tests" map onto the classes below:
   TestResolveQuestionResponderBaseline    F1 — reviewer tiers, review_count=0 vs unset
   TestDispatchBoundaries                  non-trigger: old / human / other-run Qs never dispatch
   TestSequentialQuestions                 F2 — Q1→Q2 one at a time, from the responder's own

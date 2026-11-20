@@ -932,7 +932,7 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
     the previous three independently locked calls (project_git_status has none,
     base_revert/base_commit each took and released their own) that left a race window
     where a concurrent git operation could change the dirty set between baseline and
-    application, or between discard and commit. 0669 unit 9a (D §7 "base dirty 정리"):
+    application, or between discard and commit. 0669 unit 9a (D §7 "base dirty-state cleanup"):
     B replaced the project mutex; a refusal is the old 409 git_busy, nothing is queued."""
     from modules.flow_gate.services import git_service
     from modules.flow_gate.services.git import lock_manager as locks

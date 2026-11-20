@@ -14,7 +14,7 @@
       </div>
 
       <div class="fgs-panel-body">
-        <!-- 저장 Root: GET /system/storage-root, 읽기 전용 -->
+        <!-- Storage Root: GET /system/storage-root, read-only -->
         <div class="fgs-sec" data-card="storage-root">
           <div class="fgs-sec-head">
             <h3>{{ t('gui.settings.general.root.title') }}</h3>
@@ -59,7 +59,7 @@
           </div>
         </div>
         <template v-else>
-          <!-- Scratch 보존 기간: scratch_ttl_value + scratch_ttl_unit, PATCH 한 건에 둘 다 -->
+          <!-- Scratch retention period: scratch_ttl_value + scratch_ttl_unit, both in one PATCH -->
           <div class="fgs-sec" data-card="scratch">
             <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.scratch.title') }}</h3></div>
             <div class="fgs-rows">
@@ -101,7 +101,7 @@
             </div>
           </div>
 
-          <!-- AI 반복 상한: ai_repeat_count_max 하나만 -->
+          <!-- AI iteration limit: ai_repeat_count_max only -->
           <div class="fgs-sec" data-card="repeat">
             <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.repeat.title') }}</h3></div>
             <div class="fgs-rows">
@@ -143,7 +143,7 @@
             </div>
           </div>
 
-          <!-- 검증: verify_max_runs, verify_run_timeout_sec — 각각 따로 저장 (flowgate.v02test.0053 0003-T) -->
+          <!-- 검증: verify_max_runs, verify_run_timeout_sec — saved separately (flowgate.v02test.0053 0003-T) -->
           <div class="fgs-sec" data-card="verify">
             <div class="fgs-sec-head">
               <h3>{{ t('gui.settings.general.verify.title') }}</h3>
@@ -189,12 +189,12 @@
           </div>
         </template>
 
-        <!-- flowgate.chat.0017 CH0002: AI 첨부 승인 요청의 시스템 기본 한도 (프로젝트가 따로 정하지 않으면 상속). -->
+        <!-- flowgate.chat.0017 CH0002: System default limits for AI attachment approval requests (inherited unless the project overrides them). -->
         <AttachmentRequestSettingsCard scope="system" />
       </div>
     </section>
 
-    <!-- 반복 상한 하향 확인: 취소하면 요청 0건 -->
+    <!-- Confirm lowering the iteration limit: cancel sends no requests -->
     <ModalShell :open="lowerConfirmOpen" size="sm" :aria-label="t('gui.settings.general.repeat.lower_title')" @close="lowerConfirmOpen = false">
       <div class="confirm" data-testid="repeat-lower-confirm">
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
@@ -210,7 +210,7 @@
       </template>
     </ModalShell>
 
-    <!-- 미저장 이탈 보호: 계속 편집하면 이동 취소, 요청 0건 -->
+    <!-- Unsaved changes guard: continuing to edit cancels navigation and sends no requests -->
     <ModalShell :open="leaveOpen" size="sm" :aria-label="t('gui.settings.general.leave.title')" @close="answerLeave(false)">
       <div class="confirm" data-testid="leave-confirm">
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
@@ -231,26 +231,26 @@
 <script setup lang="ts">
 // 시스템 › 일반 (flowgate.v02.0076 T#3, D §2.5). Only the existing contracts:
 //
-// - 저장 Root: GET /system/storage-root — the stored value, the effective Root, where it comes from
+// - Storage Root: GET /system/storage-root — the stored value, the effective Root, where it comes from
 //   and whether FLOWGATE_STORAGE_DIR overrides it. Read only: no input, no save, no move, and
 //   storage_root never goes into a PATCH. /system/settings/storage-root (a different contract with
 //   other field names) is not used, not even as a fallback.
-// - Scratch 보존 기간 and AI 반복 상한 come from the rows of GET /system/settings and are two
+// - Scratch retention period and AI iteration limit come from the rows of GET /system/settings and are two
 //   separate saves on PATCH /system/settings:
 //   · Scratch: scratch_ttl_value and scratch_ttl_unit together, as strings, in ONE request — the
 //     server validates the pair and writes it in one store transaction (V13 checked the deployment
 //     store rolls both keys back). Never split into two PATCHes, never converted to minutes.
-//   · 반복 상한: ai_repeat_count_max alone, 1~30. Lowering it first shows the impact on stored and
+//   · iteration limit: ai_repeat_count_max alone, 1~30. Lowering it first shows the impact on stored and
 //     paused runs (re-evaluated against the current ceiling on run/resume); this screen never edits
 //     a run or resumes one.
 // A save is complete only when the PATCH answer carries exactly the sent value(s) AND a re-read
 // GET agrees; otherwise the input stays as typed and an error is shown. Invalid input is never sent.
-// The 저장되었습니다 notice belongs to the value that was saved: editing again takes it away.
-// 미저장 이탈 보호 (D §3.2): while an editor holds an unsaved input or a save is still out, leaving
+// The Saved notice belongs to the value that was saved: editing again takes it away.
+// Unsaved changes guard (D §3.2): while an editor holds an unsaved input or a save is still out, leaving
 // by the app (another route) asks first and a refresh / tab close gets the browser's own question.
 // It never holds the screen once the session or the administrator role is gone (sign-out, a lost
 // token, the role taken away): those moves go through at once (../components/useUnsavedLeaveGuard,
-// shared with 시스템 Agent since T#4).
+// shared with System Agent since T#4).
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -349,7 +349,7 @@ async function loadSettings() {
   }
 }
 
-// ── Scratch 보존 기간 ──
+// ── Scratch retention period ──
 const scratchConfirmed = ref<Pair | null>(null)
 const scratchValue = ref('')
 const scratchUnit = ref('')
@@ -412,7 +412,7 @@ async function rereadScratch(): Promise<Pair | null> {
   }
 }
 
-// ── AI 반복 상한 ──
+// ── AI iteration limit ──
 const repeatConfirmed = ref<string | null>(null)
 const repeatValue = ref('')
 const repeatSaving = ref(false)
@@ -491,9 +491,9 @@ async function rereadRepeat(): Promise<string | null> {
   }
 }
 
-// ── 검증 기본값 (flowgate.v02test.0053 0003-T, 1-A) ──
+// ── verification defaults (flowgate.v02test.0053 0003-T, 1-A) ──
 // Two separate saves, each its own PATCH with its one key: 검증 최대 횟수 (`verify_max_runs`, a whole number from 1) and
-// 검증 1회 최대 시간 (`verify_run_timeout_sec`, the screen types minutes 1~30 and the API stores seconds). A save is
+// 검증 1per-run time limit (`verify_run_timeout_sec`, the screen types minutes 1~30 and the API stores seconds). A save is
 // complete only when the PATCH answer and a re-read GET carry exactly the sent value, as for the repeat ceiling.
 interface NumberEditor {
   readonly value: Ref<string>
@@ -607,7 +607,7 @@ watch(repeatValue, () => {
   repeatSaved.value = false
 })
 
-// ── 미저장 이탈 보호 ──
+// ── Unsaved changes guard ──
 const unsaved = computed(() => scratchDirty.value || repeatDirty.value || scratchSaving.value || repeatSaving.value || verifyDirty.value || verifySaving.value)
 const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 

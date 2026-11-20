@@ -1,4 +1,4 @@
-"""Execution policy slots (D0004 §2.2 실행 정책 묶음, L0009 §2.6.1) — names only, no rules.
+"""Execution policy slots (D0004 §2.2 execution policy set, L0009 §2.6.1) — names only, no rules.
 
 No question of D0004 §8 that a slot depends on has been answered, so every slot is
 ``undecided``: the validator reports the structures that need it as ``rule_undecided`` and

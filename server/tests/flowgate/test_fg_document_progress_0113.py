@@ -1,5 +1,5 @@
 """flowgate.v02.0113 0038-T T#3 — the next stage by the card's documents, the review a satisfied card still takes, the
-wait reinterpreted by the next command, and [전체 실행]'s graph progress (0030-M §3 / §3.1 / §3.2, 0002-D 개정 §3.5.1 /
+wait reinterpreted by the next command, and [전체 실행]'s graph progress (0030-M §3 / §3.1 / §3.2, 0002-D revised §3.5.1 /
 §3.6-0 / §3.7 / §3.12).
 
 The harness of ``test_fg_ai_roles_l2_assignment`` (real routes, Graph engine, card settings / documents / approval
@@ -166,7 +166,7 @@ def test_a_person_s_card_goes_by_its_documents(env, decided, starts, row):
     key, docs = _row_card(env, row, ai=False)
     start(env)
     assert write_jobs(env) == [] and starts == []                       # no AI, whatever the row
-    if row in ("2_omit_report", "5_ins_report"):                         # 충족: 작성 생략 → 검수(사용하지 않음) → 다음
+    if row in ("2_omit_report", "5_ins_report"):                         # Satisfied: omit writing → review (not used) → next
         assert status(env, key) == "done"
         assert _review_status(docs["report"]) == "approved"
         assert one(env, key, "result_review", 1)["verdict"] == "auto_approved"
@@ -301,7 +301,7 @@ def test_an_ai_s_card_goes_by_its_documents(env, decided, starts, monkeypatch, r
                 "4_ins_none": [("result", X)], "5_ins_report": [], "6_none_report": [("instruction", X)]}[row]
     assert jobs == expected
     assert loops(starts) == []
-    if not expected:                                                     # 충족: no writer, reviewed (not used) → done
+    if not expected:                                                     # Satisfied: no writer, reviewed (not used) → done
         assert status(env, key) == "done" and _review_status(docs["report"]) == "approved"
         ra = one(env, key, "result")
         assert (ra["actor"], ra["provider_id"], ra["stage_state"], ra["intent_kind"]) == ("ai", X, "done", None)

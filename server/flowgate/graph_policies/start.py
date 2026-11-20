@@ -1,4 +1,4 @@
-"""Start node execution policy — flowgate.v02.0061 (R §2.1 시작점, 0002-CH turns 3 / 7 / 13 / 15).
+"""Start node execution policy — flowgate.v02.0061 (R §2.1 start, 0002-CH turns 3 / 7 / 13 / 15).
 
 The ``start_node`` slot (L0009 §2.6.1, D0004 §8 Q-1) gets its decided implementation here, for what a run
 opens on its ``start`` control event:
@@ -10,7 +10,7 @@ opens on its ``start`` control event:
 - A path the start nodes do not reach is never opened (turn 15 rule 4): the resolver (``frontier``) opens only
   what ``select`` returns and what an approval propagates to along its out-edges, so nothing reaches a node the
   run scope leaves out. New runs do not create node run rows for left-out nodes.
-- 0056 T#1 개정: the root-bound input (``run_service._root_bound_start``) is already ``done`` when ``select``
+- 0056 T#1 revision: the root-bound input (``run_service._root_bound_start``) is already ``done`` when ``select``
   is asked; ``openable_only`` skips it and its recorded propagation is drained by the same ``start`` decision,
   as before. A root start node that is not bound is ``pending`` and is opened like any other node.
 

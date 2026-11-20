@@ -1,27 +1,29 @@
 """Workflow root ↔ Git finalize state invariant (0477 NR0003 R1/R2/R5, T#1).
 
-NR0003 §7-13 재조사에 따르면 최종 승인(root=wf_done → Git=awaiting_choice/waiting)까지
-갔다가 Time Machine/rework로 root가 wf_in_progress로 되돌아가도 ``reopen_group_git()``은
-merged/pushed 두 terminal 상태만 reset하고 awaiting_choice/waiting은 그대로 남긴다. 그
-결과 승인이 취소된 그룹인데도 헤더 Git 메뉴에 Merge 실행 버튼이 남고, POST finalize도
-그 stale 상태를 재검증 없이 통과시킬 수 있다(§13).
+NR0003 §7-13's follow-up investigation found that after final approval
+(root=wf_done → Git=awaiting_choice/waiting), returning the root to wf_in_progress
+through Time Machine/rework made ``reopen_group_git()`` reset only merged/pushed
+terminal states, leaving awaiting_choice/waiting intact. The header Git menu could
+still offer Merge after approval was revoked, and POST finalize could accept
+that stale state without revalidation (§13).
 
-이 시험이 고정하는 계약:
+Contracts:
 
-  R1. invariant — Git status가 awaiting_choice/waiting이면 반드시 root == wf_done.
-  R2. Reopen 시 pending Git 상태 초기화 — awaiting_choice/waiting은 rework 후 none으로
-      떨어진다. conflict/merging은 실제 git 세션/작업이 있을 수 있으므로 조용히 reset하지
-      않고, reopen 요청 자체를 409로 막아 세션을 그대로 보존한다.
-  R5. Rework path(SSOT) — 이 정책은 ``git_service.reopen_group_git`` /
-      ``git_service.raise_if_git_session_blocks_reopen`` /
-      ``workflow_rework_service.reopen_to_target`` 세 지점에서 실제로 구현된다.
+  R1. Invariant: awaiting_choice/waiting Git status requires root == wf_done.
+  R2. Reset pending Git states on reopen: awaiting_choice/waiting becomes none after
+      rework. conflict/merging may represent real sessions/operations, so preserve
+      them and reject reopen with 409 instead of silently resetting them.
+  R5. Rework's single policy is implemented through ``git_service.reopen_group_git``,
+      ``git_service.raise_if_git_session_blocks_reopen``, and
+      ``workflow_rework_service.reopen_to_target``.
 
-Test1-4는 ``git_service`` 함수를 DB 상태만 몽키패치해 status별로 직접 검증한다(0332의
-``git_active`` 패턴). Test5는 기존 merged/pushed terminal 경로가 이번 변경으로 깨지지
-않았음을 진짜 git 워크트리로 재확인하는 회귀다. Test6은 새 가드 함수의 판정표를 모든
-status에 대해 훑는다. Test7-8은 실제 seeded group + workflow_sequence + group_git_state로
-``reopen_to_target``을 끝까지 돌려, 차단 시 워크플로/문서/git 세션이 정말 손대지지 않고
-그대로인지, 통과 시 root와 git 상태가 함께 정확히 떨어지는지를 본다.
+Tests 1–4 check git_service functions for each status, monkeypatching only DB state
+(the 0332 ``git_active`` pattern). Test 5 uses a real worktree to confirm the existing
+merged/pushed terminal path remains intact. Test 6 covers the new guard's decision
+table for every status. Tests 7–8 run ``reopen_to_target`` end to end with real seeded
+group, workflow_sequence, and group_git_state rows, verifying that blocked calls
+leave workflow/documents/Git sessions untouched and accepted calls transition
+root and Git state together correctly.
 """
 from __future__ import annotations
 
@@ -593,7 +595,7 @@ def test_14_project_status_recovers_stale_pending_before_header_aggregation(monk
     assert rows[4]["status"] == "conflict"
 
 
-# ── Part D — router/HTTP envelope for the stale-pending 409 (0007-T 완료 기준 3) ──
+# ── Part D: router/HTTP envelope for the stale-pending 409 (0007-T acceptance criterion 3) ──
 
 
 def test_12_stale_pending_finalize_409_reaches_router_envelope(
@@ -655,7 +657,7 @@ def test_12_stale_pending_finalize_409_reaches_router_envelope(
 def test_13_stale_pending_finalize_409_reaches_global_exception_handler(
     finalize_pending_state,
 ):
-    """0007-T 완료 기준 3 targets routers/main.py's global
+    """0007-T acceptance criterion 3 targets routers/main.py's global
     `git_service_exception_handler` specifically — the handler installed for
     endpoints that call into git_service *without* a local `except GitServiceError`
     guard (flowgate.default.0233 B0001: token_routes' /token/issue and

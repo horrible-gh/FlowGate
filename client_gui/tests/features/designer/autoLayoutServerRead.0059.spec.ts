@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0016-TR rework) — 자동 배치 from the server's own Canvas responses to the server's own
+ * flowgate.v02.0059 T#2 (0016-TR rework) — auto-layout from the server's own Canvas responses to the server's own
  * coordinates, on the real read path: the project store's Canvas loader (fetchFlowCanvas with
  * `collapse=conversation`, as every Designer read asks) -> toFlowCanvas -> the server Graph source -> the Center
  * session -> autoLayout. Only `@shared/api` is mocked: it answers SERVER_CANVAS for the query it gets, and the
@@ -8,7 +8,7 @@
  * SERVER_CANVAS is what the server returned for these Flows — server legacy_projector.project and
  * canvas_service._place / _collapse run unchanged in Python (no saved layout), once with
  * `collapse=conversation` and once without. With no saved layout the server's read shows its auto placement,
- * so after the shown cards are moved away, 자동 배치 (scale 1) must bring each back where the server put it —
+ * so after the shown cards are moved away, auto-layout (scale 1) must bring each back where the server put it —
  * a lone v0.1 root or a lone slot on the chain at (0, 0), the documents the read left out keeping their place
  * in the order, a root that replaced older root documents found through their supersede chain.
  */
@@ -435,7 +435,7 @@ async function openSession(flowId: string) {
     return load.graph as FlowGraph
   }
   const positions = () => Object.fromEntries(shown().nodes.map((node) => [node.id, [node.x, node.y]]))
-  /** Every shown card somewhere else (one undo entry), so 자동 배치 has to place each again. */
+  /** Every shown card somewhere else (one undo entry), so auto-layout has to place each again. */
   const scatter = () =>
     center.moveNodes(flowId, shown().nodes.map((node, i) => ({ nodeId: node.id, x: 2000 + 300 * i, y: 1500 + 40 * i })))
   return { center, shown, positions, scatter }
@@ -462,7 +462,7 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     expect(SERVER_CANVAS['p.ui.0013'].collapsed.collapsed.hidden_counts).toEqual({ conversation: 1 })
   })
 
-  // flowgate.v02.0068 T#2 (0004-D §4): the explicit 자동정렬 is no longer the server's own placement — the read and
+  // flowgate.v02.0068 T#2 (0004-D §4): the explicit auto-layout is no longer the server's own placement — the read and
   // the server's input (the whole Flow, the supersede chain) stay the same; the last column is where 가로 자동정렬
   // puts the shown cards (0005-L §2.6: the chain first, the documents in one row below it, a hidden document keeping
   // its slot and its real place as an obstacle).
@@ -491,7 +491,7 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     expect(positions()).toEqual(laidOut)
     expect(wholeReads()).toBe(whole)
     expect(documentReads()).toEqual(documents)
-    // One 실행 취소 takes the 자동정렬 back.
+    // One 실행 취소 takes the auto-layout back.
     expect(center.undoEdit(flowId)).toBe(true)
     expect(positions()).not.toEqual(laidOut)
   })

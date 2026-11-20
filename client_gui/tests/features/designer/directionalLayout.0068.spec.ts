@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#2 — 가로 / 세로 자동정렬, pure (arrange/directionalLayout.ts):
+ * flowgate.v02.0068 T#2 — horizontal / 세로 자동정렬, pure (arrange/directionalLayout.ts):
  * - 0005-L §5.4 L1 ~ L15, horizontal and vertical, at the coordinates the L rules give (card size 176 x 92 unless
  *   given, movable and shown unless said);
  * - 0004-D §7 B: branch -> merge, isolated cards apart, a fixed start, a cycle, a collapsed document, a lone sequence

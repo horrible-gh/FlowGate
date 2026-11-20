@@ -3,7 +3,7 @@
 The v0.1 root lookup (``find_sequence_by_group_root``) also returns cancelled / superseded R·B,
 and a slot result document can be cancelled or superseded after it filled the slot. Neither
 may stay on the Canvas as a node or as the end of a reference edge (P0008 §2.4·§2.7,
-D0004 §3.7 "root 문서").
+D0004 §3.7 "root document").
 """
 from __future__ import annotations
 

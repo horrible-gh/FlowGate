@@ -141,7 +141,7 @@ export function inspectorReadOnly(ownership: string | null | undefined, viewMode
 /**
  * flowgate.v02.0053 T#7 — what the settings tab holds for a Node, by the kinds the server keeps card settings
  * by (T#2 `fields.card_kind`): run (조사 · 작업 · 설계 · Custom), test, requirement, check.
- * flowgate.v02.0072 T#3 — and plan: a Graph work plan (WP) card keeps the plan settings (the AI 사전 지시서 작성
+ * flowgate.v02.0072 T#3 — and plan: a Graph work plan (WP) card keeps the plan settings (the AI pre-instruction writing
  * switch and the run block, values only).
  */
 export const INSPECTOR_SETTINGS_KINDS = ['run', 'test', 'requirement', 'check', 'plan'] as const
@@ -287,7 +287,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
 }
 
 /**
- * flowgate.v02.0056 F2-1 — the card state of a Graph card with a run (작업 중 · 승인 대기 · 승인됨 …), decided by the
+ * flowgate.v02.0056 F2-1 — the card state of a Graph card with a run (Working · 승인 대기 · 승인됨 …), decided by the
  * one rule the Canvas card uses too (center/graph/cardStateView.ts); null on a gate (✓ 확인 · ✕ 반려 is its own),
  * a card not saved yet, a Node without a definition or without a run.
  */

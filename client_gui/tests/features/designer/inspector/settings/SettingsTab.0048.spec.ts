@@ -10,7 +10,7 @@
  * from the saved row). Last, the real registry: the settings tab on v0.1 step Nodes only.
  * flowgate.v02.0053 T#7 — the same v0.1 Node, drawn as v7 draws it: no row title / state line, no save button
  * and no "saved" line (a change is saved at once), no running-hop block, a done step in the same form (off),
- * the v7 items a sequence row cannot hold (지시서 · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
+ * the v7 items a sequence row cannot hold (instruction · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
  * with their reason as a tooltip, and a refusal as a red ! beside the field. A Graph card's settings are
  * cardSettings.0053.
  * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its setting (O1 0005-TR §4-3); a v0.1
@@ -358,7 +358,7 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
     expect(w.text()).not.toContain('6단계')
     expect(w.text()).not.toContain('시작 전')
     expect(w.text()).not.toContain('저장')
-    // v7 execSettings order: 지시서 · 실행 설정 (flowgate.v02.0056 F2-1: no progress-after-review row, no 지시 AI on a v0.1 step).
+    // v7 execSettings order: instruction · 실행 설정 (flowgate.v02.0056 F2-1: no progress-after-review row, no 지시 AI on a v0.1 step).
     expect(
       w.findAll('[data-test="inspector-run-settings"], [data-test="settings-instruction"], [data-test="settings-policy"], [data-test="settings-instruction-ai"]').map((el) => el.attributes('data-test')),
     ).toEqual(['settings-instruction', 'inspector-run-settings'])

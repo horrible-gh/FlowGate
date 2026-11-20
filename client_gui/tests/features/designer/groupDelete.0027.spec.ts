@@ -1,7 +1,7 @@
 /**
- * flowgate.v02gui.0027 (0008-T) — 그룹 삭제 (empty Groups only) on the client: the Group menu part (danger item, one line,
+ * flowgate.v02gui.0027 (0008-T) — Delete Group (empty Groups only) on the client: the Group menu part (danger item, one line,
  * no hint under it — v02test.0027 0005-T), the Explorer display tree / ⋯ target carrying `flowTotal`, and the store /
- * API path (DELETE, 409 `module_not_empty` with its count). The Shell end to end (window, 대신 아카이브, refresh) is in
+ * API path (DELETE, 409 `module_not_empty` with its count). The Shell end to end (window, Archive instead, refresh) is in
  * contextMenuServerActions.0060.spec.ts; the server side in server/tests/.../test_group_delete_v02gui_0027.py.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -42,7 +42,7 @@ describe('v02gui.0027 0008-T — the Group menu part', () => {
     expect(deleteItem(empty)).toMatchObject({ danger: true, disabled: false, icon: '×', labelKey: 'groupDelete' })
     expect('hint' in deleteItem(empty)!).toBe(false)
     expect(empty.request('group.delete')).toEqual({ command: 'group.delete', target: group })
-    // A Group with Flows is the same menu (no count / cannot-delete line); pressing it opens the refusal window (대신 아카이브).
+    // A Group with Flows is the same menu (no count / cannot-delete line); pressing it opens the refusal window (Archive instead).
     // The menu no longer takes the Flow count at all, so a target carrying `flowTotal` changes nothing here.
     const busy = projectTreeMenu({ target: { ...group, flowTotal: 3 } as typeof group, available: { currentProject: true }, connected: ALL })
     expect(deleteItem(busy)).toMatchObject({ disabled: false })

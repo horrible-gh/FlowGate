@@ -664,7 +664,7 @@ describe('closing and external changes', () => {
 })
 
 describe('empty, unreadable, missing', () => {
-  // flowgate.v02.0074 T#1 (R §2.1): no sentence for every quantity 0 — the 작업 순서 section is its header only.
+  // flowgate.v02.0074 T#1 (R §2.1): no sentence for every quantity 0 — the task order section is its header only.
   it('a plan with every quantity 0 shows no text; raising a quantity adds Steps', async () => {
     const empty = planBody() as Record<string, any>
     for (const box of Object.values(empty.quantities) as Array<{ count: number }>) box.count = 0

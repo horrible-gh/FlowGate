@@ -1,4 +1,4 @@
-"""flowgate.default.0459 T0005 — 리비전 인식 리뷰 게이트 · 완료 기반 system stop exact-delete.
+"""flowgate.default.0459 T0005 — revision-aware review gate and completion-based exact system-stop deletion.
 
 The two defects 0459 NR0003 traced, and nothing else. Each NR regression item owns one
 class, so a failure names its own cause:

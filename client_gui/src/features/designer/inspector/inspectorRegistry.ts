@@ -86,7 +86,7 @@ export interface InspectorRegistration {
   /** Header meta part (left of the state chip); its one input is `target`. */
   readonly headerMeta?: Component
   /**
-   * flowgate.v02.0051 — header kind badge part: replaces the static 종류 badge (the R/B 종류 배지 ▾ of
+   * flowgate.v02.0051 — header kind badge part: replaces the static 종류 badge (the R/B kind badge ▾ of
    * kindSwitch). The Frame lays out the first that applies; its one input is `target`.
    */
   readonly headerKind?: Component

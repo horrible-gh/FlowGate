@@ -1,13 +1,15 @@
 """Work plan (WP) countable-type registry — flowgate.default.0429 T0004.
 
-NR0003 확정 원인: 클라이언트는 document_types 를 `series, sort_order, type_code` 원본
-순서(design 이 instruction 보다 앞이라 D · P · L · DB · DS · N · T · TS)로 읽고, 서버
-`work_plan_service.list_countable_types()`는 DS 를 설계 앞으로 옮기는 별도 순위
-(DS · D · P · L · DB · N · T · TS)를 썼다. 이 파일은 T0004 가 만든 단일 정본 —
-서버의 `work_plan_countable_types` API 필드 + `list_countable_types(project_id)` +
-`expand_steps()`/`type_order()` — 이 프로젝트 오버라이드(신규 비countable 코드,
-기존 코드의 중복·비활성·재정렬)가 있어도 항상 같은 코드당-한-항목 · 결정적 순서를
-내는지 고정한다. `load_body(path, project_id=...)` 전파도 함께 고정한다.
+NR0003 confirmed cause: the client read document_types in its original
+`series, sort_order, type_code` order (design before instruction:
+D · P · L · DB · DS · N · T · TS), while the server's
+`work_plan_service.list_countable_types()` used a separate ranking that moved DS
+before design (DS · D · P · L · DB · N · T · TS). Pin the single canonical source
+introduced by T0004: the server's `work_plan_countable_types` API field,
+`list_countable_types(project_id)`, and `expand_steps()`/`type_order()` always produce
+one entry per code in deterministic order, even with project overrides (new
+non-countable codes, duplicates, inactive entries, and reordered existing codes).
+Also pin propagation through `load_body(path, project_id=...)`.
 """
 from __future__ import annotations
 
@@ -75,7 +77,7 @@ def test_expand_steps_through_the_registry_matches_canonical_order(seed):
 
 
 def test_document_types_api_exposes_both_orders(seed):
-    """0429 T0004 작업 2: `data` keeps the settings-screen order; the additive
+    """0429 T0004 task 2: `data` keeps the settings-screen order; the additive
     `work_plan_countable_types` array is the sole work-plan sort/dedup registry."""
     from modules.flow_gate.settings.routers import project_settings as ps_router
 
@@ -112,8 +114,8 @@ def _insert_project_doctype(store, now, *, project_id, code, name, series, is_ac
 @pytest.fixture(scope="module", autouse=True)
 def project2_overrides(tmp_db, patch_store, seed):
     """A second project whose own document_types rows exercise every override shape
-    T0004 작업 5 lists: a project-only non-countable code, a duplicate active override
-    of an existing countable code with a different sort_order (재정렬, no duplicate
+    T0004 task 5 lists: a project-only non-countable code, a duplicate active override
+    of an existing countable code with a different sort_order (reordered, no duplicate
     entry), and an inactive override that turns an active global type off."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import groups as db_groups
@@ -185,7 +187,7 @@ def test_inactive_project_override_removes_the_code_but_not_globally():
 
 
 def test_type_order_falls_back_deterministically_for_a_deactivated_code():
-    """0429 T0004 작업 1: a plan can still name a code the active registry dropped
+    """0429 T0004 task 1: a plan can still name a code the active registry dropped
     (DB, inactive for PROJECT2). type_order() must place it by the same
     WORK_PLAN_COUNTABLE_ORDER rank list_countable_types uses on a DB outage — not
     alphabetically, and not wobbling between calls."""
@@ -273,7 +275,7 @@ def test_get_suggest_and_sequence_candidates_pass_the_document_project_id(seed, 
 
 
 def test_apply_preview_and_apply_pass_the_document_project_id(seed, storage_root):
-    """0429 T0004 작업 4: _preview_sync / _apply_sync also forward project_id — mock
+    """0429 T0004 task 4: _preview_sync / _apply_sync also forward project_id — mock
     the apply-service calls themselves (their own contract is out of this task's scope)
     and only observe what load_body() received."""
     from modules.flow_gate.documents.routers import work_plan as wp_router

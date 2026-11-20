@@ -20,7 +20,7 @@
 // stacking only. The caller owns the `toasts` array -- its own message queue, its own
 // decision about when an item appears or disappears -- and this component never invents
 // one of its own: no global event bus, no store, no server-driven notifications, no
-// NotificationCenter integration (T0008 §12 "확장하지 않는다"). A `<div v-for>` in normal
+// NotificationCenter integration (T0008 §12 "Do not extend"). A `<div v-for>` in normal
 // flex flow is the entire "stack without overlap" mechanism (T0008 §5.3) -- no absolute
 // positioning per item, so two or a dozen toasts simply lay out one after another.
 import { ref, watch } from 'vue'
@@ -49,7 +49,7 @@ const emit = defineEmits<{ dismiss: [id: string | number] }>()
 
 // Allocated from the same shared counter ModalShell/ModelessShell use (core/overlay/
 // zIndex.ts), so a toast host still renders above whatever Modal/Modeless opened before
-// it -- consistent with "나중에 뜬 것이 위" everywhere else in this overlay layer.
+// it -- consistent with "Later windows appear on top" everywhere else in this overlay layer.
 //
 // A one-shot `computed` here would only ever allocate once: if a Modal opens *after*
 // the host first appears, the Modal's z-index becomes higher and the host is stuck

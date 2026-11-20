@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0083 T#4 — the run band and the card state show what the server already tells apart (0022-T 작업 2·4):
+ * flowgate.v02.0083 T#4 — the run band and the card state show what the server already tells apart (0022-T tasks 2 and 4):
  *
  * - cardStateView: an open card no AI execution works on (running / requested executions both 0) waits — 응답 대기
- *   with an unanswered question, else 작성 대기 — never 작업 중; a writer that ended without a result keeps 결과 없음 /
- *   실행 미완료; an AI that runs or is requested keeps 결과 작성 중; without the counts the card keeps 작업 중 as before.
- * - the Canvas card: a waiting card shows the clock, not the spinning 작업 중 mark.
+ *   with an unanswered question, else 작성 대기 — never Working; a writer that ended without a result keeps 결과 없음 /
+ *   실행 미완료; an AI that runs or is requested keeps Writing result; without the counts the card keeps Working as before.
+ * - the Canvas card: a waiting card shows the clock, not the spinning Working mark.
  * - run state remains available internally; the toolbar has no status area in any phase (T0024 revision).
  * - the Inspector pill: a Graph card with a run leads with its card state — the Canvas card's word, not 진행 중.
  */

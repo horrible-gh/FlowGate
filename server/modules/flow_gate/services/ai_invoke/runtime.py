@@ -603,11 +603,11 @@ _auto_resume_lock = threading.Lock()
 # ── edit_once handoff gate (0515 T0009 §10) ─────────────────────────────────────────
 # Every /ai-invoke/start run gets exactly one of these. The worker thread body must
 # never touch the token/prompt admission handed it until the gate is OPEN (T0009 §10
-# "worker는 OPEN 전 token/prompt 사용 금지") -- concretely, the `ai_invoke_started`
+# "workers must not use the token/prompt before OPEN") -- concretely, the `ai_invoke_started`
 # broadcast at the top of worker._worker() must never fire before OPEN (T0009 §11).
 #
 # Two shapes, chosen by admission solely from `issue.one_shot_claimed` (T0009 §10
-# "claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를 두 벌 만들지 않는다"):
+# "branch on claim presence only through issue.one_shot_claimed; do not create two worker implementations"):
 #   claim-less run (the overwhelming majority -- non-chat, or chat read_only/edit):
 #       PENDING -> OPEN directly. There is no one-shot commit to guard.
 #   one-shot run (chat edit_once, this call won the claim):
@@ -615,15 +615,15 @@ _auto_resume_lock = threading.Lock()
 #
 # Both sides can independently try to move the gate to ABORT (the worker's own
 # PENDING/SEALED wait timing out, or admission hitting a commit failure) -- only the
-# caller whose CAS actually lands runs cleanup (T0009 §10.1 "CAS 승자만 admission
-# 대신 cleanup(abort_handoff)한다"); everyone else just sees the state already ABORT
+# caller whose CAS actually lands runs cleanup (T0009 §10.1 "only the CAS winner runs cleanup
+# (abort_handoff) instead of admission"); everyone else just sees the state already ABORT
 # and stops without repeating it.
 PENDING = "PENDING"
 SEALED = "SEALED"
 OPEN = "OPEN"
 ABORT = "ABORT"
 
-# T0009 §10 상한.
+# T0009 §10 limit.
 HANDOFF_PENDING_WAIT_SEC = 30
 HANDOFF_SEALED_WAIT_SEC = 120
 
@@ -1446,8 +1446,8 @@ def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] =
     by exact literal match, independent of any label.
 
     rev5 (review finding): none of the above touches the PROMPT itself — T0007 §3.2.3 bans
-    that separately from a credential ("토큰·Authorization·전체 프롬프트·무제한 stdout을
-    노출하지 마라"). A CLI worker that rejects its own stdin ("invalid input, got: <prompt>"
+    that separately from a credential ("do not expose tokens, Authorization,
+    full prompts, or unlimited stdout"). A CLI worker that rejects its own stdin ("invalid input, got: <prompt>"
     is the shape a parse error takes) echoes the exact text this run wrote to the child's
     stdin — `run["mention"]`, set at issue time (L1843) and again on every reissued retry
     (L3048) — into `last_message`/`stderr_tail`/`stdout_tail` untouched by either regex or

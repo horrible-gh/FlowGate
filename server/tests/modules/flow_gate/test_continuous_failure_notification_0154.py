@@ -145,7 +145,7 @@ def test_normal_inflow_still_present(failed_chain_store):
 
 
 def test_noise_invariant_preserved(failed_chain_store):
-    # 0118 / group 0125 NR0003 권고 4: per-transition state_changed and present-tense work_started must
+    # 0118 / group 0125 NR0003 recommendation 4: per-transition state_changed and present-tense work_started must
     # NEVER reach the feed even though the terminal failure now does.
     result = dashboard_service.get_notification_feed("flowgate", None, 50)
     types = {i["activity_type"] for i in result["recent_activities"]["items"]}

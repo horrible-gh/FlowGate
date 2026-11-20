@@ -128,7 +128,7 @@ function optionsOf(name: InspectorRunSettingsField): SelectOption[] {
 
 /**
  * A field without a value shows `—`: the item is there, nothing is chosen (or connected) yet. A field whose
- * '' is a choice of its own (an AI's 담당 AI / 기본 검수 AI) shows that choice instead.
+ * '' is a choice of its own (an AI's assignee AI / default review AI) shows that choice instead.
  */
 function placeholderOf(name: InspectorRunSettingsField): string | undefined {
   const field = props.fields[name]

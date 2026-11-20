@@ -1,10 +1,10 @@
 // flowgate.v02test.0052 (0008) — the two confirm questions that end a conflict in one press, shared by the conflict card
 // and the merge-approval card: [병합 중단] and the administrator's [강제 정리].
 //
-// 병합 중단: close the conflict review (merge abort) AND cancel the approval parked on it, then say "확인 카드에서
-// [승인]" (`abortAndCancelApproval`; the same two steps [새 커밋으로 다시 승인] takes). The dialog says what is undone
+// Merge abort: close the conflict review AND cancel the approval parked on it, then direct the user to the check card
+// and its [승인] action (`abortAndCancelApproval`; the same two steps [새 커밋으로 다시 승인] takes). The dialog says what is undone
 // and what stays before the person presses the red button, and its two buttons never read the same ([돌아가기] / [병합 중단]).
-// 강제 정리: administrators only; reads what would be put back (target workspace, HEAD, the work lost) and shows it.
+// "강제 정리": administrators only; reads what would be put back (target workspace, HEAD, the work lost) and shows it.
 import { inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { abortAndCancelApproval, cancelOperationOfGroup, cancelParkedApproval, frozenShaOf, readConflictOperationOf, useGitGateOperations, type GateOperation } from './gateOperations'

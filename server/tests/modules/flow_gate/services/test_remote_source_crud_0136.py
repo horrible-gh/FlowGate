@@ -1,6 +1,6 @@
 """Remote source CRUD guidance in copied worker mentions (group 0136).
 
-0349 TR-2 (D0004 D-4/D-8 2단계) moved the request formats and JSON examples out of the
+0349 TR-2 (D0004 D-4/D-8 phase 2) moved the request formats and JSON examples out of the
 mention and behind GET /help/tools. What the mention still owes the worker is unchanged in
 kind — which tools this step may use, and the token to use them with — so these tests keep
 asserting that, against the shrunk text. The example-shape guarantee this file has carried

@@ -1,15 +1,14 @@
-"""문서 조회 도구 — 계산 규칙 단위 시험 (group 0370, P0002 / L0003).
+"""Document-query tools: calculation-rule unit tests (group 0370, P0002 / L0003).
 
-여기서 재는 것은 좌표 계산이다. `/outline`·`/section`·검색 매치 위치·저장 변경 요약이
-전부 같은 함수 위에 서 있으므로, 이 파일이 깨지면 네 화면이 같은 자리를 서로 다른 숫자로
-부르기 시작한다.
+Verify coordinates shared by /outline, /section, search match locations, and saved-change
+summaries. A failure here would make these four views describe the same location differently.
 
-L0003 이 "이건 아직 검증되지 않았다" 고 정직하게 적어 둔 자리 두 곳을 특히 겨눈다.
+Specifically cover two gaps L0003 explicitly identified as unverified:
 
-* §2-2 — "0370.0002-P 로는 코드 울타리 규칙이 검증되지 않는다(울타리 안에 줄 첫머리 `#`
-  이 없다). 시험 자료는 울타리 안에 `#` 줄이 있는 문서로 따로 만든다." → `_FENCED_DOC`.
-* §2-1 — "머리말 없는 문서에서는 본문↔파일 좌표 변환이 항등식이라 변환을 빠뜨려도 증상이
-  안 보인다. 시험은 반드시 머리말 있는 문서로 해야 한다." → `_FRONTMATTER_DOC`.
+* §2-2: 0370.0002-P has no line-leading # inside code fences, so use _FENCED_DOC
+  to verify that headings quoted inside a fence are ignored.
+* §2-1: body-to-file conversion is an identity without frontmatter and can be omitted
+  unnoticed. Use _FRONTMATTER_DOC to exercise the nontrivial conversion.
 """
 from __future__ import annotations
 
@@ -29,9 +28,9 @@ from modules.flow_gate.services import document_outline_service as outline  # no
 from modules.flow_gate.services import change_summary_service  # noqa: E402
 
 
-# ── 시험 자료 ────────────────────────────────────────────────────────────────────
+# ── Fixtures ──
 
-# 머리말 5줄 + 본문. 본문↔파일 좌표 변환을 빠뜨리면 여기서만 틀린다.
+# Five frontmatter lines plus body: missing body-to-file conversion fails here.
 _FRONTMATTER_DOC = (
     "---\n"          # 1
     "group_id: 0370\n"   # 2
@@ -48,22 +47,22 @@ _FRONTMATTER_DOC = (
     "가지 본문 한 줄.\n"   # 13
 )
 
-# 코드 울타리 안에 줄 첫머리 `#` 이 있는 문서 — L0003 §2-2 가 따로 만들라고 한 자료.
+# Fenced code containing line-leading # characters, required by L0003 §2-2.
 _FENCED_DOC = (
     "# 진짜 제목\n"          # 1  s1
     "\n"                    # 2
     "```markdown\n"          # 3
-    "## 이건 인용일 뿐이다\n"  # 4  ← 제목으로 세면 안 된다
-    "### 이것도\n"           # 5  ← 제목으로 세면 안 된다
+    "## 이건 인용일 뿐이다\n"  # 4: must not count as a heading
+    "### 이것도\n"           # 5: must not count as a heading
     "```\n"                  # 6
     "\n"                    # 7
     "## 진짜 두 번째\n"       # 8  s2
     "\n"                    # 9
     "~~~\n"                  # 10
-    "# 물결 울타리 안\n"      # 11 ← 제목으로 세면 안 된다
+    "# 물결 울타리 안\n"      # 11: must not count as a heading
     "~~~\n"                  # 12
     "\n"                    # 13
-    "#### 진짜 세 번째\n"     # 14 s3 (깊이를 건너뛴다)
+    "#### 진짜 세 번째\n"     # 14 s3 (skips a depth level)
     "\n"                    # 15
     "끝.\n"                  # 16
 )
@@ -73,7 +72,7 @@ def _doc(text: str) -> outline.DocumentText:
     return outline.DocumentText(outline.canonical_text(text))
 
 
-# ── 2-1. 정본 텍스트와 좌표 ───────────────────────────────────────────────────────
+# ── 2-1. Canonical text and coordinates ──
 
 def test_frontmatter_boundary_and_document_size():
     doc = _doc(_FRONTMATTER_DOC)
@@ -84,7 +83,7 @@ def test_frontmatter_boundary_and_document_size():
 
 
 def test_trailing_newline_is_not_an_extra_line():
-    """파일이 개행으로 끝나면 그 뒤에 줄이 하나 더 있다고 세지 않는다(L0003 §2-1)."""
+    """A final newline does not imply an extra line after it (L0003 §2-1)."""
     assert _doc("a\nb\n").document_lines == 2
     assert _doc("a\nb").document_lines == 2, "개행 없이 끝나도 마지막 줄은 한 줄이다"
     assert _doc("").document_lines == 0
@@ -92,7 +91,7 @@ def test_trailing_newline_is_not_an_extra_line():
 
 
 def test_crlf_and_bom_do_not_change_any_number():
-    """같은 문서를 어떤 운영체제에서 저장했느냐로 줄 번호가 달라지면 안 된다."""
+    """Saving the same document on a different OS must not change line numbers."""
     lf = _doc(_FRONTMATTER_DOC)
     crlf = _doc(_FRONTMATTER_DOC.replace("\n", "\r\n"))
     bom = _doc("﻿" + _FRONTMATTER_DOC)
@@ -104,7 +103,7 @@ def test_crlf_and_bom_do_not_change_any_number():
 
 
 def test_unclosed_frontmatter_is_treated_as_no_frontmatter():
-    """문서 전체를 머리말로 삼아 통째로 감추는 것보다 낫다(L0003 §5)."""
+    """Prefer this to treating the whole document as frontmatter and hiding it (L0003 §5)."""
     doc = _doc("---\ntitle: 안 닫힘\n\n# 제목\n")
     assert doc.body_line_start == 1
     assert doc.frontmatter_chars == 0
@@ -112,10 +111,10 @@ def test_unclosed_frontmatter_is_treated_as_no_frontmatter():
 
 
 def test_char_end_of_one_section_equals_char_start_of_the_next_sibling():
-    """끝 제외 규약 — 앞 구간의 끝과 뒤 구간의 시작이 같은 값이 된다(P0002 §1-2).
+    """Exclusive-end convention: one sibling ends where the next starts (P0002 §1-2).
 
-    같은 깊이의 형제끼리 성립하는 규약이다. 부모는 include_children 기준으로 자식을 품고
-    있으므로 부모의 끝이 자식의 시작과 같을 수는 없다(P0002 예시의 s3·s4 도 형제다).
+    This applies to siblings at equal depth. With include_children, a parent contains
+    its children, so its end cannot equal a child start; P0002 examples s3/s4 are siblings.
     """
     doc = _doc("## 첫째\n\n가\n\n## 둘째\n\n나\n\n## 셋째\n\n다\n")
     items, _ = outline.outline_items(doc, outline.MAX_HEADING_LEVEL)
@@ -125,10 +124,10 @@ def test_char_end_of_one_section_equals_char_start_of_the_next_sibling():
 
 
 def test_body_coordinates_convert_to_file_coordinates():
-    """검색이 쥔 본문 좌표를 파일 좌표로 옮기는 변환(L0003 §2-1 / §2-7).
+    """Convert search body coordinates to file coordinates (L0003 §2-1 / §2-7).
 
-    머리말 없는 문서에서는 이 변환이 항등식이라 빠뜨려도 증상이 안 보인다. 그래서 머리말
-    있는 문서로 잰다.
+    Without frontmatter this is an identity and omissions stay invisible.
+    Use a document with frontmatter to exercise the conversion.
     """
     doc = _doc(_FRONTMATTER_DOC)
     body = doc.text[doc.frontmatter_chars:]
@@ -137,17 +136,17 @@ def test_body_coordinates_convert_to_file_coordinates():
     file_char = doc.body_char_to_file(body_char)
     assert doc.text[file_char: file_char + len(needle)] == needle
     assert doc.line_containing(file_char) == 13
-    # 본문 기준으로 8번째 줄이 파일 기준 13번째 줄이다.
+    # Body line 8 is file line 13.
     assert doc.body_line_to_file(8) == 13
 
 
-# ── 2-2. 제목 훑기 ───────────────────────────────────────────────────────────────
+# ── 2-2. Heading scan ──
 
 def test_headings_inside_a_code_fence_are_not_sections():
-    """L0003 §2-2 가 "따로 시험 자료를 만들라" 고 못 박은 자리.
+    """Exercise the separate fixture explicitly required by L0003 §2-2.
 
-    울타리를 무시한 파서는 인용된 `##` 줄을 진짜 제목으로 세어 그 뒤 구간 번호를 통째로
-    밀어 버린다. TR 문서가 서식 예시로 `## 변경 파일` 을 인용하는 일이 실제로 잦다.
+    A parser ignoring fences counts quoted ## lines as headings and shifts all subsequent
+    section IDs. TR documents often quote `## 변경 파일` as a format example.
     """
     doc = _doc(_FENCED_DOC)
     assert [it["title"] for it in doc.items] == ["진짜 제목", "진짜 두 번째", "진짜 세 번째"]
@@ -156,17 +155,17 @@ def test_headings_inside_a_code_fence_are_not_sections():
 
 
 def test_fence_closes_only_on_the_same_char_and_not_shorter():
-    """닫는 울타리는 **같은 문자**로, 여는 울타리보다 **짧지 않게**, 정보 문자열 없이."""
+    """A closing fence uses the same character, is at least as long, and has no info string."""
     def titles(text):
         return [it["title"] for it in _doc(text).items]
 
-    # ``` 로 연 것을 ~~~ 로는 닫을 수 없다.
+    # A fence opened with ``` cannot close with ~~~.
     assert titles("```\n# 안\n~~~\n# 여전히 안\n```\n# 밖\n") == ["밖"]
-    # ```` 로 연 것은 더 짧은 ``` 으로 닫히지 않는다.
+    # A fence opened with ```` cannot close with the shorter ```.
     assert titles("````\n# 안\n```\n# 여전히 안\n````\n# 밖\n") == ["밖"]
-    # 반대로 ``` 로 연 것은 더 긴 ```` 로 닫힌다 — 조건은 "짧지 않을 것" 이다.
+    # A fence opened with ``` can close with ````: closing must be at least as long.
     assert titles("```\n# 안\n````\n# 밖\n") == ["밖"]
-    # 뒤에 정보 문자열이 붙은 줄은 닫는 울타리가 아니다.
+    # A line with a trailing info string is not a closing fence.
     assert titles("```\n# 안\n``` vue\n# 여전히 안\n```\n# 밖\n") == ["밖"]
 
 
@@ -178,24 +177,24 @@ def test_unclosed_fence_swallows_the_rest_of_the_document():
 @pytest.mark.parametrize("line, expected", [
     ("# 제목", ["제목"]),
     ("###### 여섯", ["여섯"]),
-    ("####### 일곱", []),          # `#` 7개 이상은 제목이 아니다
-    ("#태그", []),                  # `#` 뒤에 공백이 없으면 제목이 아니다
-    ("    # 네 칸 들여쓰기", []),    # 4칸 이상은 코드 블록
-    ("   ### 세 칸", ["세 칸"]),     # 3칸까지는 제목
+    ("####### 일곱", []),          # Seven or more # characters do not form a heading
+    ("#태그", []),                  # A heading requires whitespace after #
+    ("    # 네 칸 들여쓰기", []),    # Four or more spaces indicate a code block
+    ("   ### 세 칸", ["세 칸"]),     # Up to three spaces still allow a heading
     ("## 닫는 해시 ##", ["닫는 해시"]),
-    ("##", [""]),                   # 제목 글자가 비어도 센다
+    ("##", [""]),                   # Count headings even when their text is empty
 ])
 def test_atx_heading_edge_cases(line, expected):
     assert [it["title"] for it in _doc(line + "\n").items] == expected
 
 
 def test_setext_heading_is_not_counted():
-    """밑줄식 제목을 여기서만 늘리면 기존 파서와 같은 문서를 다르게 읽는다(L0003 §2-2)."""
+    """Adding setext headings only here would disagree with the existing parser (L0003 §2-2)."""
     assert _doc("제목처럼 보이는 줄\n===\n\n또 한 줄\n---\n").items == []
 
 
 def test_empty_heading_still_advances_section_id():
-    """빼면 뒤 구간의 section_id 가 밀린다."""
+    """Omitting this shifts the section_id of subsequent sections."""
     doc = _doc("# 하나\n\n##\n\n## 셋\n")
     assert [(it["section_id"], it["title"]) for it in doc.items] == [
         ("s1", "하나"), ("s2", ""), ("s3", "셋"),
@@ -208,10 +207,10 @@ def test_heading_title_is_clipped():
     assert len(doc.items[0]["title"]) == outline.HEADING_TITLE_MAX
 
 
-# ── 2-3. 구간 경계 ───────────────────────────────────────────────────────────────
+# ── 2-3. Section boundaries ──
 
 def test_skipped_depth_keeps_the_real_parent():
-    """`##` 다음에 바로 `####` 가 오면 `####` 의 부모는 그 `##` 이다."""
+    """When ## is immediately followed by ####, the ## heading is its parent."""
     doc = _doc(_FENCED_DOC)
     s2, s3 = doc.items[1], doc.items[2]
     assert s3["level"] == 4, "글에 적힌 깊이를 그대로 싣는다"
@@ -239,7 +238,7 @@ def test_back_to_back_headings_give_a_one_line_section():
 
 
 def test_section_id_numbering_ignores_the_max_level_filter():
-    """거른 목차의 section_id 를 그대로 /section 에 넣어도 같은 구간이 열려야 한다."""
+    """A section_id from a filtered outline must open the same section through /section."""
     doc = _doc("# 1\n\n## 1.1\n\n### 1.1.1\n\n## 1.2\n")
     shallow, _ = outline.outline_items(doc, 2)
     assert [it["section_id"] for it in shallow] == ["s1", "s2", "s4"]
@@ -259,10 +258,10 @@ def test_outline_truncates_at_the_item_cap():
     assert doc.section_total == outline.OUTLINE_MAX_ITEMS + 20, "전체 개수는 그대로 말한다"
 
 
-# ── 2-4. 제목 이름 맞추기 ─────────────────────────────────────────────────────────
+# ── 2-4. Heading-name matching ──
 
 def test_normalisation_keeps_underscores_and_asterisks():
-    """지우면 `client_src` 와 `clientsrc` 가 같은 제목이 된다(L0003 §2-4)."""
+    """Removing this would conflate client_src and clientsrc (L0003 §2-4)."""
     assert outline.normalize_heading("client_src") != outline.normalize_heading("clientsrc")
     assert outline.normalize_heading("`코드`") == "코드", "백틱만 지운다"
     assert outline.normalize_heading("  두   칸  ") == "두 칸"
@@ -270,7 +269,7 @@ def test_normalisation_keeps_underscores_and_asterisks():
 
 
 def test_alias_table_is_read_from_the_existing_parsers():
-    """값을 옮겨 적지 않고 불러 쓴다 — 한쪽만 고쳐져 어긋나는 것을 막는다."""
+    """Import the value instead of copying it, preventing one-sided changes and drift."""
     from modules.flow_gate.services import test_run_service, tr_scope_service
 
     outline.reset_alias_map()
@@ -291,10 +290,10 @@ def test_english_alias_finds_the_korean_section_and_back():
 
 
 def test_numbered_changed_files_reads_but_stays_unreportable_to_tr_scope():
-    """**읽히는 것과 TR 이 통과하는 것은 다른 문제다**(L0003 §2-4).
+    """Readable queries and passing TR validation are separate contracts (L0003 §2-4).
 
-    조회는 번호 접두사를 떼고 찾아 주지만, 신고 섹션 판정은 조금도 느슨해지지 않는다.
-    조회가 읽어 줬으니 신고 형식도 맞겠지 하고 넘기면 TR 이 반려된다.
+    Lookup strips number prefixes, but reported-section validation stays strict.
+    Successful lookup does not imply a valid TR declaration format.
     """
     from modules.flow_gate.services import tr_scope_service
 
@@ -307,7 +306,7 @@ def test_numbered_changed_files_reads_but_stays_unreportable_to_tr_scope():
 
 
 def test_exact_match_wins_before_the_number_stripping_stage():
-    """`2.1 구성` 과 `구성` 이 둘 다 있을 때 `2.1 구성` 으로 물으면 그 하나만 나온다."""
+    """When both `2.1 구성` and `구성` exist, requesting `2.1 구성` returns only that heading."""
     doc = _doc("## 2.1 구성\n\n가\n\n## 구성\n\n나\n")
     hits = outline.resolve_by_name(doc.items, "2.1 구성")
     assert [it["title"] for it in hits] == ["2.1 구성"]
@@ -328,13 +327,13 @@ def test_similar_candidates_are_scored_and_floored():
     assert outline.similarity("가", "나") == 0.0
 
 
-# ── 2-5. 자리 지정 ───────────────────────────────────────────────────────────────
+# ── 2-5. Locators ──
 
 _DOC_ID = "flowgate.default.0370.9999-TR"
 
 
 def test_lines_and_chars_and_name_resolve_to_the_same_span():
-    """L0003 §2-5 가 "구현 확인의 첫 번째 시험" 이라고 지목한 대조."""
+    """The comparison L0003 §2-5 names as the first implementation check."""
     doc = _doc(_FRONTMATTER_DOC)
     by_name = outline.resolve_locator(doc, _DOC_ID, 0, section="가지")
     lines = f"{by_name.line_start}-{by_name.line_end}"
@@ -365,7 +364,7 @@ def test_exactly_one_locator_is_required():
 
 
 def test_line_range_rules():
-    doc = _doc(_FENCED_DOC)                     # 16줄
+    doc = _doc(_FENCED_DOC)                     # 16 lines
     ok = outline.resolve_locator(doc, _DOC_ID, 0, lines="14-999")
     assert ok.line_end == 16, "끝만 넘치면 문서 끝으로 자른다"
     for bad in ("999-1000", "49-22", "0-3", "not-a-range"):
@@ -384,7 +383,7 @@ def test_missing_section_raises_404_with_candidates_and_section_total():
 
 
 def test_unknown_section_id_gets_no_candidates():
-    """번호는 목차에서 받은 값이다. 틀렸다면 판이 달라진 것이지 비슷한 번호를 권할 일이 아니다."""
+    """IDs come from the outline; an invalid ID means a different revision, not a similar suggestion."""
     doc = _doc("## 하나\n\n가\n")
     with pytest.raises(outline.LocatorError) as exc:
         outline.resolve_locator(doc, _DOC_ID, 0, section_id="s99")
@@ -393,7 +392,7 @@ def test_unknown_section_id_gets_no_candidates():
 
 
 def test_ambiguous_name_reads_the_first_and_says_so():
-    """무인 작업에서 애매하다고 멈춰 세우면 작업이 죽는다 — 읽어 주되 애매했다고 말한다."""
+    """Ambiguity must not stall unattended work: return a result while reporting the ambiguity."""
     doc = _doc("## 변경 파일\n\n가\n\n## 부록\n\n### 변경 파일\n\n나\n")
     res = outline.resolve_locator(doc, _DOC_ID, 2, section="변경 파일")
     assert res.ambiguous is True
@@ -409,7 +408,7 @@ def test_enclosing_section_is_null_inside_the_frontmatter():
     assert loc["section_id"] is None and loc["heading_path"] == [] and loc["level"] is None
 
 
-# ── 2-6. 자르기와 next_locator ───────────────────────────────────────────────────
+# ── 2-6. Truncation and next_locator ──
 
 def test_truncation_cuts_on_a_line_boundary_and_resumes_exactly():
     doc = _doc("".join(f"{i:03d} 줄 내용이 여기에 있습니다\n" for i in range(1, 41)))
@@ -426,7 +425,7 @@ def test_truncation_cuts_on_a_line_boundary_and_resumes_exactly():
 
 
 def test_a_single_oversized_line_is_returned_whole():
-    """한 글자도 못 주면 next_locator 가 제자리를 가리켜 무한히 같은 요청을 반복한다."""
+    """Returning no character makes next_locator repeat the same request indefinitely."""
     doc = _doc("가" * 5000 + "\n두 번째 줄\n")
     last, truncated = outline.cut_to_limit(doc, 1, 2, 800)
     assert last == 1 and truncated is True
@@ -448,7 +447,7 @@ def test_context_line_is_clipped_with_an_ellipsis():
     assert outline.clip_line("짧은 줄") == "짧은 줄", "짧으면 원문 그대로"
 
 
-# ── 2-9. 저장 전후 견주기 ────────────────────────────────────────────────────────
+# ── 2-9. Compare before and after saving ──
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
     target = tmp_path / name
@@ -469,7 +468,7 @@ def test_new_registration_has_no_before_and_counts_everything_as_added(tmp_path)
 
 
 def test_identical_save_reports_changed_false_with_zeroes(tmp_path):
-    """`changed: false` 는 바뀐 게 없다는 뜻이지 저장이 안 됐다는 뜻이 아니다."""
+    """changed: false means no difference, not a failed save."""
     text = "# 하나\n\n가\n\n## 둘\n\n나\n"
     before = _write(tmp_path, "before.md", text)
     after = _write(tmp_path, "after.md", text)
@@ -509,7 +508,7 @@ def test_section_diff_splits_added_removed_and_changed(tmp_path):
 
 
 def test_changing_a_child_does_not_mark_its_ancestors_changed(tmp_path):
-    """하위까지 넣어 견주면 소제목 한 줄만 고쳐도 조상이 전부 '고쳤다' 로 잡힌다."""
+    """Including descendants would mark every ancestor changed after a single subheading edit."""
     before = _write(tmp_path, "before.md", "## 부모\n\n부모 본문\n\n### 자식\n\n옛 줄\n")
     after = _write(tmp_path, "after.md", "## 부모\n\n부모 본문\n\n### 자식\n\n새 줄\n")
     summary = change_summary_service.build(
@@ -521,7 +520,7 @@ def test_changing_a_child_does_not_mark_its_ancestors_changed(tmp_path):
 
 
 def test_number_prefix_change_counts_as_a_different_section(tmp_path):
-    """조회의 M4 는 사람이 대충 물어도 찾아 주려는 것이고, 여기는 두 판을 견주는 자리다."""
+    """Query M4 tolerates imprecise human requests; this comparison instead aligns two revisions."""
     before = _write(tmp_path, "before.md", "## 2. 구성\n\n가\n")
     after = _write(tmp_path, "after.md", "## 3. 구성\n\n가\n")
     summary = change_summary_service.build(
@@ -543,7 +542,7 @@ def test_indentation_only_edit_is_still_an_edit(tmp_path):
 
 
 def test_unreadable_backup_gives_up_on_the_summary_only(tmp_path):
-    """저장은 이미 끝났다. 여기서 실패를 오류로 올리면 같은 문서를 또 올리게 된다."""
+    """The save already completed; surfacing this as an error would cause duplicate submissions."""
     after = _write(tmp_path, "after.md", "# 하나\n")
     summary = change_summary_service.build(
         doc_id=_DOC_ID, after_path=after, after_revision_no=1,

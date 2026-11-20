@@ -1,4 +1,4 @@
-"""flowgate.default.0358 R0001 4번째 반려 — a renamed migration must not run twice.
+"""flowgate.default.0358 R0001 fourth rejection — a renamed migration must not run twice.
 
 The rejected boot log is one line:
 
@@ -420,7 +420,7 @@ def _provider_columns(db_path: Path) -> list[str]:
 
 @pytest.mark.parametrize("history", _MOVED_HISTORIES)
 def test_the_rejected_boot_reproduces_for_every_history_without_the_repair(tmp_path, history):
-    """대조군 — 반려 사유가 세 이력 모두에서 글자 그대로 재현된다."""
+    """Control case: reproduce the rejection reason verbatim for all three histories."""
     from sqloader.migrator import DatabaseMigrator
     from sqloader.sqlite3 import SQLiteWrapper
 

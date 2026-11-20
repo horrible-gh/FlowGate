@@ -184,8 +184,8 @@
 // title line is name · state dot · copy · minimize · close, the body is the document's view
 // (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). The viewer
 // footer's edit button turns the same window to a text editor of the body (the
-// frontmatter is kept aside and put back, as the v0.1 editor does); 저장 writes it with the v0.1
-// content save and goes back to the view, 취소 drops it. Unsaved text is asked about once — on 취소,
+// frontmatter is kept aside and put back, as the v0.1 editor does); "저장" writes it with the v0.1
+// content save and goes back to the view, "취소" drops it. Unsaved text is asked about once — on "취소",
 // on close and on Esc. flowgate.v02.0056 F1: the editor bar also has [닫기] (0056 CH §5), the window's
 // close by button — the same path as × and Esc, so the same question about unsaved text. A document whose file is not written yet opens empty and edits the same way.
 // The window follows the server (T#3 rework): its document's events on the v0.2 project event hub

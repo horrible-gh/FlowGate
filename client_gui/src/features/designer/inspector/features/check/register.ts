@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#12 — the check card (D#1 §6.3 order 430, §10.1 헤더 액션 · 확인·Git columns): AC
+// flowgate.v02.0048 T#12 — the check card (D#1 §6.3 order 430, §10.1 header actions · 확인·Git columns): AC
 // cards in every ownership, on a Node with a bound document (an AC Node exists only once its document
 // does). Two places with the same order: the final approval in the header and the check section of
 // the documents tab (check state, Git reflection, the Git panel). Graph gate confirm / reject and

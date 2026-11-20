@@ -84,7 +84,7 @@ export function clampGroupToCanvas<T extends { readonly x: number; readonly y: n
  * first) goes to the step lattice point nearest to where it was dragged — the Graph points whose x and y are
  * whole steps, which the Canvas draws as its dots (canvasDotGrid) — rounded the same in both directions. Every
  * other dragged Node gets the anchor's offset from its own start, so the Nodes keep their relative layout.
- * No step (자율형) leaves every position as it was dragged, and so does a start that is not known.
+ * No step (freeform) leaves every position as it was dragged, and so does a start that is not known.
  */
 export function stepGroupMove<T extends { readonly nodeId: string; readonly x: number; readonly y: number }>(
   moved: readonly T[],
@@ -126,7 +126,7 @@ export interface CanvasDotGrid {
  * whole `gap`s, so it moves and scales with the Canvas (pan / zoom) and a card dropped on the step lattice sits
  * on a dot. `gap` is the step itself, or its double (quadruple, ...) only while the step would be drawn closer
  * than CANVAS_GRID_MIN_SCREEN_GAP pixels (far zoomed out), so every dot is still a lattice point. No step
- * (자율형) = no lattice = no grid (null).
+ * (freeform) = no lattice = no grid (null).
  */
 export function canvasDotGrid(viewport: CanvasViewport, step: number | null | undefined): CanvasDotGrid | null {
   if (!step || !(step > 0) || !(viewport.zoom > 0)) return null

@@ -26,10 +26,10 @@ import pytest
 from scratch_support import remove_tree, session_scratch
 
 _SERVER_DIR = Path(__file__).resolve().parents[4]
-# 0382 B0001: 기본값이 `_SERVER_DIR / ".test-tmp-0313"` 이었다. FLOWGATE_TEST_SCRATCH 는
-# FlowGate 가 직접 돌릴 때만 채워지므로, 사람이나 AI 가 손으로 pytest 를 돌리면 저장소
-# **안에** 폴더가 생겼고(수집만 해도 생긴다 — 이 줄은 모듈 최상단이다) 마무리 커밋의
-# `git add -A` 가 그걸 통째로 삼켰다. 기본값은 이제 저장소 밖이다.
+# 0382 B0001: the old default was _SERVER_DIR / ".test-tmp-0313".
+# FLOWGATE_TEST_SCRATCH is set only for FlowGate-managed runs. Manual pytest runs
+# created directories inside the repository even during collection, and final
+# git add -A absorbed them. The default now resides outside the repository.
 _TEST_SCRATCH = session_scratch("0313")
 
 os.environ["TESTING"] = "1"
@@ -53,8 +53,7 @@ def scratch_path():
     FlowGate host's managed workspace that can produce an unreadable ACL, so this
     stays a plain directory instead of pytest's tmp_path.
 
-    0382 제안 7: the case directory used to be kept on purpose — "윈도우에서 읽기
-    전용 git 개체 때문에 정리가 실패한다". That is exactly what remove_tree's
+    0382 proposal 7: the case directory used to be kept on purpose — "read-only Git objects prevent cleanup on Windows". That is exactly what remove_tree's
     permission-restoring retry fixes, so there is no reason to hoard them.
     """
     path = _TEST_SCRATCH / f"case-{uuid.uuid4().hex}"

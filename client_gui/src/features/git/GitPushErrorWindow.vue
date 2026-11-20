@@ -20,7 +20,7 @@
             <dt>{{ effect.phase }}</dt><dd>{{ effect.status }} · {{ effect.sha_after ?? effect.target_ref ?? effect.error_code ?? '—' }}<span v-if="effect.recovery_state"> · {{ effect.recovery_state }}</span></dd>
           </template>
         </dl>
-        <!-- flowgate.v02test.0052 (0008 할 일 4): the merge session of this approval is closed — [재시도] only re-reads it and can
+        <!-- flowgate.v02test.0052 (0008 task 4): the merge session of this approval is closed — [재시도] only re-reads it and can
              never succeed, so it is off (with the reason) and the working button, [이 승인 취소], leads. Same set as the card. -->
         <p v-if="closed" class="gx-reason" data-test="git-closed-note">{{ t('gui.git.gate_job.closed_note') }}</p>
         <div class="gx-actions">

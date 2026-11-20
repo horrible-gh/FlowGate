@@ -60,12 +60,12 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         // flowgate.v02.0053 T#9: the top band's run buttons on the server Graph run.
         'run/flowRunControl.ts',
         // flowgate.v02.0059 T#2: one undo / redo of structure edits and card moves, the draft actions
-        // moved out of the controller, and 정렬 / 분배 / 자동 배치 (the server's auto_layout ported).
+        // moved out of the controller, and alignment / distribution / auto-layout (the server's auto_layout ported).
         'edit/editHistory.ts',
         'edit/draftActions.ts',
         'arrange/arrangeNodes.ts',
         'arrange/autoLayout.ts',
-        // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 (0005-L §2.1 ~ §2.8) in its own files next to the server port.
+        // flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 (0005-L §2.1 ~ §2.8) in its own files next to the server port.
         'arrange/directionalLayout.ts',
         'arrange/edgeCurve.ts',
         'arrange/layoutBands.ts',

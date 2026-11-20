@@ -143,8 +143,8 @@ def _abort_handoff(run: dict, reason: str) -> None:
     Called ONLY by whichever side's ``HandoffGate.abort()`` call actually won the CAS
     (T0009 §10.1) -- never speculatively by the loser of a race, so this does not need
     to defend against being invoked twice by the SAME lost handoff. It is still written
-    defensively idempotent (§10.2 "watchdog/admission이 둘 다 호출할 수 있으므로
-    멱등이어야 한다"): every step here already tolerates being re-run (``dict.pop`` with
+    defensively idempotent (§10.2 "must be idempotent because both watchdog
+    and admission can call it"): every step here already tolerates being re-run (``dict.pop`` with
     a default, ``token_service.revoke`` is its own idempotent no-op on an already-revoked
     token, and ``HandoffGate.abort()`` itself is a harmless no-op once the state is
     already ABORT).
@@ -169,8 +169,8 @@ def _abort_handoff(run: dict, reason: str) -> None:
             logger.warning(
                 "lease release failed during gate-lost abort for run %s", run_id, exc_info=True
             )
-    # T0009 §10.2: "CH token revoke는 issue.source_access is not None 기준이다. edit
-    # token도 포함한다." -- re-read the token row rather than trust a stashed value, so
+    # T0009 §10.2: "CH token revocation depends on issue.source_access is not None, including edit
+    # tokens." -- re-read the token row rather than trust a stashed value, so
     # this stays correct even if the run dict never carried source_access explicitly.
     token_id = run.get("token_id")
     if token_id:
@@ -1031,7 +1031,7 @@ def _record_lease_admission_rejected(
     rejection stage. The key is still present (T0004 §5 lists it as a minimum field) so a
     reader never has to guess whether it was omitted or genuinely absent.
 
-    Provider identity (T0004 §5 "있다면", §15 allows provider_id/provider_name): the
+    Provider identity (T0004 §5 "if available", §15 allows provider_id/provider_name): the
     requesting side already has its resolved provider_id in the ``provider_id`` argument,
     so its name is resolved the same way `resolve_pinned_provider_name` names a mention
     (chain lookup by id). The blocking side has no provider_id on the lease row itself --
@@ -2071,7 +2071,7 @@ def start_run(
         # A single run is a degenerate one-hop chain. Returning the same payload
         # shape keeps clients simple without changing the run counters' meaning.
         #
-        # 0414 L0008 §5 체인 카운터: unless the CALLER named a chain. A review/rework hop is
+        # 0414 L0008 §5 chain counter: unless the CALLER named a chain. A review/rework hop is
         # mode="single" but belongs to a running chain, and overwriting chain_id with its own
         # run_id would break the lease handoff (which requires a matching chain_id) and reset
         # the miniplayer's progress to 0. An ordinary single run passes none of these three
@@ -2102,7 +2102,7 @@ def start_run(
     # started_at is part of the immutable pre-admission identity.
     # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
     # response rather than after the fact — "I picked a reviewer, did it take?" has to be
-    # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
+    # answerable while the run is going, not once it is over (0406 T0022 task 3's reasoning
     # for the instruction mode, applied to the same class of question).
     review_count_overrides = (
         continuation_review_count_overrides if mode == "continuous" else None
@@ -2536,15 +2536,15 @@ def start_run(
     )
     thread.start()
 
-    # 0515 T0009 §10: claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를
-    # 두 벌 만들지 않는다. Every non-chat and every chat read_only/edit run has
+    # 0515 T0009 §10: branch on claim presence only through issue.one_shot_claimed; do not create
+    # two worker implementations. Every non-chat and every chat read_only/edit run has
     # one_shot_claimed falsy and takes the direct-open branch below; only a chat
     # edit_once run that actually won the claim CAS carries seal/commit/open.
     if issue.get("one_shot_claimed"):
         if not gate.seal():
             # T0009 §10.1 (b): the worker's own PENDING wait already won CAS
             # PENDING -> ABORT and already ran abort_handoff itself -- do not repeat it
-            # (§10.1 "CAS 승자만 admission 대신 cleanup한다").
+            # (§10.1 "only the CAS winner cleans up instead of admitting").
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
         try:
             commit_outcome = db_source_access.commit(issued_to, run["project_id"], run["group_id"], issue["token_id"], now_iso())
@@ -2622,7 +2622,7 @@ def start_run(
             "continuation_instruction_mode_fallback_applied"
         ],
         "hop_item_seq": run["hop_item_seq"],
-        # 0414 P0007 시작 응답: the selection as stored, plus what it resolved to for THIS
+        # 0414 P0007 start response: the selection as stored, plus what it resolved to for THIS
         # hop. docs_target above is deliberately untouched — review rounds are not documents,
         # so a reviewed chain and an unreviewed one report the same target.
         "continuation_review_count_overrides": run["continuation_review_count_overrides"],

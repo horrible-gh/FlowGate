@@ -45,17 +45,17 @@ _API_DIR = _SERVER_DIR / "modules" / "flow_gate" / "api"
 
 # Module-level names whose attribute calls mean "synchronous DB / filesystem work".
 #
-# 0394 T0016 항목 4 (NR0003 §5.3): 이 목록은 0279 당시 존재하던 서비스 모듈 이름을 손으로
-# 적은 것이었다. 그 뒤에 생긴 서비스(conversation_query_service, conversation_turn_service,
-# ai_invoke_service, token_service, document_service …)는 목록에 없으므로 **그 호출을 async
-# 핸들러에서 그냥 부르면 가드가 아무 말도 하지 않았다.** 실측으로 확인했다: worker 대화 조회
-# 라우트의 `anyio.to_thread.run_sync` 를 걷어내고 `_list_authenticated(...)` 를 직접 부르게
-# 바꿔도 이 가드는 초록이었다. 규칙은 전역인데 판정기가 국소였던 것이다.
+# 0394 T0016 item 4 (NR0003 section 5.3): the old hand-written list named only
+# service modules present in 0279. Later services (conversation_query_service,
+# conversation_turn_service, ai_invoke_service, token_service, document_service)
+# were unguarded when called directly from async handlers. A measured check
+# removed anyio.to_thread.run_sync from worker conversation reads and called
+# _list_authenticated directly; the guard still passed despite the global rule.
 #
-# 그래서 이름을 하나씩 적는 대신 접미사로 판정한다 — 이 저장소의 서비스 계층은 예외 없이
-# `*_service` 로 끝나고, 저장소 게이트웨이는 `*_store` / `db` 다. 넓힌 뒤 새로 드러난 위반은
-# 0건이었다(현재 모든 async 핸들러가 이미 오프로드한다). 즉 이 확장의 값어치는 지금 잡히는
-# 것이 아니라, 앞으로 새 서비스에서 오프로드를 빠뜨렸을 때 잡힌다는 데 있다.
+# Classify by suffix instead of listing names: this repository consistently
+# names services *_service and storage gateways *_store / db. Expanding the
+# scope found zero current violations because async handlers already offload.
+# Its value is catching future services that forget to offload.
 _SYNC_MODULE_NAMES = {
     "service",
     "process_service",
@@ -122,10 +122,10 @@ def _is_route_handler(node: ast.AST) -> bool:
     return False
 
 
-# 0394 T0016 항목 4 (NR0003 §5.3): 규칙은 "이벤트 루프에서 동기 작업을 하지 않는다" 인데
-# 검사는 `@router.*` 가 붙은 핸들러만 봤다. `BaseHTTPMiddleware.dispatch` 도 똑같이 루프
-# 위에서 돌고, 게다가 **모든** 요청을 지나가므로 여기서 막히면 라우트 하나가 아니라 서버
-# 전체가 멈춘다. 검사 대상을 미들웨어의 dispatch 까지 넓힌다.
+# 0394 T0016 item 4 (NR0003 section 5.3): the no-synchronous-work-on-the-loop
+# rule also applies to BaseHTTPMiddleware.dispatch, not only @router handlers.
+# Every request passes through middleware, so blocking there stalls the whole
+# server rather than one route. Include middleware dispatch in the guard.
 def _is_middleware_dispatch(node: ast.AST, class_bases: tuple[str, ...]) -> bool:
     """True for `async def dispatch` inside a BaseHTTPMiddleware subclass."""
     return (
@@ -286,9 +286,9 @@ _FLOWGATE_ROOT = _SERVER_DIR / "flowgate"
 def _router_sources() -> list[Path]:
     """Every file that can define something Starlette runs on the event loop.
 
-    0394 T0016 항목 4: 라우터 파일(api/)에 더해, 미들웨어를 정의하는 파일도 포함한다 —
-    `GroupMutationPolicyMiddleware` 는 services/ 에 있어서 예전 범위(api/ 전용) 밖이었고,
-    그래서 모든 변경 요청이 지나는 dispatch 가 한 번도 검사되지 않았다.
+    0394 T0016 item 4: include middleware definitions as well as api/ routers.
+    GroupMutationPolicyMiddleware lives in services/, outside the previous api/
+    scope, so its dispatch handling all mutations was never checked.
     """
     files = {p for p in _API_DIR.rglob("*.py") if p.name != "__init__.py"}
     for path in _MODULE_ROOT.rglob("*.py"):

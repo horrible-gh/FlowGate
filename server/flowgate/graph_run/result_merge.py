@@ -11,7 +11,7 @@ Flow guard and DB transaction (``integrate``):
 (a) only while the run is running / paused / idle and the attempt active and ``pending`` — a stopping run starts
     none. An idle run (a person's approval on it) goes running first (``_wake``: the integration hold ``idle``), so
     the run is working, locked and may be stopped while its integration waits or runs. 0083 WP-3 rework (0061 T#2
-    개정): a person's approval whose propagation an idle run admits at once (``command.approval_wakes``) wakes the run
+    revision): a person's approval whose propagation an idle run admits at once (``command.approval_wakes``) wakes the run
     in its own guard (``run_apply.apply_decision``, cause ``work_resumed``) before this, so no idle hold is taken and
     (e) opens the next cards with no further resume; the idle hold is left to the integrations no approval woke for
     (a step's, the next command's drain, the server start);

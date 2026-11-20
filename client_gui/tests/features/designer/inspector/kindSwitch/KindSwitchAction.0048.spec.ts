@@ -7,10 +7,10 @@
  * Canvas read again when the Flow moved under it, the guards (disposed, AI running) read through the real
  * hub, read-only views and a Node change. Last, the real registry puts the switch in the Frame header of an
  * unassigned R / B root only — never on v01, Graph or conflict Flows or on other cards.
- * flowgate.v02.0051 stage 2: the switch is drawn as the v7 header 종류 배지 ▾ (headerKind) — the badge opens
+ * flowgate.v02.0051 stage 2: the switch is drawn as the v7 header kind badge ▾ (headerKind) — the badge opens
  * a menu, picking the other kind opens the same confirmation; a disabled switch carries its reason as the
  * badge's hover text instead of a line.
- * flowgate.v02.0070 (0015-T T2): picking the other kind switches at once — no 종류 전환 confirmation, and no read awaited
+ * flowgate.v02.0070 (0015-T T2): picking the other kind switches at once — no kind switch confirmation, and no read awaited
  * before the call: a read still pending (or settling after the part is gone / the selection cleared) starts nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -163,7 +163,7 @@ const B_NODE: FlowGraphNode = {
 const TARGET_B = targetOf(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [B_NODE] }, B_NODE.id))
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
-/** flowgate.v02.0051 stage 2: the switch is the v7 header 종류 배지 ▾ — the badge opens a menu; 0015-T T2: the other kind switches. */
+/** flowgate.v02.0051 stage 2: the switch is the v7 header kind badge ▾ — the badge opens a menu; 0015-T T2: the other kind switches. */
 const openButton = () => find('kind-switch-open')
 const line = () => find('kind-switch-line')
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]

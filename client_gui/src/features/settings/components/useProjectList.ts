@@ -8,7 +8,7 @@ import { STALE, useLiveRequests } from './useLiveRequests'
 // a bookkeeping project, not one a person can select.
 const SYSTEM_PROJECT_ID = '__SYSTEM__'
 
-/** How a failed read is shown: 401 and 403 are 접근 불가, never an empty list or 미설정. */
+/** How a failed read is shown: 401 and 403 are Access denied, never an empty list or 미설정. */
 export interface ReadError {
   kind: 'unauthorized' | 'forbidden' | 'failed'
   message: string

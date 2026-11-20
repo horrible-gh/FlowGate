@@ -207,7 +207,7 @@ describe('InspectorSlotRow', () => {
 })
 
 // flowgate.v02.0052 T#4: on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
-// open button after it stays in the line (the 확인 card's Git 패널 열기 ↗ used to push it out).
+// open button after it stays in the line (the 확인 card's Git Open panel ↗ used to push it out).
 // flowgate.v02.0053 T#5: the nav button keeps its ↗ (it goes to another screen); the open button is the
 // document icon.
 describe('InspectorSlotList — nav before the document icon', () => {
@@ -228,7 +228,7 @@ describe('InspectorSlotList — nav before the document icon', () => {
 })
 
 // flowgate.v02.0056 F1 (0056 CH §2): a line that opens also has the history button (a clock, before the
-// document icon) — the document's 검수·반려 이력 window; a line may leave it out or hand the entry count.
+// document icon) — the document's review·rejection history window; a line may leave it out or hand the entry count.
 describe('InspectorSlotList — the history button (flowgate.v02.0056 F1)', () => {
   it('comes before the document icon on a line that opens, named 검수·반려 이력, and emits history with the line', async () => {
     const line = { name: '레포트', id: 'doc-tr', open: 'enabled' as const }

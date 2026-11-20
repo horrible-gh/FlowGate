@@ -1,4 +1,4 @@
-// flowgate.v02.0045 S3 — connection pre-check (D0004 §2.3 "연결 규칙 미리검사"): while the user
+// flowgate.v02.0045 S3 — connection pre-check (D0004 §2.3 "Connection rule pre-check"): while the user
 // drags a connection, tell at once whether the draft would take it, with the server validator's
 // own criteria (L0009 §2.5). The server stays the judge (validation / confirmation).
 //

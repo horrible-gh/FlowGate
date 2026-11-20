@@ -31,7 +31,7 @@ function checkToken(): void {
  * request belongs to the epoch it was sent in. Leaving the screen, another person signing in, the
  * administrator role going away, a pending /auth/me or a lost token ends the epoch; `onExpire`
  * then drops what the view holds, and an answer arriving afterwards is dropped too — it is never
- * rendered, kept or followed by another request. The rule is the one 시스템 Agent applies
+ * rendered, kept or followed by another request. The rule is the one System Agent applies
  * (SystemAgentSettingsView, T#4), with the same access decision as the router guard.
  *
  * A lost session (no token, or the settings access no longer `allow`) is not this view's alone:

@@ -1,6 +1,6 @@
 """flowgate.default.0267 TR0005 — required tests for the file/folder delete API.
 
-Covers the NR0003 '필수 테스트' items that touch the server contract:
+Covers the NR0003 'required tests' items that touch the server contract:
   - file delete success (+ base_git returned so the explorer can refresh base-dirty)
   - empty / non-empty folder recursive delete
   - non-existent path (404 NOT_FOUND) and type mismatch (409 TYPE_MISMATCH)
@@ -9,7 +9,7 @@ Covers the NR0003 '필수 테스트' items that touch the server contract:
   - group-scoped delete resolves that group's worktree — 0327 TR0005 (see below)
   - delete failure surfaces 500 DELETE_FAILED without corrupting the response contract
 
-0327 TR0005 supersedes NR0003 권고 4/권고 5 for the group case. Those recommendations
+0327 TR0005 supersedes NR0003 recommendation  4/recommendation  5 for the group case. Those recommendations
 assumed a group delete would hard-delete inside the BASE checkout, which is why they
 tied it to the finalize E3 base-contamination guard and refused every group delete with
 403. Group context is now resolved to that group's OWN worktree (fail-closed — never a
@@ -100,7 +100,7 @@ def test_delete_file_success_returns_base_git(monkeypatch):
     body = res.json()
     assert body["deleted"] == "docs/gone.md"
     assert body["type"] == "file"
-    # NR0003 권장 8: base-git status is returned so the explorer refreshes base-dirty/finalize.
+    # NR0003 recommendation 8: base-git status is returned so the explorer refreshes base-dirty/finalize.
     assert body["base_git"] == BASE_GIT_SENTINEL
     assert not f.exists()
 
@@ -185,7 +185,7 @@ def test_delete_rejects_symlink_component(monkeypatch):
 # ── authorization ────────────────────────────────────────────────────────────
 
 def test_delete_forbidden_without_delete_permission(monkeypatch):
-    # NR0003 권장 4: a user JWT without perm_document_delete is rejected.
+    # NR0003 recommendation 4: a user JWT without perm_document_delete is rejected.
     client = _client(monkeypatch, is_user_jwt=True, can_delete=False)
     (ROOT / "keep.md").write_text("k", encoding="utf-8")
     res = client.request("DELETE", _url(), json={"path": "keep.md", "type": "file"})
@@ -195,7 +195,7 @@ def test_delete_forbidden_without_delete_permission(monkeypatch):
 
 
 def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
-    # NR0003 권장 4: worker/outbound tokens (and cross-project tokens) must ALSO be gated
+    # NR0003 recommendation 4: worker/outbound tokens (and cross-project tokens) must ALSO be gated
     # by perm_document_delete — not just perm_document_read. is_user_jwt=False models a
     # worker token; can_delete=False models a token whose issued_to user lacks delete on
     # THIS project (e.g. a token bound to a different project).
@@ -207,7 +207,7 @@ def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
     assert (ROOT / "keep.md").exists()
 
 
-# ── group-scoped delete (0327 TR0005 — supersedes NR0003 권고 4/권고 5) ─────────
+# ── group-scoped delete (0327 TR0005 supersedes NR0003 recommendations 4/5) ───
 
 GID = "flowgate.default.0267"
 

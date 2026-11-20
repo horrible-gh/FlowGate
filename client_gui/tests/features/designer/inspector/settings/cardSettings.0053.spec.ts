@@ -3,10 +3,10 @@
  * (T#2 `GET / PATCH /flows/{flow_id}/nodes/{node_key}/settings`, one value per change, no save button).
  * `@/features/document` is mocked as a small card settings server with the T#2 fields, defaults and choices:
  *
- * - every card kind's blocks, items and order as v7 (run: 지시서 · 지시 AI · 실행 설정 + 고급 ▾; test:
- *   지시서 · 시나리오 작성 · 실행; requirement: AI 위임 · 범위 · AI Team · 안전 한도; check: 용도 ·
- *   반영 방식 · 병합 대상 · 원격 반영 · 브랜치 보관) — on a card just placed and on a done card alike;
- * - the items v0.2 had "미연결" (지시서 사용 / 생략, 재시작, 실행 제한 시간, 검수 기준) are saved;
+ * - every card kind's blocks, items and order as v7 (run: instruction · 지시 AI · 실행 설정 + 고급 ▾; test:
+ *   instruction · 시나리오 작성 · 실행; requirement: AI delegation · scope · AI Team · safety limit; check: purpose ·
+ *   apply mode · 병합 대상 · apply to remote · keep branch) — on a card just placed and on a done card alike;
+ * - the items v0.2 had "미연결" (use instruction / omit, 재시작, 실행 제한 시간, 검수 기준) are saved;
  * - a change is one PATCH of one value at once, shown while it waits, answered by the card's settings;
  * - a running card is 🔒 and off; a refusal is a red ! beside its control (the reason its tooltip); a card not
  *   saved yet is drawn off; no sentence, no type code on screen;
@@ -16,7 +16,7 @@
  * bound its result (N → NR, T → TR, TS → TSR — the card keeps its form).
  * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its field (O1 0005-TR §4-3: a PATCH of it
  * is 422 not_a_setting_of_this_card); a RUN card has the 지시 AI row (`instruction_ai`, O2 0007-TR §4-1) right
- * under 지시서, only while the instruction is used — none is the run AI, then the assigned AI — saved as one
+ * under instruction, only while the instruction is used — none is the run AI, then the assigned AI — saved as one
  * value (null for none), with its refusals (422 unknown_ai · not_a_text · invalid_text ·
  * not_a_setting_of_this_card, 409 node_settings_locked · card_settings_unavailable) as the ! beside it — the code's
  * sentence, then the server's own message as sent (x-locale) when it says more (ko / en / ja); the 0053 fields keep
@@ -318,7 +318,7 @@ async function mountPart(component: unknown, target: InspectorTarget) {
   return wrapper
 }
 
-// flowgate.v02.0056 F2-1: the 지시 AI is its own row's select (under 지시서), the rest the run settings block's.
+// flowgate.v02.0056 F2-1: the 지시 AI is its own row's select (under instruction), the rest the run settings block's.
 const runSelect = (w: VueWrapper<any>, field: string) =>
   w.find(field === 'instruction_ai' ? 'select[data-test="settings-instruction-ai-select"]' : `select[data-test="inspector-run-settings-${field}"]`)
 const valueOf = (w: VueWrapper<any>, field: string) => (runSelect(w, field).element as HTMLSelectElement).value

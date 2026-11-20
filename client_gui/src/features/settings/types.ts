@@ -202,7 +202,7 @@ export interface SystemSettingRow {
 
 export type ScratchUnit = 'minute' | 'hour' | 'day'
 
-// ── 시스템 › 시스템 Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+// ── 시스템 › System Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
 
 export type AgentLocation = 'local' | 'remote'
 export type AgentCapability = 'ai_cli' | 'ai_api' | 'storage'
@@ -269,7 +269,7 @@ export interface AgentEnrollment {
   expires_at: string
 }
 
-// ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ─────
+// ── Project lookup · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ─────
 
 /** One module of a project row (GET /projects attaches `name` and `title`). */
 export interface ProjectModuleRef {

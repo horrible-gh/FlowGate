@@ -6,7 +6,7 @@
 // the open window back.
 // - `view` (↗): the document as it reads.
 // - `edit` (✎): straight to the window's text editor.
-// flowgate.v02.0056 F1 — a document's 검수·반려 이력 opens the same way, in its own modeless window
+// flowgate.v02.0056 F1 — a document's review·rejection history opens the same way, in its own modeless window
 // (openDocumentHistory, from the history button of a document line).
 // flowgate.v02.0056 F2-2 — the row actions of a card line open their windows here too (openCardLineAction):
 // [작성] of a line without a document opens its write window (O3 0009-TR §4-2), [AI 호출] of a line with one the
@@ -76,7 +76,7 @@ export interface OpenDocumentOptions {
   readonly card?: CardDocumentContext | null
 }
 
-/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → 지시서). */
+/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → instruction). */
 const SHARED_SLOT_OWNER: Readonly<Record<string, string>> = { scenario: 'instruction' }
 
 /**
@@ -260,7 +260,7 @@ export interface CardLineActionLine {
 
 /**
  * flowgate.v02.0056 F2-2 — what the card's own line (`cardSlot`) adds to a row of its documents tab (slotLineCard):
- * 문서 없음 with [작성], 비어 있음, the history number and [AI 호출] — drawn running while an AI run works on the
+ * 문서 없음 with [작성], Empty, the history number and [AI 호출] — drawn running while an AI run works on the
  * document. Only a stored card that is not read only offers the actions.
  */
 export function cardLineRow(target: InspectorTarget, row: { readonly id?: string | null; readonly empty?: boolean }, cardSlot: string): SlotLineCard {

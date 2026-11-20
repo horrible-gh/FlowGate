@@ -2,7 +2,7 @@
 
 DB0010 T13 / T14 (migration 143_graph_engine_assignment.sql), queries §4.3 Q-R6c and Q-W8 ④⑤.
 At most one assignment and one binding per Flow; neither is ever updated or removed here
-(D0004 §3.1 "배정은 되돌리지 않는다"). v0.1 assignment is never recorded — the v0.1 sequence
+(D0004 §3.1 "do not roll back assignments"). v0.1 assignment is never recorded — the v0.1 sequence
 itself is its evidence.
 """
 from __future__ import annotations

@@ -2,7 +2,7 @@
 status, process-tree kill, and every place a cancelled run must NOT go (auto-recovery,
 chain-failure alarm, TSR assembly, chain auto-approve).
 
-Covers the T's 완료 기준 신규 테스트 목록 1-8. Groups:
+Covers the T's acceptance-test list 1-8. Groups:
   * DB layer (migration 074 + CAS helpers) against a real sqlite connection with all
     migrations applied — the app's actual FlowGateStore is a thin wrapper over
     _execute/_fetch_one/_fetch_all/transaction, so a minimal stand-in bound to that
@@ -360,7 +360,7 @@ def test_cas_running_to_cancelling_then_cancelling_to_cancelled_roundtrip(store,
 
 
 def test_finish_run_does_not_overwrite_already_cancelled_row(store, all_migrations_db):
-    """0358 T0004 위험 2: a natural completion racing a cancel must not resurrect it."""
+    """0358 T0004 risk 2: a natural completion racing a cancel must not resurrect it."""
     from modules.flow_gate.db import test_runs as db_test_runs
 
     conn = all_migrations_db
@@ -551,7 +551,7 @@ def _base_doc():
 
 
 def test_execute_run_inner_cancelled_before_start_skips_all_side_effects(monkeypatch, tmp_path):
-    """#2/#4 core + 위험 1: cancel accepted before the worker even resolves src_root —
+    """#2/#4 core + risk 1: cancel accepted before the worker even resolves src_root —
     no setup/case/teardown runs, no TSR/auto-recovery/chain-failure notify fires."""
     from modules.flow_gate.services import test_run_service as svc
 

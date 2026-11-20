@@ -91,9 +91,9 @@
 // flowgate.v02.0033 — conflict modeless (0033-D §6.3) on the non-blocking ModelessShell.
 // flowgate.v02gui.0004 (0001-B §A-3/§A-4) — this is now the direct resolver, opened over the
 // centre from the Git tab's conflict card (a file, [직접 해결], `외 N개 보기`). The duplicate
-// AI / 직접 해결 buttons and the technical block are gone: the card is the one entry point.
+// AI / "직접 해결" buttons and the technical block are gone: the card is the one entry point.
 // A file's chunks are shown side by side (current = the branch the merge lands on, incoming = the
-// group branch); each chunk takes 현재 / 들어온 쪽 / 둘 다 or a typed result, and [저장] sends the
+// group branch); each chunk takes "현재" / incoming side / "둘 다" or a typed result, and [저장] sends the
 // chunks to the existing POST …/resolve. The conflicts answer read right after decides the file's
 // state; once no file has markers left the review card's [승인] continues the apply.
 // Unsaved choices are kept per merge / file / file content in this browser session, so a tab

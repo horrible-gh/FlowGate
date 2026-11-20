@@ -1,13 +1,12 @@
-"""문서 조회 도구 — 엔드포인트 시험 (group 0370, P0002 시나리오 1~20).
+"""Document-query endpoint tests (group 0370, P0002 scenarios 1–20).
 
-`/outline`·`/section`·`/meta`·`/relations` 네 갈래와, 검색 결과에 붙는 매치 위치, 저장
-응답의 변경 요약을 실제 HTTP 로 왕복시켜 잰다. 문서 파일은 임시 저장소에 진짜로 쓰고
-읽는다 — 좌표 계산이 파일을 어떻게 읽느냐에 달려 있어서 흉내 낸 본문으로는 증명되지 않는다.
+Exercise /outline, /section, /meta, /relations, search match positions, and save-response
+change summaries through real HTTP. Read and write actual temporary document files:
+coordinate calculations depend on file reading and cannot be proved with simulated bodies.
 
-**시험 자료의 핵심은 머리말이다.** `_NR_BODY` 는 8줄짜리 머리말을 이고 있고 검색어는 그
-아래 18번째 줄에 있다. 본문 기준으로는 10번째 줄이므로, 본문↔파일 좌표 변환(L0003 §2-1)
-을 빠뜨린 구현은 여기서만 10 을 답한다 — 요즘 등록된 머리말 없는 문서로는 절대 드러나지
-않는 종류의 버그다.
+Frontmatter is essential: _NR_BODY has eight frontmatter lines and its search term is
+at file line 18, body line 10. Omitting the body-to-file conversion (L0003 §2-1)
+incorrectly returns 10, a bug that documents without frontmatter cannot expose.
 """
 from __future__ import annotations
 
@@ -42,7 +41,7 @@ DOC_PLAIN = "testprj-__ALL__-0370-N0002"
 
 MARKER = "zqmarkerunique"
 
-# 머리말 8줄 + 본문. 줄 번호를 주석으로 못 박아 둔다 — 기대값이 여기서 나온다.
+# Eight frontmatter lines plus body; the annotated line numbers define expectations.
 _NR_BODY = (
     "---\n"                       # 1
     "project: testprj\n"          # 2
@@ -61,7 +60,7 @@ _NR_BODY = (
     "\n"                          # 15
     "### 2.1 현재 구성\n"           # 16  s3
     "\n"                          # 17
-    f"여기에 {MARKER} 가 있다.\n"    # 18  ← 검색어. 본문 기준으로는 10번째 줄이다.
+    f"여기에 {MARKER} 가 있다.\n"    # 18: search term, at body line 10
     "\n"                          # 19
     "### 2.2 다른 모드\n"           # 20  s4
     "\n"                          # 21
@@ -72,10 +71,10 @@ _NR_BODY = (
     "마지막 줄.\n"                  # 26
 )
 
-# 제목이 하나도 없는 산문 문서 — 목차가 비어도 200 이어야 한다(P0002 시나리오 2).
+# Prose without headings: an empty outline must still return 200 (P0002 scenario 2).
 _PLAIN_BODY = "짧은 산문 한 줄.\n또 한 줄 있다.\n"
 
-# 같은 이름의 제목이 두 곳에 있는 문서(P0002 시나리오 5).
+# Two headings with identical names (P0002 scenario 5).
 _T_BODY = (
     "## 변경 파일\n"      # 1  s1
     "\n"                 # 2
@@ -182,8 +181,8 @@ def patch_store(tmp_db):
             self._sq = None
 
         def _sql(self, key: str) -> str:
-            # 실제 store 와 같은 경로로 등록된 SQL 을 읽는다(_sq 가 없으면 파일 폴백).
-            # /meta·/relations 는 답 개수·검토 이력처럼 등록 SQL 을 타는 값을 싣는다.
+            # Read registered SQL through the real store path, falling back to files without _sq.
+            # /meta and /relations include registered-SQL values such as answer counts and review history.
             return conn_mod.FlowGateStore._sql(self, key)
 
     conn_mod.STORE = _PatchedStore()
@@ -282,7 +281,7 @@ def _get(path, raw, client=None):
     return client.get(path, headers={"Authorization": f"Bearer {raw}"})
 
 
-# ── 시나리오 1·2: 목차 조회 ──────────────────────────────────────────────────────
+# ── Scenarios 1–2: outline lookup ──
 
 def test_outline_lists_sections_without_any_body_text(tmp_path):
     resp = _get(f"/api/v1/document/{DOC_NR}/outline", _bearer(tmp_path))
@@ -300,7 +299,7 @@ def test_outline_lists_sections_without_any_body_text(tmp_path):
     assert data["items"][2]["heading_path"] == ["2. 액션바 구조 분석", "2.1 현재 구성"]
     assert data["items"][1]["has_children"] is True
     assert data["items"][0]["has_children"] is False
-    # 목차 응답에 본문 글자가 실려 있으면 "필요한 부분만 가져온다" 는 목적이 무너진다.
+    # Returning body text in the outline would defeat bounded document retrieval.
     assert MARKER not in resp.text
 
 
@@ -320,7 +319,7 @@ def test_outline_of_a_document_without_headings_is_200_not_404(tmp_path):
     assert data["document_lines"] == 2 and data["body_line_start"] == 1
 
 
-# ── 시나리오 3~8: 구간 읽기 ──────────────────────────────────────────────────────
+# ── Scenarios 3–8: section reads ──
 
 def test_section_by_name_returns_the_heading_line_and_its_body(tmp_path):
     resp = _get(f"/api/v1/document/{DOC_NR}/section?section=2.1 현재 구성", _bearer(tmp_path))
@@ -338,7 +337,7 @@ def test_section_by_name_returns_the_heading_line_and_its_body(tmp_path):
 
 
 def test_section_by_name_id_lines_and_chars_all_agree(tmp_path):
-    """이름으로 찾든 줄로 찾든 글자로 찾든 **같은 로케이터**가 나온다(P0002 시나리오 3·4)."""
+    """Name, line, and character lookup return the same locator (P0002 scenarios 3–4)."""
     raw = _bearer(tmp_path)
     client = _client()
     by_name = _get(f"/api/v1/document/{DOC_NR}/section?section=2.1 현재 구성", raw, client).json()
@@ -369,7 +368,7 @@ def test_section_include_children_false_returns_only_its_own_body(tmp_path):
 
 
 def test_section_truncation_resumes_exactly_where_it_stopped(tmp_path):
-    """자를 때 줄 가운데를 자르지 않고, next_locator 로 이어 읽으면 원문이 복원된다."""
+    """Never truncate within a line; following next_locator reconstructs the original."""
     raw = _bearer(tmp_path)
     client = _client()
     head = _get(
@@ -390,7 +389,7 @@ def test_section_truncation_resumes_exactly_where_it_stopped(tmp_path):
 
 
 def test_section_reads_the_first_of_two_same_named_headings_and_says_so(tmp_path):
-    """무인 작업에서 애매하다고 멈춰 세우면 작업이 죽는다(P0002 시나리오 5)."""
+    """Ambiguity must not stall unattended work (P0002 scenario 5)."""
     resp = _get(f"/api/v1/document/{DOC_T}/section?section=변경 파일", _bearer(tmp_path))
     assert resp.status_code == 200
     data = resp.json()
@@ -401,7 +400,7 @@ def test_section_reads_the_first_of_two_same_named_headings_and_says_so(tmp_path
 
 
 def test_section_accepts_the_english_alias(tmp_path):
-    """`변경 파일` ↔ `Changed Files` — 별칭은 기존 파서의 상수에서 불러온다."""
+    """Load the `변경 파일` / `Changed Files` alias from existing parser constants."""
     resp = _get(f"/api/v1/document/{DOC_T}/section?section=Changed Files", _bearer(tmp_path))
     assert resp.status_code == 200
     assert resp.json()["locator"]["section_id"] == "s1"
@@ -440,10 +439,10 @@ def test_line_start_out_of_range_is_422_but_end_overflow_clamps(tmp_path):
 
 
 def test_stale_revision_is_409_and_wins_over_a_missing_section(tmp_path):
-    """**6번(409)이 8번(404)보다 앞**이라는 L0003 §4-1 의 순서를 못 박는다.
+    """Pin L0003 §4-1 ordering: case 6 (409) precedes case 8 (404).
 
-    판이 달라졌다는 사실을 먼저 말하지 않으면, 작업자는 제목이 지워진 줄 알고 목차를 다시
-    부르는 대신 엉뚱한 곳을 뒤진다.
+    Report revision changes first, or workers may assume a heading was deleted
+    and search elsewhere instead of refreshing the outline.
     """
     raw = _bearer(tmp_path)
     resp = _get(
@@ -467,7 +466,7 @@ def test_missing_document_and_missing_token(tmp_path):
     assert _client().get(f"/api/v1/document/{DOC_NR}/outline").status_code == 401
 
 
-# ── 시나리오 12: 본문 뺀 정보만 ──────────────────────────────────────────────────
+# ── Scenario 12: metadata without the body ──
 
 def test_meta_omits_the_content_key_entirely(tmp_path):
     resp = _get(f"/api/v1/document/{DOC_NR}/meta", _bearer(tmp_path))
@@ -481,7 +480,7 @@ def test_meta_omits_the_content_key_entirely(tmp_path):
     assert body["section_total"] == 5
     assert body["outline_url"].endswith(f"/document/{DOC_NR}/outline")
     assert data["answers_count"] == 0
-    # 기존 조회와 같은 필드·같은 값 — 이름을 바꾸지 않는다.
+    # Preserve existing lookup field names and values.
     assert data["type"] == "NR" and data["title"] == "조사 보고서"
     assert data["triggered_by"] == DOC_R and data["stored_path"]
 
@@ -508,7 +507,7 @@ def test_outline_of_an_unreadable_body_is_404(tmp_path):
     assert resp.status_code == 404
 
 
-# ── 시나리오 13: 관계 조회 ───────────────────────────────────────────────────────
+# ── Scenario 13: relationships ──
 
 def test_relations_walks_the_group_and_the_pointers(tmp_path):
     resp = _get(f"/api/v1/document/{DOC_NR}/relations", _bearer(tmp_path))
@@ -532,7 +531,7 @@ def test_relations_walks_the_group_and_the_pointers(tmp_path):
 
 
 def test_relations_workflow_maps_the_slot_and_its_neighbours(monkeypatch):
-    """워크플로 칸 매핑은 SQL 이 아니라 항목 목록 위의 계산이다 — 그 계산만 따로 잰다."""
+    """Workflow-slot mapping operates on item lists, not SQL; test that calculation separately."""
     from modules.flow_gate.api.v1 import document_routes
     from modules.flow_gate.db import workflow_sequences as db_wfseq
 
@@ -555,10 +554,10 @@ def test_relations_workflow_maps_the_slot_and_its_neighbours(monkeypatch):
     assert wf["next_item"]["item_seq"] == 3
 
 
-# ── 시나리오 9~11: 검색 결과의 위치와 앞뒤 줄 ────────────────────────────────────
+# ── Scenarios 9–11: match positions and context ──
 
 def test_search_match_locator_is_in_file_coordinates_not_body_coordinates(tmp_path):
-    """머리말 있는 문서에서만 드러나는 버그 — 본문 10번째 줄은 파일 18번째 줄이다."""
+    """Frontmatter exposes this bug: body line 10 is file line 18."""
     resp = _get(
         f"/api/v1/search/documents/content?q={MARKER}&project={PROJECT}&context_lines=2",
         _bearer(tmp_path),
@@ -576,7 +575,7 @@ def test_search_match_locator_is_in_file_coordinates_not_body_coordinates(tmp_pa
     assert loc["unit"] == "line" and loc["ref"] == f"{DOC_NR}@r0#L18-18"
     assert loc["section_id"] == "s3", "매치가 어느 구간 안인지도 같이 알려 준다"
     assert loc["heading_path"] == ["2. 액션바 구조 분석", "2.1 현재 구성"]
-    # 매치의 문자 위치는 파일 원문에서 실제로 그 글자를 가리켜야 한다.
+    # Character offsets must point to the actual match in the source file.
     assert _NR_BODY[match["match_char_start"]: match["match_char_end"]] == MARKER
     assert match["text"] == f"여기에 {MARKER} 가 있다."
     assert match["before"] == ["### 2.1 현재 구성", ""], "앞 두 줄을 원문 그대로, 순서대로"
@@ -595,7 +594,7 @@ def test_search_context_lines_zero_empties_the_neighbours(tmp_path):
 
 
 def test_search_does_not_invent_a_place_for_a_title_only_match(tmp_path):
-    """본문에서 맞은 게 아니면 억지로 첫 줄을 가리키지 않는다(P0002 시나리오 10)."""
+    """A non-body match must not invent a first-line location (P0002 scenario 10)."""
     resp = _get(
         f"/api/v1/search/documents/content?q={MARKER}&project={PROJECT}", _bearer(tmp_path)
     )
@@ -605,7 +604,7 @@ def test_search_does_not_invent_a_place_for_a_title_only_match(tmp_path):
 
 
 def test_search_without_matches_is_byte_identical_to_the_old_response(tmp_path):
-    """`include_matches=false` 는 두 키를 아예 뺀다 — 지금 화면은 고치지 않아도 된다."""
+    """include_matches=false omits both keys, preserving compatibility with the current UI."""
     raw = _bearer(tmp_path)
     client = _client()
     off = _get(
@@ -665,13 +664,13 @@ def test_search_out_of_range_knobs_are_clamped_and_echoed_honestly(tmp_path):
     )
 
 
-# ── 시나리오 14~16: 저장 후 변경 요약 ────────────────────────────────────────────
+# ── Scenarios 14–16: post-save change summaries ──
 
 def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
-    """진짜 inbox 수정 저장을 한 번 돌려 응답에 요약이 붙는지 본다.
+    """Perform a real inbox edit and verify its response includes a summary.
 
-    토큰 검증/소모만 모듈 경계에서 대역을 세운다(기존 0301 시험과 같은 이유 — 여기서
-    재는 것은 Step 10 의 응답이지 토큰 표가 아니다).
+    Replace only token verification/consumption at the module boundary, as in 0301:
+    this test measures the Step 10 response, not the token table.
     """
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.db import documents as db_docs
@@ -717,7 +716,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    # 기존 필드는 값까지 그대로다 — change_summary 는 그 옆에 나란히 붙는다.
+    # Existing fields retain their values; change_summary is added alongside them.
     assert data["ok"] is True and data["revision_no"] == 1
     assert data["worktree_untracked"] == {
         "total_count": 3, "excluded_artifact_count": 2,
@@ -727,7 +726,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
     assert summary["changed"] is True
     assert summary["before"]["revision_no"] == 0 and summary["after"]["revision_no"] == 1
     assert summary["before"]["lines"] == 7 and summary["after"]["lines"] == 8
-    # 옛 7줄 중 4줄이 그대로 남았다 → 3줄이 사라지고 8줄 중 4줄이 새로 생겼다.
+    # Four of seven old lines remain: three removed, four of eight new lines added.
     assert summary["lines_added"] == 4 and summary["lines_removed"] == 3
     assert [s["heading_path"] for s in summary["sections_added"]] == [["3. 새로 생길 것"]]
     assert [s["heading_path"] for s in summary["sections_removed"]] == [["2. 사라질 것"]]
@@ -737,12 +736,12 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
         "구간 안에서만 다시 견주므로 문서 전체 숫자와 다르다"
     )
     assert summary["truncated"] is False
-    # 요약은 응답에만 있다 — 표도 컬럼도 늘리지 않았다.
+    # Summary is response-only: no new table or column.
     assert "change_summary" not in (db_docs.get_by_id(doc_id) or {})
 
 
 def test_inbox_edit_summary_failure_does_not_fail_the_save(tmp_path, storage_root):
-    """요약이 죽어도 저장은 끝난 것이다 — 아니면 작업자가 같은 문서를 또 올린다."""
+    """Summary failure must not undo save success or cause workers to submit twice."""
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.services import change_summary_service, token_service
@@ -824,12 +823,12 @@ def test_inbox_new_tr_response_carries_worktree_untracked(tmp_path):
     assert resp.json()["worktree_untracked"] == expected
 
 def test_inbox_new_response_carries_the_change_summary(tmp_path, storage_root):
-    """진짜 inbox 신규 등록을 한 번 돌려 응답에 요약이 붙는지 본다(P0002 시나리오 15).
+    """Perform a real inbox creation and verify its summary (P0002 scenario 15).
 
-    신규 등록은 견줄 옛 판이 없으므로 ``before`` 는 ``null``, 문서 전체가 추가로
-    잡혀야 한다. 줄 번호는 **저장된 파일** 기준이므로, 목차 조회가 말할 줄 수와
-    같아야 한다 — 보낸 본문 그대로를 세면(머리말이 없으니 이 문서에서는 우연히도
-    같은 값이 나오지만) 두 계산이 실제로 같은 함수를 타는지는 이 시험으로 못 박는다.
+    With no prior revision, before is null and the entire document is added.
+    Line numbers refer to the saved file and must match outline calculations.
+    Counting the submitted body happens to agree here because it lacks frontmatter;
+    this test pins the shared calculation path rather than relying on that coincidence.
     """
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.services import token_service
@@ -870,6 +869,6 @@ def test_inbox_new_response_carries_the_change_summary(tmp_path, storage_root):
     assert summary["sections_removed"] == [] and summary["sections_unchanged"] == 0
     assert "worktree_untracked" not in data, "N is not a source-mutating document type"
     assert f"@r0#L" in summary["sections_added"][0]["ref"]
-    # 요약은 응답에만 있다 — 표도 컬럼도 늘리지 않았다.
+    # Summary is response-only: no new table or column.
     from modules.flow_gate.db import documents as db_docs
     assert "change_summary" not in (db_docs.get_by_id(data["doc_id"]) or {})

@@ -5,7 +5,7 @@
 // FlowGate Graph Model values — no imitation of a server response, so no server format is
 // decided here. Node / Edge ids carry the Flow id as a prefix so tabs never share ids.
 //
-// Titles are Korean UI text: the Flow object is never called Flow / 흐름 / 플로 (T0006 §3).
+// Titles are Korean UI text: the Flow object is never called Flow / Flow / Flo (T0006 §3).
 import type { FlowGraph, FlowGraphEdge, FlowGraphNode } from './flowGraph'
 import type { FlowGraphSource } from './flowGraphSource'
 

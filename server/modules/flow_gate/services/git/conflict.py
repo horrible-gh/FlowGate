@@ -1,6 +1,6 @@
 """Conflict-session lifecycle and merge-conflict resolution.
 
-Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
@@ -576,7 +576,7 @@ def _abort_graph_attempt_merge(
     try:
         context = _graph_merge_owned(group_id, merge_id, root)
         if _gs._rev_parse(root, "MERGE_HEAD") is not None:
-            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session
+            # flowgate.v02test.0052 T0003 task 3(b): audited on the session
             # (``ref_operations[].stderr_tail``) and, on failure, marked "정리 실패"
             # (``context.abort_failure``, trigger ``graph_attempt_abort``) — a person's
             # abort, the sweep's and a Stop's all come through here.
@@ -692,7 +692,7 @@ def tr_conflict_review(group_id: str, merge_id: int) -> dict:
     review conversation and no reject (there is no resolver baseline to re-run a revert
     from — the resolver itself is where a TR resolution is redone), only approve.
 
-    flowgate.v02test.0052 T0003 할 일 4(c): opening (reading) the review is NOT activity;
+    flowgate.v02test.0052 T0003 task 4(c): opening (reading) the review is NOT activity;
     it never calls ``touch_session`` and leaves ``touched_at`` (the sweep TTL basis) as it is.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -1460,7 +1460,7 @@ def _apply_conflict_resolution_locked(
                 "do not submit a resolution",
             )
 
-        # flowgate.v02test.0052 T0003 (0001-B 1절 8): a merge session whose workspace is no
+        # flowgate.v02test.0052 T0003 (0001-B section 1 8): a merge session whose workspace is no
         # longer merging (MERGE_HEAD gone) is refused BEFORE any file is written. It used
         # to write + `git add` + mark "resolved" and only then fail at the freeze, so every
         # retry just grew the "resolved" count while the session stayed stuck.
@@ -1911,7 +1911,7 @@ def _abort_failed_error(
 
 def _raise_if_merge_gone(session: dict, root: Path, merge_id: int) -> None:
     """Refuse a resolution for a merge-kind session whose workspace observably has no
-    MERGE_HEAD (0001-B 1절 8). 409 ``merge_not_in_progress`` with a one-line reason and
+    MERGE_HEAD (0001-B section 1 8). 409 ``merge_not_in_progress`` with a one-line reason and
     ``next_action="abort"`` — the abort now closes such a session as already cleaned."""
     from modules.flow_gate.services import git_service as _gs
     if _gs.db_git.session_kind(session) not in _MERGE_HEAD_SESSION_KINDS:
@@ -2015,7 +2015,7 @@ def force_cleanup_preview(group_id: str, merge_id: int) -> dict:
 
 def force_cleanup_merge(group_id: str, merge_id: int, *, actor: Optional[str] = None) -> dict:
     """Administrator-only way out of a merge session whose ``merge --abort`` fails
-    (0001-B 1절 3, T0003 할 일 5). Under the same session lock as [abort]:
+    (0001-B section 1 3, T0003 task 5). Under the same session lock as [abort]:
 
     1. the ordinary abort (index refresh + ``merge --abort``) is tried first;
     2. only if it fails: the session's own managed target workspace is reset to the
@@ -2186,7 +2186,7 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     already_cleaned = False
     if root.exists():
-        # flowgate.v02test.0052 T0003 (0001-B 1절 2): a workspace that is observably no
+        # flowgate.v02test.0052 T0003 (0001-B section 1 2): a workspace that is observably no
         # longer merging — MERGE_HEAD absent and no unmerged path — has nothing to abort.
         # It is "already cleaned": the session closes exactly like a successful abort.
         # An unobservable MERGE_HEAD (a failed read) is never taken as absent.

@@ -1,4 +1,4 @@
-"""Run Coordinator (D0004 §2.2 실행 서비스, L0009 §2.6.5 / §2.6.7, P0008 §7 S5).
+"""Run Coordinator (D0004 §2.2 execution service, L0009 §2.6.5 / §2.6.7, P0008 §7 S5).
 
 Start, stop and resume each run in one Flow guard; the checks come first and write nothing (the
 order of L0009 §4.6 / §4.7 fixes which error wins). Policies come from the run's snapshot only.
@@ -8,7 +8,7 @@ Until D0004 §8 is answered every policy is ``undecided``, so a start is refused
 flowgate.v02.0056 T#1: a run read also tells the run band how many approved cards' propagations wait
 for the run to go on (``pending_propagation_count`` / ``pending_node_keys``: "멈춤 · 다음 카드 N개 대기")
 and each node run whether its card waits for a person's approval (``awaiting_approval``,
-``node_approval``). 0056 T#1 개정: a bound root is existing input accepted by Run, including a rejected
+``node_approval``). 0056 T#1 revision: a bound root is existing input accepted by Run, including a rejected
 root. Its card becomes done and propagates approved without changing the document's review status.
 
 flowgate.v02.0056 T#2: each node run also tells the stage of its card run (``stage``: ``instruction`` while the
@@ -31,7 +31,7 @@ holds or follows it.
 flowgate.v02.0061 T#11: each node run tells whether its card is held (``hold``, ``graph_execution_hooks`` ``held_nodes``).
 A held root-bound input is not marked done at the run start either (``_take_root_binding``): it
 stays ``pending``, no propagation is recorded and nothing follows it. Released, nothing happens until the next step /
-full command, which marks the root input done and records its approved propagation (0056 T#1 개정),
+full command, which marks the root input done and records its approved propagation (0056 T#1 revision),
 then goes on as the start would have — never an ordinary opening of the R / B card
 (``run_apply.read_run_state`` keeps such a node out of every opening).
 
@@ -152,7 +152,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
 
     def body() -> dict:
         require_writable(flow_id)
-        own = read_ownership(flow_id)                                             # 1~3 담당
+        own = read_ownership(flow_id)                                             # 1–3 assignment
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
         if command_request_id is not None:
@@ -173,7 +173,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             replay = recovery.before()
             if replay is not None:
                 return replay
-        active = run_store.current_run(flow_id)                                    # 4 진행 중 실행
+        active = run_store.current_run(flow_id)                                    # 4 active run
         if active is not None:
             if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
                     revision_no is not None and revision_no not in (
@@ -187,16 +187,16 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             result = {"run": run_payload(active["run_id"], with_nodes=True)}
             return record(result, active["run_id"], command_seq, "user_command")
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
-        if number is None or definition_store.revision(flow_id, number) is None:  # 5 개정
+        if number is None or definition_store.revision(flow_id, number) is None:  # 5 revision
             raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
-        snapshot = policy_set_for_run(flow_id)                                    # 6 정책
+        snapshot = policy_set_for_run(flow_id)                                    # 6 policy
         policies = policies_of(snapshot["entries"])
         probe = load_context({"run_id": "", "group_id": flow_id, "revision_no": number, "status": "running",
                               "last_event_seq": 0, "started_by": user_id}, project_id, user_id, jobs)
         missing = _missing(probe, snapshot["entries"])
         if missing:
             raise _undecided(flow_id, number, missing)
-        root = probe.root_document() if probe.binding else None                 # 7 결합 문서
+        root = probe.root_document() if probe.binding else None                 # 7 bound document
         if probe.binding and (root is None or probe.binding["node_key"] not in bindable_starts(
                 probe.revision, probe.binding.get("doc_type"))):
             raise GraphApiError(409, "root_binding_lost", {"flow_id": flow_id, "node_key": probe.binding["node_key"],
@@ -364,7 +364,7 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
     records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
     asked (``flowgate.graph_run.result_merge``). 0061 T#11: a bound node its Hold kept pending at the start takes its
-    input completion first, once released (``_take_root_binding``, 0056 T#1 개정).
+    input completion first, once released (``_take_root_binding``, 0056 T#1 revision).
 
     flowgate.v02.0124 T#1 (0003-NR §5.1.1 / §5.1.3-1): after the re-dispatch of the open nodes a new command
     (``command`` given) asks for each node in review whether its card's spent result review is requested again
@@ -433,7 +433,7 @@ def _hold_flow(run: dict) -> None:
 
 
 def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = None) -> None:
-    """0061 T#11 / 0056 T#1 개정: the bound input is marked done (``_root_bound_start``) while it is ``pending`` and
+    """0061 T#11 / 0056 T#1 revision: the bound input is marked done (``_root_bound_start``) while it is ``pending`` and
     has not been bound yet — at the run start, or at the first command after its Hold is released. A held one stays
     pending (the Hold bounds this as it bounds an opening); a root lost by then is refused as at the start (409
     ``root_binding_lost``)."""
@@ -454,7 +454,7 @@ def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = N
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
-    """0056 T#1 개정: Run accepts the bound root as input, regardless of its review status.
+    """0056 T#1 revision: Run accepts the bound root as input, regardless of its review status.
 
     The input consumes neither approval nor a Step; only its card becomes done. The document's
     review status stays unchanged, and the existing approved propagation opens the first work card.
@@ -820,7 +820,7 @@ def running_cause(flow_id: str, row: dict, running: bool) -> Optional[str]:
 def running_lock(flow_id: str, row: dict) -> bool:
     """0064 T#4: the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
     the one a title save is refused by). Only an open or review node can be running, so no other is asked.
-    flowgate.v02.0113 T#1 (0002-D 개정 §3.13): that lock is the node's *actual running* (an AI execution of it requested
+    flowgate.v02.0113 T#1 (0002-D revision §3.13): that lock is the node's *actual running* (an AI execution of it requested
     or running, or an AI review loop on its result), so an open node a person or a setup waits on is not running."""
     return row.get("status") in ("open", "review") and card_settings_ports.node_running(flow_id, row["node_key"])
 

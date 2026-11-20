@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Menu Bar (0001-R §3): 파일 | 편집 | 실행 | 보기 | 창 | 도움말,
+  <!-- flowgate.v02.0038 — Designer Menu Bar (0001-R §3): 파일 | 편집 | 실행 | View | Window | 도움말,
        no AI menu and no Save. A menu opens on click; while one is open, hovering another title
        switches to it. A choice, Escape or a press outside closes it. Arrow keys move between
        menus and items. Items emit commands (or the panel / tab / density / recent events) — the

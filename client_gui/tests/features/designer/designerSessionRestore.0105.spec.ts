@@ -294,7 +294,7 @@ describe('F5 restore of the Designer screen (NR 0101-0003 §5.5)', () => {
     expect(putRequest).not.toHaveBeenCalled()
     expect(stored()).toMatchObject({ projectId: 'p', activeFlowId: 'p.ui.0002', leftMode: 'file', rightTool: 'git' })
     expect(stored().tabs.map((t: { flowId: string }) => t.flowId)).toEqual(['p.ui.0001', 'p.ui.0002', 'p.core.0001'])
-    // 순서 경쟁: the Project watch's setProject and the Explorer's Project change did not clear what was restored.
+    // Ordering race: the Project watch's setProject and the Explorer's Project change did not clear what was restored.
     await settle()
     expect(tabIds(w)).toEqual(['p.ui.0001', 'p.ui.0002', 'p.core.0001'])
   })

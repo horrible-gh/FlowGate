@@ -75,7 +75,7 @@
       </template>
     </ModalShell>
 
-    <!-- 미저장 이탈 보호: 계속 편집하면 이동 취소, 요청 0건 -->
+    <!-- Unsaved changes guard: continuing to edit cancels navigation and sends no requests -->
     <ModalShell :open="leaveOpen" size="sm" :aria-label="t('gui.settings.general.leave.title')" @close="answerLeave(false)">
       <div class="confirm" data-testid="leave-confirm">
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
@@ -169,7 +169,7 @@ const actionError = ref('')
 const selected = computed(() =>
   mode.value === 'view' ? agents.value?.find((a) => a.agent_id === selectedId.value) ?? null : null)
 
-// ── 응답의 수명: 화면 이탈 · 세션/권한 변경 뒤에 도착한 응답은 버린다 ──
+// ── Response lifetime: discard responses arriving after leaving the view or changing the session/permissions ──
 const route = useRoute()
 const router = useRouter()
 const { user, status } = useCurrentUser()
@@ -400,14 +400,14 @@ async function submitCreate() {
   }
 }
 
-// ── 이름 · 실행 경로 · capability ──
+// ── Name, execution path, and capability ──
 // flowgate.v02test.0019: workspace cleanup (the Agent deletes finished Job folders after these hours).
 const CLEANUP_HOURS_MIN = 1
 const CLEANUP_HOURS_MAX = 720
 const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', maxJobs: '4', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
 const edit = reactive<{ name: string; path: string; workdir: string; cleanup: boolean; hours: string; maxJobs: string; enabled: boolean; caps: AgentCapabilities }>(blankEdit())
 const editSaved = ref(false)
-/** The person typed in 작업 폴더 위치 (a saved value without ${AGENT_JOB_ID} reads the same as typed). */
+/** The person typed in working directory location (a saved value without ${AGENT_JOB_ID} reads the same as typed). */
 const workdirEdited = ref(false)
 
 /** The confirmed values the form stands on: the server's last answer for the Agent in the form. */
@@ -749,12 +749,12 @@ function onFocus() {
 }
 function onVisibility() { if (document.visibilityState !== 'hidden') onFocus() }
 
-// ── 미저장 이탈 보호 ──
+// ── Unsaved changes guard ──
 // flowgate.v02test.0019: hours typed but not valid is still unsaved input.
 const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value || !!editHoursProblem.value || !!maxJobsProblem.value))
 const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() => formDirty.value || saving.value)
 
-/** 개요 › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */
+/** Overview › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */
 function openFromQuery() {
   const id = route.query.agent
   if (typeof id !== 'string' || !id) return

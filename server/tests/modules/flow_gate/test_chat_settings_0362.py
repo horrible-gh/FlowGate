@@ -2,7 +2,7 @@
 
 Three things are pinned here, in the order the work was specified:
 
-1. the window arithmetic and the mention text it produces (L0010 §2-3/§2-4, P0009 시나리오 11~15),
+1. the window arithmetic and the mention text it produces (L0010 §2-3/§2-4, P0009 scenario 11~15),
 2. the settings the window is read from, in both directions (L0010 §2-1/§2-2),
 3. the table those settings live in, including the constraints DB0011 deliberately did
    NOT put in the schema.
@@ -355,7 +355,7 @@ class TestResolveSettings:
         assert settings["updated_at"] == "2026-07-30T18:22:41+09:00"
 
     def test_only_the_broken_field_is_reverted(self, memory_store):
-        # P0009 시나리오 17: one unusable value must not take a good one down with it.
+        # P0009 scenario 17: one unusable value must not take a good one down with it.
         memory_store.row = {
             "user_id": "u1", "send_action": "invoke_ai", "context_mode": "last_week",
             "context_turns": 20, "created_at": "x", "updated_at": "t",

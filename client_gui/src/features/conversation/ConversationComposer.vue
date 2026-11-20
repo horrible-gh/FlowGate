@@ -86,7 +86,7 @@
       </button>
     </div>
 
-    <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with 다시 시도) and in the timeline's error
+    <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with "다시 시도") and in the timeline's error
          line; the composer no longer repeats it. -->
     <!-- flowgate.v02test.0030: while the chat's AI is still being read, send waits without any line under the input
          (flowgate.v02test.0041: the passing "checking" line was removed); if it could not be read, say why and offer a

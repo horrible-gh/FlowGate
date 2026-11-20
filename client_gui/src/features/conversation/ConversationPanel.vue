@@ -227,8 +227,8 @@ const headerTitle = computed(() => {
   return start.isDraft.value ? (start.draftTitle.value ?? t('gui.conversation.header.new_title')) : ''
 })
 
-// flowgate.v02test.0025: the chat's checkpoint (⋯ menu, divider) exists only under 체크포인트 사용; another context
-// setting hides it but keeps it stored, so choosing 체크포인트 사용 again applies it again.
+// flowgate.v02test.0025: the chat's checkpoint (⋯ menu, divider) exists only under "체크포인트 사용"; another context
+// setting hides it but keeps it stored, so choosing "체크포인트 사용" again applies it again.
 const checkpointMode = computed(() => (state.settings.contextMode === 'checkpoint' || state.settings.contextMode === 'checkpoint_recent'))
 
 // A draft can be written once the Flow's chat list has been read (a send before that could

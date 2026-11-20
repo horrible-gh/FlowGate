@@ -37,7 +37,7 @@
 // selected Node together with its Flow's Graph and the project; `refreshFlow` reads a Flow again
 // quietly (as a change elsewhere does) after a change that sends no event.
 //
-// flowgate.v02.0045 TR0020 rev3: no 편집 / 편집 마치기 — which definition a Graph Flow shows is
+// flowgate.v02.0045 TR0020 rev3: no 편집 / Finish editing — which definition a Graph Flow shows is
 // picked here. A stored draft (edits not run yet) is shown; with none, the latest revision (the
 // run view) is shown editable as is (draftModel `editableRevision`) and its first edit saves a new
 // draft from it. 실행 confirms the draft as the next revision and the Flow shows its run again.
@@ -55,13 +55,13 @@
 // Nodes across a `tmp_` key rename and loses the ones a re-read, an edit or its undo / redo took away.
 //
 // flowgate.v02.0059 T#2 (0011-CH contracts C / D): every action that moves cards — a drop of one card or of
-// the dragged selection (`moveNodes`), 정렬 / 분배 of the selected cards (`arrangeNodes`), 자동 배치 at a
+// the dragged selection (`moveNodes`), alignment / distribution of the selected cards (`arrangeNodes`), auto-layout at a
 // spacing scale (`autoLayout`, the server's auto_layout rules) — puts the movable cards through one path
 // (Graph, layout save queue) and is one entry of the Flow's undo / redo, next to its structure edits. An
 // undone / redone move entry comes back through the same path; the draft is never saved for a move.
-// 자동 배치 takes the server's layout input: when the shown Graph leaves part of it out (documents the read
+// auto-layout takes the server's layout input: when the shown Graph leaves part of it out (documents the read
 // collapsed, a v0.1 root only its supersede chain tells — arrange/autoLayout.ts), the Flow is read whole
-// first and the cards move once that answers; only the Flow's latest 자동 배치 moves them, and none does
+// first and the cards move once that answers; only the Flow's latest auto-layout moves them, and none does
 // when the read fails. Nor does one whose answer comes after `cancelAutoLayout`, after the
 // session was disposed, or after a read replaced the Graph it was asked for (a retry, a change elsewhere, the
 // re-read of an ignored / failed save, a reset) — the cards stay where they are shown.
@@ -360,10 +360,10 @@ export interface DesignerCenterSession {
    * saved like moveNode, one undo entry for all of them. Whether any Node moved.
    */
   moveNodes(flowId: string, placements: readonly NodePlacement[]): boolean
-  /** flowgate.v02.0059 T#2: 정렬 / 분배 of the Flow's selected Nodes (one undo entry). Whether any Node moved. */
+  /** flowgate.v02.0059 T#2: alignment / distribution of the Flow's selected Nodes (one undo entry). Whether any Node moved. */
   arrangeNodes(flowId: string, kind: ArrangeKind): boolean
   /**
-   * flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 of every movable shown Node (one undo entry), at spacing scale 1.
+   * flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 of every movable shown Node (one undo entry), at spacing scale 1.
    * Whether any Node moved — at once, or once the Flow read whole answers when the shown Graph leaves part of the
    * input out. A refused candidate moves nothing and gives a `layoutNotice`.
    */
@@ -374,7 +374,7 @@ export interface DesignerCenterSession {
   readonly activeNodeSizes: ComputedRef<Readonly<Record<string, CanvasNodeSize>> | null>
   /** flowgate.v02.0068 T#2: the latest layout notice (the Shell shows it once), or null. */
   readonly layoutNotice: ComputedRef<LayoutNotice | null>
-  /** flowgate.v02.0059 T#2: every 자동 배치 still reading the whole Flow moves nothing when it answers. */
+  /** flowgate.v02.0059 T#2: every auto-layout still reading the whole Flow moves nothing when it answers. */
   cancelAutoLayout(): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
   dispose(): void
@@ -396,7 +396,7 @@ export interface DesignerCenterSession {
   confirmDraft(flowId: string): Promise<void>
   /**
    * flowgate.v02.0045 TR0020 rev2: 실행 is about to start on the Flow — its edited draft is
-   * confirmed first (no separate 확정 on screen). Whether the run may start — at once when there
+   * confirmed first (no separate confirmation on screen). Whether the run may start — at once when there
    * is nothing to confirm, else once the confirmation answered.
    */
   prepareRun(flowId: string): boolean | Promise<boolean>
@@ -587,14 +587,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const staleFlows = new Set<string>()
   // Node moves per Flow; a read compares it to tell whether a move happened meanwhile.
   const moveCounts = new Map<string, number>()
-  // flowgate.v02.0059 T#2: the latest 자동 배치 asked per Flow; an earlier one still reading the whole Flow
+  // flowgate.v02.0059 T#2: the latest auto-layout asked per Flow; an earlier one still reading the whole Flow
   // moves nothing.
   const layoutRuns = new Map<string, number>()
   let layoutRunSeq = 0
   // flowgate.v02.0068 T#2: the cards' measured sizes per Flow, as the Canvas reports them (recordNodeSizes).
   const nodeSizes = shallowRef<Readonly<Record<string, Readonly<Record<string, CanvasNodeSize>>>>>({})
   // flowgate.v02.0059 T#2: a new mark per Flow each time a read puts a Graph on screen (or its loading /
-  // error); a 자동 배치 whose input was read for an earlier one moves nothing.
+  // error); a auto-layout whose input was read for an earlier one moves nothing.
   const shownReads = new Map<string, number>()
   let shownReadSeq = 0
   function setShownLoad(flowId: string, load: FlowGraphLoad) {
@@ -750,7 +750,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
    *
    * flowgate.v02.0083 T#4 rev1: a Canvas read newer than the run read (by event sequence) tells the run as of itself —
    * status and the band's facts it sent (command, idle reason, executions, waiting cards) — and nothing of the older run
-   * read is shown as now: its idle reason, executions or waiting cards were another moment's (a 사람 작성·승인 대기 or
+   * read is shown as now: its idle reason, executions or waiting cards were another moment's (a Human writing·승인 대기 or
    * 실행 1/4 beside a completed run). Of its node runs only those of nodes the Canvas sends none of (`graph`: a draft
    * view) stay, until the run read answers. Without both sequences (an older server) nothing tells which is newer: the
    * Canvas status over the run read, as before.
@@ -1317,8 +1317,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   /**
    * Puts movable Nodes of a ready Graph at new positions and saves them (a Node not movable, unknown or
-   * already there stays). flowgate.v02.0059 T#2: the one path of every move — a drop, 정렬 / 분배,
-   * 자동 배치, and an undone / redone move. The draft keeps the same positions. The moves made.
+   * already there stays). flowgate.v02.0059 T#2: the one path of every move — a drop, alignment / distribution,
+   * auto-layout, and an undone / redone move. The draft keeps the same positions. The moves made.
    */
   function placeNodes(flowId: string, placements: readonly NodePlacement[]): NodeMove[] {
     const load = state.graphs[flowId]
@@ -1422,7 +1422,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     staleFlows.clear()
   }
 
-  // flowgate.v02.0045 TR0020 rev2: no 확정 step on screen. 실행 takes what was drawn: an editable,
+  // flowgate.v02.0045 TR0020 rev2: no confirmation step on screen. 실행 takes what was drawn: an editable,
   // confirmable draft with something saved (or being saved) is confirmed as the next revision (the
   // server's run unit) first, and the run starts only if that succeeds (refused: its issues show).
   // Nothing to confirm is a go at once (not through a promise), so the run state changes in the

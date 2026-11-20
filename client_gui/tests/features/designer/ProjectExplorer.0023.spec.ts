@@ -384,7 +384,7 @@ describe('ProjectExplorer — search', () => {
     await expandGroup(w, 'core')
     expect(labels(w, 'flow')).toEqual(['Engine'])
 
-    // Clearing the query brings back the pre-search expansion (UI 개선 was never opened).
+    // Clearing the query brings back the pre-search expansion (UI improvement was never opened).
     await w.find('[data-test="project-explorer-search-clear"]').trigger('click')
     await flushPromises()
     expect(labels(w, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])

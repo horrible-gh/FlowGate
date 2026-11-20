@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import type { FlowCommandResult } from '@/features/project'
 
-// flowgate.v02.0113 T#5 (0030-M §5, D 개정 §3.14-1, 7-1) — when the run result windows open. A [다음 단계] / [전체 실행]
+// flowgate.v02.0113 T#5 (0030-M §5, D revision §3.14-1, 7-1) — when the run result windows open. A [다음 단계] / [전체 실행]
 // command the server took is watched (`arm`, with the run as this tab knew it before the command) every time its Flow's
 // run is idle again (`observe`): the command's result is read (by its own `command_seq` once known), and only a command
 // that ended completed (the run completed) or failed opens the 1st window, once. A command that ended waiting (a step

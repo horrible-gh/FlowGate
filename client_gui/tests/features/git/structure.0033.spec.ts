@@ -221,7 +221,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     for (const code of [...reasonCodes, 'unknown']) expect(ko.reason[code], code).toBeTruthy()
   })
 
-  // flowgate.v02.0066 T#6 — none of the v19 mock-up's demo data, fixed branches or "(시안)" success texts.
+  // flowgate.v02.0066 T#6 — none of the v19 mock-up's demo data, fixed branches or "(mockup)" success texts.
   // T#7 (C15) — the Base apply parts too: no `v0.2` / `main` literal, no demo counters or gate.
   it('carries no mock-up demo data, fixed branch name or fake success text in the worktree area', () => {
     const files = FILES.filter((f) => /worktree|Worktree|GitChange|GitCommitBar|CenterDiff|GitApply|GitMergeResult/.test(rel(f)))
@@ -234,7 +234,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
   })
 
   // flowgate.v02.0066 T#7 — the Base apply area has no approval or commit button and never calls
-  // the Base checkout push / fetch or finalize (0066 D#2 §6-4, §8 T#7 "하지 않는 것").
+  // the Base checkout push / fetch or finalize (0066 D#2 §6-4, §8 T#7 "Out of scope").
   it('the Base apply parts add no approval / commit action and no /git/push, /git/fetch or finalize call', () => {
     for (const name of ['GitApplyAccordion.vue', 'GitApplyInfo.vue', 'GitMergeResultPush.vue']) {
       const src = read(join(GIT, name))

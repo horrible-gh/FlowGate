@@ -1,4 +1,4 @@
-"""Gate decision (D0004 §2.2 게이트 노드 실행기, P0008 S6-1, L0009 §2.6.3 / §2.6.4 / §2.6.7).
+"""Gate decision (D0004 §2.2 gate node executor, P0008 S6-1, L0009 §2.6.3 / §2.6.4 / §2.6.7).
 
 ``POST /runs/{run_id}/nodes/{node_key}/gate-decision`` runs in the run's Flow guard like stop /
 resume: ``flow_id`` from outside the guard picks the guard only, the run is re-read inside it and

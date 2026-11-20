@@ -217,7 +217,7 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-git').attributes('data-tone')).toBe('warning')
     expect(el(w, 'check-git-branch').text()).toBe('브랜치 test2_default_0034')
     expect(w.findAll('[data-test="check-git-note"]').map((note) => note.text())).toEqual(['본 브랜치보다 2커밋 앞서고 0커밋 뒤처져 있습니다'])
-    // flowgate.v02.0051 stage 2: both are the 확인 결과 slot line's buttons. flowgate.v02.0053 T#5: the Git panel
+    // flowgate.v02.0051 stage 2: both are the check result slot line's buttons. flowgate.v02.0053 T#5: the Git panel
     // (another screen) keeps its ↗; the open button is the document icon (tooltip 열기) and the check state
     // is the line's dot (its wording the tooltip).
     expect(el(w, 'check-open-git').text()).toBe('Git 패널 열기 ↗')

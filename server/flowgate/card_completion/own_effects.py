@@ -22,7 +22,7 @@ same TS effect from its own approval (``instruction.approve``), with the instruc
 the TS is no node's result there, so the effect is no longer left to a result completion that never comes. Raises ``EffectRefused`` (the effect is refused: nothing is written) or ``EffectRevisionMoved``
 (the document's revision is not ``revision`` any more).
 
-Listed for the directory move (WP 부록 A): ``services.test_run_service`` / ``spec_execution_service`` /
+Listed for the directory move (WP Appendix A): ``services.test_run_service`` / ``spec_execution_service`` /
 ``test_spec_service`` / ``test_basis_service``, ``documents.tr2_approval_service`` / ``tr2_service`` /
 ``tr2_errors``, ``db.tr2_approval_attempts``, ``services.mutation_policy.system_principal``.
 """

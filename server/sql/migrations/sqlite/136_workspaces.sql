@@ -1,5 +1,5 @@
 -- 136_workspaces.sql
--- flowgate.v02.0020 TR (시안 11~14): Workspace becomes the membership / project-access / policy
+-- flowgate.v02.0020 TR (draft 11~14): Workspace becomes the membership / project-access / policy
 -- boundary above projects. Users stay system-wide identities; user_project_roles stays the row
 -- every access check reads, and the workspace only decides which rows exist.
 --

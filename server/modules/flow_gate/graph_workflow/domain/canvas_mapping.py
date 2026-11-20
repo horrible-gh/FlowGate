@@ -67,7 +67,7 @@ def document_state(doc_review_status, type_code) -> Optional[str]:
 
 
 def node_run_state(status, run: Optional[dict] = None) -> Optional[str]:
-    """State of a Graph node from its ``node_run.status`` (P0008 §2.3 'Graph 노드 → state').
+    """State of a Graph node from its ``node_run.status`` (P0008 §2.3 'Graph node → state').
 
     flowgate.v02.0083 T#4: ``run`` is the node's run wire (``node_run_wire``). An open node whose writer ended
     without a result — the wire's ``dispatch.error_code`` (``no_result``, a failed AI start or run) — is ``blocked``,
@@ -79,14 +79,14 @@ def node_run_state(status, run: Optional[dict] = None) -> Optional[str]:
 
 
 def slot_state(result_doc_id, doc_review_status, type_code) -> Optional[str]:
-    """State of a v0.1 sequence slot (P0008 §2.3 'v0.1 슬롯 → state')."""
+    """State of a v0.1 sequence slot (P0008 §2.3 'v0.1 slot → state')."""
     if result_doc_id is None:
         return "draft"
     return document_state(doc_review_status, type_code)
 
 
 def is_alive(doc: dict, flow_id: str) -> bool:
-    """P0008 §2.4 / L0009 §2.0 '살아 있는 문서'."""
+    """P0008 §2.4 / L0009 §2.0 'live documents'."""
     return (
         doc.get("group_id") == flow_id
         and doc.get("status") != CANCELLED_STATUS

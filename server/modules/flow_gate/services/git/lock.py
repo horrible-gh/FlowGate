@@ -1,6 +1,6 @@
 """Project-level Git mutex and admission guards.
 
-Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 

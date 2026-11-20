@@ -1,4 +1,4 @@
-// flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, D 개정 §3.14): what the [다음 단계] / [전체 실행]
+// flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, D revision §3.14): what the [다음 단계] / [전체 실행]
 // command did, read from the run's own records by the server. snake_case stays inside this file; the request carries this
 // tab's `x-canvas-client-id` like the other run requests (flowRunApi.ts).
 //

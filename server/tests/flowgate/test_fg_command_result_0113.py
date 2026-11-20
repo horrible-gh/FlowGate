@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, 0002-D 개정 §3.14 / §6.5).
+"""flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, 0002-D revised §3.14 / §6.5).
 
 The harness of ``test_fg_ai_roles_l2_assignment`` / ``test_fg_document_progress_0113`` (real routes, Graph engine, card
 settings / documents / approval ports, a separate SQLite DB; every AI write start is the ``env["jobs"]`` recorder and every
@@ -132,7 +132,7 @@ def test_full_on_a_written_manual_flow_is_completed_with_no_ai_call(env, decided
     assert r["counts"] == {"done": 3, "failed": 0, "waiting": 0}
     assert outcomes(r) == {key: "done" for key in keys.values()}          # the root input is no work of the command
     assert r["failure"] is None and r["failures"] == []
-    assert invocations(r) == [] and starts == [] and env["jobs"] == []    # AI 0건, still 완료
+    assert invocations(r) == [] and starts == [] and env["jobs"] == []    # Zero AI executions, still complete
     assert r["message_count"] == len(r["messages"]) > 0                  # its node events
     assert {m["node_key"] for m in r["messages"]} == set(keys.values())
     assert all(m["title"] for m in r["messages"])
@@ -154,7 +154,7 @@ def test_full_with_one_branch_waiting_is_waiting_never_completed(env, fork_join,
 def test_one_branch_failed_while_another_waits_is_failed_with_its_reason(env, fork_join, starts):
     keys = graph(env, {"c1": "T", "c2": "T"}, [("r", "c1"), ("r", "c2")], omit=("c1",))
     all_roles(keys)
-    roles(keys["c1"], "not_used", _write_wait(env, "wait_unavailable"), "not_used")   # 사용 불가 AI 지정
+    roles(keys["c1"], "not_used", _write_wait(env, "wait_unavailable"), "not_used")   # Assign an unavailable AI
     run = start(env)
     r = result(env, run["run_id"])
     assert r["idle_reason"] == "needs_intervention"                        # the run waits for c2's person ...

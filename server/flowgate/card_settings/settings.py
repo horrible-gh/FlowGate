@@ -9,7 +9,7 @@ answer what a node's AI start takes from its card.
 - 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
   Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
   instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
-  flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13) replaces both for card settings: a card is locked only while
+  flowgate.v02.0113 T#1 (0030-M §4, 0002-D revision §3.13) replaces both for card settings: a card is locked only while
   it actually runs (``legacy.node_running``: an AI execution of it requested or running, or an AI review loop on its
   result; 409 ``node_settings_locked``). Waiting (ready, a person's writing, AI setup needed / unavailable, a question,
   an approval), done and error cards take their settings whatever the run's status — all three roles ``not_used``
@@ -31,7 +31,7 @@ answer what a node's AI start takes from its card.
   line (``card_documents.lines.set_delegation``), in the same guard.
 - flowgate.v02.0072 T#3: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
   pre-instruction writing switch and the run block) by the same GET / PATCH, locks and failures. Nothing here touches
-  the plan document (its Steps' AI, review AI, pre-instructions and attachments). flowgate.v02.0083 T#1 — 0072 T#3 개정
+  the plan document (its Steps' AI, review AI, pre-instructions and attachments). flowgate.v02.0083 T#1 — 0072 T#3 revision
   (revised): the run block is read by a run now. ``uses_ai`` judges the plan card's writer (an explicit person assignee,
   else the card's work AI, else an explicit AI assignee, else a person) and ``run_settings`` hands an AI writer its
   work AI, time limit and restarts (``fields.run_plan``).
@@ -364,7 +364,7 @@ def legacy_uses_ai(flow_id: str, node: dict) -> bool:
     then the invoke service's project default. An explicit human assignment is never overridden;
     requirement delegation, gates and cards without a run plan retain their own contracts.
 
-    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card (WP) is judged in this order — an explicit person assignee:
+    flowgate.v02.0083 T#1 (0072 T#3 revision): a work plan card (WP) is judged in this order — an explicit person assignee:
     a person; the card's work AI (``run_ai``) stored: AI; an explicit AI assignee: AI; nothing: a person (the default
     stays a person's writing, so a WP a person already writes is never handed to an AI by a later command). Run / test
     cards keep their judgement (unassigned: AI, the project default when the card names none)."""
@@ -438,7 +438,7 @@ def instruction_document(flow_id: str, node: dict) -> dict:
 
 
 def required_instruction(flow_id: str, node: dict) -> Optional[str]:
-    """flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 "필수 산출물"): the instruction type the card's completion requires
+    """flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 "required outputs"): the instruction type the card's completion requires
     approved — the card uses an instruction — whoever writes it, else None. An assigned attempt: its plan names it (a test
     card's TS unless omitted; a plan card none). A pre-feature attempt: the card's stored instruction use — a run card's
     instruction stage type (``fields.instruction_stage``: none when omitted), a test card's TS unless omitted. A card with

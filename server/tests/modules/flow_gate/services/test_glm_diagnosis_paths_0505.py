@@ -1,4 +1,4 @@
-"""flowgate.default.0505 TR0023: GLM 기동 실패(getaddrinfo) 진단 경로 고정 테스트.
+"""flowgate.default.0505 TR0023: tests pinning GLM spawn-failure (getaddrinfo) diagnostics.
 
 TR0023 concluded that two differently-labelled failures sharing one UI shape are two
 different code paths, both behaving as designed:

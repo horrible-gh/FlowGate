@@ -213,9 +213,9 @@ def test_base_dirty_project_admission_blocks_same_project_but_allows_other(monke
 
 
 def test_base_dirty_mention_unavailable_releases_the_project_lease(monkeypatch):
-    """T0011 완료 기준 2: mention_builder가 빈 값을 반환하면(engine이 HTTPException(409,
-    mention_unavailable)로 신호) 토큰 회수는 ai_invoke_service.start_run 내부 책임이고,
-    이 라우트는 project lease를 명시적으로 release한 뒤 같은 409를 그대로 전달해야 한다."""
+    """T0011 acceptance criterion 2: an empty mention_builder result raises 409 mention_unavailable.
+    ai_invoke_service.start_run owns token revocation; this route explicitly releases the
+    project lease and propagates the same 409."""
     monkeypatch.setattr(ai_invoke_routes, "_require_user", lambda _r: {"issued_to": "u", "is_admin": True})
     monkeypatch.setattr(ai_invoke_routes.db_projects, "get_by_id", lambda _p: {"id": "flowgate"})
     monkeypatch.setattr(ai_invoke_routes.git_service, "project_git_status", lambda _p: {"status": {"base_dirty": {"files": ["a.py"]}}})
@@ -239,9 +239,9 @@ def test_base_dirty_mention_unavailable_releases_the_project_lease(monkeypatch):
 
 
 def test_base_dirty_activate_null_cancels_the_run_without_releasing_a_stolen_row(monkeypatch):
-    """T0011 완료 기준 2: activate()가 null이면(acquiring 행이 이미 다른 소유자로 교체됨)
-    이 자리는 release를 호출하지 않고 방금 시작된 run만 취소한 뒤 409 run_lease_lost를
-    반환해야 한다 — 남의 리스를 지우면 그 리스가 막으려는 동시성 보장이 깨진다."""
+    """T0011 acceptance criterion 2: activate() returning null means another owner replaced
+    the acquiring row. Cancel only the newly started run and return 409 run_lease_lost;
+    releasing someone else's lease would break the concurrency guarantee."""
     monkeypatch.setattr(ai_invoke_routes, "_require_user", lambda _r: {"issued_to": "u", "is_admin": True})
     monkeypatch.setattr(ai_invoke_routes.db_projects, "get_by_id", lambda _p: {"id": "flowgate"})
     monkeypatch.setattr(ai_invoke_routes.git_service, "project_git_status", lambda _p: {"status": {"base_dirty": {"files": ["a.py"]}}})

@@ -1,19 +1,19 @@
 """Project-list N+1 removal (flowgate.default.0559 T0005 / B0001) — unit suite.
 
-B0001 ("리팩터링 하다 만거같은데?") and 0559 NR0003 §7·§10 권고1: one
+B0001 ("리팩터링 하다 만거같은데?") and 0559 NR0003 §7·§10 recommendation 1: one
 ``GET /projects?status=active`` fired ``1 + 2N`` queries because
 ``_attach_project_modules()`` called ``db/projects.list_modules()`` once per
 project (operations measurement: N=13 → 27 queries / 84.5ms).
 
 Covers:
-  - 쿼리 예산: the endpoint's query count stays flat (3) whether one project or
+  - query budget: the endpoint's query count stays flat (3) whether one project or
     many are active, measured the way test_screen_load_query_reduction_0282.py
     measures it — a mock SQLite connection that counts every statement it runs.
-  - 청킹 경계: >900 ids are split into 900-sized chunks (SQLite's historical 999
+  - chunk boundaries: >900 ids are split into 900-sized chunks (SQLite's historical 999
     bind-variable limit) and the per-chunk results are merged.
-  - 단건 호환: list_modules(project_id) keeps its signature/return shape and now
+  - single-item compatibility: list_modules(project_id) keeps its signature/return shape and now
     delegates, so it must agree with the batch path row for row.
-  - 정렬·제목 규칙: 'none'/"All" first, then alphabetical; project_modules.title
+  - sorting/title rules: 'none'/"All" first, then alphabetical; project_modules.title
     wins when present, the label itself is the fallback.
   - `_project_modules_table_exists()` guard survives on the batch path.
 
@@ -235,7 +235,7 @@ def _sql_of(calls, table: str) -> list[tuple[str, list]]:
     return [(sql, params) for sql, params in calls if f"FROM {table}" in sql]
 
 
-# ── 쿼리 예산: /projects?status=active ───────────────────────────────────────
+# ── query budget: /projects?status=active ───────────────────────────────────────
 
 class TestProjectsEndpointQueryBudget:
     """One screen load's query count must not follow the project count."""
@@ -344,7 +344,7 @@ class TestProjectsEndpointQueryBudget:
         assert len(_sql_of(calls, "groups")) == 1
 
 
-# ── 청킹 경계: 900 bind-variable chunks ──────────────────────────────────────
+# ── chunk boundaries: 900 bind-variable chunks ──────────────────────────────────────
 
 class TestChunkBoundary:
     def test_over_900_ids_are_chunked_and_merged(self, tmp_db, warm_pm_probe):
@@ -405,7 +405,7 @@ class TestChunkBoundary:
         assert calls == []
 
 
-# ── 단건 호환 + 정렬·제목 규칙 ───────────────────────────────────────────────
+# ── single-item compatibility + sorting/title rules ───────────────────────────────────────────────
 
 class TestSingleCallCompatibility:
     @pytest.mark.parametrize("pid", [P_MOD, P_BLANK, P_EMPTY, P_GHOST])
@@ -479,7 +479,7 @@ class TestOrderingAndTitleRules:
         assert batch[P_GHOST] == []
 
 
-# ── 마이그레이션 이전 DB 보호 ────────────────────────────────────────────────
+# ── protect pre-migration databases ────────────────────────────────────────────────
 
 class TestProjectModulesTableGuard:
     def test_missing_table_skips_the_project_modules_query(

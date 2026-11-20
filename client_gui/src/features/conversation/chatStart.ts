@@ -12,7 +12,7 @@
 // is used as is and owes nothing, and the server pays the debt once and drops it on any manual
 // rename.
 //
-// flowgate.v02gui.0028: the first message shows at once, as a bubble marked 전송 중, from the press of send — through the
+// flowgate.v02gui.0028: the first message shows at once, as a bubble marked Sending, from the press of send — through the
 // chat's create, its opening and the POST (session.holdFirstSend): there is no silent gap before the chat exists. It is
 // the same message all the way (the session hands it over to the chat made, with the key it was given at the press):
 // accepted, it is the chat's turn; a failed create or opening leaves it failed with its retry, which asks for the same
@@ -155,7 +155,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const providerId = state.selectedProviderId
     // flowgate.v02test.0030: and how it was chosen, kept with it for the AI call's record.
     const providerOrigin = state.providerOrigin
-    // flowgate.v02gui.0028: the bubble shows now (전송 중), before the create; a held try of this text keeps its intent.
+    // flowgate.v02gui.0028: the bubble shows now (Sending), before the create; a held try of this text keeps its intent.
     const held = session.holdFirstSend({ intentId: origin.owner.intentId, createIntentId: draftCreateIntent(origin.owner),
       body: text, providerId, providerOrigin, sendAction: state.settings.sendAction, ...(origin.images?.length ? { images: origin.images } : {}) })
     origin.createIntentId = held?.createIntentId ?? draftCreateIntent(origin.owner)

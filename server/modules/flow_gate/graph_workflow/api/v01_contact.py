@@ -1,4 +1,4 @@
-"""The v0.1 side of the engine router (D0004 §4.3 접점 목록, P0008 §9).
+"""The v0.1 side of the engine router (D0004 §4.3 contact-point list, P0008 §9).
 
 The only Graph module the v0.1 routes import. Each contact adds one call after the existing v0.1
 guards; refusals use the v0.1 flat error shape (``{"error", "doc_id", "group_id",

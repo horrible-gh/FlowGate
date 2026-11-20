@@ -19,7 +19,7 @@ import type {
   WorkspaceListResponse,
 } from '@/features/settings/types'
 
-// flowgate.v02.0020 — 환경 설정 시안 11~14 wired to the real API adapter (mocked here).
+// flowgate.v02.0020 — 환경 설정 mockup 11~14 wired to the real API adapter (mocked here).
 vi.mock('@/features/settings/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/settings/api')>()
   const mocked: Record<string, unknown> = { SettingsRequestError: actual.SettingsRequestError }

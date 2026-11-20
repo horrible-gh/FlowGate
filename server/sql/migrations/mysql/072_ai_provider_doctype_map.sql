@@ -1,10 +1,10 @@
 -- 072_ai_provider_doctype_map.sql
 -- Per-document-type AI provider assignment for the continuous (unmanned) chain
--- (flowgate.default.0317: R0001 -> NR0003 -> D0004 -> T0005 구현 단계).
+-- (flowgate.default.0317: R0001 -> NR0003 -> D0004 -> T0005 implementation stage).
 --
 -- The continuous chain runs one provider start-to-finish today. This table stores the
--- "문서 종류 -> 프로바이더" 배정 규칙 the hop provider decider reads at each step boundary
--- (D0004 §1: 배정은 프로젝트 단위). One row = one (project, doc_type) assignment.
+-- Document-type-to-provider assignment rules the hop provider decider reads at each step boundary
+-- (D0004 §1: assignments are per project). One row = one (project, doc_type) assignment.
 --
 -- Scope mirrors ai_providers/document_types: project_id is the owning project. The assigned
 -- provider_id references an ai_providers row (which may itself be a global/inherited row).

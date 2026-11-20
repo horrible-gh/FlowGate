@@ -8,7 +8,7 @@
  * - the Center session: a saved title goes onto the shared Graph at once (the Canvas card and the Inspector header),
  *   never through the draft — no draft save, no undo / redo entry, the draft version as it was; a late answer or an old
  *   read never takes a newer title back; an edit, an undo and a redo of the structure keep the title; a refusal names the
- *   server's code and changes nothing; a reread after the save keeps it (새로고침 유지);
+ *   server's code and changes nothing; a reread after the save keeps it (retained after refresh);
  * - the Inspector header shows the shared title — the same new title after a save or another tab's save read again;
  * - flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — the Canvas mapping carries
  *   no title edit state any more; the session's selection says whether the selected card's title opens now

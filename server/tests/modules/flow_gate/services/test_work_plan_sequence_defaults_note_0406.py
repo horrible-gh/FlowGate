@@ -59,7 +59,7 @@ def test_step_note_has_priority_over_defaults_note():
 
 
 def test_pair_note_goes_to_the_result_row_and_defaults_still_fill_the_instruction():
-    """0408 M0019 재반려 2 — 결과 단계의 멘트는 결과 줄에 남고, 지시 줄은 공통 멘트를 받는다."""
+    """0408 M0019 second rejection, item 2: result notes stay on result rows; instruction rows receive the common note."""
     rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
@@ -148,8 +148,8 @@ def test_missing_invalid_or_blank_defaults_preserves_empty_note_and_note_missing
 
 
 def test_shared_note_reuses_normalization_and_control_character_removal():
-    # 0406 T0022 작업 6: 후보 생성은 표시 경로다 — 자르지 않고 그대로 나른다. 상한을 넘긴
-    # 값은 [저장]에서 note_too_long 으로 거절되며, 그 판정은 저장 경로가 한다.
+    # Candidate generation is a display path: preserve untrimmed input; saving rejects oversize values.
+    # [저장] rejects this value with note_too_long; the save path owns that validation.
     body = "가" * (wpseq.NOTE_MAX_CHARS + 50)
     rows, _, _ = _rows({
         "defaults": {"note": " \x00" + body + "\n"},

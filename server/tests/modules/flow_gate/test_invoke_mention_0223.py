@@ -55,7 +55,7 @@ class TestConversationMention:
         """0362 T0012: the builder now reads the head to size the recent-turn window.
 
         These cases pin text shapes and run without a database. A head of 0 is the
-        short conversation of P0009 시나리오 12 — nothing folds, and the mention is the
+        short conversation of P0009 scenario 12 — nothing folds, and the mention is the
         one this file already describes. The two cases with a provider cursor set their
         own head, because a cursor beyond the end of the conversation is not a state
         the mention should be asked to render.

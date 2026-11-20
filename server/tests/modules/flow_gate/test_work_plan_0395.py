@@ -125,7 +125,7 @@ def test_set_steps_are_paired_and_tsr_is_locked():
 
 
 def test_canonical_dump_is_stable():
-    """P0009 §2.6 결정 3·4: fixed key order, 2-space indent, one trailing newline."""
+    """P0009 §2.6 decision 3·4: fixed key order, 2-space indent, one trailing newline."""
     from modules.flow_gate.services import work_plan_service as wp
 
     text = wp.dumps(wp.validate(_plan()))
@@ -199,7 +199,7 @@ def test_provider_must_be_a_candidate():
 
 
 def test_duplicate_key_stops_before_the_quantity_comparison():
-    """L0010 §2.3 결정 5: one mistake must not be reported as two."""
+    """L0010 §2.3 decision 5: one mistake must not be reported as two."""
     from modules.flow_gate.services import work_plan_service as wp
 
     body = _plan()
@@ -333,8 +333,8 @@ def test_change_summary_reports_what_changed():
     assert created["kind"] == "work_plan"
     assert "T 4세트" in created["quantities"]
     assert created["steps"] == 17
-    # P0009 §5.1 · §5.4: 배정 + 미배정 = 단계 수. 잠긴 TSR 을 어느 쪽에도 넣지
-    # 않으면 무인 작업자가 자기가 보낸 것이 다 저장됐는지 셈으로 확인할 수 없다.
+    # P0009 §5.1/§5.4: assigned + unassigned must equal the step count. Include locked TSRs
+    # so unattended workers can verify that every submitted step was saved.
     assert created["assigned_steps"] + created["unassigned_steps"] == created["steps"]
     assert created["unassigned_steps"] == wp.unassigned_step_count(after)
 
@@ -357,7 +357,7 @@ def test_template_is_json_and_valid():
 
 def test_template_body_stays_zero_count():
     """flowgate.default.0488 T0005: adding canonical examples must not touch the
-    zero-count template body itself (NR0003 정정본 §13 — count 0 stays 0; the examples
+    zero-count template body itself (NR0003 corrected revision §13 — count 0 stays 0; the examples
     live in the separate `examples` field instead).
     """
     from modules.flow_gate.services import work_plan_service as wp
@@ -371,7 +371,7 @@ def test_template_body_stays_zero_count():
 
 def test_help_template_examples_match_make_step_and_cover_all_pair_roles():
     """flowgate.default.0488 T0005: canonical step examples must come from
-    make_step() itself, not hand-authored JSON (NR0003 정정본 §12 R6 drift guard).
+    make_step() itself, not hand-authored JSON (NR0003 corrected revision §12 R6 drift guard).
     """
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -438,15 +438,15 @@ def test_work_plan_is_not_auto_complete():
         WORK_PLAN_TYPE,
     )
 
-    # 결정 4: it is created pending_review and reviewed like any other document.
+    # decision 4: it is created pending_review and reviewed like any other document.
     assert WORK_PLAN_TYPE not in AUTO_COMPLETE_TYPES
     # It has a real body file, so it is not a file-less approval either.
     assert WORK_PLAN_TYPE not in FILELESS_APPROVABLE_TYPES
-    # 결정 5: several plans per group, at any point — so not pinned to the head type.
+    # decision 5: several plans per group, at any point — so not pinned to the head type.
     assert WORK_PLAN_TYPE in HEAD_TYPE_GUARD_EXEMPT_TYPES
-    # D0007 §7 은 작업계획이 워크플로 칸을 차지하는지 "명시"하라고 했다. 같은 문서가
-    # 그것을 "요건정의 다음에 오는 일반 칸"으로 정했으므로 칸을 차지한다 — 머리 타입
-    # 검사에서 빠지는 것과 칸을 갖지 않는 것은 다른 이야기다.
+    # D0007 §7 explicitly places WP in a normal workflow slot after requirements.
+    # It therefore occupies a slot even though head-type validation exempts it;
+    # exemption from head-type checking does not mean it has no slot.
     assert WORK_PLAN_TYPE not in NON_SLOT_WORKFLOW_TYPES
 
 
@@ -473,9 +473,9 @@ def test_type_annotation_marks_countable_types():
     assert by_code["D"]["countable"] is True and by_code["D"]["unit"] == "sheet"
     assert by_code["T"]["countable"] is True and by_code["T"]["unit"] == "set"
     assert by_code["T"]["pair_code"] == "TR"
-    # P0009 §4.1: 짝의 이름은 같은 응답 안의 행에서 가져오므로 로케일이 저절로 맞는다.
+    # P0009 §4.1: use the paired row name from the same response, preserving locale.
     assert by_code["T"]["pair_name"] == "작업레포트"
-    # 짝 행이 목록에 없으면 항목 자체를 만들지 않는다 — 코드를 이름인 척 보이지 않는다.
+    # Without the paired row, omit the item instead of displaying its code as a name.
     lone = wp.annotate_types([{"type_code": "N", "series": "instruction"}])[0]
     assert lone["pair_code"] == "NR" and "pair_name" not in lone
     assert by_code["L"]["countable"] is False   # same letter, different type
@@ -718,17 +718,17 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     created = resp.json()
     doc_id = created["doc_id"]
 
-    # 결정 2: an explicit quantity in the request is honored as-is.
+    # decision 2: an explicit quantity in the request is honored as-is.
     assert created["body"]["quantities"]["D"]["count"] == 1
     assert created["body"]["binding"] == "advisory"
-    # 결정 2 (P0009 §2.6): the canonical body is a .json file, never .md.
+    # decision 2 (P0009 §2.6): the canonical body is a .json file, never .md.
     stored = created["stored_path"]
     assert stored.endswith("_document.json"), stored
     assert (storage_root / stored).is_file()
     assert json.loads((storage_root / stored).read_text(encoding="utf-8"))["wp_version"] == 2
     _assert_exact_r0(doc_id, storage_root / stored)
 
-    # 결정 4: pending review, and the parent is left exactly as it was.
+    # decision 4: pending review, and the parent is left exactly as it was.
     row = db_docs.get_by_id(doc_id)
     assert row["doc_review_status"] == "pending_review"
     # §4.2: the parent's state is left exactly as it was — creating a plan is not
@@ -770,10 +770,10 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "wp_revision_conflict"
     assert conflict.json()["current_revision_no"] == 1
-    assert "body" not in conflict.json()          # 결정 7: no merge, so no rival body
+    assert "body" not in conflict.json()          # decision 7: no merge, so no rival body
     assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk
 
-    # 결정 6: an invalid body is refused BEFORE the revision check, so the user is
+    # decision 6: an invalid body is refused BEFORE the revision check, so the user is
     # never told to discard their edits only to find the values were wrong anyway.
     bad = json.loads(json.dumps(body))
     tsr = [s for s in bad["steps"] if s["key"] == "TSR#1"][0]
@@ -1456,13 +1456,13 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     data = resp.json()
     assert data["stored_path"].endswith("_document.json")
     assert Path(data["stored_path"]).is_file()
-    # 결정 10: the work-plan flavour of the summary, not the prose one.
+    # decision 10: the work-plan flavour of the summary, not the prose one.
     assert data["change_summary"]["kind"] == "work_plan"
     assert data["change_summary"]["steps"] == 15
     assert "T 3세트" in data["change_summary"]["quantities"]
     assert data["origin"] == "ai"
     assert data["title"] == wp.derived_title(plan, "ko")
-    # 결정 3 (§2.6): stored in canonical form regardless of how it arrived.
+    # decision 3 (§2.6): stored in canonical form regardless of how it arrived.
     assert Path(data["stored_path"]).read_text(encoding="utf-8") == wp.dumps(plan)
     _assert_exact_r0(data["doc_id"], Path(data["stored_path"]))
 
@@ -1606,7 +1606,7 @@ def test_ai_inbox_refuses_markdown_and_rule_breaks(seed, tmp_path):
     # Same verdict as the human path, flattened into the inbox envelope (§5.3).
     assert "TSR#1" in broken.json()["error_message"]
 
-    # 결정 9: the title lives in the request, so a body that repeats it is refused
+    # decision 9: the title lives in the request, so a body that repeats it is refused
     # rather than silently ignored.
     titled = _plan()
     titled["title"] = "본문에 적은 제목"
@@ -1615,7 +1615,7 @@ def test_ai_inbox_refuses_markdown_and_rule_breaks(seed, tmp_path):
     assert "title" in named.json()["error_message"]
 
 
-# ── Part 6: 0395 T0021 — 작업계획이 워크플로 시퀀스의 한 칸일 때 ────────────────
+# ── Part 6: 0395 T0021: work plans occupying workflow-sequence slots ──
 
 
 @contextmanager
@@ -1653,12 +1653,11 @@ def _decide_sequence(root_doc_id: str, types: list[str]) -> int:
 
 
 def test_human_create_fills_a_pending_WP_slot(seed, storage_root):
-    """T0021: 작업계획을 시퀀스 칸으로 놓을 수 있게 되었으니 사람 경로도 그 칸을 채운다.
+    """T0021: the human path must fill WP workflow slots too.
 
-    D0007 §7 puts WP in a workflow slot (it is deliberately absent from
-    NON_SLOT_WORKFLOW_TYPES) and the AI path already fills the head at inbox step 7.5.
-    Until this change the human dialog did not, so a group whose sequence held a WP
-    step stayed pending forever and the created plan came back as an orphaned member.
+    D0007 §7 puts WP in a workflow slot, deliberately outside NON_SLOT_WORKFLOW_TYPES.
+    The AI path already fills its head at inbox step 7.5. Previously the human dialog
+    left the WP step pending forever and created an orphaned member plan instead.
     """
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -1697,7 +1696,7 @@ def test_human_create_fills_a_pending_WP_slot(seed, storage_root):
 
 
 def test_human_create_leaves_a_non_WP_head_alone(seed, storage_root):
-    """자문형이라는 성질은 그대로다: 머리가 다른 타입이면 그 칸을 가로채지 않는다."""
+    """Preserve advisory behavior: do not take a head slot belonging to another type."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_sequences as db_wfseq
 
@@ -1750,20 +1749,20 @@ def test_ai_inbox_is_not_blocked_by_a_mismatched_workflow_head(seed, tmp_path):
         assert "DS" in control.json()["error_message"]
 
 
-# ── Part 7: 0395 T0026 재작업 — 생성 대화상자를 거치지 않고 만들어진 작업계획 ────
+# ── Part 7: 0395 T0026 rework: plans created without the creation dialog ──
 #
-# 사용자가 실제로 겪은 일: 워크플로 머리 칸이 WP 인 그룹에서 [빈 문서 만들기]로 작업계획을
-# 만들었더니, 문서를 열 때마다
+# Reported case: [빈 문서 만들기] created a plan when the workflow head was WP.
+# Opening it repeatedly showed:
 #     이 작업계획을 표로 열 수 없습니다. 원문 보기로 확인해 주세요.
 #     Expecting value: line 1 column 1 (char 0)
-# 만 나왔다. 그 길이 마크다운 머리말 뼈대를 정본 자리에 써 버렸기 때문이다.
+# The creation path had written a Markdown frontmatter skeleton as the canonical plan.
 
 
 def _seed_providers():
-    """진짜 공급자 두 대와 프로젝트 기본값, 그리고 D 타입 배정 규칙 한 줄.
+    """Two real providers, project defaults, and one D-type assignment rule.
 
-    auto_plan_body 가 무엇을 읽는지가 이 시험의 핵심이므로 설정 서비스를 가짜로 바꾸지
-    않는다 — 실제 표에 넣고 실제 해석기를 통과시킨다.
+    Verify what auto_plan_body actually reads by seeding real tables and using the
+    real resolver instead of replacing the settings service.
     """
     from modules.flow_gate.db.connection import get_store, now_iso
 
@@ -1812,7 +1811,7 @@ def _full_client():
 
 
 def test_workflow_type_counts_folds_the_report_half_into_its_set():
-    """짝 레포트 칸은 새 세트가 아니다. 지시 칸이 사라진 시퀀스에서도 세트 수는 유지된다."""
+    """A paired report is not a new set; preserve counts even if the instruction slot was removed."""
     from modules.flow_gate.services import work_plan_service as wp
 
     items = [{"type": t} for t in ("WP", "D", "D", "T", "TR", "TS", "TSR", "AC")]
@@ -1822,7 +1821,7 @@ def test_workflow_type_counts_folds_the_report_half_into_its_set():
 
 
 def test_unwritten_plan_is_only_the_never_written_file():
-    """되살리기 대상은 '계획이 들어 있던 적 없는 파일'뿐이다. 내용이 있으면 손대지 않는다."""
+    """Recover only files that never held a plan; leave any existing content untouched."""
     from modules.flow_gate.services import work_plan_service as wp
 
     assert wp.is_unwritten_plan("") is True
@@ -1832,10 +1831,10 @@ def test_unwritten_plan_is_only_the_never_written_file():
 
 
 def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
-    """[빈 문서 만들기]로 만든 작업계획이 표로 열리고, 수량·공급자가 채워져 있다.
+    """A plan created through [빈 문서 만들기] opens as a table with counts and providers.
 
-    사용자가 신고한 증상(Expecting value: line 1 column 1)이 여기서 나던 것이다. 수량은
-    이 그룹의 워크플로 시퀀스에서, 공급자는 프로젝트 실행 체인과 문서종류 배정표에서 온다.
+    This was the reported Expecting value: line 1 column 1 failure. Derive counts
+    from the group sequence and providers from project execution/type-assignment rules.
     """
     from modules.flow_gate.db import documents as db_docs
 
@@ -1860,28 +1859,28 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
         assert created.status_code == 201, created.text
         doc_id = created.json()["doc_id"]
 
-    # 1. 정본은 마크다운이 아니라 JSON 이다.
+    # 1. Canonical content is JSON, not Markdown.
     stored = created.json()["data"]["file_path"]
     assert stored.endswith("_document.json"), stored
     on_disk = json.loads((storage_root / stored).read_text(encoding="utf-8"))
     assert on_disk["wp_version"] == 2
     _assert_exact_r0(doc_id, storage_root / stored)
 
-    # 2. 문서를 열면 표가 나온다 — 409 "표로 열 수 없습니다" 가 아니다.
+    # 2. Opening the document shows a table instead of 409 "표로 열 수 없습니다".
     view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
     assert view.status_code == 200, view.text
     payload = view.json()
 
-    # 3. 수량은 시퀀스에서 왔고, 미지정 칸이 없다.
+    # 3. Counts come from the sequence and no provider slot is unspecified.
     assert payload["totals"] == {"design_sheets": 2, "work_sets": 2, "steps": 6}
     assert payload["unassigned_step_count"] == 0
     by_key = {step["key"]: step for step in payload["body"]["steps"]}
-    assert by_key["D#1"]["provider_id"] == "aip_seed_b"   # 문서종류 배정표가 이긴다
-    assert by_key["T#1"]["provider_id"] == "aip_seed_a"   # 규칙이 없으면 기본 공급자
-    assert by_key["TR#1"]["provider_id"] == "aip_seed_a"  # 짝 레포트도 같은 공급자
+    assert by_key["D#1"]["provider_id"] == "aip_seed_b"   # The document-type assignment wins
+    assert by_key["T#1"]["provider_id"] == "aip_seed_a"   # Without a rule, use the default provider
+    assert by_key["TR#1"]["provider_id"] == "aip_seed_a"  # The paired report uses the same provider
     assert by_key["TSR#1"]["locked"] is True and by_key["TSR#1"]["provider_id"] is None
 
-    # 4. 제목은 canonical totals에서 파생되고 요청 문자열 "ww"는 정본이 아니다.
+    # 4. Derive the title from canonical totals; request text "ww" is not canonical.
     assert payload["title"] == "작업계획 — 설계 2장 · 작업 2세트"
 
     # 0599 T#3 E: this is deliberately the connected POST /documents/next-empty
@@ -1906,7 +1905,7 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
 
 
 def test_next_empty_still_writes_markdown_for_other_types(seed, storage_root):
-    """작업계획만 다르다. 나머지 타입의 빈 문서는 지금까지와 똑같은 마크다운 뼈대다."""
+    """Only work plans differ; other blank document types retain the existing Markdown skeleton."""
     from modules.flow_gate.db import documents as db_docs
 
     root = f"{GROUP}-R0930"
@@ -1934,11 +1933,11 @@ def test_next_empty_still_writes_markdown_for_other_types(seed, storage_root):
 
 
 def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_root):
-    """이미 만들어져 버린 마크다운 작업계획도 열면 되살아난다.
+    """Recover already-created Markdown work plans when opened.
 
-    생성 경로만 고치면 사용자가 이미 갖고 있는 문서는 영원히 못 연다. 계획이 들어 있던 적
-    없는 파일에 한해, 여는 그 자리에서 정본을 만들고 문서가 그 파일을 가리키게 한다.
-    지난 마크다운 파일은 지우지 않는다.
+    Fixing creation alone would leave existing documents unreadable. For files that
+    never held a plan, create canonical content on opening and repoint the document.
+    Preserve the previous Markdown file.
     """
     from modules.flow_gate.db import document_revisions as db_revisions
     from modules.flow_gate.db import documents as db_docs
@@ -1976,9 +1975,9 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
     healed = db_docs.get_by_id(doc_id)["file_path"]
     assert healed.endswith("_document.json"), healed
     assert json.loads((storage_root / healed).read_text(encoding="utf-8"))["wp_version"] == 2
-    assert stub_path.is_file()  # 되살리기는 지우는 일이 아니다
+    assert stub_path.is_file()  # Recovery must not erase content
 
-    # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).
+    # Opening it again returns the same table: recovery happens only once.
     assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
     # 0127: preserve the actual raw r0 before-image, never today's generated plan.
     [before] = db_revisions.list_by_doc(doc_id)
@@ -1988,7 +1987,7 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
 
 def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
-    """반쯤 쓰다 깨진 계획은 서버가 덮어쓰지 않는다 — 원문 보기로 넘긴다."""
+    """Never overwrite a partially written broken plan; hand it to the source view."""
     from modules.flow_gate.db import document_revisions as db_revisions
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.storage import paths as storage_paths
@@ -2182,8 +2181,8 @@ def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snaps
                 "provider_ids": ["aip_opus", "aip_sonnet"],
             }},
         )
-    # 두 provider 모두 selectable_ids 안에 있어야 200 — candidate_ids가 비어도
-    # registered_provider_ids 쪽에서 이미 둘 다 들어온다.
+    # Both providers must be selectable for 200, even with empty candidate_ids;
+    # registered_provider_ids already includes both.
     assert resp.status_code == 200, resp.text
 
 # ── flowgate.default.0591 T#2: canonical totals own the WP title ─────────────

@@ -220,7 +220,7 @@ const { t, te } = useI18n()
 const kind = computed(() => flowNodeKindView(props.target.nodeKind, props.target.docType))
 const kindLabelKey = computed(() => kind.value.labelKey)
 const state = computed(() => flowNodeStateDisplay(props.target.canvasState))
-// flowgate.v02.0083 T#4: a Graph card with a run says what its Canvas card says (작업 중 · 작성 대기 · 결과 없음 …).
+// flowgate.v02.0083 T#4: a Graph card with a run says what its Canvas card says (Working · 작성 대기 · 결과 없음 …).
 const cardState = computed(() => inspectorCardState(props.target))
 
 type PillTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
@@ -734,7 +734,7 @@ onScopeDispose(() => {
   min-width: 8px;
 }
 
-/* The card meta part (the 작업계획 작성 사람 badge): clips on a narrow line rather than pushing the ⋯ out. */
+/* The card meta part (the work plan human writer badge): clips on a narrow line rather than pushing the ⋯ out. */
 .inspector-header-meta {
   display: inline-flex;
   flex: 0 1 auto;

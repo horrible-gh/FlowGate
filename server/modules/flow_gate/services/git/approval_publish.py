@@ -137,7 +137,7 @@ def holder_of(job_id: str) -> str:
     return merge_target.JOB_HOLDER_PREFIX + job_id
 
 
-# ── job view (P "Job 조회" shape, the fields the approval response carries) ──
+# ── job view (P "Job query" shape, the fields the approval response carries) ──
 
 def job_outcome(job: Optional[dict]) -> Optional[str]:
     """0674 T0004 §2-6: the meaning of a ``succeeded`` job — executed, handed off to the

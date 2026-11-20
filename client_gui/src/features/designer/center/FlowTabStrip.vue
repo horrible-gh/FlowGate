@@ -266,7 +266,7 @@ function isCheckTone(tone: FlowTabRunEndTone): boolean {
   return tone === 'success' || tone === 'neutral'
 }
 
-/** The result's name: 실행 완료, else the run band's idle reason words (개입 필요, 오류로 멈춤 …), else 실행 끝남. */
+/** The result's name: Execution complete, else the run band's idle reason words (개입 필요, 오류로 멈춤 …), else Execution ended. */
 function runEndLabel(flowId: string): string {
   const reason = runEndOf(flowId)?.reason ?? ''
   if (reason === 'completed') return t('gui.designer.center.tab_run_end.completed')

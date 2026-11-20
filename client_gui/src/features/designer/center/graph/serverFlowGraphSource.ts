@@ -1,4 +1,4 @@
-// flowgate.v02.0045 S1+S2 — server Graph source (D0004 §2.3 "서버 Graph 공급원"): implements the
+// flowgate.v02.0045 S1+S2 — server Graph source (D0004 §2.3 "Server Graph source"): implements the
 // FlowGraphSource boundary over the Canvas read / layout save API of P0008 §3 / §4. It replaces
 // the sample source in the Designer (isSample = false, no sample badge). The transport model
 // comes from the features/project store loaders, so this file holds no API, store or axios of
@@ -11,7 +11,7 @@
 //
 // flowgate.v02.0053 T#9: the Flow's Graph run (P0008 §7 S5) — read the current one, start, stop, resume.
 //
-// flowgate.v02.0059 T#2: 자동 배치's input when the shown Graph is not the server's whole one — the same
+// flowgate.v02.0059 T#2: auto-layout's input when the shown Graph is not the server's whole one — the same
 // Canvas read with nothing left out (no collapse) and, given the v0.1 document read, a document's
 // supersede link (the sequence root's chain).
 //
@@ -245,7 +245,7 @@ function asDraftError(error: unknown): unknown {
 
 /**
  * `readDocument`: the v0.1 document read (`documentRead` of features/document fits); absent = no supersede
- * link is read, so 자동 배치 cannot tell a v0.1 root that replaced an older root document.
+ * link is read, so auto-layout cannot tell a v0.1 root that replaced an older root document.
  * `cardHold` (flowgate.v02.0061 T#15): a card's Hold write; absent = the Canvas holds nothing.
  */
 export function createServerFlowGraphSource(

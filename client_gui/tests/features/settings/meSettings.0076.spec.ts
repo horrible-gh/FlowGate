@@ -12,11 +12,11 @@ import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
 import { setCurrentUser, useCurrentUser } from '@/core/auth/currentUser'
 
-// flowgate.v02.0076 T#2 (D §2.1/§2.2, §5.2 V07–V10): 내 설정 › 계정 · 화면 and 보안 · 세션 on the
+// flowgate.v02.0076 T#2 (D §2.1/§2.2, §5.2 V07–V10): 내 설정 › Account · 화면 and 보안 · 세션 on the
 // real /app router (installAuthGuard + installSettingsAccessGuard + SettingsLayout) with the real
 // views. Only the transport is replaced: @shared/api's request helpers talk to a small in-memory
 // server that keeps the ui-settings row, the session list and the password, and every call is
-// recorded with its body, so "요청 0건" and "재조회값" are read off the request list and the
+// recorded with its body, so "zero requests" and "re-read values" are read off the request list and the
 // server state rather than off a mocked view. The axios instance itself (default export) stays
 // real, so X-Locale is checked on its own request interceptor.
 
@@ -213,7 +213,7 @@ describe('V07 개인 정보 / 언어', () => {
       api.defaults.adapter = original
     }
     expect(seen).toEqual(['ja', 'en'])
-    // 재진입: leave and come back — still English. A reload starts from preferred_locale, which the
+    // Re-entry: leave and come back — still English. A reload starts from preferred_locale, which the
     // shared i18n reads at start-up (tests/shared/api.locale.0589 pins that part).
     await go('/settings/me/security')
     await go('/settings/me/account')
@@ -256,7 +256,7 @@ describe('V08 완료 카드 유지 시간', () => {
     expect(w.find('[data-testid="me-retention-saved"]').exists()).toBe(true)
     expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('60')
 
-    // 재진입: a new GET answers the stored 60.
+    // Re-entry: a new GET answers the stored 60.
     await go('/settings/me/security')
     await go('/settings/me/account')
     expect(net.requests.filter((r) => r === 'GET /api/v1/me/ui-settings')).toHaveLength(2)
@@ -367,7 +367,7 @@ describe('V09 보안 / 세션 (s1 = 현재, s2 = 다른 세션)', () => {
   it('wrong current password: no success, old password still valid; right one: success, other sessions gone', async () => {
     net.sessions.push(session('s3', false))
     const w = await open('/settings/me/security')
-    // The three inputs open with 변경 (시안 ⑩); a closed form has none.
+    // The three inputs open with 변경 (mockup ⑩); a closed form has none.
     expect(w.find('[data-testid="current-password"]').exists()).toBe(false)
     await w.get('[data-testid="password-open"]').trigger('click')
     const fill = async (current: string, next: string, confirm = next) => {

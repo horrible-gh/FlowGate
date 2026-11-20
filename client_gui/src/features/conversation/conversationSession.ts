@@ -267,7 +267,7 @@ export interface ConversationSession {
   showDraft(intentId: string | null): void
   /**
    * flowgate.v02gui.0028: shows the first message of a new chat at once — before its chat is created — as a bubble
-   * marked 전송 중, and keeps it in this browser until the server answers (F5). Keyed by user x Flow x draft intent;
+   * marked Sending, and keeps it in this browser until the server answers (F5). Keyed by user x Flow x draft intent;
    * createChat hands it over to the chat it made and `send` sends it there with the key it was given now. The same
    * text held already in this draft (a failed try) is reused, with its key and create intent. Null: nothing to hold.
    */
@@ -307,7 +307,7 @@ export interface ConversationSession {
   retryChatProvider(): void
   /**
    * flowgate.v02test.0025: the open chat's checkpoint: send from message `seq` ('include') or from the next one
-   * ('exclude'); null clears it. Applied while the context setting is 체크포인트 사용.
+   * ('exclude'); null clears it. Applied while the context setting is "체크포인트 사용".
    */
   setCheckpoint(seq: number | null, kind?: CheckpointKind): Promise<void>
   /** Whether the source keeps per-chat settings (AI pick, context checkpoint). */
@@ -420,7 +420,7 @@ function forgetStartStop(requestId: string): void {
 // flowgate.v02gui.0028 — every send the server has not confirmed yet is kept in this browser's localStorage, per signed-in
 // user and project, until the server answers it: an F5 or a closed panel no longer loses it. A new session of the same
 // user restores the entries of the Flow it opens: a message whose chat exists and that was still on its way is shown
-// 전송 중 and sent again with the SAME idempotency key (the server answers a stored turn by that key, never a second
+// Sending and sent again with the SAME idempotency key (the server answers a stored turn by that key, never a second
 // one); a message whose sending had already failed comes back as the failed bubble with its retry; the first message
 // of a chat never confirmed made comes back as a failed bubble in its draft — a reload never creates a chat by itself.
 // An entry goes once the server stored the message, or refused it for good (400 / 404 / 409 / 422: the failed bubble
@@ -761,7 +761,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const display = state.runId !== null ? state.runDisplay : null
     const activities = display ? [...state.activities, runLine(display)] : state.activities
     const items = buildTimeline(state.turns, activities, state.pending, state.readSeq)
-    // flowgate.v02test.0029: a person's stored message sent while the AI was answering waits (대기) for the answer
+    // flowgate.v02test.0029: a person's stored message sent while the AI was answering waits ("대기") for the answer
     // that follows the current one.
     const queued = followUp.value
     if (!queued || queued.chatId !== state.activeChatId) return items
@@ -1462,7 +1462,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   /**
-   * flowgate.v02test.0025: under 체크포인트 사용 the checkpoint message is always on screen, so the
+   * flowgate.v02test.0025: under "체크포인트 사용" the checkpoint message is always on screen, so the
    * "▼ 여기부터 전송됩니다" line is drawn right next to it. When the chat opens on its recent messages only (or the
    * mode is switched on later), older pages are read until the checkpoint message is loaded. Nothing is drawn for a
    * message that is not on screen. A failed read stops here; the [이전 대화] button stays to try again.

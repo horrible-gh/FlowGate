@@ -16,13 +16,13 @@ own parameters, or an ``except ... as name`` binding.
 Automated review (rev1) found that this second branch was checked far too loosely: any
 name the function had assigned to LOCALLY -- regardless of what it was assigned FROM --
 was accepted outright. That let two aliasing bypasses through undetected:
-``fresh = "새로 작성한 문장"; turn["message"] = fresh`` and
+``fresh = "newly authored sentence"; turn["message"] = fresh`` and
 ``fresh = _build_new_sentence(); conversation.append({"message": fresh})`` -- both
 functionally identical to the direct literal/builder-call cases this guard already
 caught, just one assignment hop removed. Fixed here by tracing a local name's OWN
 right-hand side(s) back to trusted roots (this function's own parameters, or an
 ``except ... as name`` binding) instead of trusting the name on sight, exactly as
-rev1 asked ("로컬 바인딩의 RHS까지 역추적해 파라미터 유래 값만 허용"):
+rev1 asked ("trace local binding RHS values back to parameters and allow only parameter-derived values"):
 - a non-empty string literal anywhere along that trace is still rejected;
 - a call -- bare (``f(x)``) or off an object (``obj.f(x)``) -- is trusted only when at
   least one of its arguments itself traces back to a trusted root; a call given no

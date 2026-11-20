@@ -1,4 +1,4 @@
-// flowgate.v02.0060 T#2 — the Designer context menu attached (0006-D rev2 2단계-A, §3.1, §3.3, §3.4, §4.2, §5.3):
+// flowgate.v02.0060 T#2 — the Designer context menu attached (0006-D rev2 2 step-A, §3.1, §3.3, §3.4, §4.2, §5.3):
 // the one menu host of the Designer Shell and the connectors of its five areas — ① project tree, ② file explorer,
 // ③ Flow tab strip, ④ Canvas, ⑤ Palette card. An area hands over the event and the real ids it holds (row kind,
 // node path, flowId, card / edge id, palette definition); the connector builds the snapshot and the availability,
@@ -13,21 +13,21 @@
 // selection the Canvas click places). The card's existing run menu (0061 T#15) is carried into the single card menu
 // so one menu is ever open on a card.
 //
-// flowgate.v02.0060 T#1 (WP 0012, Q item 459): the 11 first-step commands (§5.3 1차 연결) and 정렬 · 배치 / 정렬 are
+// flowgate.v02.0060 T#1 (WP 0012, Q item 459): the 11 first-step commands (§5.3 initial wiring) and alignment · layout / alignment are
 // connected (CLIENT_COMMANDS, 13); every other item of the mockup's 40 is shown disabled where the mockup puts it —
-// 연결 예정 for the 11 2-B commands, 미구현 for the 16 others — and never reaches an execute path here (no request,
+// awaiting integration for the 11 2-B commands, unimplemented for the 16 others — and never reaches an execute path here (no request,
 // no API call). So the Flow row, the file row, the root folder and a card of a multi-selection open their menus now.
-// The multi-selection menu takes no single card command and no run item (§3.6), and changes no selection. 정렬 · 배치
-// and 정렬 open the Edit menu's 정렬 / 배치 commands (the Shell's DESIGNER_ARRANGE_GROUPS, its isMenuCommandEnabled
+// The multi-selection menu takes no single card command and no run item (§3.6), and changes no selection. alignment · layout
+// and alignment open the Edit menu's alignment / layout commands (the Shell's DESIGNER_ARRANGE_GROUPS, its isMenuCommandEnabled
 // and its onTopCommand → center.arrangeNodes); no arrange logic of its own.
 //
 // flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B): the 11 2-B commands are connected through the existing server
-// contracts the Shell lends (`server`, features/project → the v0.1 routes): 이름 변경 (Group / Flow), Flow 삭제 = the
-// existing dispose (DC), 새 폴더 / 새 파일, 폴더 다운로드 / 업로드 / 삭제, 파일 다운로드 / Git › 수정 확인 / 삭제. A chosen
+// contracts the Shell lends (`server`, features/project → the v0.1 routes): 이름 변경 (Group / Flow), Flow Delete = the
+// existing dispose (DC), New folder / 새 파일, Download folder / 업로드 / 삭제, Download file / Git › Review changes / 삭제. A chosen
 // one opens its window (DesignerMenuActions) with the target the menu saw; right before the request the window builds the
 // menu again from now, so a target that left its scope or an item no longer enabled (canMutate, virtual deleted node,
 // read permission, Git state) runs nothing. The connector itself still calls no API. Without `server` (a host that lends
-// none) the 11 stay 연결 예정. Flow 삭제 never deletes permanently; no document or branch delete exists here.
+// none) the 11 stay awaiting integration. Flow Delete never deletes permanently; no document or branch delete exists here.
 //
 // The areas reach this through `provide` / `inject` under DESIGNER_CONTEXT_MENU (no import of this folder), so an
 // area mounted outside the Designer Shell keeps its old behaviour.
@@ -75,21 +75,21 @@ export type { DesignerMenuServerDeps, MenuActionResult } from './menuActions'
 /** The injection key the five areas use (`inject(Symbol.for('flowgate.designer.contextMenu'), null)`). */
 export const DESIGNER_CONTEXT_MENU = Symbol.for('flowgate.designer.contextMenu')
 
-/** §5.3 1차 연결 (2-A). */
+/** §5.3 1 phase integration (2-A). */
 export const FIRST_STEP_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'project.newGroup', 'group.newFlow', 'folder.open', 'tab.close', 'tab.closeOthers', 'tab.closeAll',
   'canvas.addCard', 'canvas.selectAll', 'node.delete', 'edge.disconnect', 'palette.addCard',
 ])
-/** T#1 (WP 0012 [B]): 정렬 · 배치 / 정렬 through the Edit menu's 정렬 / 배치 commands. */
+/** T#1 (WP 0012 [B]): alignment · layout / alignment through the Edit menu's alignment / layout commands. */
 export const ARRANGE_COMMANDS: readonly MenuCommand[] = Object.freeze(['canvas.arrange', 'multi.arrange'])
-/** The commands that run on client paths alone (13: 1차 11 + 정렬 2). */
+/** The commands that run on client paths alone (13: 1 phase 11 + alignment 2). */
 export const CLIENT_COMMANDS: readonly MenuCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...ARRANGE_COMMANDS])
 /** T#2 (0006-D §4.3 2-B): the 11 existing server contracts, run through the windows and the Shell's `server`. */
 export const SERVER_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
   'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
 ])
-/** The commands that run (24); the other 16 of the 40 are shown disabled as 미구현. */
+/** The commands that run (24); the other 16 of the 40 are shown disabled as unimplemented. */
 export const CONNECTED_COMMANDS: readonly MenuCommand[] = Object.freeze([...CLIENT_COMMANDS, ...SERVER_COMMANDS])
 const SERVER_SET: ReadonlySet<string> = new Set(SERVER_COMMANDS)
 
@@ -150,7 +150,7 @@ export interface DesignerContextMenuApi {
   palette(event: MouseEvent, entry: PaletteMenuEntry): boolean
 }
 
-/** The Edit menu's 정렬 / 배치, lent by the Shell (its command names, rule and path). */
+/** The Edit menu's alignment / layout, lent by the Shell (its command names, rule and path). */
 export interface DesignerArrangeDeps {
   /** DESIGNER_ARRANGE_GROUPS: the commands in order, one group per separator. */
   readonly groups: readonly (readonly string[])[]
@@ -168,7 +168,7 @@ export interface DesignerContextMenuDeps {
   readonly canSelectAll: () => boolean
   /** Edit › 전체 선택 on the active Flow (the top menu's path). */
   readonly selectAll: (flowId: string) => void
-  /** File › 새 Group (the top menu's dialog and create path). */
+  /** File › New Group (the top menu's dialog and create path). */
   readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
   /** flowgate.v02gui.0003: the card menu's ID 복사 — copies the card's document id (absent: the item is not shown). */
   readonly copyDocumentId?: (docId: string) => void
@@ -180,13 +180,13 @@ export interface DesignerContextMenuDeps {
     restoreFlow: (flowId: string) => Promise<void>
   }
   readonly openGroupCreate: () => void
-  /** The 새 Flow dialog with this Group given explicitly (the selection is left as it is). */
+  /** The New Flow dialog with this Group given explicitly (the selection is left as it is). */
   readonly openFlowCreate: (groupId: string) => void
   /** The Palette item becomes the Palette selection the next Canvas click places. */
   readonly selectPalette: (definition: PaletteItemDefinition) => void
-  /** 정렬 · 배치 / 정렬 (T#1). */
+  /** alignment · layout / alignment (T#1). */
   readonly arrange: DesignerArrangeDeps
-  /** T#2: the 2-B server paths (absent: the 11 stay 연결 예정). */
+  /** T#2: the 2-B server paths (absent: the 11 stay awaiting integration). */
   readonly server?: DesignerMenuServerDeps
   /** Anything whose change hides an area (Dock collapse, Explorer mode, Tool tab): the menu closes. */
   readonly layout?: () => unknown
@@ -274,16 +274,16 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       else if (request.command === 'flow.baseBranch' && scope.kind === 'flow') deps.openFlowBaseBranch?.(scope.projectId, scope.flowId)
       else if (request.command === 'flow.archive' && scope.kind === 'flow' && recheck()) void deps.archive?.archiveFlow(scope.flowId)
       else if (request.command === 'flow.restore' && scope.kind === 'flow' && recheck()) void deps.archive?.restoreFlow(scope.flowId)
-      // v02gui.0027: 그룹 아카이브 asks first (its window); 그룹 복원 runs at once (the Shell reports a refusal).
+      // v02gui.0027: Archive Group asks first (its window); Restore Group runs at once (the Shell reports a refusal).
       else if (request.command === 'group.archive' && scope.kind === 'group') {
         openAction({ kind: 'group.archive', projectId: scope.projectId, groupId: scope.groupId }, recheck)
       } else if (request.command === 'group.restore' && scope.kind === 'group' && recheck()) void deps.server?.restoreGroup?.(scope.projectId, scope.groupId)
-      // v02gui.0027 (0008-T): 그룹 삭제 opens its window — the confirmation of an empty Group, or the refusal with 대신 아카이브.
+      // v02gui.0027 (0008-T): Delete Group opens its window — the confirmation of an empty Group, or the refusal with Archive instead.
       else if (request.command === 'group.delete' && scope.kind === 'group') {
         openAction({ kind: 'group.delete', projectId: scope.projectId, groupId: scope.groupId }, recheck)
       }
       else if (!SERVER_SET.has(request.command)) return
-      // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
+      // T#2: 이름 변경 (Group / Flow) and Flow Delete (the existing dispose, DC) open their windows on this row.
       else if (request.command === 'group.rename' && scope.kind === 'group') {
         openAction({ kind: 'group.rename', projectId: scope.projectId, groupId: scope.groupId }, recheck)
       } else if ((request.command === 'flow.rename' || request.command === 'flow.delete') && scope.kind === 'flow') {
@@ -318,7 +318,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         return
       }
       if (!SERVER_SET.has(request.command)) return
-      // T#2: the Flow worktree commands open their windows with the node the menu saw (파일 다운로드 runs at once).
+      // T#2: the Flow worktree commands open their windows with the node the menu saw (Download file runs at once).
       const scope = request.target as FileTarget
       if (scope.kind === 'folder' && request.command.startsWith('folder.')) {
         openAction({
@@ -377,7 +377,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     return DEFAULT_PALETTE_ITEMS.map((item) => paletteItemDefinition(item, t(`gui.designer.palette.items.${item.labelKey}`)))
   }
 
-  /** The Edit menu's 정렬 / 배치 of now: its groups, its words (gui.designer.top.arrange.*) and its rule. */
+  /** The Edit menu's alignment / layout of now: its groups, its words (gui.designer.top.arrange.*) and its rule. */
   function arrangeChoices(): ArrangeChoice[][] {
     return deps.arrange.groups.map((group) => group.map((command) => ({
       command,
@@ -424,7 +424,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       if (!node) return null
       target = canvasNodeTarget(entry.flowId, node.id, view.selectedNodeIds)
       // A card of a multi-selection takes no single card command, its run menu included (§3.6); its menu is the
-      // multi-selection's (정렬 runs on the selection, the rest 미구현).
+      // multi-selection's (alignment runs on the selection, the rest unimplemented).
       return canvasMenu({
         target,
         available: {
@@ -468,7 +468,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         const transfer = { getData: (type: string) => (type === PALETTE_DRAG_MIME ? definition : '') }
         center.dropOnCanvas(scope.flowId, transfer, scope.canvas.x, scope.canvas.y)
       } else if ((request.command === 'canvas.arrange' && scope.kind === 'canvas') || (request.command === 'multi.arrange' && scope.kind === 'multi')) {
-        // The Edit menu's 정렬 / 배치 on the active Flow's selection — the one seen at open (alive checked it).
+        // The Edit menu's alignment / layout on the active Flow's selection — the one seen at open (alive checked it).
         if (request.arrange) deps.arrange.run(scope.flowId, request.arrange)
       } else if (request.command === 'canvas.selectAll') {
         deps.selectAll(scope.flowId)

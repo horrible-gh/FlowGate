@@ -114,7 +114,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
         "elapsed_ms": int((time.monotonic() - run["started_mono"]) * 1000),
-        # 0414 P0007 상태 응답 — the same review facts a live card needs mid-hop.
+        # 0414 P0007 status response — the same review facts a live card needs mid-hop.
         "hop_item_seq": run.get("hop_item_seq"),
         "hop_kind": run.get("hop_kind"),
         "hop_review_count": run.get("hop_review_count"),

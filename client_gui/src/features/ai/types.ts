@@ -28,7 +28,7 @@ export interface ProviderItem {
   target_agent_id?: string | null
 }
 
-// ── Owned AI lists (system settings > 시스템 AI, personal settings > 내 AI) ──────
+// ── Owned AI lists (system settings > "시스템 AI", personal settings > "내 AI") ──────
 
 export interface SystemAiSettings {
   providers: ProviderItem[]

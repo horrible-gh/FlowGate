@@ -189,7 +189,7 @@ def test_commit_result_merge_and_removal_match_between_layouts(repo, monkeypatch
 
 
 def test_branch_layout_attempt_keeps_working_beside_a_new_one(repo, monkeypatch):
-    """3단계: an attempt prepared before T#8 is re-prepared, committed and removed on its branch; never moved to a
+    """Stage 3: an attempt prepared before T#8 is re-prepared, committed and removed on its branch; never moved to a
     ref, renamed or given one. The new attempt beside it takes the ref."""
     monkeypatch.setattr(workspace, "NEW_LAYOUT", BRANCH)
     old = _item(repo, "old")

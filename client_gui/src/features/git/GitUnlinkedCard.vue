@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0065 — Git 미연동 (0065-R §3.1, v12 `#gxUnlinked`): the Git icon, `Git 미연동`
+// flowgate.v02.0065 — "Git 미연동" (0065-R §3.1, v12 `#gxUnlinked`): the Git icon, `Git 미연동`
 // and `Git 연결`, shown instead of the exception cards when the project's Git is off. A read
 // failure is not this card (GitStatusErrorCard).
 import { useI18n } from 'vue-i18n'

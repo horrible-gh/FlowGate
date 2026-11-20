@@ -1,9 +1,9 @@
 -- 132_git_concurrency_resource_lock.sql
--- flowgate.default.0669 (단위 1a) / 0666 0010-DB §2.1·§2.2·§3 (설계 번호 131 → 132).
--- resource_lock        — domain(P/G/W/B/R/M) 잠금 점유의 정본. 획득 = lock_key PK 삽입(L 2.5).
---                        group_id 는 G 만, target_key 는 W 만 채운다(CHECK). 진단용 원문이라 FK 없음(DB §2.0).
--- resource_reservation — fairness 예약(L 2.12). lock 행 없이도 존재할 수 있어 resource_lock 에 FK 를 걸지 않는다.
--- 가산형.
+-- flowgate.default.0669 (unit 1a) / 0666 0010-DB §2.1·§2.2·§3 (design number 131 → 132).
+-- resource_lock        — authoritative domain (P/G/W/B/R/M) lock ownership. Acquire by inserting the lock_key PK (L 2.5).
+--                        group_id is set only for G, target_key only for W (CHECK). Raw diagnostic values have no FK (DB §2.0).
+-- resource_reservation — fairness reservations (L 2.12). They can exist without a lock row, so there is no FK to resource_lock.
+-- Additive.
 
 CREATE TABLE resource_lock (
     lock_key        VARCHAR(66)  NOT NULL PRIMARY KEY,

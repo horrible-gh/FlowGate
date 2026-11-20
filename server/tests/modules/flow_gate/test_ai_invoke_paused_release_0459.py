@@ -1,6 +1,6 @@
-"""flowgate.default.0459 T0007 — group-keyed paused chain 명시적 취소·해제 API.
+"""flowgate.default.0459 T0007 — group-keyed paused chain explicit cancel/release API.
 
-Covers the server half of NR0003 방향 C / WP T#2:
+Covers the server half of NR0003 approach C / WP T#2:
 
   * DB layer (``ai_invoke_paused_chains.release_owned``): compare-and-swap delete,
     NULL-safe on ``paused_at``/``stop_run_id``, race survival (a row upserted after the

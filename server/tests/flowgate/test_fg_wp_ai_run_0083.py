@@ -1,7 +1,7 @@
 """flowgate.v02.0083 T#1 (WP-1) — a work plan (WP) card whose work AI is set runs on that AI, and its result takes the
 run cards' path: review -> automatic approval -> the next card.
 
-0072 T#3 개정 (revised): the plan card's run block was values only (``test_a_work_plan_node_hands_nothing_to_a_run``).
+0072 T#3 revised: the plan card's run block was values only (``test_a_work_plan_node_hands_nothing_to_a_run``).
 Now ``settings.uses_ai`` judges a plan card's writer — an explicit person assignee, else the card's work AI
 (``run_ai``), else an explicit AI assignee, else a person — ``fields.run_plan`` hands the AI writer its work AI, time
 limit and restarts, and ``fields.after_result`` gives its AI result the review / approval of a run card. The review
@@ -23,7 +23,7 @@ to a person — open / active, no job. Covered here:
     resume (``go_on_command`` -> ``needs_ai_dispatch``);
 
 and the regressions: run / test cards still approve by themselves, person-assigned run cards keep a person's
-writing and approval (0083 WP-4 개정: a person's WP takes its card's review / approval, ``test_fg_person_wp_review_0083``),
+writing and approval (0083 WP-4 revised: a person's WP takes its card's review / approval, ``test_fg_person_wp_review_0083``),
 and a step command keeps the next card pending.
 
 On the card settings suites' real SQLite DB, routes and fixtures (``test_fg_card_settings``,
@@ -211,7 +211,7 @@ def _plan_line(env, key):
 # ── (a) the work AI runs the WP ──────────────────────────────────────────────
 
 def test_a_wp_with_its_work_ai_creates_the_job_on_that_ai_and_issues_its_tokens_to_it(env, decided, monkeypatch):
-    """0072 T#3 개정: the reported case's card (no assignee, work AI aip_ozi33p) is an AI node — not a person's."""
+    """0072 T#3 revised: the reported case's card (no assignee, work AI aip_ozi33p) is an AI node — not a person's."""
     _opus(env)
     [wp] = _cards(env, [("WP", None)], {0: (("run_ai", OPUS), ("time_limit", 90), ("restart", 1))})
     _start(env)
@@ -248,7 +248,7 @@ AI_ASSIGNEE = {"kind": "ai", "user_id": None, "provider_id": "aip_assignee"}
 ], ids=["person_over_work_ai", "work_ai_only", "ai_assignee_only", "work_ai_over_ai_assignee", "nothing_person"])
 def test_b_the_wp_writer_follows_person_then_work_ai_then_ai_assignee_then_person(
         env, decided, assignee, run_ai, writer):
-    """0072 T#3 개정: the plan card's writer order (CH seq 5). Run / test cards keep their own judgement."""
+    """0072 T#3 revised: the plan card's writer order (CH seq 5). Run / test cards keep their own judgement."""
     from flowgate.card_settings import settings
 
     [wp] = _cards(env, [("WP", assignee)], {0: (("run_ai", run_ai),)} if run_ai else None)
@@ -460,7 +460,7 @@ def test_r_run_and_test_cards_keep_their_judgement(pre_feature_attempts, env):
 # 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: manual judgement and the system's approval (T §6.4, G-2)
 @pytest.mark.parametrize("doc_type, typ", [("T", "T")])
 def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revised_0083_wp4(pre_feature_attempts, env, decided, doc_type, typ):
-    """0083 WP-4 개정 (revised): the WP case is gone from here. A work plan a person writes now takes its card's review
+    """0083 WP-4 revised: the WP case is gone from here. A work plan a person writes now takes its card's review
     or, review 'none' (this card), its automatic approval (``test_fg_person_wp_review_0083``). flowgate.v02.0119 T#4
     rework (rej_01M6DQW6YF0SCQ5D P1): a person's run card no longer waits for a person's approval — its card reviews
     nothing, so its result completes as submitted (``human_submitted``); the person still writes it (no AI start)."""

@@ -177,7 +177,7 @@ useInspectorEvents(
     changed: () => worktree.refresh(),
   },
 )
-// flowgate.v02gui.0004 (0001-B §A-1, 관찰 2): a conflict (or its end) is shown as it happens — the Git ledger frames of
+// flowgate.v02gui.0004 (0001-B §A-1, observation 2): a conflict (or its end) is shown as it happens — the Git ledger frames of
 // the shown Flow read git/status and the conflict again, also while the tab is hidden (badge), with no F5. The
 // inspector event hook coalesces a burst of frames into one read.
 const GIT_LEDGER_EVENTS = [
@@ -359,7 +359,7 @@ watch(
   },
 )
 
-// flowgate.v02.0065 — Git 미연동 / read failure / Git 연결 (0065-R §3.1, §3.2). One branch shows
+// flowgate.v02.0065 — "Git 미연동" / read failure / "Git 연결" (0065-R §3.1, §3.2). One branch shows
 // either the read-failure card, the "미연동" card (a status the server answered with Git off) or
 // the 0033 exception area — a failed re-read never leaves an earlier exception card (and its
 // actions) up beside it. "미연동" also hides the header, as v12 does; it stays in the DOM.
@@ -367,7 +367,7 @@ watch(
 // `windows-change` keeps reporting the 0033 windows only.
 //
 // A re-read the network failed keeps the last answer and only notes it on the header (0033
-// §4.5). Over a connected project that is right; over "Git off" it would leave 미연동 up with
+// §4.5). Over a connected project that is right; over "Git off" it would leave Disconnected up with
 // the header (and its note) hidden — even after a connect turned Git on. There it is a read
 // failure: the error card with retry, until a read answers.
 const staleUnlinked = computed(
@@ -475,7 +475,7 @@ function openConnect(): void {
 }
 
 // Settings that exist with Git off open the window filled in (never the token: only whether
-// one is stored). A failed read leaves the form empty with a note; 미연동 stays as it is.
+// one is stored). A failed read leaves the form empty with a note; Disconnected stays as it is.
 // A request of a closed window still running is waited for, so the form shows what it left.
 async function loadConnectConfig(projectId: string, gen: number): Promise<void> {
   await connectSettled.get(projectId)
@@ -553,7 +553,7 @@ async function runConnect(projectId: string, gen: number, input: GitConfigSave):
     return stopConnect({ tone: 'error', messageKey: requestFailureKey(error, 'gui.git.connect.result.test_failed') })
   }
 
-  // 2. Save with Git on — `연결` is the Git 사용 switch (0065-R §3.3).
+  // 2. Save with Git on — `연결` is the Git use switch (0065-R §3.3).
   try {
     await connectSrc().saveGitConfig(projectId, input)
   } catch (error) {

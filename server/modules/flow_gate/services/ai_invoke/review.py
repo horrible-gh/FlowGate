@@ -149,8 +149,8 @@ def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
 # AND reworked, or the chain stopped. There is no fourth path.
 # The earlier form of R1 — "never advances without a `pass`" — ended a spent budget by parking
 # the chain, which left the LAST round's findings recorded and never fixed. That is exactly
-# what M0020 refused ("지적을 두번했으면 당연히 수정도 두번해야지"), so a finite count is now a
-# budget of review+rework PAIRS: N 검수 · 지적마다 수정 · 마지막 수정 뒤 다음 단계.
+# what M0020 refused ("two reviews with findings must naturally yield two reworks"), so a finite count is now a
+# budget of review+rework PAIRS: N reviews, rework after each finding, then the next step after the final rework.
 
 def _enabled_provider_chain(project_id: Optional[str]) -> list[dict]:
     """The project's effective provider chain, or [] when it cannot be read."""
@@ -687,7 +687,7 @@ def _derive_review_gate(bundle: dict) -> dict:
     if slot_revision > latest_revision:
         # The rework for this complaint already landed (I2). Reaching here IS the proof that
         # the complaint was rejected and then fixed, so this branch decides the NEXT round
-        # only and carries no reject_first at all (0458 NR0003 §8 방향 A). Carrying it was
+        # only and carries no reject_first at all (0458 NR0003 §8 option A). Carrying it was
         # what re-rejected the already-fixed review, drove `revised -> rejected`, and made
         # the following `pass` fail its own approval: the fresh revision keeps its `revised`
         # status into the next round, which is what lets a later `pass` settle through the
@@ -707,7 +707,7 @@ def _derive_review_gate(bundle: dict) -> dict:
         return {"stage": WORK_HOP_KIND, "approve_first": True, **common}
 
     # No rework has landed for this complaint yet. EVERY `issues` verdict earns its rework
-    # hop, the LAST round's included — 0414 M0020 "지적을 두번했으면 수정도 두번": a complaint
+    # hop, the LAST round's included — 0414 M0020 "two reviews with findings require two reworks": a complaint
     # that is only recorded and never fixed is not a review. So count=1 runs
     # review → rework → advance, and count=2 runs review → rework → review → rework → advance.
     return {"stage": REWORK_HOP_KIND, "round_no": rounds_used,
@@ -1168,7 +1168,7 @@ def _append_answered_questions(mention: str, bundle: dict, slot: dict, stage: st
     return mention
 
 
-# The automatic rejection text. English on purpose: T0010 작업 4 forbids new Korean literals
+# The automatic rejection text. English on purpose: T0010 task 4 forbids new Korean literals
 # in server modules, and build_review_mention's own review instructions are English in every
 # locale, so the rejection the same reviewer's findings produce matches what it reads.
 REVIEW_REJECT_HEADING = "## Automated review rejection"
@@ -1541,7 +1541,7 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
     its body correctly tells that reader "a human decides afterward". On an unmanned chain
     that premise is false, so the reviewer has to be told the verdict wires straight into an
     automatic rejection and how many rounds are left. English, like the review instructions
-    it extends (T0010 작업 4: no new Korean literals in server modules).
+    it extends (T0010 task 4: no new Korean literals in server modules).
     """
     if not mention:
         return mention
@@ -1887,7 +1887,7 @@ def active_review_selection(group_id: Optional[str]) -> tuple[Optional[dict], Op
 def _resumable_reviewer_overrides(
     project_id: str, reviewer_overrides: Optional[dict]
 ) -> Optional[dict]:
-    """Drop reviewers the project no longer has, keep the rest (P0007 [엣지] 재개).
+    """Drop reviewers the project no longer has, keep the rest (P0007 [edge] resume).
 
     The counterpart of _resumable_base_provider, and the opposite of the fresh-request rule:
     a NEW request naming a disabled reviewer is a visible 422, because the person is still
@@ -2051,7 +2051,7 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
 def _document_loop_counted_rounds(current: list[dict], excluded_review_ids) -> int:
     """How many of the loop's review ROUNDS (``_document_loop_review_view``) count against its review_count.
 
-    flowgate.v02test.0051 T0007 (A2, R A-3 "질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다"): a round whose verdict
+    flowgate.v02test.0051 T0007 (A2, R A-3 "rejections caused by questions do not count toward the review budget"): a round whose verdict
     carries an explicit question-wait cause marker (``db.review_count_exclusions``, written when that verdict's hop
     ended -- ``question_loop_wait.classify_parked_review`` / ``classify_answer_check_review``) is left out of the COUNT
     only. It stays in ``current``: it is still its round's verdict for the rejection and the rework, the stall check,
@@ -2567,7 +2567,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
             # fg:doc_review_status_changed listener is what applies a fresh
             # rejection_history onto the open document reactively (MainPanel/DocInfoPanel
             # read off that same doc object), so without this broadcast the sidebar's
-            # AI 검수·반려 feed stayed exactly as it was until a manual refresh/reopen.
+            # AI review/rejection feed stayed exactly as it was until a manual refresh/reopen.
             # Queued through after_commit — this whole function runs inside the caller's
             # transaction() frame, and broadcasting before it actually commits would tell
             # an open tab about a rejection that a later failure in this same transaction

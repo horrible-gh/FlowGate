@@ -189,7 +189,7 @@ describe('v02gui.0011 B: stop right after the send', () => {
   })
 })
 
-// flowgate.v02gui.0011 T — "중지 버튼을 누른것과 안누른게 아이콘이 똑같아서 ... 알아보기가 어려운데": a pressed stop
+// flowgate.v02gui.0011 T — "The stop icon looks the same before and after clicking ... so it is hard to tell": a pressed stop
 // (stop under way) is a muted spinning ring instead of the red ■ (… when the user asks for reduced motion).
 const COMPOSER_STYLE = readFileSync(resolve(__dirname, '../../../src/features/conversation/ConversationComposer.vue'), 'utf8')
   .split('<style')[1] ?? ''

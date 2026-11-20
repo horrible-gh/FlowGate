@@ -26,7 +26,7 @@ describe('features/designer/minimap structure (flowgate.v02.0049)', () => {
       /^\.\.\/center\/canvas\/flowNodeKinds$/,
       /^\.\.\/center\/canvas\/vueFlowMapping$/,
       /^\.\.\/center\/graph\/flowGraph$/,
-      // flowgate.v02.0068 T#2 (0004-D §0.1 미니맵 접속면 통일, 0005-L §2.9): the lines join the sides the Canvas
+      // flowgate.v02.0068 T#2 (0004-D §0.1 consistent minimap attachment sides, 0005-L §2.9): the lines join the sides the Canvas
       // joins — the Canvas's own edgeAnchors (pure; edgeGeometry itself is unchanged). Nothing else is opened.
       /^\.\.\/center\/canvas\/edgeGeometry$/,
     ]

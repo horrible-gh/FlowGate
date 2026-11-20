@@ -1,4 +1,4 @@
-// Icon set of the approved 11~14 환경 설정 mockups (24x24 stroke symbols), owned by this feature
+// Icon set of the approved 11~14 "환경 설정" mockups (24x24 stroke symbols), owned by this feature
 // the way features/ai owns AiIcon. The markup is static (no user input reaches v-html).
 export const SETTINGS_ICONS = {
   agent: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/>',

@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.11 표 교체 · §3.13 신설) — a card that actually runs vs one that waits.
+"""flowgate.v02.0113 T#1 (0030-M §4, 0002-D revised §3.11 table replaced · §3.13 added) — a card that actually runs vs one that waits.
 
 One judgement, ``card_settings.legacy_adapter.node_running``, is the card's *actual running*: an AI execution of the node
 is requested or running, or an AI review loop works on its result (also a result taken as written and sent straight to

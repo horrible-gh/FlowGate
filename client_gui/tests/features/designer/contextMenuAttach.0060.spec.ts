@@ -6,7 +6,7 @@
  * rule, the re-check before running, the invalidation and the right-button guard on the Canvas root.
  * flowgate.v02.0060 T#1 (WP 0012, Q item 459): every mockup item is shown — the 27 not connected disabled with their
  * reason (no request, no session call) — the multi-selection card opens its menu (no single card command, no run item,
- * selection kept), and 정렬 · 배치 / 정렬 run the Edit menu's 정렬 / 배치 (the same rule, one arrangeNodes, one undo).
+ * selection kept), and alignment · layout / alignment run the Edit menu's alignment / layout (the same rule, one arrangeNodes, one undo).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, ref, type PropType, type Ref } from 'vue'
@@ -128,7 +128,7 @@ interface Calls {
   groupCreate: number
   flowCreate: string[]
   palette: PaletteItemDefinition[]
-  /** 정렬 · 배치 / 정렬 reaching the Edit menu path (flowId, command). */
+  /** alignment · layout / alignment reaching the Edit menu path (flowId, command). */
   arrange: Array<[string, string]>
   /** ID 복사 reaching the Shell's copy (the document id). */
   copied: string[]
@@ -154,7 +154,7 @@ const Harness = defineComponent({
       copyDocumentId: (docId) => { props.calls.copied.push(docId) },
       openFlowCreate: (groupId) => { props.calls.flowCreate.push(groupId) },
       selectPalette: (picked) => { props.calls.palette.push(picked) },
-      // The Shell's Edit menu 정렬 / 배치 as DesignerShell lends it (rule: isMenuCommandEnabled with the open Flow and
+      // The Shell's Edit menu alignment / layout as DesignerShell lends it (rule: isMenuCommandEnabled with the open Flow and
       // its selected count; path: onTopCommand -> center.arrangeNodes). The Shell itself: contextMenuArrangeShell.0060.
       arrange: {
         groups: DESIGNER_ARRANGE_GROUPS,
@@ -274,7 +274,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     await settle()
     expect(event.defaultPrevented).toBe(true)
     expect(itemTexts()).toEqual(['＋ 카드 추가 ›', '▣ 붙여넣기', '▢ 전체 선택', '≡ 정렬 · 배치 ›'])
-    // No card selected: the Edit menu refuses every 정렬 / 배치, so the parent is disabled (no reason: a condition).
+    // No card selected: the Edit menu refuses every alignment / layout, so the parent is disabled (no reason: a condition).
     expect(states()).toEqual([['canvas.addCard', 'false', ''], ['canvas.paste', 'true', '미구현'], ['canvas.selectAll', 'false', ''], ['canvas.arrange', 'true', '']])
     expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(2)
     item('canvas.addCard').dispatchEvent(new MouseEvent('mouseenter'))
@@ -418,7 +418,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(graphOf(center).nodes).toHaveLength(4)
   })
 
-  // Q item 459 replaces "다중선택 카드는 메뉴 없음·신호 미소비" (D §3.6): the menu opens and consumes the signal; the rest of
+  // Q item 459 replaces "No menu or signal consumption for multiple selected cards" (D §3.6): the menu opens and consumes the signal; the rest of
   // §3.6 stays — no single card command (and no run item), the selection, select mode and cards unchanged.
   it('multi-selection: a selected card opens the multi menu (no single card command) and keeps the selection; a card outside is the single card menu', async () => {
     const { w, center, calls } = await mountHarness()
@@ -774,7 +774,7 @@ describe('Designer context menu — Palette (0006-D §9.3 ⑤)', () => {
   })
 })
 
-// flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 (blank Canvas) / 정렬 (multi-selected card) = Edit › 정렬 / 배치.
+// flowgate.v02.0060 T#1 (WP 0012 [B]): alignment · layout (blank Canvas) / alignment (multi-selected card) = Edit › alignment / layout.
 describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit menu 정렬 / 배치 (T#1)', () => {
   const ORDER = DESIGNER_ARRANGE_GROUPS.flat()
   const words = (command: string) => i18n.global.t(`gui.designer.top.arrange.${command.slice(5)}`)
@@ -784,7 +784,7 @@ describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit m
     item(parent).dispatchEvent(new MouseEvent('mouseenter'))
     await settle()
   }
-  /** What the Edit menu rule says for each 정렬 / 배치 command right now. */
+  /** What the Edit menu rule says for each alignment / layout command right now. */
   const rule = (center: DesignerCenterSession) => ORDER.map((command) => [command, !isMenuCommandEnabled(command, 'idle', {
     project: true, group: false, flow: center.state.activeFlowId !== null, selectedCount: center.state.views.f1.selectedNodeIds.length,
   })])
@@ -803,7 +803,7 @@ describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit m
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       await settle()
     }
-    // 3 cards: every command on (2 cards: 균등 분배 off, checked against the same rule above).
+    // 3 cards: every command on (2 cards: equal distribution off, checked against the same rule above).
     expect(rule(center).filter(([, off]) => off)).toEqual([])
   })
 
@@ -865,7 +865,7 @@ describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit m
     expect(arrange).not.toHaveBeenCalled()
     expect(calls.arrange).toEqual([])
 
-    // 2 selected: 균등 분배 waits for 3 (the Edit menu rule) — disabled, it requests nothing.
+    // 2 selected: equal distribution waits for 3 (the Edit menu rule) — disabled, it requests nothing.
     await openSub(w, card(w, 'gn_b'), 'multi.arrange')
     expect(items(1).filter((entry) => entry.getAttribute('aria-disabled') === 'true').map((entry) => entry.dataset.key))
       .toEqual(['multi.arrange:edit.distribute-horizontal', 'multi.arrange:edit.distribute-vertical'])

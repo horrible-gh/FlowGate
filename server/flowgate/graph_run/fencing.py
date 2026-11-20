@@ -17,7 +17,7 @@ the result binder, the result stage, a review / rework hop) is taken only while
 
 The engine's own start of a new execution (``request_write`` when a node opens) is no attempt token's write: it refuses
 only a run that is not running, paused or idle (``OPENING``); the execution itself then needs
-``execution_store.eligible`` (running / paused) to acquire. 0083 WP-3 (0061 T#2 개정): a person's approval on an idle
+``execution_store.eligible`` (running / paused) to acquire. 0083 WP-3 (0061 T#2 revision): a person's approval on an idle
 run opens the next node at once (``frontier.defers``; before, its propagation waited for the next command) and takes
 the run back to running first (``command.wake_approval``), so that opening's execution is requested on a running run
 and can acquire; a stopped run and one under a Time Machine operation are not woken and their propagation waits.

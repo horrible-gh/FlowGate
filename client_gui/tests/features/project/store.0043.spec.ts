@@ -1,6 +1,6 @@
 /**
  * flowgate.v02.0043 — what the project store adds for the Designer File menu: the recent
- * Project / Group / Flow lists (recentStorage.ts), Project 닫기, opening a recent Project the way
+ * Project / Group / Flow lists (recentStorage.ts), Project Close, opening a recent Project the way
  * the Dialog's "열기" does, the Dialog open that asks for the create child, and the Group / Flow
  * creates that invalidate the cached group tree.
  */

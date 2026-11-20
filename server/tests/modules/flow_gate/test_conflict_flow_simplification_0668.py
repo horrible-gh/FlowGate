@@ -1,20 +1,18 @@
-"""Git 충돌 처리 프로세스 간략화 — 서버 계약 (flowgate.default.0668 T0004).
+"""Simplified Git conflict handling: server contracts (flowgate.default.0668 T0004).
 
-0668 NR0003 이 정한 정상 경로는 ``승인 → 충돌 → AI/직접 해결 → 검토 및 승인 → 완료`` 다.
-화면 쪽 단계는 클라이언트가 줄이지만, 그 단계가 서버 상태 하나로 이어지려면 서버가 세 가지를
-약속해야 한다. 이 스위트가 그 셋을 고정한다.
+0668 NR0003 defines approval → conflict → AI/manual resolution → review/approval → completion.
+Client simplification relies on three server contracts:
 
-  * **TR 충돌도 같은 검토 화면에서 승인된다.** 해결이 끝나면 병합처럼 후보가 얼고
-    (``review_fingerprint``), ``GET …/review`` 가 같은 모양으로 답하고, ``POST …/approve``
-    가 그 지문으로 TR 커밋을 끝낸다. 본 것과 다른 트리는 커밋하지 않는다(``stale_review``).
-    별도 ``tr-commit`` 은 호환 경로로 그대로 남는다.
-  * **검토 대기는 화면이 아니라 서버 상태다.** 검토를 열면 세션 활동으로 친다(TTL 연장).
-    베이스를 쥐지 않은 검토 대기는 TTL 로 죽지 않고, 베이스를 쥔 것은 활동 TTL 에 생성 시점
-    기준 상한(``REVIEW_PENDING_MAX_HOURS``)이 걸린다.
-  * **청소가 닫은 시도는 abort 와 똑같이 정리된다.** TTL·고아 종료도 승인 intent 와
-    rerere checkpoint 를 버려, 이후 재승인이 ``final_approval_retry_mismatch`` 로 막히지 않는다.
+* TR conflicts use the same review screen. Resolution freezes review_fingerprint;
+  GET review returns the shared shape, and POST approve completes the TR commit using
+  that fingerprint. Reject changed trees with stale_review. Keep tr-commit compatible.
+* Review waiting is server state. The original 0668 contract treated opening a review
+  as activity. Review waits without a base lock do not expire by TTL; those holding
+  the base have activity TTL plus the creation-time REVIEW_PENDING_MAX_HOURS cap.
+* TTL/orphan cleanup clears approval intent and rerere checkpoints just like abort,
+  preventing later approvals from failing with final_approval_retry_mismatch.
 
-TR 쪽은 진짜 git 저장소와 마이그레이션된 sqlite 로 돌린다(0332 스위트와 같은 방식).
+TR tests use real Git and migrated SQLite, as in the 0332 suite.
 """
 from __future__ import annotations
 
@@ -212,7 +210,7 @@ def git_active(monkeypatch, repo):
 
 
 def _parked_cancel(repo):
-    """0009-TR 이 f.txt 를 A 로 만들고 그 위에 사람이 C 를 얹었다. 취소는 충돌한다."""
+    """0009-TR wrote A to f.txt, then a person changed it to C; cancellation conflicts."""
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     row = db_ledger.record_commit(
@@ -237,12 +235,12 @@ def _iso(delta_hours: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=delta_hours)).isoformat()
 
 
-# ── 1. TR 충돌도 같은 검토 화면에서 승인된다 ─────────────────────────────────────
+# ── 1. Approve TR conflicts through the same review screen ──
 
 @needs_git
 def test_resolving_a_tr_conflict_freezes_a_review_candidate(real_store, git_active, repo):
-    """해결 응답이 병합과 같은 ``review_fingerprint`` 를 싣고, 세션은 TR 어휘(resolved)를
-    유지한 채 검토 화면이 읽을 후보를 들고 있다. 커밋은 여전히 없다."""
+    """Resolution returns review_fingerprint like a merge. The TR session stays resolved
+    and holds the review candidate, but has not committed yet."""
     _row, parked, out = _resolved_cancel(repo)
     head = _git(["rev-parse", "HEAD"], repo).strip()
 
@@ -258,8 +256,8 @@ def test_resolving_a_tr_conflict_freezes_a_review_candidate(real_store, git_acti
 
 @needs_git
 def test_the_common_review_payload_serves_a_tr_conflict(real_store, git_active, repo):
-    """``GET …/review`` 가 병합 검토와 같은 모양으로 답한다. 없는 기능(대화·반려)은
-    다른 화면이 아니라 capability 플래그로 말한다."""
+    """GET review returns the merge-review shape. Capability flags indicate unsupported
+    conversation/rejection features without introducing a separate screen."""
     _row, parked, out = _resolved_cancel(repo)
 
     review = svc.get_merge_review(_GROUP, parked["merge_id"])["result"]
@@ -288,7 +286,7 @@ def test_opening_a_tr_review_before_resolution_is_not_ready(real_store, git_acti
 
 @needs_git
 def test_approving_with_the_shown_fingerprint_commits_the_tr(real_store, git_active, repo):
-    """검토 화면의 [승인] 한 번이 TR 커밋과 원장 기록까지 끝낸다(별도 커밋 단추 없음)."""
+    """One [승인] action completes the TR commit and ledger record, with no separate commit button."""
     row, parked, out = _resolved_cancel(repo)
 
     done = trc.commit_conflict_resolution(
@@ -319,8 +317,8 @@ def test_a_fingerprint_that_was_not_shown_commits_nothing(real_store, git_active
 
 @needs_git
 def test_a_tree_changed_after_review_is_refrozen_not_committed(real_store, git_active, repo):
-    """검토 뒤에 누군가 워크트리를 바꿨다. 본 지문은 맞지만 지금 트리는 본 트리가 아니다 —
-    커밋하지 않고, 새 지문으로 다시 얼려 다시 보게 한다(병합의 identity_mismatch 와 같은 계약)."""
+    """The worktree changed after review. Refuse the old fingerprint without committing;
+    freeze a new candidate for review, matching the merge identity_mismatch contract."""
     _row, parked, out = _resolved_cancel(repo)
     shown = out["result"]["review_fingerprint"]
     head = _git(["rev-parse", "HEAD"], repo).strip()
@@ -335,7 +333,7 @@ def test_a_tree_changed_after_review_is_refrozen_not_committed(real_store, git_a
     context = db_git.session_context(db_git.get_session(parked["merge_id"]))
     assert context["review_fingerprint"] != shown
     assert exc.value.details["review_fingerprint"] == context["review_fingerprint"]
-    # 새 지문으로는 승인된다.
+    # The new fingerprint is accepted.
     done = trc.commit_conflict_resolution(
         _GROUP, parked["merge_id"], review_fingerprint=context["review_fingerprint"],
     )
@@ -347,7 +345,7 @@ def test_a_tree_changed_after_review_is_refrozen_not_committed(real_store, git_a
 def test_the_legacy_tr_commit_route_still_commits_without_a_fingerprint(
     real_store, git_active, repo,
 ):
-    """``tr-commit`` 은 호환 alias 로 남는다 — 예전 화면이 눌러도 같은 결과다."""
+    """tr-commit remains a compatibility alias, producing the same result for old clients."""
     _row, parked, _out = _resolved_cancel(repo)
 
     done = trc.commit_conflict_resolution(_GROUP, parked["merge_id"])
@@ -359,8 +357,8 @@ def test_the_legacy_tr_commit_route_still_commits_without_a_fingerprint(
 def test_the_approve_route_dispatches_a_tr_session_to_the_tr_commit(
     real_store, git_active, repo, monkeypatch,
 ):
-    """같은 ``POST …/approve`` 가 TR 세션이면 TR 커밋으로 간다. 병합 승인 함수는 불리지
-    않는다 — TR 커밋과 병합 검토 적용은 한 잠금 구간으로 합쳐지지 않는다."""
+    """POST approve routes TR sessions to TR commit without calling merge approval.
+    TR commit and merge-review application remain separate lock scopes."""
     _row, parked, out = _resolved_cancel(repo)
     monkeypatch.setattr(git_routes, "_check_group_permission", lambda *a, **k: None)
 
@@ -379,7 +377,7 @@ def test_the_approve_route_dispatches_a_tr_session_to_the_tr_commit(
     assert resp["result"]["status"] == "committed"
 
 
-# ── 2. 검토 대기의 TTL ─────────────────────────────────────────────────────────
+# ── 2. Review-wait TTL ──
 
 def _session(created_h: float, touched_h: float) -> dict:
     return {"merge_id": 1, "created_at": _iso(created_h), "touched_at": _iso(touched_h)}
@@ -422,8 +420,8 @@ def test_a_base_holding_review_wait_has_a_hard_cap(monkeypatch):
 def test_the_sweep_keeps_a_resolved_tr_conflict_under_the_review_ttl(
     real_store, git_active, repo,
 ):
-    """해결된 TR 충돌은 검토 TTL 을 따른다: 최근에 열어 봤으면 하루가 지나도 남고,
-    상한을 넘으면 예전 TTL 과 같은 포기 경로로 정리된다."""
+    """Resolved TR conflicts use review TTL: recently viewed sessions survive a day,
+    but the hard cap sends them through the existing abandonment cleanup path."""
     _row, parked, _out = _resolved_cancel(repo)
     merge_id = parked["merge_id"]
     real_store._execute(
@@ -444,7 +442,7 @@ def test_the_sweep_keeps_a_resolved_tr_conflict_under_the_review_ttl(
 
 @needs_git
 def test_opening_the_tr_review_is_not_activity(real_store, git_active, repo):
-    """flowgate.v02test.0052 T0003 할 일 4(c) supersedes 0668 T0004 here: opening (reading)
+    """flowgate.v02test.0052 T0003 task 4(c) supersedes 0668 T0004 here: opening (reading)
     the TR review is not activity — only real operations move ``touched_at``."""
     _row, parked, _out = _resolved_cancel(repo)
     merge_id = parked["merge_id"]
@@ -459,7 +457,7 @@ def test_opening_the_tr_review_is_not_activity(real_store, git_active, repo):
     assert db_git.get_session(merge_id)["touched_at"] == stale
 
 
-# ── 3. 청소가 닫은 시도는 abort 와 같이 정리된다 ───────────────────────────────
+# ── 3. Cleanup closes attempts with the same cleanup as abort ──
 
 def test_a_sweep_close_discards_the_intent_and_the_checkpoint(monkeypatch):
     calls: list[tuple] = []

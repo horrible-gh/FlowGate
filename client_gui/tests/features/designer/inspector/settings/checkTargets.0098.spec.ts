@@ -381,7 +381,7 @@ describe('0119 refresh icon and field help', () => {
     expect(targetRow.getAttribute('data-label')).toBe('병합 대상')
     const switches = w.get('[data-test="check-settings-switches"]')
     expect(switches.element.closest('[data-test="inspector-control-row"]')).toBe(targetRow)
-    // The target area comes first, then the switch pairs (원격 반영, 브랜치 보관) with their own labels.
+    // The target area comes first, then the switch pairs (apply to remote, keep branch) with their own labels.
     const value = targetRow.querySelector('.inspector-control-value')!
     expect([...value.children].map(el => el.className)).toEqual(['inspector-check-settings-target-group', 'inspector-check-settings-switches'])
     expect(switches.findAll('.inspector-check-settings-toggle').map(l => l.text())).toEqual(['원격 반영', '브랜치 보관'])

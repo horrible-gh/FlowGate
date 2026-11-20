@@ -1,7 +1,7 @@
 """flowgate.default.0410 T0008 — backend tests for the origin_provider_name /
 origin_ai_run_id snapshot fields on get_group_tree() document nodes.
 
-Covers T0008 완료 기준: a document with a provider/run snapshot and a legacy
+Covers T0008 acceptance criteria: a document with a provider/run snapshot and a legacy
 document with neither must both carry the two keys (explicit None for the
 legacy row, never an omitted key) in the same group's tree nodes.
 """
@@ -117,7 +117,7 @@ class TestOriginSnapshotTreeNodes:
         assert node["origin_ai_run_id"] is None
 
     def test_both_states_render_in_the_same_group_tree(self, origin_conn):
-        """The two documents share a group — this is the T0008 완료 기준 scenario
+        """The two documents share a group — this is the T0008 acceptance criteria scenario
         of a snapshot document and a legacy document appearing side by side."""
         nodes = _doc_nodes(origin_conn)
         assert len(nodes) == 2

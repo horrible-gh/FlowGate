@@ -1,9 +1,9 @@
 // flowgate.v02.0051 stage 2 — the 설계 card's own lines. Pure functions over the target; nothing reads
 // the server.
 // flowgate.v02.0053 T#5 (0053 CH) — the 설계 card (기본 · 프로토콜 · 로직 · DB) is shaped like 조사 · 작업:
-// 지시서 · 레포트, and the v7 "설명 대기" note is gone. The lines are the documents the server made when the
-// card was placed (T#1 card lines: 지시서 DS, 레포트 D / P / L / DB). A Node without card lines (a design
-// document Node) shows its own document on its line and a run's result on the report line. The 지시서
+// instruction · report, and the v7 "설명 대기" note is gone. The lines are the documents the server made when the
+// card was placed (T#1 card lines: instruction DS, report D / P / L / DB). A Node without card lines (a design
+// document Node) shows its own document on its line and a run's result on the report line. The instruction
 // line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
 
@@ -75,7 +75,7 @@ function designLine(key: DesignSlot['key'], types: readonly string[], facts: Des
   return emptyLine(key, key === 'report' ? 'empty.after_run' : facts.docId !== null ? 'empty.unconnected' : null)
 }
 
-/** The card's lines: 설계 지시 (unless the settings omit it) · 설계서 (flowgate.v02.0074 T#3 names). */
+/** The card's lines: 설계 지시 (unless the settings omit it) · design document (flowgate.v02.0074 T#3 names). */
 export function designCardSlots(facts: DesignCardFacts, instructionOmitted = false): readonly DesignSlot[] {
   const report = designLine('report', DESIGN_REPORT_TYPES, facts)
   const instruction = designLine('instruction', DESIGN_INSTRUCTION_TYPES, facts)

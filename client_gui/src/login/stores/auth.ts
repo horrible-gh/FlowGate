@@ -313,7 +313,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // flowgate.v02.0020 (시스템 › 보안): enrolment the 2FA policy requires before sign-in.
+  // flowgate.v02.0020 ("시스템" › "보안"): enrolment the 2FA policy requires before sign-in.
   async function startTotpSetup() {
     state.value = 'TOTP_SETUP_SUBMITTING'
     error.value = null
@@ -367,7 +367,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // flowgate.v02.0020 (시스템 › 사용자 › 초대): /login?invite=<token>.
+  // flowgate.v02.0020 ("시스템" › "사용자" › "초대"): /login?invite=<token>.
   async function openInvite(token: string) {
     inviteToken.value = token
     invite.value = null

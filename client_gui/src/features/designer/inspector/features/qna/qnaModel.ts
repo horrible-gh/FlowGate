@@ -24,7 +24,7 @@
 // disposed group) does not show the question line, the answer form or the AI line at all.
 // flowgate.v02.0064 T-B5 (L0005 2.18, P0006 §5.2·§6.4) — who answered is one of four classes plus unknown:
 // a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
-// (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
+// (No linked execution record) and an AI with no run evidence (external/unconfirmed). The list shows the side; the ↗ window adds
 // the answer time and the run id when there is one. The item's `responder` is never read for this.
 // flowgate.v02.0070 T#5 (B5) — a question is answered after its context is checked: the Inspector list shows and opens
 // the questions only; the ↗ window shows the document id, the full question, who asked and when, then the answer form.
@@ -123,8 +123,8 @@ export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind
  * `gui.inspector.qna.`) and the key's parameters.
  *   human           a person — `side.human_named` with the server's `author_name`, else `side.human`
  *   ai_named        an AI whose provider name (or id) the server recorded
- *   ai_run_only     an AI whose run id is recorded but not its provider (실행 기록 연결 안 됨)
- *   ai_no_evidence  an AI with no run evidence at all (실행 정보 없음 — 외부/미확인)
+ *   ai_run_only     an AI whose run id is recorded but not its provider (No linked execution record)
+ *   ai_no_evidence  an AI with no run evidence at all (No execution information — external/unconfirmed)
  *   unknown         any other author kind
  */
 export type QnaSideClass = 'human' | 'ai_named' | 'ai_run_only' | 'ai_no_evidence' | 'unknown'

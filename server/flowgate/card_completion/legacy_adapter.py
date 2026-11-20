@@ -6,7 +6,7 @@ a run step's context and its post-commit jobs, the run's policies, the result bi
 path that turns a missing node event into ``resolve`` -> ``apply_decision``; the frontier ignores an invalid or repeated
 event, L0009 E-20 / E-36), the document row and its review verdicts.
 
-Listed for the directory move (WP 부록 A): ``graph_workflow.services.result_binder`` / ``run_apply`` / ``flow_guard``,
+Listed for the directory move (WP Appendix A): ``graph_workflow.services.result_binder`` / ``run_apply`` / ``flow_guard``,
 ``graph_workflow.store.run_store``, ``db.documents``, ``db.document_reviews``, ``workflow_events`` (a submission's author),
 ``services.ai_invoke.runtime.get_run_record`` (the provider a review run actually ran on).
 
@@ -15,7 +15,7 @@ the completion still needs moved here — the card lines an ended attempt left b
 the read-only gates the v0.1 approval asked (a readable, non-blank body; a TSR's test gate), which are now the v0.2
 completion's own judgement (``card_completion.gates``), and the system's write of an approved instruction
 (``write_instruction_approved``: no v0.1 review transition, no TR approval hook, no Graph contact). Listed for the directory
-move (WP 부록 A): ``graph_workflow.projection.run_documents.registered_documents``, ``workflow.pipeline_service``
+move (WP Appendix A): ``graph_workflow.projection.run_documents.registered_documents``, ``workflow.pipeline_service``
 (``_require_document_body_for_approval`` / ``_require_test_gate_for_approval`` / ``approvable_text`` /
 ``AUTO_COMPLETE_TYPES`` / ``FILELESS_APPROVABLE_TYPES`` / ``TransitionError``), ``workflow.transition_rules.get_doc_rule``,
 ``db.events``.

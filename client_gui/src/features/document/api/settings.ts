@@ -308,7 +308,7 @@ export async function settingsRunRead(groupId: string): Promise<SettingsRun> {
 }
 
 // flowgate.v02.0053 T#5 — the card (Node) settings T#2 stores (server/flowgate/card_settings), read by the
-// documents tab for the one value it shows: a card whose instruction is omitted has no 지시서 line (v7).
+// documents tab for the one value it shows: a card whose instruction is omitted has no instruction line (v7).
 //   node      GET   /api/v1/flows/{flow_id}/nodes/{node_key}/settings -> { ok, flow_id, node_key, card_kind,
 //             locked, fields: { <name>: { value, stored, default, choices } } } — `value` is the stored
 //             value, else the default; `card_kind` is null for a card without settings. 404 node_not_found
@@ -405,7 +405,7 @@ export async function settingsNodeRead(flowId: string, nodeKey: string, refreshM
   return toSettingsNode(response.data)
 }
 
-/** Whether the card omits its instruction (`instruction` = omit): its 지시서 line is not shown. */
+/** Whether the card omits its instruction (`instruction` = omit): its instruction line is not shown. */
 export function settingsInstructionOmitted(node: SettingsNode | null | undefined): boolean {
   return node?.fields.instruction?.value === 'omit'
 }

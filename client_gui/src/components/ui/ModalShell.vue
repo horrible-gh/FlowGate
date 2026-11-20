@@ -217,8 +217,8 @@ function onOverlayMouseUp(event: MouseEvent): void {
 
 /* ──────────────────────────── open / close lifecycle ────────────────────── */
 // Scroll lock is refcounted in core/overlay/scrollLock.ts (real module scope, see the
-// import above): more than one ModalShell can be open at once (T0006 §5 "중첩
-// 가능성"), and the lock must only lift once the last one closes, regardless of which
+// import above): more than one ModalShell can be open at once (T0006 §5 "Support
+// nesting"), and the lock must only lift once the last one closes, regardless of which
 // one opened or closed first.
 
 let listenersAttached = false

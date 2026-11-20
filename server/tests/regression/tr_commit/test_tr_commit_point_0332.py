@@ -1,17 +1,17 @@
-"""TR 승인이 그룹 워크트리에 커밋을 남기는가 (0332 T#1 — R0001 앞 절).
+"""Does TR approval commit to the group worktree? (0332 T#1, first part of R0001.)
 
-세 층을 각각 진짜로 돌린다. 어느 하나라도 대역으로 때우면 이 기능이 "호출은 됐다"까지만
-증명되기 때문이다.
+Exercise each of three real layers. Substituting any layer would prove only that
+the feature was called.
 
-1. **원장(085)** — 마이그레이션을 전부 적용한 sqlite 위에서 운영 INSERT/SELECT 를 그대로
-   돌린다. CHECK 제약(DB0008 §2-1)이 실제로 잘못된 조합을 막는지도 여기서 본다.
-2. **커밋(git)** — 저장소 밖의 진짜 git 워크트리에 ``create_tr_commit`` 을 걸어 커밋이
-   정말 생기는지, 도구 흔적이 빠지는지(0382 규칙 공유), 못 하는 상황마다 P0006 §5-2 의
-   닫힌 코드 중 무엇이 나오는지 본다.
-3. **훅(승인)** — TR 이 아니면 아무 것도 하지 않고, TR 이면 원장 한 줄과 P0006 §1 모양의
-   응답이 남는지 본다.
+1. **Ledger (085)**: execute production INSERT/SELECT statements unchanged on fully
+   migrated SQLite, including CHECK constraints rejecting invalid combinations (DB0008 §2-1).
+2. **Commit (Git)**: run ``create_tr_commit`` on a real worktree outside the repository,
+   checking actual commits, exclusion of tool artifacts (shared 0382 rules), and which
+   closed P0006 §5-2 code each failure condition produces.
+3. **Hook (approval)**: do nothing for non-TRs; for TRs, leave a ledger row and a response
+   matching P0006 §1.
 
-한 줄로 요약하면 이 시험이 고정하는 계약은 **"승인은 git 이 무엇을 하든 선다"** 이다.
+The governing contract: **approval stands regardless of what Git does**.
 """
 from __future__ import annotations
 
@@ -78,8 +78,8 @@ INSERT OR IGNORE INTO documents(
 
 
 class _SqliteStore:
-    """운영 FlowGateStore 와 같은 최소 계약. ``_sql`` 은 일부러 두지 않는다 — 등록된
-    진짜 SQL 본문이 쓰이게 하려는 것이다(0393 의 교훈)."""
+    """The same minimal contract as production FlowGateStore. Deliberately omit ``_sql``
+    so the registered real SQL body is used (the lesson from 0393)."""
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -109,10 +109,10 @@ class _SqliteStore:
 
 @pytest.fixture
 def real_store(migrated_sqlite_db):
-    """085 를 포함해 마이그레이션 전부를 적용한 sqlite 위의 진짜 저장소.
+    """A real store on SQLite with every migration applied, including 085.
 
-    ``get_store`` 함수가 아니라 connection 의 STORE 객체를 바꾼다 — 이미 ``get_store`` 를
-    임포트해 둔 모듈도 같은 객체를 보게 하기 위해서다.
+    Replace the connection's STORE object, not the ``get_store`` function, so modules
+    that already imported ``get_store`` see the same object.
     """
     db_path = migrated_sqlite_db("tr_commit_ledger_0332.db", seed_sql=_SEED_SQL)
     store = _SqliteStore(db_path)
@@ -125,7 +125,7 @@ def real_store(migrated_sqlite_db):
         store._conn.close()
 
 
-# ── 1. 원장(마이그레이션 085) ────────────────────────────────────────────────
+# ── 1. Ledger (migration 085) ───────────────────────────────────────────────
 
 def test_a_commit_round_writes_one_live_row(real_store):
     row = db_ledger.record_commit(
@@ -140,7 +140,7 @@ def test_a_commit_round_writes_one_live_row(real_store):
 
 
 def test_a_skipped_round_writes_one_no_commit_row_carrying_why(real_store):
-    """K3 의 이유: "소스를 안 건드렸다"와 "커밋을 시도조차 못 했다"가 구별돼야 한다."""
+    """Reason for K3: distinguish no source changes from an inability even to attempt a commit."""
     row = db_ledger.record_no_commit(
         group_id=_GROUP, doc_id=_TR_DOC, skip_reason="git_busy",
     )
@@ -151,7 +151,7 @@ def test_a_skipped_round_writes_one_no_commit_row_carrying_why(real_store):
 
 
 def test_the_schema_refuses_a_live_row_without_a_commit(real_store):
-    """CHECK ck_trl_commit_sha_matches_state — DB0008 §5-1 의 첫 불변식."""
+    """CHECK ck_trl_commit_sha_matches_state: the first invariant in DB0008 §5-1."""
     with pytest.raises(sqlite3.IntegrityError):
         real_store._execute(
             "INSERT INTO tr_commit_ledger"
@@ -162,7 +162,7 @@ def test_the_schema_refuses_a_live_row_without_a_commit(real_store):
 
 
 def test_the_schema_refuses_a_skip_reason_outside_the_closed_set(real_store):
-    """P0006 §5-2 가 닫아 둔 여섯 코드 — 일곱 번째를 DB 가 막는다."""
+    """The six closed-set codes in P0006 §5-2; the DB rejects a seventh."""
     with pytest.raises(sqlite3.IntegrityError):
         real_store._execute(
             "INSERT INTO tr_commit_ledger"
@@ -173,7 +173,7 @@ def test_the_schema_refuses_a_skip_reason_outside_the_closed_set(real_store):
 
 
 def test_re_approval_adds_a_row_and_the_newest_one_wins(real_store):
-    """되돌렸다가 다시 승인하면 새 행이다 — 앞 행은 지우지 않는다(D0005 K9)."""
+    """Reapproval after rewind creates a new row without deleting the earlier row (D0005 K9)."""
     first = db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_DOC, commit_sha="1" * 40, commit_subject="first",
     )
@@ -188,7 +188,7 @@ def test_re_approval_adds_a_row_and_the_newest_one_wins(real_store):
 
 
 def test_live_rows_are_the_cancel_targets_newest_first(real_store):
-    """L0007 §2.4 — 정렬 키는 seq 가 아니라 원장 행 번호(삽입 순서)다."""
+    """L0007 §2.4: sort by ledger row ID (insertion order), not seq."""
     db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_DOC_2, commit_sha="b" * 40, commit_subject="seq 11",
     )
@@ -201,13 +201,13 @@ def test_live_rows_are_the_cancel_targets_newest_first(real_store):
 
     targets = db_ledger.live_rows(_GROUP, [_TR_DOC, _TR_DOC_2, _D_DOC])
 
-    # seq 9 가 나중에 커밋됐으므로 seq 11 보다 먼저 취소돼야 한다.
+    # seq 9 was committed later, so it must be canceled before seq 11.
     assert [t["doc_id"] for t in targets] == [_TR_DOC, _TR_DOC_2]
-    # no_commit 행은 취소 대상이 아니다.
+    # no_commit rows are not cancellation targets.
     assert _D_DOC not in [t["doc_id"] for t in targets]
 
 
-# ── 2. 화면이 읽는 모양 ───────────────────────────────────────────────────────
+# ── 2. Shape consumed by the UI ────────────────────────────────────────────
 
 def test_the_strip_marks_only_steps_that_actually_committed(real_store):
     db_ledger.record_commit(
@@ -222,19 +222,19 @@ def test_the_strip_marks_only_steps_that_actually_committed(real_store):
     assert marks[_TR_DOC] == {
         "state": "live", "commit": "d" * 7,
         "subject": "0009-TR: 제목", "cancel_commit": None,
-        # 0332 T0018 K11 — 처음 승인이 남긴 커밋이지 되살린 커밋이 아니다.
+        # 0332 T0018 K11: a commit from initial approval, not a reapplied commit.
         "restored": False,
     }
-    # 소스를 바꾸지 않은 단계는 조용하다 — 표식 자체가 없다(D0005 §6.1).
+    # A step that did not change source stays quiet: no marker at all (D0005 §6.1).
     assert _TR_DOC_2 not in marks
     assert _D_DOC not in marks
 
 
 def test_a_failed_re_approval_does_not_blank_out_an_existing_commit(real_store):
-    """재승인이 커밋에 실패해도 살아 있는 커밋의 표식은 그대로 있어야 한다.
+    """A live commit's marker must remain even if reapproval fails to commit.
 
-    가장 새 행만 보면 그 위에 얹힌 ``no_commit`` 이 칸을 비워 버린다 — 브랜치에는 그 커밋이
-    멀쩡히 있는데 화면만 없다고 말하는 상태가 된다.
+    Reading only the newest row would let a later ``no_commit`` clear the field,
+    making the UI deny a commit that still exists intact on the branch.
     """
     db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_DOC, commit_sha="f" * 40, commit_subject="살아 있는 커밋",
@@ -264,10 +264,10 @@ def test_the_panel_summary_counts_every_row_and_never_truncates_silently(real_st
     assert summary["live"] == trc.PANEL_COMMIT_LIST_MAX + 3
     assert summary["no_commit"] == 1
     assert len(summary["commits"]) == trc.PANEL_COMMIT_LIST_MAX
-    assert summary["more"] == 4          # 접힌 줄 수를 화면이 "N개 더"로 말한다
-    # 최신순이므로 맨 위는 마지막에 쓴 no_commit 줄이다.
+    assert summary["more"] == 4          # The UI reports the number of collapsed rows as "N개 더".
+    # Newest first: the top row is the no_commit row written last.
     assert summary["commits"][0]["doc_code"] == "0011-TR"
-    # doc_code 는 저장된 값이 아니라 지금의 documents.seq/type_code 에서 조립된다.
+    # Assemble doc_code from current documents.seq/type_code, not stored values.
     assert {c["doc_code"] for c in summary["commits"] if c["state"] == "live"} == {"0009-TR"}
 
 
@@ -279,14 +279,14 @@ def test_summaries_answer_for_several_groups_in_one_call(real_store):
     summaries = trc.group_commit_summaries([_GROUP, "flowgate.default.9999"])
 
     assert summaries[_GROUP]["live"] == 1
-    # 원장 행이 없는 그룹은 아예 빠진다 — 호출자가 빈 요약을 채운다.
+    # Omit groups without ledger rows; the caller fills their empty summaries.
     assert "flowgate.default.9999" not in summaries
 
 
-# ── 3. 승인 훅 ────────────────────────────────────────────────────────────────
+# ── 3. Approval hook ──────────────────────────────────────────────────────
 
 def test_a_non_tr_approval_is_not_touched_at_all(real_store, monkeypatch):
-    """P0006 §1-8 — TR 이 아닌 승인 응답은 이 기능 이전과 바이트 단위로 같다."""
+    """P0006 §1-8: non-TR approval responses remain byte-for-byte identical to before this feature."""
     def _never(*args, **kwargs):
         raise AssertionError("non-TR 승인이 git 을 건드렸다")
 
@@ -307,8 +307,8 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
 
     assert payload["committed"] is True
     assert payload["commit"] == "a1b2c3d"
-    # flowgate.default.0462 T0005 §4-2 — L0007 §2.6 을 대체: 초안이 없으면(이 시드 문서의
-    # commit_message 는 NULL) ASCII 폴백이고, 번역은 여전히 타지 않는다.
+    # flowgate.default.0462 T0005 §4-2 replaces L0007 §2.6: without a draft (this seeded document's
+    # commit_message is NULL), use the ASCII fallback; still perform no translation.
     assert payload["subject"] == "chore: approve 0009-TR"
     rows = db_ledger.list_by_group(_GROUP)
     assert [r["state"] for r in rows] == ["live"]
@@ -316,7 +316,7 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
 
 
 def test_a_tr_approval_that_could_not_commit_still_leaves_the_reason(real_store, monkeypatch):
-    """승인은 선다. 못 한 이유는 원장과 응답 양쪽에 남는다(P0006 §1-6)."""
+    """Approval stands. Record the failure reason in both the ledger and response (P0006 §1-6)."""
     monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
         "committed": False, "commit": None, "commit_sha": None, "subject": None,
         "skipped_reason": "git_busy", "excluded_artifacts": [], "committed_paths": [],
@@ -336,12 +336,12 @@ def test_the_hook_never_lets_a_git_failure_reach_the_approval(real_store, monkey
 
     monkeypatch.setattr(svc, "create_tr_commit", _boom)
 
-    # 예외가 아니라 None 이다 — 호출자는 tr_commit 키를 빼고 승인을 그대로 돌려준다.
+    # Return None, not an exception: the caller omits tr_commit and returns approval unchanged.
     assert trc.on_document_approved(_TR_DOC) is None
 
 
 def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkeypatch, tmp_path):
-    """D0005 K2 — 신고 목록은 대조에만 쓴다. 커밋 범위를 좁히지 않는다."""
+    """D0005 K2: use the reported list only for comparison, never to narrow commit scope."""
     body = tmp_path / "0009-TR_document.md"
     body.write_text(
         "# 작업레포트\n\n## 변경 파일\n\n- server/reported.py\n- client/forgotten.ts\n",
@@ -364,14 +364,14 @@ def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkey
     payload = trc.on_document_approved(_TR_DOC)
 
     assert payload["reported_diff"] == {
-        "unreported": ["server/never_declared.py"],   # 신고 없이 담긴 것
-        "missing": ["client/forgotten.ts"],           # 신고했는데 안 담긴 것
+        "unreported": ["server/never_declared.py"],   # Included without being reported.
+        "missing": ["client/forgotten.ts"],           # Reported but not included.
     }
-    # 그래도 커밋은 그대로 성공이다 — 경고이지 차단이 아니다.
+    # The commit still succeeds; this is a warning, not a blocker.
     assert payload["committed"] is True
 
 
-# ── 3a. 승인 훅의 quiet 판정 (flowgate.default.0548 T0004) ─────────────────────
+# ── 3a. Approval hook's quiet decision (flowgate.default.0548 T0004) ─────────
 
 def _tr_body_doc(tmp_path, real_store, monkeypatch, body_text):
     """The seed TR's file_path pointed at a real temp file carrying body_text."""
@@ -659,10 +659,10 @@ def test_a_committed_approval_is_never_marked_quiet(real_store, monkeypatch):
     assert payload["quiet"] is False
 
 
-# ── 3b. 승인 커밋 제목 규칙 (flowgate.default.0462 T0005) ─────────────────────
+# ── 3b. Approval commit subject rules (flowgate.default.0462 T0005) ─────────
 
 def _draft_doc(commit_message=None, seq=9, title="커밋 포인트 생성 작업레포트"):
-    """``commit_subject()`` 는 dict 만 보므로 DB 없이도 결정 로직을 시험할 수 있다."""
+    """``commit_subject()`` reads only a dict, so its decision logic can be tested without a DB."""
     return {
         "doc_id": _TR_DOC, "seq": seq, "type_code": "TR", "title": title,
         "commit_message": commit_message, "group_id": _GROUP,
@@ -675,7 +675,7 @@ def test_a_conventional_ascii_draft_is_used_verbatim():
 
 
 def test_a_non_conventional_ascii_draft_gets_the_derived_type_prefixed(real_store):
-    """`derive_commit_type()` 이 실제로 DB 를 읽고 돌려준 타입이 쓰인다 — 대역이 아니다."""
+    """Use the type actually read and returned from the DB by `derive_commit_type()`, without a substitute."""
     real_store._execute(
         "INSERT INTO documents(doc_id, project_id, module, group_id, type_code, seq, "
         "title, status, created_at, updated_at) VALUES (?, ?, 'default', ?, 'B', 1, "
@@ -706,8 +706,8 @@ def test_an_oversized_draft_falls_back_instead_of_being_clipped():
 def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
     real_store, monkeypatch,
 ):
-    """T0005 §4-3 — RPC 승인 경로가 넘기는 dict 에는 commit_message 키 자체가 없다.
-    재조회가 실제로 도는지 본다."""
+    """T0005 §4-3: the RPC approval dict omits commit_message entirely.
+    Verify that re-querying actually happens."""
     real_store._execute(
         "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
         ["fix(git): preserve finalized commit subject", _TR_DOC],
@@ -720,7 +720,7 @@ def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
     partial = {
         "doc_id": _TR_DOC, "type_code": "TR", "group_id": _GROUP,
         "title": "커밋 포인트 생성 작업레포트", "seq": 9,
-        # commit_message 키 자체가 없다 — RPC 경로(workflow.py:766)의 result dict 재현.
+        # No commit_message key: reproduce the result dict from the RPC path (workflow.py:766).
     }
 
     payload = trc.on_document_approved(_TR_DOC, partial)
@@ -729,7 +729,7 @@ def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
 
 
 def test_a_commit_message_key_present_as_none_skips_the_refetch(real_store, monkeypatch):
-    """키가 있고 값이 None 이면 "초안 없음"이 확정된 정보다 — 재조회하지 않는다."""
+    """A present key with value None conclusively means no draft; do not re-query."""
     real_store._execute(
         "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
         ["fix(git): preserve finalized commit subject", _TR_DOC],
@@ -747,7 +747,7 @@ def test_a_commit_message_key_present_as_none_skips_the_refetch(real_store, monk
 
     payload = trc.on_document_approved(_TR_DOC, partial)
 
-    # DB 에는 영문 초안이 있어도, 넘겨받은 dict 가 "키 있음+None" 이므로 그 정보를 믿는다.
+    # Even if the DB has an English draft, trust the supplied dict's present key with value None.
     assert payload["subject"] == "chore: approve 0009-TR"
 
 
@@ -761,7 +761,7 @@ def test_cancel_and_reapply_subjects_quote_the_new_style_subject():
     )
 
 
-# ── 4. 진짜 git 워크트리 ─────────────────────────────────────────────────────
+# ── 4. Real Git worktree ───────────────────────────────────────────────────
 
 def _git(args, cwd):
     env = os.environ.copy()
@@ -779,7 +779,7 @@ def _git(args, cwd):
 
 @pytest.fixture
 def repo():
-    """저장소 **밖**의 진짜 git 워크트리 하나 (0382 의 재발 방지 규칙을 스스로 지킨다)."""
+    """One real Git worktree **outside** the repository, following the 0382 recurrence-prevention rule itself."""
     path = _SCRATCH / f"wt-{os.urandom(6).hex()}"
     path.mkdir(parents=True)
     _git(["init", "-b", "work"], path)
@@ -792,7 +792,7 @@ def repo():
 
 @pytest.fixture
 def git_active(monkeypatch, repo, real_store):
-    """그룹이 git 활성이고 워크트리가 이 repo 라고 서버에 알려 준다."""
+    """Tell the server the group has Git enabled and this repo is its worktree."""
     monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: {
         "enabled": 1, "base_branch": "main", "author_name": None, "author_email": None,
     })
@@ -824,7 +824,7 @@ def test_the_commit_really_lands_and_debris_stays_out(git_active, repo):
     assert _git(["log", "-1", "--pretty=%s"], repo).strip() == "0009-TR: 커밋 포인트 생성"
     assert result["committed_paths"] == ["server/real.py"]
     assert result["excluded_artifacts"] == ["server/.test-tmp-0332/junk.txt"]
-    # 뺐다고 지우지 않는다 — 흔적 파일은 워크트리에 그대로 있다(타임머신 원칙).
+    # Exclusion is not deletion: artifact files remain in the worktree (Time Machine principle).
     assert (debris / "junk.txt").exists()
 
 
@@ -836,13 +836,13 @@ def test_a_tr_that_changed_nothing_gets_no_commit_and_says_so(git_active, repo):
 
     assert result["committed"] is False
     assert result["skipped_reason"] == "no_changes"
-    # 빈 앵커 커밋을 남기지 않는다(D0005 K3) — 마무리의 자동 폐기 판단이 죽는다.
+    # No empty anchor commit (D0005 K3); it would defeat finalize's automatic-discard decision.
     assert _git(["rev-parse", "HEAD"], repo).strip() == before
 
 
 @needs_git
 def test_a_worktree_dirty_only_with_debris_is_not_no_changes(git_active, repo):
-    """P0006 §1-5 — 화면 문구가 다르므로 코드도 다르다."""
+    """P0006 §1-5: different UI text requires different codes."""
     debris = repo / "server" / ".test-tmp-0332"
     debris.mkdir(parents=True)
     (debris / "junk.txt").write_text("junk\n", encoding="utf-8")
@@ -858,7 +858,7 @@ def test_a_worktree_dirty_only_with_debris_is_not_no_changes(git_active, repo):
 def test_a_held_lock_gives_up_immediately_instead_of_stalling_the_approval(
     git_active, repo, monkeypatch,
 ):
-    """L0007 §1 tr_commit_lock_wait_sec = 0 — 마무리 한 번이 승인 전부를 멈추면 안 된다."""
+    """L0007 §1 tr_commit_lock_wait_sec = 0: one finalization must not block all approvals."""
     stub_group_lock(monkeypatch, grant=False)
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 2\n", encoding="utf-8")
@@ -867,7 +867,7 @@ def test_a_held_lock_gives_up_immediately_instead_of_stalling_the_approval(
 
     assert result["committed"] is False
     assert result["skipped_reason"] == "git_busy"
-    # 잃는 것은 없다 — 변경분은 워크트리에 그대로 남아 다음 커밋이 가져간다.
+    # Nothing is lost: edits remain in the worktree for the next commit.
     assert (repo / "server" / "real.py").exists()
 
 
@@ -990,8 +990,8 @@ def test_real_no_worktree_ever_registered_stays_quiet_even_with_no_declaration(
 def test_the_approval_hook_produces_a_conventional_english_commit_in_real_git(
     real_store, git_active, repo,
 ):
-    """flowgate.default.0462 T0005 완료 기준 3 — 실제 승인 훅을 태워 커밋 제목을 실측한다
-    (초안이 있는 경우)."""
+    """flowgate.default.0462 T0005 acceptance criterion 3: measure the commit subject through
+    the real approval hook when a draft exists."""
     real_store._execute(
         "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
         ["fix(git): preserve finalized commit subject", _TR_DOC],
@@ -1011,7 +1011,7 @@ def test_the_approval_hook_produces_a_conventional_english_commit_in_real_git(
 def test_the_approval_hook_falls_back_to_ascii_chore_when_no_draft(
     real_store, git_active, repo,
 ):
-    """완료 기준 3의 두 번째 실측 — 초안이 없는 경우."""
+    """The second measurement for acceptance criterion 3: no draft exists."""
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 3\n", encoding="utf-8")
 
@@ -1025,7 +1025,7 @@ def test_the_approval_hook_falls_back_to_ascii_chore_when_no_draft(
 
 @needs_git
 def test_the_finalize_absorb_still_behaves_exactly_as_before(repo):
-    """공유한 것은 stage 단계뿐 — 0382 가 고정한 흡수 커밋의 계약은 그대로다."""
+    """Only the staging step is shared; preserve 0382's absorb-commit contract."""
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 2\n", encoding="utf-8")
     debris = repo / "server" / ".test-tmp-0332"

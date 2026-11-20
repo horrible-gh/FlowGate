@@ -440,7 +440,7 @@ def hold(group_id: str, merge_id: int) -> dict:
         })
         # No abort can happen before the checkpoint INSERT has committed. If Git
         # refuses the abort, restore the previous active ledger entry atomically.
-        # flowgate.v02test.0052 T0003 할 일 3(b): the session's abort is audited
+        # flowgate.v02test.0052 T0003 task 3(b): the session's abort is audited
         # (``ref_operations[].stderr_tail`` on failure) like the user [abort].
         proc = gs._abort_merge(root, merge_id=merge_id, reason="hold_abort")
         if proc.returncode:

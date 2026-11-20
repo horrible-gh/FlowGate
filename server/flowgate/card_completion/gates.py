@@ -1,4 +1,4 @@
-"""The read-only gates of a v0.2 completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3, seq 11 교체 3).
+"""The read-only gates of a v0.2 completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3, seq 11 replacement 3).
 
 Before a node's result is completed (``card_settings.legacy_adapter.approve``) or a card's instruction is approved
 (``instruction.approve``), the document passes the gates the v0.1 approval asked — never the v0.1 approval itself:

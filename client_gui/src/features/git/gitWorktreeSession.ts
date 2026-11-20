@@ -1212,7 +1212,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 
   // ── Base apply (T#7, §3-4) ─────────────────────────────────────────────────────────
 
-  // Folding closes the `상태` / `Diff` pane (§3-7 구역 열림).
+  // Folding closes the `상태` / `Diff` pane (§3-7 section open).
   function toggleApply(): void {
     state.applyOpen = !state.applyOpen
     if (!state.applyOpen) state.infoPane = null

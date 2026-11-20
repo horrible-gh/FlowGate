@@ -325,7 +325,7 @@ _TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
 # rev2 folded build_overview_summary's result into the `/groups/tree` envelope itself so both
 # problems above went away — but that made `include_terminal=true` (the default) stop being
 # byte-identical to the pre-T0006 API for every existing caller, which is exactly what T0006
-# §1.1 ("그대로 반환한다") and the completion criteria ("기본 API 호환 ... 유지된다") rule out.
+# §1.1 ("return unchanged") and the completion criteria ("preserve existing API compatibility") rule out.
 # The review on rev2 called this out.
 #
 # rev3 put `/groups/tree/overview_summary` back as its own route, so `/groups/tree` reverted to

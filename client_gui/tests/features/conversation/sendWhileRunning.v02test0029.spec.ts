@@ -9,7 +9,7 @@ import { createFakeSource, turn } from './fakeConversationSource'
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0029 — "답하는 중에도 채팅": a message sent while the chat's AI answers is stored at once and shown as
+// flowgate.v02test.0029 — "Chat while an answer is in progress": a message sent while the chat's AI answers is stored at once and shown as
 // 대기; its AI call is not started next to the running one but once that run has ended (one follow-up per chat), unless
 // the answer already read it.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }

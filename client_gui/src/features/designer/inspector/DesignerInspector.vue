@@ -448,7 +448,7 @@ function selectTab(key: string) {
   font-weight: 700;
 }
 
-/* 시안 v7: the coloured tab is underlined in its own colour when selected (not the default blue). */
+/* mockup v7: the coloured tab is underlined in its own colour when selected (not the default blue). */
 .designer-inspector-tabs :deep(.ui-tab.is-active[data-tone="info"]) {
   border-bottom-color: #7cc0ff;
 }

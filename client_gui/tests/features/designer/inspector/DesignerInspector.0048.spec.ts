@@ -170,7 +170,7 @@ describe('Node selection shows the real document state in the header', () => {
     expect(center.activeSelection.value).toMatchObject({ projectId: 'flowgate', graph: { flowId: 'flowgate.v02.0048', ownership: 'v01' }, node: { id: 'slot_t1' } })
     expect(get(w, 'designer-inspector-kind').text()).toBe('작업')
     expect(get(w, 'designer-inspector-title').text()).toBe('T#1 결과')
-    // flowgate.v02.0052 묶음 A: one pill; the raw values sit in the tooltip and data attributes.
+    // flowgate.v02.0052 batch A: one pill; the raw values sit in the tooltip and data attributes.
     // flowgate.v02.0052 T#3: the Canvas `blocked` of a rejected document is named as the rejection
     // (반려됨, v7 work.rej), not as the Canvas word 보류; the Canvas value stays in the state span.
     const pill = get(w, 'designer-inspector-pill')

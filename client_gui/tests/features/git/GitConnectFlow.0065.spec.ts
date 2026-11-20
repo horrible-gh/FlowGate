@@ -102,7 +102,7 @@ function deferred<T>() {
 const ok: GitConnectionTest = { reachable: true, authenticated: true, failureCode: null, remoteDefaultBranch: 'main' }
 const failedProvision: GitProvisionResult = { status: 'failed', mode: 'clone', busy: false, provision: null }
 
-// The 0033 view (Git on, nothing to do is quiet): no 미연동 / read-failure card, the header shown.
+// The 0033 view (Git on, nothing to do is quiet): no Disconnected / read-failure card, the header shown.
 const connected = () =>
   q('git-unlinked') === null && q('git-status-error') === null && q<HTMLElement>('git-head')?.style.display === ''
 
@@ -323,7 +323,7 @@ describe('saved but the Base not prepared (0065-R §3.3)', () => {
     expect(text('git-connect-message')).toBe('설정은 저장됐지만 저장소 준비에 실패했습니다. 저장소 준비를 다시 시도하세요.')
     expect(fake.source.fetchGitProvision).toHaveBeenCalledWith(P)
     expect(fake.source.loadStatus.mock.calls.length).toBe(reads + 1)
-    // The tab follows the server: Git is on now, so the 0033 view, not 미연동.
+    // The tab follows the server: Git is on now, so the 0033 view, not Disconnected.
     expect(connected()).toBe(true)
     expect(text('git-connect-retry-provision')).toBe('저장소 준비 다시 시도')
 

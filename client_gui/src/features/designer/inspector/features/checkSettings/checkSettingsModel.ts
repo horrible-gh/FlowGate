@@ -161,7 +161,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const targetOptions = optionsSource === 'live' ? liveOptions : optionsSource === 'cache' ? cached
     : optionsSource === 'unverified' ? unverified : []
   const reason = checkSettingsReason(input)
-  // flowgate.v02gui.0004 (0001-B 관찰 1): no stored mode = the server applies no merge / commit, i.e. 보류. It is shown
+  // flowgate.v02gui.0004 (0001-B observation 1): no stored mode = the server applies no merge / commit, i.e. 보류. It is shown
   // selected so the default is visible instead of three unselected choices.
   const scope = oneOf(valueOf('merge_mode'), CHECK_SCOPES) ?? (input.node ? 'hold' : null)
   const lookupError = state?.status === 'git_unavailable' ? 'target.git_unavailable'

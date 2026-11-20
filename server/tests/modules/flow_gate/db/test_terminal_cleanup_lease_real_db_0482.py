@@ -1,17 +1,14 @@
-"""flowgate.default.0482 T0011 완료 기준 2: 실제 SQL 영속 경로 회귀.
+"""flowgate.default.0482 T0011 acceptance criterion 2: real SQL persistence regressions.
 
-rej_01M1HZBVZ61GG8H9 finding 2가 지적한 공백을 채운다: 지금까지의 terminal-cleanup
-스냅샷/프로젝트 리스 시험은 전부 `_using_memory()`가 True인 process-local dict를
-거쳤고(테스트 프로세스에는 실 DB 연결이 없으므로), 097/098 마이그레이션(T0016 병합 전 093/094)의 신규
-적용·재실행과 `git_terminal_cleanup_snapshots`/`project_ai_leases` 테이블의 실제
-INSERT/UPSERT/SELECT/DELETE 경로는 어떤 시험에서도 실행되지 않았다.
+Close finding 2 from rej_01M1HZBVZ61GG8H9. Earlier terminal-cleanup snapshot/project-lease
+tests used process-local dictionaries because _using_memory() returned True without a DB.
+They never exercised initial/repeated migration 097/098 application (093/094 before T0016)
+or actual INSERT/UPSERT/SELECT/DELETE on git_terminal_cleanup_snapshots/project_ai_leases.
 
-이 파일은 `FlowGateStore._db`에 실제 `sqloader.sqlite3.SQLiteWrapper`(파일 모드)를
-얹어 `_using_memory()`가 False로 떨어지게 만들고, 두 모듈의 `get_store`를 그 스토어로
-monkeypatch해 진짜 SQL 문을 sqlite 파일에 실행한다. `migrated_sqlite_db`가 097/098을
-포함한 전체 마이그레이션 디렉터리를 적용하므로, 이 파일이 통과하는 것 자체가
-"신규 적용" 증거이고, 두 번째 `_migrate_fresh` 재실행(아래 `test_migrations_rerun_...`)이
-"재실행 안전성" 증거다.
+Install a file-backed sqloader.sqlite3.SQLiteWrapper in FlowGateStore._db so _using_memory()
+is False, then patch both modules' get_store to execute real SQL. migrated_sqlite_db applies
+the entire migration directory, proving initial application including 097/098. Repeating
+_migrate_fresh in test_migrations_rerun_... proves rerun safety.
 """
 from __future__ import annotations
 
@@ -122,8 +119,8 @@ class TestSnapshotDurableSqlPath:
         assert rows[0][0] == "failed" and rows[0][1] == 0
 
     def test_snapshot_survives_a_brand_new_store_instance(self, real_store, monkeypatch):
-        """'새 탭과 서버 재시작 뒤에도 마지막 완료 스냅샷을 조회할 수 있어야 한다'
-        (T0011 삭제·축소 금지 조건 3): a fresh FlowGateStore over the SAME db file — no
+        """'The last completed snapshot remains readable after a new tab or server restart'
+        (T0011 preservation requirement 3): a fresh FlowGateStore over the SAME db file — no
         shared Python object, no process-local `_memory` dict — must still read it back."""
         store, db_path = real_store
         monkeypatch.setattr(snapshots, "get_store", lambda: store)
@@ -245,7 +242,7 @@ class TestProjectLeaseDurableSqlPath:
         assert project_ai_leases.get_active("other")["run_id"] == "owner-b"
 
 
-# ── migration apply/rerun safety (T0011 완료 기준 2) ──────────────────────────
+# ── migration apply/rerun safety (T0011 acceptance criteria 2) ──────────────────────────
 #
 # `migrated_sqlite_db` (conftest.py) applies every .sql file with plain
 # `executescript` and keeps no ledger — it is the right tool for "give me a schema",

@@ -699,7 +699,7 @@ class TestGhostCardRoundTripOverRealRoutes:
         assert removed.status_code == 200
         assert removed.json()["dismissed"] is True
 
-        # 언제까지 나오게 할건데 -- this is the answer: it does not come back.
+        # The dismissed card must not keep reappearing.
         again = http.get("/api/v1/ai-invoke/active-all", headers=headers)
         assert again.json()["runs"] == []
 

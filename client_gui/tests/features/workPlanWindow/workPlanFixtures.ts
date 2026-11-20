@@ -98,7 +98,7 @@ export function readAnswer(over: Record<string, unknown> = {}): Record<string, u
 }
 
 /**
- * flowgate.v02.0073 T#1 — the plan with a 설계 지시 (DS) sheet first and a 반영 지시 (T2) set between the two work
+ * flowgate.v02.0073 T#1 — the plan with a 설계 지시 (DS) sheet first and a apply instruction (T2) set between the two work
  * sets: types the window does not draw, carrying values and an x_* field that every save must keep as they are.
  * Card order (draft.cards): c_ds1, c_d1, c_t1, c_t21, c_t2, c_ts1 — shown: c_d1, c_t1, c_t2, c_ts1.
  */

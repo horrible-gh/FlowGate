@@ -1,7 +1,7 @@
 // flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's own lines (0035 v7 req.*): one document slot,
 // 요구사항 or 버그 by the document type. Pure functions over the target; nothing reads the server.
-// flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI 위임 (only while AI 위임 is on): the lines are the card's
-// documents the server keeps (T#1 / T#2 card lines). The AI 위임 engine is not in this range — its line is
+// flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI delegation (only while AI delegation is on): the lines are the card's
+// documents the server keeps (T#1 / T#2 card lines). The AI delegation engine is not in this range — its line is
 // the empty record document the setting made, opened like any other.
 import type { InspectorTarget } from '../../inspectorTarget'
 
@@ -14,7 +14,7 @@ export interface RequirementSlotState {
 }
 
 export interface RequirementSlot {
-  /** `document`: the root document line (요구사항 / 버그); `delegation`: the AI 위임 line. */
+  /** `document`: the root document line (요구사항 / 버그); `delegation`: the AI delegation line. */
   readonly key: 'document' | 'delegation'
   readonly kind: 'document' | 'result'
   /** Which name the line carries. */
@@ -73,8 +73,8 @@ function filled(key: RequirementSlot['key'], name: RequirementSlot['name'], id: 
 }
 
 /**
- * The card's lines: the root document (its card line, else the bound document), and the AI 위임 line
- * while the card has one — the server keeps it only while AI 위임 is on (T#2), so it is never drawn empty.
+ * The card's lines: the root document (its card line, else the bound document), and the AI delegation line
+ * while the card has one — the server keeps it only while AI delegation is on (T#2), so it is never drawn empty.
  * A requirement card whose Flow root is held by another card has no document on its line (T#1).
  */
 export function requirementCardSlots(facts: RequirementCardFacts): readonly RequirementSlot[] {

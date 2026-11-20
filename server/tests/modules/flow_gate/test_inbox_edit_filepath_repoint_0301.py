@@ -88,9 +88,9 @@ def _patch_store(_db):
             raise NotImplementedError
 
     original = conn_mod.STORE
-    # 0394 T0004: 이 모듈은 자기 pepper 로 갈아끼워야 하지만, 그건 이 모듈이 도는
-    # 동안만이다. 다른 스위트도 import 시점에 각자 ACTIVE_ID 를 발행하므로, 돌려놓지
-    # 않으면 뒤에 오는 쪽이 남의 pepper 로 토큰을 검증하게 된다.
+    # 0394 T0004: this module must install its own pepper only while its tests run.
+    # Other suites also issue ACTIVE_ID values at import time. Without restoring it,
+    # later suites would validate tokens using another suite's pepper.
     original_pepper = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
     os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
     conn_mod.STORE = _PatchedStore()

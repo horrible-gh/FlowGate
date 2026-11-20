@@ -79,7 +79,7 @@
         <b class="designer-header-label">{{ user.username }}</b>
         <LineIcon name="chevron-down" class="designer-header-chevron" />
       </button>
-      <!-- 0016-CH (시안 basodrr4 B안): who is signed in on a card at the top, then the three items with tinted line
+      <!-- 0016-CH (mockup basodrr4 option B): who is signed in on a card at the top, then the three items with tinted line
            icons; 로그아웃 sits apart below a separator in red. Items and destinations are unchanged. -->
       <div v-if="accountOpen" id="designer-account-menu" ref="accountMenu" role="menu" class="designer-account-menu" @keydown="menuKey">
         <div class="designer-account-heading">
@@ -208,7 +208,7 @@ function setLocale(code: DesignerLocale) {
 
 <style scoped>
 .designer-account { position: relative; }
-/* 0016-CH (시안 basodrr4 B안): the raised card menu, on theme.css's type scale. */
+/* 0016-CH (mockup basodrr4 option B): the raised card menu, on theme.css's type scale. */
 .designer-account-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 100; width: 280px; max-width: calc(100vw - 24px); padding: 8px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-pop-radius); background: var(--fg2-pop-surface); color: var(--fg2-text); box-shadow: var(--fg2-pop-shadow); font-size: var(--fg2-fs-body); }
 .designer-account-heading { display: flex; align-items: center; gap: 12px; min-width: 0; margin-bottom: 8px; padding: 12px; border: 1px solid var(--fg2-line); border-radius: 12px; background: var(--fg2-inset-bg); }
 .designer-account-avatar { display: grid; flex: none; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 14px; font-weight: 700; }

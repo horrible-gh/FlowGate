@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0043 — the Designer File menu connected to the product (0001-R).
  *
- * Every item of 파일 — Project / Group / Flow 새로 만들기 · 열기 · 최근 · 닫기 and Designer 닫기 — acts
+ * Every item of 파일 — Project / Group / Flow Create new · 열기 · Recent · 닫기 and Designer 닫기 — acts
  * on what already exists: the Project Dialog and its "열기" (0040), the Project Explorer's
  * selection / expansion (0023), the Center session's Flow tabs (0026) and the v0.1 module /
  * group creates. Opening a Flow is the Explorer's double click (select + open); a selection

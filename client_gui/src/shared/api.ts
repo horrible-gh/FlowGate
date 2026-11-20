@@ -66,7 +66,7 @@ const clearStoredAuth = () => {
 }
 
 // --- group 0016 / NR0003 Finding C: cross-tab refresh coordination -----------------
-// Symptom: "간혹" every session is force-logged-out. Root cause: with "remember me" the
+// Symptom: "occasionally" every session is force-logged-out. Root cause: with "remember me" the
 // refresh token lives in shared localStorage, so two tabs that both hit 401 after an idle
 // period read the SAME refresh token and each POST /auth/refresh. The server rotates the
 // token on the first call and treats the second (now-retired jti) as token reuse, which
@@ -284,8 +284,8 @@ const LONG_RUNNING_PATHS = [
   /\/conversations\/[^/]+\/auto-title/,
   // flowgate.v02.0152: an AI start answers only after admission — worktree check, the group's
   // first source sync (git commands of up to 120s each), lease, token, scratch. The 30s default
-  // gave up on healthy starts the server went on to run, and the chat said "AI를 호출하지
-  // 못했습니다" for its first call. The chat resends the same press (client_request_id) when even
+  // gave up on healthy starts the server went on to run, and the chat said "AI를 호출하지 못했습니다"
+  // for its first call. The chat resends the same press (client_request_id) when even
   // this ceiling passes, so a slower admission is still recovered rather than started twice.
   /\/ai-invoke\/start(?:$|\?)/,
 ]

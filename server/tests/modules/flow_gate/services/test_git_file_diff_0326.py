@@ -4,7 +4,7 @@ R0001: "파일 익스플로러에 파일이 변경됐다 까지는 나오는데 
 바뀌었는지 까지는 나오지 않는다." No endpoint returned the *content* of a change —
 ``git/status`` and ``git/groups/{gid}/changes`` return paths and status letters only.
 ``read_base_file_diff`` / ``read_group_file_diff`` add the missing half: the old and
-new content of ONE path, which the client turns into a line diff (NR0005 안 b).
+new content of ONE path, which the client turns into a line diff (NR0005 option b).
 
 Like test_git_manual_fetch_0320, the git plumbing is monkeypatched so the branch logic
 runs identically on every host (the real-git E2E suite skips on git-for-Windows). The

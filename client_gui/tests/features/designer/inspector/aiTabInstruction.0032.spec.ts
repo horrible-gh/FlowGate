@@ -3,8 +3,8 @@ import { cardRoleRows, instructionWritten } from '@/features/designer/inspector/
 import type { CardAiRoles } from '@/features/document'
 
 /**
- * flowgate.v02gui.0032 (decision 7): a card whose 지시서 has a written body never calls its 지시 AI, so the AI tab shows
- * the 지시 AI row as 사용하지 않음 (held) without changing the stored value; an empty 지시서 shows the stored AI again.
+ * flowgate.v02gui.0032 (decision 7): a card whose instruction has a written body never calls its 지시 AI, so the AI tab shows
+ * the 지시 AI row as 사용하지 않음 (held) without changing the stored value; an empty instruction shows the stored AI again.
  */
 function roles(): CardAiRoles {
   const row = (providerId: string) => ({ state: 'assigned_ok', outcome: 'ai', source: 'card', legacyFlag: false, providerId,

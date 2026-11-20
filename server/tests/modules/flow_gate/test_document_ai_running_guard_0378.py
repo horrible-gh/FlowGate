@@ -66,7 +66,7 @@ def test_human_mutation_is_structured_423(monkeypatch):
         "message": "Modification not allowed while an AI run owns this group.",
         "group_id": GROUP,
         "run_id": "aiv_owner",
-        # 0401 NR0003 §3 / T0004 작업 4: the lease's OWN run is not in this process's
+        # 0401 NR0003 §3 / T0004 task 4: the lease's OWN run is not in this process's
         # registry (never seeded here), so is_run_live reports False -- an orphaned lease.
         "run_live": False,
     }}

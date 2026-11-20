@@ -1,16 +1,16 @@
-"""flowgate.default.0403 T0005 — NR0004 가 재현 조건까지 적어 둔 결함들의 회귀 테스트.
+"""flowgate.default.0403 T0005: regressions for defects reproduced in NR0004.
 
-NR0004 §5 의 우선순위 순서를 그대로 따라간다.
+Follow the priority order in NR0004 §5:
 
-  1. F1  저장의 파일 쓰기와 DB 리비전이 한 덩어리인가            (§3 F1 재현 조건)
-  2. F2  부어 넣은 계획이 낡았을 때 저장이 멈추는가              (§3 F2 재현 조건)
-  3. F3  부어 저장한 사실이 적용 이력에 남는가                    (§3 F3)
-  4. F4  워크플로가 없어도 계획으로 첫 시퀀스를 만들 수 있는가    (§3 F4)
-  5. F6  제안이 화면과 서버 가운데 하나의 리비전만 기준으로 삼는가 (§3 F6)
-  6. F7  편집 잠금 판정이 서버 한 곳에서 나오는가                 (§3 F7)
-  7. F8  제목 길이 오류가 문서 번호를 소비하지 않는가             (§3 F8)
+1. F1: file writes and DB revision updates form one save operation (§3 F1).
+2. F2: stale applied plans cannot be saved (§3 F2).
+3. F3: application history records applying and saving a plan (§3 F3).
+4. F4: a plan can create the first sequence without an existing workflow (§3 F4).
+5. F6: suggestions use one shared revision basis between client and server (§3 F6).
+6. F7: the server is the single authority for edit locking (§3 F7).
+7. F8: title-length errors do not consume document numbers (§3 F8).
 
-앞의 네 개는 서비스 계층을, 뒤의 세 개는 HTTP 라우트를 직접 두드린다.
+The first four exercise services; the last three call HTTP routes directly.
 """
 from __future__ import annotations
 
@@ -42,13 +42,13 @@ PROJECT = "wp403prj"
 GROUP = "wp403prj-__ALL__-0403"
 ROOT_DOC = "wp403prj-__ALL__-0403-R0001"
 
-# 서비스 계층 시험이 쓰는 이름들 (DB 없이 monkeypatch 로 배선한다).
+# Names used by service-layer tests, wired through monkeypatch without a DB.
 OWNER_DOC_ID = "flowgate.default.0403.0001-B"
 WP_DOC_ID = "flowgate.default.0403.0009-WP"
 SEQUENCE = {"id": 403, "doc_id": OWNER_DOC_ID, "head_advanced_at": None}
 
 
-# ══ 서비스 계층 — F2 · F3 · F4 ═══════════════════════════════════════════════
+# ══ Service layer: F2 · F3 · F4 ══
 
 def _item(item_seq, type_, label, status, result=None):
     return {
@@ -67,7 +67,7 @@ class _FakeStore:
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """edit_workflow_pending 을 DB 대신 기록으로 돌린다. 시퀀스가 이미 있는 그룹."""
+    """Record edit_workflow_pending calls without a DB for a group with an existing sequence."""
     inserted: list[dict] = []
     stored = [
         _item(1, "R", "요건정의", "done", result=OWNER_DOC_ID),
@@ -82,8 +82,8 @@ def wired(monkeypatch, tmp_path):
     }
 
     def _current_items(seq_id):
-        """저장 전에는 지금 있는 줄, 저장 뒤에는 방금 쓴 줄까지 — 적용 이력에 적히는
-        '저장 뒤 지문'과 '이 계획이 만든 줄 번호'가 진짜 값이 되도록."""
+        """Return existing rows before saving and newly written rows afterward, so the
+        recorded post-save fingerprint and row numbers reflect actual state."""
         if not inserted:
             return [dict(r) for r in stored]
         locked = [dict(r) for r in stored if r["result_doc_id"] is not None]
@@ -118,7 +118,7 @@ def wired(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wds.db_documents, "get_by_id", _get_by_id)
 
-    # 적용 이력은 진짜 파일로 남긴다 — 남았는지를 파일에서 읽어 확인하기 위해서다.
+    # Persist application history in a real file so its presence can be verified on disk.
     plan_path = tmp_path / "0009-WP_document.json"
     plan_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
@@ -146,7 +146,7 @@ def _write_plan(wired: dict, counts: dict) -> None:
 
 
 def test_f2_a_plan_that_moved_since_the_dialog_opened_stops_the_save(wired):
-    """NR0004 F2 재현 조건: 워크플로 지문은 그대로인데 계획만 리비전이 올랐다."""
+    """NR0004 F2: the workflow fingerprint is unchanged but the plan revision advanced."""
     with pytest.raises(wds.PlanRevisionChanged) as exc:
         wds.edit_workflow_pending(
             OWNER_DOC_ID,
@@ -156,7 +156,7 @@ def test_f2_a_plan_that_moved_since_the_dialog_opened_stops_the_save(wired):
         )
     assert exc.value.expected == 2
     assert exc.value.current == 3
-    # 한 줄도 쓰이지 않았다.
+    # No row was written.
     assert wired["inserted"] == []
 
 
@@ -172,8 +172,8 @@ def test_f2_the_same_plan_revision_lets_the_save_through(wired):
 
 
 def test_f2_an_ordinary_edit_carrying_an_old_source_is_not_judged_by_it(wired):
-    """이미 부어 저장된 줄은 그 출처를 계속 달고 다닌다. 그 낡은 번호로 평범한
-    [시퀀스 수정]을 막으면, 한 번 부은 그룹은 두 번 다시 시퀀스를 못 고친다."""
+    """Applied rows retain their provenance. Rejecting ordinary [시퀀스 수정] using that
+    old revision would prevent any later sequence edit after applying a plan once."""
     wds.edit_workflow_pending(
         OWNER_DOC_ID,
         [{"type": "P", "label": "프로토콜설계", "note": "예전에 부어 둔 줄",
@@ -202,7 +202,7 @@ def test_f3_a_poured_save_is_written_into_the_plans_application_journal(wired):
     assert row["mode"] == "replace_after"
     assert row["workflow_doc_id"] == OWNER_DOC_ID
     assert row["workflow_tag_before"] != row["workflow_tag_after"]
-    # 이 계획이 만든 줄이 어느 자리인지까지 남는다 — T 뒤에 자동 붙는 TR도 같은 근원이다.
+    # Record exactly which rows this plan created, including the TR automatically paired with T.
     assert row["poured_item_seqs"] == [6, 7]
 
 
@@ -214,7 +214,7 @@ def test_f3_an_ordinary_edit_writes_no_application_row(wired):
 
 @pytest.fixture
 def wired_without_sequence(wired, monkeypatch):
-    """같은 배선인데 이 그룹에는 아직 워크플로가 없다 (NR0004 F4)."""
+    """The same wiring, but this group has no workflow yet (NR0004 F4)."""
     created: list[str] = []
     sequence: dict = {}
 
@@ -251,22 +251,22 @@ def test_f4_an_undecided_workflow_still_refuses_an_ordinary_edit(wired_without_s
 
 
 def test_f4_pouring_a_plan_builds_the_first_sequence(wired_without_sequence):
-    """NR0004 F4: 후보 생성기는 시퀀스가 없어도 계획 행을 만들어 주는데, 저장하는 쪽이
-    곧바로 거절해서 "계획을 세워 두고 그걸로 워크플로를 만든다"가 막혀 있었다."""
+    """NR0004 F4: candidate generation could create plan rows without a sequence,
+    but saving immediately rejected them, blocking workflow creation from a plan."""
     _write_plan(wired_without_sequence, {"N": 1})
     result = wds.edit_workflow_pending(
         OWNER_DOC_ID,
         [{"type": "N", "label": "조사지시", "note": "먼저 조사",
           "source_doc_id": WP_DOC_ID, "source_revision_no": 3}],
-        expected_workflow_tag="none",          # 시퀀스가 없을 때의 지문
+        expected_workflow_tag="none",          # Fingerprint when no sequence exists
         expected_plan={"wp_doc_id": WP_DOC_ID, "wp_revision_no": 3, "mode": "append"},
         applied_by="usr_403",
     )
     assert result["sequence_created"] is True
     assert wired_without_sequence["created"] == [OWNER_DOC_ID]
-    # 지시 줄에는 서버가 레포트 줄을 붙인다 — 결정 경로와 같다.
+    # The server pairs instruction rows with report rows, as in the decision path.
     assert [row["type_"] for row in wired_without_sequence["inserted"]] == ["N", "NR"]
-    # 그리고 그 사실이 계획의 적용 이력에도 남는다.
+    # Record that pairing in the plan application history too.
     journal = wpa.read_applications(wired_without_sequence["plan_path"], WP_DOC_ID)
     assert journal["items"][0]["sequence_created"] is True
 
@@ -282,7 +282,7 @@ def test_f4_an_empty_pour_does_not_create_a_zombie_sequence(wired_without_sequen
 
 
 def test_f2_the_candidate_response_carries_the_plan_revision(monkeypatch):
-    """저장할 때 되돌려 보낼 값이므로, 후보 응답에 실려 있어야 한다."""
+    """Include the value in the candidate response because saving must send it back."""
     monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_by_doc_id", lambda doc_id: None)
     monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_items", lambda seq_id: [])
     monkeypatch.setattr(wpseq.db_wfseq, "get_item_by_result_doc_id", lambda doc_id: None)
@@ -295,7 +295,7 @@ def test_f2_the_candidate_response_carries_the_plan_revision(monkeypatch):
     assert out["workflow_tag"] == "none"
 
 
-# ══ HTTP 라우트 — F1 · F6 · F7 · F8 ══════════════════════════════════════════
+# ══ HTTP routes: F1 · F6 · F7 · F8 ══
 
 class _MockDB:
     def __init__(self, db_path: str):
@@ -362,8 +362,8 @@ def tmp_db():
 
 @pytest.fixture(scope="module", autouse=True)
 def patch_store(tmp_db):
-    """get_store 가 아니라 STORE 객체를 갈아끼운다 — 함수를 패치하면 뒤에 import 되는
-    모듈로 새어 "혼자 돌리면 통과, 같이 돌리면 실패"가 된다."""
+    """Replace STORE, not get_store. Patching the function leaks into later imports,
+    causing tests to pass alone but fail together."""
     from modules.flow_gate.db import connection as conn_mod
 
     original = conn_mod.STORE
@@ -477,11 +477,11 @@ def _create_plan(client, doc_code: str, title: str = "0403 작업계획"):
 def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
     seed, storage_root, monkeypatch,
 ):
-    """NR0004 F1 재현 조건 — 두 요청이 같은 리비전을 읽고 초기 검사를 나란히 통과한다.
+    """NR0004 F1: two requests read the same revision and both pass the initial check.
 
-    저장 A 가 끝난 뒤에도, 저장 B 는 자기가 창을 열 때 읽어 둔 revision_no=0 을 들고 온다.
-    고치기 전에는 B 가 그 낡은 값으로 검사를 통과해 정본 파일을 덮어쓴 다음에야 DB 경쟁에서
-    져서 409 를 받았다 — 화면에는 "저장 실패", 디스크에는 B 의 본문.
+    After A saves, B still presents revision_no=0 from when its window opened.
+    Previously B overwrote the canonical file before losing the DB race with 409:
+    the UI reported "저장 실패" while the disk held B's body.
     """
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.documents.routers import work_plan as route
@@ -501,7 +501,7 @@ def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
     on_disk_after_a = json.loads((storage_root / stored).read_text(encoding="utf-8"))
     assert on_disk_after_a["defaults"]["note"] == "A 가 저장한 본문"
 
-    # B 의 요청. 첫 조회만 "창을 열 때 본 값"(리비전 0)을 돌려준다.
+    # Request B: only the first read returns revision 0, as observed when its window opened.
     real_get_by_id = db_docs.get_by_id
     seen: dict = {"first": True}
 
@@ -533,14 +533,14 @@ def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "wp_revision_conflict"
     assert conflict.json()["current_revision_no"] == 1
-    # 진 요청은 파일에 손대지 않는다 — 이것이 이 결함의 본체다.
+    # The losing request must not touch the file: this is the core defect.
     assert writes == []
     assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk_after_a
     assert db_docs.get_by_id(doc_id)["revision_no"] == 1
 
 
 def test_f6_a_suggestion_asked_against_a_stale_revision_is_refused(seed):
-    """NR0004 F6: 제안 라우트는 base_revision_no 를 받아 놓고 한 번도 보지 않았다."""
+    """NR0004 F6: the suggestion route accepted base_revision_no but never inspected it."""
     client = _client()
     created = _create_plan(client, "0003-WP")
     doc_id = created["doc_id"]
@@ -555,13 +555,13 @@ def test_f6_a_suggestion_asked_against_a_stale_revision_is_refused(seed):
     assert stale.json()["code"] == "wp_revision_conflict"
     assert stale.json()["current_revision_no"] == 0
 
-    # 리비전을 말하지 않은 호출은 예전처럼 그대로 통과한다.
+    # Calls omitting a revision retain their previous behavior.
     silent = client.post(f"/api/v1/documents/{doc_id}/work-plan/suggest", json={})
     assert silent.status_code == 200, silent.text
 
 
 def test_f7_the_read_view_states_whether_the_plan_can_be_edited(seed):
-    """NR0004 F7: 화면이 승인 상태만 보고 혼자 잠그던 것을 서버 판정으로 바꿨다."""
+    """NR0004 F7: replace client-only approval-state locking with the server decision."""
     from modules.flow_gate.db import documents as db_docs
 
     client = _client()
@@ -571,13 +571,13 @@ def test_f7_the_read_view_states_whether_the_plan_can_be_edited(seed):
     view = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()
     assert view["editable"] is True
     assert view["edit_locked_reason"] is None
-    # 승인만으로는 잠기지 않는다 — 서버가 저장을 받아 주는 상태와 화면이 같아야 한다.
+    # Approval alone does not lock editing; UI state must match server save eligibility.
     db_docs.update(doc_id, {"doc_review_status": "approved"})
     approved = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()
     assert approved["doc_review_status"] == "approved"
     assert approved["editable"] is True
 
-    # 그룹 최종 승인이 끝나면 잠긴다 — 저장 라우트가 거절하는 바로 그 조건이다.
+    # Final group approval locks editing, exactly as the save route enforces.
     db_docs.update(ROOT_DOC, {"doc_review_status": "wf_done"})
     try:
         locked = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()
@@ -592,7 +592,7 @@ def test_f7_the_read_view_states_whether_the_plan_can_be_edited(seed):
 
 
 def test_f7_the_read_view_reports_where_a_plan_was_last_applied(seed, storage_root):
-    """F3 의 화면 쪽 절반: 이력이 있으면 마지막 한 건을 읽기 응답에 실어 준다."""
+    """The UI half of F3: include the latest application-history entry in the read response."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.services import work_plan_service as wp
 

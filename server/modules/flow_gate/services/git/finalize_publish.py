@@ -1,5 +1,5 @@
 """Manual finalize job (flowgate.default.0669 unit 9a; 0666 0008-D §3.6.1, §7 "finalize
-일반(비승인)", 0009-L §2.28, §4.4).
+ordinary (non-approval)", 0009-L §2.28, §4.4).
 
 ``finalize`` without a final approval no longer takes the old project mutex. After its
 prechecks the request registers a ``base_publish`` job with action ``finalize`` and runs it
@@ -22,7 +22,7 @@ not terminal and the sweep/startup recovery leave it to the job.
 
 Deviations recorded as design changes (0669 chat):
 
-* No new job kind: D §7 allows "base_publish 또는 동일 kind", and a new kind would need the
+* No new job kind: D §7 allows "base_publish or an equivalent kind", and a new kind would need the
   operation_job kind CHECK changed in three schemas. The request key is
   ``bsp:{project}:finalize:{group_id}:{n}``, n the number of terminal finalize jobs of the
   Group: a double click is the same job, the next finalize after one ended a new one.
@@ -32,8 +32,8 @@ Deviations recorded as design changes (0669 chat):
   attempt → conflict handed off, or ``recover_interrupted_attempt`` (landed → succeeded,
   interrupted → run again, unprovable → recovery_required); a started job whose Group
   ledger is already terminal → that terminal answer.
-* G, W/B and R are held for the whole body instead of phase by phase (D §7 "승인과 동일
-  phase"), exactly as the old mutex covered it: the body interleaves Group, target and
+* G, W/B and R are held for the whole body instead of phase by phase (D §7 "the same phases
+  as approval"), exactly as the old mutex covered it: the body interleaves Group, target and
   remote steps (absorb → fetch → merge → push → slot cleanup) and is not split here.
 * The merged/pushed slot cleanup stays inline in the body (under G), not a worktree_cleanup
   job, as before.

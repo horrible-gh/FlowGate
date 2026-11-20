@@ -27,7 +27,7 @@ export interface SettingsPage {
   groupKey?: string
 }
 
-/** 프로젝트 and 시스템 are shown to system administrators only (D §0.2 노출 결정). */
+/** 프로젝트 and 시스템 are shown to system administrators only (D §0.2 visibility decision). */
 export const ADMIN_SETTINGS_SCOPES: readonly SettingsScopeKey[] = ['project', 'system']
 
 // D §1.2 order. 프로젝트's 기본 정보 / 저장 경로 / Git are reached from the project selection, not

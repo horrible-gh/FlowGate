@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0053 T#5 — the card settings read the documents tab uses (features/document/api/settings.ts):
  * GET /api/v1/flows/{flow_id}/nodes/{node_key}/settings (T#2) -> camelCase, and whether the card omits its
- * instruction (its 지시서 line is then not shown, v7).
+ * instruction (its instruction line is then not shown, v7).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 

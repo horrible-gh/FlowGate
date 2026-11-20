@@ -1,4 +1,4 @@
-"""The automatic approval of a card's instruction (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 교체 3).
+"""The automatic approval of a card's instruction (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 replacement 3).
 
 An instruction is a required output of its card's completion (``outputs.pending_outputs``), never a node's result: its
 approval records no completion row and binds no node event. It replaces the removed card approval's document approval

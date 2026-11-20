@@ -199,7 +199,7 @@ beforeEach(async () => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
-  // D §2.3 / §2.4 / §2.8, T#5 지시 7 (V25 GUI part): GETs of the three existing contracts only — no
+  // D §2.3 / §2.4 / §2.8, T#5 instruction 7 (V25 GUI part): GETs of the three existing contracts only — no
   // settings / paths GET, no /system/settings/storage-root, no legacy list, and no write at all.
   // flowgate.v02.0077: the administrator overview's 확인 필요 read is not a project request.
   for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/agents')) {
@@ -421,7 +421,7 @@ describe('V22 프로젝트 Root · Git 계약 — values as answered, null = 미
   ])('%s offers no change control: only 다시 불러오기 / 다시 시도 buttons and the picker as the only input', async (url, ready) => {
     const w = await open(url)
     await waitFor(w, ready)
-    const body = w.get('.settings-shell-view') // the picker sits in the navigation (시안 ⑩)
+    const body = w.get('.settings-shell-view') // the picker sits in the navigation (mockup ⑩)
     for (const b of body.findAll('button')) expect(b.attributes('data-testid')).toMatch(/-(refresh|retry)$/)
     expect(body.findAll('input, select, textarea').map((e) => e.attributes('data-testid'))).toEqual(['project-select', 'project-include-inactive'])
     expect(body.findAll('form').length).toBe(0)

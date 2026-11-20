@@ -53,7 +53,7 @@ def _project_modules_table_exists(store) -> bool:
 
 
 def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
-    """Batch counterpart of list_modules() (0559 NR0003 §7 권고1, B0001).
+    """Batch counterpart of list_modules() (0559 NR0003 §7 recommendation 1, B0001).
 
     ``_attach_project_modules()`` called list_modules() once per project, so
     ``GET /projects?status=active`` cost 1 + 2N queries (operations measurement:

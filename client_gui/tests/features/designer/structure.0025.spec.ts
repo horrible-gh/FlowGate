@@ -59,12 +59,12 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^@\/features\/conversation$/,
       /^@\/features\/git$/,
       // flowgate.v02.0059 T#2 — the v0.1 document read (features/document public surface) the Shell hands to the
-      // server Graph source, so 자동 배치 can follow a v0.1 sequence root's supersede chain.
+      // server Graph source, so auto-layout can follow a v0.1 sequence root's supersede chain.
       /^@\/features\/document$/,
       // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
       /^\.\.\/top\/Designer(Header|MenuBar|Toolbar)\.vue$/,
       /^\.\.\/top\/designerTop$/,
-      // flowgate.v02.0043 — File menu dialogs (Group / Flow 열기, 새 Group / Flow).
+      // flowgate.v02.0043 — File menu dialogs (Group / Flow Open, New Group / Flow).
       /^\.\.\/fileMenu\/Designer[A-Za-z]+Dialog\.vue$/,
       // flowgate.v02.0060 T#2 — the Designer context menu (0006-D rev2 §4.2): its view and the host / area connectors.
       /^\.\.\/contextMenu\/DesignerContextMenu\.vue$/,
@@ -74,7 +74,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
-        // 0113 D §6.2: only the Shell hosts the shared first-run role surface/coordinator; 0113 T#5 (D 개정 §6.5): and the
+        // 0113 D §6.2: only the Shell hosts the shared first-run role surface/coordinator; 0113 T#5 (D revision §6.5): and the
         // run result windows with their watch, from the same features/ai surface.
         const firstRunRoles = name === 'DesignerShell.vue' && spec === '@/features/ai'
         const runFailureParts = name === 'runFailureToast.ts' && /^\.\.\/center\/run\/(flowRunControl|runFailureDiagnostic)$/.test(spec)

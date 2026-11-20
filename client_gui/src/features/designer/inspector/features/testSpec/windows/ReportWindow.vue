@@ -183,7 +183,7 @@ const reason = (op: TestCardCommand, caseId?: string) => { const key = card.valu
 const entry = computed(() => card.value?.can('resultEntry', selected.value?.caseId) ?? { enabled: false, reason: 'reason.busy' })
 const entryReason = computed(() => reason('resultEntry', selected.value?.caseId))
 const causeOptions = computed(() => (['env'] as const).map((cause) => {
-  // 통과 처리 only opens its reason input; recording it is the guarded change.
+  // Mark as passed only opens its reason input; recording it is the guarded change.
   const why = reason('rerunCase', selected.value?.caseId)
   return { value: cause, label: t(k(`cause_${cause}`)), disabled: !!why, title: why || null }
 }))

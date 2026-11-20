@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Toolbar (0001-R §4): undo / redo, 정렬 / 배치 ▾, the two run
+  <!-- flowgate.v02.0038 — Designer Toolbar (0001-R §4): undo / redo, alignment / layout ▾, the two run
        buttons, fit / zoom out / zoom in, the zoom value and the layout density. No select / add
        node / connect modes (0001-R §4.2) and no standing stop button: the run button that was
        used turns into ■ 중지 in place and the other one is disabled until the run stops
@@ -220,7 +220,7 @@ const props = withDefaults(
     canRedo?: boolean
     /** flowgate.v02.0059 T#1: the [선택] mode is on. */
     selectMode?: boolean
-    /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
+    /** flowgate.v02.0059 T#2: what the alignment / layout ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
     /** Retained input contract for run state; the toolbar renders no status area. */
     runBand?: DesignerRunBand | null
@@ -294,9 +294,9 @@ const runButtons = computed(() =>
   })),
 )
 
-// flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
+// flowgate.v02.0059 T#2: alignment / layout ▾ — the Edit menu's alignment / layout commands, then auto-layout. The drop-down
 // is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
-// flowgate.v02.0068 T#2: 자동 배치 is 가로 자동정렬 / 세로 자동정렬 (0004-D §6.3), one group after a separator.
+// flowgate.v02.0068 T#2: auto-layout is 가로 자동정렬 / 세로 자동정렬 (0004-D §6.3), one group after a separator.
 const ARRANGE_MENU = DESIGNER_LAYOUT_GROUPS
 const arrangeOpen = ref(false)
 const arrangeRoot = ref<HTMLElement | null>(null)
@@ -433,7 +433,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   color: #fff;
 }
 
-/* flowgate.v02.0059 T#2: 정렬 / 배치 ▾ and its drop-down (fixed under the button, over the work area). */
+/* flowgate.v02.0059 T#2: alignment / layout ▾ and its drop-down (fixed under the button, over the work area). */
 .designer-tool-menu {
   display: flex;
 }
@@ -492,7 +492,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   background: #20364e;
 }
 
-/* flowgate.v02gui.0030: 첨부파일 (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
+/* flowgate.v02gui.0030: attachments (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
 .designer-tool-attachment {
   position: relative;
   color: #d8ebfa;

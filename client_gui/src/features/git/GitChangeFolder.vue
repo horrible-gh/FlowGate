@@ -42,7 +42,7 @@
 // flowgate.v02.0067 T#2 — plus the folder checkbox (0067-R §4-2): checked when every selectable
 // file of the folder is, mixed when some are; a press checks them all, or clears them when all
 // were. Managed / protected files are never among them (isSelectable). It only selects: Stage and
-// Stage 해제 stay the selection bar's, and each path still goes by its own `can*` flags.
+// Stage "해제" stay the selection bar's, and each path still goes by its own `can*` flags.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitChangeRow from './GitChangeRow.vue'

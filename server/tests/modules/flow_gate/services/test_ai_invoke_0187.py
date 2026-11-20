@@ -454,7 +454,7 @@ class TestRegistrationDiagnostics:
         assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
 
         assert len(handler_calls) == 1
-        # 0501 T0004 필수5: exit_code=None is the API contract even on a normal,
+        # 0501 T0004 required item 5: exit_code=None is the API contract even on a normal,
         # successful registration -- there is no subprocess to hand back a real code,
         # and this run dict is what the real turn loop produced, not a hand-built one.
         assert run["exit_code"] is None
@@ -588,7 +588,7 @@ class TestRegistrationDiagnostics:
         assert run["model_last_http_status"] == 0
 
     def test_exit_code_none_reads_as_completed_not_failed_on_a_real_run(self, monkeypatch):
-        """0501 T0004 필수5: test_no_output_detail_branching.py's
+        """0501 T0004 required item 5: test_no_output_detail_branching.py's
         test_api_provider_fallback_to_completed_on_exit_none proves the same text on a
         run dict it authors by hand ({"exit_code": None, ...}). This is the same contract
         pinned to a run dict svc._api_execute() itself produced -- no register_errors, no
@@ -863,12 +863,12 @@ class TestAdmission:
 # ── SSE contract (P0005) ─────────────────────────────────────────────────────
 
 class TestWorkerVisibility:
-    """0406 T0022 작업 3 — 실행 중에도 "누가 이 홉을 수행하는가"를 답한다.
+    """0406 T0022 task 3: identify who executes this hop while it is still running.
 
-    NR0021 §11 이 확정한 현상은, auto_approved 에서 서버가 N/T 를 대신 작성·승인해
-    AI 워커가 아예 붙지 않았고 그 사실이 어디에도 남지 않았다는 것이다. 끝난 뒤의
-    기록만으로는 부족하다 — 시작 응답과 시작 이벤트가 먼저 답해야 실행 중 화면이
-    "N/T 가 사라졌다"와 "TR 워커가 정상 실행됐다"를 구분해 그릴 수 있다.
+    NR0021 §11 found that auto_approved had the server author/approve N/T without an
+    AI worker or any record of that fact. End-of-run records are insufficient:
+    the start response and event must let the live UI distinguish instruction folding
+    from normal TR worker execution.
     """
 
     def test_start_response_names_the_worker_and_the_mode_it_actually_used(self, fake_env):
@@ -886,8 +886,8 @@ class TestWorkerVisibility:
             "auto_handled_item_seqs",
         ):
             assert key in res, key
-        # _start 는 모드를 보내지 않는다 — 하위호환대로 auto_approved 로 접히되,
-        # 접혔다는 사실이 응답에 적혀 있다(작업 2).
+        # _start omits mode: compatibility still folds it to auto_approved,
+        # The response records that the instruction was folded (task 2).
         assert res["continuation_instruction_mode"] == "auto_approved"
         assert res["continuation_instruction_mode_requested"] is None
         assert res["continuation_instruction_mode_normalized"] == "auto_approved"
@@ -939,7 +939,7 @@ class TestEvents:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0501 T0004 필수4 -- terminal run lifecycle: lease release
+# flowgate.default.0501 T0004 required item 4 -- terminal run lifecycle: lease release
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestTerminalLeaseRelease0501:

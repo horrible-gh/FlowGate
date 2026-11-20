@@ -56,7 +56,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect(all.size).toBe(40)
     expect([...all].join(' ')).not.toMatch(/permanent|base|untracked/)
   })
-  // flowgate.v02.0060 T#1 (Q item 459, replacing "연결되지 않은 명령은 숨김"): nothing connected → every mockup item stays
+  // flowgate.v02.0060 T#1 (Q item 459, replacing "Hide commands that are not wired up"): nothing connected → every mockup item stays
   // where the mockup puts it, disabled with its reason, and requests nothing.
   it('with no connected command every part still shows the whole mockup, all disabled with 연결 예정 / 미구현 (Q 459)', () => {
     const models = [
@@ -93,7 +93,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect([...byCommand].filter(([, reason]) => reason === null).map(([c]) => c).sort()).toEqual([...connectedNow].sort())
     expect([...byCommand].filter(([, reason]) => reason === 'planned').map(([c]) => c).sort()).toEqual([...plannedCommands].sort())
     expect([...byCommand].filter(([, reason]) => reason === 'unimplemented').map(([c]) => c).sort()).toEqual([...unimplementedCommands].sort())
-    // Not one of the 27 requests anything; Git 되돌리기 / 이력 and the multi-selection items included.
+    // Not one of the 27 requests anything; Git Revert / 이력 and the multi-selection items included.
     for (const target of targets) {
       const model = modelFor(target, connectedNow)
       for (const item of actions(model.items).filter((entry) => !(connectedNow as readonly string[]).includes(entry.command))) {
@@ -121,7 +121,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect(commands).not.toContain('folder.open')
     expect(commands).not.toContain('folder.rename')
     expect(commands).not.toContain('folder.delete')
-    // Q 459: the root folder keeps its mockup items (the 2-B ones 연결 예정), still without 열기 / 이름 변경 / 삭제.
+    // Q 459: the root folder keeps its mockup items (the 2-B ones awaiting integration), still without 열기 / 이름 변경 / 삭제.
     expect(states(modelFor(root, connectedNow).items)).toEqual([
       ['folder.newFolder', true, 'planned'], ['folder.newFile', true, 'planned'], ['folder.download', true, 'planned'],
       ['folder.upload', true, 'planned'], ['folder.git.changes', true, 'unimplemented'], ['folder.git.revert', true, 'unimplemented'],
@@ -230,7 +230,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
       expect(selected).toEqual(before)
       if (target.kind === 'multi') {
         expect(target.selectedNodeIds).toEqual(before)
-        // Q 459: the multi-selection menu opens; only 정렬 runs (on the selection), no single card command.
+        // Q 459: the multi-selection menu opens; only alignment runs (on the selection), no single card command.
         expect(states(modelFor(target, connectedNow).items)).toEqual([
           ['multi.editSettings', true, 'unimplemented'], ['multi.copy', true, 'unimplemented'], ['multi.arrange', false, null],
           ['multi.delete', true, 'unimplemented'],
@@ -300,7 +300,7 @@ describe('card run items in the card menu (T#2)', () => {
 })
 
 
-// flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 / 정렬 open the Edit menu's 정렬 / 배치 commands.
+// flowgate.v02.0060 T#1 (WP 0012 [B]): alignment · layout / alignment open the Edit menu's alignment / layout commands.
 describe('정렬 · 배치 / 정렬 as the Edit menu 정렬 / 배치 submenu (T#1)', () => {
   const canvas = targets[6]
   const multi = targets[8]
@@ -353,7 +353,7 @@ describe('정렬 · 배치 / 정렬 as the Edit menu 정렬 / 배치 submenu (T#
   })
 })
 
-// flowgate.v02.0060 T#1: the Git parent follows the Git state read, not its children being 연결 예정 / 미구현.
+// flowgate.v02.0060 T#1: the Git parent follows the Git state read, not its children being awaiting integration / unimplemented.
 describe('Git parent of the file / folder menu (T#1)', () => {
   it('linked: the parent opens even though every child is 연결 예정 / 미구현', () => {
     for (const target of [targets[3], targets[4]]) {

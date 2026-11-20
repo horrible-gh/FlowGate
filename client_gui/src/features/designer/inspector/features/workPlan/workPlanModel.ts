@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#13 — the WP summary's rules (D#1 §8, §10.1 WP 요약 column, §10.2 T#13 row). Pure
+// flowgate.v02.0048 T#13 — the WP summary's rules (D#1 §8, §10.1 WP summary column, §10.2 T#13 row). Pure
 // functions over the target and the WP read view of its document (`GET /documents/{doc_id}/work-plan`,
 // normalized by `@/features/document`): the cards of the plan (an instruction / result pair is one card)
 // and the progress tally (cards the workflow already started).
@@ -139,8 +139,8 @@ export function workPlanAvailability(input: WorkPlanInput): WorkPlanAvailability
 // flowgate.v02.0074 T#5 (D#1 §6.1 · §3.6.1) — the header's [전개] and [재전개 ▾] (its two items 「추가분 전개」 add ·
 // 「정리 포함 재전개」 cleanup) deploy the plan onto the Flow's Graph draft through the T#4 API (`GET …/work-plan/deploy`
 // for the counts, preview, then the execution with the preview's baseline). Which one is usable follows the counts of
-// the status read: no deployed card and at least one target → [전개]; a deployed card → [재전개 ▾], whose 「추가분
-// 전개」 needs a target and whose 「정리 포함 재전개」 needs nothing more (a plan saved with every quantity at 0 cleans up).
+// the status read: no deployed card and at least one target → [전개]; a deployed card → [재전개 ▾], whose 「additions
+// deployment」 needs a target and whose 「정리 포함 재전개」 needs nothing more (a plan saved with every quantity at 0 cleans up).
 
 export type WorkPlanDeployOperation = 'deploy' | 'redeploy' | 'add' | 'cleanup'
 

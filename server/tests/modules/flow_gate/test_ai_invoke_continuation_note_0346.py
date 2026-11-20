@@ -1,17 +1,17 @@
-"""flowgate.default.0346 (R0001 -> N0002 -> NR0003 -> D0004 -> T0005 구현): the [전달멘트] tab's
+"""flowgate.default.0346 (R0001 -> N0002 -> NR0003 -> D0004 -> T0005 implementation): the [전달멘트] tab's
 common/per-step notes, prepended to each continuous hop's prompt as a "사용자 메시지" section.
 
 Covers:
   • _resolve_continuation_hop_note: the SAME _hop_worker_item_seq fold + str/int dual-key
     lookup as _resolve_continuation_hop_override — the two tables must resolve the same
     item_seq for the same hop, or the row a user sees in ContinuousWorkDialog would carry a
-    provider meant for one hop and a note meant for another (0317 T0013 재발 방지).
+    provider meant for one hop and a note meant for another (0317 T0013 regression prevention).
   • start_run prompt injection, end to end: individual-only / common-only / both / neither,
     verified against the LITERAL bytes a spawned worker receives on stdin (no notes ⇒
-    byte-identical to the pre-feature prompt — D0004 §3-3 / T0005 §3 제약 5).
+    byte-identical to the pre-feature prompt — D0004 §3-3 / T0005 §3 constraint 5).
   • _maybe_auto_resume_hop / _spawn_auto_resume: the note bundle rides the run forward across
     a hop re-spawn, mirroring test_ai_provider_doctype_map_0317.py's provider-override coverage
-    (the "first hop only" shape is the easiest way to get this feature wrong — T0005 §3 제약 4).
+    (the "first hop only" shape is the easiest way to get this feature wrong — T0005 §3 constraint 4).
   • a note-resolution failure never stalls the hop.
 
 Uses TESTING=1; DB/settings/token layers monkeypatched exactly like test_ai_invoke_0187.py —
@@ -306,7 +306,7 @@ class TestPromptInjectionEndToEnd:
         assert "공통 멘트" in got and "개별 멘트" in got
 
     def test_no_notes_is_byte_identical_to_the_pre_feature_prompt(self, note_env):
-        # T0005 §3 제약 5: no notes supplied ⇒ the worker's prompt must be untouched, byte
+        # T0005 §3 constraint 5: no notes supplied ⇒ the worker's prompt must be untouched, byte
         # for byte — no empty section, no stray blank line.
         res, outfile = _start(note_env, MENTION)
         _wait_finished(res["run_id"])
@@ -378,7 +378,7 @@ class TestNoteInjectionFailureIsSwallowed:
 class TestNotesStayInsideThePause:
     """The notes are per-run content, and the ONE place they may be stored is a paused chain.
 
-    D0004 / T0005 완료 기준 '공통' originally said the feature adds no schema and no
+    D0004 / T0005 acceptance criteria 'common' originally said the feature adds no schema and no
     persistence: the notes were to live in the in-memory run dict and the start request,
     nowhere else. This class asserted that by searching all of `server/sql` and
     `server/modules/flow_gate/db` for the two field names and demanding zero hits.
@@ -457,8 +457,8 @@ class TestNotesStayInsideThePause:
 
 class TestNoteRunDictAndAutoResume:
     """The note bundle rides the run dict and the auto-resume handoff exactly like
-    continuation_provider_overrides / continuation_base_provider_id (0317 T0013 결함 재발
-    방지 shape: 첫 홉엔 반영되는데 두 번째 홉부터 사라지는 누락)."""
+    continuation_provider_overrides / continuation_base_provider_id (0317 T0013 regression shape: values apply on the first hop
+    but disappear from the second hop onward)."""
 
     @pytest.fixture(autouse=True)
     def _clean_registries(self):

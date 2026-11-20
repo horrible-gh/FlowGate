@@ -251,7 +251,7 @@ export interface FlowGraphSource {
   pauseRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /**
    * flowgate.v02.0059 T#2: the Graph as loadGraph reads it but with nothing left out (no collapse) — the
-   * input of 자동 배치 when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.
+   * input of auto-layout when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.
    */
   loadLayoutGraph?(projectId: string, flowId: string, view?: string): Promise<FlowGraph>
   /** flowgate.v02.0059 T#2: one document's supersede link (a v0.1 sequence root's chain). Absent = none read. */

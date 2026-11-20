@@ -19,8 +19,8 @@ export function stripFrontmatter(md: string): string {
 // body is handed to the Markdown renderer, exactly the way stripFrontmatter()
 // removes the YAML header above it. rev1-rev4 wrapped it in a fenced `text`
 // block instead, which kept the seven fields on screen as a code box at the top
-// of every document -- rejected with "당장 이 문서만 봐도 헤더가 문서에 그대로
-// 드러나잖아".
+// of every document -- rejected with "Even in this document, the headers appear
+// verbatim in the body".
 //
 // This is display-only: `content` itself, "Markdown 복사" and "헤더 포함 복사"
 // still hand back the stored bytes. Only a *complete*, in-order 7-field block at

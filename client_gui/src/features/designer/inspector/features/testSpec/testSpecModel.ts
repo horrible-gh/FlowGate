@@ -16,7 +16,7 @@
 // read-only views, the permission refusal, a cancel already accepted and a call in flight; the server does
 // not refuse a cancel for a disposed group or an AI run, so neither blocks reclaiming a runaway run.
 // Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all in the document window), the
-// Graph TS Node run (Graph 실행 연동) and the separate Case document kind.
+// Graph TS Node run (Graph execution integration) and the separate Case document kind.
 import type { InspectorCardDocument, InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of the target the section reads. */
@@ -370,11 +370,11 @@ export function testSpecErrorKey(kind: TestSpecFailureKind): string {
 }
 
 // --- flowgate.v02.0051 stage 2 — the v7 테스트 card lines ---
-// flowgate.v02.0053 T#5 (0053 CH) — 지시서 · 시나리오 · 레포트 (케이스 → 시나리오, 결과 → 레포트, no type code in a
-// name). The lines are the card's documents the server made when it was placed (T#1: 지시서 TS, 시나리오 the
-// same TS — the cases live in it, contract 2 — and 레포트 TSR), so a test card without a bound document still
+// flowgate.v02.0053 T#5 (0053 CH) — instruction · 시나리오 · report (cases → 시나리오, 결과 → report, no type code in a
+// name). The lines are the card's documents the server made when it was placed (T#1: instruction TS, 시나리오 the
+// same TS — the cases live in it, contract 2 — and report TSR), so a test card without a bound document still
 // shows and opens them. Without card lines (a TS / TSR document Node) the test view and the bound document
-// fill them as before. The 지시서 line is hidden when the card's settings omit the instruction (v7).
+// fill them as before. The instruction line is hidden when the card's settings omit the instruction (v7).
 
 export type TestSpecSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -441,7 +441,7 @@ function emptyLine(key: TestSpecSlot['key'], emptyKey: string | null): TestSpecS
 /**
  * The three lines from the card's documents, the test view and the target. A document's state is the
  * test view's review status when the view read that document, else the card line's (or the bound
- * document's) state; the 레포트 line shows a live or finished run's state and progress first.
+ * document's) state; the report line shows a live or finished run's state and progress first.
  */
 export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLineFacts, instructionOmitted = false): readonly TestSpecSlot[] {
   const type = target.docType?.trim().toUpperCase() ?? ''

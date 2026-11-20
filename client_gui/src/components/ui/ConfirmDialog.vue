@@ -28,16 +28,16 @@
 </template>
 
 <script setup lang="ts">
-// v02gui.0029 (0003-CH, 시안 tfi2zm20 "공용 확인창"): drawn like the Designer's Group archive confirm — a badge above the
+// v02gui.0029 (0003-CH, mockup tfi2zm20 "Shared confirmation dialog"): drawn like the Designer's Group archive confirm — a badge above the
 // title (`icon`, else ⚠ for a danger confirm and ? for any other), the rounded pop surface and two wide buttons. Only
 // the look changed: the caller's words, the events, Escape and the focus order stay as they were.
 //
 // Short Yes/No confirmation, built on ModalShell (T0006 §7). This is choice A from
-// T0006 §7 ("공용 ConfirmDialog component") — plain declarative props, no separate
+// T0006 §7 ("Shared ConfirmDialog component") — plain declarative props, no separate
 // confirm() service layer, because the caller here already owns `open` the same way
 // every other declarative dialog in this layer does; adding an imperative queue on top
-// is speculative machinery this T does not need (T0006 §7 "과도하게 만들 필요는
-// 없다").
+// is speculative machinery this T does not need (T0006 §7 "No need to
+// overengineer it").
 //
 // Business wording (title/message/labels) is entirely the caller's — this component
 // carries no domain text of its own (T0006 §7/§15).
@@ -45,7 +45,7 @@
 // Safe default focus: Cancel renders before Confirm/Danger in the DOM, and ModalShell
 // focuses the first focusable element on open, so a danger confirm never lands its
 // initial focus on the destructive button without this component having to special-
-// case `danger` at all (T0006 §7 "무조건 기본 focus가 가지 않도록").
+// case `danger` at all (T0006 §7 "Do not unconditionally apply default focus").
 import { computed } from 'vue'
 import Button from './Button.vue'
 import LineIcon, { type LineIconName } from './LineIcon.vue'

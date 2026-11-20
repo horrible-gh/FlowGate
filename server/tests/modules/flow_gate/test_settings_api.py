@@ -208,14 +208,13 @@ class TestSystemSettingsService:
         assert get_one("log_level")["setting_value"] == "INFO"
 
     def test_storage_root_empty_uses_default(self, monkeypatch):
-        """빈 storage_root 는 기본 경로로 대체된다.
+        """An empty storage_root falls back to the default path.
 
-        0394 T0004: 이 케이스는 FLOWGATE_STORAGE_DIR 이 **없어야** 성립한다
-        (`get_storage_root` 의 1순위가 그 변수다). 그런데 스스로 지운 적이 없고, 앞서
-        실행된 다른 모듈이 정리하면서 그 변수를 지워 준 덕에 통과하고 있었다 — 그
-        누출을 막자 이 케이스가 빨간불이 됐다. NR0003 §5.1 이 말한 "옆 테스트 덕에
-        우연히 통과" 의 실물이라, 전제를 자기 손으로 만들도록 고친다. monkeypatch 는
-        테스트가 끝나면 원래 값을 되돌려 준다.
+        0394 T0004: this case requires FLOWGATE_STORAGE_DIR to be absent because
+        get_storage_root gives it priority. It previously passed only because an
+        earlier module leaked its cleanup by deleting that variable. Fixing the leak
+        exposed this dependency (NR0003 §5.1). Establish the precondition explicitly;
+        monkeypatch restores the original value when the test finishes.
         """
         from modules.flow_gate.settings.system_settings_service import get_one, set_values
 

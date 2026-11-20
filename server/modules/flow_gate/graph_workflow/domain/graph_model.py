@@ -1,7 +1,7 @@
-"""Graph definition model (D0004 §2.2 "Graph 모델", P0008 §5.1) — pure data, storage-agnostic.
+"""Graph definition model (D0004 §2.2 "Graph model", P0008 §5.1) — pure data, storage-agnostic.
 
 A Graph is the meaning half of a Flow's definition: nodes (what to do) and execution edges
-(what comes next). Coordinates never live here (D0004 §2.1 의미와 모양의 분리).
+(what comes next). Coordinates never live here (D0004 §2.1 separation of semantics and appearance).
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ NODE_TYPES = ("document", "gate", "custom")
 # P0008 §5 S3-5 / L0009 §2.5.1: the Palette's document types and the root types.
 PALETTE_DOC_TYPES = frozenset({"D", "P", "L", "DB", "N", "WP", "T", "TS"})
 ROOT_DOC_TYPES = frozenset({"R", "B"})
-# L0009 §2.0 보고 타입 (AUTO_REPORT_MAP values).
+# L0009 §2.0 report types (AUTO_REPORT_MAP values).
 REPORT_DOC_TYPES = frozenset({"NR", "TR", "TR2", "TSR"})
 # flowgate.v02.0053 T#8: a Custom card (palette [+], whatever Palette category it was added to) is a plain
 # document card like 조사 · 작업 — its lines are a work instruction and its report (card_documents.slots
@@ -94,7 +94,7 @@ class Graph:
         return deg
 
     def start_keys(self) -> list[str]:
-        """Nodes with no incoming edge (L0009 §2.0 시작 노드), in stored order."""
+        """Nodes with no incoming edge (L0009 §2.0 start nodes), in stored order."""
         deg = self.in_degree()
         return [n.key for n in self.nodes if deg[n.key] == 0]
 

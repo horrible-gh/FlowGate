@@ -385,7 +385,7 @@ function orphanSettled(token: DocumentIoToken, outcome: SaveOutcome): void {
 
 /**
  * flowgate.v02.0074 T#2 (D#1 §6.3) — a work plan's upload: its window opens (an open one is reused) asking for [JSON
- * 가져오기]. No file pick, no guard, no save here — the plan is saved by the window's [저장] (one PUT with
+ * "가져오기"]. No file pick, no guard, no save here — the plan is saved by the window's [저장] (one PUT with
  * base_revision_no) only. Blocked (the button's reason), nothing happens.
  */
 function workPlanUpload(docId: string, options: DocumentIoUploadOptions): void {

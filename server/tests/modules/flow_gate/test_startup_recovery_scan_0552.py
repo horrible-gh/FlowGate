@@ -151,7 +151,7 @@ def test_explicit_empty_lists_never_trigger_a_hidden_rescan(monkeypatch):
     listed.assert_not_called()
 
 
-# NR0025 T0030 §3.6 (권고4) -- the facade owns `_sweep_daemon_started`; reading it
+# NR0025 T0030 §3.6 (recommendation 4) -- the facade owns `_sweep_daemon_started`; reading it
 # through `svc.` sees the real state, and resetting it through `svc.` re-arms the
 # daemon (0550 §3.5). Never let a real thread run: `_start_sweep_daemon` does
 # `import threading` inside its own body, so patching the real `threading` module's

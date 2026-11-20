@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0010 rev5 (반려 #1) — the start response's run identity.
+"""flowgate.default.0481 T0010 rev5 (rejection #1) — the start response's run identity.
 
 "충돌해결에서 AI호출 했더니 아무것도 안하고 가만히 있음... 뭔가 표시되는것도 없고."
 

@@ -1,5 +1,5 @@
-// flowgate.v02.0051 stage 2 — the 확인 card's settings tab (0035 v7 confirmSettings: 용도 · Git 반영).
-// 0048 registered no settings for AC; v7 puts 용도 (under discussion) and the Git 반영 card here.
+// flowgate.v02.0051 stage 2 — the 확인 card's settings tab (0035 v7 confirmSettings: purpose · Git apply).
+// 0048 registered no settings for AC; v7 puts purpose (under discussion) and the Git apply card here.
 // flowgate.v02.0053 T#7 — every card with check settings (inspectorSettingsKind): a Graph gate (확인) card in
 // any ownership keeps its values (T#2); a v0.1 Flow's 확인 (AC) Node is drawn without a store.
 import type { InspectorRegistration } from '../../inspectorRegistry'

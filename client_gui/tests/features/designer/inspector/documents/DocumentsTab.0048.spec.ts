@@ -184,7 +184,7 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     expect(previous[0].text()).toContain('#9')
 
     expect(paneState(w).exists()).toBe(false)
-    // flowgate.v02.0052 묶음 A: no prose line; where editing happens is the ↗ 열기 hover text.
+    // flowgate.v02.0052 batch A: no prose line; where editing happens is the ↗ 열기 hover text.
     expect(find(w, 'documents-edit-hint').exists()).toBe(false)
     // flowgate.v02.0053 T#3: the document opens in its window in this tab; the hover text says only that.
     expect(find(w, 'documents-open').attributes('title')).toBe('문서 열기')

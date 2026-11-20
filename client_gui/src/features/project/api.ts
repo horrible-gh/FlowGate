@@ -829,7 +829,7 @@ function transportError(error: unknown): unknown {
 }
 
 /**
- * What a refused Group / Flow / source command (or a failed read of the 수정 확인 window) means on screen. The server's
+ * What a refused Group / Flow / source command (or a failed read of the Review changes window) means on screen. The server's
  * text is only read, never shown.
  */
 export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {

@@ -10,7 +10,7 @@
 -- source_doc_id=NULL, which is exactly "there is no record that this row came from a plan"
 -- (L0011 §2.1 origin_of_loaded_row reads a NULL source as "manual").
 --
--- DB0012 §5 불변식 2 (source_revision_no IS NULL OR source_doc_id IS NOT NULL) is a CHECK in
+-- DB0012 §5 invariant 2 (source_revision_no IS NULL OR source_doc_id IS NOT NULL) is a CHECK in
 -- the postgres/mysql dialects. SQLite has no ALTER TABLE ... ADD CONSTRAINT, and the only way
 -- to add one is the full table rebuild 033 had to do — which would drop and recreate a table
 -- that other rows point at, for an invariant no write path can reach: the API layer rejects

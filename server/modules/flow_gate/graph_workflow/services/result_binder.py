@@ -1,4 +1,4 @@
-"""Result Binder (D0004 §2.2 결과 연결기, L0009 §2.6.8, P0008 §7.2).
+"""Result Binder (D0004 §2.2 result binder, L0009 §2.6.8, P0008 §7.2).
 
 The v0.1 contacts hand every document event of a Graph-owned Flow here after v0.1 committed
 (inbox registration, review decision). Inside the Flow guard the event is located on a node run
@@ -26,7 +26,7 @@ of the active run and turned into a node event for the resolver:
 flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
 a rework or when its count is spent — is not a node event of the v0.2 contract: the node stays in review
-and waits for the card's approval (``node_approval``). 0056 T#1 개정: bound root input is already done
+and waits for the card's approval (``node_approval``). 0056 T#1 revision: bound root input is already done
 at run start regardless of its document's review status (``run_service._root_bound_start``).
 A gate's confirm / reject is its own event and does not change.
 
@@ -408,7 +408,7 @@ def reconcile_links(ctx: RunContext, policies: dict) -> None:
 
 
 def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
-    """Before a run read (L0009 §2.6.8 호출 시점). A failure only skips the repair; the read goes on."""
+    """Before a run read (L0009 §2.6.8 invocation timing). A failure only skips the repair; the read goes on."""
     from modules.flow_gate.db.groups import is_archived
     if is_archived(flow_id):
         return

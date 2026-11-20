@@ -777,7 +777,7 @@ class TestFinalizeActionContract0331:
 
         state = svc.get_finalize_state(git_active_group)["state"]
         axes = state["action_axes"]
-        # Approved v4 order — 머지 → 커밋 → 대기 — comes from the server, so the
+        # Approved v4 order — merge → commit → wait — comes from the server, so the
         # three finalize surfaces cannot drift into different orders.
         assert axes["scopes"] == ["merge", "commit", "none"]
         assert axes["matrix"] == {
@@ -1932,7 +1932,7 @@ class TestGitEndToEnd:
         return blobs["base"], blobs["ours"], blobs["theirs"], resolved
 
     def test_0599_six_files_resolve_in_one_resolve_token_call(self, origin_repo, monkeypatch):
-        """0604 T0008 §11.12 (완료 조건): the real 0599 merge, reproduced by zdiff3 in a
+        """0604 T0008 §11.12 (acceptance criteria): the real 0599 merge, reproduced by zdiff3 in a
         throwaway repo, resolves all six files in ONE resolve-token call; all-ours and
         all-theirs stay rejected with or without declarations."""
         from modules.flow_gate.db import git_integration as db_git
@@ -2014,7 +2014,7 @@ class TestGitEndToEnd:
                     out.append(line)
             return "".join(out)
 
-        # §11.12 / D0005 완료 조건 3: all-ours and all-theirs are rejected with or
+        # §11.12 / D0005 acceptance criteria 3: all-ours and all-theirs are rejected with or
         # without declarations, and nothing is written. (a) one side picked in EVERY
         # chunk of the real markers: every file is a violation, listed in one 422.
         for label in ("ours", "theirs"):
@@ -3071,7 +3071,7 @@ class TestGitEndToEnd:
     def test_conflict_side_dropped_422_flows_through_resolve_token_and_retries(
         self, origin_repo, monkeypatch,
     ):
-        # 0478 T0012 작업 항목 3 (TR0013 rev0 반려 대응): the review demanded proof that
+        # 0478 T0012 task item 3 (addressing TR0013 rev0 rejection): the review demanded proof that
         # `conflict_side_dropped` isn't just raised in-process — it must survive the real
         # POST /groups/{g}/git/merge/{m}/resolve-token route (git_routes.py:490) and be
         # handled by ai_invoke_service._api_execute's conflict_pending branch exactly like
@@ -5849,7 +5849,7 @@ class TestBaseCommitRevert0177:
         assert out["base_dirty"] == {
             "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
         }
-        # dirty 0개인데 base-commit → 멱등 성공 (§5 경합 케이스)
+        # Zero dirty files and base-commit: idempotent success (§5 race case)
         out = svc.base_commit("baseprj", None)["result"]
         assert out["committed"] is False
         assert out["files"] == [] and out["remaining"] == []
@@ -6516,7 +6516,7 @@ class TestNoWorkFinalizeSurfaces0548:
     where they did no work at all (R → T → TR → AC in half a minute):
 
         머지할게 없는데... 경고 토스트가 그대로 뜬다 / 깃 다이얼로그도 그대로 뜬다
-        머지 다이얼로그가 그대로 뜬다 / 문서에 머지 섹션이 그대로 뜬다
+        머지 다이얼로그가 그대로 뜬다 / document merge section이 그대로 뜬다
 
     All four fall out of one chain, reproduced here on a real origin + real worktree
     + the real DB: the AC approval dialog faked a finalize gate for a slot with
@@ -6537,7 +6537,7 @@ class TestNoWorkFinalizeSurfaces0548:
         assert svc.ensure_worktree("gitnowork", "default", group) == "ok"
         # …and then nobody touches a single source file.
 
-        # 1) 머지 다이얼로그 — the AC confirm dialog asks with context=approval while
+        # 1) Merge dialog — the AC confirm dialog asks with context=approval while
         #    the root is still wf_in_progress. No work ⇒ no choice block.
         preview = svc.get_finalize_state(group, preview_ac=True)["state"]
         assert preview["status"] == "none"
@@ -6558,7 +6558,7 @@ class TestNoWorkFinalizeSurfaces0548:
         assert out.get("quiet") is None
         assert out["error"]["code"] == "invalid_state"
 
-        # 4) 문서에 머지 섹션 — GitFinalizePanel renders only on status != 'none'.
+        # 4) document merge section — GitFinalizePanel renders only on status != 'none'.
         assert svc.get_finalize_state(group)["state"]["status"] == "none"
 
         # And none of this quiet ever became a silent merge/push.
@@ -6588,7 +6588,7 @@ class TestNoWorkFinalizeSurfaces0548:
     def test_a_stale_pending_slot_with_nothing_in_it_loses_the_gate(
         self, nowork_surface_origin,
     ):
-        """The durable form of 문서에 머지 섹션: a slot that entered the gate before
+        """The durable form of document merge section: a slot that entered the gate before
         0199's entry guard existed (or while divergence was briefly unmeasurable)
         used to sit in `awaiting_choice` forever with nothing to finalize."""
         from modules.flow_gate.db import git_integration as db_git
@@ -7227,7 +7227,7 @@ def grpexp_origin(seed):
 
 @needs_git
 class TestGroupExplorerUntracked:
-    """0315 TR (NR0003 권고 1·2·3): the checkout-free group-branch explorer surfaces
+    """0315 TR (NR0003 recommendation 1·2·3): the checkout-free group-branch explorer surfaces
     untracked (never-committed) worktree files. B0001's symptom was that a worker's new
     file stayed invisible in tree / changes / blob reads until finalize, because all three
     read committed git objects only. These pin the untracked channel end-to-end."""

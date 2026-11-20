@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 stage 2 — the 작업 card's documents tab body (0035 v7 work.*): the 지시서 and 레포트 slot
+  <!-- flowgate.v02.0051 stage 2 — the 작업 card's documents tab body (0035 v7 work.*): the instruction and report slot
        lines, built from the common slot list part. A thin container: taskCardModel decides the lines from
        the target; the document icon (or the line's name) opens a document in its window, ✎ straight in its
        editor. No server call of its own.
@@ -57,12 +57,12 @@ function lineOf(slot: TaskSlot): InspectorSlotView {
     danger: slot.state?.tone === 'danger',
     open: slot.open,
     author: authorOf(slot.key),
-    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line.
+    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · Empty · the history number · [AI 호출] of the card's own line.
     ...cardLineRow(props.target, slot, slot.key),
   }
 }
 
-/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI 또는 사람), as the server sent it. */
+/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI or a person), as the server sent it. */
 function authorOf(key: string): string | null {
   return props.target.cardDocuments.find((line) => line.slot === key)?.author ?? null
 }
@@ -78,7 +78,7 @@ function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window (flowgate.v02.0056 F1). */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

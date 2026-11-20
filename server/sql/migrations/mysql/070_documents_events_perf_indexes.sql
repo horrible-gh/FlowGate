@@ -1,29 +1,29 @@
 -- 070_documents_events_perf_indexes.sql
--- flowgate.default.0291 (R0001 → N0002 → NR0003 → T0010): NR0003 권고 P2 — 쿼리 단가.
+-- flowgate.default.0291 (R0001 → N0002 → NR0003 → T0010): NR0003 recommendation P2 — per-query cost.
 --
--- SQLite 원본(sql/migrations/sqlite/070_documents_events_perf_indexes.sql)의 MySQL/MariaDB
--- 판이다. 근거·컬럼 순서·각 인덱스가 어느 쿼리를 덮는지는 원본 주석에 있다.
+-- MySQL/MariaDB version of the SQLite original (sql/migrations/sqlite/070_documents_events_perf_indexes.sql).
+-- See the original comments for rationale, column order, and the queries each index covers.
 --
--- 방언 차이 두 가지만 여기서 다룬다.
+-- Only two dialect differences are addressed here.
 --
--- 1. BEGIN/COMMIT 제거 — DDL 이 암묵적으로 커밋되므로 명시적 트랜잭션은 의미가 없다.
---    069/068 등 기존 생성물과 같은 처리다.
+-- 1. Remove BEGIN/COMMIT: DDL commits implicitly, making explicit transactions meaningless.
+--    This follows existing generated migrations such as 069/068.
 --
--- 2. TEXT 컬럼 prefix 길이 — documents.doc_review_status 는 이 방언에서 TEXT 라
---    prefix 길이 없이는 인덱싱할 수 없다(1170 에러). 067a_auth_sessions.sql 의
---    `revoked_at(191)` 과 같은 방식으로 191 을 붙였다. 191 은 이 스키마가 문자열 키에
---    쓰는 VARCHAR 폭이며, doc_review_status 의 실제 값은 가장 긴 것이
---    'wf_in_progress'(14자)라 잘림이 발생하지 않는다.
---    나머지 컬럼은 모두 VARCHAR/INTEGER 라 그대로 쓴다:
+-- 2. TEXT column prefix length: documents.doc_review_status is TEXT in this dialect and
+--    cannot be indexed without a prefix length (error 1170). Use 191, following
+--    `revoked_at(191)` in 067a_auth_sessions.sql. 191 is the VARCHAR width this schema
+--    uses for string keys; the longest actual doc_review_status value is
+--    'wf_in_progress' (14 characters), so no truncation occurs.
+--    All remaining columns are VARCHAR/INTEGER and are used unchanged:
 --      documents.group_id VARCHAR(191) / type_code VARCHAR(191) / project_id VARCHAR(191)
 --      documents.updated_at VARCHAR(191) / status VARCHAR(64) / seq INTEGER
 --      events.event_type VARCHAR(191) / doc_id VARCHAR(191) / event_id INTEGER
---    최대 키 길이는 idx_documents_group_type_review 의 (764+764+764)=2292 바이트로
---    InnoDB DYNAMIC 행 포맷 상한 3072 안에 든다.
+--    the largest key, idx_documents_group_type_review, is (764+764+764)=2292 bytes,
+--    within the InnoDB DYNAMIC row format limit of 3072.
 --
--- ORDER BY 방향 표기(DESC)는 MariaDB 가 파싱 후 무시한다 — 정방향 스캔으로 같은 순서가
--- 나오므로 동작 차이는 없고, 001 의 idx_events_doc_created / 027 의 idx_documents_updated
--- 가 이미 같은 표기를 쓰고 있어 표기를 맞췄다.
+-- MariaDB parses and ignores the ORDER BY direction (DESC). A forward scan produces the same order,
+-- so behavior is unchanged. This also matches the notation already used by idx_events_doc_created in 001
+-- and idx_documents_updated in 027.
 
 CREATE INDEX IF NOT EXISTS idx_documents_group_seq
     ON documents(group_id, seq);

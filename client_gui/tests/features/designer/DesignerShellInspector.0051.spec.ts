@@ -123,7 +123,7 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-canvas').attributes('data-selected-node-id')).toBe('gn_task')
     expect(get('designer-inspector-title').text()).toBe('구현 레포트')
     expect(get('designer-inspector-doc-status').text()).toBe('검수 대기')
-    // flowgate.v02.0052 묶음 A: a run status without a display name is kept as the raw value only
+    // flowgate.v02.0052 batch A: a run status without a display name is kept as the raw value only
     // (data-value, tooltip) and never shown as text.
     expect(get('designer-inspector-run-status').attributes('data-value')).toBe('waiting_review')
     expect(get('designer-inspector-pill').text()).not.toContain('waiting_review')

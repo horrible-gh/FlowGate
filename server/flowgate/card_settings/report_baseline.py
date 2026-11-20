@@ -1,4 +1,4 @@
-"""The report baseline of an attempt (flowgate.v02.0113 0038-T T#3 A-2, 0002-D 개정 §3.6-0-2).
+"""The report baseline of an attempt (flowgate.v02.0113 0038-T T#3 A-2, 0002-D revision §3.6-0-2).
 
 An attempt of a card that uses an instruction and opens with none written records the card's report as it is then —
 its report line document and that document's content (revision, body digest, last body save) — as the attempt's

@@ -167,11 +167,11 @@ def test_started_event_payload_carries_the_project_scoped_identity():
     assert '"action_scope": run.get("action_scope")' in started
 
 
-# ── T0010 rev1 (2026-09-08 반려) ────────────────────────────────────────────────
-# "난 채팅을 치면 기다렸다가 바로 답장 받는걸 원했는데 아예 다이얼로그 밖으로 빠져나가서
-# 기본 AI실행 다이얼로그 보는걸 원하지 않는다." 승인 대기 화면이 제자리에서 기다리려면
-# 서버가 "지금 이 대화 턴의 실행이 돌고 있다"를 말해 줘야 하고, 영영 오지 않을 답을
-# 기다리게 두어서도 안 된다.
+# ── T0010 rev1 (2026-09-08 rejection) ──
+# The user expected an inline reply after sending chat, rather than leaving the
+# dialog for the general AI execution dialog. To keep the approval screen waiting
+# in place, the server must expose this conversation turn's active run and must
+# not leave the user waiting indefinitely for a reply that cannot arrive.
 
 def _review_session(monkeypatch, context: dict):
     """Drive get_merge_review against an in-memory session context."""

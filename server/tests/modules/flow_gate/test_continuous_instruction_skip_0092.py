@@ -57,8 +57,8 @@ def test_auto_complete_fills_instruction_then_stops_at_report(monkeypatch):
                    "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    # 0406 T0022 작업 3: 개수가 아니라 **어느 칸을** 서버가 대신 처리했는지를 돌려준다.
-    # 그 목록이 없으면 "N/T 단계가 사라졌다"는 관찰을 사후에 설명할 근거가 없다.
+    # 0406 T0022 task 3: return which slots the server handled, not merely their count.
+    # Without that list, instruction stages disappearing cannot be explained afterward.
     assert n == [1]
     assert created == ["N"]  # only the instruction head was auto-completed
 
@@ -232,7 +232,7 @@ def test_advance_continuous_ai_direct_mints_instruction(monkeypatch):
 # ── (0352 T0004 §2) per-item_seq N/T auto-approve selection within ai_direct ──────────
 
 def test_advance_continuous_ai_direct_auto_approves_selected_item_seq(monkeypatch):
-    # §4 완료기준 1: ai_direct + T at item_seq 1 and 3, selecting {3} auto-completes ONLY
+    # §4 acceptance criteria 1: ai_direct + T at item_seq 1 and 3, selecting {3} auto-completes ONLY
     # item_seq 3 server-side; item_seq 1 (not selected) still mints a worker token.
     _patch_perms(monkeypatch)
     doc = {"doc_id": "flowgate.default.0353.0001-R", "group_id": "flowgate.default.0353",
@@ -271,7 +271,7 @@ def test_advance_continuous_ai_direct_auto_approves_selected_item_seq(monkeypatc
 
 
 def test_advance_continuous_ai_direct_leaves_unselected_item_seq_to_worker(monkeypatch):
-    # §4 완료기준 1 (converse): T at item_seq 1 is NOT in the selection {3} → the worker
+    # §4 acceptance criteria 1 (converse): T at item_seq 1 is NOT in the selection {3} → the worker
     # token is minted for it, exactly like plain (no-selection) ai_direct.
     _patch_perms(monkeypatch)
     doc = {"doc_id": "flowgate.default.0353.0001-R", "group_id": "flowgate.default.0353",
@@ -362,7 +362,7 @@ def test_validate_auto_approve_item_seqs_rejects_ineligible_type(monkeypatch):
             {"item_seq": 2, "type": "NR", "status": "pending"},
         ],
     )
-    # §4 완료기준 8: a non-N/T item_seq (here NR) is rejected.
+    # §4 acceptance criteria 8: a non-N/T item_seq (here NR) is rejected.
     with pytest.raises(ValueError, match="ineligible_auto_approve_item_seq"):
         svc.validate_continuation_auto_approve_item_seqs([2], "r-doc", target_seq=6)
 
@@ -377,7 +377,7 @@ def test_validate_auto_approve_item_seqs_rejects_beyond_target(monkeypatch):
             {"item_seq": 3, "type": "T", "status": "pending"},
         ],
     )
-    # §4 완료기준 8: target range 밖 item_seq is rejected.
+    # §4 acceptance criteria 8: target range 밖 item_seq is rejected.
     with pytest.raises(ValueError, match="out_of_range_auto_approve_item_seq"):
         svc.validate_continuation_auto_approve_item_seqs([3], "r-doc", target_seq=2)
 
@@ -410,7 +410,7 @@ def test_validate_auto_approve_item_seqs_rejects_already_done_at_front_door(monk
         svc.db_wfseq, "get_sequence_items",
         lambda _sid: [{"item_seq": 1, "type": "T", "status": "done"}],
     )
-    # §2: 이미 끝난(승인 완료) 단계의 item_seq는 422 — the default (reject_already_done=True)
+    # §2: item_seq for an already approved/completed step yields 422 — the default (reject_already_done=True)
     # front-door validation catches this.
     with pytest.raises(ValueError, match="already_done_auto_approve_item_seq"):
         svc.validate_continuation_auto_approve_item_seqs([1], "r-doc", target_seq=6)

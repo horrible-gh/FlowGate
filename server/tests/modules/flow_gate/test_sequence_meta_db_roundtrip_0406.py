@@ -1,13 +1,10 @@
-"""0406 T0013 — note·source 세 값이 진짜 DB 왕복에서 살아남는지 (NR0003 §6-2).
+"""0406 T0013: preserve the three note/source values through real DB round trips (NR0003 §6-2).
 
-이 그룹의 다른 시험은 모두 ``modules.flow_gate.db`` 를 기록용 대역으로 바꾼다. 그래서
-지금까지 증명된 것은 "파이썬 호출에 값이 실렸다"까지이고, 마이그레이션 079 가 만든 세
-컬럼을 실제로 쓰고 다시 읽는 SQL 은 한 번도 실행되지 않았다. B0001 의 실측이 운영
-테이블에서 note 가 채워진 행 0 개였다는 점을 생각하면, 그 수준의 증명이 바로 실패한
-수준이다.
-
-그래서 여기서는 모든 마이그레이션을 적용한 sqlite 파일에 실제 저장 경로
-(``edit_workflow_pending``)를 돌리고, 운영과 같은 SELECT 로 다시 읽는다.
+Other suites replaced modules.flow_gate.db with recording doubles, proving only Python
+argument propagation. They never exercised SQL writing and reading migration 079 columns.
+B0001 found zero production rows with a populated note, demonstrating why that evidence
+was insufficient. Run edit_workflow_pending against fully migrated SQLite and read it
+back using the same SELECT as production.
 """
 from __future__ import annotations
 
@@ -54,11 +51,10 @@ INSERT OR IGNORE INTO documents(
 
 
 class _SqliteStore:
-    """운영 FlowGateStore 와 같은 최소 계약. ``_sql`` 은 일부러 두지 않는다.
+    """Minimal production FlowGateStore contract, deliberately without _sql.
 
-    ``workflow_sequences._sql`` 이 ``FlowGateStore._sql`` 로 떨어지면서 등록된 진짜 SQL
-    본문을 그대로 쓰게 하려는 것이다 — 여기서 문장을 새로 쓰면 검사하려던 계약을 시험이
-    다시 작성해 버린다.
+    Let workflow_sequences._sql fall back to FlowGateStore._sql and the real registered
+    SQL. Rewriting statements here would duplicate the contract this test must verify.
     """
 
     def __init__(self, db_path: str) -> None:
@@ -84,10 +80,10 @@ class _SqliteStore:
 
 @pytest.fixture
 def real_store(migrated_sqlite_db):
-    """마이그레이션 전부를 적용한 sqlite 파일 위의 진짜 저장소.
+    """Real storage backed by a SQLite file with every migration applied.
 
-    0393 의 교훈대로 ``get_store`` 함수를 갈아끼우지 않고 connection 의 STORE 객체만
-    바꾼다. 이미 ``get_store`` 를 임포트해 둔 모듈도 같은 객체를 보게 된다.
+    Following 0393, replace connection.STORE, not get_store, so modules that already
+    imported the function see the same store.
     """
     db_path = migrated_sqlite_db("seq_meta_roundtrip_0406.db", seed_sql=_SEED_SQL)
     store = _SqliteStore(db_path)
@@ -102,7 +98,7 @@ def real_store(migrated_sqlite_db):
 
 @pytest.fixture
 def seeded_sequence(real_store):
-    """WP 가 부은 것과 같은 모양의 대기 행 3개. 두 행은 출처가 있고 한 행은 없다."""
+    """Three pending rows shaped like an applied WP: two with provenance and one without."""
     db_wfseq.insert_sequence(_ROOT_DOC)
     seq = db_wfseq.get_sequence_by_doc_id(_ROOT_DOC)
     rows = [
@@ -130,7 +126,7 @@ def _metadata(items):
 
 
 def test_insert_and_select_carry_the_three_columns_through_real_sql(seeded_sequence):
-    """079 가 만든 컬럼이 운영 INSERT/SELECT 문 그대로 값을 실어 나른다."""
+    """Production INSERT/SELECT statements preserve values in migration 079 columns."""
     stored = db_wfseq.get_sequence_items(seeded_sequence["id"])
 
     assert _metadata(stored) == [
@@ -142,7 +138,7 @@ def test_insert_and_select_carry_the_three_columns_through_real_sql(seeded_seque
 
 
 def test_canonical_query_reads_the_metadata_out_of_the_database(seeded_sequence):
-    """정본 조회가 DB 에 실제로 있는 값을 세 키로 돌려준다 (구형 serializer 였다면 키 자체가 없다)."""
+    """Canonical lookup returns all three stored keys; the old serializer omitted them."""
     result = workflow_decision_service.get_workflow_sequence(_ROOT_DOC)
 
     assert result["decided"] is True
@@ -155,11 +151,11 @@ def test_canonical_query_reads_the_metadata_out_of_the_database(seeded_sequence)
 
 
 def test_no_edit_save_round_trip_keeps_every_value_in_the_database(seeded_sequence):
-    """B0001 원래 증상의 회귀 항목: 아무것도 고치지 않은 저장이 세 값을 그대로 둔다."""
+    """B0001 regression: saving without edits preserves all three values."""
     loaded = workflow_decision_service.get_workflow_sequence(_ROOT_DOC)
     before = _metadata(loaded["items"])
 
-    # 화면이 하는 일과 같다: 받은 행을 그대로 PATCH 본문으로 되돌린다.
+    # Mirror the UI: send the received rows unchanged as the PATCH body.
     workflow_decision_service.edit_workflow_pending(
         _ROOT_DOC,
         [
@@ -180,7 +176,7 @@ def test_no_edit_save_round_trip_keeps_every_value_in_the_database(seeded_sequen
 
 
 def test_a_save_without_the_keys_is_what_wiped_the_rows(seeded_sequence):
-    """세 키가 빠진 저장은 실제로 값을 지운다 — 화면 가드가 막는 것이 바로 이 요청이다."""
+    """Saving without the three keys really clears them; the UI guard prevents that request."""
     workflow_decision_service.edit_workflow_pending(
         _ROOT_DOC,
         [
@@ -195,7 +191,7 @@ def test_a_save_without_the_keys_is_what_wiped_the_rows(seeded_sequence):
 
 
 def test_revision_without_a_source_document_is_refused_before_any_row_is_touched(seeded_sequence):
-    """불변식 2 는 sqlite 에서 이 검사뿐이다. 거절이 앞선 행을 건드리지 않는 것까지 본다."""
+    """The SQLite check enforcing invariant 2 must reject without altering earlier rows."""
     with pytest.raises(ValueError, match="invalid_sequence_item:0:"):
         workflow_decision_service.edit_workflow_pending(
             _ROOT_DOC,

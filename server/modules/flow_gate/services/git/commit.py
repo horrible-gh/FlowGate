@@ -1,6 +1,6 @@
 """Commit-message pipeline and TR commit point / cancel / revert-reapply helpers.
 
-Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/부록 A).
+Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/Appendix A).
 """
 from __future__ import annotations
 
@@ -713,7 +713,7 @@ def _cancel_prelock_gate(group_id: str) -> dict:
     """L0007 §4.1 G2~G7 — everything that can be judged from the DB alone.
 
     Split out of :func:`open_cancel_session` because the rewind dialog's preview must
-    answer with the SAME reading in the SAME order (L0007 §3 그룹 관측 상태); two copies
+    answer with the SAME reading in the SAME order (L0007 §3 observed group state); two copies
     of this ladder is exactly how a dialog ends up saying "2 commits will be reverted"
     about a group whose cancel then refuses.
     """
@@ -758,7 +758,7 @@ def _cancel_prelock_gate(group_id: str) -> dict:
 
 # L0007 §3 — the preview's group-level status. `git_busy`/`dirty_worktree` are NOT in
 # it: both are true only at the instant a revert is being laid down, and a dialog that
-# opened ten seconds ago would be stating them as facts (P0006 §2 서두). A merge in
+# opened ten seconds ago would be stating them as facts (P0006 §2 introduction). A merge in
 # flight therefore previews as "active" and the confirm press answers `git_busy` — with
 # a [다시 시도] button, which is the honest sequence.
 _PREVIEW_STATUS_OF_BLOCK = {
@@ -785,7 +785,7 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str], *, owned_dirt
     ``{"ok": False, "blocked_reason": <P0006 §5-3 code>, "block_sub": <L0007 detail>}``.
 
     The gate ORDER is the part that carries meaning, and it is the same order the
-    preview reads (L0007 §3 그룹 관측 상태) so the dialog never promises something the
+    preview reads (L0007 §3 observed group state) so the dialog never promises something the
     press of the button then refuses:
 
     * ``already_merged`` is checked BEFORE ``worktree_registered`` — cleanup unregisters

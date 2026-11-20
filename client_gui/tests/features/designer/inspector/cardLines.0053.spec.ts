@@ -3,15 +3,15 @@
  * The real Frame and registry on a draft node as the server answers it after the save (its card lines and,
  * for the Inspector's document tabs, the first line a person writes as the node's document):
  *
- * - every card kind shows the lines of the table — 요구사항 · AI 위임 (only while on), 작업계획 (flowgate.v02.0072 T#3: the
- *   전개 line is not shown; the plan opens in the work plan edit window),
- *   설계 (기본 · 프로토콜 · 로직 · DB): 설계 지시 · 설계서 (flowgate.v02.0074 T#3, R §3), 조사 · 작업 · Custom: 지시서 · 레포트,
- *   테스트: 지시서 · 시나리오 · 레포트;
+ * - every card kind shows the lines of the table — 요구사항 · AI delegation (only while on), 작업계획 (flowgate.v02.0072 T#3: the
+ *   deployment line is not shown; the plan opens in the work plan edit window),
+ *   설계 (기본 · 프로토콜 · 로직 · DB): 설계 지시 · design document (flowgate.v02.0074 T#3, R §3), 조사 · 작업 · Custom: instruction · report,
+ *   테스트: instruction · 시나리오 · report;
  * - each line is `name · [state] · [history] · [document icon] · ✎`: the name and the document icon (tooltip
  *   열기) open the document window, ✎ opens it straight in the editor — the report too, before any run; a
- *   draft draws no state badge (flowgate.v02.0056 F1), and the history button opens the 검수·반려 이력 window;
+ *   draft draws no state badge (flowgate.v02.0056 F1), and the history button opens the review·rejection history window;
  * - no type code in a name, no "아직 없음", no ↗ and no "설명 대기" note on the tab;
- * - a card whose settings omit the instruction has no 지시서 line (v7); a card not saved yet reads nothing.
+ * - a card whose settings omit the instruction has no instruction line (v7); a card not saved yet reads nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -111,7 +111,7 @@ const CARDS: readonly PlacedCard[] = [
   { card: '조사', section: 'researchCard', node: placed('gn_n', 'document', 'N', [line('instruction', 'N', doc('0007', 'N'), 'human'), line('report', 'NR', doc('0008', 'NR'), 'run')]), names: ['지시서', '레포트'] },
   { card: '작업', section: 'taskCard', node: placed('gn_t', 'document', 'T', [line('instruction', 'T', doc('0009', 'T'), 'human'), line('report', 'TR', doc('0010', 'TR'), 'run')]), names: ['지시서', '레포트'] },
   { card: '반영', section: 'taskCard', node: placed('gn_t2', 'document', 'T2', [line('instruction', 'T2', doc('0011', 'T2'), 'human'), line('report', 'TR2', doc('0012', 'TR2'), 'run')]), names: ['지시서', '레포트'] },
-  // A Custom card holds T / TR documents (T#1), so with its 지시서 bound it is drawn by the 작업 card part; without
+  // A Custom card holds T / TR documents (T#1), so with its instruction bound it is drawn by the 작업 card part; without
   // a bound document the gate part draws the same two lines (Custom without a document, below).
   { card: 'Custom', section: 'taskCard', node: placed('gn_c', 'custom', null, [line('instruction', 'T', doc('0013', 'T'), 'human'), line('report', 'TR', doc('0014', 'TR'), 'run')]), names: ['지시서', '레포트'] },
   {

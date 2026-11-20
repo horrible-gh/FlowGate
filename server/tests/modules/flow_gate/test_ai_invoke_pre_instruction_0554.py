@@ -1809,7 +1809,7 @@ class TestConnectedFlowFullEffectiveBundle:
         assert mid_gate["stage"] == review_module.REVIEW_HOP_KIND
         assert mid_gate["round_no"] == 2
 
-        # ---- 7. final pass (최종 pass) — run the actual settlement rather than stopping
+        # ---- 7. final pass (final pass) — run the actual settlement rather than stopping
         # at resolve_review_gate(). The fake sequence view derives its next head from the
         # canonical T's real approval state, mirroring the production SQL effective-head join.
         review_rows.append({"id": 2, "verdict": "pass", "revision_no": 1,

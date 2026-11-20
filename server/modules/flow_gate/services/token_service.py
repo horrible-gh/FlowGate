@@ -146,7 +146,7 @@ def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional
     sweep (T0009 §5.1) and resolves the *stored* mode — the caller performs the claim
     itself once inside that transaction.
 
-    0515 T0009 §7 "절대 하지 말 것": the caller never supplies capability — only this
+    0515 T0009 §7 "never do this": the caller never supplies capability — only this
     function, reading the user's own stored setting, decides it.
     """
     from modules.flow_gate.db import user_chat_source_access as db_source_access

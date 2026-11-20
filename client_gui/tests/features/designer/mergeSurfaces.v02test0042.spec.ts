@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0042 — where a card result's merge shows outside its tab (시안 v7): the Canvas card (the hourglass names
+ * flowgate.v02test.0042 — where a card result's merge shows outside its tab (mockup v7): the Canvas card (the hourglass names
  * the card it waits for; nothing is added below the card; 병합 충돌 opens the card's tab), the Center column turning
  * "open this card's merge" into a selection and a tab request, the notification runs tab and the Git panel (no dead end:
  * "카드에서 처리합니다 [카드로 이동]").
@@ -163,7 +163,7 @@ describe('notification runs tab: merge items', () => {
       '‘업로드 대기열 이전’ 카드 병합 충돌 — 선택 필요',
       '‘승인 화면’ 카드 병합 대기 (‘업로드 대기열 이전’ 뒤)',
     ])
-    // 시안 v7: the conflict row is framed red with the conflict mark; the waiting one carries the hourglass
+    // mockup v7: the conflict row is framed red with the conflict mark; the waiting one carries the hourglass
     expect(rows[0].classes()).toContain('is-choice')
     expect(rows[1].classes()).not.toContain('is-choice')
     expect(rows[0].get('.notification-status').classes()).toContain('is-fail')

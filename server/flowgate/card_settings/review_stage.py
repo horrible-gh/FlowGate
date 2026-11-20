@@ -166,8 +166,8 @@ stage's start (``start_result_stage`` ``idle_ok``), and an approved instruction 
 # ``review_result_unknown``) make it a ``system_error`` instead: the reconciliation below (B-3) tries the path again
 # while ``card_intervention.reasons.retry_due`` allows it (a needs_intervention reason never; system errors up to
 # ``SYSTEM_ERROR_RETRY_LIMIT`` records of the submission), where it tried once before.
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1, 0004-CH seq 9 T-3 "사람 작성 결과는 검수 설정이 있으면 AI 검수, 없으면
-# 제출 시 human_submitted 로 완료"): a pre-feature attempt (no stage assignment record: ``manual_stage.person_result``
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1, 0004-CH seq 9 T-3 "human-authored results receive AI review when configured; otherwise
+# complete as human_submitted on submission"): a pre-feature attempt (no stage assignment record: ``manual_stage.person_result``
 # answers ``LEGACY``) of a run / test card a person writes is no longer left to a person's card approval, which is gone —
 # its submissions (the result, a new revision, ``mark_revised``, a lost contact's binding) take the same post-commit step
 # as the 0083 WP-4 plan: its card's review set (review count not 0) -> one AI review of the submission (no rework AI;
@@ -456,7 +456,7 @@ def _assigned_instruction_failed(flow_id: str, attempt_id: Optional[str], run_id
 def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: str, *, mark: Optional[dict] = None,
                         attempt_id: Optional[str] = None, expected_revision: Optional[int] = None):
     """Approve the card's instruction ``doc_id`` at once, with no review (``card_settings_ports.approve_instruction``):
-    True when it is approved. flowgate.v02.0105 T#2 (B-4, Q #511 o3 — 0083 T#4 개정): under the server's automatic
+    True when it is approved. flowgate.v02.0105 T#2 (B-4, Q #511 o3 — 0083 T#4 revision): under the server's automatic
     approval authority (``legacy.AUTOMATION_APPROVE_PERMISSIONS``), the issuer ``actor_user_id`` kept as the approval's
     actor. With no issuer (``issuer_missing``), or on any refusal (``approval_refused``), nothing is approved (False) and
     why is recorded (B-1). flowgate.v02.0119 T#3 (T-2 rework): no card approval takes it any more — a system error of
@@ -1122,7 +1122,7 @@ def _reconciled_approval(flow_id: str, run_id: str, key: str, doc_id: str, issue
 
 def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:
     """B-3 for a node open in its instruction stage whose instruction AI run ended on its own and was never followed: the
-    same rules on ``instruction_review_count`` (3.9.2, 지시서 단계)."""
+    same rules on ``instruction_review_count`` (3.9.2, instruction stage)."""
     key = row["node_key"]
     node = _ai_card(flow_id, key)
     if node is None or _handoff_pending(flow_id, key) or legacy.node_ai_run_active(flow_id, key):

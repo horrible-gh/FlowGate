@@ -1,4 +1,4 @@
-"""Workspace API (flowgate.v02.0020, 시안 11 워크스페이스 / 12 워크스페이스 상세).
+"""Workspace API (flowgate.v02.0020, draft 11 워크스페이스 / 12 워크스페이스 상세).
 
 GET    /api/v1/workspaces                                   list (system admin: all; others: own)
 POST   /api/v1/workspaces                                   create (system admin)

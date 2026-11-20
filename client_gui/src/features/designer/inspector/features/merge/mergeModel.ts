@@ -1,4 +1,4 @@
-// flowgate.v02test.0042 — the '병합 · 충돌' tab's pure rules (시안 v7, 0005-CH turns 38-40): when the tab shows, its
+// flowgate.v02test.0042 — the '병합 · 충돌' tab's pure rules (mockup v7, 0005-CH turns 38-40): when the tab shows, its
 // colour, which screen it draws and how a reason reads. No API, no Vue.
 import type { InspectorTarget } from '../../inspectorTarget'
 
@@ -32,7 +32,7 @@ export function mergeToneOfStatus(status: string | null | undefined): MergeTone 
 export type MergeScreen = 'loading' | 'waiting' | 'catching_up' | 'needs_choice' | 'pick' | 'failed' | 'merged' | 'none'
 
 /**
- * Which screen the tab draws: the read state, or ④ 병합 완료 when work this tab showed went away while it was open
+ * Which screen the tab draws: the read state, or ④ Merge complete when work this tab showed went away while it was open
  * (`hadWork`), or the per-file pick (③) the person opened on a conflict.
  */
 export function mergeScreenOf(state: string | null, hadWork: boolean, picking: boolean): MergeScreen {

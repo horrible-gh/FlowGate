@@ -40,14 +40,14 @@ _log = logging.getLogger(__name__)
 TR_TYPE_CODE = "TR"
 
 # L0007 §1 artifact_list_max — the same cap the finalize result already uses. P0006 §1
-# spells the number "20" while calling it "마무리 목록 상한과 동일"; the finalize cap is
+# spells the number "20" while calling it "same as the finalize list cap"; the finalize cap is
 # 200 (git_service.FINALIZE_ARTIFACT_LIST_MAX), so the shared-cap intent both documents
 # state is what is implemented, and the count is always exact regardless of the cap.
 ARTIFACT_LIST_MAX = git_service.FINALIZE_ARTIFACT_LIST_MAX
 
 # L0007 §1 panel_commit_list_max — how many rows the Git status panel shows before it
 # folds the rest into "N개 더". The response never truncates silently: the total travels
-# with the list (L0007 §5 "조용한 절단 금지").
+# with the list (L0007 §5 "no silent truncation").
 PANEL_COMMIT_LIST_MAX = 20
 
 
@@ -64,7 +64,7 @@ def doc_code(doc: Optional[dict]) -> str:
 
 
 def commit_subject(doc: dict) -> str:
-    """flowgate.default.0462 T0005 §4-2 (supersedes L0007 §2.6's ``0009-TR: 제목`` rule)
+    """flowgate.default.0462 T0005 §4-2 (supersedes L0007 §2.6's ``0009-TR: title`` rule)
     — a conventional, ASCII-only commit subject for a TR approval.
 
     Still NOT translated: no HTTP call, no 3s timeout, the L0007 §2.6 cost argument
@@ -168,7 +168,7 @@ def _declared_no_source_changes(doc: dict) -> bool:
     """True when the TR's own ``## 변경 파일`` section explicitly says nothing changed.
 
     Doc-level, so it still answers when git cannot be asked at all (T0004 §2's "git
-    gate보다 먼저" case). Used only to demote a git_inactive/no_worktree skip from an
+    before the gate" case). Used only to demote a git_inactive/no_worktree skip from an
     actionable warning to a quiet one — it never decides what git_service actually
     commits, so module rule 2 (the reported list is never a filter) still holds.
     """
@@ -192,8 +192,8 @@ def _worktree_shows_pending_changes(doc: dict) -> Optional[bool]:
     on the row, no directory on disk): a worktree is the only place a source edit can
     exist, so a group that never had one, or whose assigned branch has no directory on
     disk, could not possibly be carrying an undeclared change (rejection on revision 3
-    of this TR — "실제 commit 대상이 존재하지 않는 no-work/no-worktree 상태 자체를 quiet
-    no-op으로 수렴시켜라"). ``None`` is now reserved for the one case that is genuinely
+    of this TR — "make no-work/no-worktree states with no actual commit target
+    converge to a quiet no-op"). ``None`` is now reserved for the one case that is genuinely
     unknowable: a directory that *does* exist but git itself cannot answer for it (no
     git binary, not a real repo, a timeout) or an unexpected setup failure — there, and
     only there, the caller still has nothing but the TR's own declaration to fall back
@@ -238,7 +238,7 @@ def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
     """T0004 §5 — the single place ReviewActionBar's toast severity is decided.
 
     Kept server-side on purpose: a client that string-matched ``skipped_reason``
-    itself would be exactly the "클라이언트에서만 문자열 기준으로 억지 suppression" T0004 §8
+    itself would be exactly the "forced client-only suppression through string matching" T0004 §8
     forbids.
     """
     if skipped_reason in _ALWAYS_QUIET_SKIP_REASONS:
@@ -246,8 +246,8 @@ def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
     if skipped_reason in _CONDITIONALLY_QUIET_SKIP_REASONS:
         # The worktree is the authoritative signal whenever it can answer, and "no
         # worktree was ever assigned to this group" is itself an answer (False, not
-        # unknown) — rejection on revision 3 of this TR: "Git으로 변경 유무를 확인할 수
-        # 없음"을 "변경이 있음"으로 취급하지 말라, no-work/no-worktree 상태 자체가 quiet.
+        # unknown) — rejection on revision 3 of this TR: "Git cannot determine whether changes
+        # exist" must not be treated as "changes exist"; no-work/no-worktree is itself quiet.
         # A clean or nonexistent tree is quiet even when the TR omitted or malformed
         # Changed Files; pending source changes keep the warning even when the TR
         # incorrectly says "none". Only the genuinely unknowable case — a directory
@@ -415,7 +415,7 @@ def _record(*, group_id: str, doc_id: str, outcome: dict, subject: str) -> None:
 # ── read models for the two screens (D0005 §6.1 / §6.2) ───────────────────────
 
 def _row_view(row: dict, doc: Optional[dict] = None) -> dict[str, Any]:
-    """One ledger row as a screen reads it. Short hashes are cut here (P0006 서두);
+    """One ledger row as a screen reads it. Short hashes are cut here (P0006 introduction);
     the ledger keeps the full 40 characters."""
     sha = row.get("commit_sha")
     cancel = row.get("cancel_commit")

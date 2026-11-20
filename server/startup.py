@@ -25,7 +25,7 @@ def preload_singletons():
 
 
 def recover_ai_invoke_leases():
-    """0401 NR0003 / T0004 작업 1: clear AI-run group leases orphaned by a restart.
+    """0401 NR0003 / T0004 task 1: clear AI-run group leases orphaned by a restart.
 
     Every lease still in the table when this runs belongs to a process that no
     longer exists (this process's live-run registry starts empty), so it is safe
@@ -405,7 +405,7 @@ def start_card_memo_integration():
 
 
 def start_graph_policy_integration():
-    """flowgate.v02.0061 (R §2.1 시작점, §2.4 분기, §2.5 합류; D0006 §2.1, §2.3): composition root of the Graph
+    """flowgate.v02.0061 (R §2.1 start, §2.4 fork, §2.5 join; D0006 §2.1, §2.3): composition root of the Graph
     execution policies. Registers ``flowgate.graph_policies`` as the decided rules of the Graph workflow's slots:
     ``start_node`` = ``root_start`` (a run opens the requirement / bug nodes with no incoming and an outgoing edge;
     an isolated node and a path they do not reach are left out), ``edge_condition`` / ``parallelism`` =

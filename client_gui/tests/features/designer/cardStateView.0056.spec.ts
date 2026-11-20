@@ -1,6 +1,6 @@
 /**
  * flowgate.v02.0056 F2-1 — cardStateView as tables (O1 0005-TR §4-2, O2 0007-TR §4-2): the three card states
- * by the node run alone — 작업 중 (open: 지시서 작성 중 / 결과 작성 중; review while an AI still works), 승인 대기
+ * by the node run alone — Working (open: Writing instruction / Writing result; review while an AI still works), 승인 대기
  * (awaiting_approval), 승인됨 (done) — a rejected R/B root that never offers [승인], and the [승인] refusals grouped
  * by the server's code (O1 4-1). Every key the rules produce has a ko / en / ja string.
  */
@@ -62,7 +62,7 @@ describe('cardStateView — the three card states (flowgate.v02.0056 F2-1)', () 
     for (const messages of [ko, en, ja]) {
       for (const key of CARD_STATE_KEYS) expect(typeof messages.designer.center.card_states[key]).toBe('string')
     }
-    // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): ◌ = actually running, 완료 = done, 준비 = not opened yet.
+    // flowgate.v02.0113 T#1 (0002-D revision §3.11): ◌ = actually running, 완료 = done, 준비 = not opened yet.
     expect(ko.designer.center.card_states).toMatchObject({ writing_instruction: '◌ 지시서 작성 중', writing_result: '◌ 결과 작성 중', working: '◌ 실행 중', needs_intervention: '개입 필요', approved: '완료', pending: '준비' })
     expect(cardStateView(run('review', { awaitingApproval: true }))!.labelKey).toBe('gui.designer.center.card_states.needs_intervention')
   })

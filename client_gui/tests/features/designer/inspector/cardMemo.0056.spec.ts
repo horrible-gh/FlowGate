@@ -5,7 +5,7 @@
  *   only, [AI가 참조] OFF by default, every refusal sorted by error.code / the 422 field and worded in ko · en · ja;
  *   lengths in Unicode code points as the server counts them (emoji at and over the limits; a change checks only
  *   the fields it sends, so an ai_ref change of a stored memo is never refused before sending);
- * - the lines (0017-CH): each memo one card line like the document lines (메모 · AI 참조 · title), no section head;
+ * - the lines (0017-CH): each memo one card line like the document lines (메모 · AI reference · title), no section head;
  *   the header ✎ 메모 opens a new memo; a memo line has the document line's buttons — 열기 reads the memo ([삭제] ·
  *   [편집] · [닫기]), ✎ opens its form (title · body · [AI가 참조], [삭제] · [저장] · [닫기], no hint) — and the trash
  *   icon, which deletes after one confirm; the list read again after every write (no server event);

@@ -1,9 +1,9 @@
-// flowgate.v02.0059 T#2 (0011-CH contract D) — 정렬 / 분배 of the selected cards: where each movable
+// flowgate.v02.0059 T#2 (0011-CH contract D) — alignment / distribution of the selected cards: where each movable
 // selected card goes. Every card has the one size FlowNodeCard fixes, so lining up their left / centre /
 // right edges is lining up their x (top / middle / bottom: y), and equal gaps are equal steps of x (y).
-// - 정렬 (2 or more selected): left / top = the smallest x / y of the selection, right / bottom = the
+// - alignment (2 or more selected): left / top = the smallest x / y of the selection, right / bottom = the
 //   largest, centre / middle = halfway between the two.
-// - 균등 분배 (3 or more selected): the first and last card along the axis stay, the others are spread
+// - equal distribution (3 or more selected): the first and last card along the axis stay, the others are spread
 //   between them at equal steps, in their order along that axis.
 // Every selected card counts for the reference; a card that is not movable stays where it is. The result
 // is kept inside the Canvas origin as a group (canvasView clampGroupToCanvas). Pure: no Vue, no Vue Flow.
@@ -26,7 +26,7 @@ export const ARRANGE_KINDS: readonly ArrangeKind[] = [
   'distribute-horizontal', 'distribute-vertical',
 ]
 
-/** How many selected cards each kind needs: 정렬 2, 분배 3. */
+/** How many selected cards each kind needs: alignment 2, distribution 3. */
 export function arrangeMinimum(kind: ArrangeKind): number {
   return kind.startsWith('distribute-') ? 3 : 2
 }

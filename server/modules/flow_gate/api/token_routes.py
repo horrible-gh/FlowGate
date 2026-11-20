@@ -80,8 +80,8 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
 
     Every CH token (read_only / edit / edit_once) is revoked when the mention that
     would hand it to a worker never materializes -- ``one_shot_claimed`` is NOT
-    consulted to decide whether cleanup runs (T0009 §9 "one_shot_claimed 여부로
-    cleanup 여부를 가르지 않는다"). A one-shot (edit_once) claim that DID win the
+    consulted to decide whether cleanup runs (T0009 §9 "do not decide whether cleanup runs
+    based on one_shot_claimed"). A one-shot (edit_once) claim that DID win the
     claim CAS additionally has to commit here before the token may leave this
     function: commit() is what turns CLAIMED into CONSUMED and makes the claim
     un-revocable by a later stale-recovery sweep (T0009 §4.3, §5).
@@ -114,7 +114,7 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
                 "chat_one_shot_commit_failed token_id=%s user_id=%s",
                 token_id, user_id, exc_info=True,
             )
-            # T0009 §9 "예외: token revoke + rollback": the marker's post-failure shape
+            # T0009 §9 "exception: token revoke + rollback": the marker's post-failure shape
             # is unknown, so roll it back to edit_once explicitly rather than leaving a
             # CLAIMED row nothing will ever recover (the token itself is being revoked,
             # so it can never come back to finish this commit itself).

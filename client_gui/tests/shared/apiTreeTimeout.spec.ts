@@ -5,7 +5,7 @@
  * recursive directory walk of the storage root, but fell under the 30s `DEFAULT_TIMEOUT_MS`,
  * so axios aborted healthy-but-slow walks on remote/UNC storage with ECONNABORTED.
  *
- * 0394 T0016 (NR0003 §6.2-라): this suite used to read the committed `shared/api.ts` as
+ * 0394 T0016 (NR0003 §6.2-d): this suite used to read the committed `shared/api.ts` as
  * text, pull the `LONG_RUNNING_PATHS` array literal out with a regex, rebuild each entry
  * into a real RegExp and re-implement the interceptor's decision
  * (`LONG_RUNNING_PATHS.some((re) => re.test(path))`) inside the test. Two things were

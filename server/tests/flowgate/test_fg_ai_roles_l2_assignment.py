@@ -300,7 +300,7 @@ def test_g3_no_selectable_ai_is_a_person_stage_that_stays_one_when_an_ai_is_adde
                                                           "owner_user_id = 'u_kim' WHERE provider_id = ?", (X,))),
 ])
 def test_g7_an_unavailable_assigned_ai_waits_with_its_cause_and_calls_nothing(env, decided, starts, cause, setup):
-    """G-7 / 폴백 금지: an assigned AI that cannot run (the last AI deleted included) is WAIT_UNAVAILABLE(cause) with its
+    """G-7 / No fallback: an assigned AI that cannot run (the last AI deleted included) is WAIT_UNAVAILABLE(cause) with its
     original id, the node records ``ai_unavailable:<cause>``, no request, no call, no other AI."""
     key = flow(env)
     roles(key, X, X, "not_used")

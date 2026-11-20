@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0011-CH contract D) — 정렬 / 분배 and 자동 배치, pure:
+ * flowgate.v02.0059 T#2 (0011-CH contract D) — alignment / distribution and auto-layout, pure:
  * - the client port of server/modules/flow_gate/graph_workflow/domain/auto_layout.py: the same input gives the
  *   same coordinates. SERVER_CASES were made by running the server's own `layout()` / `layered_depths()` on
  *   these inputs (Python, the server file unchanged) and are compared value for value.
@@ -9,7 +9,7 @@
  * - (0016-TR rework) the sequence chain by the server's roles — the root node and the slot nodes, a lone root or
  *   a lone slot included, the root found through its document's supersede chain when only that tells — and the
  *   documents the Canvas read left out (collapse) keeping their place (FlowLayoutBasis).
- * - 정렬 6종 / 균등 분배 2종 of the selected cards; the menu availability by the selection size.
+ * - alignment 6 kinds / equal distribution 2 kinds of the selected cards; the menu availability by the selection size.
  */
 import { describe, expect, it } from 'vitest'
 import { arrangeMinimum, arrangeSelection, ARRANGE_KINDS, type ArrangeKind } from '@/features/designer/center/arrange/arrangeNodes'
@@ -376,7 +376,7 @@ describe('정렬 / 균등 분배 of the selected cards', () => {
     expect(enabled(2)).toEqual(commands.slice(0, 6))
     expect(enabled(3)).toEqual(commands)
     expect(isMenuCommandEnabled('edit.align-left', null, { project: true, group: false, flow: false, selectedCount: 5 })).toBe(false)
-    // 자동 배치 needs the open Flow only. flowgate.v02.0068 T#2: it is 가로 / 세로 자동정렬 now.
+    // auto-layout needs the open Flow only. flowgate.v02.0068 T#2: it is horizontal / 세로 자동정렬 now.
     for (const command of ['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'] as const) {
       expect(isMenuCommandEnabled(command, null, { ...ALL_MENU_TARGETS, selectedCount: 0 })).toBe(true)
       expect(isMenuCommandEnabled(command, null, { project: true, group: false, flow: false })).toBe(false)

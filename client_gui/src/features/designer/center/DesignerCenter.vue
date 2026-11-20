@@ -129,7 +129,7 @@ import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
 const props = withDefaults(defineProps<{
   center: DesignerCenterSession
   placing?: boolean
-  /** flowgate.v02.0059 0017-T: the step a card drag moves in; null = 자율형. */
+  /** flowgate.v02.0059 0017-T: the step a card drag moves in; null = freeform. */
   moveStep?: number | null
 }>(), { placing: false, moveStep: null })
 
@@ -154,7 +154,7 @@ function cardMenuOf(nodeId: string) {
 }
 
 /**
- * flowgate.v02test.0042 (시안 v7): a card's 병합 충돌 opens that card's '병합 · 충돌' Inspector tab — the one window event every
+ * flowgate.v02test.0042 (mockup v7): a card's 병합 충돌 opens that card's '병합 · 충돌' Inspector tab — the one window event every
  * "open this card's merge" goes through (the Center column selects the card and asks the Inspector for the tab).
  */
 function openCardMerge(flowId: string, nodeKey: string) {

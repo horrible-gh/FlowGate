@@ -1190,13 +1190,13 @@ async def document_review_transition_endpoint(
         from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
         _graph_contact.after_review_decided((result or {}).get("group_id"), doc_id, action)
 
-        # 0332 D0005 K1 — TR 승인 커밋 포인트. 자리가 여기인 이유 셋:
-        #   * 승인 전이는 이미 DB 에 커밋된 뒤다(pipeline_service 는 자기 트랜잭션을
-        #     열지 않는다). 그래서 git 이 무엇을 하든 승인은 이미 서 있다.
-        #   * 이 클로저는 이미 anyio.to_thread 안이라 동기 git 명령이 이벤트 루프를
-        #     막지 않는다 — 새로 to_thread 를 감는 자리가 없다.
-        #   * 경로형과 RPC형 승인이 둘 다 이 함수로 모이므로 한 줄이면 두 표면이 끝난다.
-        # 훅 자신이 "TR 인가 / git 이 켜져 있나"를 판단하고 절대 예외를 던지지 않는다.
+        # 0332 D0005 K1 — TR approval commit point. It belongs here for three reasons:
+        #   * The approval transition is already committed to the DB (pipeline_service does not open
+        #     its own transaction). Approval therefore stands regardless of what Git does.
+        #   * This closure already runs inside anyio.to_thread, so synchronous Git commands cannot
+        #     block the event loop; no additional to_thread wrapper is needed.
+        #   * Both path-based and RPC approvals converge here, so one line covers both surfaces.
+        # The hook itself checks whether this is a TR and Git is enabled, and never raises.
         tr_commit = (
             tr_commit_service.on_document_approved(doc_id, result)
             if action == "approve" else None
