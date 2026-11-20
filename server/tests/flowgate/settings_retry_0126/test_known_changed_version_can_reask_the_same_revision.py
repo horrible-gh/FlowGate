@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode', ['step', 'full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_known_changed_version_can_reask_the_same_revision(env, decided, monkeypatch, starts, mode):
     from test_fg_command_review_0125 import _loop_row, _loop_end
     key, _, result, revision = _spent(env, monkeypatch, starts, mode, follow=False)

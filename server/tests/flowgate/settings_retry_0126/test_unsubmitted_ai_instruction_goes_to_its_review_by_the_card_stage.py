@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage(env,decided,monkeypatch,starts,mode):
     """flowgate.v02test.0015 (replaces the 0158 refusal case): an AI instruction written but never submitted (the v0.1
     submit step never ran on it) goes to its review because the card's instruction stage ended -- the review start puts

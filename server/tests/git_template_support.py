@@ -35,7 +35,50 @@ def seed_card_settings(tmp_path):
     return bare, seed
 
 
-SHAPES = {"card-settings-v02": seed_card_settings}
+def seed_merge_target(tmp_path):
+    """0594's initial repository; clone/fetch/merge under test still run for real."""
+    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
+    _git_cmd(["init", "--bare", "-b", "main", str(bare)], tmp_path)
+    _git_cmd(["init", "-b", "main", str(seed)], tmp_path)
+    (seed / "README.md").write_text("hello\n", encoding="utf-8")
+    (seed / "shared.txt").write_text("line1\n", encoding="utf-8")
+    _git_cmd(["add", "-A"], seed)
+    _git_cmd(["commit", "-m", "init"], seed)
+    _git_cmd(["remote", "add", "origin", str(bare)], seed)
+    _git_cmd(["push", "origin", "main", "main:develop", "main:release"], seed)
+    return bare, seed
+
+
+def seed_git_integration(tmp_path):
+    """0115's pristine main branch, before product provisioning."""
+    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
+    _git_cmd(["init", "--bare", "-b", "main", str(bare)], tmp_path)
+    _git_cmd(["init", "-b", "main", str(seed)], tmp_path)
+    (seed / "README.md").write_text("hello\n", encoding="utf-8")
+    (seed / "shared.py").write_text('"line1"\n', encoding="utf-8")
+    _git_cmd(["add", "-A"], seed)
+    _git_cmd(["commit", "-m", "init"], seed)
+    _git_cmd(["remote", "add", "origin", str(bare)], seed)
+    _git_cmd(["push", "origin", "main"], seed)
+    return bare, seed
+
+
+def seed_gate_publish(tmp_path):
+    """Gate publish's initial remote; job execution and provisioning stay real."""
+    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
+    _git_cmd(["init", "--bare", "-b", "main", str(bare)], tmp_path)
+    _git_cmd(["init", "-b", "main", str(seed)], tmp_path)
+    (seed / "README.md").write_text("hello\n", encoding="utf-8")
+    (seed / "shared.txt").write_text("base\n", encoding="utf-8")
+    _git_cmd(["add", "-A"], seed)
+    _git_cmd(["commit", "-m", "init"], seed)
+    _git_cmd(["remote", "add", "origin", str(bare)], seed)
+    _git_cmd(["push", "origin", "main"], seed)
+    return bare, seed
+
+
+SHAPES = {"card-settings-v02": seed_card_settings, "merge-target-0594": seed_merge_target,
+          "git-integration-0115": seed_git_integration, "gate-publish-0085": seed_gate_publish}
 
 
 class GitRepositoryFactory:

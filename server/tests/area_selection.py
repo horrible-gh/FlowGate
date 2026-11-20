@@ -120,6 +120,10 @@ class AreaMap:
                 else:
                     matches = {a for a, entry in self.areas.items()
                                if any(fnmatchcase(key, p) for p in entry.get("source", []))}
+                # A test module can also supply fixtures/helpers to other areas.
+                # Explicit source dependencies still apply to such a path.
+                matches.update(a for a, entry in self.areas.items()
+                               if any(fnmatchcase(key, p) for p in entry.get("source", [])))
                 if not matches:
                     raise ValueError(f"changed path has no area: {key}")
                 selected.update(matches)

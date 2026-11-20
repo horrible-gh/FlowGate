@@ -459,7 +459,7 @@ tests = [
 also = []
 
 [area.gate]
-source = [
+source = ["tests/test_fg_gate_publish_0085.py",
   "db_bootstrap.py",
   "flowgate/card_merge/**",
   "flowgate/gate_decisions/**",
@@ -1540,7 +1540,7 @@ tests = [
 also = []
 
 [area.db]
-source = [
+source = ["tests/migration_contracts.py",
   "db_bootstrap.py",
   "migration_rename_repair.py",
   "modules/flow_gate/db/backfills/**",
@@ -1602,6 +1602,7 @@ tests = [
   "tests/architecture/test_fk_reference_indexes_0040.py",
   "tests/architecture/test_git_facade_seam_scope_0550.py",
   "tests/architecture/test_git_template_0114.py",
+  "tests/architecture/test_group_lock_store_isolation_0053.py",
   "tests/architecture/test_korean_source_census_0430.py",
   "tests/architecture/test_no_duplicate_defs_0329.py",
   "tests/architecture/test_repo_scratch_guard_0382.py",
@@ -1689,51 +1690,562 @@ tests = [
 ]
 also = []
 
-[area."card.settings.retry_review"]
-source = [
-  "tests/flowgate/settings_retry_support_0126.py",
-  "db_bootstrap.py",
-  "flowgate/card_settings/**",
-  "modules/flow_gate/db/connection.py",
-  "modules/flow_gate/db/dialect.py",
-  "requirements.txt",
-  "sql/migrations/**"
-]
+[area."card.settings.retry_review.1"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
 tests = [
   "tests/flowgate/settings_retry_0126/test_changed_review_to_no_review_drives_completion_without_old_ai.py",
+  "tests/flowgate/settings_retry_0126/test_changed_review_to_no_review_drives_completion_without_old_ai_full.py",
   "tests/flowgate/settings_retry_0126/test_command_recovers_lost_loop_end_once_and_fences_old_callback.py",
+  "tests/flowgate/settings_retry_0126/test_command_recovers_lost_loop_end_once_and_fences_old_callback_full.py",
   "tests/flowgate/settings_retry_0126/test_explicit_card_hold_stays_held_until_its_own_release.py",
+  "tests/flowgate/settings_retry_0126/test_explicit_card_hold_stays_held_until_its_own_release_full.py",
   "tests/flowgate/settings_retry_0126/test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai.py",
-  "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision.py",
-  "tests/flowgate/settings_retry_0126/test_review_abnormal.py",
-  "tests/flowgate/settings_retry_0126/test_review_completion_missing.py",
-  "tests/flowgate/settings_retry_0126/test_review_exhausted.py",
-  "tests/flowgate/settings_retry_0126/test_review_failed_review.py",
-  "tests/flowgate/settings_retry_0126/test_review_verdict_hold.py"
+  "tests/flowgate/settings_retry_0126/test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai_full.py"
 ]
 also = []
 
-[area."card.settings.retry_recovery"]
-source = [
-  "tests/flowgate/settings_retry_support_0126.py",
-  "db_bootstrap.py",
-  "flowgate/card_settings/**",
-  "modules/flow_gate/db/connection.py",
-  "modules/flow_gate/db/dialect.py",
-  "requirements.txt",
-  "sql/migrations/**"
+[area."card.settings.retry_review.2"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
+tests = [
+  "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision.py",
+  "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision_full.py",
+  "tests/flowgate/settings_retry_0126/test_review_abnormal.py",
+  "tests/flowgate/settings_retry_0126/test_review_abnormal_full.py",
+  "tests/flowgate/settings_retry_0126/test_review_completion_missing.py",
+  "tests/flowgate/settings_retry_0126/test_review_completion_missing_full.py",
+  "tests/flowgate/settings_retry_0126/test_review_exhausted.py",
+  "tests/flowgate/settings_retry_0126/test_review_exhausted_full.py"
 ]
+also = []
+
+[area."card.settings.retry_review.3"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
+tests = [
+  "tests/flowgate/settings_retry_0126/test_review_failed_review.py",
+  "tests/flowgate/settings_retry_0126/test_review_failed_review_full.py",
+  "tests/flowgate/settings_retry_0126/test_review_verdict_hold.py",
+  "tests/flowgate/settings_retry_0126/test_review_verdict_hold_full.py"
+]
+also = []
+
+
+[area."card.settings.retry_recovery.1"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
 tests = [
   "tests/flowgate/settings_retry_0126/test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit.py",
+  "tests/flowgate/settings_retry_0126/test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit_full.py",
   "tests/flowgate/settings_retry_0126/test_pre_t5_assignment_without_version_keeps_q544_revision_guard.py",
+  "tests/flowgate/settings_retry_0126/test_pre_t5_assignment_without_version_keeps_q544_revision_guard_full.py",
   "tests/flowgate/settings_retry_0126/test_pre_t5_reviewed_assignment_without_version.py",
+  "tests/flowgate/settings_retry_0126/test_pre_t5_reviewed_assignment_without_version_full.py",
   "tests/flowgate/settings_retry_0126/test_race_approval_refused.py",
+  "tests/flowgate/settings_retry_0126/test_race_approval_refused_full.py"
+]
+also = []
+
+[area."card.settings.retry_recovery.2"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
+tests = [
   "tests/flowgate/settings_retry_0126/test_race_review_not_started.py",
+  "tests/flowgate/settings_retry_0126/test_race_review_not_started_full.py",
   "tests/flowgate/settings_retry_0126/test_race_review_result_unknown.py",
+  "tests/flowgate/settings_retry_0126/test_race_review_result_unknown_full.py",
   "tests/flowgate/settings_retry_0126/test_race_stage_not_person.py",
+  "tests/flowgate/settings_retry_0126/test_race_stage_not_person_full.py",
   "tests/flowgate/settings_retry_0126/test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage.py",
+  "tests/flowgate/settings_retry_0126/test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage_full.py"
+]
+also = []
+
+[area."card.settings.retry_recovery.3"]
+source = ["tests/flowgate/settings_retry_support_0126.py", "db_bootstrap.py", "flowgate/card_settings/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "requirements.txt", "sql/migrations/**"]
+tests = [
   "tests/flowgate/settings_retry_0126/test_writer_no_result.py",
+  "tests/flowgate/settings_retry_0126/test_writer_no_result_full.py",
   "tests/flowgate/settings_retry_0126/test_writer_provider_failed.py",
-  "tests/flowgate/settings_retry_0126/test_writer_timeout.py"
+  "tests/flowgate/settings_retry_0126/test_writer_provider_failed_full.py",
+  "tests/flowgate/settings_retry_0126/test_writer_timeout.py",
+  "tests/flowgate/settings_retry_0126/test_writer_timeout_full.py"
+]
+also = []
+
+
+[area."git.target_core.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_workspace_path_is_deterministic_safe_and_collision_free.py",
+  "tests/modules/flow_gate/merge_target_0594/test_A_base_finalize_without_target_is_unchanged_and_records_attempt.py",
+  "tests/modules/flow_gate/merge_target_0594/test_B_non_base_clean_finalize_uses_managed_workspace.py",
+  "tests/modules/flow_gate/merge_target_0594/test_C_non_base_conflict_resolve_review_approve_stays_on_target.py",
+  "tests/modules/flow_gate/merge_target_0594/test_D_reject_and_re_review_keep_the_target_root.py",
+  "tests/modules/flow_gate/merge_target_0594/test_F_workspace_has_a_single_owner.py",
+  "tests/modules/flow_gate/merge_target_0594/test_I_legacy_session_without_target_falls_back_to_base.py",
+  "tests/modules/flow_gate/merge_target_0594/test_J_non_base_unmerge_fails_closed_service_and_route.py"
+]
+also = []
+
+[area."git.target_core.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_K_base_unmerge_still_works.py",
+  "tests/modules/flow_gate/merge_target_0594/test_L_internal_slot_remote_only_and_missing_targets_are_refused.py",
+  "tests/modules/flow_gate/merge_target_0594/test_M_base_only_paths_keep_the_project_base_meaning.py",
+  "tests/modules/flow_gate/merge_target_0594/test_target_carrier_through_route_and_approval_seam.py",
+  "tests/modules/flow_gate/merge_target_0594/test_N_sequential_groups_grow_the_same_integration_branch.py",
+  "tests/modules/flow_gate/merge_target_0594/test_O_default_merge_target_persists_and_is_settable_directly.py",
+  "tests/modules/flow_gate/merge_target_0594/test_P_default_merge_target_route.py",
+  "tests/modules/flow_gate/merge_target_0594/test_held_checkpoint_is_consumed_after_base_advance_and_clean_finalize.py"
+]
+also = []
+
+[area."git.target_core.3"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_0683_group_blocker_details_name_the_group_finalize.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0086_off_branch_base_refuses_a_non_base_target_before_any_attempt.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0086_off_branch_base_never_merges_into_the_checked_out_branch.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0086_open_attempt_keeps_its_pinned_target_off_branch.py"
+]
+also = []
+
+
+[area."git.target_recovery.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_E1_startup_recovery_refinds_the_deterministic_workspace.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E2_startup_recovery_closes_an_interrupted_attempt.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E3_live_in_progress_attempt_is_not_a_conflict_and_not_swept.py",
+  "tests/modules/flow_gate/merge_target_0594/test_G_owner_marker_mismatch_fails_closed_and_is_never_cleaned.py",
+  "tests/modules/flow_gate/merge_target_0594/test_G_mismatch_leaves_merge_state_row_and_workspace_on_every_path.py",
+  "tests/modules/flow_gate/merge_target_0594/test_G_interrupted_attempt_never_aborts_another_owners_merge.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_1.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_2.py"
+]
+also = []
+
+[area."git.target_recovery.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_3.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E4_crash_before_the_push_rolls_the_local_merge_back.py",
+  "tests/modules/flow_gate/merge_target_0594/test_E5_completed_review_left_open_is_finished_on_restart.py",
+  "tests/modules/flow_gate/merge_target_0594/test_H1_H2_retarget_allowed_without_open_attempt_and_after_failure.py",
+  "tests/modules/flow_gate/merge_target_0594/test_H3_H4_H5_open_attempt_pins_its_target.py"
+]
+also = []
+
+
+[area."git.target_candidates.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_0098_candidates_are_exactly_the_targets_the_judgement_allows.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_main_is_a_target_only_when_it_holds_the_work_base_history.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_base_and_non_base_targets_take_their_own_slot_checks.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_an_occupied_target_is_refused_and_never_reclaimed.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_the_candidate_cache_is_shared_served_stale_and_revalidated.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_the_judgement_reads_a_legacy_group_without_recording_anything.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed.py"
+]
+also = []
+
+[area."git.target_candidates.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_0098_a_base_status_that_cannot_be_read_is_no_clean_base.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_a_same_name_tag_never_renames_a_candidate.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0020_a_lookup_that_outlives_the_view_budget_ends_in_the_background.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_1.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_2.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_3.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_1.py"
+]
+also = []
+
+[area."git.target_candidates.3"]
+source = ["db_bootstrap.py", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/merge_*", "modules/flow_gate/db/terminal_cleanup_snapshots.py", "modules/flow_gate/services/git/branch_merge*", "modules/flow_gate/services/git/cleanup.py", "modules/flow_gate/services/git/command.py", "modules/flow_gate/services/git/commit.py", "modules/flow_gate/services/git/conflict*", "modules/flow_gate/services/git/credentials.py", "modules/flow_gate/services/git/instance_registry.py", "modules/flow_gate/services/git/lock.py", "modules/flow_gate/services/git/lock_manager.py", "modules/flow_gate/services/git/manual_merge.py", "modules/flow_gate/services/git/merge_target.py", "modules/flow_gate/services/git/refs.py", "modules/flow_gate/services/git/rerere_checkpoint.py", "modules/flow_gate/services/git/review_messages.py", "modules/flow_gate/services/git/session_claim.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_merge_target_0594.py"]
+tests = [
+  "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_2.py",
+  "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_3.py"
+]
+also = []
+
+
+[area."git.integration_contracts"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_migration.py",
+  "tests/modules/flow_gate/git_integration_0115/test_branch_name.py",
+  "tests/modules/flow_gate/git_integration_0115/test_auto_commit_message.py",
+  "tests/modules/flow_gate/git_integration_0115/test_secrets.py",
+  "tests/modules/flow_gate/git_integration_0115/test_config.py",
+  "tests/modules/flow_gate/git_integration_0115/test_effective_src_root.py",
+  "tests/modules/flow_gate/git_integration_0115/test_lock.py",
+  "tests/modules/flow_gate/git_integration_0115/test_finalize_guards.py",
+  "tests/modules/flow_gate/git_integration_0115/test_finalize_action_contract0331.py",
+  "tests/modules/flow_gate/git_integration_0115/test_status0162_no_git.py",
+  "tests/modules/flow_gate/git_integration_0115/test_default_base_commit_message0177.py",
+  "tests/modules/flow_gate/git_integration_0115/test_untracked_merge_blockers_parsing.py"
+]
+also = []
+
+[area."git.integration_conflicts.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_conflict_side_dropped_chunk_local0602.py",
+  "tests/modules/flow_gate/git_integration_0115/test_conflict_side_dropped_adjacent_groups0604.py",
+  "tests/modules/flow_gate/git_integration_0115/test_conflict_supersede0604.py",
+  "tests/modules/flow_gate/git_integration_0115/test_supersede_transport0604.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_adjacent_chunk_group_resolve_token_end_to_end.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_supersede_declaration_resolve_token_end_to_end.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_0599_six_files_resolve_in_one_resolve_token_call.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_eol_only_conflict_is_separated_and_lf_survives_resolution_0608.py"
+]
+also = []
+
+[area."git.integration_conflicts.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_connection_ok.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_connection_ignores_broken_server_cwd_0617.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_ensure_worktree_and_idempotence.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_finalize_wait_then_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_push_action.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_push_action_rejects_dirty_worktree.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_commit_push_action_commits_dirty_then_pushes.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_commit_only_action_keeps_worktree_waiting.py"
+]
+also = []
+
+[area."git.integration_conflicts.3"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_merge_only_unpushed_status_and_unmerge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_conflict_resolve_flow.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rejects_one_sided_drop.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rejects_the_opposite_one_sided_drop.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_accepts_synthesized_single_line_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_accepts_real_workplaneditor_disabled_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_side_drop_not_hidden_by_same_line_elsewhere.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rear_coincidental_both_does_not_hide_an_early_drop.py"
+]
+also = []
+
+[area."git.integration_conflicts.4"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_base_dirty_belongs_to_the_merge_while_a_conflict_is_open.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_allows_both_sides_kept.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_skips_baseless_add_add_chunk.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_judge_hop_settles_none_when_conflict_side_dropped.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_conflict_side_dropped_422_flows_through_resolve_token_and_retries.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_abort_flow.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_failure_is_side_effect_free.py"
+]
+also = []
+
+[area."git.integration_conflicts.5"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_revert_tracked_then_untracked_only_matches_b0001_order.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_noncolliding_untracked_never_blocks_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_api_conflict_tool_loop0608.py",
+  "tests/modules/flow_gate/git_integration_0115/test_api_conflict_tool_loop0608_small_conflict_stays_inline_and_the_validators_still_decide.py"
+]
+also = []
+
+
+[area."git.integration_review.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_blocks_commit_until_approved.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_auto_authority_commits_without_a_screen.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_worker_token_cannot_grant_itself_auto.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_reject_restores_conflict_markers.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_py_compile_failure_blocks_approval.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conditional_push_rejects_a_moved_remote.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_message_appends_ai_turn.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_cancelled_run_shows_cancelled_not_failed.py"
+]
+also = []
+
+[area."git.integration_review.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_lets_an_unvalidatable_file_type_through_the_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_real_typescript_parser_blocks_approval.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_vue_validates_both_script_and_script_setup_blocks.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_explicit_apply_applies_anchored_write_plan.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_create_file_operation.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_stale_fingerprint_is_rejected.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_anchor_mismatch_is_rejected.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_requires_a_pending_write_turn.py"
+]
+also = []
+
+[area."git.integration_review.3"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_structure_validation.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_rejects_a_mismatched_run_id.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_overwrites_the_runs_own_prior_plan.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_held_only_plan_is_shown_not_applied.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_mixed_plan_preserves_held_operations.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_allow_test_edits_second_authorization_applies_test_edit.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_stale_run_discarded_when_approved_while_active.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_stale_run_discarded_when_rejected_while_active.py"
+]
+also = []
+
+[area."git.integration_review.4"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_approval_racing_the_materialize_window_is_serialized.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_rejection_racing_the_materialize_window_is_serialized.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_message_does_not_overwrite_an_approval_that_won_the_race.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_reject_does_not_undo_an_approval_that_won_the_race.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_resubmitted_in_the_materialize_window_wins.py"
+]
+also = []
+
+
+[area."git.integration_worktrees.1"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_provision0161.py",
+  "tests/modules/flow_gate/git_integration_0115/test_git_actions0162.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_dirty_listed_then_revert_then_commit.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_revert_not_dirty_and_validation.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_commit_message_too_long_422.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_merge_session_guard.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_lock_busy_409.py"
+]
+also = []
+
+[area."git.integration_worktrees.2"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_e3_409_then_commit_then_merge.py",
+  "tests/modules/flow_gate/git_integration_0115/test_resolve_base_dirty_real_repo0482.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_dirty_delegation_admission0481.py",
+  "tests/modules/flow_gate/git_integration_0115/test_configurable_author0237.py",
+  "tests/modules/flow_gate/git_integration_0115/test_no_work_auto_discard0199.py",
+  "tests/modules/flow_gate/git_integration_0115/test_no_work_finalize_surfaces0548.py",
+  "tests/modules/flow_gate/git_integration_0115/test_first_push_bootstrap0297.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_untracked_commit0296.py"
+]
+also = []
+
+[area."git.integration_worktrees.3"]
+source = ["db_bootstrap.py", "modules/flow_gate/api/v1/git_*", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/git_*", "modules/flow_gate/services/git/**", "modules/flow_gate/services/git_service.py", "requirements.txt", "sql/migrations/**", "tests/git_template_support.py", "tests/sqlite_db_support.py", "tests/modules/flow_gate/test_git_integration_0115.py"]
+tests = [
+  "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_remove_then_retry_merge_pushes.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_remove_then_retry_merge_only_stays_local.py",
+  "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_selective_commit_then_retry_also_unblocks.py",
+  "tests/modules/flow_gate/git_integration_0115/test_group_explorer_untracked.py",
+  "tests/modules/flow_gate/git_integration_0115/test_terminal_reopen_reprovision0532.py"
+]
+also = []
+
+
+[area."graph.integration_persistence_1"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_04.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_05.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_06.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_07.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_08.py"
+]
+also = []
+
+[area."graph.integration_persistence_2"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_09.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_10.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_11.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_12.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_13.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_14.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_15.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_16.py"
+]
+also = []
+
+[area."graph.integration_persistence_3"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_17.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_18.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_19.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_20.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_21.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_22.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_23.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_24.py"
+]
+also = []
+
+[area."graph.integration_persistence_4"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_25.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_26.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_27.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_28.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_29.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_30.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_of_the_left_session_fails_the_attempt_and_never_merges_again.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_in_the_failed_drain_s_window_still_fails_the_attempt.py"
+]
+also = []
+
+[area."graph.integration_persistence_5"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_between_the_reclaim_s_session_read_and_its_recovery_still_fails_the_attempt.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_04.py"
+]
+also = []
+
+[area."graph.integration_persistence_6"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d2_7_a_session_just_opened_is_never_reclaimed.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d2_8_a_real_flow_lock_timeout_after_the_merge_is_reclaimed_once_the_lock_is_free.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3a_1_the_snapshot_pin_s_lock_release_retries_the_reserved_integration.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_04.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3b_1_close_attempt_retries_the_claimed_group.py"
+]
+also = []
+
+[area."graph.integration_persistence_7"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_d3b_2_a_claim_ended_with_its_session_open_is_retried_by_the_lock_release_that_follows.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3c_1_a_g_release_under_m_is_taken_at_the_m_release.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3c_2_a_release_inside_a_transaction_waits_for_the_thread_s_next_dispatch.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3c_3_a_session_closed_inside_a_transaction.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3c_4_a_release_retried_by_its_timer_dispatches_on_the_timer_thread.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3c_5_a_stale_lock_reclaimed_by_the_sweeper.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3d_1_a_failed_drain_and_a_failed_hold_release.py",
+  "tests/flowgate/integration_persistence_0156/test_s_d3d_2_a_hold_left_with_no_waiting_integration_is_taken_by_the_next_lock_release.py"
+]
+also = []
+
+[area."graph.integration_persistence_8"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_04.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_05.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_06.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_l2_the_attempt_worktree_lock_is_a_failed_commit_never_pending.py",
+  "tests/flowgate/integration_persistence_0156/test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it_01.py"
+]
+also = []
+
+[area."graph.integration_persistence_9"]
+source = ["db_bootstrap.py", "flowgate/graph_policies/**", "flowgate/graph_read/**", "flowgate/graph_run/**", "flowgate/graph_validation/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/graph_workflow/api/envelope.py", "modules/flow_gate/graph_workflow/api/graph_messages.py", "modules/flow_gate/graph_workflow/api/run_routes.py", "modules/flow_gate/graph_workflow/domain/canvas_mapping.py", "modules/flow_gate/graph_workflow/domain/frontier.py", "modules/flow_gate/graph_workflow/domain/graph_model.py", "modules/flow_gate/graph_workflow/domain/graph_validator.py", "modules/flow_gate/graph_workflow/domain/policies.py", "modules/flow_gate/graph_workflow/domain/root_binding.py", "modules/flow_gate/graph_workflow/domain/run_*", "modules/flow_gate/graph_workflow/domain/supersede.py", "modules/flow_gate/graph_workflow/projection/flow_snapshot.py", "modules/flow_gate/graph_workflow/projection/graph_projector.py", "modules/flow_gate/graph_workflow/projection/run_documents.py", "modules/flow_gate/graph_workflow/services/canvas_events.py", "modules/flow_gate/graph_workflow/services/canvas_service.py", "modules/flow_gate/graph_workflow/services/card_completion_ports.py", "modules/flow_gate/graph_workflow/services/card_document_ports.py", "modules/flow_gate/graph_workflow/services/card_settings_ports.py", "modules/flow_gate/graph_workflow/services/engine_router.py", "modules/flow_gate/graph_workflow/services/errors.py", "modules/flow_gate/graph_workflow/services/flow_guard.py", "modules/flow_gate/graph_workflow/services/gate_service.py", "modules/flow_gate/graph_workflow/services/graph_service.py", "modules/flow_gate/graph_workflow/services/graph_validation_ports.py", "modules/flow_gate/graph_workflow/services/identity_keeper.py", "modules/flow_gate/graph_workflow/services/node_approval.py", "modules/flow_gate/graph_workflow/services/node_dispatch.py", "modules/flow_gate/graph_workflow/services/policy_snapshot.py", "modules/flow_gate/graph_workflow/services/run_*", "modules/flow_gate/graph_workflow/store/assignment_store.py", "modules/flow_gate/graph_workflow/store/definition_store.py", "modules/flow_gate/graph_workflow/store/layout_store.py", "modules/flow_gate/graph_workflow/store/run_store.py", "modules/flow_gate/graph_workflow/store/title_store.py", "modules/flow_gate/services/graph_*", "requirements.txt", "sql/migrations/**", "tests/flowgate/test_fg_integration_persistence_0156.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/flowgate/integration_persistence_0156/test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_01.py",
+  "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_02.py",
+  "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_03.py",
+  "tests/flowgate/integration_persistence_0156/test_s_safe_4_no_new_thread_timer_sweep_and_the_recovery_rule_is_called_not_copied.py"
+]
+also = []
+
+[area."gate.run_resume_1"]
+source = ["tests/test_fg_gate_publish_0085.py", "tests/test_fg_gate_push_sync_0132.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_run_resume_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_01.py",
+  "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_02.py",
+  "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_03.py",
+  "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_04.py",
+  "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_01.py",
+  "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_02.py",
+  "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_03.py",
+  "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_04.py"
+]
+also = []
+
+[area."gate.run_resume_2"]
+source = ["tests/test_fg_gate_publish_0085.py", "tests/test_fg_gate_push_sync_0132.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_run_resume_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_01.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_02.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_03.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_04.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_05.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_06.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_07.py",
+  "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_08.py"
+]
+also = []
+
+[area."gate.run_resume_3"]
+source = ["tests/test_fg_gate_publish_0085.py", "tests/test_fg_gate_push_sync_0132.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_run_resume_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_run_resume_0132/test_target_moved_before_merge_parks_idle_and_stop_cancels.py"
+]
+also = []
+
+[area."gate.push_sync_1"]
+source = ["tests/test_fg_gate_publish_0085.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_push_sync_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_push_sync_0132/test_remote_ahead_is_synced_once_and_pushed_keeping_the_applied_sha_01.py",
+  "tests/gate_push_sync_0132/test_remote_ahead_is_synced_once_and_pushed_keeping_the_applied_sha_02.py",
+  "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_01.py",
+  "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_02.py",
+  "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_03.py",
+  "tests/gate_push_sync_0132/test_a_sync_conflict_goes_to_the_review_and_goes_on_or_parks_after_it_01.py",
+  "tests/gate_push_sync_0132/test_a_sync_conflict_goes_to_the_review_and_goes_on_or_parks_after_it_02.py",
+  "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_01.py"
+]
+also = []
+
+[area."gate.push_sync_2"]
+source = ["tests/test_fg_gate_publish_0085.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_push_sync_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_02.py",
+  "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_03.py",
+  "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_04.py",
+  "tests/gate_push_sync_0132/test_a_sync_cut_off_is_judged_from_its_attempt_without_a_second_merge_01.py",
+  "tests/gate_push_sync_0132/test_a_sync_cut_off_is_judged_from_its_attempt_without_a_second_merge_02.py",
+  "tests/gate_push_sync_0132/test_another_decision_accepted_on_the_old_target_fails_target_moved_after_a_sync.py",
+  "tests/gate_push_sync_0132/test_commit_mode_parks_a_remote_ahead_push_without_a_sync.py",
+  "tests/gate_push_sync_0132/test_a_sync_conflict_hand_off_cut_off_before_its_record_is_the_active_conflict_after_the_resume.py"
+]
+also = []
+
+[area."gate.push_sync_3"]
+source = ["tests/test_fg_gate_publish_0085.py", "db_bootstrap.py", "flowgate/card_merge/**", "flowgate/gate_decisions/**", "modules/flow_gate/db/connection.py", "modules/flow_gate/db/dialect.py", "modules/flow_gate/db/tr_commit_ledger.py", "modules/flow_gate/services/tr_commit_service.py", "modules/flow_gate/services/tr_scope_service.py", "requirements.txt", "sql/migrations/**", "tests/test_fg_gate_push_sync_0132.py", "tests/git_template_support.py", "tests/sqlite_db_support.py"]
+tests = [
+  "tests/gate_push_sync_0132/test_a_done_sync_round_stays_an_effect_after_a_later_round_fails_01.py",
+  "tests/gate_push_sync_0132/test_a_done_sync_round_stays_an_effect_after_a_later_round_fails_02.py",
+  "tests/gate_push_sync_0132/test_an_abandon_keeps_the_landed_sync_commit_its_round_never_recorded_01.py",
+  "tests/gate_push_sync_0132/test_an_abandon_keeps_the_landed_sync_commit_its_round_never_recorded_02.py",
+  "tests/gate_push_sync_0132/test_a_retried_push_after_a_sync_round_keeps_the_foreign_results_it_sends.py"
 ]
 also = []

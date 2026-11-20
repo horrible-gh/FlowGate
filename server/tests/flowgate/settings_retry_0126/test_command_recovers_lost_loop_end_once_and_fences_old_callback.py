@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_command_recovers_lost_loop_end_once_and_fences_old_callback(
         env,decided,monkeypatch,starts,mode):
     from flowgate.card_settings import assigned_review

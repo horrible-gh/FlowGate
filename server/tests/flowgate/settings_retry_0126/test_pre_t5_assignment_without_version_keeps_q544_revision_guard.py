@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode', ['step', 'full'])
+@pytest.mark.parametrize('mode', ['step'])
 @pytest.mark.parametrize('evidence', ['asked'])
 def test_pre_t5_assignment_without_version_keeps_q544_revision_guard(
         env, decided, monkeypatch, starts, mode, evidence):

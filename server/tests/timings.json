@@ -63,6 +63,14 @@
       },
       "sha256": "3d69bf17936e9cc28731418fa9e85731c4c7e86de58578ed53dfcabdd3d920e2"
     },
+    "tests/architecture/test_conversation_migrations_0351.py": {
+      "eligible": true,
+      "seconds": 1.088144099805504,
+      "seconds_by_marker": {
+        "auto": 1.088144099805504
+      },
+      "sha256": "39c2139fed1a81bf40a2142d1b7f8f6e12300e34d05a78e1706d6755a993bca0"
+    },
     "tests/architecture/test_db_bootstrap_0273.py": {
       "eligible": true,
       "measurement_run": "db",
@@ -80,6 +88,14 @@
         "auto": 4.082921101246029
       },
       "sha256": "2084de897301c080c9433ef5b52fde39fa85ffddbda2ae767cf4c7ec4451e20c"
+    },
+    "tests/architecture/test_db_schema.py": {
+      "eligible": true,
+      "seconds": 0.1606088988482952,
+      "seconds_by_marker": {
+        "auto": 0.1606088988482952
+      },
+      "sha256": "5aeefd90692d1294d7e275e264532e0ec162bcbc6404b62525a4c8f2078a0e46"
     },
     "tests/architecture/test_document_index_coverage_0291.py": {
       "eligible": true,
@@ -233,6 +249,558 @@
         "auto": 7.562035698443651
       },
       "sha256": "892d82b958b5b601a478975308f665975ea19c634c16fc1021f65082c7ea574b"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_between_the_reclaim_s_session_read_and_its_recovery_still_fails_the_attempt.py": {
+      "eligible": true,
+      "seconds": 9.992148499470204,
+      "seconds_by_marker": {
+        "auto": 9.992148499470204
+      },
+      "sha256": "f7aa7177eb9ee57f3dec8bbc5c6cfd4ac21fb0000e0e5b8b92b7c8da0ce906c7"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_in_the_failed_drain_s_window_still_fails_the_attempt.py": {
+      "eligible": true,
+      "seconds": 4.670412700157613,
+      "seconds_by_marker": {
+        "auto": 4.670412700157613
+      },
+      "sha256": "5914b5adedcafe4768c06e77f208201b7c5970eb6efbf3a24688d5f996871618"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_5_an_abort_of_the_left_session_fails_the_attempt_and_never_merges_again.py": {
+      "eligible": true,
+      "seconds": 4.595846500247717,
+      "seconds_by_marker": {
+        "auto": 4.595846500247717
+      },
+      "sha256": "09e4bbbff34b31bd145eb756f71896a7f5ebcef305bb4a2702809d9183bf714a"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_01.py": {
+      "eligible": true,
+      "seconds": 3.999125999864191,
+      "seconds_by_marker": {
+        "auto": 3.999125999864191
+      },
+      "sha256": "00482985c6adfeefd26518fee757d5f2e3732c9d3d3200dd65505bbecfa3b282"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_02.py": {
+      "eligible": true,
+      "seconds": 3.8914679000154138,
+      "seconds_by_marker": {
+        "auto": 3.8914679000154138
+      },
+      "sha256": "076d90ee082b86dbe7e24711f69ba152e220c73c68a6112933d511668eb1d09c"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done_03.py": {
+      "eligible": true,
+      "seconds": 3.833666400052607,
+      "seconds_by_marker": {
+        "auto": 3.833666400052607
+      },
+      "sha256": "9ee0f9054dcb214dd74bedc7353c9f93de9a864216b995f4e312e2448ced9ce6"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_7_a_session_just_opened_is_never_reclaimed.py": {
+      "eligible": true,
+      "seconds": 3.585737300105393,
+      "seconds_by_marker": {
+        "auto": 3.585737300105393
+      },
+      "sha256": "5bc5817d09cfcf41d080750479b34afae7d8782ab3910b6ef4e8b449b3336ef0"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_01.py": {
+      "eligible": true,
+      "seconds": 3.2811648999340832,
+      "seconds_by_marker": {
+        "auto": 3.2811648999340832
+      },
+      "sha256": "c379bc2d9f271f93bdaa4b6ebb70f88cb7b654aa65df476760d62058491bb262"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_02.py": {
+      "eligible": true,
+      "seconds": 3.4044817998073995,
+      "seconds_by_marker": {
+        "auto": 3.4044817998073995
+      },
+      "sha256": "1bbaf3c7f5129c04709e28b770cb38c43941f1a817ae7d89488aaa6cb4c248ee"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_03.py": {
+      "eligible": true,
+      "seconds": 3.5674525001086295,
+      "seconds_by_marker": {
+        "auto": 3.5674525001086295
+      },
+      "sha256": "9a27637ccbff2ccd8e08c521a6215ecde3a1d2365a7b8e2dd3a47626121e2678"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_7_no_trigger_reclaims_an_integration_in_progress_04.py": {
+      "eligible": true,
+      "seconds": 3.640354800503701,
+      "seconds_by_marker": {
+        "auto": 3.640354800503701
+      },
+      "sha256": "a7dca20f5035b7743b85d47721d2ef7f027c55e926f880911319241a24dc6f06"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_8_a_real_flow_lock_timeout_after_the_merge_is_reclaimed_once_the_lock_is_free.py": {
+      "eligible": true,
+      "seconds": 8.536001599859446,
+      "seconds_by_marker": {
+        "auto": 8.536001599859446
+      },
+      "sha256": "eeff7289220b1f108350943494cdc79289170f2666beb5d2638968a5ae96d56d"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_01.py": {
+      "eligible": true,
+      "seconds": 4.702336099930108,
+      "seconds_by_marker": {
+        "auto": 4.702336099930108
+      },
+      "sha256": "4717a7ec1c4d690d92fb7490fe6c3dcc075685deafce0013f024dbd656bef6fd"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_02.py": {
+      "eligible": true,
+      "seconds": 5.228284300304949,
+      "seconds_by_marker": {
+        "auto": 5.228284300304949
+      },
+      "sha256": "bb1d3d81cb857bf6950f8b9fa65dfe2c40c7d58318194c04cd61aac866740f6e"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_03.py": {
+      "eligible": true,
+      "seconds": 5.049611000344157,
+      "seconds_by_marker": {
+        "auto": 5.049611000344157
+      },
+      "sha256": "c2da3986d2c0aa9d8429bd9a3617e8ca3e9332af381b64e3971b262144e179c8"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_04.py": {
+      "eligible": true,
+      "seconds": 6.7670136000961065,
+      "seconds_by_marker": {
+        "auto": 6.7670136000961065
+      },
+      "sha256": "9e7c3aaba71953f533c7affab8c9ba70ea0f21098c6b370f05bcdc697b892ac2"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_05.py": {
+      "eligible": true,
+      "seconds": 4.453375400509685,
+      "seconds_by_marker": {
+        "auto": 4.453375400509685
+      },
+      "sha256": "15ef4f248b6702536aa8b8a47267f2b5a7bf108bed239494f63041d6d1bac4f4"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_06.py": {
+      "eligible": true,
+      "seconds": 5.761903599835932,
+      "seconds_by_marker": {
+        "auto": 5.761903599835932
+      },
+      "sha256": "b9923451a9afc3d781778fb65d0a8f500a973713a33688beff014e6126159071"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_07.py": {
+      "eligible": true,
+      "seconds": 6.297753000166267,
+      "seconds_by_marker": {
+        "auto": 6.297753000166267
+      },
+      "sha256": "9b153e1a4298e4cb3e2e1a409cd75d4a323d38cf6f37fa77bae2c51f24c2fa96"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_08.py": {
+      "eligible": true,
+      "seconds": 6.176992600318044,
+      "seconds_by_marker": {
+        "auto": 6.176992600318044
+      },
+      "sha256": "dec9439462c12b75f6719ef6bf295d0d0f55a8d779401f0f72f3b0e479ae2d67"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_09.py": {
+      "eligible": true,
+      "seconds": 7.912928099744022,
+      "seconds_by_marker": {
+        "auto": 7.912928099744022
+      },
+      "sha256": "1a3f8dda64472e0107f59b26a955f34eeb3aceafcd11c6dbc5d5a5d2cc49de4a"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_10.py": {
+      "eligible": true,
+      "seconds": 5.599120400380343,
+      "seconds_by_marker": {
+        "auto": 5.599120400380343
+      },
+      "sha256": "3858edd51bfdd74d36d622991b6b57054eec5519ddccf93771ae2314fd5c1f00"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_11.py": {
+      "eligible": true,
+      "seconds": 4.950366600416601,
+      "seconds_by_marker": {
+        "auto": 4.950366600416601
+      },
+      "sha256": "6315dc1ba28882c8e9bc2d32140cbd90cb0f1e95f213069f5a8422cb5c8e1eb9"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_12.py": {
+      "eligible": true,
+      "seconds": 5.3490270003676414,
+      "seconds_by_marker": {
+        "auto": 5.3490270003676414
+      },
+      "sha256": "7ed6ccbaebe652e25007974f25b540718aea3124b71ad7d00ba53fb1d958b6a5"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_13.py": {
+      "eligible": true,
+      "seconds": 5.209998699836433,
+      "seconds_by_marker": {
+        "auto": 5.209998699836433
+      },
+      "sha256": "83eb45555e1ae54cb43ac9444f92fab58b822b3dc1a46c8db65d9f478438a6aa"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_14.py": {
+      "eligible": true,
+      "seconds": 6.851341800298542,
+      "seconds_by_marker": {
+        "auto": 6.851341800298542
+      },
+      "sha256": "e46f1648561290aa047fb9a418daa4266b60671ac0819957e1498512cf6da472"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_15.py": {
+      "eligible": true,
+      "seconds": 4.4014266999438405,
+      "seconds_by_marker": {
+        "auto": 4.4014266999438405
+      },
+      "sha256": "e90321b29684f83d9193754ec28e8108dabf32e4f8fef3b954de4fffe936c526"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_16.py": {
+      "eligible": true,
+      "seconds": 5.0443652998656034,
+      "seconds_by_marker": {
+        "auto": 5.0443652998656034
+      },
+      "sha256": "bf46da3f847e5354bcc7afc2cad498683b70581dfee5fe875cfd50a5abeb5bb0"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_17.py": {
+      "eligible": true,
+      "seconds": 5.475203800480813,
+      "seconds_by_marker": {
+        "auto": 5.475203800480813
+      },
+      "sha256": "e9caedc01fd940d558c18661fb21e242c81aca283e6e0da194a61105a357ecb8"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_18.py": {
+      "eligible": true,
+      "seconds": 5.224776700139046,
+      "seconds_by_marker": {
+        "auto": 5.224776700139046
+      },
+      "sha256": "3bb1a236aa41d08f64283d40cea2f5052d52bfd0453639f3bacf498881c937d7"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_19.py": {
+      "eligible": true,
+      "seconds": 7.013466899748892,
+      "seconds_by_marker": {
+        "auto": 7.013466899748892
+      },
+      "sha256": "def8fdb08152dd0d9d49f36ce77e096cb06e1db7858d00461fe04828e9b45b12"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_20.py": {
+      "eligible": true,
+      "seconds": 4.478192499838769,
+      "seconds_by_marker": {
+        "auto": 4.478192499838769
+      },
+      "sha256": "b5a17e21327585b256ed537252bb64933d20232c2a566e56f7049c8c81e99eee"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_21.py": {
+      "eligible": true,
+      "seconds": 6.102721000090241,
+      "seconds_by_marker": {
+        "auto": 6.102721000090241
+      },
+      "sha256": "faf25728b1ddbec94d65a461e3750db123ad553b5044c1307aa64fc91dcb4e18"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_22.py": {
+      "eligible": true,
+      "seconds": 6.564601500052959,
+      "seconds_by_marker": {
+        "auto": 6.564601500052959
+      },
+      "sha256": "2f4d905452bcbcc2c14af47ef5aded4d466aa52546ccc99fb3e470792a7fc589"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_23.py": {
+      "eligible": true,
+      "seconds": 6.196548399981111,
+      "seconds_by_marker": {
+        "auto": 6.196548399981111
+      },
+      "sha256": "7a8b6efc9e2b26561ae03b603bb4089cb227db40d9a3bb590aec35ab0450a3dd"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_24.py": {
+      "eligible": true,
+      "seconds": 8.172978600021452,
+      "seconds_by_marker": {
+        "auto": 8.172978600021452
+      },
+      "sha256": "a5e65be7e707abe915863ea72858b8154d917a3ab81577aa0f53c759ba377e08"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_25.py": {
+      "eligible": true,
+      "seconds": 5.65708679985255,
+      "seconds_by_marker": {
+        "auto": 5.65708679985255
+      },
+      "sha256": "08f6a7310f8f7ff7dac70141cbc22aa54f5df5fd7b72f09dc0fd806a334015c3"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_26.py": {
+      "eligible": true,
+      "seconds": 5.0943317003548145,
+      "seconds_by_marker": {
+        "auto": 5.0943317003548145
+      },
+      "sha256": "a403631ac32d51e1f58f51ce913c527082528e4701cd64ef49eccf54404b5dce"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_27.py": {
+      "eligible": true,
+      "seconds": 5.585646499879658,
+      "seconds_by_marker": {
+        "auto": 5.585646499879658
+      },
+      "sha256": "f2a3c5c2cb1cad12b5a3e4a70bd6e8dd9fa9976d42e02fa0ce7be28d622a7c36"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_28.py": {
+      "eligible": true,
+      "seconds": 5.289528199937195,
+      "seconds_by_marker": {
+        "auto": 5.289528199937195
+      },
+      "sha256": "55b754d88f7540a9f16925402301e4dc975453b1af1560c6f1fe9cbaee25677f"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_29.py": {
+      "eligible": true,
+      "seconds": 7.0928476001136005,
+      "seconds_by_marker": {
+        "auto": 7.0928476001136005
+      },
+      "sha256": "60627fd4a16203a081d7e45d392083d2a1dcb911c363415facefff3e65f66563"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d2_matrix_30.py": {
+      "eligible": true,
+      "seconds": 4.54658589977771,
+      "seconds_by_marker": {
+        "auto": 4.54658589977771
+      },
+      "sha256": "69a87f8eddb262a5e6c97ff299260c7ff08132770746a7a882cae121abb6a11b"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3a_1_the_snapshot_pin_s_lock_release_retries_the_reserved_integration.py": {
+      "eligible": true,
+      "seconds": 4.0883320001885295,
+      "seconds_by_marker": {
+        "auto": 4.0883320001885295
+      },
+      "sha256": "7dd3a4ec4a84eee3e99d5281e0c7b56fac42b5e3951782b847d779cab41a0b8b"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_01.py": {
+      "eligible": true,
+      "seconds": 3.7862505996599793,
+      "seconds_by_marker": {
+        "auto": 3.7862505996599793
+      },
+      "sha256": "97ac2c3c9c4f4aea309af102addcfee3cf2a05edde8fdee639556deea2e22936"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_02.py": {
+      "eligible": true,
+      "seconds": 4.031824699603021,
+      "seconds_by_marker": {
+        "auto": 4.031824699603021
+      },
+      "sha256": "4b4fa1af38fabf30098678f877d8e404758a71a5aa704b97321ac8a5ef8255be"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_03.py": {
+      "eligible": true,
+      "seconds": 4.107909900136292,
+      "seconds_by_marker": {
+        "auto": 4.107909900136292
+      },
+      "sha256": "f8584b4d1d0c72cab7dae1720b80a99fbb8eaddc6d43a104c8c3b58e13f8a693"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3a_2_a_reservation_that_ends_without_a_pin_04.py": {
+      "eligible": true,
+      "seconds": 4.454467400442809,
+      "seconds_by_marker": {
+        "auto": 4.454467400442809
+      },
+      "sha256": "87f75967525f9af972a85e0c090f0c5c4ee61260a913912b1e4060e07edec57b"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3b_1_close_attempt_retries_the_claimed_group.py": {
+      "eligible": true,
+      "seconds": 3.9755191998556256,
+      "seconds_by_marker": {
+        "auto": 3.9755191998556256
+      },
+      "sha256": "a3bf1a02a1b3e18600fd474e4144d6d7b90abcfc8efdfdc4719672e86fafe1b2"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3b_2_a_claim_ended_with_its_session_open_is_retried_by_the_lock_release_that_follows.py": {
+      "eligible": true,
+      "seconds": 4.149184499401599,
+      "seconds_by_marker": {
+        "auto": 4.149184499401599
+      },
+      "sha256": "0df5c9e811376dad354d28b66dd154f30dd74f2246f37b6f484161d9f4f3cb6c"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3c_1_a_g_release_under_m_is_taken_at_the_m_release.py": {
+      "eligible": true,
+      "seconds": 3.71941679995507,
+      "seconds_by_marker": {
+        "auto": 3.71941679995507
+      },
+      "sha256": "17585730e27b7589f95623c8bbe86bf01b8a8815c9514aeaedd61ab9cbfac4db"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3c_2_a_release_inside_a_transaction_waits_for_the_thread_s_next_dispatch.py": {
+      "eligible": true,
+      "seconds": 3.758426600135863,
+      "seconds_by_marker": {
+        "auto": 3.758426600135863
+      },
+      "sha256": "3d5391a4d5e7af8a702d409e773fcb218e0e802827915a8b164f1e6ebc28f815"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3c_3_a_session_closed_inside_a_transaction.py": {
+      "eligible": true,
+      "seconds": 4.085679900366813,
+      "seconds_by_marker": {
+        "auto": 4.085679900366813
+      },
+      "sha256": "c90273b6d08b881f342603dee78c3442e8f8c7b224c5863699e3fbbce8e4407c"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3c_4_a_release_retried_by_its_timer_dispatches_on_the_timer_thread.py": {
+      "eligible": true,
+      "seconds": 4.478524399921298,
+      "seconds_by_marker": {
+        "auto": 4.478524399921298
+      },
+      "sha256": "637cf7d6b99a9ffc142190adb1d4c374b07fe9bc6497b728f018f5abb68e0393"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3c_5_a_stale_lock_reclaimed_by_the_sweeper.py": {
+      "eligible": true,
+      "seconds": 3.7193134999834,
+      "seconds_by_marker": {
+        "auto": 3.7193134999834
+      },
+      "sha256": "d8889ed72c86d45a8a90650f6dbdf9e975276035ae3496aed09b46e59caca9b8"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3d_1_a_failed_drain_and_a_failed_hold_release.py": {
+      "eligible": true,
+      "seconds": 4.499824299477041,
+      "seconds_by_marker": {
+        "auto": 4.499824299477041
+      },
+      "sha256": "18afef02a6c7aae8aefe2d32b6472ae8352761ede9d427f65d90768f631febdd"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_d3d_2_a_hold_left_with_no_waiting_integration_is_taken_by_the_next_lock_release.py": {
+      "eligible": true,
+      "seconds": 4.662994800135493,
+      "seconds_by_marker": {
+        "auto": 4.662994800135493
+      },
+      "sha256": "be1e935fd31e5ac33bc9853d0312d73cccd8262787f2cce81348709d11b7ea9f"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_01.py": {
+      "eligible": true,
+      "seconds": 4.757366799749434,
+      "seconds_by_marker": {
+        "auto": 4.757366799749434
+      },
+      "sha256": "b82d1834c36c002e0e36da23b0c98958d3574fc3044fc2be0b121afc68192976"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_02.py": {
+      "eligible": true,
+      "seconds": 5.136616100091487,
+      "seconds_by_marker": {
+        "auto": 5.136616100091487
+      },
+      "sha256": "2c6f37e0b307afe5d8faa55e7cdc70443257a10f37b9e99021fd1790899f08cc"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_03.py": {
+      "eligible": true,
+      "seconds": 3.8356134993955493,
+      "seconds_by_marker": {
+        "auto": 3.8356134993955493
+      },
+      "sha256": "595f42f786e320e0395e3b0abda893fefbb5aac36ea5e457452681587e2805ed"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_04.py": {
+      "eligible": true,
+      "seconds": 5.996026600245386,
+      "seconds_by_marker": {
+        "auto": 5.996026600245386
+      },
+      "sha256": "68411c5bd267862dbf684fa1fc6345d2d138be108cfff2b550e857909193529c"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_05.py": {
+      "eligible": true,
+      "seconds": 6.415063000284135,
+      "seconds_by_marker": {
+        "auto": 6.415063000284135
+      },
+      "sha256": "f396680c8aa3d59073560c8199f23a3788248dde9e4085989386befd9a113e19"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_an_outside_git_lock_file_06.py": {
+      "eligible": true,
+      "seconds": 5.219406799878925,
+      "seconds_by_marker": {
+        "auto": 5.219406799878925
+      },
+      "sha256": "db62d93014860c0024b272158d9ca6bdb7786acf0c3389f7ca05690ba8dba265"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it_01.py": {
+      "eligible": true,
+      "seconds": 4.540659099817276,
+      "seconds_by_marker": {
+        "auto": 4.540659099817276
+      },
+      "sha256": "cc137e7d2dc47eb31556479e8bdc32f698fd211e18ebee5360609bf97c0de930"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it_02.py": {
+      "eligible": true,
+      "seconds": 5.5792609001509845,
+      "seconds_by_marker": {
+        "auto": 5.5792609001509845
+      },
+      "sha256": "ecafdcb7e45e32c423bb0459b53aef1cca2d551e0af8d5a3b9ddbc601ea6e154"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_il_l2_the_attempt_worktree_lock_is_a_failed_commit_never_pending.py": {
+      "eligible": true,
+      "seconds": 0.9273624992929399,
+      "seconds_by_marker": {
+        "auto": 0.9273624992929399
+      },
+      "sha256": "9db5608eac1ea1179ed667aaff9b919b1fe26021c9f684cc05ee7bc21aa51314"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_01.py": {
+      "eligible": true,
+      "seconds": 3.1305776997469366,
+      "seconds_by_marker": {
+        "auto": 3.1305776997469366
+      },
+      "sha256": "262b62ffab2b43b50c875e3dcd2c1323cf43575cdbab15fe8a40a645e88eeb05"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_02.py": {
+      "eligible": true,
+      "seconds": 4.0360733000561595,
+      "seconds_by_marker": {
+        "auto": 4.0360733000561595
+      },
+      "sha256": "097733da960a7bf6f61a477e2f1b13a11b7b645f5fab7c41b08ac37ad1a7645c"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_rec_1_the_server_start_recovery_03.py": {
+      "eligible": true,
+      "seconds": 4.211728199385107,
+      "seconds_by_marker": {
+        "auto": 4.211728199385107
+      },
+      "sha256": "03655ab06f33cc71ac6cfe6ea50817965796a989d4160a46505df94b4e152d3e"
+    },
+    "tests/flowgate/integration_persistence_0156/test_s_safe_4_no_new_thread_timer_sweep_and_the_recovery_rule_is_called_not_copied.py": {
+      "eligible": true,
+      "seconds": 0.15774629963561893,
+      "seconds_by_marker": {
+        "auto": 0.15774629963561893
+      },
+      "sha256": "a3b35c7f2230057ed942ceddc942ec9113c5ddacc00ce258199d48991d4c4395"
     },
     "tests/flowgate/l3_states_0127/test_card_document_l3_states_a_api_0127.py": {
       "eligible": true,
@@ -497,192 +1065,339 @@
     },
     "tests/flowgate/settings_retry_0126/test_changed_review_to_no_review_drives_completion_without_old_ai.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 12.197718899697065,
+      "seconds": 8.769914499484003,
       "seconds_by_marker": {
-        "auto": 12.197718899697065
+        "auto": 8.769914499484003
       },
-      "sha256": "e3ddb41930ef9b7d7856b5c7cd2beb86e171dc2cfc0460effeedcbd76a402426"
+      "sha256": "f1c26ed0d5b335601e899281881a7bd7873e7f2ca00be7a7d9614f3f0be602f4"
+    },
+    "tests/flowgate/settings_retry_0126/test_changed_review_to_no_review_drives_completion_without_old_ai_full.py": {
+      "eligible": true,
+      "seconds": 3.611944600008428,
+      "seconds_by_marker": {
+        "auto": 3.611944600008428
+      },
+      "sha256": "558d7f8458055199205f1f985c6bd482ebc4c2a66f4e5527cff9fe70dc6424fe"
     },
     "tests/flowgate/settings_retry_0126/test_command_recovers_lost_loop_end_once_and_fences_old_callback.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 14.508521499112248,
+      "seconds": 4.748290900141001,
       "seconds_by_marker": {
-        "auto": 14.508521499112248
+        "auto": 4.748290900141001
       },
-      "sha256": "1e66f286863321188979366269af91816513ae9e5b7ad597c26b22e3cefb7379"
+      "sha256": "b869f3da8b22b243daf53b40271c9c6b6098b8e372e65b06c7b1c5575e43e9d1"
+    },
+    "tests/flowgate/settings_retry_0126/test_command_recovers_lost_loop_end_once_and_fences_old_callback_full.py": {
+      "eligible": true,
+      "seconds": 4.732413900084794,
+      "seconds_by_marker": {
+        "auto": 4.732413900084794
+      },
+      "sha256": "73847da5f18bb431887c9de4dcc46a8e01aacd4a8bfc9c2f706c91a3f86963f8"
     },
     "tests/flowgate/settings_retry_0126/test_explicit_card_hold_stays_held_until_its_own_release.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 16.501779299229383,
+      "seconds": 5.792016600258648,
       "seconds_by_marker": {
-        "auto": 16.501779299229383
+        "auto": 5.792016600258648
       },
-      "sha256": "68793c076f60eabfaf018e6fe2cfe26f232c37d02fcc7dc245173a9c57e0d038"
+      "sha256": "8c7792ff67df12c2def29814afb8cd45530b7083aa74b25c255eb72dbc106a01"
+    },
+    "tests/flowgate/settings_retry_0126/test_explicit_card_hold_stays_held_until_its_own_release_full.py": {
+      "eligible": true,
+      "seconds": 5.740274500101805,
+      "seconds_by_marker": {
+        "auto": 5.740274500101805
+      },
+      "sha256": "84013255313677233f2fa2c2a4a1c4ec1d2910e4874320bb9879e765449f08c0"
     },
     "tests/flowgate/settings_retry_0126/test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 29.61442600004375,
+      "seconds": 12.222387199755758,
       "seconds_by_marker": {
-        "auto": 29.61442600004375
+        "auto": 12.222387199755758
       },
-      "sha256": "43a9c090ec7b65bab815e392b6a844c3bce0224326d111770b900ee444404f38"
+      "sha256": "3f9cb5cf6cfe8e468d8c01611f108f85f9c253d6abeef058154df00694d744a7"
+    },
+    "tests/flowgate/settings_retry_0126/test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai_full.py": {
+      "eligible": true,
+      "seconds": 12.782253000419587,
+      "seconds_by_marker": {
+        "auto": 12.782253000419587
+      },
+      "sha256": "0dfc87b3d17142ab7f3c52835a1ce48ecfc2a2a6447aaa85739a413e257f7b73"
     },
     "tests/flowgate/settings_retry_0126/test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 14.653302201069891,
+      "seconds": 4.978984400164336,
       "seconds_by_marker": {
-        "auto": 14.653302201069891
+        "auto": 4.978984400164336
       },
-      "sha256": "a5c8a475275bcec9fd767901c5e8861b6c17f1158c1d718c88a3d3b4470ebf64"
+      "sha256": "394208fb4efdd8274cef677bdbdb244793e9c475b142f1c95bb4b0b851f31286"
+    },
+    "tests/flowgate/settings_retry_0126/test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit_full.py": {
+      "eligible": true,
+      "seconds": 5.000447199679911,
+      "seconds_by_marker": {
+        "auto": 5.000447199679911
+      },
+      "sha256": "866b9e45a48ed332053fc928e62aadc90992e2a09d84404cfbfd8dd5b5f37128"
     },
     "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 19.243993600364774,
+      "seconds": 7.515098300296813,
       "seconds_by_marker": {
-        "auto": 19.243993600364774
+        "auto": 7.515098300296813
       },
-      "sha256": "cd6335da41e7c0973d37c488bd84cb1a1cdac07d8438db5c7ac18769429dcf97"
+      "sha256": "b706bdfe6a74ab7cd755e274acf1a2eb3ef746aac5796aef0228fc6719322c1d"
+    },
+    "tests/flowgate/settings_retry_0126/test_known_changed_version_can_reask_the_same_revision_full.py": {
+      "eligible": true,
+      "seconds": 7.816157300025225,
+      "seconds_by_marker": {
+        "auto": 7.816157300025225
+      },
+      "sha256": "c2fce2e3ec94ef6bb0ff57f9c487f11fc4ed61e13b5bde561eaa7979672d8820"
     },
     "tests/flowgate/settings_retry_0126/test_pre_t5_assignment_without_version_keeps_q544_revision_guard.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 24.90099119907245,
+      "seconds": 11.499641499947757,
       "seconds_by_marker": {
-        "auto": 24.90099119907245
+        "auto": 11.499641499947757
       },
-      "sha256": "84e800b501b2216c2c48eedd4c5bf02fe12a5c3dc5684e8f20312ccae29fce95"
+      "sha256": "a57547910419834751e4a2fab8cb872ddb43084b657d809ff32c3dd81bee64ed"
+    },
+    "tests/flowgate/settings_retry_0126/test_pre_t5_assignment_without_version_keeps_q544_revision_guard_full.py": {
+      "eligible": true,
+      "seconds": 11.334817300084978,
+      "seconds_by_marker": {
+        "auto": 11.334817300084978
+      },
+      "sha256": "498213fc2b0f03ebb302605b92f365a0fa56891d7104a4bd53648ae220e8c116"
     },
     "tests/flowgate/settings_retry_0126/test_pre_t5_reviewed_assignment_without_version.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 23.027908799704164,
+      "seconds": 10.134779800660908,
       "seconds_by_marker": {
-        "auto": 23.027908799704164
+        "auto": 10.134779800660908
       },
-      "sha256": "1ce523a6006801713f0858176c1859c80821abd24619a881f343bc21a73a08d7"
+      "sha256": "aad46f1e6706c39d349f7604d1a43d8448a47b4526c273bf4c02f06f2b92d4bd"
+    },
+    "tests/flowgate/settings_retry_0126/test_pre_t5_reviewed_assignment_without_version_full.py": {
+      "eligible": true,
+      "seconds": 9.87507989956066,
+      "seconds_by_marker": {
+        "auto": 9.87507989956066
+      },
+      "sha256": "8e18271a295a898d9701e9d36ae2cadd9a89038fa3231e14ae18235acd7d6ed7"
     },
     "tests/flowgate/settings_retry_0126/test_race_approval_refused.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 18.494390700012445,
+      "seconds": 7.1909772995859385,
       "seconds_by_marker": {
-        "auto": 18.494390700012445
+        "auto": 7.1909772995859385
       },
-      "sha256": "de93fba31ca217c16b894739bbfd3074e27ab2a55345bf7e79bf63f7e868b6a7"
+      "sha256": "28264d9c7aad19fa52c624cc16c38b3ca135829e7d0bcf16ce59c61e94e66571"
+    },
+    "tests/flowgate/settings_retry_0126/test_race_approval_refused_full.py": {
+      "eligible": true,
+      "seconds": 7.234353600535542,
+      "seconds_by_marker": {
+        "auto": 7.234353600535542
+      },
+      "sha256": "be953170082bae23def33feb1759242a1b7f3964e580e7c5f8f4230990e40e95"
     },
     "tests/flowgate/settings_retry_0126/test_race_review_not_started.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 18.16934100072831,
+      "seconds": 7.180315799545497,
       "seconds_by_marker": {
-        "auto": 18.16934100072831
+        "auto": 7.180315799545497
       },
-      "sha256": "f0d6b035c36797326b513984743ccb5cb227847072a1c59106eab4cd0b9cc5df"
+      "sha256": "fb94a72c7e202317b3313d2391ffa981b4391be9bf6272960115fedf8b79dfba"
+    },
+    "tests/flowgate/settings_retry_0126/test_race_review_not_started_full.py": {
+      "eligible": true,
+      "seconds": 7.2760848994366825,
+      "seconds_by_marker": {
+        "auto": 7.2760848994366825
+      },
+      "sha256": "d80f67798be09725764ba859a5cd5307c2a7e63595a787592e49837546fa7bab"
     },
     "tests/flowgate/settings_retry_0126/test_race_review_result_unknown.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 18.19004910066724,
+      "seconds": 7.590862599667162,
       "seconds_by_marker": {
-        "auto": 18.19004910066724
+        "auto": 7.590862599667162
       },
-      "sha256": "0b230a6f1958a72f6b8c2ece8d444c165df9bfeb3270292253265da28736d187"
+      "sha256": "975138b0936d5ced0102f0535b413e0a49abb659df5297b4ef9d616c2dd3512e"
+    },
+    "tests/flowgate/settings_retry_0126/test_race_review_result_unknown_full.py": {
+      "eligible": true,
+      "seconds": 7.237749699968845,
+      "seconds_by_marker": {
+        "auto": 7.237749699968845
+      },
+      "sha256": "09bee8c81772191987ef4ec5341e9f42619c686ceab1d7444d01d0940215a93e"
     },
     "tests/flowgate/settings_retry_0126/test_race_stage_not_person.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 18.255696999374777,
+      "seconds": 6.9784645000472665,
       "seconds_by_marker": {
-        "auto": 18.255696999374777
+        "auto": 6.9784645000472665
       },
-      "sha256": "c76f881e6476c66f1fdc5ff9d821b0748828de6121ce2abd83df9addc613861b"
+      "sha256": "1da6b51a93456d85f7d82a77ef926d58609151038ae7dbb10285d11e46a4354e"
+    },
+    "tests/flowgate/settings_retry_0126/test_race_stage_not_person_full.py": {
+      "eligible": true,
+      "seconds": 6.996577599551529,
+      "seconds_by_marker": {
+        "auto": 6.996577599551529
+      },
+      "sha256": "93fe7ec04e831521be8695f4e60d59cf6f6b5784534728cd2fe48e9c142c58fc"
     },
     "tests/flowgate/settings_retry_0126/test_review_abnormal.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 21.61002520052716,
+      "seconds": 8.931879099924117,
       "seconds_by_marker": {
-        "auto": 21.61002520052716
+        "auto": 8.931879099924117
       },
-      "sha256": "665000a362376d4ff3c15ffa938b7b80d531aef072ccb6de2dcce0c9627d0667"
+      "sha256": "0d3202bd4266026b4b9a3dad5e7d967532065cb1d6178ea3d0aaf7d221a8b4b6"
+    },
+    "tests/flowgate/settings_retry_0126/test_review_abnormal_full.py": {
+      "eligible": true,
+      "seconds": 8.938452600035816,
+      "seconds_by_marker": {
+        "auto": 8.938452600035816
+      },
+      "sha256": "53ac21d779c2826ba4939109499d5201e801ac5a68393621864e1d8874542fea"
     },
     "tests/flowgate/settings_retry_0126/test_review_completion_missing.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 21.63187629915774,
+      "seconds": 8.757974700070918,
       "seconds_by_marker": {
-        "auto": 21.63187629915774
+        "auto": 8.757974700070918
       },
-      "sha256": "6a8acdc214afd28f1d4cdad9652e577d1bce700dab6867bf806dd8ec9a46f04c"
+      "sha256": "b53123de1bff7bfd778d889913aee8594e6afa8361b58db6a0cef12e3253d0b9"
+    },
+    "tests/flowgate/settings_retry_0126/test_review_completion_missing_full.py": {
+      "eligible": true,
+      "seconds": 8.93987279990688,
+      "seconds_by_marker": {
+        "auto": 8.93987279990688
+      },
+      "sha256": "9063180af95e8d0dc22c53128502b366889f1fc4fa31d30f9dc13088ec1aca69"
     },
     "tests/flowgate/settings_retry_0126/test_review_exhausted.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 21.79589799977839,
+      "seconds": 8.875139599666,
       "seconds_by_marker": {
-        "auto": 21.79589799977839
+        "auto": 8.875139599666
       },
-      "sha256": "f81a3cc0951b0be90d8f6ab43034352834ee49972eeecd50938bdef1c2c561fc"
+      "sha256": "6cc54f5601853e9a61913b7d977a2aaf80672bc77cefe40cd2c52f796405c41d"
+    },
+    "tests/flowgate/settings_retry_0126/test_review_exhausted_full.py": {
+      "eligible": true,
+      "seconds": 9.276151800062507,
+      "seconds_by_marker": {
+        "auto": 9.276151800062507
+      },
+      "sha256": "f13ca1c356155e6debb49aa043b0ade1ce8a9e965e528ed4b21b286d3f0ae5cd"
     },
     "tests/flowgate/settings_retry_0126/test_review_failed_review.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 22.27927980059758,
+      "seconds": 9.133367400150746,
       "seconds_by_marker": {
-        "auto": 22.27927980059758
+        "auto": 9.133367400150746
       },
-      "sha256": "6ed46cd8177debc770c59415e0148288fc584895e304fcbaef88e1704abc1a57"
+      "sha256": "5876b4b22699d0484b4bea7ecdad372b775263416b09daea99c3c5b57bd7ccf5"
+    },
+    "tests/flowgate/settings_retry_0126/test_review_failed_review_full.py": {
+      "eligible": true,
+      "seconds": 9.301392199937254,
+      "seconds_by_marker": {
+        "auto": 9.301392199937254
+      },
+      "sha256": "18f310aff3a02edf78322463f35aa2f2a31f904d0efd69488319b3079bd0e1cd"
     },
     "tests/flowgate/settings_retry_0126/test_review_verdict_hold.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 21.885210200212896,
+      "seconds": 8.856973799876869,
       "seconds_by_marker": {
-        "auto": 21.885210200212896
+        "auto": 8.856973799876869
       },
-      "sha256": "f959bf2e6068a8752aa232d79b076922386b67e9ad4f8d21051ca6e1aa1beeb7"
+      "sha256": "8cbde89a14f45a6fc3b796413f29525f73711c2533bbe1894f9de6740e6c1f88"
+    },
+    "tests/flowgate/settings_retry_0126/test_review_verdict_hold_full.py": {
+      "eligible": true,
+      "seconds": 8.901898100040853,
+      "seconds_by_marker": {
+        "auto": 8.901898100040853
+      },
+      "sha256": "b0e308f893e21bbb563a2c6366ca40158b08dac475bd3d6d63b32f10c3b85847"
     },
     "tests/flowgate/settings_retry_0126/test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 9.911835099570453,
+      "seconds": 2.5461083999834955,
       "seconds_by_marker": {
-        "auto": 9.911835099570453
+        "auto": 2.5461083999834955
       },
-      "sha256": "03b0b95c5783872b204604377401e3ee767d47c4429fc4bb5eddb77693aa77f5"
+      "sha256": "c8b939470f14985ffd6b2c5c7245a0116f1ef21b381818107146563f8dd0fdfd"
+    },
+    "tests/flowgate/settings_retry_0126/test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage_full.py": {
+      "eligible": true,
+      "seconds": 2.582112300209701,
+      "seconds_by_marker": {
+        "auto": 2.582112300209701
+      },
+      "sha256": "53c9b9f59f7ca0e19dd765618b72dd4d98bb7b6209c951021b19aafd96ccaf7d"
     },
     "tests/flowgate/settings_retry_0126/test_writer_no_result.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 18.726729799527675,
+      "seconds": 7.567585100419819,
       "seconds_by_marker": {
-        "auto": 18.726729799527675
+        "auto": 7.567585100419819
       },
-      "sha256": "4b8fbcfa1f430ae23b5bfc66c17ade2e72dc47165a1bb930d47f1f5293f3f4c5"
+      "sha256": "0a5206a8c444a1bf06d7a35777a513a868f9664034a4bc5d8803d86099aa7ee8"
+    },
+    "tests/flowgate/settings_retry_0126/test_writer_no_result_full.py": {
+      "eligible": true,
+      "seconds": 7.567027799785137,
+      "seconds_by_marker": {
+        "auto": 7.567027799785137
+      },
+      "sha256": "be4410044e69bfbeaeea54ee861587552538bacd7b640735c506e21d4fe2a77d"
     },
     "tests/flowgate/settings_retry_0126/test_writer_provider_failed.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 19.80612069973722,
+      "seconds": 8.01672640023753,
       "seconds_by_marker": {
-        "auto": 19.80612069973722
+        "auto": 8.01672640023753
       },
-      "sha256": "b076420a5af3fe3ef83e51d490dac2ccae57ce391b8beff6af5588f0834aa138"
+      "sha256": "fe0cc70c583cd672119d9a1991f46e2b1b6bfe3047dda86f89a88a5df1644a2f"
+    },
+    "tests/flowgate/settings_retry_0126/test_writer_provider_failed_full.py": {
+      "eligible": true,
+      "seconds": 7.955462399870157,
+      "seconds_by_marker": {
+        "auto": 7.955462399870157
+      },
+      "sha256": "736031546ce7de26ca5c6d18713a7cf0f16d163827752a55bb3b10af224698bb"
     },
     "tests/flowgate/settings_retry_0126/test_writer_timeout.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 19.784529700875282,
+      "seconds": 7.829324100166559,
       "seconds_by_marker": {
-        "auto": 19.784529700875282
+        "auto": 7.829324100166559
       },
-      "sha256": "f2a6029525fcb006484bd15ade1a3976fce2f6a393c4d83729b838baa905257b"
+      "sha256": "0c64d969580d7869914c371376c760a42012715a7ed8ad945b33b8e543add7f7"
+    },
+    "tests/flowgate/settings_retry_0126/test_writer_timeout_full.py": {
+      "eligible": true,
+      "seconds": 8.146425199694932,
+      "seconds_by_marker": {
+        "auto": 8.146425199694932
+      },
+      "sha256": "fd90d694b1d714602645e6b6164617aee257f245230f1745ffbedc24b629ed23"
     },
     "tests/flowgate/test_ai_base_select_browser_0031.py": {
       "eligible": true,
@@ -1242,15 +1957,6 @@
       },
       "sha256": "c0be00606c12918f87614d462baa168b7a549e4cc2bd056fb882990da42c64e3"
     },
-    "tests/flowgate/test_fg_integration_persistence_0156.py": {
-      "eligible": true,
-      "measurement_run": "graph-2",
-      "seconds": 357.9010109012015,
-      "seconds_by_marker": {
-        "auto": 357.9010109012015
-      },
-      "sha256": "700d612721325f49215dadfa6b8218b39bc62479587dfcf1f6ecec1001c72639"
-    },
     "tests/flowgate/test_fg_node_running_cause_0159.py": {
       "eligible": true,
       "measurement_run": "graph-2",
@@ -1379,10 +2085,9 @@
     },
     "tests/flowgate/test_fg_settings_retry_0126.py": {
       "eligible": true,
-      "measurement_run": "refactor-20261120",
-      "seconds": 8.758628400042653,
+      "seconds": 10.797071199864149,
       "seconds_by_marker": {
-        "auto": 8.758628400042653
+        "auto": 10.797071199864149
       },
       "sha256": "5da010aa6b19f973cad470a0bcd5043ffe00ef44495f9bce51a4a6d3bc2195cc"
     },
@@ -1574,6 +2279,310 @@
         "auto": 0.18110999977216125
       },
       "sha256": "76c80cc8faaa6e80dcaa5ccb1ce0ee5c042771e23432e816e0cf7ebcb3fc3eed"
+    },
+    "tests/gate_push_sync_0132/test_a_done_sync_round_stays_an_effect_after_a_later_round_fails_01.py": {
+      "eligible": true,
+      "seconds": 14.832478299736977,
+      "seconds_by_marker": {
+        "auto": 14.832478299736977
+      },
+      "sha256": "a08d24381ed228c60408784195ef7da53b2b237498057151d643ef561cee7bde"
+    },
+    "tests/gate_push_sync_0132/test_a_done_sync_round_stays_an_effect_after_a_later_round_fails_02.py": {
+      "eligible": true,
+      "seconds": 13.311132399830967,
+      "seconds_by_marker": {
+        "auto": 13.311132399830967
+      },
+      "sha256": "8212343b4402d0705ef949162ec05808321ae68d06210c603c5a7a9ae19e488e"
+    },
+    "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_01.py": {
+      "eligible": true,
+      "seconds": 13.955206100363284,
+      "seconds_by_marker": {
+        "auto": 13.955206100363284
+      },
+      "sha256": "ae6767e2abaede80651e2ccd0453476651dd44b6f01507268f4a0b516a3ec9d0"
+    },
+    "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_02.py": {
+      "eligible": true,
+      "seconds": 22.67071110010147,
+      "seconds_by_marker": {
+        "auto": 22.67071110010147
+      },
+      "sha256": "09c746938ac40d971b8c4b540fe5f032d8eb7f8d933fec87243e894128ccd57e"
+    },
+    "tests/gate_push_sync_0132/test_a_racing_remote_is_synced_each_round_up_to_the_limit_03.py": {
+      "eligible": true,
+      "seconds": 19.99483870016411,
+      "seconds_by_marker": {
+        "auto": 19.99483870016411
+      },
+      "sha256": "b469042604903af0f2c7c8dd4afb669954a563605c0ebd2f038ce75ec6e899cd"
+    },
+    "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_01.py": {
+      "eligible": true,
+      "seconds": 13.178554000332952,
+      "seconds_by_marker": {
+        "auto": 13.178554000332952
+      },
+      "sha256": "9f77a71cefb431fd5600ad352505f216ce37e8501bbe0738d016c932a5644413"
+    },
+    "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_02.py": {
+      "eligible": true,
+      "seconds": 8.853188899811357,
+      "seconds_by_marker": {
+        "auto": 8.853188899811357
+      },
+      "sha256": "87cf0131a63fbb605fb39129a371961be3c13fc8c8967c21b688abff8267153f"
+    },
+    "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_03.py": {
+      "eligible": true,
+      "seconds": 8.85139530012384,
+      "seconds_by_marker": {
+        "auto": 8.85139530012384
+      },
+      "sha256": "674a7feded17cdb38e0808842751e1cb9bd5964baca197ca5493f6acbfddccb6"
+    },
+    "tests/gate_push_sync_0132/test_a_resumed_push_judges_the_local_target_and_its_checkout_04.py": {
+      "eligible": true,
+      "seconds": 9.574357599485666,
+      "seconds_by_marker": {
+        "auto": 9.574357599485666
+      },
+      "sha256": "f98de2b3262654f2f2754f7371a47677dcbedddf2616e70892efa05638807528"
+    },
+    "tests/gate_push_sync_0132/test_a_retried_push_after_a_sync_round_keeps_the_foreign_results_it_sends.py": {
+      "eligible": true,
+      "seconds": 18.293205599766225,
+      "seconds_by_marker": {
+        "auto": 18.293205599766225
+      },
+      "sha256": "2368f94591f82660d516eccb166a117cf305b1a46d47dc873f83eedd19481a1e"
+    },
+    "tests/gate_push_sync_0132/test_a_sync_conflict_goes_to_the_review_and_goes_on_or_parks_after_it_01.py": {
+      "eligible": true,
+      "seconds": 11.986263500060886,
+      "seconds_by_marker": {
+        "auto": 11.986263500060886
+      },
+      "sha256": "4286aeb162848ae5ba59aac4ce8df80dd0f4ea2afbd70e296b1ec2ac8e644441"
+    },
+    "tests/gate_push_sync_0132/test_a_sync_conflict_goes_to_the_review_and_goes_on_or_parks_after_it_02.py": {
+      "eligible": true,
+      "seconds": 10.46310820011422,
+      "seconds_by_marker": {
+        "auto": 10.46310820011422
+      },
+      "sha256": "f5adf707aa5224df445ccad02c484c638648ad33cc40f76cdcca6a458cb0fe5b"
+    },
+    "tests/gate_push_sync_0132/test_a_sync_conflict_hand_off_cut_off_before_its_record_is_the_active_conflict_after_the_resume.py": {
+      "eligible": true,
+      "seconds": 10.286465000361204,
+      "seconds_by_marker": {
+        "auto": 10.286465000361204
+      },
+      "sha256": "a0487ad402f956c05ec46b7b0e2392722618d10ea070adbed31494ec473fcab0"
+    },
+    "tests/gate_push_sync_0132/test_a_sync_cut_off_is_judged_from_its_attempt_without_a_second_merge_01.py": {
+      "eligible": true,
+      "seconds": 11.045381099916995,
+      "seconds_by_marker": {
+        "auto": 11.045381099916995
+      },
+      "sha256": "9efd79940da2013e46ae20cc382b456b280236530a1d89b782ec1c5e88983165"
+    },
+    "tests/gate_push_sync_0132/test_a_sync_cut_off_is_judged_from_its_attempt_without_a_second_merge_02.py": {
+      "eligible": true,
+      "seconds": 12.633980500046164,
+      "seconds_by_marker": {
+        "auto": 12.633980500046164
+      },
+      "sha256": "edd7502c0ab40e12e9d8c469346b6e77d94af168a11a43e97fd946a7a97dd229"
+    },
+    "tests/gate_push_sync_0132/test_an_abandon_keeps_the_landed_sync_commit_its_round_never_recorded_01.py": {
+      "eligible": true,
+      "seconds": 11.036150599829853,
+      "seconds_by_marker": {
+        "auto": 11.036150599829853
+      },
+      "sha256": "718cd0685cfbdc57edb5d40adb2c424fa88147682bd97e38e2bddcbeac3d1add"
+    },
+    "tests/gate_push_sync_0132/test_an_abandon_keeps_the_landed_sync_commit_its_round_never_recorded_02.py": {
+      "eligible": true,
+      "seconds": 14.63778160046786,
+      "seconds_by_marker": {
+        "auto": 14.63778160046786
+      },
+      "sha256": "449e18359a44796790182ef209ad9520ea5deeca3db577be1e497ca34c66afbe"
+    },
+    "tests/gate_push_sync_0132/test_another_decision_accepted_on_the_old_target_fails_target_moved_after_a_sync.py": {
+      "eligible": true,
+      "seconds": 13.891488900408149,
+      "seconds_by_marker": {
+        "auto": 13.891488900408149
+      },
+      "sha256": "7cdad316ebe9a3ca9513185920c0b44bdee7af66942d0027780ba3f815722e02"
+    },
+    "tests/gate_push_sync_0132/test_commit_mode_parks_a_remote_ahead_push_without_a_sync.py": {
+      "eligible": true,
+      "seconds": 6.236183499451727,
+      "seconds_by_marker": {
+        "auto": 6.236183499451727
+      },
+      "sha256": "61881943d0959afd3c6620142acdebe75c41af50c90c040f773c98e94a188d17"
+    },
+    "tests/gate_push_sync_0132/test_remote_ahead_is_synced_once_and_pushed_keeping_the_applied_sha_01.py": {
+      "eligible": true,
+      "seconds": 10.99480879958719,
+      "seconds_by_marker": {
+        "auto": 10.99480879958719
+      },
+      "sha256": "0c9fa07041fe1f71c3cff24e4276d0f0ad86a89897abb9849ca604d824c759f4"
+    },
+    "tests/gate_push_sync_0132/test_remote_ahead_is_synced_once_and_pushed_keeping_the_applied_sha_02.py": {
+      "eligible": true,
+      "seconds": 11.809543800074607,
+      "seconds_by_marker": {
+        "auto": 11.809543800074607
+      },
+      "sha256": "b7257ce558ae2f70e35f5f6f1e9bdfbf87f4196ab9746880249e6e5d48856ed2"
+    },
+    "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_01.py": {
+      "eligible": true,
+      "seconds": 11.60284350020811,
+      "seconds_by_marker": {
+        "auto": 11.60284350020811
+      },
+      "sha256": "36d15c49b4a476fdbeb002b7b0cda80d686c59d93c492e21971682478d36e973"
+    },
+    "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_02.py": {
+      "eligible": true,
+      "seconds": 14.634904299862683,
+      "seconds_by_marker": {
+        "auto": 14.634904299862683
+      },
+      "sha256": "dee08afe87ad7572f56255ff56056ac37b4718c140e736f801fe6c5563c2a075"
+    },
+    "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_03.py": {
+      "eligible": true,
+      "seconds": 11.222893699537963,
+      "seconds_by_marker": {
+        "auto": 11.222893699537963
+      },
+      "sha256": "46b9c2ec57fd42568ee67f58ba016f67fa2b7e7513e844fe8eb4b6c96f1f81c6"
+    },
+    "tests/gate_run_resume_0132/test_mixed_retry_repark_returns_to_original_wait_04.py": {
+      "eligible": true,
+      "seconds": 15.391124099958688,
+      "seconds_by_marker": {
+        "auto": 15.391124099958688
+      },
+      "sha256": "e6b6acf8fd4b596aac22d7ee0400b9a13a68d8fbccc898f0f198356b9c3a142e"
+    },
+    "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_01.py": {
+      "eligible": true,
+      "seconds": 11.893033500760794,
+      "seconds_by_marker": {
+        "auto": 11.893033500760794
+      },
+      "sha256": "861631644adc182031b78eefc82ea16de1cff71cdc85064addce9b4fa3bec905"
+    },
+    "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_02.py": {
+      "eligible": true,
+      "seconds": 15.158965799957514,
+      "seconds_by_marker": {
+        "auto": 15.158965799957514
+      },
+      "sha256": "bbada44f15093f69cb57b5d5076c22a60b693c84b89288e2a0fdbb9eee5558bd"
+    },
+    "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_03.py": {
+      "eligible": true,
+      "seconds": 12.978165400214493,
+      "seconds_by_marker": {
+        "auto": 12.978165400214493
+      },
+      "sha256": "7c894e324f05c1a2e15768cc320a0fee7fb6f5a5285f1a273d914cb9588f0746"
+    },
+    "tests/gate_run_resume_0132/test_mixed_wait_resume_preserves_other_cards_and_propagates_04.py": {
+      "eligible": true,
+      "seconds": 16.198138799984008,
+      "seconds_by_marker": {
+        "auto": 16.198138799984008
+      },
+      "sha256": "e1a2c527aaab1ff74ed63cd9d50b4d5de1f9242951ba37cf86f19b2b101786cc"
+    },
+    "tests/gate_run_resume_0132/test_target_moved_before_merge_parks_idle_and_stop_cancels.py": {
+      "eligible": true,
+      "seconds": 5.928334900178015,
+      "seconds_by_marker": {
+        "auto": 5.928334900178015
+      },
+      "sha256": "e7189da1ac01980a57ce883cb3f06970bb6d2576f388a81db1ea803ecdd55ea1"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_01.py": {
+      "eligible": true,
+      "seconds": 10.232380399946123,
+      "seconds_by_marker": {
+        "auto": 10.232380399946123
+      },
+      "sha256": "452cd936417b2f7f881ac5bcf84c733395cb18bc2148d3ae470f6be417ec09c9"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_02.py": {
+      "eligible": true,
+      "seconds": 14.356952200178057,
+      "seconds_by_marker": {
+        "auto": 14.356952200178057
+      },
+      "sha256": "f4fdfd0b5c4f03fd9266aeae6a2eeee7772faaf4130b9b1e15cc16f6a9cba5b3"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_03.py": {
+      "eligible": true,
+      "seconds": 9.722797200083733,
+      "seconds_by_marker": {
+        "auto": 9.722797200083733
+      },
+      "sha256": "3f0412ccb36d3a8e0e51a740788c8e2f70ec9c10d1a27d1a5be885bcd941f582"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_04.py": {
+      "eligible": true,
+      "seconds": 13.768591400235891,
+      "seconds_by_marker": {
+        "auto": 13.768591400235891
+      },
+      "sha256": "3a9cde32ff7ab22de84004fddbecf037afbd7bcd6fb99aea90d8c598bd561b90"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_05.py": {
+      "eligible": true,
+      "seconds": 9.216638999991119,
+      "seconds_by_marker": {
+        "auto": 9.216638999991119
+      },
+      "sha256": "fdfb79e299454510bf8461b6dddd6530f880c464f33c757360d15aa0ae689d10"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_06.py": {
+      "eligible": true,
+      "seconds": 13.36999179981649,
+      "seconds_by_marker": {
+        "auto": 13.36999179981649
+      },
+      "sha256": "6857d52a95b58b5afea7ee467acf36666b507e5a79cd2f175769093fee3f4996"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_07.py": {
+      "eligible": true,
+      "seconds": 9.198184300214052,
+      "seconds_by_marker": {
+        "auto": 9.198184300214052
+      },
+      "sha256": "0edfa4d9a179735c7d9c14d3d3b5cb0dfad210232e932bc39cecf7874c14a0f7"
+    },
+    "tests/gate_run_resume_0132/test_user_intent_survives_publish_and_defers_successor_08.py": {
+      "eligible": true,
+      "seconds": 13.294625099282712,
+      "seconds_by_marker": {
+        "auto": 13.294625099282712
+      },
+      "sha256": "a5d13a8ceb6690bd7aaf41decf0d47fa567fc19fb9d636fc0276224c34c0a18f"
     },
     "tests/integration/ai_run_identity/test_ai_run_identity_0138.py": {
       "eligible": true,
@@ -1836,6 +2845,798 @@
       },
       "sha256": "6816fa0ff33cadd55ac446e45915068d3041421d990630ade870de6c02bf4050"
     },
+    "tests/modules/flow_gate/git_integration_0115/test_api_conflict_tool_loop0608.py": {
+      "eligible": true,
+      "seconds": 19.93660969985649,
+      "seconds_by_marker": {
+        "auto": 19.93660969985649
+      },
+      "sha256": "3f89fce894c8c66e94ea3485c9a6d936a833e1162123685c778f45a177e42c0e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_api_conflict_tool_loop0608_small_conflict_stays_inline_and_the_validators_still_decide.py": {
+      "eligible": true,
+      "seconds": 8.087535100057721,
+      "seconds_by_marker": {
+        "auto": 8.087535100057721
+      },
+      "sha256": "7d28ac66fd21887c4e6b4e94fae4d29743751ca2ed2893749a0eb18398eef2ee"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_auto_commit_message.py": {
+      "eligible": true,
+      "seconds": 0.1157562998123467,
+      "seconds_by_marker": {
+        "auto": 0.1157562998123467
+      },
+      "sha256": "67b318ebf0523fae6389d68781c39121cb06e528ddc797fe9ebc3e07ca6c46a8"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177.py": {
+      "eligible": true,
+      "seconds": 2.0232170992530882,
+      "seconds_by_marker": {
+        "auto": 2.0232170992530882
+      },
+      "sha256": "7f48546238c37bcf7bae7e84c2aa1ea4bac5ffe9cd693c2d2fb3e00b2bffb950"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_commit_message_too_long_422.py": {
+      "eligible": true,
+      "seconds": 1.6151274992153049,
+      "seconds_by_marker": {
+        "auto": 1.6151274992153049
+      },
+      "sha256": "244455d4bc892bcce64c8ebf005394d38e2d9149ce6195741c1a2c45cf771932"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_dirty_listed_then_revert_then_commit.py": {
+      "eligible": true,
+      "seconds": 2.6141426996327937,
+      "seconds_by_marker": {
+        "auto": 2.6141426996327937
+      },
+      "sha256": "33c1402b3c3c7383cb775eb0db5bd6cca61d15d80b06c8435f144e5dd24c1e92"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_e3_409_then_commit_then_merge.py": {
+      "eligible": true,
+      "seconds": 6.557535699568689,
+      "seconds_by_marker": {
+        "auto": 6.557535699568689
+      },
+      "sha256": "5e0a5115de158f36265cb09668720fc77696f2d781b4e3c2b3306115c4dcca71"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_lock_busy_409.py": {
+      "eligible": true,
+      "seconds": 6.386221200227737,
+      "seconds_by_marker": {
+        "auto": 6.386221200227737
+      },
+      "sha256": "dd7fe48e3bd1b093ef29c0a376f923accec092c32669032f75032d39db11b049"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_merge_session_guard.py": {
+      "eligible": true,
+      "seconds": 1.7129935002885759,
+      "seconds_by_marker": {
+        "auto": 1.7129935002885759
+      },
+      "sha256": "c6c114bd1b4ddc739ff4ca5649c72ab6604cfbb9bb97521805e0ccb7ea6e826d"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_commit_revert0177_revert_not_dirty_and_validation.py": {
+      "eligible": true,
+      "seconds": 1.8980426006019115,
+      "seconds_by_marker": {
+        "auto": 1.8980426006019115
+      },
+      "sha256": "dc6eec3ff752972337379d8de5279d47d8497a2b2f3c92e116a32fee94b4b3a1"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_dirty_delegation_admission0481.py": {
+      "eligible": true,
+      "seconds": 3.949407899286598,
+      "seconds_by_marker": {
+        "auto": 3.949407899286598
+      },
+      "sha256": "b62e3b9d3e4b8676073bd34ef174f57db3f2cd91aa6ec6aa47ed30b1d6516dc9"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350.py": {
+      "eligible": true,
+      "seconds": 2.3475437997840345,
+      "seconds_by_marker": {
+        "auto": 2.3475437997840345
+      },
+      "sha256": "021bb5988de622a5f7dfabf9bbbe7b0e60ebcb6999393e48091926b969f9211a"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_remove_then_retry_merge_only_stays_local.py": {
+      "eligible": true,
+      "seconds": 6.372580700088292,
+      "seconds_by_marker": {
+        "auto": 6.372580700088292
+      },
+      "sha256": "342f8c97cd7cd3bbfc042203f4acbfc4f50b486784b7b1fc6f400c9956765504"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_remove_then_retry_merge_pushes.py": {
+      "eligible": true,
+      "seconds": 6.914515299722552,
+      "seconds_by_marker": {
+        "auto": 6.914515299722552
+      },
+      "sha256": "fbeff4c2d2dba8c0020e16687fe7e4679ef46bffb069a0039847d20d1e765510"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_remove_and_retry0350_selective_commit_then_retry_also_unblocks.py": {
+      "eligible": true,
+      "seconds": 6.788909200113267,
+      "seconds_by_marker": {
+        "auto": 6.788909200113267
+      },
+      "sha256": "0935ce3d9e507d072ae48ef4ee2077399c8366699c6f260e8d9527526f91ba1a"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_untracked_commit0296.py": {
+      "eligible": true,
+      "seconds": 6.961804199498147,
+      "seconds_by_marker": {
+        "auto": 6.961804199498147
+      },
+      "sha256": "869bbcfb51b544040ccc38fec5297abcdb8409f5d2d4dff4032e114b68b72098"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350.py": {
+      "eligible": true,
+      "seconds": 7.899210799951106,
+      "seconds_by_marker": {
+        "auto": 7.899210799951106
+      },
+      "sha256": "aa3968f3bb7450a02bf693972ee082ef13c2e1dff605b02cc1b57895be577e45"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_failure_is_side_effect_free.py": {
+      "eligible": true,
+      "seconds": 4.9149728999473155,
+      "seconds_by_marker": {
+        "auto": 4.9149728999473155
+      },
+      "sha256": "f712c7672f35305bb933286b282a675118e4f3d1d83e5d297be0793be2a3f332"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_noncolliding_untracked_never_blocks_merge.py": {
+      "eligible": true,
+      "seconds": 4.747581599745899,
+      "seconds_by_marker": {
+        "auto": 4.747581599745899
+      },
+      "sha256": "fc168564c75c25e53f20418d8daff83f60e1a41c7f085b8eeb8d1550051ca21e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_base_untracked_conflict_end_to_end0350_revert_tracked_then_untracked_only_matches_b0001_order.py": {
+      "eligible": true,
+      "seconds": 5.684408300090581,
+      "seconds_by_marker": {
+        "auto": 5.684408300090581
+      },
+      "sha256": "ae3f6baaba22be486ee1e42a2f96f308db598ca7796839a20c883a2989e2c74f"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_branch_name.py": {
+      "eligible": true,
+      "seconds": 0.01529550040140748,
+      "seconds_by_marker": {
+        "auto": 0.01529550040140748
+      },
+      "sha256": "775de4e2b03130d18ecfa91f506cf5c4f39485dfa2e89aeb328c8b222240bdcf"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_config.py": {
+      "eligible": true,
+      "seconds": 0.11185130104422569,
+      "seconds_by_marker": {
+        "auto": 0.11185130104422569
+      },
+      "sha256": "9da3ee2269a3bd692c82ce2c982ceb6d77b15a13c7c821513837ea2b49dce776"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_configurable_author0237.py": {
+      "eligible": true,
+      "seconds": 7.069294900167733,
+      "seconds_by_marker": {
+        "auto": 7.069294900167733
+      },
+      "sha256": "89105500a4036c9fb8aded814a5bc3f866fa7259b1b483ccccd0bd1526fce92b"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_conflict_side_dropped_adjacent_groups0604.py": {
+      "eligible": true,
+      "seconds": 0.053961899131536484,
+      "seconds_by_marker": {
+        "auto": 0.053961899131536484
+      },
+      "sha256": "9dbe5aa810a74c01bbd972b273b2bd3b0794ac8c1ae1e7d39daec30e12e22cc8"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_conflict_side_dropped_chunk_local0602.py": {
+      "eligible": true,
+      "seconds": 0.05284599959850311,
+      "seconds_by_marker": {
+        "auto": 0.05284599959850311
+      },
+      "sha256": "372303022265a6b9142d4ded4e0a9fc54e18332a0e5f50be4208780be5dd7fbd"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_conflict_supersede0604.py": {
+      "eligible": true,
+      "seconds": 0.04686609981581569,
+      "seconds_by_marker": {
+        "auto": 0.04686609981581569
+      },
+      "sha256": "40e9d15571f4969e9aa886f1244a5038496986f6071c8b81ba8f99a540ff2905"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_default_base_commit_message0177.py": {
+      "eligible": true,
+      "seconds": 0.02604320039972663,
+      "seconds_by_marker": {
+        "auto": 0.02604320039972663
+      },
+      "sha256": "c92d5d454475ebfb6cdd8476ef361ed63ed2919c1c00fbad4d66a3ab702fb092"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_effective_src_root.py": {
+      "eligible": true,
+      "seconds": 0.05416619963943958,
+      "seconds_by_marker": {
+        "auto": 0.05416619963943958
+      },
+      "sha256": "46b0c907571b4a804c7c09fb23e0ac7c6d3a63989865eeaf7969960d9af68ec5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_finalize_action_contract0331.py": {
+      "eligible": true,
+      "seconds": 0.21108190156519413,
+      "seconds_by_marker": {
+        "auto": 0.21108190156519413
+      },
+      "sha256": "24f1729092d7ea8bd612c7939756653cafaed1172256068925a4af49ce6c6b31"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_finalize_guards.py": {
+      "eligible": true,
+      "seconds": 0.1141121992841363,
+      "seconds_by_marker": {
+        "auto": 0.1141121992841363
+      },
+      "sha256": "0138558f4c0c6201c535c56405a2675ecfa03caf03e549edc493c1f6c5d0cf0d"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_first_push_bootstrap0297.py": {
+      "eligible": true,
+      "seconds": 2.9329436998814344,
+      "seconds_by_marker": {
+        "auto": 2.9329436998814344
+      },
+      "sha256": "3174455cf283c76b51f4c6447793eefae64d8f78101e2be0ee43c9ce6c6d2f3e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_actions0162.py": {
+      "eligible": true,
+      "seconds": 12.494966600090265,
+      "seconds_by_marker": {
+        "auto": 12.494966600090265
+      },
+      "sha256": "aa2d665b6f771fa1c792370e4742f3b5b2ab48b8faed93c5fd96ef71bdab43e6"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_0599_six_files_resolve_in_one_resolve_token_call.py": {
+      "eligible": true,
+      "seconds": 15.628918299917132,
+      "seconds_by_marker": {
+        "auto": 15.628918299917132
+      },
+      "sha256": "6e9bbb174f34e3f28b83e611f691d20e72e2f8b51a9acfab1f094a8364eff187"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_abort_flow.py": {
+      "eligible": true,
+      "seconds": 5.702781400643289,
+      "seconds_by_marker": {
+        "auto": 5.702781400643289
+      },
+      "sha256": "7d03fb374754377df238cb987663c4e5d36a2d2f68251531430111dc988498e5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_adjacent_chunk_group_resolve_token_end_to_end.py": {
+      "eligible": true,
+      "seconds": 7.002160899806768,
+      "seconds_by_marker": {
+        "auto": 7.002160899806768
+      },
+      "sha256": "2997befce54cc8a111f03582c14ab2c9c96c9c0902ebd31e144aad3eb4050aa0"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_base_dirty_belongs_to_the_merge_while_a_conflict_is_open.py": {
+      "eligible": true,
+      "seconds": 6.88789499970153,
+      "seconds_by_marker": {
+        "auto": 6.88789499970153
+      },
+      "sha256": "edb8dc5331b084b2c9dc374f70a9f60f2337a87c9aa8d49b2f2f7152a1ab8faa"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_commit_only_action_keeps_worktree_waiting.py": {
+      "eligible": true,
+      "seconds": 3.9703965997323394,
+      "seconds_by_marker": {
+        "auto": 3.9703965997323394
+      },
+      "sha256": "a28e49d136e132b107d3c08bbd978c2735ebf6dc0a40795496cdf846ead34049"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_commit_push_action_commits_dirty_then_pushes.py": {
+      "eligible": true,
+      "seconds": 3.5740975001826882,
+      "seconds_by_marker": {
+        "auto": 3.5740975001826882
+      },
+      "sha256": "373794d6fca06feedb491afd29354fc86af6dfb724c0641c7d8df80a59b0ee11"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_conflict_resolve_flow.py": {
+      "eligible": true,
+      "seconds": 9.24615509994328,
+      "seconds_by_marker": {
+        "auto": 9.24615509994328
+      },
+      "sha256": "bf1ecc1a616a01ce5164a5363de039a29da26b23d7b3593318ca9c77429c3de1"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_conflict_side_dropped_422_flows_through_resolve_token_and_retries.py": {
+      "eligible": true,
+      "seconds": 8.43153930036351,
+      "seconds_by_marker": {
+        "auto": 8.43153930036351
+      },
+      "sha256": "1dad7df761e6053f24eada6c2d9eec87dce1968880ee50df65379ee4f5a7d81a"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_connection_ignores_broken_server_cwd_0617.py": {
+      "eligible": true,
+      "seconds": 0.2452180003747344,
+      "seconds_by_marker": {
+        "auto": 0.2452180003747344
+      },
+      "sha256": "53aa694418317491878a8a6ec177e0b991bbff7ad970f34c94ce52750e046af5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_connection_ok.py": {
+      "eligible": true,
+      "seconds": 0.2554832003079355,
+      "seconds_by_marker": {
+        "auto": 0.2554832003079355
+      },
+      "sha256": "3b8f0eecffa86446d1dc753d626f5d73ef5656441435326f53af62b2da477db8"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_ensure_worktree_and_idempotence.py": {
+      "eligible": true,
+      "seconds": 2.2937762001529336,
+      "seconds_by_marker": {
+        "auto": 2.2937762001529336
+      },
+      "sha256": "522737cabc078dbe989eba25ee37de70223a915d689685cfcb649332a21e51f4"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_eol_only_conflict_is_separated_and_lf_survives_resolution_0608.py": {
+      "eligible": true,
+      "seconds": 7.761699200142175,
+      "seconds_by_marker": {
+        "auto": 7.761699200142175
+      },
+      "sha256": "c3a77124a8a5134174d9dcabf0d2b4c8b1daafede31499d0a1c8692904f10503"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_finalize_wait_then_merge.py": {
+      "eligible": true,
+      "seconds": 4.80734800035134,
+      "seconds_by_marker": {
+        "auto": 4.80734800035134
+      },
+      "sha256": "871c5c31c21e99be8867aeff81e0c41e58c70473aa62435438f6f5ce1d5c6c0f"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_judge_hop_settles_none_when_conflict_side_dropped.py": {
+      "eligible": true,
+      "seconds": 9.44154949951917,
+      "seconds_by_marker": {
+        "auto": 9.44154949951917
+      },
+      "sha256": "e7b492cc5c88499e1cbb3a18a57614014df77571d9872e34c83e4392ff4b6815"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_merge_only_unpushed_status_and_unmerge.py": {
+      "eligible": true,
+      "seconds": 5.849790800362825,
+      "seconds_by_marker": {
+        "auto": 5.849790800362825
+      },
+      "sha256": "a38b482aee20248cac1836286d469adae22e94ab1609e10e3702b5522e512dc5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_push_action.py": {
+      "eligible": true,
+      "seconds": 3.778637300245464,
+      "seconds_by_marker": {
+        "auto": 3.778637300245464
+      },
+      "sha256": "ac1edff8c0be7d9368d92723246a7ceeed399e9ae2022ed33150dbf103fee1a8"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_push_action_rejects_dirty_worktree.py": {
+      "eligible": true,
+      "seconds": 2.4233267004601657,
+      "seconds_by_marker": {
+        "auto": 2.4233267004601657
+      },
+      "sha256": "14c364ce306c58542693874119b6785695a64222ae3ce841ea91327f1e0c1096"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_accepts_real_workplaneditor_disabled_merge.py": {
+      "eligible": true,
+      "seconds": 7.1864891005679965,
+      "seconds_by_marker": {
+        "auto": 7.1864891005679965
+      },
+      "sha256": "7735b7a6839dca918e2f3a6b1378b2c56159a7f4fef2d21f19ac9118ef642410"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_accepts_synthesized_single_line_merge.py": {
+      "eligible": true,
+      "seconds": 8.913719499949366,
+      "seconds_by_marker": {
+        "auto": 8.913719499949366
+      },
+      "sha256": "9d246f66e8cfeeed18f745e5bf94d2b9207aaf9f4fb67af5fe97287c330aeca2"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_allows_both_sides_kept.py": {
+      "eligible": true,
+      "seconds": 8.219281299971044,
+      "seconds_by_marker": {
+        "auto": 8.219281299971044
+      },
+      "sha256": "9788c96ec0e3011b52cb799abcd3f2cef5e14a80b1308efff25ffb6155fe92ec"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rear_coincidental_both_does_not_hide_an_early_drop.py": {
+      "eligible": true,
+      "seconds": 6.6062389998696744,
+      "seconds_by_marker": {
+        "auto": 6.6062389998696744
+      },
+      "sha256": "463f262b43c68ce18dd1d08b55094168476c283f936c1ed0c78c11402771d585"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rejects_one_sided_drop.py": {
+      "eligible": true,
+      "seconds": 6.562998400069773,
+      "seconds_by_marker": {
+        "auto": 6.562998400069773
+      },
+      "sha256": "44145a9b7cde94705fe22d6891f7d27c0e31798db9b9fc08d6d1062ee54dc3b4"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_rejects_the_opposite_one_sided_drop.py": {
+      "eligible": true,
+      "seconds": 6.277057300787419,
+      "seconds_by_marker": {
+        "auto": 6.277057300787419
+      },
+      "sha256": "8cc5f515f0d902971b9f66487e6444c74c9dd8c76d7bfa15074d6a44b270df6e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_side_drop_not_hidden_by_same_line_elsewhere.py": {
+      "eligible": true,
+      "seconds": 6.67123720003292,
+      "seconds_by_marker": {
+        "auto": 6.67123720003292
+      },
+      "sha256": "da6277c1742498421d2dc27ee26e7d4ed860e04a8327c248894c11feaded5516"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_resolve_conflicts_skips_baseless_add_add_chunk.py": {
+      "eligible": true,
+      "seconds": 7.572871099226177,
+      "seconds_by_marker": {
+        "auto": 7.572871099226177
+      },
+      "sha256": "0726d95e9cd42ebf0dcf064a6f0d17f3c3e0d88eea107b07ec61ec10bcc59fcc"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_approval_racing_the_materialize_window_is_serialized.py": {
+      "eligible": true,
+      "seconds": 13.547084299381822,
+      "seconds_by_marker": {
+        "auto": 13.547084299381822
+      },
+      "sha256": "8aedb4fbeb295dfdcc95c6f5e63533ed40f560bd73c2f877d986ff7e74d89fc5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_auto_authority_commits_without_a_screen.py": {
+      "eligible": true,
+      "seconds": 7.230282100383192,
+      "seconds_by_marker": {
+        "auto": 7.230282100383192
+      },
+      "sha256": "b8d273ddad6b5af53f8cccee4ae21a0c62500e3df0567d86291368e380c35eb5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_blocks_commit_until_approved.py": {
+      "eligible": true,
+      "seconds": 7.650062200147659,
+      "seconds_by_marker": {
+        "auto": 7.650062200147659
+      },
+      "sha256": "68c9cf149e272d46f512e5e346c059c4cb217c93157dcde86b28e92626397894"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conditional_push_rejects_a_moved_remote.py": {
+      "eligible": true,
+      "seconds": 8.811583900358528,
+      "seconds_by_marker": {
+        "auto": 8.811583900358528
+      },
+      "sha256": "3caf9de758625181026206c03695f8862c79a1c2b1363f3be8f995a2aefa1ca5"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_cancelled_run_shows_cancelled_not_failed.py": {
+      "eligible": true,
+      "seconds": 5.964262900408357,
+      "seconds_by_marker": {
+        "auto": 5.964262900408357
+      },
+      "sha256": "456aaf91fd839ff047c4579e59af95eeafe71547b12ddfec45ef19df398a6383"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_message_appends_ai_turn.py": {
+      "eligible": true,
+      "seconds": 6.0630478002130985,
+      "seconds_by_marker": {
+        "auto": 6.0630478002130985
+      },
+      "sha256": "2a51b884a0afdb311648595fff7e1460606c22d60c3526db66c9cf73601fbac7"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_conversation_stale_run_discarded_when_rejected_while_active.py": {
+      "eligible": true,
+      "seconds": 6.473568699788302,
+      "seconds_by_marker": {
+        "auto": 6.473568699788302
+      },
+      "sha256": "77c0d60c2a2733cf53130ec502af88f2c74d2708169cd4c5171fec68efd68128"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_explicit_apply_applies_anchored_write_plan.py": {
+      "eligible": true,
+      "seconds": 8.748761799186468,
+      "seconds_by_marker": {
+        "auto": 8.748761799186468
+      },
+      "sha256": "5e672d48f34eedb6878e3c7de8668573052de3095ecf005e1b6e3b9d246ab68c"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_lets_an_unvalidatable_file_type_through_the_merge.py": {
+      "eligible": true,
+      "seconds": 7.459637999534607,
+      "seconds_by_marker": {
+        "auto": 7.459637999534607
+      },
+      "sha256": "22762c4d63d2991fce6120d91df19f961b81be3760546aa1f7dd0f948ea4cc93"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_message_does_not_overwrite_an_approval_that_won_the_race.py": {
+      "eligible": true,
+      "seconds": 7.2920023002661765,
+      "seconds_by_marker": {
+        "auto": 7.2920023002661765
+      },
+      "sha256": "4462b7a24f44c4512e30ea253737e05c50400dffe52973c4ea020c7618ba46b0"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_py_compile_failure_blocks_approval.py": {
+      "eligible": true,
+      "seconds": 8.11939419992268,
+      "seconds_by_marker": {
+        "auto": 8.11939419992268
+      },
+      "sha256": "a8bb2e9569a426b95da33337a69159e399d908f4f43c6a53fee739a22f63d859"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_real_typescript_parser_blocks_approval.py": {
+      "eligible": true,
+      "seconds": 9.428128000348806,
+      "seconds_by_marker": {
+        "auto": 9.428128000348806
+      },
+      "sha256": "832e9ca6ff4d4b4b5a7594c6d370358e6cc3acbe58c1102e12707a634db30244"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_reject_does_not_undo_an_approval_that_won_the_race.py": {
+      "eligible": true,
+      "seconds": 7.280985599383712,
+      "seconds_by_marker": {
+        "auto": 7.280985599383712
+      },
+      "sha256": "f3e00ed3357d3ab1b36795fa4b8ecca122ef8822a4cb711538dec206a36d6e7f"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_reject_restores_conflict_markers.py": {
+      "eligible": true,
+      "seconds": 6.764324299991131,
+      "seconds_by_marker": {
+        "auto": 6.764324299991131
+      },
+      "sha256": "05c60f3edf43288f24b6f11aa19690a30dda4c648a4d8bbe9112ca2d43ed1448"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_rejection_racing_the_materialize_window_is_serialized.py": {
+      "eligible": true,
+      "seconds": 13.375939700752497,
+      "seconds_by_marker": {
+        "auto": 13.375939700752497
+      },
+      "sha256": "96cdcf3e3f0b862f4d2ae63040822c8f2caea6c9e251ad51ff0cee8f29b9cbe6"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_vue_validates_both_script_and_script_setup_blocks.py": {
+      "eligible": true,
+      "seconds": 19.447147400584072,
+      "seconds_by_marker": {
+        "auto": 19.447147400584072
+      },
+      "sha256": "a5fb55779c165d17213b0fd1942497481591b7bf41b5dd3c4b0ad5cf399dcfae"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_worker_token_cannot_grant_itself_auto.py": {
+      "eligible": true,
+      "seconds": 0.020801899954676628,
+      "seconds_by_marker": {
+        "auto": 0.020801899954676628
+      },
+      "sha256": "28106b965cbcbb1f509ccb519d37112deda1aae7539264b52ffbad69eb774f68"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_allow_test_edits_second_authorization_applies_test_edit.py": {
+      "eligible": true,
+      "seconds": 15.851311600301415,
+      "seconds_by_marker": {
+        "auto": 15.851311600301415
+      },
+      "sha256": "15dcc0114e6e96c34930b4717a7afe4fb57c45f6587b7b8c33d89ac74353d246"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_anchor_mismatch_is_rejected.py": {
+      "eligible": true,
+      "seconds": 13.46607429953292,
+      "seconds_by_marker": {
+        "auto": 13.46607429953292
+      },
+      "sha256": "dd91c3bfe0e431faa4b2038ab854ee07c4d4600fbae5a055e395e4f3a5217dc0"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_create_file_operation.py": {
+      "eligible": true,
+      "seconds": 16.23750209994614,
+      "seconds_by_marker": {
+        "auto": 16.23750209994614
+      },
+      "sha256": "9aa1c28cb5df556be6389c8d88a39cae2c5a6f7d449f32e7003d3f1f40947afb"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_held_only_plan_is_shown_not_applied.py": {
+      "eligible": true,
+      "seconds": 11.878113999497145,
+      "seconds_by_marker": {
+        "auto": 11.878113999497145
+      },
+      "sha256": "5e8199066e5b1895778482b6714bcd85f762d7e273429493b0bcd600d86bda1b"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_mixed_plan_preserves_held_operations.py": {
+      "eligible": true,
+      "seconds": 15.73995539965108,
+      "seconds_by_marker": {
+        "auto": 15.73995539965108
+      },
+      "sha256": "779583d3e35c9aca6154a2e77421051cc26ce490d4b8630f5de108bcf0ae772e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_resubmitted_in_the_materialize_window_wins.py": {
+      "eligible": true,
+      "seconds": 13.366504500154406,
+      "seconds_by_marker": {
+        "auto": 13.366504500154406
+      },
+      "sha256": "9d96c37b89d510a4814b9313b1f4102447aa5d15bb2064c3cb4ad81e5d9d9db9"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_stale_fingerprint_is_rejected.py": {
+      "eligible": true,
+      "seconds": 10.77017250051722,
+      "seconds_by_marker": {
+        "auto": 10.77017250051722
+      },
+      "sha256": "09469433ac9fb73384c2cefdf8db56f79385179de32840aa079d155e7bfbcdce"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_stale_run_discarded_when_approved_while_active.py": {
+      "eligible": true,
+      "seconds": 7.527600000146776,
+      "seconds_by_marker": {
+        "auto": 7.527600000146776
+      },
+      "sha256": "a3e1d9315b033da767ad9fb6dc943bab8232cf7c13bfe5eb1c9e058c987155df"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_structure_validation.py": {
+      "eligible": true,
+      "seconds": 0.31751060020178556,
+      "seconds_by_marker": {
+        "auto": 0.31751060020178556
+      },
+      "sha256": "87bb7cd67a2ce1a20828746473ea2fe8b8cd5b605e158aa8299ed262d52ffa94"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_overwrites_the_runs_own_prior_plan.py": {
+      "eligible": true,
+      "seconds": 15.5654211002402,
+      "seconds_by_marker": {
+        "auto": 15.5654211002402
+      },
+      "sha256": "f6627328894fb7854827ee6c793f505019ed7e42bef1f6109c0bf2372dad315f"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_rejects_a_mismatched_run_id.py": {
+      "eligible": true,
+      "seconds": 9.766962599474937,
+      "seconds_by_marker": {
+        "auto": 9.766962599474937
+      },
+      "sha256": "c76de37f4a1880cc3ffe3d9e3dbb04cf2d18f7b247a2e83b6f57971718000c68"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_review_gate_write_plan_submission_requires_a_pending_write_turn.py": {
+      "eligible": true,
+      "seconds": 6.259063600096852,
+      "seconds_by_marker": {
+        "auto": 6.259063600096852
+      },
+      "sha256": "ffdac17a11648ecbcbd348c79f37a6bac2b45e44ca7d50c520ec93ab3685f1e6"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_git_end_to_end_supersede_declaration_resolve_token_end_to_end.py": {
+      "eligible": true,
+      "seconds": 8.324486499652267,
+      "seconds_by_marker": {
+        "auto": 8.324486499652267
+      },
+      "sha256": "1de7121ad30ef4b6c2192294402e64f61939b37570b5802718689883ef390111"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_group_explorer_untracked.py": {
+      "eligible": true,
+      "seconds": 6.3577302997000515,
+      "seconds_by_marker": {
+        "auto": 6.3577302997000515
+      },
+      "sha256": "21b2672a920e25f4f826212502d4e497b7cd2f2803cb09468bbf08c19b51418f"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_lock.py": {
+      "eligible": true,
+      "seconds": 0.0763556002639234,
+      "seconds_by_marker": {
+        "auto": 0.0763556002639234
+      },
+      "sha256": "420b19fabbcdfc0d7db1f1f4b98d690ca99cba51215b36b17c147dc8cfc2a0e3"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_migration.py": {
+      "eligible": true,
+      "seconds": 0.02464119903743267,
+      "seconds_by_marker": {
+        "auto": 0.02464119903743267
+      },
+      "sha256": "9797cdfc4918b4071311f73625869cfc5fe8cc15f9e4dd074602907dd8899290"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_no_work_auto_discard0199.py": {
+      "eligible": true,
+      "seconds": 11.688140199519694,
+      "seconds_by_marker": {
+        "auto": 11.688140199519694
+      },
+      "sha256": "9968143450e6bf5ede63946c5df3d0033d4f4c80074b2a3f6b0dbeec0dbd4eb2"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_no_work_finalize_surfaces0548.py": {
+      "eligible": true,
+      "seconds": 9.024461499415338,
+      "seconds_by_marker": {
+        "auto": 9.024461499415338
+      },
+      "sha256": "87e7eddc9cbe20dd0d0f8f1545066b3ad227064ba1c0cfdd0ab4f9a3e9908269"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_provision0161.py": {
+      "eligible": true,
+      "seconds": 7.86889800010249,
+      "seconds_by_marker": {
+        "auto": 7.86889800010249
+      },
+      "sha256": "93d80e00c4f649768edc431b314c298a5a9ad22975d1cbf80666978730c71e40"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_resolve_base_dirty_real_repo0482.py": {
+      "eligible": true,
+      "seconds": 8.283643499948084,
+      "seconds_by_marker": {
+        "auto": 8.283643499948084
+      },
+      "sha256": "3371bd81bab84cdd60d6e138772bd40261e69f1f4a526575e81dd836877969df"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_secrets.py": {
+      "eligible": true,
+      "seconds": 0.03992409957572818,
+      "seconds_by_marker": {
+        "auto": 0.03992409957572818
+      },
+      "sha256": "6fea6eb674ee537543f28df7f13e919a397eccbc20402b9b1dc1c7ec938255b1"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_status0162_no_git.py": {
+      "eligible": true,
+      "seconds": 0.03452190011739731,
+      "seconds_by_marker": {
+        "auto": 0.03452190011739731
+      },
+      "sha256": "f8df5d760cf99f7f92d7c1d87a729419063d3d19fa804cadaf861a7500bb7e51"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_supersede_transport0604.py": {
+      "eligible": true,
+      "seconds": 0.20209390064701438,
+      "seconds_by_marker": {
+        "auto": 0.20209390064701438
+      },
+      "sha256": "260076d1688865e5a5e15c59dda76a2721e4540c25310c80d7a41890de70ce1e"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_terminal_reopen_reprovision0532.py": {
+      "eligible": true,
+      "seconds": 7.148239499423653,
+      "seconds_by_marker": {
+        "auto": 7.148239499423653
+      },
+      "sha256": "9fd2534285bd5c62363ed0a9f1f1d19a4c53125f13a1ed5f50ff7f92e64bb616"
+    },
+    "tests/modules/flow_gate/git_integration_0115/test_untracked_merge_blockers_parsing.py": {
+      "eligible": true,
+      "seconds": 0.07219489989802241,
+      "seconds_by_marker": {
+        "auto": 0.07219489989802241
+      },
+      "sha256": "358b77491417b064e45f2d733e99119d08ccb591818ba9abbb16e5749379d680"
+    },
     "tests/modules/flow_gate/graph_workflow/domain/test_graph_canvas_domain_0045.py": {
       "eligible": true,
       "measurement_run": "graph-4",
@@ -1853,6 +3654,422 @@
         "auto": 0.1351843001320958
       },
       "sha256": "4136bf007f6f5394935967fad034a44b7a8c3c0413e7af631c431a249cceab4d"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0020_a_lookup_that_outlives_the_view_budget_ends_in_the_background.py": {
+      "eligible": true,
+      "seconds": 10.244113400112838,
+      "seconds_by_marker": {
+        "auto": 10.244113400112838
+      },
+      "sha256": "b0a29ed9c952c262f4c2aa16c43dd0e4aee21eac2a7f9da81a77b88ba033108a"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0086_off_branch_base_never_merges_into_the_checked_out_branch.py": {
+      "eligible": true,
+      "seconds": 4.504507800098509,
+      "seconds_by_marker": {
+        "auto": 4.504507800098509
+      },
+      "sha256": "028f5374288fb81f19362f4bff922f59f23ef58b1272b382384d370aec3ace34"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0086_off_branch_base_refuses_a_non_base_target_before_any_attempt.py": {
+      "eligible": true,
+      "seconds": 3.485258699860424,
+      "seconds_by_marker": {
+        "auto": 3.485258699860424
+      },
+      "sha256": "c31898f05c890545e8200d1d5ed2843cc70ce6f1f3b0c2a6049119fce17bd628"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0086_open_attempt_keeps_its_pinned_target_off_branch.py": {
+      "eligible": true,
+      "seconds": 8.162833499722183,
+      "seconds_by_marker": {
+        "auto": 8.162833499722183
+      },
+      "sha256": "b363cedfe89e7f4de9f0b728588228d2e05c334eb37124d82343441ba0d6912b"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_a_base_status_that_cannot_be_read_is_no_clean_base.py": {
+      "eligible": true,
+      "seconds": 5.023064700420946,
+      "seconds_by_marker": {
+        "auto": 5.023064700420946
+      },
+      "sha256": "aabf97d7884ac57fb3addf4ff4a3a2d75ca711a774a92cb7a941a1a6a9c4ed9e"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_a_same_name_tag_never_renames_a_candidate.py": {
+      "eligible": true,
+      "seconds": 11.907446499913931,
+      "seconds_by_marker": {
+        "auto": 11.907446499913931
+      },
+      "sha256": "103ffc9b52e2d4c269af606f83afa6311786765d7d758ef6a5b0515499903831"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_an_occupied_target_is_refused_and_never_reclaimed.py": {
+      "eligible": true,
+      "seconds": 11.37646140018478,
+      "seconds_by_marker": {
+        "auto": 11.37646140018478
+      },
+      "sha256": "fe19b66abc2abbf3bf4ac392fefb83e9aa0b4e189db19710038dabeb93f2a2f0"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_base_and_non_base_targets_take_their_own_slot_checks.py": {
+      "eligible": true,
+      "seconds": 7.193893699906766,
+      "seconds_by_marker": {
+        "auto": 7.193893699906766
+      },
+      "sha256": "a2a29c8ab38a44426b5789824a3af17f4dd8571eb54d52e0a02813b5d849a202"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_1.py": {
+      "eligible": true,
+      "seconds": 6.438308199401945,
+      "seconds_by_marker": {
+        "auto": 6.438308199401945
+      },
+      "sha256": "74e4f61be93f5923261407214b7b9eeff90209df0bdf8741f820d5ad2a637256"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_2.py": {
+      "eligible": true,
+      "seconds": 6.276204600464553,
+      "seconds_by_marker": {
+        "auto": 6.276204600464553
+      },
+      "sha256": "1a28a2b1ce3a85f7c2c2332e610582d2f2669a25bb3254927d8d8ca6c48b417e"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_base_unmerge_ignores_unfinished_decisions_accepted_at_its_result_3.py": {
+      "eligible": true,
+      "seconds": 6.352940400131047,
+      "seconds_by_marker": {
+        "auto": 6.352940400131047
+      },
+      "sha256": "e5f25750b8d593dcfc25217ca7858640eccb26a598b816b892ddc43130e220bb"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_candidates_are_exactly_the_targets_the_judgement_allows.py": {
+      "eligible": true,
+      "seconds": 8.924081199336797,
+      "seconds_by_marker": {
+        "auto": 8.924081199336797
+      },
+      "sha256": "381ceb2eccbaf487feab463ec834044dc751728a765f1eb6992f8af024d54796"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_main_is_a_target_only_when_it_holds_the_work_base_history.py": {
+      "eligible": true,
+      "seconds": 7.914162099827081,
+      "seconds_by_marker": {
+        "auto": 7.914162099827081
+      },
+      "sha256": "8540100291b3e03ea7be2630f3617c9b7954901e53c664ac9eadf4da85133066"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target.py": {
+      "eligible": true,
+      "seconds": 4.99695870000869,
+      "seconds_by_marker": {
+        "auto": 4.99695870000869
+      },
+      "sha256": "4b8f80b87fc7a965a5f39f5f56b52e4f8066dc8096cef8706ee619e82777c224"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list.py": {
+      "eligible": true,
+      "seconds": 3.3024598001502454,
+      "seconds_by_marker": {
+        "auto": 3.3024598001502454
+      },
+      "sha256": "3bb3d29b74df31e153c07d513cb783560e8a8970c9f14fa2ca94658d4f722850"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_the_candidate_cache_is_shared_served_stale_and_revalidated.py": {
+      "eligible": true,
+      "seconds": 4.16860350035131,
+      "seconds_by_marker": {
+        "auto": 4.16860350035131
+      },
+      "sha256": "d6ecf4edd9b5dd59bd18de0c68366f6d61314c1dc86949187d5aead63e8f59b3"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_the_judgement_reads_a_legacy_group_without_recording_anything.py": {
+      "eligible": true,
+      "seconds": 5.168406899552792,
+      "seconds_by_marker": {
+        "auto": 5.168406899552792
+      },
+      "sha256": "9c6640192052a421d9a05f2197df1dacf9f6ede1f9770c8a07bbcdaba0f7c568"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_1.py": {
+      "eligible": true,
+      "seconds": 5.737588500138372,
+      "seconds_by_marker": {
+        "auto": 5.737588500138372
+      },
+      "sha256": "858996db7fdfd7f01015221aa368cb3a43f892b8f5de394dff584b848a330d99"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_2.py": {
+      "eligible": true,
+      "seconds": 5.633015099912882,
+      "seconds_by_marker": {
+        "auto": 5.633015099912882
+      },
+      "sha256": "75b0602c2bb612e46aaf1f17c9b2fb69234240e8e6893f454e0b77d21bd6a6e7"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_unmerge_new_decision_target_damage_never_uses_legacy_base_3.py": {
+      "eligible": true,
+      "seconds": 5.610914900433272,
+      "seconds_by_marker": {
+        "auto": 5.610914900433272
+      },
+      "sha256": "3a1265a66e70874ee2e78f90ef93567e9c396009074cf692e8b9c6f487fd80fc"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed.py": {
+      "eligible": true,
+      "seconds": 10.220281399320811,
+      "seconds_by_marker": {
+        "auto": 10.220281399320811
+      },
+      "sha256": "9b1738afdc94c4dc0b60d2e10efc157ebc7dae5fa40e07c93eae455a137838db"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0683_group_blocker_details_name_the_group_finalize.py": {
+      "eligible": true,
+      "seconds": 8.87760000070557,
+      "seconds_by_marker": {
+        "auto": 8.87760000070557
+      },
+      "sha256": "290bfbe0551150e979d906851b63f523a31486853fe1ef7015fa9676a4ed5455"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize.py": {
+      "eligible": true,
+      "seconds": 8.53211020026356,
+      "seconds_by_marker": {
+        "auto": 8.53211020026356
+      },
+      "sha256": "0956838458cf2ff05b8bf6cbc670d268482a09fce82c92eee057950b33c0c559"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_A_base_finalize_without_target_is_unchanged_and_records_attempt.py": {
+      "eligible": true,
+      "seconds": 5.533058299683034,
+      "seconds_by_marker": {
+        "auto": 5.533058299683034
+      },
+      "sha256": "e79e5ac5f15982c60c758fe329a2e3bf2eb4173021ebc254deefe3ca269f9c5c"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_B_non_base_clean_finalize_uses_managed_workspace.py": {
+      "eligible": true,
+      "seconds": 9.12191169988364,
+      "seconds_by_marker": {
+        "auto": 9.12191169988364
+      },
+      "sha256": "456c8f0916759b105b05b9eed03880d3f5181be7045e4e1efdc121b2f5370ea0"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_C_non_base_conflict_resolve_review_approve_stays_on_target.py": {
+      "eligible": true,
+      "seconds": 10.453945499844849,
+      "seconds_by_marker": {
+        "auto": 10.453945499844849
+      },
+      "sha256": "c0a9e9040638f60e02b4c82859af6c374bf7e354b4b189b51e23a68228df6b68"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_D_reject_and_re_review_keep_the_target_root.py": {
+      "eligible": true,
+      "seconds": 11.587266000453383,
+      "seconds_by_marker": {
+        "auto": 11.587266000453383
+      },
+      "sha256": "80051f17ff8bc8f9d8e8443fd80bf2faf000e4f9e4e1e25da7d144e39d783db5"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E1_startup_recovery_refinds_the_deterministic_workspace.py": {
+      "eligible": true,
+      "seconds": 7.503828600049019,
+      "seconds_by_marker": {
+        "auto": 7.503828600049019
+      },
+      "sha256": "ebec4d869d3ce2cfb237fd97df58e6344d14ebf0104ff0f40186a2a7aab39a3c"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E2_startup_recovery_closes_an_interrupted_attempt.py": {
+      "eligible": true,
+      "seconds": 3.5394286001101136,
+      "seconds_by_marker": {
+        "auto": 3.5394286001101136
+      },
+      "sha256": "fd98e8efdb7b69318a29a76c052cc0b3e0c6c42dad6208cb526b50256054d048"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E3_live_in_progress_attempt_is_not_a_conflict_and_not_swept.py": {
+      "eligible": true,
+      "seconds": 6.163378300145268,
+      "seconds_by_marker": {
+        "auto": 6.163378300145268
+      },
+      "sha256": "8f68d7addd7be45ab12d08dd131f3f067caad3666cb62d167618b1fdf93243c6"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_1.py": {
+      "eligible": true,
+      "seconds": 6.950826100073755,
+      "seconds_by_marker": {
+        "auto": 6.950826100073755
+      },
+      "sha256": "4b03d1f1c0ffc9c655fb6cf6b4068f56a16b840a20916c461c3b3418f0bdf891"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_2.py": {
+      "eligible": true,
+      "seconds": 6.733959000092,
+      "seconds_by_marker": {
+        "auto": 6.733959000092
+      },
+      "sha256": "5965cf9537fbd04febc9f042fefceb294e1991c9294da39cdee9132b7fbb10e0"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E4_crash_after_the_merge_landed_is_reconciled_to_completed_3.py": {
+      "eligible": true,
+      "seconds": 6.08344169985503,
+      "seconds_by_marker": {
+        "auto": 6.08344169985503
+      },
+      "sha256": "cb9e47432e2f92e3c3142e1c599a633ad7769445acbbba6f76d858327c2a2d05"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E4_crash_before_the_push_rolls_the_local_merge_back.py": {
+      "eligible": true,
+      "seconds": 8.37864620005712,
+      "seconds_by_marker": {
+        "auto": 8.37864620005712
+      },
+      "sha256": "d47a61ad461260a93dbfea52b9db6f86e67700564e97ed1ed46b32deb89ff6ef"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_E5_completed_review_left_open_is_finished_on_restart.py": {
+      "eligible": true,
+      "seconds": 7.987418000586331,
+      "seconds_by_marker": {
+        "auto": 7.987418000586331
+      },
+      "sha256": "998d42a4b60fd57cea4bfd6144136e2a9eabf9e735a7c5eb66b66dc56d52c046"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_F_workspace_has_a_single_owner.py": {
+      "eligible": true,
+      "seconds": 9.523206900339574,
+      "seconds_by_marker": {
+        "auto": 9.523206900339574
+      },
+      "sha256": "3d3ba2c69e677d832343464c50e71595204275f4b5a189f5f54bea50a293fcd2"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_G_interrupted_attempt_never_aborts_another_owners_merge.py": {
+      "eligible": true,
+      "seconds": 4.128915900364518,
+      "seconds_by_marker": {
+        "auto": 4.128915900364518
+      },
+      "sha256": "f1db49c4d5894e62d9fe88763732402c8c63a076d4293eba543d3e6103ccb001"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_G_mismatch_leaves_merge_state_row_and_workspace_on_every_path.py": {
+      "eligible": true,
+      "seconds": 8.387228000443429,
+      "seconds_by_marker": {
+        "auto": 8.387228000443429
+      },
+      "sha256": "ebfc2b263e9fcc13417ba69f3d905dbbdca61cc6ace165683de8c6a884f218d4"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_G_owner_marker_mismatch_fails_closed_and_is_never_cleaned.py": {
+      "eligible": true,
+      "seconds": 9.519219799898565,
+      "seconds_by_marker": {
+        "auto": 9.519219799898565
+      },
+      "sha256": "6c4c3f28f146047f473e9f84219156a17cc9f0744872c737f63a06eae50dac92"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_H1_H2_retarget_allowed_without_open_attempt_and_after_failure.py": {
+      "eligible": true,
+      "seconds": 8.685743899550289,
+      "seconds_by_marker": {
+        "auto": 8.685743899550289
+      },
+      "sha256": "f8684a1a9e831fb21f7a5da6c931ce73d13cb1e2adcddaa63abd03785bfa73db"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_H3_H4_H5_open_attempt_pins_its_target.py": {
+      "eligible": true,
+      "seconds": 10.793861700687557,
+      "seconds_by_marker": {
+        "auto": 10.793861700687557
+      },
+      "sha256": "9e1d40265a63e8ff9f3910566fd295fc52d6b8306b5caf26d964adfbab9d3cd4"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_I_legacy_session_without_target_falls_back_to_base.py": {
+      "eligible": true,
+      "seconds": 9.61813550023362,
+      "seconds_by_marker": {
+        "auto": 9.61813550023362
+      },
+      "sha256": "d5d2eb89951c34d69768787a65d96c5ecf5ad7dd33abcc369a97003c7c8918ad"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_J_non_base_unmerge_fails_closed_service_and_route.py": {
+      "eligible": true,
+      "seconds": 7.344412399921566,
+      "seconds_by_marker": {
+        "auto": 7.344412399921566
+      },
+      "sha256": "3b28331d360499c59329109b5a8c058cfe4603b5dd34846a6219a81d7e715a1e"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_K_base_unmerge_still_works.py": {
+      "eligible": true,
+      "seconds": 7.912096899934113,
+      "seconds_by_marker": {
+        "auto": 7.912096899934113
+      },
+      "sha256": "0a8a35f08ed71c013e5cbad67c3408bd2206a1c5b03575d39f8d8cfc8caa6805"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_L_internal_slot_remote_only_and_missing_targets_are_refused.py": {
+      "eligible": true,
+      "seconds": 7.334255800116807,
+      "seconds_by_marker": {
+        "auto": 7.334255800116807
+      },
+      "sha256": "b4c8b30f7f3f0ecb21f8c5c56eaeed5d3309c5ba9135ae648099125e57d9c941"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_M_base_only_paths_keep_the_project_base_meaning.py": {
+      "eligible": true,
+      "seconds": 12.173712199553847,
+      "seconds_by_marker": {
+        "auto": 12.173712199553847
+      },
+      "sha256": "d4a905f134240d6412bebf8043d261d232a4d072009e6d7b182cb9e3b83af091"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_N_sequential_groups_grow_the_same_integration_branch.py": {
+      "eligible": true,
+      "seconds": 13.931744000408798,
+      "seconds_by_marker": {
+        "auto": 13.931744000408798
+      },
+      "sha256": "1b53791d9f15045906c7dfc01cc7ddc50dd2094de1fc5abf030f719811da5c3d"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_O_default_merge_target_persists_and_is_settable_directly.py": {
+      "eligible": true,
+      "seconds": 7.965687099844217,
+      "seconds_by_marker": {
+        "auto": 7.965687099844217
+      },
+      "sha256": "648a5c7e431ecf5bea0faec7fad115a3c070c02724d5c619dfce83fd29a97f38"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_P_default_merge_target_route.py": {
+      "eligible": true,
+      "seconds": 2.9318180005066097,
+      "seconds_by_marker": {
+        "auto": 2.9318180005066097
+      },
+      "sha256": "f4527c121052049e5825db46e77a35f7a13b74ab120219e1b4be883f77fbce9e"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_held_checkpoint_is_consumed_after_base_advance_and_clean_finalize.py": {
+      "eligible": true,
+      "seconds": 5.201397699303925,
+      "seconds_by_marker": {
+        "auto": 5.201397699303925
+      },
+      "sha256": "df0cddee70395eb95810e96492b1e93c28a04a4e0b8f30e17b44405923c4d0ec"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_target_carrier_through_route_and_approval_seam.py": {
+      "eligible": true,
+      "seconds": 10.270485900342464,
+      "seconds_by_marker": {
+        "auto": 10.270485900342464
+      },
+      "sha256": "64abe9b608293382eca08088b6cd837eda071fe8f36ba06825111705cf72163f"
+    },
+    "tests/modules/flow_gate/merge_target_0594/test_workspace_path_is_deterministic_safe_and_collision_free.py": {
+      "eligible": true,
+      "seconds": 0.018316200468689203,
+      "seconds_by_marker": {
+        "auto": 0.018316200468689203
+      },
+      "sha256": "a82547aa98f1feaba9236cc66402091702ac2f054e8ba509995eee319ea23551"
     },
     "tests/modules/flow_gate/services/ai_invoke/test_ai_invoke_status_identity_0481.py": {
       "eligible": true,
@@ -2825,6 +5042,14 @@
         "auto": 5.213178099598736
       },
       "sha256": "aaa1a3b145778bc402e2d72761569a5a9817268bdb256b071cbad33898ee3d80"
+    },
+    "tests/modules/flow_gate/test_base_dirty_rework_0482.py": {
+      "eligible": true,
+      "seconds": 9.843349602073431,
+      "seconds_by_marker": {
+        "auto": 9.843349602073431
+      },
+      "sha256": "687dc191e41c48c12801dd0837cc4a7f93d804a3de7be38d4b20cfd0ec5bebd0"
     },
     "tests/modules/flow_gate/test_branch_merge_attempt_0630.py": {
       "eligible": true,
@@ -3971,12 +6196,11 @@
     },
     "tests/modules/flow_gate/test_review_atomicity_0535.py": {
       "eligible": true,
-      "measurement_run": "card-6",
-      "seconds": 313.54449499771,
+      "seconds": 6.885149805340916,
       "seconds_by_marker": {
-        "auto": 313.54449499771
+        "auto": 6.885149805340916
       },
-      "sha256": "9c372cfb5aa6ee88e75adacd6dabb1194e6df5766695a4cb2d77605b3730f1de"
+      "sha256": "ba7d289ff2f6571df3890cc95a70638aea1fa63b9631c38d7353f9c91355d87d"
     },
     "tests/modules/flow_gate/test_review_round_idempotency_0583.py": {
       "eligible": true,
@@ -5058,24 +7282,6 @@
       },
       "sha256": "78327b5de3af62524523447b2e59657de622f0a47c2f9057e62322d57a59f156"
     },
-    "tests/test_fg_gate_push_sync_0132.py": {
-      "eligible": true,
-      "measurement_run": "gate-2",
-      "seconds": 337.02763200039044,
-      "seconds_by_marker": {
-        "auto": 337.02763200039044
-      },
-      "sha256": "dc2c74d952b5ffdf2abf7fb3808be4ee470f4e28417d4a617d31bf831febdca9"
-    },
-    "tests/test_fg_gate_run_resume_0132.py": {
-      "eligible": true,
-      "measurement_run": "gate-2",
-      "seconds": 346.43490830017254,
-      "seconds_by_marker": {
-        "auto": 346.43490830017254
-      },
-      "sha256": "dacc8d45ee2e8e94d2d4bf4ff26e99820984c5c96fff50aa62f5259e883412af"
-    },
     "tests/test_fg_gate_target_before_confirm_0002.py": {
       "eligible": true,
       "measurement_run": "gate-2",
@@ -5095,7 +7301,7 @@
       "sha256": "c09737828b1d80d697968fa14b3a7776d06441a7cd816782806870579fe9c14a"
     }
   },
-  "measured_at": "2026-11-20T12:38:12.566824+00:00",
+  "measured_at": "2026-11-20T13:38:14.715636+00:00",
   "measurement": {
     "collection_error_files": [
       "tests/integration/src_content/test_t509_src_content_routes.py",
@@ -5137,21 +7343,41 @@
         ],
         "refreshed_files": 54,
         "updated_at": "2026-11-20T12:38:12.566824+00:00"
+      },
+      {
+        "label": "split-retry-git-gate-20261120",
+        "mode": "complete_serial_files",
+        "moved_to_support_modules": [
+          "tests/flowgate/test_fg_integration_persistence_0156.py",
+          "tests/modules/flow_gate/test_git_integration_0115.py",
+          "tests/modules/flow_gate/test_git_merge_target_0594.py",
+          "tests/test_fg_gate_push_sync_0132.py",
+          "tests/test_fg_gate_run_resume_0132.py"
+        ],
+        "notes": [
+          "M1 totals remain historical, not a current full-suite result.",
+          "Ineligible recorded files can include skips or incomplete selection; they are not a failed-file count.",
+          "All 57 retry, 52 merge-target, 217 Git integration and 107 gate/persistence cases are retained.",
+          "Only complete serial file records are promoted; individual cases or mixed node-id selections are excluded.",
+          "Files still above 15 seconds keep their measured higher tier; no threshold or test skip was relaxed."
+        ],
+        "refreshed_files": 305,
+        "updated_at": "2026-11-20T13:38:14.715636+00:00",
+        "verification_runs": [
+          "ccr_037b0d0c805e4676b5fb0551",
+          "ccr_0b1aef0ee3b840d19d2d6c28",
+          "ccr_36fe3a5f23184c05bd297d8e",
+          "ccr_4ca57117b7e24fd8adc73f30",
+          "ccr_2282d80bb6e84d778a6109f4",
+          "ccr_8685ab1309724c62851b3b25",
+          "ccr_93854075ae284ab1b7d51208",
+          "ccr_a80576b8e5254871a0288041",
+          "ccr_41585ad849264bfd91e9ed22",
+          "ccr_7db91337eaf04818867e201f"
+        ]
       }
     ],
     "ineligible_files_over_60s": [
-      {
-        "area": "git",
-        "eligible": false,
-        "path": "tests/modules/flow_gate/test_git_integration_0115.py",
-        "seconds": 481.2189991995692
-      },
-      {
-        "area": "git",
-        "eligible": false,
-        "path": "tests/modules/flow_gate/test_git_merge_target_0594.py",
-        "seconds": 475.4652690021321
-      },
       {
         "area": "gate",
         "eligible": false,

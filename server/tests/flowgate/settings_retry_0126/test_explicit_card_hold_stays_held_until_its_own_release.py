@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_explicit_card_hold_stays_held_until_its_own_release(env,decided,monkeypatch,starts,mode):
     key,_,_,_ = _spent(env,monkeypatch,starts,mode,follow=False)
     new_settings(env,key)

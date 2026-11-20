@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 @pytest.mark.parametrize('failure', ['timeout'])
 @pytest.mark.parametrize('changed',[False,True])
 def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(

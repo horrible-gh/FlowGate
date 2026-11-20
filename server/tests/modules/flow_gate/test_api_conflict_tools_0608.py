@@ -20,7 +20,7 @@ one 8,192-token reply for whole files. This file pins what connects it:
      dispatched; it comes back as `prerequisite_tool_failed`.
 
 The connected runs (0594's real blobs through a real finalize session, and the inline/
-validator case) are test_git_integration_0115.py::TestApiConflictToolLoop0608.
+validator case) are git_integration_0115/test_api_conflict_tool_loop0608*.py.
 """
 from __future__ import annotations
 
@@ -119,10 +119,15 @@ class TestOneToolContract:
         names = [spec["name"] for spec in api_server_tools.conflict_tool_definitions()]
         assert names == ["read_help", "read_source_file"]
 
-    def test_api_guidance_names_exactly_the_exposed_tools(self):
+    def test_api_guidance_keeps_the_transport_and_read_submit_contract_compact(self):
         names = [spec["name"] for spec in api_server_tools.conflict_tool_definitions()] + ["resolve_git_conflict"]
         guidance = provider_api._api_conflict_guidance(names)
-        assert "Tools: " + ", ".join(f"`{n}`" for n in names) + "." in guidance
+        # Names/parameters are already in the separately asserted tool schemas.
+        # Repeating them in prose can push location-only mentions over 10k chars.
+        assert len(guidance) < 500
+        assert "Never resolve unread chunks" in guidance
+        assert "remaining_conflicts" in guidance
+        assert "complete=false" in guidance and "complete=true" in guidance
         assert "`read_source_file` (path, start_line/end_line, ref)" in guidance
         assert "http" not in guidance.replace("HTTP", "")
 

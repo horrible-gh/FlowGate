@@ -84,6 +84,7 @@ class LiveSqliteDB:
     def __init__(self, path: str):
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.log: list[str] = []
         self.fail_on: str | None = None
 
@@ -141,13 +142,7 @@ class LiveSqliteDB:
 
 def _build_db(path: str) -> LiveSqliteDB:
     db = LiveSqliteDB(path)
-    for migration in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            db.conn.executescript(migration.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            # Same convention as test_document_reviews.py: migrations that do not apply
-            # to a fresh file (re-adds, backfills) are skipped, the tables are what count.
-            pass
+    # The caller supplies a fresh copy of the fully migrated SQLite template.
     now = "2026-09-06T00:00:00+09:00"
     db.conn.execute(
         "INSERT INTO projects (project_id, project_name, created_at, updated_at) "
@@ -217,8 +212,15 @@ class _SseSpy:
 
 
 @pytest.fixture
-def env(monkeypatch, tmp_path):
-    db = _build_db(str(tmp_path / "flowgate.db"))
+def env(monkeypatch, migrated_sqlite_db):
+    # Lazy token initialization may populate this variable; restore its prior value.
+    if "FLOWGATE_AGENT_PEPPER_ID" in os.environ:
+        monkeypatch.setenv("FLOWGATE_AGENT_PEPPER_ID", os.environ["FLOWGATE_AGENT_PEPPER_ID"])
+    else:
+        monkeypatch.setenv("FLOWGATE_AGENT_PEPPER_ID", "p1")
+        monkeypatch.delenv("FLOWGATE_AGENT_PEPPER_ID")
+    db_path = migrated_sqlite_db("review-atomicity.db")
+    db = _build_db(db_path)
     store = db_connection.FlowGateStore.__new__(db_connection.FlowGateStore)
     store._db, store._sq = db, None
     monkeypatch.setattr(db_connection, "STORE", store)
@@ -234,7 +236,10 @@ def env(monkeypatch, tmp_path):
 
     sse = _SseSpy()
     monkeypatch.setattr(sse_publisher, "broadcast_event_threadsafe", sse)
-    return {"db": db, "sse": sse, "store": store, "token_rec": token_rec}
+    try:
+        yield {"db": db, "db_path": db_path, "sse": sse, "store": store, "token_rec": token_rec}
+    finally:
+        db.conn.close()
 
 
 def _body(**overrides) -> dict:
@@ -450,7 +455,7 @@ def test_a_concurrent_claim_of_one_token_has_exactly_one_winner(env, tmp_path, m
     same row; SQLite serializes the guarded UPDATE, so exactly one call can see an
     affected row count of 1.
     """
-    db_path = str(tmp_path / "flowgate.db")
+    db_path = env["db_path"]
     local = threading.local()
 
     def _thread_store():
@@ -470,9 +475,14 @@ def test_a_concurrent_claim_of_one_token_has_exactly_one_winner(env, tmp_path, m
 
     def claim():
         start.wait()
-        won = db_tokens.consume_claim(TOKEN_ID)
-        with lock:
-            results.append(won)
+        try:
+            won = db_tokens.consume_claim(TOKEN_ID)
+            with lock:
+                results.append(won)
+        finally:
+            store = getattr(local, "store", None)
+            if store is not None:
+                store._db.conn.close()
 
     threads = [threading.Thread(target=claim) for _ in range(2)]
     for t in threads:

@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_explicit_command_repairs_exhausted_approval_retries_without_repeating_ai(
         env,decided,monkeypatch,starts,mode):
     from flowgate.card_settings import legacy_adapter

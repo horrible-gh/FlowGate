@@ -32,25 +32,18 @@ SEED_ROLES = ["role_admin", "role_manager", "role_worker", "role_viewer"]
 
 
 @pytest.fixture
-def db():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+def db(migrated_sqlite_db):
+    # Schema assertions must see the complete migration chain, never a partial
+    # database left by a swallowed OperationalError. Each test owns a fresh copy.
+    db_path = migrated_sqlite_db("schema.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    
-    # Apply all migrations in order
-    for migration_file in get_all_migrations():
-        try:
-            sql = migration_file.read_text(encoding="utf-8")
-            conn.executescript(sql)
-        except sqlite3.OperationalError:
-            # Some migrations might fail (e.g., IF NOT EXISTS constraints)
-            pass
-    
-    yield conn
-    conn.close()
-    os.unlink(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+        os.unlink(db_path)
 
 
 def test_schema_file_exists():
@@ -98,12 +91,11 @@ def test_seed_permissions_count(db):
 
 
 def test_seed_document_types_count(db):
-    # 21 seeded types + WP (work plan), added as a global system type by migration 078
-    # (flowgate.default.0395 D0007 §7: the type count assertion moves with the type).
+    # The 22 legacy types include WP; migration 113 adds T2 and TR2.
     count = db.execute(
         "SELECT COUNT(*) FROM document_types WHERE project_id IS NULL AND is_system=1"
     ).fetchone()[0]
-    assert count == 22, f"Document types count mismatch: {count}"
+    assert count == 24, f"Document types count mismatch: {count}"
 
 
 def test_seed_work_plan_document_type(db):
@@ -137,7 +129,7 @@ def test_documents_status_constraint(db):
         "INSERT INTO projects (project_id, project_name, is_active, created_at, updated_at) "
         "VALUES ('P1', 'Test', 1, '2026-01-01', '2026-01-01')"
     )
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO documents (doc_id, project_id, module, type_code, seq, title, "
             "status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -154,7 +146,7 @@ def test_groups_status_constraint(db):
         "INSERT INTO projects (project_id, project_name, is_active, created_at, updated_at) "
         "VALUES ('P2', 'Test2', 1, '2026-01-01', '2026-01-01')"
     )
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO groups "
             "(group_id, project_id, module, title, status, created_at, updated_at) "

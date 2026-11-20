@@ -179,7 +179,8 @@ def _review_session(monkeypatch, context: dict):
 
     from modules.flow_gate.services import git_service
 
-    session = {"group_id": "flowgate.default.0481", "kind": "merge"}
+    session = {"merge_id": 9, "project_id": "flowgate",
+               "group_id": "flowgate.default.0481", "kind": "merge"}
     monkeypatch.setattr(
         git_service, "_merge_review_session",
         lambda g, m: (session, context, "flowgate", _Path("."), "main"),

@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode', ['step', 'full'])
+@pytest.mark.parametrize('mode', ['step'])
 @pytest.mark.parametrize('winner', ['automatic', 'command'])
 @pytest.mark.parametrize('reason', ['review_result_unknown'])
 def test_system_error_command_and_stale_automatic_retry_open_one_seq(

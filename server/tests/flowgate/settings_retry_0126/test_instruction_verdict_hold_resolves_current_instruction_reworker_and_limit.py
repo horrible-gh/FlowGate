@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode',['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 def test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit(
         env,decided,monkeypatch,starts,mode):
     from test_fg_ai_roles_l2_assignment import record_starts

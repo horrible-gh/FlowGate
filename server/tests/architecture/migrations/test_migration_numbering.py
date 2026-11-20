@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from migration_contracts import shared_migration_files
+
 _SERVER_DIR = Path(__file__).resolve().parents[3]
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
@@ -118,7 +120,7 @@ def test_no_two_migrations_share_an_ordinal(dialect):
 # ── 3. 방언 3벌이 같은 집합인가 ───────────────────────────────────────────────
 
 def test_the_three_dialects_hold_the_same_file_set():
-    sets = {d: {p.name for p in _files(d)} for d in DIALECTS}
+    sets = shared_migration_files(MIGRATIONS_DIR)
     reference = sets["sqlite"]
     for dialect in ("postgres", "mysql"):
         missing = sorted(reference - sets[dialect])
@@ -142,6 +144,10 @@ def test_no_migration_recreates_an_index_that_still_exists(dialect):
     clashes = []
     for path in _files(dialect):
         body = _without_comments(path.read_text(encoding="utf-8"))
+        # DROP INDEX also ends an index's lifetime (including MySQL's
+        # ALTER TABLE ... DROP INDEX form), without dropping its table.
+        for name in re.findall(r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?[`"]?(\w+)', body, re.IGNORECASE):
+            live.pop(name, None)
         gone = set(_RENAMED_AWAY.findall(body)) | set(_DROPPED.findall(body))
         for name, (_file, table) in list(live.items()):
             if table in gone:

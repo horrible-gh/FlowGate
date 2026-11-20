@@ -131,3 +131,11 @@ def test_unknown_changed_path_errors_before_test_import(suite):
     assert result.returncode == 4, result.stdout + result.stderr
     assert "changed path has no area" in result.stderr
     assert "must not import" not in result.stdout + result.stderr
+
+def test_test_module_helpers_select_their_explicit_dependents(suite):
+    config = suite / "tests/areas.toml"
+    config.write_text(config.read_text(encoding="utf-8").replace(
+        'source = ["src/a.py"]', 'source = ["src/a.py", "tests/test_b.py"]'), encoding="utf-8")
+    mapping = AreaMap(suite)
+    assert mapping.select(None, "tests/test_b.py", "fast") == {"a.one", "b"}
+    assert mapping.select(None, "tests/test_a.py", "fast") == {"a.one"}

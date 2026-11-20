@@ -1,7 +1,7 @@
 """zdiff3 base 청크 → 서버 멘트 전달 경로 (flowgate.default.0478 WP0003 T#3).
 
 T0008 항목 3: `_split_conflict_chunks()`와 `_build_conflict_mention()`이 zdiff3 merge conflict style로 실제 관측된 base 마커를 손실 없이 실어 나르는지 실측한다. 아래 zdiff3 marker 문자열은
-test_git_integration_0115.py::TestGitEndToEnd::test_conflict_resolve_flow가 실제 git merge 출력에서 관측한 그대로다(임의 작문 아님) — `<<<<<<< HEAD` / `mainline version` / `||||||| line1` / `line1` /
+git_integration_0115/test_git_end_to_end_conflict_resolve_flow.py가 실제 git merge 출력에서 관측한 그대로다(임의 작문 아님) — `<<<<<<< HEAD` / `mainline version` / `||||||| line1` / `line1` /
 `=======` / `group version` / `>>>>>>> group/branch`.
 """
 from __future__ import annotations

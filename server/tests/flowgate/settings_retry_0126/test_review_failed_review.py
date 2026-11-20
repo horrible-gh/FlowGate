@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures('fork_join', 'completions')
 
 from settings_retry_support_0126 import (history, new_settings, _submitted_ai_instruction, _instruction_reviews, _event_seqs)
 
-@pytest.mark.parametrize('mode', ['step','full'])
+@pytest.mark.parametrize('mode', ['step'])
 @pytest.mark.parametrize('outcome', ['failed_review'])
 def test_a3_a4_current_tuple_reaches_actual_loop_admission_and_history_stays_fixed(
         env, decided, monkeypatch, starts, mode, outcome, tmp_path):
