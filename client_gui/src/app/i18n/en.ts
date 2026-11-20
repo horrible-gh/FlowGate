@@ -548,7 +548,7 @@ export default {
         control: 'Control',
       },
       items: {
-        basic_design: 'Basic ***',
+        basic_design: 'Basic design',
         protocol: 'Protocol',
         logic: 'Logic',
         db_design: 'DB design',
@@ -647,6 +647,7 @@ export default {
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
+      reconnecting: 'Reconnecting…',
       title: 'Files',
       tree_label: 'Current Flow file tree',
       readonly: 'Read-only',
@@ -1161,6 +1162,7 @@ export default {
       no_flow: 'No open flow',
       current: 'Current',
       yesterday: 'Yesterday',
+      reconnecting: 'Reconnecting…',
       list_loading: 'Loading chats...',
       list_failed: 'Could not load the chat list.',
       list_empty: 'This flow has no chats.',
@@ -2226,7 +2228,7 @@ export default {
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
       DS: 'Design instruction',
-      D: 'Basic ***',
+      D: 'Basic design',
       P: 'Protocol',
       L: 'Logic',
       DB: 'Database design',
@@ -3181,9 +3183,9 @@ export default {
         local_disabled: 'Runs locally',
         disabled: 'Connections and enrollment refused',
         disabled_revoked: 'Credential revoked',
-        pending: 'Token *** {at}',
+        pending: 'Token expires {at}',
         unregistered: 'Needs an enrollment token',
-        reenroll: 'Token *** {at}',
+        reenroll: 'Token expires {at}',
         revoked: 'Needs re-enrollment',
         incompatible: 'v{version} request refused · {at}',
         online: 'Heartbeat {at}',
@@ -3244,8 +3246,8 @@ export default {
         disable_keeps: 'Its registration and credential stay. This is not a delete or a credential revoke.',
         disable_no_cancel: 'This is not a job cancel. Running work is not cancelled.',
         issue_replaces_pending: 'The previous pending enrollment token stops working at once.',
-        issue_replaces_any: 'Any pending token *** earlier stops working at once.',
-        issue_replaces_credential: 'Enrolling with the new token *** the current credential and replaces it.',
+        issue_replaces_any: 'Any pending token issued earlier stops working at once.',
+        issue_replaces_credential: 'Enrolling with the new token revokes the current credential and replaces it.',
         issue_once: 'The token is shown once on this screen right after issuing and cannot be fetched again.',
         issue_http: 'An HTTP connection needs the risk allowed on the Agent, and the token may be sent in plain text.',
         revoke_credential: 'The current credential is revoked; this agent can no longer connect.',

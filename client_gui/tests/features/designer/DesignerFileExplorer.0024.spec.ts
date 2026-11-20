@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
+import { notifyGetRetry } from '@shared/requestRecovery'
 import { registerAppMessages } from '@/app/i18n'
 import type { FlowRef, Project } from '@/features/project'
 
@@ -9,6 +10,14 @@ import type { FlowRef, Project } from '@/features/project'
 // `@shared/api` is replaced, so features/project's api + store, the adapter and every
 // component run for real. The fake server answers `/changes` according to the `base` query,
 // the way the server-side `base` parameter does.
+const recovery = vi.hoisted(() => new Set<() => void>())
+vi.mock('@/features/project/projectEvents', () => ({
+  PROJECT_STREAM_RETRY_MS: 3000,
+  subscribeProjectEvents: vi.fn((_pid: string, sub: { resync?: () => void }) => {
+    if (sub.resync) recovery.add(sub.resync)
+    return () => { if (sub.resync) recovery.delete(sub.resync) }
+  }),
+}))
 const getRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
   getRequest,
@@ -377,6 +386,56 @@ describe('Designer File Explorer — readonly / permission / busy protection', (
   })
 })
 
+describe('Designer File Explorer — connection recovery', () => {
+  it('recovers a failed tree, merges signals during loading, and leaves a healthy tree alone', async () => {
+    server.tree = 'fail'
+    const w = await mountExplorer()
+    expect(w.find('[data-test="dfx-load-error"]').exists()).toBe(true)
+    server.tree = TREE
+    let release!: () => void
+    server.treeGate = { [FLOW_A.groupId]: new Promise<void>(r => { release = r }) }
+    for (let i = 0; i < 3; i++) for (const recover of recovery) recover()
+    // The initial failed adapter read already made its existing one retry.
+    expect(calls('/tree')).toHaveLength(3)
+    release()
+    await settle()
+    expect(rowPaths(w)).toEqual(['docs', 'src', 'README.md'])
+    for (const recover of recovery) recover()
+    await settle()
+    expect(calls('/tree')).toHaveLength(3)
+  })
+
+  it('retains a recovery signal received before the initial read fails, only once', async () => {
+    let release!: () => void
+    server.tree = 'fail'
+    server.treeGate = { [FLOW_A.groupId]: new Promise<void>(r => { release = r }) }
+    const w = await mountExplorer()
+    for (let i = 0; i < 3; i++) for (const recover of recovery) recover()
+    release()
+    await settle()
+    // Two adapter loads, each with its existing one retry.
+    expect(calls('/tree')).toHaveLength(4)
+    expect(w.find('[data-test="dfx-load-error"]').exists()).toBe(true)
+    server.tree = TREE
+    for (const recover of recovery) recover()
+    await settle()
+    expect(rowPaths(w)).toContain('README.md')
+  })
+
+  it('drops a pending recovery when the panel is removed', async () => {
+    let release!: () => void
+    server.tree = 'fail'
+    server.treeGate = { [FLOW_A.groupId]: new Promise<void>(r => { release = r }) }
+    const w = await mountExplorer()
+    for (const recover of recovery) recover()
+    w.unmount()
+    expect(recovery.size).toBe(0)
+    release()
+    await settle()
+    expect(calls('/tree')).toHaveLength(2)
+  })
+})
+
 describe('Designer File Explorer — loading / error / empty states', () => {
   it('blocks with an error on initial load failure and recovers on retry', async () => {
     server.tree = 'fail'
@@ -408,6 +467,12 @@ describe('Designer File Explorer — loading / error / empty states', () => {
     server.treeGate = { [FLOW_A.groupId]: new Promise<void>((r) => { release = r }) }
     const w = await mountExplorer()
     expect(w.find('.ui-loading-state').exists()).toBe(true)
+    notifyGetRetry('/api/v1/projects/other/git/groups/other/tree')
+    await flushPromises()
+    expect(w.text()).not.toContain('다시 연결하는 중')
+    notifyGetRetry(`/api/v1/projects/${PID}/git/groups/${FLOW_A.groupId}/tree`)
+    await flushPromises()
+    expect(w.text()).toContain('다시 연결하는 중')
     release()
     await settle()
     expect(w.find('.ui-loading-state').exists()).toBe(false)

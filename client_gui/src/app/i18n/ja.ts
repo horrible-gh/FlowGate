@@ -647,6 +647,7 @@ export default {
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
+      reconnecting: '再接続中…',
       title: 'ファイル',
       tree_label: '現在のフローのファイルツリー',
       readonly: '読み取り専用',
@@ -1161,6 +1162,7 @@ export default {
       no_flow: '開いているフローなし',
       current: '現在',
       yesterday: '昨日',
+      reconnecting: '再接続中…',
       list_loading: 'チャット一覧を読み込み中...',
       list_failed: 'チャット一覧を読み込めませんでした。',
       list_empty: 'このフローにはチャットがありません。',

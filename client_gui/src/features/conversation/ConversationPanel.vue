@@ -14,6 +14,7 @@
     <ConversationHeader
       :chats="state.chats"
       :chats-status="state.chatsStatus"
+      :reconnecting="listReconnecting"
       :active-chat="activeChat"
       :has-scope="state.scope !== null"
       :creating="state.creatingChat"
@@ -116,6 +117,7 @@
 </template>
 
 <script setup lang="ts">
+import { useRequestRecovery } from '@shared/requestRecovery'
 // The panel is handed its scope (the current Project and the active Flow's v0.1 group id)
 // and creates one Conversation session for its own lifetime. A container that already has a
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
@@ -247,9 +249,16 @@ watch(
   { immediate: true },
 )
 
+const listReconnecting = useRequestRecovery(
+  () => `${props.projectId}:${props.groupId}`,
+  () => state.chatsStatus === 'loading',
+  notice => notice.path.endsWith('/api/v1/documents') && notice.projectId === props.projectId &&
+    notice.groupId === props.groupId && notice.typeCode === 'CH',
+)
+
 const emptyText = computed(() => {
   if (!state.scope) return t('gui.conversation.timeline.no_flow')
-  if (state.chatsStatus === 'loading') return t('gui.conversation.header.list_loading')
+  if (state.chatsStatus === 'loading') return t(listReconnecting.value ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading')
   if (state.chatsStatus === 'error') return t('gui.conversation.header.list_failed')
   return t('gui.conversation.timeline.empty')
 })
