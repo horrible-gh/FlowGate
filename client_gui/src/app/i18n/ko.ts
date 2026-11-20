@@ -960,6 +960,7 @@ export default {
         zoom_out: '축소',
         zoom_reset: '100%',
         density: '배치 밀도',
+        window_reset_layout: '창 배치 초기화',
         shortcuts: '단축키',
         guide: '사용 가이드',
         about: 'FlowGate 정보',

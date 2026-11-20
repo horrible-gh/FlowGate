@@ -11,19 +11,23 @@
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
        or, for a Tool Panel, passed up to the Shell.
        flowgate.v02.0070 T#1 (B1): the Inspector header's card title save goes to the session's saveNodeTitle for the
-       Flow and card the edit was opened on (never the active Flow at answer time). -->
+       Flow and card the edit was opened on (never the active Flow at answer time).
+       flowgate.v02test.0056: `bottomHeight` is the height the person chose. When the column is too low
+       for it and the Workspace minimum, the Bottom Dock is drawn lower here (fitBottomHeight) and the
+       chosen height is left alone. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
     <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" @open-document="openCardDocument" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"
-      :size="bottomHeight"
+      :size="shownBottomHeight"
       :grow="-1"
       data-test="designer-bottom-resize"
       @resize="emit('resize-bottom', $event, columnRef?.clientHeight ?? 0)"
+      @resize-end="emit('resize-end')"
     />
     <DesignerBottomDock
-      :height="bottomHeight"
+      :height="shownBottomHeight"
       :selected-node="center.activeSelectedNode.value"
       :unselected="unselected"
       :minimap="minimap"
@@ -46,6 +50,7 @@ import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
 import { provide } from 'vue'
 import DesignerWorkspace from './DesignerWorkspace.vue'
+import { fitBottomHeight } from './designerLayout'
 
 const props = withDefaults(
   defineProps<{
@@ -62,6 +67,8 @@ const props = withDefaults(
 // Each drag step carries the column's own height, which the Shell's clamp keeps the Workspace's room in.
 const emit = defineEmits<{
   'resize-bottom': [height: number, columnHeight: number]
+  /** flowgate.v02test.0056: the bottom handle was let go. */
+  'resize-end': []
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
   'show-tool': [tool: 'git']
@@ -227,6 +234,29 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
 }
 
 const columnRef = ref<HTMLElement | null>(null)
+
+// flowgate.v02test.0056: the column's own height, followed while the window changes size. 0 until it is
+// measured (and where there is no layout), which draws the chosen height as it is.
+const measuredHeight = ref(0)
+let columnObserver: ResizeObserver | null = null
+
+function measureColumn(): void {
+  measuredHeight.value = columnRef.value?.clientHeight ?? 0
+}
+
+onMounted(() => {
+  measureColumn()
+  if (typeof ResizeObserver !== 'undefined' && columnRef.value) {
+    columnObserver = new ResizeObserver(measureColumn)
+    columnObserver.observe(columnRef.value)
+  }
+})
+onBeforeUnmount(() => {
+  columnObserver?.disconnect?.()
+  columnObserver = null
+})
+
+const shownBottomHeight = computed(() => fitBottomHeight(props.bottomHeight, measuredHeight.value))
 
 // flowgate.v02.0049: the Minimap reads the session's active Flow only — a Graph that is not ready
 // (loading, error, no tab) draws nothing, so another Flow's map never stays on screen.

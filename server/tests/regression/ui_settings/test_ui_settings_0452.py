@@ -85,7 +85,14 @@ class _MemoryStore:
 def memory_store(monkeypatch):
     mem = _MemoryStore()
     monkeypatch.setattr(uss, "ui_settings_store", mem)
+    # flowgate.v02test.0056: the Designer sizes have their own row; an empty one here keeps
+    # these retention cases away from the real table.
+    monkeypatch.setattr(uss, "designer_layout_store", _MemoryStore())
     return mem
+
+
+# flowgate.v02test.0056: the settings also carry the Designer's three dock sizes.
+SIZE_DEFAULTS = {"designer_left_width": 280, "designer_right_width": 300, "designer_bottom_height": 320}
 
 
 # ── 1. reading the setting ────────────────────────────────────────────────────
@@ -94,7 +101,7 @@ class TestResolveSettings:
     def test_never_saved_is_manual_delete_only_and_says_so(self, memory_store):
         settings, is_default = uss.resolve_ui_settings("u1")
         assert is_default is True
-        assert settings == {FIELD: -1, "updated_at": None}
+        assert settings == {FIELD: -1, **SIZE_DEFAULTS, "updated_at": None}
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
         assert uss.resolve_ui_settings(None) == (uss.defaults(), True)
@@ -146,10 +153,10 @@ class TestResolveSettings:
 
     def test_response_carries_the_domain_so_no_screen_holds_its_own_copy(self, memory_store):
         body = uss.settings_response("u1")
-        assert body["domain"] == {FIELD: [-1, 0, 30, 60, 120, 180, 360, 720, 1440]}
-        assert body["defaults"] == {FIELD: -1}
+        assert body["domain"][FIELD] == [-1, 0, 30, 60, 120, 180, 360, 720, 1440]
+        assert body["defaults"] == {FIELD: -1, **SIZE_DEFAULTS}
         assert "updated_at" not in body["defaults"]
-        assert body["settings"] == {FIELD: -1, "updated_at": None}
+        assert body["settings"] == {FIELD: -1, **SIZE_DEFAULTS, "updated_at": None}
         assert body["is_default"] is True
 
     def test_an_unreachable_store_answers_defaults_instead_of_failing(self, monkeypatch):

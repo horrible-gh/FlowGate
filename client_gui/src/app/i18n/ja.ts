@@ -949,6 +949,7 @@ export default {
         zoom_out: '縮小',
         zoom_reset: '100%',
         density: '配置密度',
+        window_reset_layout: 'ウィンドウ配置をリセット',
         shortcuts: 'ショートカット',
         guide: '使い方ガイド',
         about: '製品情報',

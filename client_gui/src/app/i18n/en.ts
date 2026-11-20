@@ -949,6 +949,7 @@ export default {
         zoom_out: 'Zoom Out',
         zoom_reset: '100%',
         density: 'Layout Density',
+        window_reset_layout: 'Reset Window Layout',
         shortcuts: 'Keyboard Shortcuts',
         guide: 'User Guide',
         about: 'About FlowGate',

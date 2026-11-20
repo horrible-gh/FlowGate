@@ -1,4 +1,5 @@
-"""Per-user, non-chat UI settings — today just the finished-card retention (0452, L0003).
+"""Per-user, non-chat UI settings — the finished-card retention (0452, L0003) and the
+Designer's three dock sizes (flowgate.v02test.0056, see "Designer dock sizes" below).
 
 Three things live here and nowhere else:
 
@@ -28,6 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
+from modules.flow_gate.db import user_designer_layout as designer_layout_store
 from modules.flow_gate.db import user_ui_settings as ui_settings_store
 from modules.flow_gate.db.connection import now_iso
 
@@ -46,9 +48,30 @@ RETENTION_IMMEDIATE = 0
 # one string.  A translation table between layers is the accident, not the safeguard.
 RETENTION_FIELD = "ai_finished_card_retention_minutes"
 
+# ── Designer dock sizes (flowgate.v02test.0056, R 0056.0001 §2) ─────────────────────
+# Left panel width, right panel width and bottom panel height of the Designer, in px.
+# Unlike the retention these are ranges, not a closed list: the minimum is the smallest
+# size the screen lets a panel be dragged to, the maximum only keeps nonsense out.  The
+# screen shows a stored size smaller when the window has no room for it and never writes
+# that smaller size back, so no "fits the window" rule belongs here.
+#
+# They live in their own table (migration 206).  ``is_default`` therefore keeps meaning
+# "never chose a retention": dragging a panel does not create the retention row.
+DESIGNER_LEFT_WIDTH_FIELD = "designer_left_width"
+DESIGNER_RIGHT_WIDTH_FIELD = "designer_right_width"
+DESIGNER_BOTTOM_HEIGHT_FIELD = "designer_bottom_height"
+DESIGNER_SIZE_MAX = 4000
+
+# field -> (stored column, default, minimum, maximum)
+DESIGNER_SIZE_FIELDS = {
+    DESIGNER_LEFT_WIDTH_FIELD: ("left_width", 280, 200, DESIGNER_SIZE_MAX),
+    DESIGNER_RIGHT_WIDTH_FIELD: ("right_width", 300, 240, DESIGNER_SIZE_MAX),
+    DESIGNER_BOTTOM_HEIGHT_FIELD: ("bottom_height", 320, 160, DESIGNER_SIZE_MAX),
+}
+
 # Validation order is fixed so a request with several bad fields always reports the same
-# one.  One field today; the tuple is what keeps that stable when a second arrives.
-PATCH_FIELDS = (RETENTION_FIELD,)
+# one.
+PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS)
 
 
 class UiSettingsError(ValueError):
@@ -69,13 +92,59 @@ def defaults() -> dict:
     """
     return {
         RETENTION_FIELD: RETENTION_DEFAULT_MINUTES,
+        **designer_size_defaults(),
         "updated_at": None,
     }
 
 
 def domain() -> dict:
-    """The choices the response carries so no screen holds its own copy (L0003 §2-8)."""
-    return {RETENTION_FIELD: list(RETENTION_DOMAIN_MINUTES)}
+    """The choices the response carries so no screen holds its own copy (L0003 §2-8).
+
+    The retention is a list of choices; a Designer size is a ``{"min", "max"}`` range.
+    """
+    return {
+        RETENTION_FIELD: list(RETENTION_DOMAIN_MINUTES),
+        **{
+            field: {"min": minimum, "max": maximum}
+            for field, (_column, _default, minimum, maximum) in DESIGNER_SIZE_FIELDS.items()
+        },
+    }
+
+
+def designer_size_defaults() -> dict:
+    """The Designer sizes of somebody who never dragged a panel (280 / 300 / 320)."""
+    return {field: spec[1] for field, spec in DESIGNER_SIZE_FIELDS.items()}
+
+
+def normalize_designer_size(field: str, value: Any) -> int:
+    """Repair a stored Designer size on the way out: outside the range means the default."""
+    _column, default, minimum, maximum = DESIGNER_SIZE_FIELDS[field]
+    if value is None or isinstance(value, bool) or not isinstance(value, int):
+        return default
+    if value < minimum or value > maximum:
+        return default
+    return value
+
+
+def resolve_designer_sizes(user_id: Optional[str]) -> dict:
+    """The three Designer sizes for a user.  Never fails and never writes.
+
+    No row, an unreadable store or a strange stored value all answer the default: a size
+    must not be able to stop the settings from being read (same rule as L0003 §5).
+    """
+    if not user_id:
+        return designer_size_defaults()
+    try:
+        row = designer_layout_store.get(user_id)
+    except Exception:
+        _log.warning("designer layout unavailable; answering defaults (user_id=%s)", user_id)
+        return designer_size_defaults()
+    if row is None:
+        return designer_size_defaults()
+    return {
+        field: normalize_designer_size(field, row.get(spec[0]))
+        for field, spec in DESIGNER_SIZE_FIELDS.items()
+    }
 
 
 def normalize_retention_minutes(value: Any) -> int:
@@ -106,12 +175,16 @@ def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
         # than a second definition of the default living somewhere else (L0003 §5).
         return defaults(), True
 
+    # ``is_default`` and ``updated_at`` are the retention row's alone; the Designer sizes
+    # come from their own row and do not change either.
     row = ui_settings_store.get(user_id)
+    sizes = resolve_designer_sizes(user_id)
     if row is None:
-        return defaults(), True
+        return {**defaults(), **sizes}, True
 
     return {
         RETENTION_FIELD: normalize_retention_minutes(row.get(RETENTION_FIELD)),
+        **sizes,
         "updated_at": row.get("updated_at"),
     }, False
 
@@ -149,6 +222,13 @@ def validate_patch(patch: dict) -> None:
             raise UiSettingsError(field, f"{field} must not be null.")
         if isinstance(value, bool) or not isinstance(value, int):
             raise UiSettingsError(field, f"{field} must be an integer.")
+        if field in DESIGNER_SIZE_FIELDS:
+            _column, _default, minimum, maximum = DESIGNER_SIZE_FIELDS[field]
+            if value < minimum or value > maximum:
+                raise UiSettingsError(
+                    field, f"{field} must be between {minimum} and {maximum}."
+                )
+            continue
         if value not in RETENTION_DOMAIN_MINUTES:
             # The list comes from §1-1 rather than the sentence, so the message cannot
             # outlive the domain it describes.
@@ -167,11 +247,26 @@ def save_ui_settings(user_id: Optional[str], patch: dict) -> dict:
     ``is_default`` to false for somebody who never chose anything (DB0004 §3-4).
     """
     validate_patch(patch)
-    if patch and user_id:
+    # Each field goes to its own row: a size-only patch must not create the retention row
+    # (that would flip ``is_default``), and a retention-only patch writes no size.
+    retention = {key: value for key, value in patch.items() if key == RETENTION_FIELD}
+    sizes = {
+        DESIGNER_SIZE_FIELDS[key][0]: value
+        for key, value in patch.items()
+        if key in DESIGNER_SIZE_FIELDS
+    }
+    if retention and user_id:
         ui_settings_store.upsert(
             user_id,
-            columns=patch,
-            unset_columns=defaults(),
+            columns=retention,
+            unset_columns={RETENTION_FIELD: RETENTION_DEFAULT_MINUTES},
+            updated_at=now_iso(),
+        )
+    if sizes and user_id:
+        designer_layout_store.upsert(
+            user_id,
+            columns=sizes,
+            unset_columns={spec[0]: spec[1] for spec in DESIGNER_SIZE_FIELDS.values()},
             updated_at=now_iso(),
         )
     return settings_response(user_id)
@@ -206,6 +301,6 @@ def settings_response_safe(user_id: Optional[str]) -> dict:
             "ok": True,
             "settings": defaults(),
             "is_default": True,
-            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES},
+            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES, **designer_size_defaults()},
             "domain": domain(),
         }

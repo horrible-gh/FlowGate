@@ -53,13 +53,18 @@
       <button v-if="center.activeRun.value?.commandRecovery?.voidPrevious" type="button" :disabled="!!center.activeRun.value?.action" @click="center.activeRun.value?.commandRecovery?.voidPrevious?.()">{{ t('gui.designer.top.run_command_recovery.void') }}</button>
       <button v-if="center.activeRun.value?.commandRecovery?.discardCorrupt" type="button" :disabled="!!center.activeRun.value?.action" @click="discardCorruptRunCommand">{{ t('gui.designer.top.run_command_recovery.discard') }}</button>
     </aside>
+    <!-- flowgate.v02test.0056 (R 0056.0001 §2.3): the Body stays mounted but unseen until the saved Dock sizes
+         are read (or the read failed / took too long), so it is never drawn at the default sizes first. -->
     <DesignerBody
+      :class="{ 'is-awaiting-sizes': !sizesReady }"
       :left-width="leftColumnWidth(layout)"
       :right-width="rightColumnWidth(layout)"
       :left-resizable="!layout.leftCollapsed"
       :right-resizable="!layout.rightCollapsed"
-      @resize-left="(width, bodyWidth) => (layout.leftWidth = clampLeftWidth(layout, width, bodyWidth))"
-      @resize-right="(width, bodyWidth) => (layout.rightWidth = clampRightWidth(layout, width, bodyWidth))"
+      :fit-keep="fitKeep"
+      @resize-left="onResizeLeft"
+      @resize-right="onResizeRight"
+      @resize-end="saveSizes"
     >
       <template #left>
         <DesignerLeftDock
@@ -89,7 +94,8 @@
           @canvas-place="onCanvasPlace"
           @cancel-placement="selectedPalette = null"
           :unselected="!hasWorkTarget"
-          @resize-bottom="(height, columnHeight) => (layout.bottomHeight = clampBottomHeight(layout, height, columnHeight))"
+          @resize-bottom="onResizeBottom"
+          @resize-end="saveSizes"
           @show-tool="onShowTab"
         />
       </template>
@@ -313,14 +319,22 @@ import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
 import FlowAttachmentHost from '../flowAttachments/FlowAttachmentHost.vue'
 import {
+  DESIGNER_LAYOUT_DEFAULTS,
   DESIGNER_LEFT_MODES,
   DESIGNER_RIGHT_TOOLS,
   clampBottomHeight,
   clampLeftWidth,
   clampRightWidth,
   createDesignerLayout,
+  dockSizesFromStored,
+  dockSizesOf,
+  fitBottomHeight,
+  fitDockWidths,
   leftColumnWidth,
   rightColumnWidth,
+  sameDockSizes,
+  type DesignerDockSizes,
+  type DesignerFitKeep,
   type DesignerLeftMode,
   type DesignerRightTool,
 } from './designerLayout'
@@ -334,6 +348,105 @@ const projectStore = useProjectStore()
 const { t, te } = useI18n()
 
 const layout = reactive(createDesignerLayout())
+
+// --- Dock sizes: saved per person (flowgate.v02test.0056, R 0056.0001 §2) -------------------------------------------
+// `layout.leftWidth / rightWidth / bottomHeight` are the sizes the person chose. They are read from the server when
+// the Designer opens, and saved when a resize handle is let go and on 창 › 창 배치 초기화. A window too small for them
+// only draws them smaller (DesignerBody / DesignerCenterColumn) — nothing here changes, so nothing is saved.
+const SIZES_WAIT_MS = 1500
+/** False only while the first read is on its way: the Body is kept unseen so the default sizes never flash. */
+const sizesReady = ref(false)
+/** The Dock dragged last keeps its width when the Body is too narrow for both (the other gives way first). */
+const fitKeep = ref<DesignerFitKeep>(null)
+/** What the server holds, as far as this screen knows; null = unknown, so the next save is always sent. */
+let savedSizes: DesignerDockSizes | null = null
+/** A size was changed here since the read started — a late answer must not undo it. */
+let sizesTouched = false
+let sizesReadSeq = 0
+let sizesWaitTimer: ReturnType<typeof setTimeout> | null = null
+let sizesSaveChain: Promise<void> = Promise.resolve()
+let shellGone = false
+
+function readSizes(): void {
+  const seq = ++sizesReadSeq
+  sizesTouched = false
+  void projectStore.loadDesignerDockSizes().then((stored) => {
+    if (shellGone || seq !== sizesReadSeq) return
+    if (stored) {
+      const sizes = dockSizesFromStored(stored)
+      savedSizes = sizes
+      if (!sizesTouched) Object.assign(layout, sizes)
+    }
+    showBody()
+  }, showBody)
+}
+
+function showBody(): void {
+  if (sizesWaitTimer !== null) clearTimeout(sizesWaitTimer)
+  sizesWaitTimer = null
+  sizesReady.value = true
+}
+
+// The saves go one after another, each sending the sizes of its moment; equal to what the server holds = no request.
+// A failed save changes nothing on screen and shows nothing: the next let-go sends the sizes again (R §2.2).
+function saveSizes(): void {
+  sizesSaveChain = sizesSaveChain.then(async () => {
+    const sizes = dockSizesOf(layout)
+    if (savedSizes && sameDockSizes(savedSizes, sizes)) return
+    const saved = await projectStore.saveDesignerDockSizes(sizes).catch(() => false)
+    savedSizes = saved ? sizes : null
+  })
+}
+
+// A drag starts from the size on screen, which a small window may be drawing smaller than the chosen one — the
+// bounds are therefore judged against what is drawn, and the dragged size becomes the chosen one.
+function shownWidths(bodyWidth: number): { left: number; right: number } {
+  return fitDockWidths(leftColumnWidth(layout), rightColumnWidth(layout), !layout.leftCollapsed, !layout.rightCollapsed, bodyWidth, fitKeep.value)
+}
+
+function onResizeLeft(width: number, bodyWidth: number): void {
+  const shown = shownWidths(bodyWidth)
+  sizesTouched = true
+  fitKeep.value = 'left'
+  layout.leftWidth = clampLeftWidth({ ...layout, leftWidth: shown.left, rightWidth: layout.rightCollapsed ? layout.rightWidth : shown.right }, width, bodyWidth)
+}
+
+function onResizeRight(width: number, bodyWidth: number): void {
+  const shown = shownWidths(bodyWidth)
+  sizesTouched = true
+  fitKeep.value = 'right'
+  layout.rightWidth = clampRightWidth({ ...layout, rightWidth: shown.right, leftWidth: layout.leftCollapsed ? layout.leftWidth : shown.left }, width, bodyWidth)
+}
+
+function onResizeBottom(height: number, columnHeight: number): void {
+  sizesTouched = true
+  layout.bottomHeight = clampBottomHeight({ ...layout, bottomHeight: fitBottomHeight(layout.bottomHeight, columnHeight) }, height, columnHeight)
+}
+
+// 창 › 창 배치 초기화 (R §3): the three sizes, both Docks expanded, the 프로젝트 / 팔레트 tabs — at once, with no
+// confirmation. The default sizes are saved too. Nothing else (Canvas view, Flow tabs, windows) is touched; already
+// at the defaults, nothing happens.
+function resetWindowLayout(): void {
+  sizesTouched = true
+  fitKeep.value = null
+  Object.assign(layout, DESIGNER_LAYOUT_DEFAULTS)
+  saveSizes()
+}
+
+readSizes()
+sizesWaitTimer = setTimeout(showBody, SIZES_WAIT_MS)
+// Another person logging in on this screen (the session owner changes) gets their own sizes.
+watch(() => projectStore.designerSessionOwner, (owner, before) => {
+  if (owner && before && owner !== before) {
+    savedSizes = null
+    readSizes()
+  }
+})
+onBeforeUnmount(() => {
+  shellGone = true
+  if (sizesWaitTimer !== null) clearTimeout(sizesWaitTimer)
+  sizesWaitTimer = null
+})
 
 const top = reactive(createDesignerTopState())
 
@@ -929,6 +1042,9 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.closeFlow(flowId)
       return
     }
+    case 'window.reset-layout':
+      resetWindowLayout()
+      return
     case 'designer.close':
       // flowgate.v02.0105 T#1: an explicit close is not an F5 — the snapshot goes, and neither a waiting restore nor
       // a later change of this Shell writes it again.
@@ -1724,6 +1840,11 @@ const contextMenu = useDesignerContextMenu({
   overflow: hidden;
   color: var(--fg2-text);
   font-family: var(--fg2-font);
+}
+
+/* flowgate.v02test.0056: mounted and laid out, only not drawn, until the saved Dock sizes are read. */
+.designer-shell > .is-awaiting-sizes {
+  visibility: hidden;
 }
 
 .run-command-recovery {

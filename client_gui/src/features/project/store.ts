@@ -32,6 +32,12 @@
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
 import { readFlowArchive, changeFlowArchive, type FlowArchiveState } from './flowArchiveApi'
+import {
+  readDesignerDockSizes,
+  saveDesignerDockSizes as saveDesignerDockSizesApi,
+  type DesignerDockSizesInput,
+  type StoredDesignerDockSizes,
+} from './designerDockSizesApi'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useCurrentUser } from '../../core/auth/currentUser'
@@ -438,6 +444,17 @@ export const useProjectStore = defineStore('project', () => {
     if (owner) clearStoredDesignerSession(owner)
   }
 
+  // ── Designer Dock sizes (flowgate.v02test.0056) ─────────────────────────────────────────
+  // The signed-in person's left / right / bottom Dock sizes, kept by the server (/me/ui-settings). Neither call
+  // throws: null = could not be read, false = not saved.
+  function loadDesignerDockSizes(): Promise<StoredDesignerDockSizes | null> {
+    return readDesignerDockSizes()
+  }
+
+  function saveDesignerDockSizes(sizes: DesignerDockSizesInput): Promise<boolean> {
+    return saveDesignerDockSizesApi(sizes)
+  }
+
   // An F5 restore gives the Designer back the Project of its snapshot. Not an opening: no recent entry and no
   // explicit-open signal, so the Explorer starts unselected as on any entry (0039) until the snapshot's own
   // selection is applied.
@@ -828,6 +845,8 @@ export const useProjectStore = defineStore('project', () => {
     readDesignerSession,
     writeDesignerSession,
     clearDesignerSession,
+    loadDesignerDockSizes,
+    saveDesignerDockSizes,
     restoreCurrentProject,
     readFailureOf,
     recordRecentGroup,

@@ -37,6 +37,10 @@ class UiSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     ai_finished_card_retention_minutes: Any = None
+    # flowgate.v02test.0056: the Designer's three dock sizes, in px.
+    designer_left_width: Any = None
+    designer_right_width: Any = None
+    designer_bottom_height: Any = None
 
 
 def _invalid_request(exc: ui_settings_service.UiSettingsError) -> JSONResponse:

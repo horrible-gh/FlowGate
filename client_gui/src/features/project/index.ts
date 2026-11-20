@@ -43,6 +43,8 @@ export type {
 } from './commandResultApi'
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
 export type { DesignerSessionSnapshot, DesignerSessionTab } from './designerSessionStorage'
+// flowgate.v02test.0056 adds the Designer Dock sizes the Shell reads / saves through the store.
+export type { DesignerDockSizesInput, StoredDesignerDockSizes } from './designerDockSizesApi'
 export type { ProjectEventFrame, ProjectEventSubscription } from './projectEvents'
 export type {
   BaseFileDiff,
