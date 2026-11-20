@@ -34,6 +34,7 @@ export const ADMIN_SETTINGS_SCOPES: readonly SettingsScopeKey[] = ['project', 's
 // from these menus.
 export const SETTINGS_PAGES: readonly SettingsPage[] = [
   { key: 'account', scope: 'me', routeName: 'settings-me-account', path: '/settings/me/account', labelKey: 'gui.settings.me_nav.account', icon: 'user' },
+  { key: 'theme', scope: 'me', routeName: 'settings-me-theme', path: '/settings/me/theme', labelKey: 'gui.taskbar.theme', icon: 'gear' },
   { key: 'agents', scope: 'me', routeName: 'settings-me-agents', path: '/settings/me/agents', labelKey: 'gui.agent_screen.title', icon: 'bot' },
   { key: 'security', scope: 'me', routeName: 'settings-me-security', path: '/settings/me/security', labelKey: 'gui.settings.me_nav.security', icon: 'shield' },
   { key: 'project', scope: 'project', routeName: 'settings-project', path: '/settings/project', labelKey: 'gui.settings.project_nav.select', icon: 'folder' },

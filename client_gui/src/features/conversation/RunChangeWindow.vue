@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#4ba3ff"
     ref="shell"
     :open="!closed"
     :title="title"

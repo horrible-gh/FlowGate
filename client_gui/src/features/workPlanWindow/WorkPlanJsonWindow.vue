@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#e7a244"
     :open="true"
     :initial-x="x"
     :initial-y="y"

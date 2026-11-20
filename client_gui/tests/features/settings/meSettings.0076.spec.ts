@@ -167,11 +167,11 @@ describe('V01 (내 설정 부분) — the hub and the 내 설정 sub-navigation'
   it('a non-administrator gets the 내 설정 card with exactly its two screens, nothing else', async () => {
     const hub = await open('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me'])
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '테마', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
     expect(net.requests).toEqual([])
     await go('/settings/me/account')
-    expect(hub.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'agents', 'security'])
+    expect(hub.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'theme', 'agents', 'security'])
     expect(hub.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me'])
   })
 })

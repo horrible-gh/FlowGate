@@ -2,7 +2,9 @@
   <Teleport to="body">
     <div
       v-if="open"
+      v-show="!(isMinimized && modelessTaskbarHeight > 0)"
       ref="panelRef"
+      :data-taskbar-style="modelessTaskbarHeight > 0 ? modelessStyle : undefined"
       class="ui-modeless-panel"
       :class="{ 'is-minimized': isMinimized }"
       :style="panelStyle"
@@ -48,9 +50,10 @@
 // no backdrop, no focus trap, background stays fully interactive. Owns only position/
 // size/minimized/open-close/drag-resize lifecycle; it knows nothing about Git branches,
 // AI runs, Projects, Documents or Approvals (T0006 §6/§15).
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import i18n from '@shared/i18n'
 import IconButton from './IconButton.vue'
+import { modelessStyle, modelessTaskbarHeight, registerModeless, unregisterModeless } from '../../core/overlay/modelessRegistry'
 import { allocateOverlayZIndex } from '../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../core/overlay/focusReturn'
 
@@ -58,6 +61,7 @@ const props = withDefaults(
   defineProps<{
     open: boolean
     title?: string
+    kindColor?: string
     initialX?: number
     initialY?: number
     initialWidth?: number
@@ -79,6 +83,7 @@ const props = withDefaults(
   }>(),
   {
     title: '',
+    kindColor: 'var(--fg2-accent, #6478dc)',
     initialX: 120,
     initialY: 120,
     initialWidth: 420,
@@ -109,6 +114,19 @@ const restoreName = computed(() => props.restoreLabel ?? controlName('gui.common
 const closeName = computed(() => props.closeLabel ?? controlName('gui.common.close', 'Close'))
 
 const panelRef = ref<HTMLElement | null>(null)
+const registryId = Symbol('modeless')
+const headerTitle = ref('')
+let titleObserver: MutationObserver | null = null
+watch(panelRef, (panel) => {
+  titleObserver?.disconnect()
+  const title = panel?.querySelector('.ui-modeless-title')
+  const update = () => { headerTitle.value = title?.textContent?.trim() ?? '' }
+  update()
+  if (title && typeof MutationObserver !== 'undefined') {
+    titleObserver = new MutationObserver(update)
+    titleObserver.observe(title, { childList: true, subtree: true, characterData: true })
+  }
+}, { flush: 'post' })
 const x = ref(props.initialX)
 const y = ref(props.initialY)
 const width = ref(props.initialWidth)
@@ -132,6 +150,18 @@ function setMinimized(value: boolean): void {
   emit('update:minimized', value)
 }
 
+watchEffect(() => {
+  if (!props.open) { unregisterModeless(registryId); return }
+  registerModeless({ id: registryId, title: props.title || headerTitle.value || 'Window',
+    color: props.kindColor, minimized: isMinimized.value, restore: () => {
+      setMinimized(false)
+      bringToFront()
+      void nextTick(() => panelRef.value?.focus({ preventScroll: true }))
+    } })
+})
+watch(modelessTaskbarHeight, () => { if (props.open) clampPosition() })
+watch(isMinimized, (value, old) => { if (old && !value) bringToFront() })
+
 // Keeps at least this many px of the titlebar reachable so a panel dragged toward an
 // edge can never fully leave the viewport (T0006 §6 "viewport 밖으로 완전히 사라지지
 // 않도록 최소 제약").
@@ -143,12 +173,14 @@ function clamp(value: number, min: number, max: number): number {
 
 function clampPosition(): void {
   const viewportWidth = window.innerWidth
-  const viewportHeight = window.innerHeight
+  const viewportHeight = window.innerHeight - modelessTaskbarHeight.value
   x.value = clamp(x.value, -(width.value - MIN_VISIBLE), Math.max(0, viewportWidth - MIN_VISIBLE))
   y.value = clamp(y.value, 0, Math.max(0, viewportHeight - MIN_VISIBLE))
 }
 
 const panelStyle = computed(() => ({
+  '--modeless-kind-color': props.kindColor,
+  maxHeight: modelessTaskbarHeight.value > 0 ? `calc(100vh - ${y.value + modelessTaskbarHeight.value}px)` : undefined,
   left: `${x.value}px`,
   top: `${y.value}px`,
   width: `${width.value}px`,
@@ -247,6 +279,7 @@ watch(
   () => props.open,
   (isOpen, wasOpen) => {
     if (isOpen && !wasOpen) {
+      if (wasOpen === false) setMinimized(false)
       triggerElement = captureFocusedElement()
       zIndex.value = allocateOverlayZIndex()
       // `initialX`/`initialY` are the caller's values, unchecked against the current
@@ -267,6 +300,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  unregisterModeless(registryId)
+  titleObserver?.disconnect()
   window.removeEventListener('resize', clampPosition)
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup', onDragEnd)
@@ -300,6 +335,7 @@ defineExpose({ bringToFront, geometry, setGeometry })
 <style scoped>
 .ui-modeless-panel {
   position: fixed;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: var(--fg2-panel);
@@ -320,6 +356,11 @@ defineExpose({ bringToFront, geometry, setGeometry })
   cursor: move;
   user-select: none;
   flex: none;
+}
+
+[data-taskbar-style="flowgate"] .ui-modeless-titlebar {
+  box-shadow: inset 0 3px 0 var(--modeless-kind-color);
+  background: color-mix(in srgb, var(--modeless-kind-color) 8%, var(--fg2-panel));
 }
 
 .is-minimized .ui-modeless-titlebar {

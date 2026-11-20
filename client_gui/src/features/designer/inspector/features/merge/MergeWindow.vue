@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell ref="shell" :open="true" :title="windowTitle" :initial-width="initialWidth" :initial-height="400"
+  <ModelessShell kind-color="#4ba3ff" ref="shell" :open="true" :title="windowTitle" :initial-width="initialWidth" :initial-height="400"
     :initial-x="16" :initial-y="80" :min-width="300" :min-height="200" :minimized="win?.minimized ?? false"
     @update:minimized="value => { if (win) win.minimized = value }" @close="close">
 

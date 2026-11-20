@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell :open="true" :title="t(k('detail'))" :initial-width="width" :initial-x="8" :initial-y="70" :min-width="240" @close="emit('close')">
+  <ModelessShell kind-color="#a78bfa" :open="true" :title="t(k('detail'))" :initial-width="width" :initial-x="8" :initial-y="70" :min-width="240" @close="emit('close')">
     <section class="ai-notification-detail" role="region" :aria-label="t(k('detail'))" :aria-busy="loading" data-test="notification-ai-detail">
       <h3>{{ title(detail || item) }}</h3>
       <p v-if="loading" role="status">{{ t('gui.designer.top.notifications.loading') }}</p>

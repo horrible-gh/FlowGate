@@ -54,6 +54,11 @@ const settingsRoute: RouteRecordRaw = {
       component: () => import('@/features/settings/views/MeAccountSettingsView.vue'),
     },
     {
+      path: 'me/theme',
+      name: 'settings-me-theme',
+      component: () => import('@/features/settings/views/MeThemeSettingsView.vue'),
+    },
+    {
       path: 'me/agents',
       name: 'settings-me-agents',
       component: () => import('@/features/settings/views/PersonalAgentSettingsView.vue'),
