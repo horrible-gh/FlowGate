@@ -324,7 +324,7 @@ def build_answer_mention(
             "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
         )
     # Refer to the shared policy by meaning; numbering changes must not alter this guidance.
-    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_ANSWER_REFERENCE
+    from modules.flow_gate.services.prompt_blocks.blocks.documents import BODY_UNREADABLE_ANSWER_REFERENCE
 
     lines.append(BODY_UNREADABLE_ANSWER_REFERENCE)
     lines.append(f"POST {escalate_url}")

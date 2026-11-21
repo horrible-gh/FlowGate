@@ -280,10 +280,11 @@ def _fold_notice(
     ]
 
 
-from modules.flow_gate.services.chat_help_content import _encoding_probe_paragraph
-
-
-from modules.flow_gate.services.chat_help_content import conversation_turn_submission_lines
+# flowgate.v02test.0061 card 4: the turn contract and the probe paragraph are prompt blocks.
+from modules.flow_gate.services.prompt_blocks.blocks.conversation import (  # noqa: E402
+    conversation_turn_submission_lines,
+    encoding_probe_paragraph as _encoding_probe_paragraph,
+)
 
 
 def build_conversation_mention(
@@ -513,6 +514,30 @@ def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     return "\n".join(parts)
 
 
+def _rejection_history(doc: dict) -> list:
+    history = doc.get("rejection_history") or []
+    if isinstance(history, str):
+        try:
+            history = json.loads(history) or []
+        except Exception:  # noqa: BLE001 — a malformed column must not block the rework
+            history = []
+    return history
+
+
+def compose_rework_mention(base: str, doc: dict, reject_reason: Optional[str], *, handoff: str = "") -> str:
+    """The one rework composition: rejection section, then the previous-run handoff, then ``base``.
+
+    flowgate.v02test.0061 card 4 (requirement R1): ``build_rework_mention`` here and the route's
+    ``ai_invoke_routes.build_rework_mention`` each carried their own copy of this assembly. Both now
+    call this. Empty leading chunks are dropped, and when both are empty ``base`` comes back as is.
+    Both chunks already end in a blank line, so joining on "\n" leaves exactly one blank line
+    between every pair.
+    """
+    section = build_rejection_section(_rejection_history(doc), reject_reason or doc.get("rejection_reason"))
+    leading = [chunk for chunk in (section, handoff) if chunk]
+    return "\n".join(leading) + "\n" + base if leading else base
+
+
 def build_rework_mention(
     *,
     doc_id: str,
@@ -547,13 +572,6 @@ def build_rework_mention(
     from modules.flow_gate.db import documents as db_documents
 
     doc = db_documents.get_by_id(doc_id) or {}
-    history = doc.get("rejection_history") or []
-    if isinstance(history, str):
-        try:
-            history = json.loads(history) or []
-        except Exception:  # noqa: BLE001 — a malformed column must not block the rework
-            history = []
-    section = build_rejection_section(history, reject_reason or doc.get("rejection_reason"))
     base = _token_routes._build_mention_for_token(
         doc_ref=doc_id,
         group_id=group_id,
@@ -568,7 +586,7 @@ def build_rework_mention(
     )
     if not base:
         return None
-    mention = section + "\n" + base if section else base
+    mention = compose_rework_mention(base, doc, reject_reason)
     # 0554 T0014 §9: rework re-applies the same item's WorkPlan pre-instruction — the
     # reviewer never sees this (its own prompt is a different assembly, review_mention.py),
     # only the worker being asked to fix the document does. May raise

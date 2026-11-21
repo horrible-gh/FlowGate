@@ -51,6 +51,8 @@ from modules.flow_gate.services import conversation_query_service
 from modules.flow_gate.services.conversation_turn_service import turn_wire
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.documents import document_service
+from modules.flow_gate.services.prompt_blocks.blocks import documents as _documents_block
+from modules.flow_gate.services.prompt_blocks.blocks import source_tools as _source_tools_block
 # AUTO_REPORT_MAP is imported lazily at its use site to avoid a service import cycle.
 
 logger = logging.getLogger(__name__)
@@ -101,38 +103,10 @@ def _remote_source_crud_lines(
     locale: str = "ko",
     kind: Optional[str] = None,
 ) -> list[str]:
-    """The five mention lines that survive the 0349 shrink (P0005 [notes] / D0004 D-4).
-
-    Every request format, field description and JSON example the mention used to carry now
-    lives behind GET /help/tools — the mention was growing one block per tool and workers
-    were reading the top and skipping the rest (R0001). What stays is exactly what a worker
-    that never calls help must still know: call help first, do not touch the disk, which
-    tools exist, the token, and where the detail is. All five are built from fixed strings
-    plus ``kind``, so no lookup failure can empty the section (D0004 D-6).
-
-    ``kind`` comes from tool_registry — the same judge the permission check uses — so the
-    mention can no longer advertise a tool the server would refuse. Pass it directly when
-    the caller holds a token rather than a step type (see q_answer_invoke_service); leave it
-    None to have the step type judged here.
-    """
-    if not raw_token:
-        return []
-    loc = template_provision.normalize_locale(locale)
-    if kind is None:
-        kind, _reason = tool_registry.kind_for_step(action_scope, step_type)
-    names = tool_registry.tool_names(kind, action_scope)
-    if not names:
-        # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
-        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 normal-3).
-        return []
-    text = tool_registry.MENTION_LINES[loc]
-    return [
-        text["first_action"].format(url=f"{base}/help/tools"),
-        text["no_disk_edit"],
-        f"{text['tools_label']}: " + ", ".join(names),
-        f"Authorization: Bearer {raw_token}",
-        text["detail"].format(url=f"{base}/help/tools/{{name}}"),
-    ]
+    """Compatibility entry: ``prompt_blocks`` block ``source_tools.crud`` (the five 0349 mention lines)."""
+    return _source_tools_block.remote_source_crud_lines(
+        base, raw_token, step_type, action_scope=action_scope, locale=locale, kind=kind
+    )
 
 
 def _remote_source_crud_section(
@@ -242,32 +216,10 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
     return lines
 
 
-# 0064 T-B1e (D0004 §3.6 rules 1-5, L0005 2.15, P0006 §2.9): the one wording of the unread-body rules. The Q&A
-# answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
-# documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
-BODY_UNREADABLE_RULES: tuple[str, ...] = (
-    "content가 null이면 읽지 못한 문서로 판단하십시오.",
-    "content_state가 readable이 아니면 읽지 못한 문서로 판단하십시오.",
-    "content_state가 readable이고 front matter뿐이면 읽은 빈 문서로 판단하십시오.",
-    "문서의 열람 여부를 판단한 결과는 내부에서만 쓰고 답변에 나열하지 마십시오.",
-    "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "읽지 못한 문서가 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오.",
-    "대체 근거가 없으면 지어내지 마십시오.",
-    "읽지 못한 문서가 없으면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 마십시오.",
-    "읽지 못한 문서가 현재 답변과 무관하면 열람 상태 보고를 쓰지 마십시오.",
-    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
-    "질문이 읽지 못한 문서의 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 표시하십시오. 이 표시는 필요한 문서의 미열람 보고와 별개로 하십시오.",
-    "이관 안내가 제공된 경우에만 그 안내의 조건으로 이관 여부를 판단하십시오. 문서를 읽지 못한 사실을 새 이관 조건으로 삼지 마십시오.",
-    "읽지 못한 이유가 권한 오류(403)이면 이 이유만으로 이관하지 마십시오. 이관 안내가 있으면 사람이 승인하거나 부여해야 하는 접근·실행 권한인지 그 안내에 따라 판단하십시오.",
-)
-
-BODY_UNREADABLE_ANSWER_REFERENCE = (
-    "[문서 조회 도구]의 본문 미열람 규칙에 따라, 필요한 미열람 문서의 문서 번호·사유(content_state 값)·"
-    "답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히고 대체 근거를 지어내지 마십시오. "
-    "미열람 문서가 없거나 답변과 무관하면 열람 상태 보고를 쓰지 마십시오. "
-    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오. "
-    "질문이 미열람 문서 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 별도로 표시하십시오."
-)
+# 0064 T-B1e: the unread-body rules and the bounded document reads now live in the prompt block registry
+# (prompt_blocks/blocks/documents.py, flowgate.v02test.0061 card 4). The names stay importable from here.
+BODY_UNREADABLE_RULES = _documents_block.BODY_UNREADABLE_RULES
+BODY_UNREADABLE_ANSWER_REFERENCE = _documents_block.BODY_UNREADABLE_ANSWER_REFERENCE
 
 
 def _document_lookup_lines(
@@ -277,35 +229,8 @@ def _document_lookup_lines(
     project: str = "",
     doc_id: str = "",
 ) -> list[str]:
-    """Advertise the bounded document reads added by group 0370.
-
-    These endpoints existed but the worker mentions still advertised only the legacy full-body
-    GET. Keep one shared block for creation/edit, workflow, review, chat and Q-answer work so a
-    worker can discover the efficient route at the point where it is about to read documents.
-
-    Merge note (group 0372 set 3 x group 0370): the document mentions built in THIS module no
-    longer inline these lines — `document_access` (help_catalog._content_document_access) serves
-    the same endpoints behind the help index, which every mention now teaches. The chat and
-    Q-answer mentions are not help-index clients, so invoke_mention_service and
-    q_answer_invoke_service still call this builder directly; that is why the line builder
-    survives the shrink while its `_document_lookup_section` wrapper does not.
-    """
-    target = doc_id or "<doc_id>"
-    project_filter = f"&project={project}" if project else ""
-    return [
-        "Read only the document data you need; use the full-document GET only when necessary:",
-        f"- Metadata without body: GET {base}/document/{target}/meta",
-        f"- Outline without body: GET {base}/document/{target}/outline",
-        f"- One section from that outline: GET {base}/document/{target}/section?section_id=<section_id>",
-        f"- Relationships without body: GET {base}/document/{target}/relations",
-        (
-            f"- Search bodies with match locations/context: GET {base}/search/documents/content"
-            f"?q=<keyword>{project_filter}&include_matches=true&context_lines=2&hits_per_doc=5"
-        ),
-        "Section reads accept exactly one of section, section_id, lines, or chars.",
-        *BODY_UNREADABLE_RULES,          # 0064 T-B1e: always, right before the credential line (P0006 §2.9 ②)
-        f"Authorization: Bearer {raw_token}",
-    ]
+    """Compatibility entry: ``prompt_blocks`` block ``documents.lookup``."""
+    return _documents_block.document_lookup_lines(base, raw_token, project=project, doc_id=doc_id)
 
 
 # ── Central help-index block (group 0372 set 3 — L-0005 §2-10) ────────────────
@@ -348,7 +273,7 @@ _HELP_INDEX_TEXT: dict[str, str] = {
 
 def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
     loc = template_provision.normalize_locale(locale)
-    from flowgate.graph_read.tools import cli_mention
+    from modules.flow_gate.services.prompt_blocks.blocks.cards import graph_state_read as cli_mention
     return _section(
         _HELP_INDEX_HEADER[loc],
         _HELP_INDEX_TEXT[loc].format(base=base, token=raw_token),
