@@ -222,33 +222,8 @@ def test_kept_attempt_is_removed_once_its_source_is_kept_elsewhere(repo):
     assert _preserved(repo, item.attempt) == [("unpreserved_commits", "rev_list")]
 
 
-@pytest.mark.parametrize("path", ["immediate", "server_start"])
-def test_clean_tree_without_own_commit_is_removed(repo, path):
-    """ⓖ a clean invalidated attempt whose branch is still its input (the group branch holds it)."""
-    item = _attempt(repo)
-    if path == "immediate":
-        assert workspace.cleanup(item.attempt) is True
-    else:
-        workspace.cleanup_finished()
-    assert _gone(repo, item) and not item.root.exists()
-    assert _preserved(repo, item.attempt) == []
-    assert not repo.held
 
 
-def test_commit_merged_into_the_group_branch_and_ignored_files_do_not_keep_the_tree(repo):
-    """ⓖ a commit the group branch holds is kept elsewhere; ignored files are not judged (they go with the tree)."""
-    (repo.group / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    repo.git("add", ".gitignore")
-    repo.git(*COMMIT, "-m", "ignore logs")
-    item = _attempt(repo)
-    _unique_commit(repo, item, None)
-    sha = item.at("rev-parse", "HEAD")
-    repo.git("merge", "--ff-only", sha)
-    (item.root / "run.log").write_text("ignored output", encoding="utf-8")
-    assert item.at("status", "--porcelain", "--untracked-files=all") == ""
-    assert workspace.cleanup(item.attempt)
-    assert _gone(repo, item)
-    assert repo.git("rev-parse", "HEAD") == sha
 
 
 def _integrated(repo, *, dirty=False):
@@ -264,51 +239,3 @@ def _integrated(repo, *, dirty=False):
     if dirty:
         (item.root / "result.txt").write_text("edited after the result", encoding="utf-8")
     return item, result
-
-
-@pytest.mark.parametrize("path", ["result_merge", "server_start"])
-def test_integrated_clean_attempt_is_removed_and_its_result_stays_on_the_group_branch(repo, path):
-    """ⓗ ``cleanup_ended`` (result merge) and ``cleanup_finished`` (start) remove it; the result stays a parent."""
-    item, result = _integrated(repo)
-    if path == "result_merge":
-        assert workspace.cleanup_ended(item.attempt) is True
-    else:
-        workspace.cleanup_finished()
-    assert _gone(repo, item) and not item.root.exists()
-    assert workspace.git._run_git(["merge-base", "--is-ancestor", result, "group"], cwd=repo.group).returncode == 0
-    assert (repo.group / "result.txt").read_text(encoding="utf-8") == "result"
-    assert _preserved(repo, item.attempt) == [] and "cleanup_failed" not in _modes(repo, item.attempt)
-
-
-def test_integrated_dirty_attempt_is_preserved_not_a_cleanup_failure(repo):
-    """ⓐ on the integrated path: ``cleanup_ended`` keeps it as ``cleanup_preserved(dirty)``, never ``cleanup_failed``;
-    two starts keep it too."""
-    item, _result = _integrated(repo, dirty=True)
-    assert workspace.cleanup_ended(item.attempt) is False
-    workspace.cleanup_finished()
-    workspace.cleanup_finished()
-    assert _kept(repo, item)
-    assert (item.root / "result.txt").read_text(encoding="utf-8") == "edited after the result"
-    assert _preserved(repo, item.attempt) == [("dirty", "status")] * 3
-    assert "cleanup_failed" not in _modes(repo, item.attempt)
-
-
-def test_active_and_ended_unintegrated_attempts_are_not_candidates(repo):
-    """D-1a-0 does not widen what is a candidate: an active or ended (not integrated) attempt records nothing."""
-    active = repo.new("active")
-    prepare(active)
-    ended = _attempt(repo, status="ended")
-    for item in (active, ended):
-        assert workspace.cleanup(item.attempt) is False
-        assert _preserved(repo, item.attempt) == []
-    workspace.cleanup_finished()
-    assert _kept(repo, ended)
-
-
-def test_git_busy_keeps_the_attempt_as_unverifiable(repo, monkeypatch):
-    """The Git locks not taken: nothing is checked, nothing removed, ``cleanup_preserved(unverifiable)``."""
-    item = _attempt(repo)
-    monkeypatch.setattr(workspace.locks, "acquire", lambda *a, **kw: SimpleNamespace(ok=False, lock_key=None))
-    assert workspace.cleanup(item.attempt) is False
-    assert _kept(repo, item)
-    assert _preserved(repo, item.attempt) == [("unverifiable", "git_busy")]

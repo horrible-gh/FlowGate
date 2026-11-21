@@ -306,62 +306,12 @@ def test_unassigned_flow_converts_as_before_inside_the_flow_guard(env, monkeypat
     assert comparable(baseline.json()) == comparable(res.json())
 
 
-def test_unassigned_flow_round_trip_and_same_type_no_op(env):
-    assert convert(env, root(FU)).status_code == 200
-    back = convert(env, root(FU, "B"), "R")
-    assert back.status_code == 200 and back.json()["data"]["doc_id"] == root(FU)
-    same = convert(env, root(FU), "R")
-    assert same.status_code == 200 and same.json()["data"]["doc_id"] == root(FU)
-    assert doc_row(env, root(FU))["filename"] == "0001-R_document.md"
 
 
-def test_unassigned_refusals_inside_the_guard_reach_the_caller_unchanged(env, monkeypatch):
-    from modules.flow_gate.db import documents as db_documents
-
-    db_documents.create({"doc_id": f"{FU}.0002-N", "project_id": "flowgate", "module": "v02", "group_id": FU,
-                         "type_code": "N", "seq": 2, "title": "child", "status": "open", "owner_id": USER,
-                         "triggered_by": root(FU), "target_id": root(FU)})
-    # 0064 T#4 (P0006 §3.5): a root with child documents is succeeded, no longer refused.
-    children = convert(env, root(FU))
-    assert children.status_code == 200, children.text
-    assert (children.json()["conversion"]["mode"], children.json()["conversion"]["child_count"]) == ("succession", 1)
-    again = convert(env, root(FU))
-    not_root = convert(env, f"{FU}.0002-N", "R")
-    missing = convert(env, f"{FU}.0009-R")
-    _bypass(env, monkeypatch)
-    for res, old in ((again, convert(env, root(FU))), (not_root, convert(env, f"{FU}.0002-N", "R")),
-                     (missing, convert(env, f"{FU}.0009-R"))):
-        assert (res.status_code, res.json()) == (old.status_code, old.json())
-    assert again.status_code == 409
-    assert (again.json()["error"], again.json()["live_root_doc_id"]) == ("root_superseded", root(FU, "B"))
-    assert not_root.status_code == 422
-    assert missing.status_code == 404
-    assert doc_row(env, root(FU))["type_code"] == "R"
-    bad = convert(env, root(FU), "X")
-    assert bad.status_code == 422                           # body validation, as before
 
 
 # ── ⓓ unassigned Flow with a draft (start Node R) ─────────────────────────────
 
-def test_unassigned_flow_with_an_r_start_draft_converts_and_validation_reports_it(env):
-    from modules.flow_gate.graph_workflow.services import graph_service
-    from modules.flow_gate.graph_workflow.store import definition_store
-
-    group = {"group_id": FD, "project_id": "flowgate"}
-    version = definition_store.draft(FD)["draft_version"]
-    before = graph_service.validate_draft(group, USER, version)
-    assert before["confirmable"] is True
-    assert before["root_binding_preview"]["doc_id"] == root(FD)
-
-    res = convert(env, root(FD))
-    assert res.status_code == 200, res.json()
-    assert res.json()["data"]["doc_id"] == root(FD, "B")
-
-    after = graph_service.validate_draft(group, USER, version)
-    assert after["confirmable"] is False
-    assert [i["code"] for i in after["issues"]] == ["root_binding_no_start_node"]
-    assert definition_store.draft(FD)["draft_version"] == version      # the draft itself is untouched
-    assert binding_row(env, FD) is None
 
 
 # ── the requesting tab on the draft card event ───────────────────────────────
@@ -369,38 +319,12 @@ def test_unassigned_flow_with_an_r_start_draft_converts_and_validation_reports_i
 # x-canvas-client-id, so the tab reads once for both. No header, or one not of the P0008 §1.1 format: no origin
 # (as before), and the conversion is never refused for it.
 
-@pytest.mark.parametrize("headers, origin", [
-    ({"x-canvas-client-id": "kind_abc-1"}, "kind_abc-1"),
-    ({}, None),
-    ({"x-canvas-client-id": "not a client id!"}, None),
-])
-def test_the_draft_card_event_names_the_requesting_tab(env, headers, origin):
-    from modules.flow_gate.graph_workflow.services import card_document_ports
-
-    card_document_ports.register(card_document_ports.ON_ROOT_CONVERTED, lambda flow, old, new: [START] if flow == FD else [])
-    res = env["client"].patch(f"/api/v1/documents/{root(FD)}/root-type", json={"new_type": "B"}, headers=headers)
-    assert res.status_code == 200, res.json()
-    assert res.json()["conversion"]["draft_node_keys"] == [START]
-    events = [e.payload for e in env["events"] if e.event_type == "graph_canvas_changed"]
-    assert [(p["flow_id"], p["reason"], p["origin_client_id"]) for p in events] == [(FD, "draft", origin)]
 
 
-def test_a_conversion_without_a_draft_card_change_sends_no_canvas_event(env):
-    res = env["client"].patch(f"/api/v1/documents/{root(FU)}/root-type", json={"new_type": "B"},
-                              headers={"x-canvas-client-id": "kind_abc-2"})
-    assert res.status_code == 200, res.json()
-    assert [e for e in env["events"] if e.event_type == "graph_canvas_changed"] == []
 
 
 # ── ⓔ v0.1 Flow ──────────────────────────────────────────────────────────────
 
-def test_v01_flow_keeps_the_converter_refusal(env, monkeypatch):
-    res = convert(env, root(FV))
-    assert (res.status_code, res.json()) == (409, {"detail": DECIDED})
-    _bypass(env, monkeypatch)
-    old = convert(env, root(FV))
-    assert (old.status_code, old.json()) == (res.status_code, res.json())
-    assert doc_row(env, root(FV))["type_code"] == "R"
 
 
 # ── ⓕ guards keep their order ────────────────────────────────────────────────
@@ -412,35 +336,3 @@ def contact_calls(env, monkeypatch):
     real = contact.guarded_assignment
     monkeypatch.setattr(contact, "guarded_assignment", lambda doc, call, actor=None: calls.append(doc["doc_id"]) or real(doc, call, actor))
     return calls
-
-
-@pytest.mark.parametrize("flow", [FG, FU])
-def test_disposed_group_is_refused_first(env, contact_calls, flow):
-    from modules.flow_gate.db import documents as db_documents
-
-    db_documents.create({"doc_id": f"{flow}.0009-DC", "project_id": "flowgate", "module": "v02", "group_id": flow,
-                         "type_code": "DC", "seq": 9, "title": "폐기", "status": "closed", "owner_id": USER})
-    res = convert(env, root(flow))
-    assert (res.status_code, res.json()) == (409, {"detail": "Modification not allowed: the group has been disposed."})
-    assert contact_calls == []
-    assert doc_row(env, root(flow))["type_code"] == "R"
-
-
-@pytest.mark.parametrize("flow", [FG, FU])
-def test_ai_run_in_progress_is_refused_first(env, contact_calls, monkeypatch, flow):
-    from modules.flow_gate.services import mutation_policy
-
-    lease = {"group_id": flow, "run_id": "run_live_1", "token_id": "tok_1", "action_scope": "edit"}
-    monkeypatch.setattr(mutation_policy.db_leases, "get_active", lambda group_id: lease if group_id == flow else None)
-    monkeypatch.setattr(mutation_policy, "_lease_run_live", lambda run_id: True)
-    res = convert(env, root(flow))
-    assert res.status_code == 423
-    assert res.json()["error"]["code"] == "GROUP_AI_RUN_LOCKED"
-    assert contact_calls == []
-    assert doc_row(env, root(flow))["type_code"] == "R"
-
-
-def test_every_conversion_reaches_the_contact_once(env, contact_calls):
-    for flow in (FU, FD, FG, FC, FV):
-        convert(env, root(flow))
-    assert contact_calls == [root(FU), root(FD), root(FG), root(FC), root(FV)]

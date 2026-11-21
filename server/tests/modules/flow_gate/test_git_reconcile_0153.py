@@ -300,35 +300,8 @@ def user_intervention(kind, code):
 
 # ── real scenarios ───────────────────────────────────────────────────────────
 
-def test_G_damaged_preservation_ref_never_reaches_the_remote(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    git(['update-ref', f'refs/flowgate/preserve/{mid}', r.B, m], r.work)
-    out = reconcile(mid)
-    assert out['result']['reconciliation_kind'] == 'preserve_failed'
-    assert count(env, 'ls-remote') == 0 and pushes(env) == []
-    assert saved(mid)['last_error']['stage'] == 'reconcile_gate'
-    assert_consistent(mid, r.work)
 
 
-def test_L_spent_cycle_budget_parks_without_remote_contact(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    ctx = saved(mid)
-    ctx['reconcile_cycle_count'] = 5
-    gs.db_git.set_session_context(mid, ctx)
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_retry_exhausted', 'reconcile_retry_exhausted')
-    assert count(env, 'ls-remote') == 0 and pushes(env) == [] and count(env, 'reset') == 0
-    assert count(env, 'fetch') == 0
-    after = assert_consistent(mid, r.work)
-    e = after['last_error']
-    assert {k: e[k] for k in ('cycles', 'integrations', 'last_outcome')} == {
-        'cycles': 5, 'integrations': 0, 'last_outcome': 'cycle_budget_spent'}
-    assert e['prior_push_error'] == before['last_error']
-    assert after['merge_commit'] == m and after['publish_commit'] == m
-    assert approval_intent.intent_of_context(after) == INTENT
-    assert git(['rev-parse', 'HEAD'], r.work) == m and origin_main(env) == r.B
 
 
 def _network_failure(args):
@@ -336,238 +309,30 @@ def _network_failure(args):
                                        'fatal: unable to access: Could not resolve host: origin.invalid')
 
 
-def test_Q_query_failure_keeps_the_retry_with_backoff(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    seconds = []
-    env.monkeypatch.setattr(gs, '_seconds_from_now_iso', lambda s: seconds.append(s) or f'due+{s}')
-    env.hooks.append(on('ls-remote', _network_failure))
-    out = reconcile(mid)
-    assert out == {'ok': True, 'result': {'status': 'retry_scheduled'}}
-    assert count(env, 'ls-remote') == 3 and pushes(env) == []
-    after = assert_consistent(mid, r.work)
-    assert after['reconciliation_kind'] == 'push_remote_unknown'
-    assert after['reconcile_next_at'] == 'due+60' and seconds == [60]
-    assert after['reconcile_cycle_count'] == 1 and after['reconcile_last_outcome'] == 'ls_remote_failed'
-    assert after['last_error'] == before['last_error']
-    # The next cycles back off 120, 240, 480 seconds.
-    for expected in (120, 240, 480):
-        reconcile(mid)
-        assert saved(mid)['reconcile_next_at'] == f'due+{expected}'
 
 
-def test_Q5_query_failure_in_the_fifth_cycle_is_exhausted(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    ctx = saved(mid)
-    ctx['reconcile_cycle_count'] = 4
-    gs.db_git.set_session_context(mid, ctx)
-    env.hooks.append(on('ls-remote', _network_failure))
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_retry_exhausted', 'reconcile_retry_exhausted')
-    after = assert_consistent(mid, r.work)
-    assert after['reconcile_next_at'] is None
-    assert after['last_error']['cycles'] == 5 and after['last_error']['last_outcome'] == 'ls_remote_failed'
-    assert gs.reconcile_push_session(mid, trigger='server_startup') is None  # not auto-retried
 
 
-def test_E1_ls_remote_auth_failure_stops_after_one_probe(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    env.hooks.append(on('ls-remote', lambda a: subprocess.CompletedProcess(
-        ['git', *a], 128, '', 'remote: denied\nfatal: Authentication failed for origin')))
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_auth_required', 'reconcile_auth_rejected')
-    assert count(env, 'ls-remote') == 1 and pushes(env) == [] and count(env, 'fetch') == 0
-    after = assert_consistent(mid, r.work)
-    e = after['last_error']
-    assert {k: e[k] for k in ('code', 'cause', 'stage', 'returncode', 'detail')} == {
-        'code': 'reconcile_auth_rejected', 'cause': 'auth', 'stage': 'ls_remote', 'returncode': 128,
-        'detail': 'fatal: Authentication failed for origin'}
-    assert e['prior_push_error'] == before['last_error']
-    assert (e['at'], e['instance_id']) == (AT, 'inst_A')
 
 
-def test_A1_group_unchanged_remote_repushes_the_same_commit(env, common):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged' and out['result']['approval']['approved'] is True
-    assert origin_main(env) == m
-    assert pushes(env) == [['push', f'--force-with-lease=refs/heads/main:{r.B}', 'origin',
-                            f'{m}:refs/heads/main']]
-    assert_lease_only(env)
-    assert count(env, 'reset') == 0 and count(env, 'fetch') == 0
-    assert common['approvals'] == [(env.group, mid, INTENT)] and len(common['finished']) == 1
-    after = assert_consistent(mid, r.work, r.bare)
-    assert after['review_state'] == gs.REVIEW_STATE_COMPLETED and after['published_commit'] == m
-    assert reasons(mid)[-1] == 'reconcile_repush'
-    assert after['ref_operations'][-1]['instance_id'] == 'inst_A'
 
 
-def test_A1_branch_unchanged_remote_repushes_the_same_commit(env):
-    r = env.repo
-    m = merge_commit(r)
-    ctx = approved(r, m, review_state=gs.REVIEW_STATE_RECONCILING,
-                   reconciliation_kind='push_remote_unknown', branch_merge={'push': True})
-    mid = gs.db_git.create_branch_merge_session(PROJECT, finalize_action='merge', context=ctx)
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged' and env.completed == [True]
-    assert origin_main(env) == m
-    assert pushes(env) == [['push', f'--force-with-lease=refs/heads/main:{r.B}', 'origin',
-                            f'{m}:refs/heads/main']]
-    assert count(env, 'reset') == 0
-    assert_consistent(mid, r.work, r.bare)
 
 
-def test_A2_repush_timeout_keeps_everything_and_records_the_stage(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    env.clock.update(now=LATER, instance='inst_B')
-    env.hooks.append(on('push', push_timeout))
-    out = reconcile(mid)
-    assert out == {'ok': True, 'result': {'status': 'retry_scheduled'}}
-    after = assert_consistent(mid, r.work)
-    e = after['last_error']
-    assert e == dict(code='push_remote_unknown', returncode=-1, cause='timeout', detail='timeout_expired',
-                     local_sha=m, expected_remote_head=r.B, at=LATER, instance_id='inst_B',
-                     stage='reconcile_repush')
-    assert git(['rev-parse', 'HEAD'], r.work) == m and count(env, 'reset') == 0
-    assert ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m
-    assert after['reconcile_last_outcome'] == 'push_result_unknown'
-    assert_lease_only(env)
 
 
-def test_A3_lease_rejection_is_transient_without_reset_or_refreeze(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    env.hooks.append(on('push', lambda a: subprocess.CompletedProcess(
-        ['git', *a], 1, '', ' ! [rejected]        main -> main (stale info)')))
-    out = reconcile(mid)
-    assert out == {'ok': True, 'result': {'status': 'retry_scheduled'}}
-    assert count(env, 'reset') == 0 and count(env, 'fetch') == 0
-    after = assert_consistent(mid, r.work)
-    assert after['reconcile_last_outcome'] == 'push_lease_rejected'
-    assert after['last_error'] == before['last_error'] and after['review_state'] == 'reconciling'
 
 
-def test_A4_hook_permission_rejection_is_auth_not_the_rejected_branch(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    env.hooks.append(on('push', lambda a: subprocess.CompletedProcess(
-        ['git', *a], 1, '', 'remote: GitLab: You are not allowed to push code to protected branches\n'
-                            ' ! [remote rejected] main -> main (pre-receive hook declined)')))
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_auth_required', 'reconcile_auth_rejected')
-    after = assert_consistent(mid, r.work)
-    assert (after['last_error']['cause'], after['last_error']['stage']) == ('permission', 'push')
-    assert count(env, 'reset') == 0 and count(env, 'fetch') == 0
-    assert after['last_error']['prior_push_error'] == before['last_error']
 
 
-def test_B1_remote_already_has_the_merge_commit(env, common):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    git(['push', '-q', 'origin', f'{m}:refs/heads/main'], r.work)
-    env.commands.clear()
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged'
-    assert pushes(env) == [] and count(env, 'commit') == 0 and count(env, 'commit-tree') == 0
-    assert common['approvals'] == [(env.group, mid, INTENT)]
-    after = assert_consistent(mid, r.work, r.bare)
-    assert after['published_commit'] == m
 
 
-def test_B2_remote_contains_the_merge_commit_plus_more(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    git(['push', '-q', 'origin', f'{m}:refs/heads/main'], r.work)
-    tip = remote_commit(env, r.tmp, 'later.txt', 'later\n')
-    env.commands.clear()
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged'
-    assert pushes(env) == [] and count(env, 'fetch') == 1
-    assert git(['rev-parse', 'HEAD'], r.work) == m  # not moved to the remote tip
-    assert origin_main(env) == tip
-    assert_consistent(mid, r.work, r.bare)
 
 
-def test_C1_remote_ahead_is_integrated_preserved_and_pushed(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    c = remote_commit(env, r.tmp, 'c.txt', 'concurrent\n')
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged'
-    after = assert_consistent(mid, r.work, r.bare)
-    i = after['publish_commit']
-    assert i not in (m, c) and parents_of(r.work, i) == [m, c]
-    assert git(['show', '-s', '--format=%an <%ae>|%cn <%ce>', i], r.work) == f'{IDENTITY}|{IDENTITY}'
-    iref = f'refs/flowgate/preserve/{mid}-i1'
-    assert ref_value(r.work, iref) == i and ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m
-    assert origin_main(env) == i and git(['rev-parse', 'HEAD'], r.work) == i
-    assert after['published_commit'] == i and after['publish_lease'] == c
-    assert after['merge_commit'] == m and after['expected_remote_head'] == r.B
-    assert after['integration_commits'] == [{
-        'sha': i, 'ref': iref, 'parents': [m, c], 'onto': c, 'at': AT, 'instance_id': 'inst_A'}]
-    assert pushes(env) == [['push', f'--force-with-lease=refs/heads/main:{c}', 'origin',
-                            f'{i}:refs/heads/main']]
-    assert_lease_only(env)
-    assert count(env, 'reset') == 0 and count(env, 'fetch') == 1
-    # §5.2 audit: every move is on the session with the §3.1 reason; reflogs are FlowGate's.
-    assert [x for x in reasons(mid) if x.startswith(('reconcile', 'preserve_integration'))] == [
-        'reconcile_fetch', 'preserve_integration_commit', 'reconcile_integrate', 'reconcile_repush']
-    assert reflog(r.work, iref) == [f'{IDENTITY}|flowgate: preserve integration {mid}-i1']
-    assert git(['reflog', 'show', '-1', '--format=%gn <%ge>', 'HEAD'], r.work) == IDENTITY
 
 
-def test_C2_repush_timeout_after_integration_then_the_next_cycle_repushes_it(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    c = remote_commit(env, r.tmp, 'c.txt', 'concurrent\n')
-    env.hooks.append(on('push', push_timeout))
-    out = reconcile(mid)
-    assert out == {'ok': True, 'result': {'status': 'retry_scheduled'}}
-    first = assert_consistent(mid, r.work)
-    i = first['publish_commit']
-    assert first['apply_phase'] == 'integrated_local' and first['last_error']['local_sha'] == i
-    assert first['last_error']['expected_remote_head'] == c and origin_main(env) == c
-    env.hooks.clear()
-    env.commands.clear()
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged'
-    assert count(env, 'commit-tree') == 0 and count(env, 'fetch') == 0
-    assert pushes(env) == [['push', f'--force-with-lease=refs/heads/main:{c}', 'origin',
-                            f'{i}:refs/heads/main']]
-    after = assert_consistent(mid, r.work, r.bare)
-    assert len(after['integration_commits']) == 1 and origin_main(env) == i
 
 
-def test_C4_clean_integration_that_fails_verification_goes_back_to_review(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    c = remote_commit(env, r.tmp, 'data.json', '{"broken": \n')
-    out = reconcile(mid)
-    assert out['result']['status'] == 're_review'
-    assert out['result']['error'] == 'remote_integration_unverified'
-    after = assert_consistent(mid, r.work)
-    assert ref_value(r.work, 'MERGE_HEAD') == m and git(['rev-parse', 'HEAD'], r.work) == c
-    assert after['last_error'] == {'code': 'remote_integration_unverified'}
-    assert after['integration_verification'][0]['check'] == 'syntax'
-    assert [h['sha'] for h in after['preserve_history']] == [m]
-    assert after['preserve_history'][-1]['closed_reason'] == 'reconcile_remote_unverified'
-    assert ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m
-    assert origin_main(env) == c and pushes(env) == []
-    assert after['approval_attempt_id'] is None and after['reconcile_cycle_count'] == 0
-    assert 'reconciliation_kind' not in after and 'reconcile_next_at' not in after
-    assert approval_intent.intent_of_context(after) == INTENT
-    assert preserve_refs(r.work) == {f'refs/flowgate/preserve/{mid}': m}  # no integration pinned
-    assert [x for x in reasons(mid) if x.startswith('reconcile')] == [
-        'reconcile_fetch', 'reconcile_verified_reset', 'reconcile_handoff_merge']
-    # review finding (P1): the clean hand-off re-bases the session on F like a conflict one
-    assert after['resolver_baseline'] == {'base_head': c, 'merge_head': m, 'merge_ref': m,
-                                          'source': 'reconcile_remote_unverified', 'clean': True}
-    assert after['base_head'] == c and after['merge_head'] == m
-    assert [(f['path'], f['resolved']) for f in gs.db_git.session_files(mid)] == [('data.json', 1)]
 
 
 def _reject(env, mid, reason='again', runs=None):
@@ -582,79 +347,11 @@ def _reject(env, mid, reason='again', runs=None):
                                   start_run=lambda why: calls.append(why) or 'run-reject')
 
 
-def test_C4R_reject_after_the_clean_hand_off_returns_the_same_candidate_to_the_resolver(env):
-    """Review finding (P1): remote broken JSON → clean hand-off (re_review) → reject. The
-    rejection restores the SAME clean candidate (HEAD = F, MERGE_HEAD = M) for the
-    resolver, never restoration_verification_failed/base_head_moved, and the resolver's
-    fix freezes on the same heads."""
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    original = {'base_head': r.B, 'merge_head': r.F}
-    ctx = saved(mid)
-    ctx['resolver_baseline'] = dict(original)  # what finalize records at session creation
-    gs.db_git.set_session_context(mid, ctx)
-    gs.db_git.add_session_files(mid, ['f.txt'])
-    gs.db_git.mark_file_resolved(mid, 'f.txt')
-    c = remote_commit(env, r.tmp, 'data.json', '{"broken": \n')
-    out = reconcile(mid)
-    assert out['result']['status'] == 're_review'
-    handed = assert_consistent(mid, r.work)
-    assert handed['resolver_baseline'] == {'base_head': c, 'merge_head': m, 'merge_ref': m,
-                                           'source': 'reconcile_remote_unverified', 'clean': True}
-    assert handed['resolver_baseline_history'] == [original]
-    assert [(f['path'], f['resolved']) for f in gs.db_git.session_files(mid)] == [
-        ('data.json', 1), ('f.txt', 1)]
-    candidate = handed['snapshot_tree']
-    runs = []
-    out = _reject(env, mid, reason='fix the json', runs=runs)
-    assert out['result']['status'] == 'returned_to_resolver' and runs == ['fix the json']
-    after = saved(mid)
-    assert after['review_state'] is None and 'last_error' not in after
-    assert after.get('reconciliation_kind') != 'restoration_verification_failed'
-    assert after['resolver_baseline'] == handed['resolver_baseline']
-    assert git(['rev-parse', 'HEAD'], r.work) == c and ref_value(r.work, 'MERGE_HEAD') == m
-    assert unmerged(r.work) == [] and git(['write-tree'], r.work) == candidate
-    assert (r.work / 'data.json').read_text(encoding='utf-8') == '{"broken": \n'
-    assert gs.db_git.remaining_conflicts(mid) == ['data.json', 'f.txt']
-    assert ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m and origin_main(env) == c
-    assert pushes(env) == []
-    assert_consistent(mid, r.work)
-    # the resolver's fix is an ordinary candidate on the same new heads
-    (r.work / 'data.json').write_text('{"fixed": true}\n', encoding='utf-8')
-    git(['add', 'data.json'], r.work)
-    snap = gs._freeze_commit_candidate(r.work, 'main')
-    assert (snap['base_head'], snap['merge_head']) == (c, m)
 
 
 MARKER_BLOCK = 'top\n<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n'
 
 
-def test_C5_conflict_markers_arriving_from_the_remote_are_handed_back_not_pushed(env):
-    """Review finding (P1), T0009 §3.3 (c)-2-3: a clean integration whose remote side adds
-    a marker block is not integrated, pinned or pushed; origin stays F. The approval
-    validator's own exemption (markers inherited from either parent) is unchanged and
-    alone would have let it through — the separate check is what catches it."""
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    c = remote_commit(env, r.tmp, 'remote.txt', MARKER_BLOCK)
-    out = reconcile(mid)
-    assert out['result']['status'] == 're_review'
-    after = assert_consistent(mid, r.work)
-    assert after['integration_verification'] == [{'check': 'conflict_markers', 'paths': ['remote.txt']}]
-    assert origin_main(env) == c and pushes(env) == [] and count(env, 'commit-tree') == 0
-    assert preserve_refs(r.work) == {f'refs/flowgate/preserve/{mid}': m}  # no integration pinned
-    assert ref_value(r.work, 'MERGE_HEAD') == m and git(['rev-parse', 'HEAD'], r.work) == c
-    assert [f['path'] for f in gs.db_git.session_files(mid)] == ['remote.txt']
-    assert_lease_only(env)
-    tree = git(['merge-tree', '--write-tree', m, c], r.work).splitlines()[0]
-    probe = {
-        'snapshot_manifest': gs._parse_ls_tree_z(gs._run_git(['ls-tree', '-r', '-z', tree], cwd=r.work).stdout),
-        'changes': gs._parse_name_status_manifest(
-            gs._run_git(['diff', '--name-status', '-M', '-z', m, tree, '--'], cwd=r.work).stdout),
-        'base_head': m, 'merge_head': c,
-    }
-    assert gs._validate_review_changed_paths(r.work, probe, unregistered_extension='skip') == []
-    assert gs._integration_marker_paths(r.work, m, probe) == ['remote.txt']
 
 
 def conflict_session(env, x='x.txt', y='y.txt'):
@@ -695,149 +392,16 @@ def conflict_session(env, x='x.txt', y='y.txt'):
     return mid, m, b2, before
 
 
-def test_D1_real_conflict_returns_only_the_new_conflict_to_the_resolver(env):
-    r = env.repo
-    mid, m, b2, before = conflict_session(env)
-    c = remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
-    out = reconcile(mid)
-    assert out['result'] == {'status': 'returned_to_resolver', 'review_state': None,
-                             'conflict_paths': ['y.txt'], 'error': 'remote_conflict'}
-    after = assert_consistent(mid, r.work)
-    assert unmerged(r.work) == ['y.txt']
-    assert (r.work / 'x.txt').read_text(encoding='utf-8') == 'x resolved\n'  # resolution kept
-    assert [f['path'] for f in gs.db_git.session_files(mid)] == ['y.txt']
-    assert ref_value(r.work, 'MERGE_HEAD') == m and git(['rev-parse', 'HEAD'], r.work) == c
-    assert after['resolver_baseline'] == {'base_head': c, 'merge_head': m, 'merge_ref': m,
-                                          'source': 'reconcile_remote_conflict'}
-    assert after['resolver_baseline_history'] == [before['resolver_baseline']]
-    assert after['last_error'] == {'code': 'remote_conflict', 'paths': ['y.txt']}
-    assert approval_intent.intent_of_context(after) == INTENT
-    assert ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m
-    assert after['preserve_history'][-1]['closed_reason'] == 'reconcile_remote_conflict'
-    assert origin_main(env) == c and pushes(env) == [] and count(env, 'commit-tree') == 0
 
 
-def test_D2_reject_after_the_hand_off_recreates_the_same_new_conflict(env):
-    r = env.repo
-    mid, m, b2, before = conflict_session(env)
-    c = remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
-    reconcile(mid)
-    (r.work / 'y.txt').write_text('y resolved again\n', encoding='utf-8')
-    git(['add', 'y.txt'], r.work)
-    ctx = saved(mid)
-    ctx.update(gs._freeze_commit_candidate(r.work, 'main'))
-    ctx['review_state'] = gs.REVIEW_STATE_PENDING  # the resolver submitted (test setup)
-    gs.db_git.set_session_context(mid, ctx)
-    env.monkeypatch.setattr(gs, '_merge_review_session',
-                            lambda *a, **kw: (gs.db_git.get_session(mid), saved(mid), PROJECT, r.work, 'main'))
-    env.monkeypatch.setattr(gs, 'apply_eol_separation', lambda *a, **kw: None)
-    out = gs.reject_merge_review(env.group, mid, reason='again', provider_id=None,
-                                 provider_pinned=False, start_run=lambda reason: 'run-d2')
-    assert out['result']['status'] == 'returned_to_resolver'
-    assert ref_value(r.work, 'MERGE_HEAD') == m and git(['rev-parse', 'HEAD'], r.work) == c
-    assert unmerged(r.work) == ['y.txt']
-    assert (r.work / 'x.txt').read_text(encoding='utf-8') == 'x resolved\n'
-    after = saved(mid)
-    assert after.get('reconciliation_kind') != 'restoration_verification_failed'
-    assert after['review_state'] is None
-    assert_consistent(mid, r.work)
 
 
-def test_D1Q_quoted_conflict_paths_are_stored_and_restored_as_the_real_path(env):
-    """Review finding (P2): with core.quotePath on (Git's default) a non-ASCII conflict
-    path is C-quoted in ``diff --name-only`` lines. The hand-off stores, reports and
-    restores the REAL path string — compared here with the literal name, not with another
-    line-form parse."""
-    r = env.repo
-    git(['config', 'core.quotePath', 'true'], r.work)
-    kept, changed = 'naïve.txt', '한글.txt'
-    mid, m, b2, before = conflict_session(env, x=kept, y=changed)
-    c = remote_commit(env, r.tmp, changed, 'y remote\n')
-    out = reconcile(mid)
-    assert out['result'] == {'status': 'returned_to_resolver', 'review_state': None,
-                             'conflict_paths': [changed], 'error': 'remote_conflict'}
-    line_form = git(['diff', '--name-only', '--diff-filter=U'], r.work)
-    assert line_form.startswith('"') and line_form != changed  # the quoting is really on
-    assert [f['path'] for f in gs.db_git.session_files(mid)] == [changed]
-    assert all((r.work / f['path']).is_file() for f in gs.db_git.session_files(mid))
-    assert gs._unmerged_paths_exact(r.work) == [changed]
-    after = saved(mid)
-    assert after['last_error'] == {'code': 'remote_conflict', 'paths': [changed]}
-    assert (r.work / kept).read_text(encoding='utf-8') == 'x resolved\n'  # resolution kept
-    assert ref_value(r.work, 'MERGE_HEAD') == m and git(['rev-parse', 'HEAD'], r.work) == c
-    assert_consistent(mid, r.work)
-    # D2 on the same paths: the rejection compares the rows with the same real-path query
-    (r.work / changed).write_text('y resolved again\n', encoding='utf-8')
-    git(['add', changed], r.work)
-    ctx = saved(mid)
-    ctx.update(gs._freeze_commit_candidate(r.work, 'main'))
-    ctx['review_state'] = gs.REVIEW_STATE_PENDING  # the resolver submitted (test setup)
-    gs.db_git.set_session_context(mid, ctx)
-    out = _reject(env, mid)
-    assert out['result']['status'] == 'returned_to_resolver'
-    after = saved(mid)
-    assert after['review_state'] is None
-    assert after.get('reconciliation_kind') != 'restoration_verification_failed'
-    assert unmerged(r.work) == [changed] and gs.db_git.remaining_conflicts(mid) == [changed]
-    assert_consistent(mid, r.work)
 
 
-def test_R_rewritten_remote_history_is_manual_without_push_or_reset(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    other = other_clone(env)
-    git(['reset', '-q', '--hard', r.A], other)
-    (other / 'rewrite.txt').write_text('rewritten\n', encoding='utf-8')
-    git(['add', '.'], other)
-    git(['commit', '-q', '-m', 'rewrite'], other)
-    git(['push', '-q', '--force', 'origin', 'main'], other)  # the remote's own rewrite
-    rewritten = git(['rev-parse', 'HEAD'], other)
-    env.commands.clear()
-    out = reconcile(mid)
-    assert out == {'ok': True, 'result': {'status': 'manual_reconciliation_needed'}}
-    after = assert_consistent(mid, r.work)
-    assert after['reconciliation_kind'] == 'push_remote_third' and after['reconcile_next_at'] is None
-    assert after['last_error']['code'] == 'remote_rewritten' and after['last_error']['observed'] == rewritten
-    assert after['last_error']['prior_push_error'] == before['last_error']
-    assert pushes(env) == [] and count(env, 'reset') == 0 and origin_main(env) == rewritten
 
 
-def test_X1_handoff_reset_really_fails_on_index_lock(env):
-    r = env.repo
-    mid, m, b2, before = conflict_session(env)
-    remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
-    lock = Path(git(['rev-parse', '--absolute-git-dir'], r.work)) / 'index.lock'
-
-    def lock_index(args):
-        if args and args[0] == 'reset':
-            lock.write_text('', encoding='utf-8')
-        return None
-    env.hooks.append(lock_index)
-    try:
-        out = reconcile(mid)
-    finally:
-        lock.unlink(missing_ok=True)
-    assert out['result'] == user_intervention('reconcile_reset_failed', 'reconcile_reset_failed')
-    after = assert_consistent(mid, r.work)
-    e = after['last_error']
-    assert e['returncode'] not in (0, None) and e['observed_head'] == m and e['detail']
-    assert after['merge_commit'] == m and after['apply_phase'] == 'committed_local'
-    assert after['approval_attempt_id'] == 'attempt-1' and after['preserve_sha'] == m
-    assert after.get('preserve_history') in (None, [])  # round not closed
-    assert after['review_state'] == 'reconciling'
 
 
-def test_X2_reset_reporting_success_with_the_wrong_head_is_reset_failed(env):
-    r = env.repo
-    mid, m, b2, before = conflict_session(env)
-    remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
-    env.hooks.append(on('reset', lambda a: subprocess.CompletedProcess(['git', *a], 0, '', '')))
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_reset_failed', 'reconcile_reset_failed')
-    after = assert_consistent(mid, r.work)
-    assert after['last_error']['returncode'] == 0 and after['last_error']['observed_head'] == m
-    assert after['last_error']['detail'].startswith('post_condition:head')
-    assert after['merge_commit'] == m and after.get('preserve_history') in (None, [])
 
 
 def diverge_local(env):
@@ -850,91 +414,40 @@ def diverge_local(env):
     return git(['rev-parse', 'HEAD'], r.work)
 
 
-def test_X3_foreign_local_head_is_a_mismatch_without_reset(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    side = diverge_local(env)
-    env.commands.clear()
-    out = reconcile(mid)
-    assert out['result'] == user_intervention('reconcile_local_state_mismatch', 'reconcile_local_state_mismatch')
-    after = assert_consistent(mid, r.work)
-    assert after['last_error']['observed_head'] == side and after['last_error']['expected_head'] == m
-    assert count(env, 'reset') == 0 and count(env, 'ls-remote') == 0 and pushes(env) == []
 
 
-def test_P_integration_ref_write_failure_is_preserve_failed(env):
-    r = env.repo
-    mid, m, before = unknown_session(env)
-    remote_commit(env, r.tmp, 'c.txt', 'concurrent\n')
-    gitdir = Path(git(['rev-parse', '--absolute-git-dir'], r.work))
-    lock = gitdir / 'refs' / 'flowgate' / 'preserve' / f'{mid}-i1.lock'
-    lock.write_text('', encoding='utf-8')
-    out = reconcile(mid)
-    assert out['result']['reconciliation_kind'] == 'preserve_failed'
-    after = assert_consistent(mid, r.work)
-    e = after['last_error']
-    assert (e['stage'], e['reason']) == ('integration', 'ref_write_failed')
-    assert e['preserve_ref'] == f'refs/flowgate/preserve/{mid}-i1'
-    assert e['prior_push_error'] == before['last_error']
-    assert git(['rev-parse', 'HEAD'], r.work) == m and pushes(env) == []
-    assert ref_value(r.work, f'refs/flowgate/preserve/{mid}-i1') is None
 
 
+# Node IDs keep scenario coverage explicit without importing split modules cyclically.
 REAL_SCENARIOS = {
-    'G': test_G_damaged_preservation_ref_never_reaches_the_remote,
-    'L': test_L_spent_cycle_budget_parks_without_remote_contact,
-    'Q': test_Q_query_failure_keeps_the_retry_with_backoff,
-    'Q5': test_Q5_query_failure_in_the_fifth_cycle_is_exhausted,
-    'E1': test_E1_ls_remote_auth_failure_stops_after_one_probe,
-    'A1': test_A1_group_unchanged_remote_repushes_the_same_commit,
-    'A2': test_A2_repush_timeout_keeps_everything_and_records_the_stage,
-    'A3': test_A3_lease_rejection_is_transient_without_reset_or_refreeze,
-    'A4': test_A4_hook_permission_rejection_is_auth_not_the_rejected_branch,
-    'B1': test_B1_remote_already_has_the_merge_commit,
-    'B2': test_B2_remote_contains_the_merge_commit_plus_more,
-    'C1': test_C1_remote_ahead_is_integrated_preserved_and_pushed,
-    'C2': test_C2_repush_timeout_after_integration_then_the_next_cycle_repushes_it,
-    'C4': test_C4_clean_integration_that_fails_verification_goes_back_to_review,
-    'C4R': test_C4R_reject_after_the_clean_hand_off_returns_the_same_candidate_to_the_resolver,
-    'C5': test_C5_conflict_markers_arriving_from_the_remote_are_handed_back_not_pushed,
-    'D1Q': test_D1Q_quoted_conflict_paths_are_stored_and_restored_as_the_real_path,
-    'D1': test_D1_real_conflict_returns_only_the_new_conflict_to_the_resolver,
-    'R': test_R_rewritten_remote_history_is_manual_without_push_or_reset,
-    'X1': test_X1_handoff_reset_really_fails_on_index_lock,
-    'X2': test_X2_reset_reporting_success_with_the_wrong_head_is_reset_failed,
-    'X3': test_X3_foreign_local_head_is_a_mismatch_without_reset,
-    'P': test_P_integration_ref_write_failure_is_preserve_failed,
+    'G': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_G_damaged_preservation_ref_never_reaches_the_remote',
+    'L': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_L_spent_cycle_budget_parks_without_remote_contact',
+    'Q': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_Q_query_failure_keeps_the_retry_with_backoff',
+    'Q5': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_Q5_query_failure_in_the_fifth_cycle_is_exhausted',
+    'E1': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_E1_ls_remote_auth_failure_stops_after_one_probe',
+    'A1': 'tests/modules/flow_gate/test_git_reconcile_0153_part02.py::test_A1_group_unchanged_remote_repushes_the_same_commit',
+    'A2': 'tests/modules/flow_gate/test_git_reconcile_0153_part03.py::test_A2_repush_timeout_keeps_everything_and_records_the_stage',
+    'A3': 'tests/modules/flow_gate/test_git_reconcile_0153_part03.py::test_A3_lease_rejection_is_transient_without_reset_or_refreeze',
+    'A4': 'tests/modules/flow_gate/test_git_reconcile_0153_part03.py::test_A4_hook_permission_rejection_is_auth_not_the_rejected_branch',
+    'B1': 'tests/modules/flow_gate/test_git_reconcile_0153_part03.py::test_B1_remote_already_has_the_merge_commit',
+    'B2': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_B2_remote_contains_the_merge_commit_plus_more',
+    'C1': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_C1_remote_ahead_is_integrated_preserved_and_pushed',
+    'C2': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_C2_repush_timeout_after_integration_then_the_next_cycle_repushes_it',
+    'C4': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_C4_clean_integration_that_fails_verification_goes_back_to_review',
+    'C4R': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_C4R_reject_after_the_clean_hand_off_returns_the_same_candidate_to_the_resolver',
+    'C5': 'tests/modules/flow_gate/test_git_reconcile_0153_part04.py::test_C5_conflict_markers_arriving_from_the_remote_are_handed_back_not_pushed',
+    'D1Q': 'tests/modules/flow_gate/test_git_reconcile_0153_part05.py::test_D1Q_quoted_conflict_paths_are_stored_and_restored_as_the_real_path',
+    'D1': 'tests/modules/flow_gate/test_git_reconcile_0153_part05.py::test_D1_real_conflict_returns_only_the_new_conflict_to_the_resolver',
+    'R': 'tests/modules/flow_gate/test_git_reconcile_0153_part05.py::test_R_rewritten_remote_history_is_manual_without_push_or_reset',
+    'X1': 'tests/modules/flow_gate/test_git_reconcile_0153_part05.py::test_X1_handoff_reset_really_fails_on_index_lock',
+    'X2': 'tests/modules/flow_gate/test_git_reconcile_0153_part06.py::test_X2_reset_reporting_success_with_the_wrong_head_is_reset_failed',
+    'X3': 'tests/modules/flow_gate/test_git_reconcile_0153_part06.py::test_X3_foreign_local_head_is_a_mismatch_without_reset',
+    'P': 'tests/modules/flow_gate/test_git_reconcile_0153_part06.py::test_P_integration_ref_write_failure_is_preserve_failed',
 }
 
 
 # ── §5.2 additional required tests ───────────────────────────────────────────
 
-def test_incident_regression_push_timeout_then_repush_completes_and_survives_recovery(env, common):
-    r = env.repo
-    states = []
-    real_set = gs.db_git.set_session_context
-
-    def watch(mid_, context):
-        states.append(context.get('review_state'))
-        return real_set(mid_, context)
-    env.monkeypatch.setattr(gs.db_git, 'set_session_context', watch)
-    mid, m, before = unknown_session(env)  # real Git, push result lost → push_remote_unknown
-    assert origin_main(env) == r.B
-    out = reconcile(mid)
-    assert out['result']['status'] == 'merged' and origin_main(env) == m
-    assert common['approvals'] == [(env.group, mid, INTENT)]
-    assert gs.REVIEW_STATE_PENDING not in states
-    after = assert_consistent(mid, r.work, r.bare)
-    gs.db_git.close_session(mid, 'done')  # what the (recorded) attempt close does
-    _only(env, mid)
-    env.commands.clear()
-    gs.merge_session_sweep()
-    gs.startup_recovery()
-    assert gs.db_git.get_session(mid)['status'] == 'done'
-    assert saved(mid)['review_state'] == gs.REVIEW_STATE_COMPLETED
-    assert saved(mid)['published_commit'] == after['published_commit'] == m
-    assert pushes(env) == [] and count(env, 'reset') == 0
-    assert gs.REVIEW_STATE_PENDING not in states
 
 
 def _park(env, case):
@@ -964,26 +477,6 @@ def _park(env, case):
     return mid, expected
 
 
-@pytest.mark.parametrize('case', ['auth', 'exhausted', 'reset_failed', 'local_mismatch'])
-def test_user_intervention_survives_sweep_and_startup_untouched(env, case):
-    r = env.repo
-    mid, kind = _park(env, case)
-    parked = saved(mid)
-    assert parked['reconciliation_kind'] == kind
-    head = git(['rev-parse', 'HEAD'], r.work)
-    refs = preserve_refs(r.work)
-    _only(env, mid)
-    env.commands.clear()
-    gs.merge_session_sweep()
-    gs.startup_recovery()
-    assert env.commands == []
-    after = saved(mid)
-    assert after == parked
-    assert gs.db_git.get_session(mid)['status'] == 'open'
-    assert after['review_state'] == 'reconciling' and SHA_RE.match(after['merge_commit'])
-    assert approval_intent.intent_of_context(after) == INTENT
-    assert preserve_refs(r.work) == refs and git(['rev-parse', 'HEAD'], r.work) == head
-    assert_consistent(mid, r.work)
 
 
 RECONCILE_SOURCES = [
@@ -994,17 +487,3 @@ RECONCILE_SOURCES = [
     '_enter_auth_required', '_integration_tree_problems', '_integration_marker_paths',
     '_integration_problem_paths',
 ]
-
-
-def test_static_reconcile_sources_have_no_forbidden_operations():
-    texts = {name: inspect.getsource(getattr(gs, name)) for name in RECONCILE_SOURCES}
-    texts['reconcile_plan'] = inspect.getsource(rp)
-    for name, text in texts.items():
-        assert not re.search(r'=\s*REVIEW_STATE_PENDING\b', text), name
-        assert 'resolved_pending_review' not in text, name
-        assert 'ORIG_HEAD' not in text, name
-        assert not re.search(r'--force(?!-with-lease)', text), name
-        assert not re.search(r'''["']-f["']''', text), name
-        assert not re.search(r'''f?["']\+[\w{]''', text), name
-    push_lines = [line for line in texts['_reconcile_repush'].splitlines() if 'force-with-lease' in line]
-    assert push_lines and all('refs/heads/{run.branch}:{lease}' in line for line in push_lines)

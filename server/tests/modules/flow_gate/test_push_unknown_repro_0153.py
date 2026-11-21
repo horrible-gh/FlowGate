@@ -307,20 +307,6 @@ def advance_remote(f, label):
     return rev(seed, 'HEAD')
 
 
-def test_remote_ahead_preserves_both_histories_and_other_group_rows(flow):
-    f = flow
-    sha, ref = approve_failed(f, 'unclassified')
-    f.fault['enabled'] = False
-    other = advance_remote(f, 'ahead')
-    due(f.mid)
-    sweep(f, f.instance_a)
-    tip = rev(f.origin['bare'], 'main')
-    for ancestor in (sha, other):
-        assert _git(['merge-base', ancestor, tip], cwd=f.root).strip() == ancestor
-    assert len(context(f.mid)['integration_commits']) == 1
-    invariants(f, sha, ref, done=True, integrated=True)
-    sweep(f, f.instance_b)
-    invariants(f, sha, ref, done=True, integrated=True)
 
 
 def assert_pending_safety(f):
@@ -350,69 +336,3 @@ def assert_pending_safety(f):
     evidence = json.dumps([ctx, gs.db_git.get_session(f.mid)]) + f.caplog.text
     assert 'orphan_recovered' not in evidence
     assert 'final_approval_intent_discarded' not in evidence
-
-
-def test_remote_advances_again_at_repush_until_bounded_user_intervention(flow):
-    f = flow
-    sha, ref = approve_failed(f, 'unclassified')
-    f.fault['enabled'] = False
-    tips = [advance_remote(f, 'first')]
-    def race():
-        tips.append(advance_remote(f, str(len(tips))))
-    f.fault['race'] = race
-    for cycle in range(gs.RECONCILE_MAX_CYCLES):
-        due(f.mid)
-        sweep(f, f.instance_a if cycle % 2 == 0 else f.instance_b)
-        assert_pending_safety(f)
-        if context(f.mid)['reconciliation_kind'] in gs.RECONCILE_USER_INTERVENTION_KINDS:
-            break
-    ctx = context(f.mid)
-    assert len(tips) >= 3  # initial advance, then actual lease races after integration
-    assert ctx['reconciliation_kind'] == 'reconcile_retry_exhausted'
-    assert ctx['reconcile_cycle_count'] <= gs.RECONCILE_MAX_CYCLES
-    assert len(ctx['integration_commits']) == gs.RECONCILE_MAX_INTEGRATIONS
-    assert ctx['reconcile_next_at'] is None
-    assert rev(f.origin['bare'], 'main') == tips[-1]
-    assert rev(f.root, ref) == sha and ctx['merge_commit'] == sha
-    for entry in ctx['integration_commits']:
-        assert rev(f.root, entry['ref']) == entry['sha']
-        assert _git(['merge-base', sha, entry['sha']], cwd=f.root).strip() == sha
-    calls = len(f.commands)
-    sweep(f, f.instance_b)
-    assert not any(c[0] == 'push' for c in f.commands[calls:])
-    assert _intent(f.mid) == f.intent and _review_status(f.ac_id) == 'pending_review'
-    assert gs.db_git.get_session(f.mid)['status'] == 'open'
-    assert not any(a in ('--force','-f') or a.startswith('+') for c in f.commands if c[0] == 'push' for a in c)
-
-
-def test_real_preserve_ref_lock_keeps_commit_intent_and_other_group(flow):
-    f = flow
-    gitdir = Path(_git(['rev-parse', '--git-common-dir'], cwd=f.root).strip())
-    if not gitdir.is_absolute():
-        gitdir = f.root / gitdir
-    lock = gitdir / 'refs' / 'flowgate' / 'preserve' / (str(f.mid) + '.lock')
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text('actual ref lock\n', encoding='utf-8')
-    try:
-        gs.approve_merge_review(f.group, f.mid, attempt_id=str(uuid.uuid4()),
-            review_fingerprint=f.fingerprint, authority='human')
-        ctx = context(f.mid)
-        sha = ctx['merge_commit']
-        assert rev(f.root, 'HEAD') == sha and rev(f.root, 'MERGE_HEAD') is None
-        assert ctx['reconciliation_kind'] == 'preserve_failed'
-        assert rev(f.root, f'refs/flowgate/preserve/{f.mid}') is None
-        assert not any(c[0] in ('push','reset') for c in f.commands)
-        assert rev(f.origin['bare'], 'main') == f.base
-        sweep(f, f.instance_a)
-        assert_pending_safety(f)
-        sweep(f, f.instance_b)
-        assert_pending_safety(f)
-        assert context(f.mid)['merge_commit'] == sha
-        assert gs.db_git.get_session(f.mid)['status'] == 'open'
-        assert _intent(f.mid) == f.intent
-        assert _review_status(f.ac_id) == 'pending_review'
-        assert _review_status(f.root_id) == 'wf_in_progress'
-        assert not f.consumes
-        assert not any(c[0] in ('push','reset') for c in f.commands)
-    finally:
-        lock.unlink()

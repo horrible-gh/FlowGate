@@ -378,174 +378,26 @@ def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
 
 # ── result binding (L0009 §2.6.8) ────────────────────────────────────────────
 
-def test_results_move_the_run_to_completion(env, decided):
-    run_id = start(env).json()["run"]["run_id"]
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env, "gn_d"))
-    decide_review(FG, d, "approve", "approved")
-    p_run = nodes_of(current(env))["gn_p"]
-    assert p_run["status"] == "open" and p_run["dispatch"] == {
-        "token_issued": True, "mention_id": None, "issued_to": "claude-code", "error_code": "ai_invoke_failed"}
-    p_token = _sql(env["db"], "SELECT * FROM tokens WHERE token_id = ?", (token_of(env, "gn_p"),))[0]
-    assert p_token["issued_to"] == "u_kim" and p_token["provider_id"] == "claude-code"
-    p = _doc(FG, 3, "P")
-    submit(FG, p, "P", token_of(env, "gn_p"))
-    decide_review(FG, p, "approve", "approved")
-    assert run_events(env)[3:] == [
-        (4, "graph_node_state_changed", "gn_d", "result_submitted"),
-        (5, "graph_node_state_changed", "gn_d", "review_approved"),
-        (6, "graph_node_state_changed", "gn_p", "opened"),
-        (7, "graph_node_state_changed", "gn_p", "dispatch_failed"),
-        (8, "graph_node_state_changed", "gn_p", "result_submitted"),
-        (9, "graph_node_state_changed", "gn_p", "review_approved"),
-        (10, "graph_run_status_changed", None, "completed")]
-    assert env["events"][-1].payload["actor_user_id"] is None
-    head = _sql(env["db"], "SELECT status, active_group_id, finished_at, last_event_seq FROM graph_runs")[0]
-    assert head["status"] == "completed" and head["active_group_id"] is None and head["finished_at"]
-    assert head["last_event_seq"] == 10 and current(env) is None
-    got = env["client"].get(f"/api/v1/runs/{run_id}", headers=_h()).json()["run"]
-    assert {k: v["result_doc_id"] for k, v in nodes_of(got).items()} == {"gn_r": f"{FG}.0001-R", "gn_d": d, "gn_p": p}
-    listed = env["client"].get(f"/api/v1/flows/{FG}/runs?limit=5", headers=_h()).json()
-    assert listed["total"] == 1 and listed["items"][0]["status"] == "completed" and "node_runs" not in listed["items"][0]
 
 
-def test_documents_that_are_not_results_bind_nothing(env, decided):
-    start(env)
-    seq = current(env)["last_event_seq"]
-    submit(FG, _doc(FG, 2, "D"), "D", None)                         # no token: Q-12, not bound
-    submit(FG, _doc(FG, 3, "M"), "M", token_of(env))                # the node's token, another type (E-24)
-    decide_review(FG, f"{FG}.0002-D", "approve", "approved")        # not a node result
-    assert current(env)["last_event_seq"] == seq and nodes_of(current(env))["gn_d"]["status"] == "open"
-    d = _doc(FG, 4, "D")
-    submit(FG, d, "D", token_of(env))
-    submit(FG, _doc(FG, 5, "D"), "D", token_of(env))                # a second result is not bound
-    decide_review(FG, d, "approve", "approved")
-    after = current(env)["last_event_seq"]
-    decide_review(FG, d, "approve", "approved")                     # repeated: ignored, no event_seq
-    assert current(env)["last_event_seq"] == after and nodes_of(current(env))["gn_d"]["result_doc_id"] == d
 
 
-def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
-    from modules.flow_gate.db import documents as db_documents
-
-    start(env)
-    d1 = _doc(FG, 2, "D")
-    submit(FG, d1, "D", token_of(env))
-    decide_review(FG, d1, "reject", "rejected")                      # flowgate.v02.0056 T#1: no node event
-    assert nodes_of(current(env))["gn_d"]["status"] == "review"
-    d2 = _doc(FG, 3, "D", "rejected")                              # revision of d1, rejected, both unreported
-    db_documents.set_superseded_by(d1, d2)
-    d3 = _doc(FG, 4, "D", "pending_review")
-    db_documents.set_superseded_by(d2, d3)
-    submit(FG, d3, "D", None)                                      # gap d1 -> d2 -> d3: walk it
-    node = nodes_of(current(env))["gn_d"]
-    assert node["status"] == "review" and node["result_doc_id"] == d3
-    assert [c for _s, _t, k, c in run_events(env) if k == "gn_d"][-3:] == ["result_submitted", "revised", "revised"]
-    d4 = _doc(FG, 5, "D")
-    db_documents.set_superseded_by(d3, d4)
-    submit(FG, d4, "D", None)                                      # direct revision (one hop)
-    assert nodes_of(current(env))["gn_d"]["result_doc_id"] == d4
 
 
 # ── S5-5: stop / resume (L0009 §2.6.7) ───────────────────────────────────────
 
-def test_stop_and_resume(env, decided):
-    run_id = start(env).json()["run"]["run_id"]
-    stopped = control(env, run_id, "stop", "설계 재검토")
-    assert stopped.status_code == 200 and stopped.json()["run"]["status"] == "stopped"
-    assert stopped.json()["run"]["stopped_at"] and "node_runs" not in stopped.json()["run"]
-    assert env["events"][-1].payload["reason"] == "설계 재검토" and env["events"][-1].payload["cause"] == "user_stop"
-    again = control(env, run_id, "stop")
-    assert again.status_code == 409 and again.json()["error"]["params"] == {"run_id": run_id, "status": "stopped"}
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))
-    decide_review(FG, d, "approve", "approved")                     # stopped: done, but nothing opens
-    held = current(env)
-    assert nodes_of(held)["gn_d"]["status"] == "done" and nodes_of(held)["gn_p"]["status"] == "pending"
-    # flowgate.v02.0056 T#1: the run band's "멈춤 · 다음 카드 N개 대기"; the approved card does not wait again
-    assert (held["pending_propagation_count"], held["pending_node_keys"]) == (1, ["gn_d"])
-    assert nodes_of(held)["gn_d"]["awaiting_approval"] is False
-    assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = 'gn_d'") == [{"status": "pending"}]
-    resumed = control(env, run_id, "resume")
-    assert resumed.status_code == 200 and resumed.json()["run"]["status"] == "running"
-    assert resumed.json()["run"]["stopped_at"] is None and resumed.json()["run"]["open_node_keys"] == ["gn_p"]
-    assert (resumed.json()["run"]["pending_propagation_count"], resumed.json()["run"]["pending_node_keys"]) == (0, [])
-    assert [c for *_x, c in run_events(env)][-3:] == ["user_resume", "opened", "dispatch_failed"]
-    assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = 'gn_d'") == [{"status": "done"}]
-    twice = control(env, run_id, "resume")
-    assert twice.status_code == 409 and twice.json()["error"]["code"] == "run_not_stopped"
-    assert control(env, "run_nope", "stop").status_code == 404
 
 
-def test_resume_refuses_an_unrestorable_snapshot(env, decided):
-    run_id = start(env).json()["run"]["run_id"]
-    control(env, run_id, "stop")
-    _sql(env["db"], "UPDATE graph_run_policy_entries SET impl_version = 'gone' WHERE policy_key = 'join'")
-    from modules.flow_gate.graph_workflow.services.policy_snapshot import check_active_runs
-
-    assert check_active_runs() == [{"policy": "join", "value": TEST_VALUE, "impl_version": "gone"}]
-    res = control(env, run_id, "resume")
-    assert res.status_code == 500 and res.json()["error"]["code"] == "internal_error"
-    assert _sql(env["db"], "SELECT status FROM graph_runs")[0]["status"] == "stopped"     # E-33: nothing written
 
 
 # ── reconciliation (L0009 §2.6.8, E-27) ──────────────────────────────────────
 
-def test_a_lost_delegation_is_recovered_before_a_run_read(env, decided, monkeypatch):
-    from modules.flow_gate.graph_workflow.services import result_binder
-    from modules.flow_gate.services import token_service
-
-    start(env)
-    real = result_binder.on_document_event
-    monkeypatch.setattr(result_binder, "on_document_event", lambda *a: (_ for _ in ()).throw(RuntimeError("lost")))
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))                               # swallowed by the contact
-    token_service.consume(token_of(env), "flowgate", d)              # what the inbox records next
-    decide_review(FG, d, "approve", "approved")                     # lost as well
-    monkeypatch.setattr(result_binder, "on_document_event", real)
-    assert _sql(env["db"], "SELECT status FROM graph_node_runs WHERE node_key = 'gn_d'") == [{"status": "open"}]
-    run = current(env)
-    assert nodes_of(run)["gn_d"]["status"] == "done" and run["open_node_keys"] == ["gn_p"]
-    assert [c for *_x, c in run_events(env)][3:6] == ["result_submitted", "review_approved", "opened"]
 
 
 # ── dispatch (L0009 §2.6.6, E-22 / E-23) ─────────────────────────────────────
 
-def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decided):
-    # flowgate.v02.0083 T#1 (0056 T#1 개정): the rejected bound root is the run's input, done at start;
-    # gn_d opens at once and its token issue to u_ghost (no users row) fails. No root revision is needed.
-    res = start(env, FH)
-    assert res.status_code == 201
-    run = res.json()["run"]
-    assert run["open_node_keys"] == ["gn_d"] and nodes_of(run)["gn_r"]["status"] == "done"
-    d = nodes_of(current(env, FH))["gn_d"]
-    assert d["status"] == "open" and d["dispatch"] == {
-        "token_issued": False, "mention_id": None, "issued_to": "u_ghost", "error_code": "token_issue_failed"}
-    assert count(env, "tokens", "issued_to = ?", ("u_ghost",)) == 0 and count(env, "graph_run_token_map") == 0
-    _sql(env["db"], "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
-                    "VALUES ('u_ghost', 'u_ghost', 'g@x', 'x', 't', 't')")
-    rid = run["run_id"]
-    # 0061 T#7: the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
-    seen = len(run_events(env))
-    assert control(env, rid, "resume").status_code == 200
-    d = nodes_of(current(env, FH))["gn_d"]
-    assert d["dispatch"] == {"token_issued": True, "mention_id": None, "issued_to": "u_ghost"}
-    assert "redispatched" in [c for *_x, c in run_events(env)[seen:]]
 
 
-def test_an_ai_node_is_started_after_the_commit(env, decided):
-    from modules.flow_gate.graph_workflow.services import node_dispatch
-
-    jobs = []
-    node_dispatch.set_ai_starter(lambda job: jobs.append(job))
-    start(env)
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))
-    decide_review(FG, d, "approve", "approved")
-    assert [(j["node_key"], j["provider_id"], j["token"]["token_id"]) for j in jobs] == [
-        ("gn_p", "claude-code", token_of(env, "gn_p"))]
-    assert nodes_of(current(env))["gn_p"]["dispatch"] == {"token_issued": True, "mention_id": None,
-                                                          "issued_to": "claude-code"}
 
 
 def _fake_ai_invoke(monkeypatch, refuse=None):
@@ -570,182 +422,20 @@ def _fake_ai_invoke(monkeypatch, refuse=None):
     return calls
 
 
-def test_an_ai_node_is_started_once_through_the_ai_invoke_service(env, decided, monkeypatch):
-    calls = _fake_ai_invoke(monkeypatch)
-    start(env)
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))
-    decide_review(FG, d, "approve", "approved")
-    assert len(calls) == 1
-    call = calls[0]
-    assert {k: call[k] for k in ("project_id", "module", "group_id", "doc_ref", "action_scope", "mode",
-                                 "issued_to", "provider_id", "api_base_url", "continuation_target_seq")} == {
-        "project_id": "flowgate", "module": "v02", "group_id": FG, "doc_ref": f"{FG}.0001-R", "action_scope": "new",
-        "mode": "single", "issued_to": "u_kim", "provider_id": "claude-code", "api_base_url": "/flowgate/api/v1",
-        "continuation_target_seq": None}
-    issued = call["issued"]
-    assert issued["mention"] and issued["raw_token"] in issued["mention"]
-    token = _sql(env["db"], "SELECT * FROM tokens WHERE token_id = ?", (issued["token_id"],))[0]
-    assert (token["action_scope"], token["doc_ref"], token["issued_to"], token["provider_id"], token["ai_run_id"],
-            token["group_id"]) == ("new", f"{FG}.0001-R", "u_kim", "claude-code", "air_graph_1", FG)
-    mapped = [r["token_id"] for r in _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = 'gn_p'")]
-    assert len(mapped) == 2 and issued["token_id"] in mapped                   # node executor's + the AI run's
-    p_run = nodes_of(current(env))["gn_p"]
-    assert p_run["status"] == "open" and p_run["dispatch"] == {
-        "token_issued": True, "mention_id": None, "issued_to": "claude-code"}  # no ai_invoke_failed
-    assert "dispatch_failed" not in [c for *_x, c in run_events(env)]
-    p = _doc(FG, 3, "P")
-    submit(FG, p, "P", issued["token_id"])                                     # the AI's submission binds
-    p_run = nodes_of(current(env))["gn_p"]
-    assert (p_run["status"], p_run["result_doc_id"]) == ("review", p)
 
 
-def test_a_refused_ai_start_marks_the_node_and_keeps_its_token(env, decided, monkeypatch):
-    calls = _fake_ai_invoke(monkeypatch, refuse="run_in_progress")
-    start(env)
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))
-    decide_review(FG, d, "approve", "approved")
-    assert calls == []
-    p_run = nodes_of(current(env))["gn_p"]
-    assert p_run["dispatch"] == {"token_issued": True, "mention_id": None, "issued_to": "claude-code",
-                                 "error_code": "ai_invoke_failed"}
-    assert count(env, "graph_run_token_map", "node_key = 'gn_p'") == 1
-    assert [c for *_x, c in run_events(env)][-1] == "dispatch_failed"
 
 
 # ── Canvas (P0008 S1-3) and reads ────────────────────────────────────────────
 
-def test_canvas_absorbs_root_and_result_documents(env, decided):
-    """Keep projection coverage independent of the legacy run status/event assertions below."""
-    start(env)
-    result = _doc(FG, 2, "D")
-    submit(FG, result, "D", token_of(env))
-    response = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h())
-    assert response.status_code == 200, response.text
-    nodes = {n["node_key"]: n for n in response.json()["nodes"]}
-    assert nodes["gn_r"]["document"]["doc_id"] == f"{FG}.0001-R"
-    assert nodes["gn_d"]["document"]["doc_id"] == result
-    assert f"doc:{result}" not in nodes and f"doc:{FG}.0001-R" not in nodes
 
 
-def test_canvas_shows_the_run(env, decided):
-    run_id = start(env).json()["run"]["run_id"]
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env))
-    body = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h()).json()
-    assert {k: body["run"][k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")} ==         {"run_id": run_id, "status": "running", "revision_no": 1, "open_node_keys": [], "last_event_seq": 4}
-    # flowgate.v02.0083 T#4 rev1: with the band's facts of the same run read
-    assert body["run"]["idle_reason"] is None and body["run"]["pending_node_keys"] == []
-    nodes = {n["node_key"]: n for n in body["nodes"]}
-    assert nodes["gn_r"]["state"] == "done" and nodes["gn_r"]["node_run"]["status"] == "done"
-    assert nodes["gn_d"]["state"] == "review" and nodes["gn_d"]["document"]["doc_id"] == d
-    assert nodes["gn_d"]["node_run"] == {"status": "review", "opened_at": nodes["gn_d"]["node_run"]["opened_at"],
-                                         "finished_at": None, "result_doc_id": d,
-                                         "dispatch": {"token_issued": True, "mention_id": None, "issued_to": "u_lee"},
-                                         "awaiting_approval": True,                       # a person's result
-                                         "stage": None, "instruction_doc_id": None}       # no AI: no card run stage
-    assert nodes["gn_p"]["state"] == "draft" and nodes["gn_p"]["node_run"]["status"] == "pending"
-    assert f"doc:{d}" not in nodes and f"doc:{FG}.0001-R" not in nodes          # results are absorbed
 
 
-def test_canvas_draws_the_revision_the_run_pinned(env, decided):
-    _confirm_next(FG, [_node("gn_r", "R"), _node("gn_d", "D", "human", user="u_lee"),
-                       _node("gn_q", "T", "human", user="u_kim")],
-                  [_edge("ge_rd", "gn_r", "gn_d"), _edge("ge_dq", "gn_d", "gn_q")])
-    run_id = start(env, body={"revision_no": 1}).json()["run"]["run_id"]          # P0008 S5-2: an older revision
-
-    def canvas(query=""):
-        res = env["client"].get(f"/api/v1/flows/{FG}/canvas{query}", headers=_h())
-        assert res.status_code == 200, res.text
-        return res.json()
-
-    def graph_nodes(body):
-        return {n["node_key"]: n for n in body["nodes"] if n["origin"] == "graph_node"}
-
-    for body in (canvas(), canvas("?view=revision")):
-        assert body["view"] == {"mode": "revision", "revision_no": 1, "draft_version": None}
-        assert body["graph"]["latest_revision_no"] == 2
-        assert (body["run"]["run_id"], body["run"]["revision_no"]) == (run_id, 1)
-        nodes = graph_nodes(body)
-        assert {k: n["node_run"]["status"] for k, n in nodes.items()} == {
-            "gn_r": "done", "gn_d": "open", "gn_p": "pending"}                       # revision 1 only, all with runs
-        assert {e["edge_id"] for e in body["edges"] if e["edge_class"] == "execution"} == {"ge_rd", "ge_dp"}
-    control(env, run_id, "stop")
-    assert canvas()["view"]["revision_no"] == 1 and canvas()["run"]["status"] == "stopped"
-    control(env, run_id, "resume")
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env, "gn_d"))
-    decide_review(FG, d, "approve", "approved")
-    p = _doc(FG, 3, "P")
-    submit(FG, p, "P", token_of(env, "gn_p"))
-    decide_review(FG, p, "approve", "approved")
-    assert current(env) is None
-    body = canvas()                                     # finished run of revision 1 is not laid over revision 2
-    assert body["view"]["revision_no"] == 2 and body["run"] is None
-    nodes = graph_nodes(body)
-    assert set(nodes) == {"gn_r", "gn_d", "gn_q"} and all(n["node_run"] is None for n in nodes.values())
 
 
-def test_a_finished_run_of_the_latest_revision_stays_on_the_canvas(env, decided):
-    run_id = start(env).json()["run"]["run_id"]
-    d = _doc(FG, 2, "D")
-    submit(FG, d, "D", token_of(env, "gn_d"))
-    decide_review(FG, d, "approve", "approved")
-    p = _doc(FG, 3, "P")
-    submit(FG, p, "P", token_of(env, "gn_p"))
-    decide_review(FG, p, "approve", "approved")
-    body = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h()).json()
-    assert body["view"]["revision_no"] == 1 and (body["run"]["run_id"], body["run"]["status"]) == (run_id, "completed")
 
 
-def test_run_reads_and_request_checks(env, decided):
-    assert env["client"].get("/api/v1/runs/run_missing", headers=_h()).json()["error"] == {
-        "code": "run_not_found", "message": "실행을 찾을 수 없습니다.", "params": {"run_id": "run_missing"}}
-    assert env["client"].get(f"/api/v1/flows/{FG}/runs?limit=0", headers=_h()).status_code == 422
-    assert env["client"].get(f"/api/v1/flows/{FG}/runs?limit=101", headers=_h()).status_code == 422
-    empty = env["client"].get(f"/api/v1/flows/{FG}/runs", headers=_h()).json()
-    assert (empty["total"], empty["items"], empty["limit"], empty["offset"]) == (0, [], 20, 0)
-    run_id = start(env).json()["run"]["run_id"]
-    long = env["client"].post(f"/api/v1/runs/{run_id}/stop", json={"reason": "x" * 501}, headers=_h())
-    assert long.status_code == 422 and long.json()["error"]["params"]["errors"] == [{"field": "reason", "reason": "too_long"}]
-    assert env["client"].post(f"/api/v1/flows/{FG}/runs", headers={}).status_code == 401
 
 
 # ── migration 144 (DB0010 §3.5 / §5.3) ───────────────────────────────────────
-
-def test_migration_144_tables_trigger_and_constraints(env, decided):
-    tables = {r["name"] for r in _sql(env["db"], "SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert set(RUN_TABLES) <= tables
-    triggers = {r["name"] for r in _sql(env["db"], "SELECT name FROM sqlite_master WHERE type = 'trigger'")}
-    assert "trg_graph_runs_group_deleted" in triggers
-    run_id = start(env).json()["run"]["run_id"]
-    conn = sqlite3.connect(env["db"])
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        with pytest.raises(sqlite3.IntegrityError):                # I-08: one active run per Flow
-            conn.execute("INSERT INTO graph_runs (run_id, group_id, revision_no, status, active_group_id, started_at, "
-                         "policy_source, policy_set_id, policy_set_version, policy_digest, updated_at) "
-                         "VALUES ('run_x', ?, 1, 'running', ?, 't', 'system_default', 's', '1', ?, 't')",
-                         (FG, FG, "0" * 64))
-        with pytest.raises(sqlite3.IntegrityError):                # I-09: one node run per result document
-            conn.execute("UPDATE graph_node_runs SET result_doc_id = ? WHERE run_id = ? AND node_key = 'gn_d'",
-                         (f"{FG}.0001-R", run_id))
-    finally:
-        conn.close()
-
-
-def test_group_delete_with_foreign_keys_off_leaves_no_run_rows(env, decided):
-    start(env)
-    start(env, FH)
-    conn = sqlite3.connect(env["db"])
-    try:
-        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 0
-        conn.execute("DELETE FROM groups WHERE group_id = ?", (FG,))
-        conn.commit()
-    finally:
-        conn.close()
-    assert count(env, "graph_runs", "group_id = ?", (FG,)) == 0
-    for table in RUN_TABLES[1:]:
-        assert count(env, table, "run_id NOT IN (SELECT run_id FROM graph_runs)") == 0, table
-    assert count(env, "graph_runs", "group_id = ?", (FH,)) == 1

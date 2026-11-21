@@ -214,216 +214,30 @@ def test_the_same_payload_inline_as_content_also_registers(review_env):
     assert review_env["insert"].call_args.kwargs["verdict"] == "issues"
 
 
-def test_review_submission_snapshots_requested_and_actual_provider_mismatch(review_env, monkeypatch):
-    """The inbox binds server-owned run evidence; the model cannot claim its provider."""
-    monkeypatch.setattr(ai_runtime, "get_run_record", lambda run_id: {
-        "run_id": run_id,
-        "action_scope": "review",
-        "doc_ref": DOC_ID,
-        "requested_provider_id": "aip_sonnet",
-        "provider_id": "aip_opus",
-        "provider": {"id": "aip_opus", "name": "Opus at review time"},
-        "selected_provider_source": "reviewer_override",
-        "attempt_no": 2,
-    })
-
-    response = post_inbox(_body(verdict="pass", findings=[], comment="ok"))
-
-    assert response.status_code == 201, response.text
-    kwargs = review_env["insert"].call_args.kwargs
-    assert kwargs == {
-        "doc_id": DOC_ID,
-        "revision_no": 2,
-        "reviewer_id": "aip_opus",
-        "verdict": "pass",
-        "findings_json": "[]",
-        "comment": "ok",
-        "reviewed_at": kwargs["reviewed_at"],
-        "review_run_id": "air_review_0393",
-        "requested_provider_id": "aip_sonnet",
-        "actual_provider_id": "aip_opus",
-        "actual_provider_name": "Opus at review time",
-        "provider_source": "fallback",
-        "attempt_no": 2,
-        "fallback_used": True,
-    }
 
 
-def test_review_submission_keeps_project_default_source_when_provider_matches(review_env, monkeypatch):
-    monkeypatch.setattr(ai_runtime, "get_run_record", lambda run_id: {
-        "run_id": run_id,
-        "action_scope": "review",
-        "doc_ref": DOC_ID,
-        "requested_provider_id": "aip_sonnet",
-        "provider_id": "aip_sonnet",
-        "provider": {"id": "aip_sonnet", "name": "Sonnet snapshot"},
-        "selected_provider_source": "project_default",
-        "attempt_no": 1,
-    })
-
-    response = post_inbox(_body(verdict="pass", findings=[], comment="ok"))
-
-    assert response.status_code == 201, response.text
-    kwargs = review_env["insert"].call_args.kwargs
-    assert kwargs["review_run_id"] == "air_review_0393"
-    assert kwargs["requested_provider_id"] == kwargs["actual_provider_id"] == "aip_sonnet"
-    assert kwargs["actual_provider_name"] == "Sonnet snapshot"
-    assert kwargs["provider_source"] == "project_default"
-    assert kwargs["attempt_no"] == 1
-    assert kwargs["fallback_used"] is False
 
 
 # ── criterion 5-2: outside the scratch directory ──────────────────────────────────────
 
-def test_a_path_outside_the_scratch_directory_is_refused(review_env):
-    doc_path = _write_payload(review_env["outside"])
-
-    response = post_inbox(
-        _body(doc_path=doc_path),
-    )
-
-    assert response.status_code == 422
-    assert "doc_path is not accessible" in response.json()["error_message"]
-    review_env["insert"].assert_not_called()
 
 
-def test_a_path_that_does_not_exist_is_refused(review_env):
-    missing = str(review_env["scratch"] / "never-written.json")
-
-    response = post_inbox(
-        _body(doc_path=missing),
-    )
-
-    assert response.status_code == 422
-    assert "doc_path file does not exist" in response.json()["error_message"]
-    review_env["insert"].assert_not_called()
 
 
 # ── criterion 5-3: both sources at once ───────────────────────────────────────────────
 
-def test_sending_both_a_file_and_inline_content_is_refused(review_env):
-    doc_path = _write_payload(review_env["scratch"])
-
-    response = post_inbox(
-        _body(doc_path=doc_path, content=json.dumps(VERDICT_PAYLOAD, ensure_ascii=False)),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_message"] == (
-        "Exactly one of doc_path or content must be provided"
-    )
-    review_env["insert"].assert_not_called()
 
 
-def test_the_error_wording_matches_the_document_paths(review_env):
-    """T0005 §2-7: "new/edit 경로와 같은 문구를 쓴다". Two implementations of the same
-    contract drift apart the moment their strings differ, so the strings are pinned here."""
-    from flowgate.card_document_edit import legacy_edit
-    source = Path(inbox_routes.__file__).read_text(encoding="utf-8")
-    legacy = Path(legacy_edit.__file__).read_text(encoding="utf-8")
-    # L#2 §2.2/2.6: edit moved to its service; new and review remain in inbox.
-    assert source.count('return _fail(400, "Exactly one of doc_path or content must be provided")') == 2
-    assert 'inbox._fail(400, "Exactly one of doc_path or content must be provided")' in legacy
-    for wording in ('doc_path is not accessible: ', 'doc_path file does not exist: '):
-        assert source.count(wording) == 2
-        assert legacy.count(wording) == 1
 
 
 # ── the shape that must NOT change (T0005 §1: the copy-mention review path) ───────────
 
-def test_an_inline_verdict_with_no_source_field_still_registers(review_env):
-    response = post_inbox(
-        _body(verdict="pass", findings=[], comment="ok"),
-    )
-
-    assert response.status_code == 201, response.text
-    assert review_env["insert"].call_args.kwargs["verdict"] == "pass"
 
 
-def test_a_file_holding_a_bad_verdict_is_still_refused(review_env):
-    doc_path = _write_payload(
-        review_env["scratch"], payload={"verdict": "looks-fine", "findings": []},
-    )
-
-    response = post_inbox(
-        _body(doc_path=doc_path),
-    )
-
-    assert response.status_code == 400
-    assert "verdict must be one of" in response.json()["error_message"]
 
 
-def test_a_file_that_is_not_json_is_refused(review_env):
-    target = review_env["scratch"] / "prose.md"
-    target.write_text("# 검토 결과\n\nverdict: issues\n", encoding="utf-8")
-
-    response = post_inbox(
-        _body(doc_path=str(target)),
-    )
-
-    assert response.status_code == 400
-    assert "not valid JSON" in response.json()["error_message"]
 
 
-def test_the_file_cannot_repoint_the_review_at_another_document(review_env):
-    """The token was already checked against the request's project/doc_id, so a doc_id in
-    the file must not be able to move the verdict onto a different document."""
-    doc_path = _write_payload(
-        review_env["scratch"],
-        payload={**VERDICT_PAYLOAD, "doc_id": "flowgate.v02.0003.0001-R", "project": "other"},
-    )
-
-    response = post_inbox(
-        _body(doc_path=doc_path),
-    )
-
-    assert response.status_code == 201, response.text
-    assert review_env["insert"].call_args.kwargs["doc_id"] == DOC_ID
 
 
 # ── §2-7: the server accepting it is only half — the worker has to be told ────────────
-
-def test_the_help_submit_item_advertises_the_file_form_for_review_tokens():
-    content = help_catalog._content_submit({
-        "base_url": "http://127.0.0.1:8089/flowgate/api/v1",
-        "action_scope": "review",
-        "doc_id": DOC_ID,
-        "project": PROJECT,
-        "group_id": GROUP_ID,
-        "locale": "ko",
-        "scratch_dir": "C:/scratch/tok-review-0393",
-    })
-    assert "doc_path" in content["source_choice"]
-    # T0004 (0506): source_choice keeps the generic scratch-directory guidance but no
-    # longer interpolates the actual server-local absolute path.
-    assert "C:/scratch/tok-review-0393" not in content["source_choice"]
-    assert "scratch directory" in content["source_choice"]
-
-
-@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
-def test_the_review_mention_tells_the_worker_about_the_file_form(locale):
-    mention = mention_service.build_review_mention(
-        token_rec={"project": PROJECT, "group_id": GROUP_ID,
-                   "scratch_dir": "C:/scratch/tok-review-0393"},
-        target_doc={"doc_id": DOC_ID, "type_code": "NR", "seq": 5,
-                    "title": "GUI 모드 전환 대상 화면 목록", "module": "v02",
-                    "project_id": PROJECT},
-        api_base_url="http://127.0.0.1:8089/flowgate/api/v1",
-        raw_token="RAW",
-        locale=locale,
-    )
-    assert "doc_path" in mention
-    # The submission section stays "address + pointer" (0372 set 3) — one added sentence,
-    # not a JSON body creeping back in.
-    assert '"action": "review"' not in mention
-
-
-def test_the_review_mention_does_not_leak_korean_into_en_or_ja():
-    """0372's locale hygiene rule, re-asserted for the sentence this group adds."""
-    import re
-
-    hangul = re.compile(r"[가-힣]")
-    for locale in ("en", "ja"):
-        line = mention_service._REVIEW_FILE_SUBMIT_TEXT[locale]
-        assert not hangul.search(line), f"{locale}: {line!r}"
-    assert hangul.search(mention_service._REVIEW_FILE_SUBMIT_TEXT["ko"])

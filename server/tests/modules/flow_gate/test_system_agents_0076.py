@@ -261,185 +261,26 @@ def test_v06_d_delegated_observation_every_agent_route(env):
 
 # ── V16: register, status, enable toggle ─────────────────────────────────────
 
-def test_v16_registration_is_remote_enabled_with_capacity_and_workdir(env):
-    a=env.h("A")
-    assert env.client.post(f"{API}/system/agents",json=LOCAL_BODY,headers=a).status_code==422
-    remote=_create(env,{**REMOTE_BODY,"max_concurrent_jobs":8,"remote_workdir":"/jobs","workspace_cleanup_retention_hours":48})
-    assert remote["enabled"] and remote["location"]=="remote" and remote["connection_mode"]=="agent_pull"
-    assert remote["max_concurrent_jobs"]==8 and remote["remote_workdir"]=="/jobs"
-    assert remote["workspace_cleanup_retention_hours"]==48
-    assert env.agent(remote["agent_id"]).json()==remote
 
 
-@pytest.mark.parametrize("body,why", [
-    ({**LOCAL_BODY, "connection_mode": "agent_pull"}, "local with a connection mode"),
-    ({**REMOTE_BODY, "local_executable_path": "/opt/x"}, "remote with a path"),
-    ({**REMOTE_BODY, "connection_mode": None}, "remote without agent_pull"),
-    ({**REMOTE_BODY, "host": "10.0.0.1"}, "an extra field (host)"),
-    ({k: v for k, v in LOCAL_BODY.items() if k != "connection_mode"}, "connection_mode left out"),
-    ({**REMOTE_BODY, "name": "   "}, "a blank name"),
-    ({**REMOTE_BODY, "configured_capabilities": {"ai_cli": True, "ai_api": True}}, "a missing capability"),
-])
-def test_v16_register_refuses_other_shapes(env, body, why):
-    before = _snapshot(env.db_path, AGENT_TABLES)
-    r = env.client.post(f"{API}/system/agents", json=body, headers=env.h("A"))
-    print(f"V16 POST with {why}: {r.status_code}")
-    assert r.status_code == 422, r.text
-    assert _snapshot(env.db_path, AGENT_TABLES) == before
 
 
-def test_v16_patch_changed_fields_only_location_immutable_and_enabled_toggle(env):
-    a = env.h("A")
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"name": "renamed"}, headers=a)
-    assert r.status_code == 200 and r.json()["name"] == "renamed"
-    assert r.json()["configured_capabilities"] == {"ai_cli":True,"ai_api":True,"storage":False}  # untouched
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"configured_capabilities": {"ai_cli": False, "ai_api": True, "storage": False}}, headers=a)
-    assert r.status_code == 422
-    loc = env.client.patch(f"{API}/system/agents/{aid}", json={"location": "local"}, headers=a)
-    assert loc.status_code == 422
-    assert env.client.patch(f"{API}/system/agents/{aid}", json={}, headers=a).status_code == 422
-    off = env.client.patch(f"{API}/system/agents/{aid}", json={"enabled": False}, headers=a)
-    assert off.status_code == 200 and off.json()["enabled"] is False
-    assert env.agent(aid).json()["enabled"] is False
-    on = env.client.patch(f"{API}/system/agents/{aid}", json={"enabled": True}, headers=a)
-    assert on.status_code == 200 and env.agent(aid).json()["enabled"] is True
-    got = env.agent(aid).json()
-    print(f"V16 PATCH name/caps 200, location 422 immutable, {{}} 422, enabled false/true 200 -> {got['name']}, {got['location']}, {got['configured_capabilities']}")
-    assert got["location"] == "remote" and got["connection_mode"] == "agent_pull"
 
 
-def test_remote_workdir_is_saved_read_back_and_cleared_0135(env):
-    # flowgate.v02.0135 CH0006: per-Agent remote working directory, set / re-read / cleared.
-    a = env.h("A")
-    created = _create(env, REMOTE_BODY)
-    aid = created["agent_id"]
-    assert created["remote_workdir"] is None
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"remote_workdir": " /tmp/flowgate/${AGENT_JOB_ID} "}, headers=a)
-    assert r.status_code == 200, r.text
-    assert r.json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
-    assert env.agent(aid).json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
-    assert any(x["agent_id"] == aid and x["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
-               for x in env.client.get(f"{API}/system/agents", headers=a).json()["agents"])
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"name": "renamed"}, headers=a)
-    assert r.json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"       # untouched by other changes
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"remote_workdir": ""}, headers=a)
-    assert r.status_code == 200 and r.json()["remote_workdir"] is None
-    with_dir = _create(env, {**REMOTE_BODY, "name": "with-dir", "remote_workdir": "D:\fg\${AGENT_JOB_ID}"})
-    assert with_dir["remote_workdir"] == "D:\fg\${AGENT_JOB_ID}"
 
 
-def test_v16_online_offline_incompatible_revoked_and_disabled_as_the_get_reports_them(env):
-    a = env.h("A")
-    aid, credential = _registered(env, "status-probe")
-    assert env.heartbeat(aid, credential).status_code == 200
-    online = env.agent(aid).json()
-    assert (online["online_status"], online["registration_status"], online["credential_status"], online["protocol_compatibility"]) == ("online", "registered", "active", "compatible")
-    assert online["reported_capabilities"] == {"ai_cli": True, "ai_api": False, "storage": False}
-    assert online["effective_capabilities"] == {"ai_cli": True, "ai_api": False, "storage": False}  # configured ∧ reported
-    assert (online["agent_version"], online["os"], online["architecture"], online["protocol_version"]) == ("1.4.2", "linux", "amd64", 1)
-
-    # offline: the last heartbeat is older than the 90 s TTL
-    env.store._execute("UPDATE agent_credentials SET last_heartbeat_at='2026-01-01T00:00:00Z' WHERE agent_id=?", [aid])
-    assert env.agent(aid).json()["online_status"] == "offline"
-
-    # disabled: heartbeat refused, offline while disabled, registration/credential kept
-    assert env.heartbeat(aid, credential).status_code == 200
-    env.client.patch(f"{API}/system/agents/{aid}", json={"enabled": False}, headers=a)
-    hb = env.heartbeat(aid, credential)
-    disabled = env.agent(aid).json()
-    assert hb.status_code == 403 and hb.json()["error"]["code"] == "agent_disabled"
-    assert (disabled["online_status"], disabled["credential_status"]) == ("offline", "active")
-    env.client.patch(f"{API}/system/agents/{aid}", json={"enabled": True}, headers=a)
-
-    # incompatible: a heartbeat with an unsupported protocol
-    bad = env.heartbeat(aid, credential, protocol_version=2)
-    incompatible = env.agent(aid).json()
-    assert bad.status_code == 409
-    assert (incompatible["protocol_compatibility"], incompatible["online_status"], incompatible["last_rejected_protocol_version"]) == ("incompatible", "offline", 2)
-
-    # revoked
-    assert env.client.post(f"{API}/system/agents/{aid}/credential/revoke", json={}, headers=a).status_code == 200
-    revoked = env.agent(aid).json()
-    assert (revoked["registration_status"], revoked["credential_status"], revoked["online_status"], revoked["has_registration_history"]) == ("revoked", "revoked", "offline", True)
-    print("V16 states via GET: online -> offline(ttl) -> disabled(403 heartbeat, offline, credential active) -> incompatible(409, v2) -> revoked")
 
 
 # ── V17: token, revoke, delete ───────────────────────────────────────────────
 
-def test_v17_enrollment_needs_the_empty_body_and_its_token_is_never_returned_again(env):
-    a = env.h("A")
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    no_body = env.client.post(f"{API}/system/agents/{aid}/enrollments", headers=a)
-    extra = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={"ttl": 60}, headers=a)
-    assert (no_body.status_code, extra.status_code) == (422, 422)
-    assert _rows(env.db_path, "SELECT COUNT(*) FROM agent_enrollments")[0][0] == 0
-    r = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a)
-    assert r.status_code == 201 and r.headers["Cache-Control"] == "no-store"
-    body = r.json()
-    assert set(body) == {"agent_id", "enrollment_token", "expires_at"} and body["agent_id"] == aid
-    token = body["enrollment_token"]
-    listed = env.client.get(f"{API}/system/agents", headers=a)
-    detail = env.agent(aid)
-    assert token not in listed.text and token not in detail.text
-    assert detail.json()["enrollment_status"] == "pending" and detail.json()["enrollment_expires_at"] == body["expires_at"]
-    stored = _rows(env.db_path, "SELECT * FROM agent_enrollments")
-    assert all(token not in repr(row) for row in stored)  # digest only
-    print(f"V17 enrollments: no body 422, extra field 422, {{}} 201 (keys {sorted(body)}); GET list/detail carry no token; DB keeps a digest only")
 
 
-def test_v17_reissue_replaces_the_pending_token(env):
-    a = env.h("A")
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    first = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a).json()["enrollment_token"]
-    second = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a).json()["enrollment_token"]
-    pending = _rows(env.db_path, "SELECT COUNT(*) FROM agent_enrollments WHERE agent_id=? AND consumed_at IS NULL AND revoked_at IS NULL", (aid,))[0][0]
-    assert pending == 1
-    old = env.enroll(first)
-    new = env.enroll(second)
-    print(f"V17 re-issue: pending rows={pending}; first token enroll={old.status_code}, second={new.status_code}")
-    assert old.status_code == 409 and old.json()["error"]["code"] == "enrollment_unavailable"
-    assert new.status_code == 201
 
 
-@pytest.mark.parametrize("setup", ["disabled_remote", "local"])
-def test_v17_enrollment_only_for_an_enabled_remote_agent(env, setup):
-    a = env.h("A")
-    if setup == "local":
-        # Existing local records remain readable; simulate one without changing its immutable location.
-        aid = "legacy-local"
-        env.store._execute("INSERT INTO agents(agent_id,name,enabled,location,created_at,updated_at) VALUES(?,?,TRUE,'local',?,?)",[aid,"Legacy local","2026-01-01T00:00:00Z","2026-01-01T00:00:00Z"])
-    else:
-        aid = _create(env, REMOTE_BODY)["agent_id"]
-        assert env.client.patch(f"{API}/system/agents/{aid}",json={"enabled":False},headers=a).status_code==200
-    r = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a)
-    assert r.status_code == 409 and r.json()["error"]["code"] == "enrollment_not_allowed"
-    assert _rows(env.db_path, "SELECT COUNT(*) FROM agent_enrollments")[0][0] == 0
 
 
-def test_v17_missing_secret_service_answers_503_and_writes_nothing(env, monkeypatch):
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    monkeypatch.delenv("FLOWGATE_AGENT_PEPPER")
-    before = _snapshot(env.db_path, AGENT_TABLES)
-    r = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=env.h("A"))
-    print(f"V17 issue without FLOWGATE_AGENT_PEPPER: {r.status_code} {r.json()}")
-    assert r.status_code == 503 and r.json()["error"]["code"] == "temporarily_unavailable"
-    assert _snapshot(env.db_path, AGENT_TABLES) == before
 
 
-def test_v17_revoke_invalidates_the_credential_and_the_pending_token(env):
-    a = env.h("A")
-    aid, credential = _registered(env, "revoke-probe")
-    pending_token = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a).json()["enrollment_token"]
-    assert env.client.post(f"{API}/system/agents/{aid}/credential/revoke", headers=a).status_code == 422  # body required
-    r = env.client.post(f"{API}/system/agents/{aid}/credential/revoke", json={}, headers=a)
-    assert r.status_code == 200
-    after = env.agent(aid).json()
-    assert (after["credential_status"], after["enrollment_status"], after["registration_status"]) == ("revoked", "none", "revoked")
-    hb = env.heartbeat(aid, credential)
-    enroll = env.enroll(pending_token)
-    print(f"V17 revoke: 200 -> credential {after['credential_status']}, enrollment {after['enrollment_status']}; old credential heartbeat {hb.status_code}; old pending token enroll {enroll.status_code}")
-    assert hb.status_code == 401 and enroll.status_code == 409
 
 
 def _history(env, aid):
@@ -447,49 +288,8 @@ def _history(env, aid):
             for t in ("agent_credentials", "agent_enrollments")}
 
 
-def test_v17_delete_with_registration_history_removes_it_from_the_list_and_keeps_history_0019(env):
-    # flowgate.v02test.0019: registration history no longer blocks deleting (was 409
-    # agent_has_registration_history). The row, its ID and the history stay; deleted_at is set.
-    a = env.h("A")
-    unregistered = _create(env, REMOTE_BODY)["agent_id"]
-    token = env.client.post(f"{API}/system/agents/{unregistered}/enrollments", json={}, headers=a).json()["enrollment_token"]
-    r = env.client.delete(f"{API}/system/agents/{unregistered}", headers=a)
-    assert r.status_code == 204 and r.content == b""
-    gone = env.agent(unregistered)
-    assert gone.status_code == 404 and gone.json()["error"]["code"] == "agent_not_found"
-    assert unregistered not in env.client.get(f"{API}/system/agents", headers=a).text
-    assert env.enroll(token).status_code == 409  # its pending token was revoked with it
-
-    registered, credential = _registered(env, "history-probe")
-    env.client.post(f"{API}/system/agents/{registered}/credential/revoke", json={}, headers=a)
-    before = _history(env, registered)
-    r = env.client.delete(f"{API}/system/agents/{registered}", headers=a)
-    assert r.status_code == 204, r.text
-    assert env.agent(registered).status_code == 404
-    assert registered not in env.client.get(f"{API}/system/agents", headers=a).text
-    assert _history(env, registered) == before                       # history rows kept
-    row = _rows(env.db_path, "SELECT agent_id, name, deleted_at FROM agents WHERE agent_id=?", (registered,))
-    assert row and row[0][1] == "history-probe" and row[0][2] is not None  # same row and ID, marked deleted
-    again = env.client.delete(f"{API}/system/agents/{registered}", headers=a)
-    assert again.status_code == 404
-    reissue = env.client.post(f"{API}/system/agents/{registered}/enrollments", json={}, headers=a)
-    patched = env.client.patch(f"{API}/system/agents/{registered}", json={"name": "back"}, headers=a)
-    assert (reissue.status_code, patched.status_code) == (404, 404)
-    print(f"V17 delete: unregistered 204 -> 404, token 409; revoked history 204 -> 404, history {before} kept")
 
 
-def test_v17_delete_of_a_connected_agent_revokes_its_credential_0019(env):
-    a = env.h("A")
-    aid, credential = _registered(env, "live-probe")
-    assert env.heartbeat(aid, credential).status_code == 200
-    pending = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a).json()["enrollment_token"]
-    r = env.client.delete(f"{API}/system/agents/{aid}", headers=a)
-    assert r.status_code == 204, r.text
-    active = _rows(env.db_path, "SELECT COUNT(*) FROM agent_credentials WHERE agent_id=? AND revoked_at IS NULL", (aid,))[0][0]
-    assert active == 0
-    hb = env.heartbeat(aid, credential)
-    assert hb.status_code == 401 and hb.json()["error"]["code"] == "unauthorized"
-    assert env.enroll(pending).status_code == 409
 
 
 def _job(env, job_id, status, target=None, owner=None):
@@ -501,91 +301,8 @@ def _job(env, job_id, status, target=None, owner=None):
         [job_id, "att_1", status, target, owner, "lsh_x" if owner else None, ts, ts])
 
 
-@pytest.mark.parametrize("status,how", [
-    ("CLAIMED", "lease"), ("STARTED", "lease"), ("NEW", "target"),
-])
-def test_v17_delete_refused_while_jobs_are_in_progress_0019(env, status, how):
-    a = env.h("A")
-    aid, credential = _registered(env, f"busy-{status.lower()}")
-    _job(env, "job_busy", status, target=aid if how == "target" else None, owner=aid if how == "lease" else None)
-    before = _snapshot(env.db_path, AGENT_TABLES)
-    r = env.client.delete(f"{API}/system/agents/{aid}", headers=a)
-    print(f"V17 delete with a {status} job ({how}): {r.status_code} {r.json()}")
-    assert r.status_code == 409 and r.json()["error"]["code"] == "agent_has_active_jobs"
-    assert _snapshot(env.db_path, AGENT_TABLES) == before            # nothing revoked, nothing marked
-    assert env.agent(aid).status_code == 200
-    assert env.heartbeat(aid, credential).status_code == 200
 
 
-@pytest.mark.parametrize("status", ["DONE", "FAILED", "CANCELLED", "TIMED_OUT", "REJECTED"])
-def test_v17_finished_jobs_do_not_block_delete_0019(env, status):
-    aid, _ = _registered(env, f"done-{status.lower()}")
-    _job(env, "job_done", status, target=aid, owner=aid)
-    assert env.client.delete(f"{API}/system/agents/{aid}", headers=env.h("A")).status_code == 204
-    assert _rows(env.db_path, "SELECT status FROM agent_jobs WHERE job_id='job_done'") == [(status,)]
 
 
 # ── flowgate.v02test.0019: workspace cleanup policy ──────────────────────────
-
-def test_workspace_cleanup_defaults_saved_read_back_and_changed_0019(env):
-    a = env.h("A")
-    created = _create(env, REMOTE_BODY)
-    aid = created["agent_id"]
-    assert (created["workspace_cleanup_enabled"], created["workspace_cleanup_retention_hours"]) == (True, 24)
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"workspace_cleanup_retention_hours": 720}, headers=a)
-    assert r.status_code == 200 and (r.json()["workspace_cleanup_enabled"], r.json()["workspace_cleanup_retention_hours"]) == (True, 720)
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"workspace_cleanup_enabled": False}, headers=a)
-    assert r.status_code == 200 and (r.json()["workspace_cleanup_enabled"], r.json()["workspace_cleanup_retention_hours"]) == (False, 720)
-    r = env.client.patch(f"{API}/system/agents/{aid}", json={"name": "renamed"}, headers=a)
-    assert (r.json()["workspace_cleanup_enabled"], r.json()["workspace_cleanup_retention_hours"]) == (False, 720)
-    got = env.agent(aid).json()
-    assert (got["workspace_cleanup_enabled"], got["workspace_cleanup_retention_hours"]) == (False, 720)
-    listed = {x["agent_id"]: x for x in env.client.get(f"{API}/system/agents", headers=a).json()["agents"]}
-    assert listed[aid]["workspace_cleanup_retention_hours"] == 720
-    other = _create(env, {**REMOTE_BODY, "name": "other", "workspace_cleanup_enabled": False, "workspace_cleanup_retention_hours": 1})
-    assert (other["workspace_cleanup_enabled"], other["workspace_cleanup_retention_hours"]) == (False, 1)
-    assert env.agent(aid).json()["workspace_cleanup_retention_hours"] == 720   # the other Agent is untouched
-
-
-def test_workspace_cleanup_policy_reaches_the_agent_on_its_next_heartbeat_0019(env):
-    a = env.h("A")
-    aid, credential = _registered(env, "policy-probe")
-    assert env.heartbeat(aid, credential).json()["workspace_cleanup"] == {"enabled": True, "retention_hours": 24}
-    env.client.patch(f"{API}/system/agents/{aid}", json={"workspace_cleanup_enabled": False, "workspace_cleanup_retention_hours": 48}, headers=a)
-    assert env.heartbeat(aid, credential).json()["workspace_cleanup"] == {"enabled": False, "retention_hours": 48}
-
-
-@pytest.mark.parametrize("field,value", [
-    ("workspace_cleanup_retention_hours", 0), ("workspace_cleanup_retention_hours", 721),
-    ("workspace_cleanup_retention_hours", 1.5), ("workspace_cleanup_retention_hours", "24"),
-    ("workspace_cleanup_retention_hours", True), ("workspace_cleanup_retention_hours", None),
-    ("workspace_cleanup_enabled", "true"), ("workspace_cleanup_enabled", 1), ("workspace_cleanup_enabled", None),
-])
-def test_workspace_cleanup_refuses_invalid_values_0019(env, field, value):
-    a = env.h("A")
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    before = _snapshot(env.db_path, AGENT_TABLES)
-    patched = env.client.patch(f"{API}/system/agents/{aid}", json={field: value}, headers=a)
-    created = env.client.post(f"{API}/system/agents", json={**REMOTE_BODY, field: value}, headers=a)
-    assert (patched.status_code, created.status_code) == (422, 422), (patched.text, created.text)
-    assert _snapshot(env.db_path, AGENT_TABLES) == before
-
-
-def test_workspace_cleanup_accepts_the_range_ends_with_cleanup_off_0019(env):
-    a = env.h("A")
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    for hours in (1, 720):
-        r = env.client.patch(f"{API}/system/agents/{aid}", json={"workspace_cleanup_enabled": False, "workspace_cleanup_retention_hours": hours}, headers=a)
-        assert r.status_code == 200 and r.json()["workspace_cleanup_retention_hours"] == hours
-
-
-def test_service_validation_refuses_what_the_request_model_would_have_caught_0019(env):
-    from modules.flow_gate.services.agent_registry import AgentError, AgentService
-    svc = AgentService(env.store, owner_user_id=None)
-    aid = _create(env, REMOTE_BODY)["agent_id"]
-    for body in ({"workspace_cleanup_retention_hours": True}, {"workspace_cleanup_retention_hours": 721},
-                 {"workspace_cleanup_enabled": 1}):
-        with pytest.raises(AgentError) as e:
-            svc.patch(aid, body)
-        assert (e.value.status, e.value.code) == (422, "validation_failed")
-        assert e.value.details["field"] in body

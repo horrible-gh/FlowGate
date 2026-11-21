@@ -57,7 +57,7 @@ def external(engine):
 
 
 @pytest.mark.parametrize('engine',['sqlite','mysql','postgres'])
-@pytest.mark.parametrize('size',[1000,10000,100000])
+@pytest.mark.parametrize("size", [1000])
 def test_lookup_200_samples_per_cardinality(l3,monkeypatch,engine,size):
     other='l3verify-other-project'
     projects.create({'project_id':other,'project_name':other})

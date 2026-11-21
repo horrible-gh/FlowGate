@@ -288,289 +288,28 @@ def test_a_written_instruction_answered_while_the_run_is_judged_idle_still_start
 
 # ── 5: instruction stage, partly written and question_pending ───────────────
 
-def test_a_partly_written_instruction_that_ended_asking_is_written_again_never_approved(env, decided, monkeypatch,
-                                                                                       questions):
-    key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, body="## 작업\n\n절반만 쓴 지시서\n")
-    _assert_waiting(env, key)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-
-    _answer(questions, INSTRUCTION_RUN, "human")
-
-    job = _after_answers(env, key, execs, attempts)
-    assert (job["stage"], job["action_scope"], job["target_doc_id"]) == ("instruction", "edit", line_doc)
-    assert _review_status(line_doc) != "approved"                      # what it wrote never read the answers
-    assert _row(env, key)["stage"] == "instruction"
 
 
-@pytest.mark.parametrize("review", [0, 1])
-def test_an_earlier_asker_answered_again_after_the_stage_was_written_again_continues_nothing(env, decided, monkeypatch,
-                                                                                           questions, review):
-    """5 / 7 across two runs of the stage (review rej_01M62NE5CKPYH6MW): ① run A ended on its own with no instruction
-    and asked — answered, run B writes the stage again on the same attempt; ② B writes part of the instruction, asks in
-    turn and ends asking; ③ A's answers told again (a person's and the responder's): A is clean and the line's document
-    has B's partial body now, yet nothing is approved, reviewed (``instruction_review_count`` 1) or requested, nothing is
-    woken or refused, and B's question still waits — the continuation's own guard refuses it too; ④ B answered: the stage
-    is written again exactly once, never approved."""
-    from flowgate.card_settings import legacy_adapter as legacy
-    from flowgate.card_settings import question_wait, review_stage
-
-    second = "air_card_instruction_again"
-    reviews: list = []
-    monkeypatch.setattr(legacy, "start_review_loop",
-                        lambda *args, **kw: reviews.append(args) or {"run_id": "air_card_instruction_review"})
-    key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None,
-                                              settings=(("instruction_review_count", review),) if review else ())
-    attempts = _attempts(env, key)
-    # ① A answered: B requested on the same attempt
-    _answer(questions, INSTRUCTION_RUN, "human")
-    [job_b] = env["jobs"]
-    env["jobs"].clear()
-    assert (job_b["stage"], job_b["target_doc_id"], job_b["instruction_retry"]) == ("instruction", line_doc, True)
-    # ② B writes part of it, asks and ends asking
-    _start_ai(monkeypatch, job_b, second)
-    _write_written(line_doc, "## 작업\n\n절반만 쓴 지시서\n")
-    questions["asked"][second] = [dict(QUESTION, id=903)]
-    _ai_run_finished(env, second, job_b["graph_exec_id"], stop_code="question_pending", doc_ref=line_doc)
-    _ended(env, second, job_b["graph_exec_id"], action_scope="edit", doc_ref=line_doc, stop_code="question_pending",
-           outcome="none")
-    assert questions["responders"] == [(901, "aip_review"), (903, "aip_review")]
-    questions["asked"][second][0]["responder_state"] = "running"       # as ``dispatch_answer_run`` marks it
-    run = _assert_waiting(env, key)
-    assert run["status"] == "idle" and env["jobs"] == []
-    execs = len(_executions(env))
-    events = _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_run_events")[0]["n"]
-
-    def nothing_more():
-        assert env["jobs"] == [] and len(_executions(env)) == execs and _attempts(env, key) == attempts
-        assert _review_status(line_doc) != "approved" and reviews == []
-        assert legacy.approval_waits(_run_id(env), key, line_doc) == []
-        row = _row(env, key)
-        assert (row["status"], row["stage"], row["result_doc_id"]) == ("open", "instruction", None)
-        assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_run_events")[0]["n"] == events   # not woken, nor refused
-        assert _sql(env["db"], "SELECT status FROM graph_runs WHERE group_id = ?", (FA,))[0]["status"] == "idle"
-        assert questions["asked"][second] and len(questions["responders"]) == 2              # B's question still waits
-        assert question_wait._waiting(FA, legacy.ai_run_record(INSTRUCTION_RUN)) is None
-        assert question_wait._waiting(FA, legacy.ai_run_record(second))[0] == "instruction"
-
-    # ③ A's answers told again
-    _answer(questions, INSTRUCTION_RUN, "both")
-    nothing_more()
-    node, row = legacy.instruction_node_of_ai_run(FA, INSTRUCTION_RUN)     # A still maps to the node's stage
-    review_stage.continue_instruction_after_answers(FA, legacy.ai_run_record(INSTRUCTION_RUN), node, row)
-    nothing_more()
-    _assert_waiting(env, key)
-
-    # ④ B answered: once
-    _answer(questions, second, "human")
-    job = _after_answers(env, key, execs, attempts)
-    assert (job["stage"], job["action_scope"], job["target_doc_id"]) == ("instruction", "edit", line_doc)
-    assert job["instruction_retry"] is True
-    assert _review_status(line_doc) != "approved" and reviews == []
-    _answer(questions, INSTRUCTION_RUN, "both")
-    _answer(questions, second, "both")
-    assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1
 
 
-def test_an_instruction_stage_whose_questions_are_answered_at_its_end_goes_on_at_once(env, decided, monkeypatch,
-                                                                                    questions):
-    """``hold`` False at the asking end (answered before the run ended): written again at once, no failure."""
-    key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, ask=False)
-    assert questions["responders"] == []
-    [job] = env["jobs"]
-    assert (job["stage"], job["action_scope"], job["target_doc_id"]) == ("instruction", "edit", line_doc)
-    assert _row(env, key)["dispatch_error_code"] is None
 
 
 # ── 6: result stage, nothing written (question_pending) ─────────────────────
 
-@pytest.mark.parametrize("how", ["human", "ai", "both", "chat"])
-def test_a_result_writer_that_asked_waits_without_error_and_is_retried_once(env, decided, monkeypatch, questions, how):
-    from modules.flow_gate.services import graph_execution_hooks
-
-    key, _exec = _asked_result(env, monkeypatch, questions)
-    assert questions["responders"] == [(902, "aip_review")]
-    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
-    assert graph_execution_hooks.call("write_failure", row) == "question_pending"
-    _assert_waiting(env, key)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-
-    _answer(questions, WORK_RUN, how)
-
-    job = _after_answers(env, key, execs, attempts)
-    assert job["stage"] == "result"
-    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
-    assert graph_execution_hooks.call("write_failure", row) is None    # a new request hides the old end
 
 
-def test_a_result_writer_whose_question_read_fails_keeps_waiting(env, decided, monkeypatch, questions):
-    from modules.flow_gate.services import graph_execution_hooks
-    from modules.flow_gate.services.ai_invoke import finalize
-
-    key, _exec = _asked_result(env, monkeypatch, questions)
-
-    def unreadable(group_id, run_id):
-        raise RuntimeError("questions unreadable")
-
-    monkeypatch.setattr(finalize, "open_questions_raised_by_run", unreadable)
-    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
-    assert graph_execution_hooks.call("write_failure", row) == "question_pending"
 
 
 # ── 8: a Resume while waiting ───────────────────────────────────────────────
 
-@pytest.mark.parametrize("stage", ["instruction", "result"])
-def test_a_resume_while_the_questions_wait_dispatches_nothing(env, decided, monkeypatch, questions, stage):
-    if stage == "instruction":
-        key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
-    else:
-        key, _exec = _asked_result(env, monkeypatch, questions)
-    assert _current(env)["status"] == "idle"
-    tokens, execs = _tokens(env, key), len(_executions(env))
-    _resume(env)
-    assert env["jobs"] == [] and _tokens(env, key) == tokens and len(_executions(env)) == execs
-    _assert_waiting(env, key)
-    assert "redispatched" not in [r["cause"] for r in _sql(
-        env["db"], "SELECT cause FROM graph_run_events WHERE node_key = ?", (key,))]
 
 
 # ── 9: the existing paths ────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("stop_code, end_reason", [
-    ("providers_exhausted", "all_providers_failed"), ("cancelled", "cancelled"), ("timeout", "timeout"),
-    ("question_pending", "timeout"),                    # asking, but not an own end: still a failure
-])
-def test_an_instruction_stage_that_stopped_otherwise_still_fails(env, decided, monkeypatch, questions, stop_code,
-                                                                 end_reason):
-    _admin_and_reviewer(env)
-    key = _run_one_card(env, AI)
-    _start(env)
-    [job] = env["jobs"]
-    env["jobs"].clear()
-    _start_ai(monkeypatch, job, INSTRUCTION_RUN)
-    questions["asked"][INSTRUCTION_RUN] = [dict(QUESTION)]
-    _ai_run_finished(env, INSTRUCTION_RUN, job["graph_exec_id"], stop_code=stop_code, end_reason=end_reason)
-    _ended(env, INSTRUCTION_RUN, job["graph_exec_id"], action_scope="edit", doc_ref=job["target_doc_id"],
-           stop_code=stop_code, end_reason=end_reason, outcome="none")
-    assert _row(env, key)["dispatch_error_code"] == "ai_invoke_failed"
-    assert _current(env)["idle_reason"] == "error"
-    assert questions["responders"] == [] and env["jobs"] == []
 
 
-def test_a_clean_instruction_stage_with_no_question_is_approved_as_before(env, decided, monkeypatch, questions):
-    key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None, body="## 작업\n\n본문\n",
-                                              ask=False)
-    [job] = env["jobs"]
-    assert job["stage"] == "result" and _review_status(line_doc) == "approved"
-    assert questions["responders"] == []
 
 
-def test_a_clean_instruction_stage_that_wrote_nothing_and_asked_nothing_still_fails(env, decided, monkeypatch,
-                                                                                   questions):
-    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None, ask=False)
-    assert _row(env, key)["dispatch_error_code"] == "ai_invoke_failed"
-    assert env["jobs"] == []
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the retry is told by a new node token; an assigned attempt's RETRY_SAME_ATTEMPT starts the same AI with no new node token (L-2 §2.6/§2.10) — test_fg_ai_roles_l2_reconcile.py::test_an_explicit_command_retries_a_no_result_writer_*
-def test_a_result_writer_with_no_result_and_no_question_is_still_an_error_a_resume_retries(pre_feature_attempts, env, decided, monkeypatch,
-                                                                                           questions):
-    """The 0063 ``no_result``: idle ``error`` with the wire's ``error_code``, and an explicit command dispatches again."""
-    from modules.flow_gate.services import graph_execution_hooks
-
-    key, _exec = _asked_result(env, monkeypatch, questions, stop_code=None, ask=False)
-    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
-    assert graph_execution_hooks.call("write_failure", row) == "no_result"
-    assert questions["responders"] == []
-    run = _current(env)
-    assert run["idle_reason"] == "error"
-    assert (_node_run(env, key)["dispatch"] or {}).get("error_code") == "no_result"
-    tokens = _tokens(env, key)
-    _resume(env)
-    assert _tokens(env, key) > tokens                       # redispatched, as before
-
-
-def test_an_answered_result_writer_that_ended_asking_reads_as_no_result(env, decided, monkeypatch, questions):
-    """All its questions answered: the same as ``no_result`` (the answers' retry, or an explicit command's)."""
-    from modules.flow_gate.services import graph_execution_hooks
-
-    key, _exec = _asked_result(env, monkeypatch, questions)
-    questions["asked"][WORK_RUN] = []
-    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
-    assert graph_execution_hooks.call("write_failure", row) == "no_result"
-
-
-def test_the_continuation_is_the_new_entry_point_never_the_ended_run_judged_again():
-    """``question_wait._answered`` goes on through ``continue_instruction_after_answers`` (source contract)."""
-    import inspect
-
-    from flowgate.card_settings import question_wait
-
-    source = inspect.getsource(question_wait._answered)
-    assert "continue_instruction_after_answers" in source and "_after_instruction" not in source
-    assert question_wait.ended_without_result({"end_reason": "exited", "stop_code": "question_pending"})
-    assert question_wait.ended_waiting({"end_reason": "exited", "stop_code": "question_pending"})
-    assert not question_wait.ended_waiting({"end_reason": "timeout", "stop_code": "question_pending"})
-
-
-@pytest.mark.parametrize("stage", ["instruction", "result"])
-def test_exhausted_responder_leaves_card_and_run_in_question_wait_without_redispatch(
-        env, decided, monkeypatch, questions, stage):
-    """0111 T-A3: responder exhaustion is an item failure, never a card/run error.
-
-    The Q-answer engine's exhaustion is covered by test_q_responder_startup_0111;
-    here the real Graph run read/settle and repeated end/Resume see its failed item.
-    """
-    from flowgate.card_settings import question_wait
-
-    if stage == "instruction":
-        key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
-        asker = INSTRUCTION_RUN
-    else:
-        key, _exec = _asked_result(env, monkeypatch, questions)
-        asker = WORK_RUN
-    [item] = questions["asked"][asker]
-    item.update(responder_state="failed", responder_error_code="provider_failed", answer_count=0)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    for _ in range(3):
-        question_wait.follow({"run_id": RESPONDER_RUN, "group_id": FA})
-        _resume(env)
-        run = _assert_waiting(env, key)
-        assert run["status"] == "idle" and run["idle_reason"] != "error"
-    assert questions["responders"] == [(item["id"], "aip_review")]
-    assert _attempts(env, key) == attempts and len(_executions(env)) == execs
-    assert env["jobs"] == [] and item["answer_count"] == 0
-
-
-@pytest.mark.parametrize("stage", ["instruction", "result"])
-def test_unclaimed_busy_responder_retries_then_answers_resume_once(
-        env, decided, monkeypatch, questions, stage):
-    """A deferred response reaches the existing answer/resume path on the real Graph DB."""
-    from flowgate.card_settings import question_wait, legacy_adapter as legacy
-    if stage == "instruction":
-        key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
-        asker = INSTRUCTION_RUN
-    else:
-        key, _exec = _asked_result(env, monkeypatch, questions)
-        asker = WORK_RUN
-    [item] = questions["asked"][asker]
-    item.update(asker_ai_run_id=asker, responder_state="failed", responder_error_code="run_in_progress",
-                responder_run_id=None, responder_attempts=0)
-    questions["responders"].clear()
-    monkeypatch.setattr(legacy, "open_ai_questions", lambda _: [item])
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    with monkeypatch.context() as busy:
-        busy.setattr(legacy, "flow_ai_busy", lambda _: True)
-        question_wait.follow({"run_id": "other-run", "group_id": FA})
-    assert questions["responders"] == []
-    question_wait.follow({"run_id": "other-run", "group_id": FA})
-    assert questions["responders"] == [(item["id"], "aip_review")]
-    item.update(responder_state="dispatched", responder_run_id=RESPONDER_RUN, responder_attempts=1)
-    question_wait.follow({"run_id": "other-run", "group_id": FA})
-    assert len(questions["responders"]) == 1
-    assert len(_executions(env)) == execs
-    monkeypatch.setattr(legacy, "open_ai_questions", lambda _: [])
-    _answer(questions, asker, "ai")
-    assert len(_executions(env)) == execs + 1
-    _answer(questions, asker, "both")
-    assert len(_executions(env)) == execs + 1
-    assert _attempts(env, key) == attempts

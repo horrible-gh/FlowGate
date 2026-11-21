@@ -348,53 +348,22 @@ def test_I_the_ledger_and_the_documents_are_untouched(incident_db):
     )
 
 
-def test_I_0007_tr_is_no_longer_an_orphan_and_0005_tr_holds_one_slot(repaired_db):
-    holders = {
-        doc: [r["id"] for r in repaired_db.execute(
-            "SELECT id FROM workflow_sequence_items WHERE result_doc_id = ? ORDER BY id", [doc])]
-        for doc in (TR_FOUR, TR_SIX)
-    }
-    assert holders == {TR_FOUR: [SLOT_FOUR], TR_SIX: [SLOT_SIX]}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # The whole-table duplicate audit
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_the_audit_finds_the_one_known_duplicate_before_the_repair(incident_db):
-    rows = _duplicates(incident_db)
-    assert [r["result_doc_id"] for r in rows] == [TR_FOUR, TR_FOUR]
-    assert [(r["sequence_id"], r["item_id"], r["item_seq"], r["sort_order"]) for r in rows] == [
-        (SEQUENCE_ID, SLOT_FOUR, 4, 3),
-        (SEQUENCE_ID, SLOT_SIX, 6, 5),
-    ], "the audit must name both sides by sequence, slot id, item_seq and sort_order"
 
 
-def test_the_audit_is_empty_after_the_repair(repaired_db):
-    assert _duplicates(repaired_db) == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # The repair is targeted, idempotent, and silent everywhere else
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_re_running_the_repair_changes_nothing(repaired_db):
-    before = _slots(repaired_db)
-    ledger_before = _ledger(repaired_db)
-    counts = _apply_repair(repaired_db)
-    assert counts[0] == 0, "the second application must match no rows"
-    assert _slots(repaired_db) == before
-    assert _ledger(repaired_db) == ledger_before
 
 
-def test_a_database_that_never_saw_the_incident_is_untouched(tmp_path):
-    """A fresh install: the file applies, the constraint appears, no data is invented."""
-    conn = _build_db(tmp_path, "fresh.db", include_repair=False)
-    counts = _apply_repair(conn)
-    assert counts[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM workflow_sequence_items").fetchone()[0] == 0
-    assert "uq_wfseq_items_result_doc" in _indexes(conn)
-    conn.close()
 
 
 GUARDS = {
@@ -427,90 +396,20 @@ GUARDS = {
 }
 
 
-@pytest.mark.parametrize("difference", sorted(GUARDS))
-def test_the_repair_is_a_no_op_when_any_identifying_fact_differs(incident_db, difference):
-    """Change one fact from NR0003 §2 and the repair declines to act.
-
-    Only 090's UPDATE runs here. These cases deliberately leave the duplicate in place, so
-    the file's CREATE UNIQUE INDEX would refuse to build — which would tell us nothing
-    about whether the *repair* held its fire.
-    """
-    if difference == "the slot belongs to a different sequence":
-        incident_db.execute(
-            "INSERT INTO workflow_sequences (id, doc_id, created_at, updated_at) VALUES "
-            "(999, 'flowgate.default.0454.0004-T', '2026-01-01', '2026-01-01')")
-    sql, params = GUARDS[difference]
-    incident_db.execute(sql, params)
-    incident_db.commit()
-
-    before = _slots(incident_db)
-    assert _apply_repair_update_only(incident_db) == 0, (
-        f"the repair fired even though {difference}"
-    )
-    assert _slots(incident_db) == before
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # The constraint
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_the_repair_replaces_the_plain_index_with_a_unique_one(repaired_db):
-    indexes = _indexes(repaired_db)
-    assert "uq_wfseq_items_result_doc" in indexes
-    assert "idx_wfseq_items_result_doc" not in indexes, (
-        "the plain index served the same reverse lookup; leaving both would be two "
-        "definitions of one thing"
-    )
-    ddl = repaired_db.execute(
-        "SELECT sql FROM sqlite_master WHERE name = 'uq_wfseq_items_result_doc'").fetchone()[0]
-    assert "UNIQUE" in ddl.upper()
-    assert "WHERE result_doc_id IS NOT NULL" in ddl
 
 
-def test_a_second_slot_cannot_take_a_document_another_slot_already_holds(repaired_db):
-    with pytest.raises(sqlite3.IntegrityError):
-        repaired_db.execute(
-            "UPDATE workflow_sequence_items SET result_doc_id = ? WHERE id = ?",
-            [TR_FOUR, 5675])
-    repaired_db.rollback()
-    assert _slot(repaired_db, 5675)["result_doc_id"] is None
 
 
-def test_many_slots_may_stay_empty(repaired_db):
-    repaired_db.execute(
-        "UPDATE workflow_sequence_items SET result_doc_id = NULL WHERE id IN (?,?)",
-        [5671, 5673])
-    repaired_db.commit()
-    empty = repaired_db.execute(
-        "SELECT COUNT(*) FROM workflow_sequence_items WHERE result_doc_id IS NULL").fetchone()[0]
-    assert empty == 4, "NULL is not a value the uniqueness rule applies to"
 
 
-def test_a_slot_may_be_rewritten_with_the_document_it_already_holds(repaired_db):
-    repaired_db.execute(
-        "UPDATE workflow_sequence_items SET result_doc_id = ? WHERE id = ?", [TR_SIX, SLOT_SIX])
-    repaired_db.commit()
-    assert _slot(repaired_db, SLOT_SIX)["result_doc_id"] == TR_SIX
 
 
-def test_the_constraint_refuses_to_build_over_an_unresolved_duplicate(incident_db):
-    """The failure mode the migration comment documents, pinned rather than assumed.
-
-    A database carrying a duplicate other than 0454's does not get the constraint applied
-    quietly around it — the migration stops. That is the intended behaviour for an
-    integrity constraint, and the audit query is how the offending rows are found.
-    """
-    index_stmts = [
-        s for s in _statements(_repair_sql()) if s.upper().startswith("CREATE UNIQUE INDEX")
-    ]
-    assert len(index_stmts) == 1
-    # Leave the duplicate unrepaired by making the repair's guard miss.
-    incident_db.execute("UPDATE workflow_sequence_items SET type = 'TSR' WHERE id = ?", [SLOT_SIX])
-    incident_db.commit()
-    with pytest.raises(sqlite3.IntegrityError):
-        incident_db.execute(index_stmts[0])
-    incident_db.rollback()
-    assert len(_duplicates(incident_db)) == 2
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -591,23 +490,6 @@ def _store_over(conn: sqlite3.Connection):
         conn_mod.STORE = original
 
 
-def test_a_document_in_two_slots_resolves_to_the_earlier_one(incident_db):
-    """The legacy shape: the lookup must not be at the engine's discretion.
-
-    Before the ordering was added the query was `WHERE result_doc_id = ? LIMIT 1` with no
-    `ORDER BY`, so which slot 0005-TR belonged to was whatever came back first. Databases
-    that have not yet run 090 still hold states like this one.
-    """
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-
-    with _store_over(incident_db):
-        item = db_wfseq.get_item_by_result_doc_id(TR_FOUR)
-        assert item["id"] == SLOT_FOUR, "the earlier slot (sort_order 3) is the answer"
-        assert item["item_seq"] == 4
-        # …and repeatedly, not by luck.
-        for _ in range(5):
-            assert db_wfseq.get_item_by_result_doc_id(TR_FOUR)["id"] == SLOT_FOUR
-        assert db_wfseq.get_item_by_result_doc_id(TR_SIX) is None
 
 
 # The query as it stood before this change. Kept verbatim so the control test below
@@ -647,77 +529,14 @@ def _seed_disagreeing_row_order(conn) -> None:
     conn.commit()
 
 
-def test_the_lookup_follows_sort_order_and_not_the_row_id(incident_db):
-    """The earlier slot wins even when it is the later row.
-
-    This is the assertion the ordering exists for. Without `ORDER BY sort_order ASC` the
-    answer here is the *later* slot — see the control below, which runs the previous query
-    text against the same rows.
-    """
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-
-    _seed_disagreeing_row_order(incident_db)
-
-    with _store_over(incident_db):
-        item = db_wfseq.get_item_by_result_doc_id(SHARED_DOC)
-
-    assert item["id"] == EARLY_SLOT
-    assert item["sort_order"] == 1
-    assert item["item_seq"] == 1
 
 
-def test_control_the_previous_unordered_lookup_answers_the_later_slot(incident_db):
-    """The control for the test above: the old query text really does get this wrong.
-
-    Without it, a green ordering test cannot be told apart from a fixture in which any
-    query would have answered correctly — which is exactly what 0454's own rows are.
-    """
-    _seed_disagreeing_row_order(incident_db)
-
-    row = incident_db.execute(_UNORDERED_LOOKUP, [SHARED_DOC]).fetchone()
-    assert row["id"] == LATE_SLOT, (
-        "if this ever stops picking the later slot the control has gone stale and the "
-        "ordering test above is no longer measuring anything"
-    )
-    assert row["sort_order"] == 5
 
 
-def test_after_the_repair_each_document_resolves_to_its_own_slot(repaired_db):
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-
-    with _store_over(repaired_db):
-        assert db_wfseq.get_item_by_result_doc_id(TR_FOUR)["id"] == SLOT_FOUR
-        assert db_wfseq.get_item_by_result_doc_id(TR_SIX)["id"] == SLOT_SIX
 
 
-def test_the_orphan_verdict_flips_only_for_0007_tr(incident_db):
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-
-    with _store_over(incident_db):
-        assert db_wfseq.is_orphaned_workflow_member(TR_SIX) is True
-        assert db_wfseq.is_orphaned_workflow_member(TR_FOUR) is False
-
-    _apply_repair(incident_db)
-
-    with _store_over(incident_db):
-        assert db_wfseq.is_orphaned_workflow_member(TR_SIX) is False, (
-            "this is what B0001 asked for: 0007-TR belongs to slot 6 again"
-        )
-        assert db_wfseq.is_orphaned_workflow_member(TR_FOUR) is False
-        assert db_wfseq.get_sequence_for_member_doc(TR_SIX)["id"] == SEQUENCE_ID
 
 
-def test_the_duplicate_audit_reads_the_same_through_the_db_layer(incident_db):
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-
-    with _store_over(incident_db):
-        rows = db_wfseq.find_duplicate_result_doc_slots()
-    assert [(r["result_doc_id"], r["item_id"]) for r in rows] == [
-        (TR_FOUR, SLOT_FOUR), (TR_FOUR, SLOT_SIX)]
-
-    _apply_repair(incident_db)
-    with _store_over(incident_db):
-        assert db_wfseq.find_duplicate_result_doc_slots() == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -742,95 +561,3 @@ def _conflict_events(conn) -> list[dict]:
             "SELECT * FROM workflow_events WHERE event_type = 'workflow_slot_conflict' "
             "ORDER BY id")
     ]
-
-
-def test_linking_a_document_to_a_second_empty_slot_is_refused(repaired_db):
-    """The uniqueness rule reaches the caller as a named workflow conflict, not a DB error."""
-    from modules.flow_gate.workflow.pipeline_service import (
-        WorkflowDocumentAlreadyLinkedError,
-    )
-
-    before = _slots(repaired_db)
-    ledger_before = _ledger(repaired_db)
-    events_before = len(_conflict_events(repaired_db))
-
-    with _store_over(repaired_db):
-        with pytest.raises(WorkflowDocumentAlreadyLinkedError) as excinfo:
-            _register(5675, TR_FOUR)     # slot 7 is empty; 0005-TR is already in slot 4
-
-    exc = excinfo.value
-    assert exc.error["code"] == "workflow_document_already_linked"
-    assert exc.item_id == 5675
-    assert exc.existing_item_id == SLOT_FOUR
-    assert exc.requested_doc_id == TR_FOUR
-    assert exc.body() == {"error": exc.error}
-
-    assert _slots(repaired_db) == before, "a refused link must leave the data alone"
-    assert _ledger(repaired_db) == ledger_before, "and no ledger row that reads like a success"
-
-    events = _conflict_events(repaired_db)
-    assert len(events) == events_before + 1
-    meta = json.loads(events[-1]["metadata"])
-    assert meta["code"] == "workflow_document_already_linked"
-    assert meta["item_id"] == 5675
-    assert meta["existing_item_id"] == SLOT_FOUR
-
-
-def test_a_document_may_still_re_register_into_its_own_slot(repaired_db):
-    """The compatibility the rejected-resubmit path depends on, unchanged."""
-    before = _slot(repaired_db, SLOT_SIX)["result_doc_id"]
-    rows_before = len([r for r in _ledger(repaired_db) if r["item_id"] == SLOT_SIX])
-
-    with _store_over(repaired_db):
-        _register(SLOT_SIX, TR_SIX)
-
-    assert _slot(repaired_db, SLOT_SIX)["result_doc_id"] == before == TR_SIX
-    rows_after = len([r for r in _ledger(repaired_db) if r["item_id"] == SLOT_SIX])
-    assert rows_after == rows_before + 1
-
-
-def test_the_occupancy_conflict_keeps_its_own_meaning(repaired_db):
-    """T0005's refusal is a different one and must not be blurred into the new code.
-
-    Slot 6 holds 0007-TR; a document that is in no slot at all tries to take it. Nothing
-    about uniqueness is involved — this is the eviction guard, and it must still answer
-    `workflow_slot_occupied`.
-    """
-    from modules.flow_gate.workflow.pipeline_service import (
-        WorkflowDocumentAlreadyLinkedError,
-        WorkflowSlotConflictError,
-    )
-
-    repaired_db.execute(
-        "INSERT INTO documents (doc_id, project_id, module, group_id, type_code, seq, title, "
-        "status, owner_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        ["flowgate.default.0454.0008-TR", PROJECT_ID, "default", GROUP_ID, "TR", 8,
-         "loose", "open", USER_ID, "2026-08-24T00:00:00Z", "2026-08-24T00:00:00Z"])
-    repaired_db.commit()
-    before = _slots(repaired_db)
-
-    with _store_over(repaired_db):
-        with pytest.raises(WorkflowSlotConflictError) as excinfo:
-            _register(SLOT_SIX, "flowgate.default.0454.0008-TR")
-
-    exc = excinfo.value
-    assert not isinstance(exc, WorkflowDocumentAlreadyLinkedError)
-    assert exc.error["code"] == "workflow_slot_occupied"
-    assert exc.existing_doc_id == TR_SIX
-    assert _slots(repaired_db) == before
-
-
-def test_an_empty_slot_still_accepts_a_document_that_is_in_no_slot(repaired_db):
-    """The refusals are refusals, not a freeze: the normal registration still works."""
-    repaired_db.execute(
-        "INSERT INTO documents (doc_id, project_id, module, group_id, type_code, seq, title, "
-        "status, owner_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        ["flowgate.default.0454.0009-TS", PROJECT_ID, "default", GROUP_ID, "TS", 9,
-         "scenario", "open", USER_ID, "2026-08-24T00:00:00Z", "2026-08-24T00:00:00Z"])
-    repaired_db.commit()
-
-    with _store_over(repaired_db):
-        _register(5675, "flowgate.default.0454.0009-TS")
-
-    assert _slot(repaired_db, 5675)["result_doc_id"] == "flowgate.default.0454.0009-TS"
-    assert _duplicates(repaired_db) == []

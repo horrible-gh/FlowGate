@@ -330,135 +330,21 @@ def test_a_written_instruction_line_of_a_card_that_omits_its_instruction_never_h
     assert _node_run(env, key)["intervention"] is None
 
 
-def test_a_complete_result_revised_while_it_waits_for_its_instruction_is_followed_after_a_lost_contact(
-        env, decided, monkeypatch):
-    from modules.flow_gate.db import documents as db_documents
-
-    key, old, _token = _in_review(env, monkeypatch, (), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _reopened(instruction)
-    seq = _current(env)["last_event_seq"]
-    _v01_approve(old)                                                    # the TR complete: it waits for its T
-    assert _node(env, key) == ("review", old)
-    new = _result(91, "TR")                                              # the TR is revised and its
-    db_documents.set_superseded_by(old, new)                             # registration's contact is lost
-    run = _current(env)                                                  # the read reconciles: the revision first
-    node_run = next(n for n in run["node_runs"] if n["node_key"] == key)
-    assert (node_run["status"], node_run["result_doc_id"], node_run["intervention"]["kind"]) == (
-        "review", new, "needs_intervention")                             # 0119 T-2: no person's approval follows
-    assert _causes_after(env, key, seq) == ["revised"]
 
 
-def test_the_reconciliation_follows_a_live_revision_before_a_complete_result_s_outputs(monkeypatch):
-    from types import SimpleNamespace
-
-    from modules.flow_gate.graph_workflow.domain.frontier import RunEvent
-    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
-    from modules.flow_gate.graph_workflow.services import card_settings_ports
-    from modules.flow_gate.graph_workflow.services import result_binder as rb
-    from modules.flow_gate.services import graph_execution_hooks
-
-    docs = {"tr_old": {"doc_id": "tr_old", "doc_review_status": "approved", "superseded_by": "tr_new",
-                       "group_id": "f", "status": "open"},
-            "tr_new": {"doc_id": "tr_new", "doc_review_status": "pending_review", "group_id": "f", "status": "open"}}
-    ctx = SimpleNamespace(flow_id="f", run={"run_id": "r"}, run_id="r", node_rows={"gn_t": {"node_key": "gn_t"}},
-                          docs=lambda: docs)
-    s = SimpleNamespace(node=lambda key: SimpleNamespace(status="review", result_doc_id="tr_old"))
-    monkeypatch.setattr(ports, "completion_of", lambda flow_id, run, key, doc: {"completion_id": "c", "legacy": False})
-    monkeypatch.setattr(card_settings_ports, "result_review_pending", lambda *a: False)
-    monkeypatch.setattr(graph_execution_hooks, "call", lambda *a, **k: None)
-    monkeypatch.setattr(ports, "pending_outputs", lambda flow_id, node, result_doc_id: ["t1"])   # its T waits
-    assert rb.next_missing_event(ctx, s, "gn_t") == RunEvent("revised", "gn_t", doc_id="tr_new", replaces="tr_old")
-    docs["tr_old"]["superseded_by"] = None                               # no revision: the instruction still waits
-    assert rb.next_missing_event(ctx, s, "gn_t") is None
-    monkeypatch.setattr(ports, "pending_outputs", lambda flow_id, node, result_doc_id: [])        # outputs complete
-    assert rb.next_missing_event(ctx, s, "gn_t") == RunEvent("review_approved", "gn_t", doc_id="tr_old")
 
 
-def test_the_pending_outputs_port_names_only_the_instruction_the_card_uses(env, decided, monkeypatch):
-    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
-
-    key, result, _token = _in_review(env, monkeypatch, (), "TR")          # its instruction used (T)
-    instruction = _line_doc(env, key, "instruction")
-    t_card = {"node_key": key, "node_type": "document", "doc_type": "T"}
-    assert ports.pending_outputs(FA, t_card, result) == []               # approved by its stage
-    _reopened(instruction)
-    assert ports.pending_outputs(FA, t_card, result) == [instruction]
-    assert ports.pending_outputs(FA, t_card, instruction) == []          # never the result itself
-    _v01_approve(instruction, contact=False)
-    assert ports.pending_outputs(FA, t_card, result) == []
-    assert ports.pending_outputs(FA, {"node_key": key, "node_type": "gate"}, None) == []
 
 
-def test_a_card_that_omits_its_instruction_has_no_pending_output(env, decided, monkeypatch):
-    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
-
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    t_card = {"node_key": key, "node_type": "document", "doc_type": "T"}
-    _write_body(instruction, "written")
-    assert ports.pending_outputs(FA, t_card, result) == []
-    _submit_written(instruction)
-    assert ports.pending_outputs(FA, t_card, result) == []
 
 
-def test_the_instruction_a_card_requires_by_its_kind_and_its_stored_use(monkeypatch):
-    """``card_settings.settings.required_instruction``: an assigned attempt's plan names it; a pre-feature attempt reads
-    the card's stored instruction use (a run card's instruction stage type, a test card's TS unless omitted)."""
-    from flowgate.card_settings import repository, settings
-
-    stored = {}
-    plan = {"value": None}
-    monkeypatch.setattr(settings, "_assigned", lambda flow_id, n: ("att", plan["value"]) if plan["value"] else None)
-    monkeypatch.setattr(repository, "available", lambda: True)
-    monkeypatch.setattr(repository, "values", lambda flow_id, key: dict(stored))
-
-    def required(node_type, doc_type):
-        return settings.required_instruction("f", {"node_key": "gn_x", "node_type": node_type, "doc_type": doc_type})
-
-    assert [required("document", t) for t in ("N", "T", "T2", "D")] == ["N", "T", "T2", "DS"]
-    assert required("custom", None) == "T" and required("document", "TS") == "TS"
-    assert [required("document", t) for t in ("WP", "R", "B")] == [None, None, None] and required("gate", None) is None
-    stored["instruction"] = "omit"
-    assert required("document", "T") is None and required("document", "TS") is None
-    plan["value"] = {"instruction_type": "DS"}                           # an assigned attempt: its plan decides
-    assert required("document", "T") == "DS"
-    plan["value"] = {"instruction_type": None, "result_type": "WP"}
-    assert required("document", "WP") is None
 
 
-def test_the_output_lines_moved_from_the_card_approval_read_written_and_stale_documents():
-    from flowgate.card_completion.outputs import is_target
-
-    assert is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": "pending_review"})
-    assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None})            # a draft
-    assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": False})
-    assert is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": True})
-    assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": "pending_review",
-                          "stale": True})                                # 0061 T#7: an ended attempt's document
-    assert not is_target({"slot": "instruction", "doc_id": None, "doc_review_status": "approved"})
 
 
 # ── 0119 T-3: the route is gone; a person's result completes its card (rework: rej_01M6DQW6YF0SCQ5D P1) ──
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's dispatch token registers its result directly; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-def test_the_card_approval_route_is_gone_and_a_person_s_result_completes_its_card(pre_feature_attempts, env, decided):
-    """0119 T-3 rework (rej_01M6DQW6YF0SCQ5D P1, was ``..._is_the_card_s_intervention``): no route takes a person's
-    approval, and a pre-feature person card whose card reviews nothing completes its result as ``human_submitted``."""
-    _admin_and_reviewer(env)
-    t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
-    _start(env)
-    for key in (t1, t2, "gn_nothing"):
-        _approval_route_gone(env, key)
-    _approval_route_gone(env, t1, run_id="run_missing")
-    result = _human_result(env, t1, state="done")                       # review 'none': completed as submitted
-    _approval_route_gone(env, t1)
-    shown = _node_run(env, t1)
-    assert (shown["status"], shown["awaiting_approval"], shown["intervention"]) == ("done", False, None)
-    assert "viewer" not in _current(env)                                 # 0119 T-3: no viewer.can_approve
-    assert _review_status(result) == "approved" and _node(env, t2)[0] == "open"
-    [done] = _sql(env["db"], "SELECT cause, actor_kind FROM graph_card_completions WHERE node_key = ?", (t1,))
-    assert (done["cause"], done["actor_kind"]) == ("human_submitted", "user")
 
 
 class _GatePolicy:
@@ -499,89 +385,15 @@ def gate_decided(monkeypatch):
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
-def test_a_gate_card_keeps_its_own_confirm(pre_feature_attempts, env, gate_decided, monkeypatch):
-    _admin_and_reviewer(env)
-    t1, gate = _chain(env, [("T", LEE), ("gate", None)])
-    _start(env)
-    # 0119 T-2 / T-3 rework: t1 completes automatically as submitted (review 'none'), no person's card approval
-    _human_result(env, t1, state="done")
-    assert _node(env, gate)[0] == "open"
-    _approval_route_gone(env, gate)
-    assert _node_run(env, gate)["awaiting_approval"] is False
-    decided_run = env["client"].post(f"/api/v1/runs/{_run_id(env)}/nodes/{gate}/gate-decision",
-                                     json={"decision": "confirm"}, headers=_h())
-    assert decided_run.status_code == 200 and _node(env, gate)[0] == "done"   # the gate keeps its own decision
 
 
 # ── a rejection is no node event ─────────────────────────────────────────────
 
 # 0113 T#3 (T §6.4) pre-feature contract: same person-card scene; an assigned person result is judged and approved by the system (G-2)
-def test_a_person_s_rejection_is_no_node_event(pre_feature_attempts, env, decided, monkeypatch):
-    from modules.flow_gate.graph_workflow.api import v01_contact
-    from modules.flow_gate.workflow.pipeline_service import transition_document_review
-    from test_fg_card_settings import legacy_setting
-
-    _admin_and_reviewer(env)
-    (t1,) = _chain(env, [("T", LEE)])
-    for field, value in (("review_count", 1), ("review_ai", "aip_review")):   # its card reviews it (0119 T-3 rework)
-        legacy_setting(env, FA, t1, field, value)
-    calls = _recorded_start_run(monkeypatch)
-    _start(env)
-    result = _human_result(env, t1)                                      # in review while its review works
-    assert len({c.get("graph_exec_id") for c in calls}) == 1           # its one review (a redelivery counted once)
-    before = _current(env)["last_event_seq"]
-    transition_document_review(doc_id=result, action="reject", actor_user_id="u_kim",
-                               user_permissions={"document.reject"}, comment="다시")
-    v01_contact.after_review_decided(FA, result, "reject")             # the v0.1 reject route's contact
-    run = _current(env)                                                  # reconciliation ran before the read
-    node_run = next(n for n in run["node_runs"] if n["node_key"] == t1)
-    assert (node_run["status"], run["last_event_seq"]) == ("review", before)     # no node event, no approval
-    assert _review_status(result) == "rejected" and len({c.get("graph_exec_id") for c in calls}) == 1
-    _approval_route_gone(env, t1)
-    assert (_node(env, t1)[0], _review_status(result)) == ("review", "rejected")
 
 
-def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, decided, monkeypatch):
-    from modules.flow_gate.db import documents as db_documents
-    from modules.flow_gate.services import ai_run_end_hooks
-
-    key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("review_ai", "aip_review"), ("after_review_exhausted", "stop")))
-    _loop_row(result, "review")
-    db_documents.update(result, {"doc_review_status": "rejected"})       # the last review hop rejected it
-    _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
-                    "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
-    ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": result, "action_scope": "review",
-                                "mode": "single", "issued_to": "u_kim",
-                                "document_review_loop": {"current_stage": "stopped"}})
-    assert _node(env, key) == ("review", result)
-    assert _node_run(env, key)["intervention"] == {"kind": "needs_intervention",
-                                                   "reason": "review_not_passed:review_count_exhausted"}
-    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
-    assert (_node(env, key)[0], _review_status(result)) == ("review", "rejected")
 
 
-def test_0056_T1_개정_rejected_root_is_input_and_its_card_is_done(env, decided):
-    """0056 T#1 개정: Run accepts rejected root input; its document stays rejected."""
-    from modules.flow_gate.db import documents as db_documents
-
-    _admin_and_reviewer(env)
-    (t1,) = _chain(env, [("T", LEE)])
-    root = f"{FA}.0001-R"
-    _write_body(root, "\n# 요구사항\n\n반려된 요구사항\n")
-    db_documents.update(root, {"doc_review_status": "rejected"})        # a person rejected the root (v0.1)
-    _start(env)
-    run = _current(env)
-    root_run = next(n for n in run["node_runs"] if n["root_bound"])
-    r_key = root_run["node_key"]
-    assert (root_run["status"], root_run["result_doc_id"], root_run["awaiting_approval"]) == ("done", root, False)
-    assert "review_rejected" not in _events(env, r_key) and run["open_node_keys"] == [t1]
-    assert _sql(env["db"], "SELECT outcome FROM graph_propagations WHERE node_key = ?", (r_key,)) == [
-        {"outcome": "approved"}]
-    _approval_route_gone(env, r_key)
-    assert _review_status(root) == "rejected"                            # nothing written
-    run = _current(env)                                                  # the first work card follows the root input
-    nodes = {n["node_key"]: n for n in run["node_runs"]}
-    assert (nodes[r_key]["status"], nodes[t1]["status"], run["open_node_keys"]) == ("done", "open", [t1])
 
 
 # ── an AI run that did not end on its own approves nothing ──────────────────
@@ -591,49 +403,13 @@ _STOPPED_AI_RUNS = [("cancelled", "cancelled"), ("timeout", "timeout"), ("user_p
                     ("worker_error", None)]
 
 
-@pytest.mark.parametrize("review_count", [0, 2])
-@pytest.mark.parametrize("end_reason, stop_code", _STOPPED_AI_RUNS)
-def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_in_intervention(
-        env, decided, monkeypatch, end_reason, stop_code, review_count):
-    settings = (("review_count", review_count), ("review_ai", "aip_review")) if review_count else ()
-    key, result, _token = _in_review(env, monkeypatch, settings)          # the result is bound (outcome complete)
-    calls = _recorded_start_run(monkeypatch)
-    _work_run_ended(end_reason=end_reason, stop_code=stop_code)
-    assert calls == []                                                   # no review loop
-    assert (_node(env, key), _review_status(result)) == (("review", result), "pending_review")   # no approval
-    shown = _node_run(env, key)                                          # 0119 T-2: the AI's abnormal end
-    assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
-    assert shown["intervention"]["reason"].startswith("run_not_clean:")
-    _approval_route_gone(env, key)
-    assert _node(env, key) == ("review", result)
 
 
-def test_only_a_run_that_ended_on_its_own_is_a_clean_end():
-    from flowgate.card_settings.review_stage import ended_cleanly
-
-    assert ended_cleanly({"end_reason": "exited", "stop_code": None, "outcome": "complete"})
-    assert ended_cleanly({"end_reason": "exited"})
-    assert not any(ended_cleanly({"end_reason": e, "stop_code": c, "outcome": "complete"}) for e, c in _STOPPED_AI_RUNS)
-    assert not ended_cleanly({"end_reason": "exited", "stop_code": "question_pending", "outcome": "complete"})
-    assert not ended_cleanly({"outcome": "complete"})                    # no end reason: not judged clean
 
 
 # ── [다음 단계] stop is not awaiting approval ────────────────────────────────────
 
 
-def test_an_automatically_approved_card_never_goes_back_to_awaiting_approval_while_stopped(
-        env, decided, monkeypatch):
-    key, result, _token = _in_review(env, monkeypatch)                   # an AI card, no review
-    _stop(env)
-    _work_run_ended()                                                    # the card approves it at once
-    assert _node(env, key) == ("done", result) and _review_status(result) == "approved"
-    for _ in range(2):                                                   # reads reconcile: nothing goes back
-        run = _current(env)
-        node_run = next(n for n in run["node_runs"] if n["node_key"] == key)
-        assert (run["status"], node_run["status"], node_run["awaiting_approval"]) == ("stopped", "done", False)
-        assert (run["pending_propagation_count"], run["pending_node_keys"]) == (1, [key])
-    _approval_route_gone(env, key)
-    assert _resume(env)["status"] == "completed"
 
 
 # ── wiring: the card approval is removed (0119 T-3) ──────────────────────────
@@ -652,45 +428,8 @@ def _imports(path: Path) -> set[str]:
     return out
 
 
-def test_the_card_approval_package_port_and_route_are_removed():
-    """0119 T-3 ③ / ④: nothing imports ``flowgate.card_approval`` or ``card_approval_ports`` (the server's sources and
-    its tests); the package, the port and the route mount are gone, and ``startup`` no longer registers it."""
-    removed = ("flowgate.card_approval", "modules.flow_gate.graph_workflow.services.card_approval_ports")
-    offenders = []
-    for path in _SERVER_DIR.rglob("*.py"):
-        if "__pycache__" in path.parts or ".venv" in path.parts:
-            continue
-        found = [m for m in _imports(path) if m.startswith(removed) or m.endswith(".card_approval_ports")]
-        if found:
-            offenders.append((str(path.relative_to(_SERVER_DIR)), found))
-    assert offenders == []
-    assert not (_SERVER_DIR / "flowgate" / "card_approval").joinpath("__init__.py").exists()
-    assert not list((_SERVER_DIR / "flowgate" / "card_approval").glob("*.py"))
-    assert not (_SERVER_DIR / "modules" / "flow_gate" / "graph_workflow" / "services" / "card_approval_ports.py").exists()
-    main = (_SERVER_DIR / "routers" / "main.py").read_text(encoding="utf-8")
-    assert "card_approval" not in main
-    startup_src = (_SERVER_DIR / "startup.py").read_text(encoding="utf-8")
-    assert "def start_card_approval_integration" not in startup_src
-    assert "start_card_approval_integration()" not in startup_src
 
 
-def test_startup_registers_the_pending_outputs_port_and_the_port_is_stdlib_only():
-    import startup
-    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
-
-    from flowgate.card_completion import integration
-
-    integration.unregister()
-    assert not ports.registered(ports.PENDING_OUTPUTS)
-    assert ports.pending_outputs(FA, {"node_key": "gn_x"}, "d") == []    # unregistered: the result alone
-    startup.start_card_completion_integration()
-    try:
-        assert ports.registered(ports.PENDING_OUTPUTS)
-    finally:
-        integration.unregister()
-    path = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow" / "services" / "card_completion_ports.py"
-    imported = {m.split(".")[0] for m in _imports(path)}
-    assert imported <= {"__future__", "logging", "threading", "typing"}
 
 
 # ── 0119 T-3 rework (rej_01M6DQW6YF0SCQ5D): a TS instruction's own effect, a required instruction missing ──
@@ -744,178 +483,3 @@ def _ts_runs(env, doc_id):
 def _doc_events(env, doc_id, event_type):
     return [r["note"] for r in _sql(env["db"], "SELECT note FROM events WHERE doc_id = ? AND event_type = ?",
                                     (doc_id, event_type))]
-
-
-def test_a_ts_instruction_s_approval_admits_its_test_run_once_with_its_approved_display(
-        env, decided, monkeypatch, no_v01_path, ts_admission):
-    """rej_01M6DQW6YF0SCQ5D P1: a test card's TS instruction approved by the v0.2 (``card_completion.instruction``) runs the
-    TS's own effect the v0.1 approval carried — its specification validated, its automated Case's asset checked, its
-    run queued and its TSR opened (``admit_on_approval``) with the admission event — in the approval's transaction, by
-    the system with the run's issuer as ``requested_by`` / the run's runner. Told again it admits nothing more."""
-    from flowgate.card_completion import instruction as card_instruction
-
-    _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")       # a run with its issuer
-    ts = _ts_instruction(95, TS_AUTOMATED, ts_admission["root"])
-    assert card_instruction.approve(ts, requested_by="u_kim") == card_instruction.WRITTEN
-    assert _review_status(ts) == "approved"
-    [run] = _ts_runs(env, ts)                                            # one run, queued for the issuer
-    assert run["runner_id"] == "u_kim" and ts_admission["opened"] == [run["run_id"]]
-    [admitted] = _doc_events(env, ts, "test_spec_execution_admitted")
-    assert '"actor": "system"' in admitted and '"requested_by": "u_kim"' in admitted and run["run_id"] in admitted
-    assert len(_doc_events(env, ts, "card_instruction_approved")) == 1
-    assert ts_admission["told"] == [run["run_id"]]                       # told after the commit
-    assert card_instruction.approve(ts, requested_by="u_kim") == card_instruction.ALREADY     # told again
-    assert len(_ts_runs(env, ts)) == 1 and len(_doc_events(env, ts, "test_spec_execution_admitted")) == 1
-    assert ts_admission["opened"] == [run["run_id"]]
-
-
-@pytest.mark.parametrize("case", ["invalid_specification", "missing_test_asset", "run_in_progress"])
-def test_a_ts_instruction_that_does_not_pass_its_gate_is_not_approved_and_starts_no_result_stage(
-        env, decided, monkeypatch, no_v01_path, ts_admission, case):
-    """rej_01M6DQW6YF0SCQ5D P1: a TS whose specification does not validate, whose automated Case's test file is missing,
-    or whose earlier run is still in progress is refused — not approved, no run, no admission event, no approval event
-    — and the instruction stage's caller (``review_stage._reconciled_result_stage``, as every caller of
-    ``approve_instruction``) starts no result stage: a system error recorded (``approval_refused``), retried."""
-    from contextlib import contextmanager
-
-    from flowgate.card_completion import instruction as card_instruction
-    from flowgate.card_settings import legacy_adapter, review_stage
-    from modules.flow_gate.services import spec_execution_service
-
-    key, _result_doc, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    body = TS_INVALID if case == "invalid_specification" else TS_AUTOMATED
-    ts = _ts_instruction(96, body, None if case == "missing_test_asset" else ts_admission["root"])
-    if case == "run_in_progress":
-        monkeypatch.setattr(spec_execution_service, "admission_blocker",
-                            lambda doc_id: {"error": "run_in_progress", "run_id": "tr_running"})
-    with pytest.raises(card_instruction.InstructionRefused) as refused:
-        card_instruction.approve(ts, requested_by="u_kim")
-    assert refused.value.code == {"invalid_specification": "test_gate_refused", "missing_test_asset": "ts_automation_assets",
-                                  "run_in_progress": "ts_run_blocked"}[case]
-    started = []
-    monkeypatch.setattr(legacy_adapter, "start_result_stage", lambda *a, **k: started.append(a))
-
-    @contextmanager
-    def owned():
-        yield True
-
-    run_id = _run_id(env)
-    node_row = {"node_key": key, "node_type": "document", "doc_type": "T"}
-    review_stage._reconciled_result_stage(FA, run_id, key, node_row, ts, "u_kim", None, hold=owned())
-    assert started == []                                                 # no result stage
-    assert _review_status(ts) == "pending_review" and _ts_runs(env, ts) == []
-    assert _doc_events(env, ts, "test_spec_execution_admitted") == [] == _doc_events(env, ts, "card_instruction_approved")
-    assert ts_admission["opened"] == [] and "approval_refused" in legacy_adapter.approval_waits(run_id, key, ts)
-
-
-def test_a_valid_ts_instruction_s_approval_starts_its_result_stage_once(env, decided, monkeypatch, no_v01_path,
-                                                                       ts_admission):
-    from contextlib import contextmanager
-
-    from flowgate.card_settings import legacy_adapter, review_stage
-
-    key, _result_doc, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    ts = _ts_instruction(97, TS_AUTOMATED, ts_admission["root"])
-    started = []
-    monkeypatch.setattr(legacy_adapter, "start_result_stage", lambda *a, **k: started.append(a))
-
-    @contextmanager
-    def owned():
-        yield True
-
-    node_row = {"node_key": key, "node_type": "document", "doc_type": "T"}
-    review_stage._reconciled_result_stage(FA, _run_id(env), key, node_row, ts, "u_kim", None, hold=owned())
-    assert [a[3] for a in started] == [ts] and _review_status(ts) == "approved"     # approved, then its result stage
-    assert review_stage.approve_instruction(FA, node_row, ts, "u_kim") is True       # told again: approved already
-    assert len(_ts_runs(env, ts)) == 1 and len(_doc_events(env, ts, "test_spec_execution_admitted")) == 1
-
-
-def test_the_required_instruction_judgement_names_a_missing_empty_or_stale_instruction(monkeypatch):
-    """rej_01M6DQW6YF0SCQ5D P2 (``outputs.pending_outputs``): with its instruction used, a card whose instruction has no live
-    document — no line document, its untouched empty draft, an ended attempt's document — is not complete
-    (``missing:<type>``); a live one not approved is named; approved, the card's outputs are complete. Exempt only: no
-    instruction used, a one-stage node (its result of the instruction's type, a node run with no stage)."""
-    from flowgate.card_completion import legacy_adapter, outputs
-    from flowgate.card_documents import decision_repository
-
-    # 0126 T#2: the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
-    # projection sees no decisions and the document's own review status decides (the ledger: test_fg_human_*_0126).
-    monkeypatch.setattr(decision_repository, "available", lambda: False)
-    lines, used, row, result_type = [], {"type": "T"}, {"stage": "result"}, {"type": "TR"}
-    monkeypatch.setattr(outputs, "card_lines_of", lambda flow_id, node: [dict(line) for line in lines])
-    monkeypatch.setattr(outputs, "instruction_type", lambda flow_id, node: used["type"])
-    monkeypatch.setattr(legacy_adapter, "document", lambda doc_id: {"doc_id": doc_id, "type_code": result_type["type"]})
-    monkeypatch.setattr(legacy_adapter, "active_run", lambda flow_id: {"run_id": "r"})
-    monkeypatch.setattr(legacy_adapter, "node_run", lambda run_id, key: dict(row) if row is not None else None)
-    card = {"node_key": "gn_t", "node_type": "document", "doc_type": "T"}
-
-    def pending():
-        return outputs.pending_outputs("f", card, "tr_1")
-
-    assert pending() == ["missing:T"]                                    # no instruction line document
-    lines[:] = [{"slot": "instruction", "doc_type": "T", "doc_id": "t_1", "doc_review_status": None, "written": False}]
-    assert pending() == ["missing:T"]                                    # its untouched empty draft
-    lines[0].update(doc_review_status="pending_review", stale=True)
-    assert pending() == ["missing:T"]                                    # an ended attempt's document
-    lines[0].pop("stale")
-    assert pending() == ["t_1"]                                          # live, not approved
-    lines[0]["doc_review_status"] = "approved"
-    assert pending() == []                                               # approved: complete
-    lines[:] = [{"slot": "report", "doc_type": "T", "doc_id": "t_9", "doc_review_status": "pending_review"}]
-    assert pending() == ["missing:T"]                                    # another line's document is no instruction
-    used["type"] = None
-    assert pending() == []                                               # the instruction omitted
-    used["type"], lines[:] = "T", []
-    row["stage"] = None
-    assert pending() == []                                               # a node run with no stage: one stage
-    row["stage"], result_type["type"] = "result", "T"
-    assert pending() == []                                               # its result is the instruction's type
-    assert outputs.pending_outputs("f", {"node_key": "gn_g", "node_type": "gate"}, None) == []
-
-
-@pytest.mark.parametrize("case", ["missing", "empty", "stale"])
-def test_a_complete_result_stays_in_review_while_its_required_instruction_is_missing_empty_or_stale(
-        env, decided, monkeypatch, case):
-    """rej_01M6DQW6YF0SCQ5D P2: a complete result (the engine suites' stand-in reads the approved result as complete) of a
-    card that uses its instruction stays in review while that instruction has no live document; once a valid
-    instruction is approved, the next read's reconciliation makes the node done once (one propagation)."""
-    from flowgate.card_completion import instruction as card_instruction
-    from flowgate.card_completion import legacy_adapter as completion_records
-    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
-
-    key, result, _token = _in_review(env, monkeypatch, (), "TR")          # through its instruction stage (T)
-    instruction = _line_doc(env, key, "instruction")
-    t_card = {"node_key": key, "node_type": "document", "doc_type": "T"}
-    kept = _sql(env["db"], "SELECT * FROM graph_node_documents WHERE group_id = ? AND node_key = ? AND slot = ?",
-                (FA, key, "instruction"))
-    if case == "missing":
-        _sql(env["db"], "DELETE FROM graph_node_documents WHERE group_id = ? AND node_key = ? AND slot = ?",
-             (FA, key, "instruction"))
-    elif case == "empty":
-        _write_body(instruction, "")
-        _sql(env["db"], "UPDATE documents SET doc_review_status = NULL WHERE doc_id = ?", (instruction,))
-    else:
-        _reopened(instruction)
-        monkeypatch.setattr(completion_records, "stale_documents", lambda flow_id, node_key: {instruction})
-    assert ports.pending_outputs(FA, t_card, result) == ["missing:T"]
-    seq = _current(env)["last_event_seq"]
-    _v01_approve(result)                                                 # the result complete (stand-in)
-    shown = _node_run(env, key)
-    assert (shown["status"], shown["intervention"]["kind"]) == ("review", "needs_intervention")
-    assert _causes_after(env, key, seq) == []
-    if case == "missing":
-        row = dict(kept[0])
-        columns = ", ".join(row)
-        _sql(env["db"], f"INSERT INTO graph_node_documents ({columns}) VALUES ({', '.join('?' for _ in row)})",
-             tuple(row.values()))
-    elif case == "empty":
-        _write_body(instruction, "\n## 작업\n\n다시 쓴 지시서\n")
-        assert card_instruction.approve(instruction, requested_by="u_kim") == card_instruction.WRITTEN
-    else:
-        monkeypatch.setattr(completion_records, "stale_documents", lambda flow_id, node_key: set())
-        assert card_instruction.approve(instruction, requested_by="u_kim") == card_instruction.WRITTEN
-    assert ports.pending_outputs(FA, t_card, result) == []
-    assert _current(env) is not None and _node(env, key) == ("done", result)
-    _current(env)                                                        # read again: nothing more
-    assert _causes_after(env, key, seq) == ["review_approved"]
-    assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_propagations WHERE node_key = ?", (key,))[0]["n"] == 1

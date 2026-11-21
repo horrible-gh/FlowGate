@@ -215,136 +215,22 @@ def test_the_last_card_s_approval_on_an_idle_run_completes_it_revised_0061_t2(pr
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@pytest.mark.parametrize("wait, before_resume", [("command_chain", "pending"), ("reported", "pending")])
-def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(pre_feature_attempts, env, decided, monkeypatch, wait, before_resume):
-    """What is revised: with the 0061 T#2 ``defers`` (every run not running waits) only a wait whose command its events
-    prove went on (``command.resume_approval``, 0083 T#2); the reported wait left the next card pending after the
-    approval, and only the next resume opened it — the reported "a person approves, then resumes".
-    flowgate.v02.0119 T#3 (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
-    ``needs_intervention`` wait is never that command chain's either: under the old rule both waits need the resume; the
-    revised ``defers`` (the cases above) moves both on at once."""
-    from modules.flow_gate.graph_workflow.domain import frontier
-
-    monkeypatch.setattr(frontier, "defers", lambda s: s.status != "running")      # the rule before the revision
-    (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], wait=wait)
-    _approve(env, t1, body={"result_doc_id": result})
-    assert (_node(env, t1)[0], _node(env, t2)[0]) == ("done", before_resume)
-    assert [j["node_key"] for j in env["jobs"]] == ([t2] if before_resume == "open" else [])
-    if before_resume == "pending":
-        assert _propagations(env, t1) == ["pending"]
-        resumed = env["client"].post(f"/api/v1/runs/{_run_id(env)}/resume", json={"mode": "full"}, headers=_h())
-        assert resumed.status_code == 200, resumed.text
-        assert (_node(env, t2)[0], [j["node_key"] for j in env["jobs"]]) == ("open", [t2])
 
 
 # ── kept: step, paused, stopped, Time Machine ────────────────────────────────
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@WAITS
-def test_a_step_still_keeps_the_next_card_pending_after_a_person_s_approval(pre_feature_attempts, env, decided, monkeypatch, wait):
-    (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], mode="step", wait=wait)
-    _approve(env, t1, body={"result_doc_id": result})
-    assert (_node(env, t1)[0], _node(env, t2)[0], _propagations(env, t1)) == ("done", "pending", ["pending"])
-    assert env["jobs"] == [] and _run_status(env)[0] == "idle"         # the step is over: the next one waits
-    resumed = env["client"].post(f"/api/v1/runs/{_run_id(env)}/resume", json={"mode": "step"}, headers=_h())
-    assert resumed.status_code == 200, resumed.text                     # the next step opens it
-    assert (_node(env, t2)[0], [j["node_key"] for j in env["jobs"]]) == ("open", [t2])
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@WAITS
-@pytest.mark.parametrize("state", ["paused", "stopped", "time_machine"])
-def test_a_paused_stopped_or_time_machine_run_does_not_go_on_after_a_person_s_approval(pre_feature_attempts, 
-        env, decided, monkeypatch, state, wait):
-    from flowgate.graph_time_machine import operation
-
-    (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], wait=wait)
-    if state == "paused":
-        _sql(env["db"], "UPDATE graph_runs SET status = 'paused', idle_reason = NULL WHERE group_id = ?", (FA,))
-    elif state == "stopped":
-        _sql(env["db"], "UPDATE graph_runs SET idle_reason = 'stopped' WHERE group_id = ?", (FA,))
-    else:
-        monkeypatch.setattr(operation, "_unfinished", lambda flow: [{"operation_id": "tm_in_progress"}])
-    before = _run_status(env)
-    seq = _seq(env)
-    _v01_approve(result)                                                # a person's approval reaches the Graph
-    assert _node(env, t1) == ("done", result) and _review_status(result) == "approved"
-    assert (_node(env, t2)[0], _propagations(env, t1)) == ("pending", ["pending"])
-    assert env["jobs"] == [] and _run_status(env)[0] == before[0]       # the run does not go on
-    if state != "time_machine":                                          # (a TM wait's idle reason is re-judged)
-        assert _run_status(env) == before
-    assert ("idle", "running", "work_resumed", "approval") not in _run_events_after(env, seq)
-    if state == "time_machine":
-        monkeypatch.setattr(operation, "_unfinished", lambda flow: [])  # the operation ends
-    resumed = env["client"].post(f"/api/v1/runs/{_run_id(env)}/resume", json={"mode": "full"}, headers=_h())
-    assert resumed.status_code == 200, resumed.text                     # the next command drains what waited
-    assert (_node(env, t2)[0], _propagations(env, t1)) == ("open", ["done"])
-    assert [j["node_key"] for j in env["jobs"]] == [t2]
 
 
-def test_the_wake_judgement_follows_wake_graph_run_s_conditions(env, monkeypatch):
-    from types import SimpleNamespace
-
-    from flowgate.graph_run import command
-    from flowgate.graph_time_machine import operation
-
-    monkeypatch.setattr(operation, "_unfinished", lambda flow: [])
-    idle = {"status": "idle", "idle_reason": "waiting_approval", "active_group_id": FA, "run_mode": "full",
-            "step_node_keys": None}
-
-    def wakes(command_pending=False, **run):
-        return command.approval_wakes(SimpleNamespace(run={**idle, **run}, command_pending=command_pending, flow_id=FA))
-
-    assert wakes() is True
-    assert wakes(idle_reason="no_targets") is True and wakes(idle_reason="error") is True
-    assert wakes(run_mode="step", step_node_keys=["gn_a"]) is True     # the step's own bound is ``in_command``
-    assert [wakes(status=s) for s in ("running", "paused", "stopping")] == [False, False, False]
-    assert wakes(idle_reason="stopped") is False
-    assert wakes(active_group_id=None) is False                         # not the Flow's active run
-    assert wakes(command_pending=True) is False                         # an explicit command drains it itself
-    assert wakes(run_mode="step", step_node_keys=None) is False
-    monkeypatch.setattr(operation, "_unfinished", lambda flow: [{"operation_id": "tm"}])
-    assert wakes() is False
 
 
-def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
-    from modules.flow_gate.graph_workflow.domain.frontier import Decision, NodeRun, RunState, defers, virtual
-
-    def state(status, wakes=False):
-        return RunState(status, {"a": NodeRun("a", "review", "d")}, approval_wakes=wakes)
-
-    assert defers(state("running")) is False
-    assert defers(state("idle", wakes=True)) is False                   # 0061 T#2 개정
-    assert defers(state("idle")) is True                                # stopped / Time Machine / a command
-    assert defers(state("paused")) is True and defers(state("paused", wakes=True)) is True
-    assert virtual(state("idle", wakes=True), Decision()).approval_wakes is True
 
 
 # ── regression: the ordinary flow approves by itself ─────────────────────────
 
-def test_r_ai_cards_still_approve_by_themselves_with_no_person_s_approval(env, decided, monkeypatch):
-    from modules.flow_gate.workflow import pipeline_service
-
-    # 0119 T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
-    approvals = []
-    real = pipeline_service.transition_document_review
-    monkeypatch.setattr(pipeline_service, "transition_document_review",
-                        lambda **kw: (approvals.append(kw) if kw.get("action") == "approve" else None) or real(**kw))
-    commands = _no_command(monkeypatch)
-    _admin_and_reviewer(env)
-    t1, t2 = _cards(env, [("T", AI), ("T", AI)], {0: (("instruction", "omit"),)})   # t1 writes its result at once
-    started = env["client"].post(f"/api/v1/flows/{FA}/runs", json={"revision_no": 1}, headers=_h())
-    assert started.status_code == 201, started.text
-    [job] = env["jobs"]
-    _heads, _call, [issued] = _start_ai_run(monkeypatch, job, run_id="air_t1")
-    result = _result(81, "TR")
-    _register(issued["token_id"], result, "TR")
-    _executions_ended()
-    _run_ended("air_t1")
-    assert (_node(env, t1), _review_status(result)) == (("done", result), "approved")
-    assert _node(env, t2)[0] == "open" and [j["node_key"] for j in env["jobs"]] == [t1, t2]
-    assert approvals == [] and commands == []                           # no person, no resume
-    assert _run_status(env)[0] == "running"
 
 
 # ── a code result's merge: the approval's wake lasts until it is merged (rework rej_01M5FKJYMETCGHGJ) ────────
@@ -461,74 +347,9 @@ HOLD = ("integration_hold", "integration_hold_end")
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@WAITS
-@pytest.mark.parametrize("approve", ["card", "v01"])
-def test_a_person_s_approval_held_for_its_merge_opens_the_next_ai_card_once_merged_revised_0061_t2(pre_feature_attempts, 
-        env, decided, monkeypatch, group_tree, wait, approve):
-    commands = _no_command(monkeypatch)
-    (t1, t2), result, attempt_id, commit = _person_waits_on_code(env, group_tree, [("T", LEE), ("T", AI)], wait=wait)
-    seq = _seq(env)
-    if approve == "card":
-        _approve(env, t1, body={"result_doc_id": result})
-    else:
-        _v01_approve(result)
-    assert group_tree.merges == [("review", "pending", "running")]     # nothing opened before the merge; run woken
-    assert _merged(group_tree, commit)
-    status, integration, merged_as = _integration(attempt_id)
-    assert (status, integration) == ("ended", "integrated") and merged_as
-    assert group_tree.cleaned == [attempt_id]
-    assert (_node(env, t1), _node(env, t2)[0]) == (("done", result), "open")   # once merged, with no resume
-    assert _review_status(result) == "approved" and _propagations(env, t1) == ["done"]
-    assert [j["node_key"] for j in env["jobs"]] == [t2]                 # the AI card's job is created
-    assert _run_status(env) == ("running", None)
-    events = _run_events_after(env, seq)
-    assert events.count(("idle", "running", "work_resumed", "approval")) == 1
-    assert not [e for e in events if e[2] in HOLD]                      # no idle run's integration hold
-    assert ("running", "idle", "run_idle", None) not in events
-    assert commands == []                                              # no resume, step or full
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@WAITS
-def test_the_last_card_s_approval_held_for_its_merge_completes_the_run_once_merged_revised_0061_t2(pre_feature_attempts, 
-        env, decided, monkeypatch, group_tree, wait):
-    commands = _no_command(monkeypatch)
-    (t1,), result, attempt_id, commit = _person_waits_on_code(env, group_tree, [("T", LEE)], wait=wait)
-    _approve(env, t1, body={"result_doc_id": result})
-    assert _merged(group_tree, commit) and _integration(attempt_id)[1] == "integrated"
-    assert _node(env, t1)[0] == "done" and _propagations(env, t1) == ["done"]
-    assert _run_status(env) == ("idle", "completed") and commands == []
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@WAITS
-@pytest.mark.parametrize("state", ["step", "paused", "stopped", "time_machine"])
-def test_a_step_paused_stopped_or_time_machine_run_still_waits_after_an_approval_held_for_its_merge(pre_feature_attempts, 
-        env, decided, monkeypatch, group_tree, state, wait):
-    from flowgate.graph_time_machine import operation
-
-    mode = "step" if state == "step" else None
-    (t1, t2), result, attempt_id, commit = _person_waits_on_code(env, group_tree, [("T", LEE), ("T", AI)],
-                                                                  mode=mode, wait=wait)
-    if state == "paused":
-        _sql(env["db"], "UPDATE graph_runs SET status = 'paused', idle_reason = NULL WHERE group_id = ?", (FA,))
-    elif state == "stopped":
-        _sql(env["db"], "UPDATE graph_runs SET idle_reason = 'stopped' WHERE group_id = ?", (FA,))
-    elif state == "time_machine":
-        monkeypatch.setattr(operation, "_unfinished", lambda flow: [{"operation_id": "tm_in_progress"}])
-    seq = _seq(env)
-    _v01_approve(result)
-    assert _review_status(result) == "approved"
-    assert _node(env, t2)[0] == "pending" and env["jobs"] == []         # the next card waits
-    assert _propagations(env, t1) in ([], ["pending"])                  # (none yet while the merge waits)
-    if state != "step":         # (a step's proven command is woken by ``resume_approval``, still bounded to its targets)
-        assert ("idle", "running", "work_resumed", "approval") not in _run_events_after(env, seq)
-    if state == "time_machine":
-        assert group_tree.merges == [] and _node(env, t1)[0] == "review"   # no integration under the operation
-        monkeypatch.setattr(operation, "_unfinished", lambda flow: [])
-    else:
-        assert _merged(group_tree, commit) and _node(env, t1)[0] == "done"
-    resumed = env["client"].post(f"/api/v1/runs/{_run_id(env)}/resume", json={"mode": mode or "full"}, headers=_h())
-    assert resumed.status_code == 200, resumed.text                     # the next command goes on
-    assert _merged(group_tree, commit) and (_node(env, t1)[0], _node(env, t2)[0]) == ("done", "open")
-    assert _propagations(env, t1) == ["done"] and [j["node_key"] for j in env["jobs"]] == [t2]

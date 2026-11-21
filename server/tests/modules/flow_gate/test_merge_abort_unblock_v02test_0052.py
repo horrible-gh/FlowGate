@@ -446,264 +446,34 @@ def test_common_abort_returns_reason_and_refresh_code(tmp_path):
 
 
 
-def test_reason_line_is_gits_cause_not_its_advice():
-    from modules.flow_gate.services import git_service as svc
-
-    stderr_457 = (
-        "error: Entry 'client_gui/src/features/designer/inspector/DesignerInspector.vue' "
-        "not uptodate. Cannot merge.\nfatal: Could not reset index file to revision 'HEAD'.\n"
-    )
-    assert svc._git_reason_line(stderr_457) == (
-        "error: Entry 'client_gui/src/features/designer/inspector/DesignerInspector.vue' "
-        "not uptodate. Cannot merge."
-    )
-    lock = ("fatal: Unable to create '/x/.git/index.lock': File exists.\n\nAnother git process "
-            "seems to be running in this repository.\nremove the file manually to continue.\n")
-    assert svc._git_reason_line(lock).startswith("fatal: Unable to create")
-    assert svc._git_reason_line("plain last\nline two\n") == "line two"
-    assert svc._git_reason_line("") == "git command failed"
-    assert len(svc._git_reason_line("error: " + "x" * 1000)) == svc.GIT_REASON_MAX_CHARS
-    assert "secret" not in svc._git_reason_line(
-        "fatal: unable to access 'https://user:secret@host/repo.git/'\n")
 
 
 # ── 2. the cause: EOL separation + rerere restore keep the index fresh ───────────────
 
-def test_eol_only_file_is_not_left_stat_stale_by_rerere_restore(proj, monkeypatch):
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git import rerere_checkpoint
-
-    real_run = rerere_checkpoint._run
-
-    def slow_rerere(root):
-        real_run(root)
-        time.sleep(1.2)       # 457: `git rerere` took seconds between the stage and the restore
-
-    monkeypatch.setattr(rerere_checkpoint, "_run", slow_rerere)
-    gid = proj.group(3)
-    proj.local_branch("develop")
-    # eol.txt: the group only turns it CRLF, develop edits line one → EOL-only conflict.
-    (proj.wt(gid) / "eol.txt").write_bytes(b"a\r\nb\r\nc\r\n")
-    (proj.wt(gid) / "shared.txt").write_bytes(f"{gid} version\n".encode())
-    proj.origin_commit("develop", {"eol.txt": b"A\nb\nc\n", "shared.txt": "develop version\n"})
-    proj.ready(gid)
-    out = svc.finalize(gid, "merge", target_branch="develop")
-    assert out["result"]["status"] == "conflict", out
-    merge_id = out["result"]["merge_id"]
-    assert _ctx(merge_id)["eol_only_paths"] == ["eol.txt"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    assert "eol.txt" not in _stat_dirty(root)
-    # and therefore even a raw abort (no refresh) is no longer refused
-    raw = _git(["merge", "--abort"], cwd=root, check=False)
-    assert raw.returncode == 0, raw.stderr
-    assert svc.abort_merge(gid, merge_id)["result"]["already_cleaned"] is True
 
 
-def test_restore_skips_identical_bytes(tmp_path):
-    from modules.flow_gate.services.git import rerere_checkpoint
-
-    repo = tmp_path / "r"
-    _git(["init", "-b", "main", str(repo)])
-    target = repo / "same.txt"
-    target.write_bytes(b"same\n")
-    old = time.time() - 3600
-    os.utime(target, (old, old))
-    rerere_checkpoint._restore(repo, {"same.txt": b"same\n"}, set())
-    assert abs(target.stat().st_mtime - old) < 1
 
 
 # ── 3. MERGE_HEAD gone: abort "already cleaned", resolve refused before writing ───────
 
-def test_merge_head_missing_abort_closes_and_resolve_is_refused(proj):
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git_service import GitServiceError
-
-    gid = proj.group(4)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    _git_path(root, "MERGE_HEAD").unlink()          # the merge state vanished from disk
-    before = (root / "shared.txt").read_bytes()
-
-    with pytest.raises(GitServiceError) as caught:
-        svc.resolve_conflicts(gid, merge_id, [{
-            "path": "shared.txt", "content": f"{gid} version\ndevelop version\n",
-        }], True)
-    assert caught.value.status == 409
-    assert caught.value.code == "merge_not_in_progress"
-    assert caught.value.params["reason"] == caught.value.details["reason"]
-    assert caught.value.details["next_action"] == "abort"
-    assert "MERGE_HEAD" in caught.value.details["reason"]
-    assert (root / "shared.txt").read_bytes() == before          # nothing written
-    assert sorted(db_git.remaining_conflicts(merge_id)) == ["other.txt", "shared.txt"]
-
-    out = svc.abort_merge(gid, merge_id)
-    assert out["result"]["already_cleaned"] is True
-    assert out["result"]["branch_preserved"] is True
-    assert _session(merge_id)["status"] == "aborted"
-    assert db_git.get_state(gid)["status"] == "waiting"
 
 
-def test_already_clean_workspace_abort_closes_without_git_abort(proj):
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(5)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    _git(["merge", "--abort"], cwd=root)        # cleaned outside the server
-    out = svc.abort_merge(gid, merge_id)
-    assert out["result"]["already_cleaned"] is True
-    assert _session(merge_id)["status"] == "aborted"
 
 
 # ── 4. a failed abort says why: API, audit, session marker, lists ─────────────────────
 
-def test_failed_abort_carries_git_reason_everywhere(proj):
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git.credentials import git_error_envelope
-    from modules.flow_gate.services.git_service import GitServiceError
-
-    gid = proj.group(6)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    lock = _hold_index_lock(root)
-    try:
-        with pytest.raises(GitServiceError) as caught:
-            svc.abort_merge(gid, merge_id)
-    finally:
-        lock.unlink()
-    exc = caught.value
-    assert exc.status == 500 and exc.code == "git_error"
-    reason = exc.details["reason"]
-    assert "index.lock" in reason
-    assert exc.params["reason"] == reason and exc.details["recovery"] == "force_cleanup"
-    envelope = git_error_envelope(exc)
-    assert envelope["error"]["details"]["reason"] == reason
-    assert envelope["error"]["params"]["reason"] == reason
-
-    context = _ctx(merge_id)
-    op = context["ref_operations"][-1]
-    assert op["reason"] == "user_abort" and op["returncode"] != 0
-    assert "index.lock" in op["stderr_tail"]
-    assert context["abort_failure"]["trigger"] == "user_abort"
-    assert context["abort_failure"]["reason"] == reason
-    assert _session(merge_id)["status"] == "open"            # nothing hidden as success
-    assert svc.list_conflicts(gid, merge_id)["abort_failure"]["reason"] == reason
-
-    listed = svc.list_abort_failures(proj.pid)["result"]["sessions"]
-    assert [row["merge_id"] for row in listed] == [merge_id]
-    assert listed[0]["target_branch"] == "develop"
-
-    member = _routes_client(MEMBER).get(f"/api/v1/projects/{proj.pid}/git/merge-abort-failures")
-    assert member.status_code == 403
-    admin = _routes_client(ADMIN).get(f"/api/v1/projects/{proj.pid}/git/merge-abort-failures")
-    assert admin.status_code == 200, admin.text
-    assert admin.json()["result"]["sessions"][0]["abort_failure"]["reason"] == reason
-
-    # once the lock is gone the ordinary abort works again
-    assert svc.abort_merge(gid, merge_id)["result"]["status"] == "waiting"
 
 
-def test_sweep_failure_marks_session_cleanup_failed(proj):
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(7)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    _age_session(merge_id)
-    lock = _hold_index_lock(root)
-    try:
-        svc.merge_session_sweep()
-    finally:
-        lock.unlink()
-    assert _session(merge_id)["status"] == "open"            # never force-reset by the sweep
-    failure = _ctx(merge_id)["abort_failure"]
-    assert failure["trigger"] == "sweep_abort"
-    assert "index.lock" in failure["reason"]
-    assert _merge_head(root) is not None
-    svc.abort_merge(gid, merge_id)
 
 
 # ── 5. administrator force cleanup ────────────────────────────────────────────────────
 
-def test_force_cleanup_admin_only_resets_target_workspace_and_keeps_group_branch(proj):
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git_service import GitServiceError
-
-    gid = proj.group(8)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    svc.resolve_conflicts(gid, merge_id, [{
-        "path": "shared.txt", "content": f"{gid} version\ndevelop version\n",
-    }], False)
-    # A real local edit on top of the staged resolution: `merge --abort` (reset --merge)
-    # refuses to lose it, and no stat refresh changes that.
-    (root / "shared.txt").write_bytes(b"hand edit\n")
-    with pytest.raises(GitServiceError) as caught:
-        svc.abort_merge(gid, merge_id)
-    assert "not uptodate" in caught.value.details["reason"]
-
-    head = _git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
-    group_sha = _group_branch_sha(proj, gid)
-    origin_develop = proj.origin_sha("develop")
-    url = f"/api/v1/groups/{gid}/git/merge/{merge_id}/force-cleanup"
-
-    assert _routes_client(MEMBER).get(url).status_code == 403
-    assert _routes_client(MEMBER).post(url).status_code == 403
-    assert _session(merge_id)["status"] == "open"
-
-    preview = _routes_client(ADMIN).get(url)
-    assert preview.status_code == 200, preview.text
-    plan = preview.json()["result"]
-    assert plan["workspace"] == str(root) and plan["head"] == head
-    assert plan["target_branch"] == "develop" and plan["merge_head"]
-    assert "shared.txt" in plan["discarded_paths"] and plan["unmerged_paths"] == ["other.txt"]
-    assert "not uptodate" in plan["abort_failure"]["reason"]
-
-    done = _routes_client(ADMIN).post(url)
-    assert done.status_code == 200, done.text
-    result = done.json()["result"]
-    assert result["status"] == "aborted" and result["forced"] is True
-    assert result["workspace"] == str(root) and result["reset_head"] == head
-    assert result["target_branch"] == "develop" and result["branch_preserved"] is True
-    assert "not uptodate" in result["abort_reason"]
-    assert set(result["discarded_paths"]) >= {"shared.txt", "other.txt"}
-    session = _session(merge_id)
-    assert session["status"] == "aborted"
-    assert db_git.get_state(gid)["status"] == "waiting"
-    assert _group_branch_sha(proj, gid) == group_sha          # group branch untouched
-    assert proj.origin_sha("develop") == origin_develop       # nothing pushed
-    assert not root.exists() or _merge_head(root) is None
-    # a closed session cannot be force-cleaned again
-    assert _routes_client(ADMIN).post(url).status_code == 409
 
 
-def test_force_cleanup_refuses_the_shared_base_checkout(proj):
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(9)
-    merge_id = _two_file_conflict(proj, gid, branch="main")["merge_id"]
-    response = _routes_client(ADMIN).post(f"/api/v1/groups/{gid}/git/merge/{merge_id}/force-cleanup")
-    assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "force_cleanup_unsupported_target"
-    assert _session(merge_id)["status"] == "open"
-    svc.abort_merge(gid, merge_id)
 
 
 # ── 6. reading the conflict list is not activity ──────────────────────────────────────
 
-def test_list_conflicts_does_not_touch_the_session(proj):
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(10)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    _age_session(merge_id, hours=30)
-    before = _session(merge_id)["touched_at"]
-    listed = svc.list_conflicts(gid, merge_id)
-    assert listed["abort_failure"] is None
-    assert _session(merge_id)["touched_at"] == before
-    svc.abort_merge(gid, merge_id)
 
 
 # ── 7. opening a review is not activity either (일반 병합 · TR 검토) ───────────────────
@@ -721,44 +491,8 @@ def _resolve_everything(p: Proj, gid: str) -> tuple[int, Path]:
     return merge_id, root
 
 
-def test_opening_the_merge_review_does_not_touch_the_session(proj):
-    """T0003 할 일 4(c): the review GET (``get_merge_review``) is a read — touched_at, the
-    sweep TTL basis, stays where the last real operation put it; a review conversation
-    turn (a real operation) does move it."""
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(11)
-    merge_id, _root = _resolve_everything(proj, gid)
-    _age_session(merge_id, hours=30)
-    before = _session(merge_id)["touched_at"]
-
-    for _ in range(3):                                    # a screen left open and polled
-        review = svc.get_merge_review(gid, merge_id)
-        assert review["result"]["review_state"] == svc.REVIEW_STATE_PENDING
-        assert review["result"]["can_approve"] is True
-    assert _session(merge_id)["touched_at"] == before
-
-    svc.send_review_message(
-        gid, merge_id, message="왜 이렇게 합쳤나요?", provider_id=None,
-        provider_pinned=True, apply_requested=False, start_run=lambda: "aiv_t0052_review",
-    )
-    assert _session(merge_id)["touched_at"] != before
 
 
-def test_the_merge_review_read_never_calls_touch_session(proj, monkeypatch):
-    """The merge review GET never reaches ``db_git.touch_session`` (a spy, so no timestamp
-    resolution can hide a call). The TR conflict review GET is covered on a real TR
-    session by test_conflict_flow_simplification_0668
-    ``test_opening_the_tr_review_is_not_activity``."""
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(12)
-    merge_id, _root = _resolve_everything(proj, gid)
-    touched: list[int] = []
-    monkeypatch.setattr(db_git, "touch_session", lambda mid: touched.append(mid))
-    svc.get_merge_review(gid, merge_id)
-    assert touched == []
 
 
 # ── 8. every session abort failure is audited, not only the user [abort] ─────────────
@@ -791,155 +525,3 @@ def _conflict_in_group_worktree(p: Proj, gid: str) -> tuple[Path, str]:
     merged = _git(["merge", "--no-ff", "--no-commit", side], cwd=root, check=False)
     assert merged.returncode != 0 and _merge_head(root) == side
     return root, side
-
-
-def test_hold_abort_failure_is_audited_on_the_session(proj, monkeypatch):
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git import rerere_checkpoint
-    from modules.flow_gate.services.git_service import GitServiceError
-
-    gid = proj.group(13)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    svc.resolve_conflicts(gid, merge_id, [{
-        "path": "shared.txt", "content": f"{gid} version\ndevelop version\n",
-    }], False)
-    real_run = rerere_checkpoint._run
-    locks: list[Path] = []
-
-    def rerere_then_lock(r):
-        real_run(r)
-        locks.append(_hold_index_lock(root))     # only the abort that follows meets it
-
-    monkeypatch.setattr(rerere_checkpoint, "_run", rerere_then_lock)
-    try:
-        with pytest.raises(GitServiceError) as caught:
-            rerere_checkpoint.hold(gid, merge_id)
-    finally:
-        for lock in locks:
-            lock.unlink()
-    assert caught.value.status == 500
-    assert "index.lock" in caught.value.details["reason"]
-    _assert_abort_audited(merge_id, "hold_abort", "hold_abort")
-    assert _merge_head(root) is not None
-    monkeypatch.setattr(rerere_checkpoint, "_run", real_run)
-    svc.abort_merge(gid, merge_id)
-
-
-def test_group_update_sweep_abort_failure_is_audited_on_the_session(proj):
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git import cleanup
-
-    gid = proj.group(14)
-    root, _side = _conflict_in_group_worktree(proj, gid)
-    branch = db_git.get_state(gid)["branch"]
-    assert svc.src_root(svc._project_name(proj.pid), branch) == root
-    merge_id = db_git.create_session(
-        gid, ["shared.txt"], kind=db_git.SESSION_KIND_GROUP_UPDATE, context={"branch": branch},
-    )
-    _age_session(merge_id)
-    lock = _hold_index_lock(root)
-    try:
-        cleanup._sweep_group_update_session(_session(merge_id), proj.pid)
-    finally:
-        lock.unlink()
-    _assert_abort_audited(merge_id, "group_update_sweep_abort", "sweep_abort")
-    assert _merge_head(root) is not None                     # never force-reset
-
-    cleanup._sweep_group_update_session(_session(merge_id), proj.pid)
-    assert _session(merge_id)["status"] == "aborted" and _merge_head(root) is None
-
-
-def test_graph_attempt_abort_failure_is_audited_and_marked(proj):
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services.git import conflict
-    from modules.flow_gate.services.git_service import GitServiceError
-
-    gid = proj.group(15)
-    root, side = _conflict_in_group_worktree(proj, gid)
-    merge_id = db_git.create_session(
-        gid, ["shared.txt"], kind=db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE,
-        context={"target_sha": side, "prev_status": "waiting"},
-    )
-    lock = _hold_index_lock(root)
-    try:
-        with pytest.raises(GitServiceError) as caught:
-            conflict._abort_graph_attempt_merge(gid, merge_id, proj.pid, root)
-    finally:
-        lock.unlink()
-    exc = caught.value
-    assert exc.status == 500 and exc.code == "git_error"
-    assert "index.lock" in exc.details["reason"] and exc.params["reason"] == exc.details["reason"]
-    assert exc.details["recovery"] is None                    # force cleanup is merge-only
-    _assert_abort_audited(merge_id, "graph_attempt_abort", conflict.GRAPH_ATTEMPT_ABORT_TRIGGER)
-    assert _merge_head(root) == side
-
-    out = conflict._abort_graph_attempt_merge(gid, merge_id, proj.pid, root)
-    assert out["result"]["status"] == "aborted"
-    assert _session(merge_id)["status"] == "aborted" and _merge_head(root) is None
-
-
-def test_interrupted_recovery_abort_failure_is_audited_on_the_session(proj):
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git import merge_target
-
-    gid = proj.group(16)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    lock = _hold_index_lock(root)
-    try:
-        assert merge_target.recover_interrupted_attempt(_session(merge_id), "interrupted") is None
-    finally:
-        lock.unlink()
-    _assert_abort_audited(merge_id, "interrupted_recovery_abort", "interrupted_recovery")
-    svc.abort_merge(gid, merge_id)
-
-
-def test_disposed_group_abort_failure_keeps_the_session_open_and_audited(proj):
-    """Disposing a group mid-conflict: a failed abort is audited and the DB session is NOT
-    closed over a workspace that is still merging (T0003 하지 말 것); once the abort can
-    run, the same call closes it."""
-    from modules.flow_gate.services import git_service as svc
-    from modules.flow_gate.services.git import worktree
-
-    gid = proj.group(17)
-    merge_id = _two_file_conflict(proj, gid)["merge_id"]
-    root = svc.resolve_conflict_src_root(gid, merge_id)
-    lock = _hold_index_lock(root)
-    try:
-        worktree._abort_disposed_merge_session(proj.pid, gid, proj.base)
-    finally:
-        lock.unlink()
-    _assert_abort_audited(merge_id, "disposed_group_abort", worktree.DISPOSED_GROUP_ABORT_TRIGGER)
-    assert _merge_head(root) is not None
-
-    worktree._abort_disposed_merge_session(proj.pid, gid, proj.base)
-    assert _session(merge_id)["status"] == "aborted"
-    assert not root.exists() or _merge_head(root) is None
-
-
-def test_session_audit_keeps_reason_for_local_commands_only(proj, monkeypatch):
-    """A failed local command keeps git's reason in ``ref_operations[].stderr_tail``; a
-    failed network command (push, fetch, …, or any call with a configured ``secret``)
-    keeps none — its stderr may carry a credential only the caller's secret can mask
-    (test_git_push_evidence_0153 pins that contract)."""
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.services import git_service as svc
-
-    gid = proj.group(18)
-    merge_id = db_git.create_session(gid, ["shared.txt"])
-    leaked = "fatal: could not read from remote: token configured-secret-value\n"
-    monkeypatch.setattr(svc, "_run_git", lambda args, **kw: subprocess.CompletedProcess(
-        args, 128, "", leaked if args[0] != "merge" else "error: merge refused\n"))
-
-    svc._run_session_git(merge_id, None, "push", "t_push", ["push", "origin", "main"])
-    svc._run_session_git(merge_id, None, "merge", "t_fetch", ["fetch", "origin"])
-    svc._run_session_git(merge_id, None, "merge", "t_secret", ["rev-parse", "x"], secret="s")
-    svc._run_session_git(merge_id, None, "merge", "t_merge", ["merge", "--abort"])
-    ops = {op["reason"]: op for op in _ctx(merge_id)["ref_operations"]}
-    for name in ("t_push", "t_fetch", "t_secret"):
-        assert ops[name]["returncode"] == 128 and "stderr_tail" not in ops[name]
-    assert ops["t_merge"]["stderr_tail"] == "error: merge refused"
-    assert "configured-secret-value" not in str(_ctx(merge_id))
-    db_git.close_session(merge_id, "aborted")

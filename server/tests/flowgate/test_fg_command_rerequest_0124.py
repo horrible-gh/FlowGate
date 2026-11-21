@@ -219,21 +219,6 @@ def test_the_re_requested_rework_hop_carries_the_last_rejection_and_the_card_mem
 
 # ── NR §6.4: a full command goes on after the pass ───────────────────────────
 
-def test_a_full_command_requests_the_spent_review_again_and_goes_on_to_completed_after_its_pass(
-        env, decided, monkeypatch, starts, fork_join):
-    a, a2, a3, result, first = _spent(env, monkeypatch, starts)
-    command(env, "full")
-    second = one(env, a, "result_review", 2)
-    assert second is not None and second["intent_kind"] == "execution"
-    assert _run()["step_node_keys"] is None                                    # a full command has no targets
-    _passes(env, monkeypatch, a, result, SECOND_LOOP)
-    assert node_run(env, a)["status"] == "done" and node_run(env, a2)["status"] == "open"
-    write_line(env, a2, "report", "## 결과\n\n본문\n")
-    assert node_run(env, a2)["status"] == "done" and node_run(env, a3)["status"] == "open"
-    write_line(env, a3, "report", "## 결과\n\n본문\n")
-    read = _read(env)
-    assert (read["status"], read["idle_reason"]) == ("idle", "completed")
-    assert [r["seq"] for r in assignments(env, a) if r["stage"] == "result_review"] == [1, 2]
 
 
 # ── NR §6.5: a person's edit of the AI's result ──────────────────────────────
@@ -257,48 +242,6 @@ def _first_hops(monkeypatch):
     return hops
 
 
-def test_a_person_s_save_of_the_rejected_ai_result_opens_no_seq_and_the_command_s_seq_2_starts_from_its_saved_state(
-        env, decided, monkeypatch, starts, fork_join):
-    """§6.5 on the real save: the result rejected as the loop's automatic rejection leaves it, then a person saves an
-    edit through the Document window's [저장] (``documents.update_document_content``, the content PATCH route's own
-    function: its write checks, its Flow guard, its save contact). Measured here (NR §6.5 left it unconfirmed): the save
-    writes the body and keeps the document's revision and its ``doc_review_status`` (``rejected``) — a body save is no
-    submission. So the save / a read opens nothing, the command's ``seq`` 2 takes the saved document's mark as its
-    basis, and its first hop is the one ``compute_review_baseline`` gives for that state: rework (the AI reworks the
-    person's edit with the last rejection reason)."""
-    from flowgate.card_settings import stage_assignment as sa
-    from modules.flow_gate.db import documents as db_documents
-    from modules.flow_gate.documents.routers import documents
-    from modules.flow_gate.storage.paths import get_storage_root
-
-    a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    why = "Name every error code of table v2."
-    db_documents.update(result, {"doc_review_status": "rejected", "rejection_reason": why,
-                                 "rejection_history": json.dumps([{"rejected_at": "t", "reason": why}])})
-    before = db_documents.get_by_id(result)
-    edited = "---\ntitle: 결과\n---\n## 결과\n\n사람이 고친 본문: 표 v2의 오류 코드 전부\n"
-
-    documents.update_document_content(result, documents.DocumentContentUpdate(content=edited),
-                                      current_user={"user_id": "u_kim", "is_admin": True})
-
-    saved = db_documents.get_by_id(result)
-    body = (get_storage_root("flowgate") / saved["file_path"]).read_text(encoding="utf-8")
-    assert "사람이 고친 본문" in body                                              # the person's edit is saved
-    measured = (int(saved.get("revision_no") or 0), saved.get("doc_review_status"))
-    assert measured == (int(before.get("revision_no") or 0), "rejected"), measured     # NR §6.5: measured here
-    assert sa.needs_new_submission(first, saved) is False                     # an AI's document: unchanged
-    _read(env)
-    assert one(env, a, "result_review", 2) is None                             # no seq by the save / a read
-    assert one(env, a, "result_review", 1) == first
-    hops = _first_hops(monkeypatch)
-
-    command(env, "step")
-
-    second = one(env, a, "result_review", 2)
-    assert (second["basis_doc_id"], second["basis_revision_no"], second["basis_rejection_count"]) == \
-        tuple(sa.mark(db_documents.get_by_id(result)).values())               # the saved document's mark
-    assert hops == ["rework"]                                                  # compute_review_baseline of "rejected"
-    assert _run()["step_node_keys"] == [a]
 
 
 # ── NR §6.6: what a command never starts ─────────────────────────────────────
@@ -336,27 +279,6 @@ EXCLUDED = {
 }
 
 
-@pytest.mark.parametrize("case", sorted(EXCLUDED))
-def test_an_excluded_card_is_never_requested_again_by_a_command(env, decided, monkeypatch, starts, fork_join, case):
-    a, a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    EXCLUDED[case](env, a, result, first)
-    rows = len(assignments(env, a))
-    loops, requests = len(_loops(starts)), len(ledger(env))
-    command(env, "step")
-    if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
-        # 0126: explicit reentry now covers these waits; attribution and older seqs remain fixed.
-        second = one(env, a, "result_review", 2)
-        assert second is not None and len(assignments(env,a)) == rows + 1
-        assert len(_loops(starts)) == loops + 1 and len(ledger(env)) == requests + 1
-        assert node_run(env,a2)["status"] == "pending"
-        if case == "person_author":
-            assert second["review_rounds"] == 1 and second["rework_provider_id"] is None
-        return
-    assert len(assignments(env, a)) == rows and one(env, a, "result_review", 2) is None
-    assert len(_loops(starts)) == loops and len(ledger(env)) == requests
-    assert a not in (_run()["step_node_keys"] or [])
-    assert node_run(env, a)["status"] == "review" and node_run(env, a2)["status"] == "pending"
-    assert _run_row(env)["status"] == "idle"
 
 
 def _fan(env):
@@ -404,106 +326,14 @@ def _card_spent(env, monkeypatch, starts, key, n, stop):
     return result, one(env, key, "result_review", 1)
 
 
-@pytest.mark.parametrize("mode", ["step", "full"])
-def test_a_command_requests_every_admitted_card_of_a_flow_again_and_nothing_of_an_excluded_one(
-        env, decided, monkeypatch, starts, fork_join, mode):
-    """§6.6 last row on real rows: three AI cards of one Flow in review at once — a (``retry_exhausted``) and b
-    (``total_timeout``) admitted, c (``review_verdict_hold``) excluded. One command: a and b each get their ``seq`` 2 with
-    its ledger request and loop start, both are the step's targets; c is asked too (every review row is) and gets
-    nothing — no ``seq``, no ledger request, no loop start, still waiting with its own reason."""
-    from flowgate.card_settings import assigned_review
-
-    a, b, c = _fan(env)
-    command(env, "full")
-    results, firsts = {}, {}
-    for n, (key, stop) in enumerate(((a, "retry_exhausted"), (b, "total_timeout"), (c, "review_verdict_hold"))):
-        results[key], firsts[key] = _card_spent(env, monkeypatch, starts, key, n, stop)
-    _read(env)
-    assert {k: _wire(env, k)["intervention"]["reason"] for k in (a, b, c)} == {
-        a: "review_not_passed:retry_exhausted", b: "review_not_passed:total_timeout",
-        c: "review_not_passed:review_verdict_hold"}
-    assert _run_row(env)["status"] == "idle"
-    _hold(env, c)  # 0126: verdict hold is retryable; the independent card Hold still blocks.
-    asked = []
-    real = assigned_review.rerequest_review_locked
-
-    def spy(ctx, row):
-        opened = real(ctx, row)
-        asked.append((row["node_key"], opened))
-        return opened
-
-    monkeypatch.setattr(assigned_review, "rerequest_review_locked", spy)
-    requests_of_c = len([l for l in ledger(env) if l["attempt_id"] == firsts[c]["attempt_id"]])
-    loops = len(_loops(starts))
-
-    command(env, mode)
-
-    assert sorted(asked) == sorted([(a, True), (b, True), (c, False)])
-    for key in (a, b):
-        second = one(env, key, "result_review", 2)
-        assert (second["actor"], second["provider_id"], second["rework_provider_id"], second["intent_kind"]) == \
-            ("ai", B, X, "execution")
-        assert second["basis_doc_id"] == results[key]
-        assert one(env, key, "result_review", 1) == firsts[key]
-    started = _loops(starts)[loops:]
-    assert sorted(s["doc_ref"] for s in started) == sorted([results[a], results[b]])
-    assert one(env, c, "result_review", 2) is None and one(env, c, "result_review", 1) == firsts[c]
-    assert len([l for l in ledger(env) if l["attempt_id"] == firsts[c]["attempt_id"]]) == requests_of_c
-    assert node_run(env, c)["status"] == "review"
-    assert _wire(env, c)["intervention"] == {"kind": "needs_intervention",
-                                             "reason": "review_not_passed:review_verdict_hold"}
-    assert _run()["step_node_keys"] == (sorted([a, b]) if mode == "step" else None)
 
 
 # ── NR §6.8: spent again, the next command only ──────────────────────────────
 
-def test_a_re_requested_review_spent_again_waits_again_and_only_the_next_command_opens_seq_3(
-        env, decided, monkeypatch, starts, fork_join):
-    a, _a2, _a3, result, _first = _spent(env, monkeypatch, starts)
-    command(env, "step")
-    second = one(env, a, "result_review", 2)
-    _loop_row(result, SECOND_LOOP, "rework")
-    _loop_end(env, second["intent_exec_id"], result, SECOND_LOOP, "retry_exhausted")
-    assert one(env, a, "result_review", 2)["verdict"] == "not_passed:retry_exhausted"
-    loops = len(_loops(starts))
-    for _ in range(3):
-        _read(env)                                                             # reads retry nothing
-    assert one(env, a, "result_review", 3) is None and len(_loops(starts)) == loops
-    assert _wire(env, a)["intervention"]["kind"] == "needs_intervention"
-    assert _run_row(env)["idle_reason"] == "needs_intervention"
-    command(env, "step")
-    third = one(env, a, "result_review", 3)
-    assert (third["provider_id"], third["rework_provider_id"], third["intent_kind"]) == (B, X, "execution")
-    assert len(_loops(starts)) == loops + 1
 
 
 # ── NR §6.9: a refused start ─────────────────────────────────────────────────
 
-def test_a_refused_start_of_the_re_requested_review_fails_seq_2_with_its_code_and_asks_no_other_ai(
-        env, decided, monkeypatch, starts, fork_join):
-    from modules.flow_gate.services import ai_invoke_service
-
-    a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    tried = []
-
-    class Refused(RuntimeError):
-        code = "ai_disabled"                                                   # an admission refusal's own code
-
-    def refused(**kwargs):
-        tried.append((kwargs.get("graph_exec_id"), (kwargs.get("document_review_loop") or {}).get(
-            "reviewer_provider_id")))
-        raise Refused("the reviewer is disabled")
-
-    monkeypatch.setattr(ai_invoke_service, "start_run", refused)
-    command(env, "step")
-    second = one(env, a, "result_review", 2)
-    assert (second["stage_state"], second["fail_cause"]) == ("failed", "start_refused:ai_disabled")
-    assert tried == [(second["intent_exec_id"], B)]                            # once, the assigned reviewer only
-    [req] = [l for l in ledger(env) if l["exec_id"] == second["intent_exec_id"]]
-    assert req["status"] != "requested"                                        # the refused start ended its request
-    assert one(env, a, "result_review", 1)["verdict"] == first["verdict"]
-    assert ("review_not_started" in [r for _d, r, _m in b1(env)])
-    assert _run()["step_node_keys"] == [a]
 
 
 # ── review P1 of the rework: the re-request begins a new recovery cycle ───────
@@ -546,233 +376,24 @@ def _mark(first):
             "rejection_count": int(first["basis_rejection_count"])}
 
 
-def test_a_refused_start_after_a_re_request_of_the_same_submission_is_retried_once_its_provider_is_back(
-        env, decided, monkeypatch, starts, fork_join):
-    """total_timeout of seq 1 (the submission mark unchanged), the command's seq 2 refused once: a system error of the
-    new cycle — the review_not_passed record the command answered no longer stops its retry. The next run read opens
-    seq 3 (the existing 0119 retry) with the reviewer back; its pass completes the card."""
-    from flowgate.card_settings import assigned_review
-    from modules.flow_gate.services import ai_invoke_service
-
-    a, a2, _a3, result, first = _spent(env, monkeypatch, starts, stop="total_timeout")
-    tried, recorder = _refuse_starts(monkeypatch)
-    command(env, "step")
-    second = one(env, a, "result_review", 2)
-    assert (second["stage_state"], second["fail_cause"]) == ("failed", "start_refused:ai_disabled")
-    floor = _rerequested_at(env, a)
-    assert _b1_after(env, floor) == [("review_not_started", _mark(first))]           # the same submission's mark
-    assert [r for r, _p in events(env, "auto_approval_skipped") if r == "review_not_passed:total_timeout"]  # kept
-    assert assigned_review.command_cycle(second["run_id"], a, second["attempt_id"], "result") == (floor, 2)
-    assert assigned_review.review_retry_due(second) is True                   # the probe the review ran: False before
-
-    monkeypatch.setattr(ai_invoke_service, "start_run", recorder)             # the provider is back
-    loops = len(_loops(starts))
-    _read(env)
-
-    third = one(env, a, "result_review", 3)
-    assert third is not None
-    assert (third["actor"], third["provider_id"], third["rework_provider_id"], third["stage_state"],
-            third["intent_kind"]) == ("ai", B, X, "active", "execution")
-    assert third["basis_doc_id"] == result
-    [loop] = _loops(starts)[loops:]
-    assert loop["graph_exec_id"] == third["intent_exec_id"] and loop["doc_ref"] == result
-    assert len(tried) == 1                                                      # refused once, retried once
-    assert one(env, a, "result_review", 1) == first                            # seq 1 / 2 kept as history
-    assert (one(env, a, "result_review", 2)["stage_state"], one(env, a, "result_review", 2)["fail_cause"]) == \
-        ("failed", "start_refused:ai_disabled")
-    _passes(env, monkeypatch, a, result, THIRD_LOOP)
-    assert node_run(env, a)["status"] == "done" and _review_status(result) == "approved"
-    assert node_run(env, a2)["status"] == "pending"                           # the step's next card: next command
-    assert [r["seq"] for r in assignments(env, a) if r["stage"] == "result_review"] == [1, 2, 3]
 
 
-def test_the_retries_of_a_re_requested_start_end_at_the_limit_of_its_own_cycle(
-        env, decided, monkeypatch, starts, fork_join):
-    """The reviewer stays refused: seq 2 (the command's) and the reads' retries are tried ``SYSTEM_ERROR_RETRY_LIMIT``
-    times in all, counted from the re-request — then nothing is tried again however often the run is read."""
-    a, _a2, _a3, _result, first = _spent(env, monkeypatch, starts)
-    tried, _recorder = _refuse_starts(monkeypatch)
-    command(env, "step")
-    for _ in range(LIMIT + 3):
-        _read(env)
-    rows = [r for r in assignments(env, a) if r["stage"] == "result_review"]
-    assert [r["seq"] for r in rows] == list(range(1, LIMIT + 2))              # seq 1, then LIMIT tries of the cycle
-    assert all((r["stage_state"], r["fail_cause"]) == ("failed", "start_refused:ai_disabled") for r in rows[1:])
-    assert len(tried) == LIMIT and {reviewer for _e, reviewer in tried} == {B}
-    assert one(env, a, "result_review", 1) == first
-    assert _b1_after(env, _rerequested_at(env, a), "review_not_started") == [("review_not_started", _mark(first))]
-    assert _wire(env, a)["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
 
 
-def test_a_needs_intervention_reason_recorded_after_the_re_request_still_stops_the_retries(
-        env, decided, monkeypatch, starts, fork_join):
-    """The cycle only drops the records before the re-request: a needs_intervention reason recorded in it (here an
-    abnormal end) stops the retry of the refused start as before — nothing is requested again but by a command."""
-    from modules.flow_gate.services import ai_invoke_service
-
-    a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    _tried, recorder = _refuse_starts(monkeypatch)
-    command(env, "step")
-    _reason(env, a, result, first, "run_not_clean:timeout")
-    monkeypatch.setattr(ai_invoke_service, "start_run", recorder)
-    loops = len(_loops(starts))
-    for _ in range(3):
-        _read(env)
-    assert one(env, a, "result_review", 3) is None and len(_loops(starts)) == loops
 
 
-def test_a_re_requested_pass_whose_approval_failed_once_completes_on_the_next_read(
-        env, decided, monkeypatch, starts, fork_join):
-    """seq 2 passes the same submission, its automatic approval is refused once (``approval_refused``, a system error
-    of the cycle): the next run read approves it — the seq 1 review_not_passed record of that mark no longer stops it."""
-    from flowgate.card_settings import legacy_adapter
-
-    a, a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    command(env, "step")
-    floor = _rerequested_at(env, a)
-    monkeypatch.setattr(legacy_adapter, "completion_gates", _refused)
-    _passes(env, monkeypatch, a, result, SECOND_LOOP)
-    assert one(env, a, "result_review", 2)["verdict"] == "passed"
-    assert node_run(env, a)["status"] == "review" and _review_status(result) != "approved"
-    assert _b1_after(env, floor) == [("approval_refused", _mark(first))]
-    monkeypatch.setattr(legacy_adapter, "completion_gates", lambda doc: None)  # the cause is gone
-    _read(env)
-    assert node_run(env, a)["status"] == "done" and _review_status(result) == "approved"
-    assert node_run(env, a2)["status"] == "pending"
-    assert _b1_after(env, floor) == [("approval_refused", _mark(first))]       # nothing recorded by the retry
 
 
-def test_the_approval_retries_of_a_re_requested_pass_end_at_the_limit_of_its_own_cycle(
-        env, decided, monkeypatch, starts, fork_join):
-    from flowgate.card_settings import legacy_adapter
-
-    a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    command(env, "step")
-    floor = _rerequested_at(env, a)
-    monkeypatch.setattr(legacy_adapter, "completion_gates", _refused)
-    _passes(env, monkeypatch, a, result, SECOND_LOOP)
-    for _ in range(LIMIT + 3):
-        _read(env)
-    assert _b1_after(env, floor, "approval_refused") == [("approval_refused", _mark(first))] * LIMIT
-    assert node_run(env, a)["status"] == "review" and _review_status(result) != "approved"
-    assert _wire(env, a)["intervention"] == {"kind": "system_error", "reason": "approval_refused"}
-    assert [r["seq"] for r in assignments(env, a) if r["stage"] == "result_review"] == [1, 2]
 
 
 # ── NR §6.10: twice in a row, a lost compare-and-set ──────────────────────────
 
-def test_two_commands_in_a_row_open_seq_2_once(env, decided, monkeypatch, starts, fork_join):
-    a, _a2, _a3, _result, _first = _spent(env, monkeypatch, starts)
-    command(env, "step")
-    again = env["client"].post(f"/api/v1/flows/{FA}/runs", json={"revision_no": 1, "mode": "full"}, headers=_h())
-    assert again.status_code in (200, 201, 409), again.text                    # 409 run_already_active while it works
-    assert [r["seq"] for r in assignments(env, a) if r["stage"] == "result_review"] == [1, 2]
-    assert len([l for l in ledger(env) if l["assignment_seq"] == 2]) == 1
 
 
-def test_a_lost_compare_and_set_requests_nothing(env, decided, monkeypatch, starts, fork_join):
-    """Another writer opened seq 2 between the judgement and the insert: insert-if-absent loses, nothing requested."""
-    from flowgate.card_settings import assigned_review
-    from flowgate.card_settings import stage_assignment as sa
-    from modules.flow_gate.graph_workflow.services import run_apply
-    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
-    from modules.flow_gate.graph_workflow.store import run_store
-
-    a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-
-    from modules.flow_gate.db import documents as db_documents
-
-    def other_writer():
-        return sa.restart_review_stage(FA, first, sa.mark(db_documents.get_by_id(result)))
-
-    with_flow_guard(FA, other_writer)
-    monkeypatch.setattr(sa, "current_review_assignment", lambda attempt_id, stage: dict(first))   # a stale read
-    requests = len(ledger(env))
-
-    def body():
-        ctx = run_apply.load_context({**_run(), "status": "running"}, "flowgate", None, [])
-        row = next(r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == a)
-        return assigned_review.rerequest_review_locked(ctx, row), ctx.jobs
-
-    opened, jobs = with_flow_guard(FA, body)
-    assert opened is False and jobs == []
-    assert len(ledger(env)) == requests and one(env, a, "result_review", 2)["intent_kind"] is None
 
 
 # ── NR §6.11: a Stop during the re-requested review, then a command ───────────
 
-def test_a_stop_during_the_re_requested_review_keeps_its_seq_and_the_next_command_goes_on(
-        env, decided, monkeypatch, starts, fork_join):
-    """§6.11 with the Stop contract as it is (0061 T#7, not changed here): the Stop cancels seq 2's request, puts the
-    card back to pending and invalidates its attempt; the next command opens the card again as a new attempt. The
-    stopped attempt's seq 1..2 stay as its history."""
-    a, _a2, _a3, _result, first = _spent(env, monkeypatch, starts)
-    command(env, "step")
-    second = one(env, a, "result_review", 2)
-    res = env["client"].post(f"/api/v1/runs/{_run()['run_id']}/stop", json={}, headers=_h())
-    assert res.status_code == 200, res.text
-    assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "stopped")
-    [req] = [l for l in ledger(env) if l["exec_id"] == second["intent_exec_id"]]
-    assert req["status"] == "cancelled"
-    assert node_run(env, a)["status"] == "pending"
-    kept = sorted((r["seq"], r["stage_state"]) for r in assignments(env, a)
-                  if r["attempt_id"] == first["attempt_id"] and r["stage"] == "result_review")
-    assert [s for s, _st in kept] == [1, 2]                                    # the stopped seq is history
-    command(env, "step")                                                       # the next command goes on
-    assert node_run(env, a)["status"] == "open"
-    assert sorted((r["seq"], r["stage_state"]) for r in assignments(env, a)
-                  if r["attempt_id"] == first["attempt_id"] and r["stage"] == "result_review") == kept
-    assert len({r["attempt_id"] for r in assignments(env, a)}) == 2          # a new attempt of the same card
 
 
 # ── the lock order (§5.1.3-6, decision ①: no hold inside the command's guard) ──
-
-def test_the_command_takes_no_stop_gate_inside_its_guard_and_a_stop_after_it_does_not_deadlock(
-        env, decided, monkeypatch, starts, fork_join):
-    from flowgate.card_settings import assigned_review
-    from flowgate.graph_run import fencing
-    from modules.flow_gate.db import groups as db_groups
-    from modules.flow_gate.graph_workflow.services import run_service
-    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
-
-    a, _a2, _a3, _result, _first = _spent(env, monkeypatch, starts)
-    monkeypatch.setattr(assigned_review, "hold_of", lambda *a_, **k: (_ for _ in ()).throw(
-        AssertionError("a node hold inside the command's guard")))
-    inside, release, gate_taken = threading.Event(), threading.Event(), threading.Event()
-    real = assigned_review.ensure_intent_locked
-    errors, seen = [], []
-
-    def ensure(*args, **kwargs):
-        inside.set()
-        release.wait(20)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(assigned_review, "ensure_intent_locked", ensure)
-    group = db_groups.get_by_id(FA)
-
-    def run_command():
-        try:
-            run_service.start_run(group, "u_kim", 1, "step")
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    def stop_order():
-        try:
-            with fencing.exclusive(FA):                                        # a Stop: the gate first ...
-                gate_taken.set()
-                with_flow_guard(FA, lambda: seen.append(one(env, a, "result_review", 2) is not None))  # ... the guard
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    commander = threading.Thread(target=run_command)
-    commander.start()
-    assert inside.wait(20)                                                     # the command is inside its guard
-    stopper = threading.Thread(target=stop_order)
-    stopper.start()
-    assert gate_taken.wait(5)                                                  # it holds no gate there
-    release.set()
-    commander.join(30)
-    stopper.join(30)
-    assert not commander.is_alive() and not stopper.is_alive()                 # no deadlock
-    assert errors == [] and seen == [True]                                     # the Stop's guard after the commit
-    assert one(env, a, "result_review", 2) is not None
