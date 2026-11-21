@@ -54,15 +54,27 @@ def _cleanup_fields(b):
 def _cleanup(r):
  """The stored policy in the heartbeat shape."""
  return {"enabled":_bool(r.get("workspace_cleanup_enabled",CLEANUP_DEFAULT_ENABLED)),"retention_hours":int(r.get("workspace_cleanup_retention_hours",CLEANUP_DEFAULT_HOURS))}
-def _row(s,agent_id):
- return s._fetch_one("""SELECT a.*,
- (SELECT COUNT(*) FROM agent_jobs j WHERE j.lease_owner_agent_id=a.agent_id AND j.status IN ('CLAIMED','STARTED')) running_jobs,
+SLOT_RELEASE_GRACE_SECONDS = 60
+
+def held_job_predicate(alias=""):
+ """Shared capacity rule; server expiry is not confirmation of remote termination."""
+ p = alias + "." if alias else ""
+ return (f"({p}status IN ('CLAIMED','STARTED') OR "
+         f"({p}status='FAILED' AND {p}end_reason IN ('remote_termination_unconfirmed','lease_expired') "
+         f"AND COALESCE({p}lease_expires_at,{p}finished_at)>?))")
+
+def held_job_cutoff(at=None):
+ return ((at or now()) - timedelta(seconds=SLOT_RELEASE_GRACE_SECONDS)).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+def _row(s,agent_id,at=None):
+ return s._fetch_one(f"""SELECT a.*,
+ (SELECT COUNT(*) FROM agent_jobs j WHERE j.lease_owner_agent_id=a.agent_id AND {held_job_predicate("j")}) running_jobs,
  (SELECT COUNT(*) FROM agent_jobs j WHERE j.target_agent_id=a.agent_id AND j.status='NEW' AND j.cancel_requested=FALSE) queued_jobs,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id) credential_count,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id AND c.revoked_at IS NULL) active_count,
  (SELECT MAX(e.expires_at) FROM agent_enrollments e WHERE e.agent_id=a.agent_id AND e.consumed_at IS NULL AND e.revoked_at IS NULL) enrollment_expires_at,
  (SELECT MAX(c.last_heartbeat_at) FROM agent_credentials c WHERE c.agent_id=a.agent_id AND c.revoked_at IS NULL) current_heartbeat_at
- FROM agents a WHERE a.agent_id=? AND a.deleted_at IS NULL""",[agent_id])
+ FROM agents a WHERE a.agent_id=? AND a.deleted_at IS NULL""",[held_job_cutoff(at),agent_id])
 def detail(r,at=None):
  if not r: return None
  cfg={k:_bool(r["configured_"+k]) for k in CAPS}

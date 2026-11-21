@@ -59,6 +59,26 @@ OTHER_DOC = "flowgate.default.0446.0007-CH"
 
 # ── §5-1. The migration itself ───────────────────────────────────────────────
 
+@pytest.mark.parametrize("state,cause,expected", [
+    ("NEW", None, "queued_capacity"), ("CLAIMED", None, "starting"),
+    ("STARTED", None, "running"), ("DONE", "agent_report", "retrieving"),
+    ("FAILED", "server_expired", "settling"),
+])
+def test_remote_execution_phase_uses_job_state(monkeypatch, state, cause, expected):
+    from modules.flow_gate.services.ai_invoke.diagnostics import _execution_status
+    from modules.flow_gate.services.agent_jobs import AgentJobService
+    from modules.flow_gate.services.agent_registry import AgentService
+    monkeypatch.setattr(AgentJobService, "__init__", lambda self: None)
+    monkeypatch.setattr(AgentService, "__init__", lambda self: None)
+    monkeypatch.setattr(AgentJobService, "get_ai_job", lambda *args: {
+        "status": state, "terminal_cause": cause, "retrieval_state": "pending", "target_agent_id": "a"})
+    monkeypatch.setattr(AgentService, "get", lambda *args: {
+        "online_status": "online", "running_jobs": 4, "max_concurrent_jobs": 4})
+    result = _execution_status({"remote_job": {"job_id": "j", "attempt_id": "a"}})
+    assert result["execution_phase"] == expected
+    assert result["agent_job_status"] == state
+
+
 class TestMigration086:
     """One number, three dialects, additive only, every new column nullable."""
 

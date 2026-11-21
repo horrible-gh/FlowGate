@@ -847,8 +847,8 @@ export default {
           ai: 'AI',
           questions: '質疑応答',
         },
-        project_only: '現在のプロジェクト {name} の実行のみ表示します。',
-        empty_runs: '実行中・待機中の実行はありません。',
+        project_only: 'プロジェクト {name} のタスクです。実行数は実行中のAIタスクのみです。',
+        empty_runs: '実行・待機・結果回収中のタスクはありません。',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: '「{title}」カードのマージ競合 — 選択が必要',
@@ -878,6 +878,9 @@ export default {
         failure: '失敗',
         unknown: '状態不明',
         phases: {
+          queued_capacity: '待機（Agentの空きなし）',
+          retrieving: '結果回収中',
+          settling: '終了確認中',
           running: '実行中',
           queued: '待機中',
           starting: '開始中',

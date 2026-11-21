@@ -203,7 +203,7 @@ describe('Designer top band — structure', () => {
       await settle()
       await get(wrapper, 'designer-header-notifications').trigger('click'); await settle()
       expect(wrapper.get('#designer-notifications').text()).toContain('Flow 목록을 확인할 수 없습니다')
-      expect(wrapper.get('#designer-notifications').text()).not.toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+      expect(wrapper.get('#designer-notifications').text()).not.toContain('실행·대기·결과 회수 중인 작업이 없습니다.')
     } finally { cache.mockRestore() }
   })
 

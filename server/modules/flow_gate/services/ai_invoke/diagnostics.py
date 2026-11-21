@@ -61,6 +61,44 @@ def ai_run_succeeded(row: dict) -> bool:
     )
 
 
+def _execution_status(run: dict) -> dict:
+    """Project remote execution separately from the invocation's lifecycle status.
+
+    Retrieval pending is also set on NEW/STARTED jobs; only a terminal report proves
+    the remote process ended. Never infer process exit from an answer being posted.
+    """
+    info = run.get("remote_job")
+    if not info:
+        return {"execution_phase": run.get("status", "unknown")}
+    job_id, attempt_id = info.get("job_id"), info.get("attempt_id")
+    if not job_id or not attempt_id:
+        return {"execution_phase": "starting"}
+    from modules.flow_gate.services.agent_jobs import AgentJobService, TERMINAL
+    from modules.flow_gate.services.agent_registry import AgentService
+    try:
+        row = AgentJobService().get_ai_job(job_id, attempt_id)
+        state = row["status"]
+        phase = "unknown"
+        if state == "NEW":
+            phase = "queued"
+            aid = row.get("target_agent_id")
+            if aid:
+                agent = AgentService().get(aid)
+                if agent["online_status"] == "online" and agent["running_jobs"] >= agent["max_concurrent_jobs"]:
+                    phase = "queued_capacity"
+        elif state == "CLAIMED":
+            phase = "starting"
+        elif state == "STARTED":
+            phase = "running"
+        elif state in TERMINAL:
+            phase = "retrieving" if row.get("terminal_cause") == "agent_report" else "settling"
+        return {"execution_phase": phase, "agent_job_status": state,
+                "agent_retrieval_state": row.get("retrieval_state")}
+    except Exception:
+        logger.debug("Remote execution status unavailable for %s", run.get("run_id"), exc_info=True)
+        return {"execution_phase": "unknown"}
+
+
 def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) -> dict:
     run = _svc().get_run_record(run_id)
     if run is None:
@@ -88,6 +126,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "ok": True,
         "run_id": run_id,
         "status": status,
+        **_execution_status(run),
         "mode": run["mode"],
         "group_id": run["group_id"],
         # 0481 T0010 rev3: the `ai_invoke_started` SSE frame already ships both of

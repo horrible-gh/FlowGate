@@ -847,8 +847,8 @@ export default {
           ai: 'AI',
           questions: 'Q&A',
         },
-        project_only: 'Only runs in the current project {name} are shown.',
-        empty_runs: 'No running or waiting runs.',
+        project_only: 'Tasks in project {name}. The run count includes only executing AI jobs.',
+        empty_runs: 'No executing, waiting or retrieving tasks.',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: 'The \'{title}\' card\'s merge conflict — a choice is needed',
@@ -878,6 +878,9 @@ export default {
         failure: 'Failed',
         unknown: 'Unknown status',
         phases: {
+          queued_capacity: 'Waiting (Agent at capacity)',
+          retrieving: 'Retrieving results',
+          settling: 'Confirming termination',
           running: 'Running',
           queued: 'Waiting',
           starting: 'Starting',

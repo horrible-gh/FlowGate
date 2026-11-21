@@ -66,7 +66,7 @@ function label(group: string, value: string) {
 /** The status box of a phase: running blue, waiting / paused orange, stopping red, unknown grey. */
 function phaseTone(phase: string): string {
   if (phase === 'running' || phase === 'starting') return 'is-run'
-  if (phase === 'queued' || phase === 'paused' || phase === 'pause_requested') return 'is-wait'
+  if (['queued', 'queued_capacity', 'retrieving', 'settling', 'paused', 'pause_requested'].includes(phase)) return 'is-wait'
   if (phase === 'cancelling') return 'is-fail'
   return ''
 }
@@ -74,7 +74,8 @@ function phaseIcon(phase: string): LineIconName {
   if (phase === 'running' || phase === 'starting') return 'loader'
   if (phase === 'paused' || phase === 'pause_requested') return 'pause-circle'
   if (phase === 'cancelling') return 'stop-circle'
-  if (phase === 'queued') return 'play'
+  if (phase === 'queued' || phase === 'queued_capacity') return 'play'
+  if (phase === 'retrieving' || phase === 'settling') return 'loader'
   return 'help-circle'
 }
 </script>
