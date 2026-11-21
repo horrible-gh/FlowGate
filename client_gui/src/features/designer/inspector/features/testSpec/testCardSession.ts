@@ -136,6 +136,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   watch(view, (value) => {
     if (value?.details?.cases.length || !value?.details?.errors.length) rawSavedInScenario.value = false
   }, { flush: 'sync' })
+  const reportDocId = computed(() => target()?.cardDocuments.find(line => line.slot === 'report')?.docId ?? view.value?.tsrDocId ?? null)
   const presentation = computed(() => testCardPresentation(view.value, writing.value, rows.value))
   const instructionOmitted = computed(() => settings.node.value?.fields.instruction?.value === 'omit')
   watch(() => presentation.value.stage, (stage, previous) => {
@@ -221,6 +222,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
 
   /** Shared by menu and section cards; the availability argument also supports window-less tests. */
   function openReason(kind: TestCardWindowKind, available = testCardWindowAvailable(kind)): string | null {
+    if (kind === 'report' && reportDocId.value) return null
     if (!available) return 'guard.unconnected'
     if (kind === 'brief') return instructionOmitted.value ? 'guard.instruction_omitted' : null
     if (writing.value === 'initial' || (kind === 'case' && writing.value)) return 'guard.writing'
@@ -232,6 +234,10 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   function canOpen(kind: TestCardWindowKind): boolean { return openReason(kind, true) === null }
   function openWindow(kind: TestCardWindowKind, caseId: string | null = null): boolean {
     if (!canOpen(kind)) return false
+    if (kind === 'report' && reportDocId.value) {
+      test.open(reportDocId.value)
+      return true
+    }
     const window = windows[kind]
     window.open = true; window.minimized = false; window.caseId = caseId; window.zIndex = ++front
     // the Frame's window host draws the card's windows from now on, whatever is selected.

@@ -152,6 +152,14 @@ describe('0071 T2 brief window', () => {
 })
 
 describe('0071 T2 scenario window', () => {
+  it('shows NOT_RUN for cases with no result instead of empty cells', async () => {
+    Object.assign(server, { latest_result: null, effective_result: null, last_execution: null, active_run: null, run_history: [] })
+    const w = await render('scenario')
+    for (const row of w.findAll('tbody tr[data-case]')) {
+      expect(row.get('td').text()).toContain('–')
+    }
+    expect(context.presentation.value.canFollow).toBe(false)
+  })
   it('renders the case table without the unused author column and opens the selected case through the session', async () => {
     const w = await render('scenario')
     expect(w.findAll('thead th')).toHaveLength(7); expect(w.findAll('tbody tr')).toHaveLength(2)
