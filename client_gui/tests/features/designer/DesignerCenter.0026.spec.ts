@@ -148,6 +148,22 @@ describe('DesignerCenter — empty / loading / error', () => {
 })
 
 describe('DesignerCenter — Flow Tabs', () => {
+  it('updates an inactive Flow conflict mark from the same card facts and removes it after resolution', async () => {
+    const w = mountCenter()
+    const base = graphOf('a')
+    const graph = { ...base, nodes: base.nodes.map(node => ({ ...node, nodeRun: { status: 'done', openedAt: null, finishedAt: null, resultDocId: null, integrationStatus: 'conflict' } })) }
+    await openReady('a', 'Alpha', graph)
+    await openReady('b', 'Beta')
+    expect(tabButton(w, 'a').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(true)
+    expect(tabButton(w, 'b').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(false)
+    center.refreshFlow('a')
+    await settle()
+    const resolved = graphOf('a')
+    reads.filter(r => r.flowId === 'a').at(-1)!.resolve(resolved)
+    await settle()
+    expect(tabButton(w, 'a').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(false)
+  })
+
   it('shows each tab with aria-selected, activates on click and closes with its own button', async () => {
     const w = mountCenter()
     await openReady('a', 'Alpha')
