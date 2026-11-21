@@ -131,6 +131,8 @@ def main():
             page.locator('.menu-trigger').click()
             card = page.locator('[data-card="theme"]')
             assert card.get_attribute('data-card-state') == 'closed'
+            assert card.locator('[data-test="menu-card-dot"]').count() == 0
+            card_text = card.inner_text()
             if evidence: page.screenshot(path=str(Path(evidence) / f'theme_menu_{width}x{height}.png'))
             card.click()
             window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="me-theme-window"]'))
@@ -143,9 +145,15 @@ def main():
             if evidence: page.screenshot(path=str(Path(evidence) / f'theme_window_{width}x{height}.png'))
             window.locator('[data-modeless-action="minimize"]').click()
             assert not window.is_visible()
-            assert page.locator('.minimized-item').filter(has_text='테마').count() == 1
+            item = page.locator('.minimized-item').filter(has_text='테마')
+            assert item.count() == 1
+            # The taskbar item shows the window title only; the card shows a dot, no status wording.
+            assert item.locator('.item-text').inner_text().strip() == '내 설정 · 테마', item.inner_text()
             page.locator('.menu-trigger').click()
             assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            assert card.inner_text() == card_text, (card_text, card.inner_text())
+            assert page.get_by_text('접힘').count() == 0
             if evidence: page.screenshot(path=str(Path(evidence) / f'theme_minimized_{width}x{height}.png'))
             card.click()
             window.wait_for()

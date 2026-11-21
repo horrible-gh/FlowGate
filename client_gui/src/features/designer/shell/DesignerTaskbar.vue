@@ -3,10 +3,10 @@
     <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>{{ t('gui.taskbar.menu') }}</button>
     <button class="taskbar-item designer-item" type="button" aria-pressed="true"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
-    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><small>{{ t('gui.taskbar.minimized') }}</small><b>{{ entry.title }}</b></span></button>
+    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
     <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
-      <button v-if="popup === 'menu'" type="button" role="menuitem" class="menu-card" data-card="theme" :data-card-state="themeState" @click="openTheme"><span class="menu-card-heading">◐ {{ t('gui.taskbar.theme') }}</span><span class="menu-card-body">{{ t('gui.taskbar.style') }}</span><span class="menu-card-state">{{ t('gui.taskbar.card_' + themeState) }}</span><i class="card-port" /></button>
+      <button v-if="popup === 'menu'" type="button" role="menuitem" class="menu-card" data-card="theme" :data-card-state="themeState" @click="openTheme"><span class="menu-card-heading">◐ {{ t('gui.taskbar.theme') }}<i v-if="themeState !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></span><span class="menu-card-body">{{ t('gui.taskbar.style') }}</span><i class="card-port" /></button>
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
     <MeThemeWindow ref="themeWindow" :open="themeOpen" v-model:minimized="themeMinimized" @close="themeOpen = false" />
@@ -135,8 +135,8 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .taskbar-popup .menu-card { position: relative; display: flex; flex-direction: column; width: 100%; height: 92px; padding: 0; border: 1.5px solid #94a3b8; border-radius: 7px; box-shadow: 0 6px 18px #0003; }
 .menu-card-heading { display: flex; align-items: center; width: 100%; height: 28px; padding: 0 9px; box-sizing: border-box; font-weight: 700; background: color-mix(in srgb, #94a3b8 16%, transparent); }
 .menu-card-body { padding: 8px 10px 0; line-height: 1.35; color: var(--fg2-muted); }
-.menu-card-state { margin-top: auto; padding: 0 10px 8px; font-size: 10.5px; color: var(--fg2-muted); }
-.menu-card:not([data-card-state="closed"]) .menu-card-state { color: var(--fg2-accent, #4ba3ff); font-weight: 600; }
+/* A window that is open or minimized shows as one dot on its card, with no status wording. */
+.menu-card-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: #28b878; box-shadow: 0 0 6px #28b878; flex: none; }
 .card-port { position: absolute; right: -5px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--fg2-panel); border: 1.5px solid #94a3b8; }
 .overflow-list { right: 10px; width: min(360px, calc(100vw - 48px)); max-height: min(400px, 60vh); overflow: auto; }
 .overflow-list button { width: 100%; margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

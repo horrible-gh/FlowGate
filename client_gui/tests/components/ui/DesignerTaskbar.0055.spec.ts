@@ -35,6 +35,8 @@ describe('taskbar window lifecycle', () => {
     clickMinimize(); await tick()
     expect(element.style.display).toBe('none')
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
+    // A taskbar item shows the window title only, with no status word next to it.
+    expect(wrapper.get('.minimized-item').text()).toBe('□Document')
     expect(wrapper.find('[role="separator"]').exists()).toBe(true)
     await wrapper.get('.minimized-item').trigger('click'); await tick()
     expect([element.style.left, element.style.top, element.style.width, element.style.height]).toEqual(before)
@@ -89,6 +91,9 @@ describe('taskbar window lifecycle', () => {
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
     const card = () => wrapper.get('[data-card="theme"]')
     expect(card().attributes('data-card-state')).toBe('closed')
+    // The card carries no status wording: a closed window shows nothing, an open or minimized one a dot.
+    const cardText = card().text()
+    expect(card().find('[data-test="menu-card-dot"]').exists()).toBe(false)
     await card().trigger('click'); await tick()
     // The card opens a window over the Designer; the page does not change.
     expect(router.currentRoute.value.path).toBe('/')
@@ -99,12 +104,16 @@ describe('taskbar window lifecycle', () => {
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
     expect(card().attributes('data-card-state')).toBe('minimized')
+    expect(card().find('[data-test="menu-card-dot"]').exists()).toBe(true)
+    expect(card().text()).toBe(cardText)
     // A minimized window is brought back by its card, never opened twice.
     await card().trigger('click'); await tick()
     expect(document.querySelectorAll('[data-test="me-theme-window"]')).toHaveLength(1)
     expect(wrapper.find('.minimized-item').exists()).toBe(false)
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
     expect(card().attributes('data-card-state')).toBe('open')
+    expect(card().find('[data-test="menu-card-dot"]').exists()).toBe(true)
+    expect(card().text()).toBe(cardText)
     ;(document.querySelector('[data-modeless-action="close"]') as HTMLButtonElement).click(); await tick()
     expect(document.querySelector('[data-test="me-theme-window"]')).toBeNull()
     expect(card().attributes('data-card-state')).toBe('closed')
