@@ -3,7 +3,7 @@
     role="group" :aria-label="t(k('label'))" data-test="inspector-gate-actions" :data-busy="busy ?? ''">
     <Button v-if="actions.confirm.visible" size="sm" variant="primary" :disabled="!actions.confirm.enabled" :loading="busy === 'confirm'"
       :title="tipOf(actions.confirm.reason)" data-test="gate-confirm" @click="decide('confirm')">{{ t(k('confirm')) }}</Button>
-    <Button v-if="cancelAction?.visible" size="sm" variant="secondary" :disabled="!cancelAction.enabled" :loading="busy === 'cancel'"
+    <Button v-if="cancelAction?.visible" size="sm" variant="secondary" class="inspector-gate-cancel" :disabled="!cancelAction.enabled" :loading="busy === 'cancel'"
       data-test="gate-cancel" @click="cancelAttempt = attemptId">{{ t(k('cancel')) }}</Button>
     <ConfirmDialog :open="cancelAttempt !== null" :title="t(k('cancel_dialog.title'))" :message="t(k('cancel_dialog.message'))"
       :confirm-label="t(k('cancel'))" :cancel-label="t(k('cancel_dialog.keep'))" :busy="busy !== null"
@@ -54,5 +54,9 @@ function tipOf(reason: string | null): string | undefined {
 <style scoped>
 .inspector-gate-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
 .inspector-gate-actions.is-failed :deep(button:not(:disabled)) { box-shadow: 0 0 0 1px #b4474f; }
+/* flowgate.v02test.0064 #29: [취소] carries a soft red outline so it reads as "stop this run" next to the blue [승인]; it
+   stays an outline (no fill) so it never outweighs the approve button, and fills lightly only on hover. */
+.inspector-gate-actions .inspector-gate-cancel { border-color: var(--fg2-status-danger-border); background: transparent; color: var(--fg2-status-danger-fg); }
+.inspector-gate-actions .inspector-gate-cancel:hover:not(:disabled) { border-color: var(--fg2-status-danger-fg); background: var(--fg2-status-danger-bg); color: var(--fg2-status-danger-fg); }
 .inspector-gate-reason { max-width: 260px; overflow: hidden; color: var(--fg2-status-warning-fg); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 </style>

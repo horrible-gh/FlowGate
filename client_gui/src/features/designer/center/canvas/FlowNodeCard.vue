@@ -614,14 +614,14 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 }
 .flow-node-conflict:hover { background: color-mix(in srgb, var(--fg2-status-danger-fg) 26%, transparent); }
 
-/* flowgate.v02test.0064 #22: [취소] is a quiet way out, not a call to action — no fill or status color (without a class
-   the browser's own light button face showed through on the dark card); it tints only on hover. */
+/* flowgate.v02test.0064 #22/#29: [취소] is a red outline X — colored so it reads as "stop this run", but unfilled so it
+   stays lighter than the filled conflict mark and the amber approve button; it fills lightly on hover. */
 .flow-node-cancel {
-  border-color: var(--fg2-line-strong);
+  border-color: var(--fg2-status-danger-border);
   background: transparent;
-  color: var(--fg2-text-2);
+  color: var(--fg2-status-danger-fg);
 }
-.flow-node-cancel:hover:not(:disabled) { color: var(--fg2-text); background: rgba(255, 255, 255, 0.06); }
+.flow-node-cancel:hover:not(:disabled) { border-color: var(--fg2-status-danger-fg); background: var(--fg2-status-danger-bg); }
 .flow-node-cancel:disabled { cursor: not-allowed; opacity: var(--fg2-control-disabled-opacity); }
 
 .flow-node-approve {
