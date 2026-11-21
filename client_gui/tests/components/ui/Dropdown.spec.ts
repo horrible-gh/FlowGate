@@ -44,7 +44,7 @@ describe('components/ui/Dropdown (T0004)', () => {
     await wrapper.get('.trigger').trigger('click')
     expect(document.querySelector('.ui-dropdown-menu')).not.toBeNull()
 
-    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
     await wrapper.vm.$nextTick()
 
     expect(document.querySelector('.ui-dropdown-menu')).toBeNull()
