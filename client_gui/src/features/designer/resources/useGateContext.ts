@@ -277,9 +277,10 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
     return replaying
   }
   async function decide(decision: RunGateDecision, comment?: string): Promise<boolean> {
-    if (decision !== 'confirm' || busy.value || Object.keys(pending.value).length) return false
-    if (request) return replay()
-    if (status.value !== 'ready' || !gate.value?.can_decide || !node.value?.attemptId || settings.value?.settingsVersion === undefined) return false
+    if (!['confirm', 'cancel'].includes(decision) || busy.value || Object.keys(pending.value).length) return false
+    if (request) return request.decision === decision ? replay() : false
+    const permitted = decision === 'cancel' ? gate.value?.can_cancel : gate.value?.can_decide
+    if (status.value !== 'ready' || !permitted || !node.value?.attemptId || settings.value?.settingsVersion === undefined) return false
     request = { runId: run.value!.runId, decision, comment, intent: { request_id: randomUuid(), expected_attempt_id: node.value.attemptId, expected_settings_version: settings.value.settingsVersion } }
     const keeps = rights()
     busy.value = decision

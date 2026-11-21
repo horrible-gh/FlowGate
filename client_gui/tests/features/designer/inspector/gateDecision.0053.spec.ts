@@ -67,6 +67,57 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); removeProjectEventStream() })
 
 describe('gate Inspector — D §8-10', () => {
+  it('cancels only after confirmation and shows the canceled receipt without approval', async () => {
+    current.nodes[0].gate.can_cancel = true
+    mocks.decide.mockImplementation(async () => current = { ...current, idleReason: 'stopped', nodes: [{
+      ...current.nodes[0], status: 'pending', attemptId: null,
+      gate: { ...current.nodes[0].gate, can_cancel: false, can_decide: false, decision: { ...result(false), status: 'canceled', result: 'canceled' } },
+    }] })
+    const w = await show()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    expect(mocks.decide).not.toHaveBeenCalled()
+    const dialog = w.findComponent({ name: 'ConfirmDialog' })
+    expect(dialog.props('open')).toBe(true)
+    dialog.vm.$emit('cancel'); await flushPromises()
+    expect(mocks.decide).not.toHaveBeenCalled()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    dialog.vm.$emit('confirm'); await flushPromises()
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(mocks.decide.mock.calls[0][2]).toBe('cancel')
+    expect(w.find('[data-test="gate-cancel"]').exists()).toBe(false)
+    expect(w.get('[data-test="gate-result-value"]').text()).toBe('취소됨')
+  })
+  it('hides pre-decision cancel while an approval is held', async () => {
+    current.nodes[0].gate.decision_in_progress = true
+    current.nodes[0].gate.can_decide = false
+    current.nodes[0].gate.can_cancel = false
+    const w = await show()
+    expect(w.find('[data-test="gate-cancel"]').exists()).toBe(false)
+    expect(w.text()).toContain('Time Machine')
+  })
+  it('dismisses a cancel confirmation when the attempt changes', async () => {
+    current.nodes[0].gate.can_cancel = true
+    const w = await show()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    const dialog = w.findComponent({ name: 'ConfirmDialog' })
+    current = { ...current, nodes: [{ ...current.nodes[0], attemptId: 'new-attempt' }] }
+    await gateContextOf(target)!.reload(); await flushPromises()
+    expect(dialog.props('open')).toBe(false)
+    dialog.vm.$emit('confirm'); await flushPromises()
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it('requires the canvas cancellation dialog and binds it to the shown attempt', async () => {
+    const data = { kind: 'approval', title: 'Check', state: null, selected: false, cancelable: true, gateAttemptId: 'attempt-canvas' }
+    const w = mount(FlowNodeCard, { props: { id: 'gate-canvas', data }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    wrappers.push(w)
+    await w.get('[data-test="designer-canvas-node-cancel"]').trigger('click')
+    expect(w.emitted('cancel')).toBeUndefined()
+    w.findComponent({ name: 'ConfirmDialog' }).vm.$emit('confirm'); await flushPromises()
+    expect(w.emitted('cancel')).toEqual([['gate-canvas', 'attempt-canvas']])
+    await w.setProps({ data: { ...data, cancelable: false } })
+    expect(w.find('[data-test="designer-canvas-node-cancel"]').exists()).toBe(false)
+  })
+
   it.each(['running', 'idle'])('open + can_decide in %s enables the document actions', async status => {
     current = gate('open', status)
     const w = await show()

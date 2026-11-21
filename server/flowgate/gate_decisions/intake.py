@@ -314,6 +314,8 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
                           "status": held["status"], **recovery_flags(held, job)} if held else None),
             "can_decide": (decided and run["status"] in DECIDABLE_RUN_STATUSES and r["status"] == "open"
                            and held is None and blocked is None and not reset),
+            "can_cancel": (run["status"] in ("running", "idle", "paused") and r["status"] == "open"
+                           and held is None and blocked is None and not reset),
             "policy_undecided": not decided, "blocked_reason": blocked, "settings_locked": lock is not None, "settings_lock_reason": lock,
             "archived": bool(latest and latest.get("archived")) and r["status"] == "done",
             "recovery_reset_required": reset,

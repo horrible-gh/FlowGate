@@ -92,6 +92,7 @@
           :approving-node-id="center.activeRun.value?.approving ?? null"
           @open-document="emit('open-document', activeTab.flowId, $event)"
           @node-approve="center.approveNode(activeTab.flowId, $event)"
+          @node-cancel="(nodeId, attemptId) => activeTab && center.cancelGateNode(activeTab.flowId, nodeId, attemptId)"
           @node-conflict="openCardMerge(activeTab.flowId, $event)"
           :card-menu="cardMenuOf"
           :holds="holds"

@@ -39,7 +39,8 @@ RESERVING = (ACCEPTED, FAILED, RECOVERY_REQUIRED)
 TERMINAL = (SUCCEEDED, REJECTED, CANCELED, ABANDONED)
 # A decision is born accepted (its job is queued), or already finished when no Git / archive work is needed
 # (succeeded) or when it is a reject (rejected, at once).
-BORN = (ACCEPTED, SUCCEEDED, REJECTED)
+# A pre-decision cancellation is terminal from birth; it never queues approval work.
+BORN = (ACCEPTED, SUCCEEDED, REJECTED, CANCELED)
 TRANSITIONS = {
     ACCEPTED: (FAILED, RECOVERY_REQUIRED, SUCCEEDED, CANCELED),
     FAILED: (ACCEPTED, RECOVERY_REQUIRED, SUCCEEDED, CANCELED),
@@ -255,7 +256,7 @@ def insert_decision(row: dict) -> dict:
         raise ValueError(f"a decision is not born {data['status']}")
     if data["decision"] not in (CONFIRM, REJECT):
         raise ValueError("decision must be confirm or reject")
-    if data["status"] in (SUCCEEDED, REJECTED):
+    if data["status"] in (SUCCEEDED, REJECTED, CANCELED):
         data.setdefault("completed_at", data["accepted_at"])
     same_request = by_request(data["run_id"], data["node_key"], data["actor_user_id"], data["request_id"])
     if same_request is not None:
@@ -265,7 +266,8 @@ def insert_decision(row: dict) -> dict:
         raise DecisionConflict("attempt", holder)
     columns = [c for c in _DECISION_INSERT if c in data]
     columns += ["valid_attempt_key", "decision_version", "updated_at"]
-    values = [data[c] for c in columns[:-3]] + [data["attempt_id"], 1, data["accepted_at"]]
+    attempt_key = None if data["status"] == CANCELED else data["attempt_id"]
+    values = [data[c] for c in columns[:-3]] + [attempt_key, 1, data["accepted_at"]]
     marks = ", ".join("?" for _ in columns)
     try:
         get_store()._execute(f"INSERT INTO gate_decisions ({', '.join(columns)}) VALUES ({marks})", values)

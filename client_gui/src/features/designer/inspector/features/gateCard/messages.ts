@@ -3,7 +3,9 @@
 // flowgate.v02.0053 T#9 — the gate decision: why it waits, why it was refused, the reject reason dialog.
 export default {
   ko: {
-    result: { before: '확인 전', confirmed: '확인 완료', rejected: '반려', archived: '아카이브됨', publishing: '반영 중', conflict_review: '충돌 검수 대기', recovery_required: '복구 필요' },
+    cancel: '취소',
+    cancel_dialog: { title: '확인 카드 실행을 취소할까요?', message: 'Git 반영과 보관 없이 취소됨으로 기록합니다. 이 흐름의 미완료 실행을 멈추며, 완료된 카드 결과는 유지합니다. 이후 다시 실행할 수 있습니다.', keep: '계속 대기', after_approval: '승인 후에는 Git 탭의 이 승인 취소 또는 Time Machine을 이용하세요.' },
+    result: { canceled: '취소됨', before: '확인 전', confirmed: '확인 완료', rejected: '반려', archived: '아카이브됨', publishing: '반영 중', conflict_review: '충돌 검수 대기', recovery_required: '복구 필요' },
     label: '확인',
     slot: {
       result: '확인 결과',
@@ -58,7 +60,9 @@ export default {
     },
   },
   en: {
-    result: { before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived', publishing: 'Publishing', conflict_review: 'Waiting for conflict review', recovery_required: 'Recovery required' },
+    cancel: 'Cancel',
+    cancel_dialog: { title: 'Cancel this check?', message: 'Record this check as canceled without Git changes or archiving. Stop unfinished work in this flow and keep completed results. You can run it again.', keep: 'Keep waiting', after_approval: 'After approval, use Cancel this approval in the Git tab or Time Machine.' },
+    result: { canceled: 'Cancel', before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived', publishing: 'Publishing', conflict_review: 'Waiting for conflict review', recovery_required: 'Recovery required' },
     label: 'Check',
     slot: {
       result: 'Check result',
@@ -112,7 +116,9 @@ export default {
     },
   },
   ja: {
-    result: { before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み', publishing: '反映中', conflict_review: '競合レビュー待ち', recovery_required: '復旧が必要' },
+    cancel: '取消',
+    cancel_dialog: { title: '確認カードの実行を取り消しますか？', message: 'Git反映や保管をせず、取消として記録します。このフローの未完了の実行を停止し、完了済みの結果は保持します。後で再実行できます。', keep: '待機を続ける', after_approval: '承認後はGitタブの承認取消またはTime Machineを利用してください。' },
+    result: { canceled: '取消', before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み', publishing: '反映中', conflict_review: '競合レビュー待ち', recovery_required: '復旧が必要' },
     label: '確認',
     slot: {
       result: '確認結果',

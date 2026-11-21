@@ -106,7 +106,7 @@
 // (B1): the title is edited in the Inspector header, not on the card — `activeSelection` says
 // whether the selected card's title opens now (`titleEdit`, the rule the card had: graph/nodeTitle.ts nodeTitleEdit with
 // the run read's node run of the card) and the header saves through `saveNodeTitle` for the card it opened on.
-import { approveGateTarget } from '../inspector/features/gateCard/useGateApproval'
+import { approveGateTarget, cancelGateTarget } from '../inspector/features/gateCard/useGateApproval'
 import { toInspectorTarget } from '../inspector/inspectorTarget'
 import { cardNodeRun } from './graph/cardStateView'
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
@@ -445,6 +445,7 @@ export interface DesignerCenterSession {
    */
   canApproveFlow(flowId: string): boolean
   approveNode(flowId: string, nodeId: string): Promise<boolean>
+  cancelGateNode(flowId: string, nodeId: string, attemptId: string): Promise<boolean>
 
   // a card's context menu (run/flowCardMenu.ts).
   /** The items of the card's context menu now (empty: none). */
@@ -827,6 +828,17 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const target = toInspectorTarget({ projectId, graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(flowId).nodeRuns.get(nodeId)) } })
     if (!target) return false
     const ok = await approveGateTarget(target)
+    if (state.projectId === projectId) refreshFlow(flowId)
+    return ok
+  }
+  async function cancelGateNode(flowId: string, nodeId: string, attemptId: string): Promise<boolean> {
+    const graph = readyGraph(flowId)
+    const node = graph?.nodes.find(item => item.id === nodeId)
+    const projectId = state.projectId
+    if (!graph || !node || !projectId || !canApproveFlow(flowId)) return false
+    const target = toInspectorTarget({ projectId, graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(flowId).nodeRuns.get(nodeId)) } })
+    if (!target) return false
+    const ok = await cancelGateTarget(target, attemptId)
     if (state.projectId === projectId) refreshFlow(flowId)
     return ok
   }
@@ -1634,6 +1646,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     canApprove: runControl.canApprove,
     canApproveFlow,
     approveNode,
+    cancelGateNode,
     cardMenu,
     chooseCardMenu,
     cardHold,

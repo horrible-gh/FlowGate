@@ -1,6 +1,6 @@
 import type { RunGateState } from '../../inspectorTarget'
 
-export const GATE_HEADER_KEYS = ['pending', 'waiting_confirm', 'publishing', 'conflict_review', 'recovery_required', 'confirmed', 'rejected'] as const
+export const GATE_HEADER_KEYS = ['pending', 'waiting_confirm', 'publishing', 'conflict_review', 'recovery_required', 'confirmed', 'rejected', 'canceled'] as const
 export interface GateHeaderState {
   readonly key: typeof GATE_HEADER_KEYS[number]
   readonly tone: 'neutral' | 'info' | 'warning' | 'danger' | 'success'
@@ -21,7 +21,8 @@ export function gateHeaderState(gate: RunGateState | null | undefined, node?: { 
   const key: GateHeaderState['key'] = conflict ? 'conflict_review' : failed ? 'recovery_required' : publishing ? 'publishing'
     : current && decision.status === 'succeeded' && node?.status === 'done' && decision.result === 'confirmed' ? 'confirmed'
     : current && decision.status === 'succeeded' && node?.status === 'rejected' ? 'rejected'
+    : decision?.status === 'canceled' && node?.status === 'pending' && !node.attemptId ? 'canceled'
     : node?.status === 'open' && gate?.can_decide === true ? 'waiting_confirm' : 'pending'
-  const tones = { pending: 'neutral', waiting_confirm: 'neutral', publishing: 'warning', conflict_review: 'warning', recovery_required: 'danger', confirmed: 'success', rejected: 'warning' } as const
+  const tones = { pending: 'neutral', waiting_confirm: 'neutral', publishing: 'warning', conflict_review: 'warning', recovery_required: 'danger', confirmed: 'success', rejected: 'warning', canceled: 'neutral' } as const
   return { key, tone: tones[key], labelKey: `gui.designer.center.card_states.${key}`, reason: recovery?.error_code ?? gate?.job?.last_error_code ?? decision?.last_error_code ?? null }
 }

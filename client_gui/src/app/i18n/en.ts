@@ -463,6 +463,7 @@ export default {
       // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        canceled: 'Canceled',
         needs_intervention: 'Intervention needed',
         system_error: 'System error',
         waiting_confirm: 'Waiting for confirmation',

@@ -83,6 +83,28 @@ def get_gate_decisions(run_id: str, node_key: str, request: Request, cursor: Opt
     return legacy.run(request, handle)
 
 
+@router.post("/runs/{run_id}/nodes/{node_key}/gate-cancel")
+def post_gate_cancel(run_id: str, node_key: str, request: Request, body: Any = Body(default=None)):
+    """Cancel before acceptance; versioned request key, same write permission as approval."""
+    def handle():
+        from flowgate.gate_decisions import cancellation
+        user_id = legacy.authenticate(request)
+        legacy.client_id_of(request)
+        raw = body if isinstance(body, dict) else {}
+        errors = [] if isinstance(body, dict) else [{"field": "body", "reason": "not_an_object"}]
+        parsed = {
+            "request_id": _text(raw, "request_id", REQUEST_ID_MAX_LEN, errors, required=True),
+            "expected_attempt_id": _text(raw, "expected_attempt_id", REQUEST_ID_MAX_LEN, errors, required=True),
+            "expected_settings_version": _version(raw, "expected_settings_version", errors, required=True),
+        }
+        if errors:
+            raise legacy.invalid(request, errors)
+        group = legacy.load_flow(legacy.run_flow_id(run_id))
+        legacy.authorize(user_id, group, "write")
+        return cancellation.cancel(group, run_id, node_key, user_id, parsed)
+    return legacy.run(request, handle)
+
+
 # ── the earlier change the earlier implementation: retry / cancel / resolve ──────────────────────────
 
 REQUEST_ID_MAX_LEN = 128
