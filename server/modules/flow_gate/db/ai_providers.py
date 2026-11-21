@@ -179,7 +179,8 @@ def get_public_row(provider_id: str) -> Optional[dict]:
     """Role availability lookup across owners: no secret columns or decryption (0113 T#2)."""
     return get_store()._fetch_one(
         "SELECT provider_id, name, exec_type, kind, enabled, owner_scope, owner_user_id, "
-        "exec_location, target_agent_id FROM ai_providers WHERE provider_id = ?", [provider_id])
+        "exec_location, target_agent_id FROM ai_providers WHERE provider_id = ? "
+        "AND deleted_at IS NULL", [provider_id])
 
 
 def get_user_row(provider_id: str) -> Optional[dict]:

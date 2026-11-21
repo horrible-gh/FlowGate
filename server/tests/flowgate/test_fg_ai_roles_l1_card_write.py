@@ -204,7 +204,10 @@ def test_blocks_p1_keys_preserved_selected_viewer_options_and_read_only(env,monk
         assert set(r["roles"]["execution"])=={"state","outcome","source","legacy_flag","provider_id","display_name","cause","selected"}
         assert all(set(o)=={"id","name","exec_type","kind","owner_scope"} for o in r["options"])
     assert snapshot(key)==before
-    other=placed(env,FB,"WP")
+    # Seed the pre-0044 stored type; new WP creation is intentionally refused.
+    other=placed(env,FB,"T")
+    _sql(env["db"], "UPDATE graph_draft_nodes SET doc_type='WP' WHERE group_id=? AND node_key=?", (FB,other))
+    _sql(env["db"], "DELETE FROM graph_node_role_slots WHERE group_id=? AND node_key=? AND role='instruction'", (FB,other))
     def fail(*a,**kw): raise RuntimeError("private details")
     monkeypatch.setattr(rs,"slots",fail); monkeypatch.setattr(availability,"selectable_ais",fail)
     r=get_settings(env,FB,other)["ai_roles"]

@@ -17,9 +17,9 @@ def state(flow,key):
 def test_created_card_kinds_and_resave_move_label_revision_do_not_recopy(env):
     from flowgate.ai_roles import role_store
     save_defaults()
-    response=put_draft(env,FA,0,[node("tmp_t","T"),node("tmp_ts","TS"),node("tmp_wp","WP"),node("tmp_r","R"),node("tmp_g",None,"gate")])
+    response=put_draft(env,FA,0,[node("tmp_t","T"),node("tmp_ts","TS"),node("tmp_second_ts","TS"),node("tmp_r","R"),node("tmp_g",None,"gate")])
     km=response["key_map"]
-    for ref,count in [("tmp_t",3),("tmp_ts",3),("tmp_wp",2)]:
+    for ref,count in [("tmp_t",3),("tmp_ts",3),("tmp_second_ts",3)]:
         slots,init,version=state(FA,km[ref])
         assert len(slots)==count and init.state=="initialized" and init.creator_id=="u_kim" and version==1
         assert all(s.source=="creation_copy" and s.set_by=="u_kim" and s.value.provider_name=="snapshot" for s in slots.values())
@@ -27,7 +27,7 @@ def test_created_card_kinds_and_resave_move_label_revision_do_not_recopy(env):
     before={k:state(FA,k) for k in km.values()}
     save_defaults(pid="aip_assignee")
     nodes=[node(k,typ,nt) for k,typ,nt in [(km["tmp_t"],"T","document"),(km["tmp_ts"],"TS","document"),
-                                            (km["tmp_wp"],"WP","document"),(km["tmp_r"],"R","document"),(km["tmp_g"],None,"gate")]]
+                                            (km["tmp_second_ts"],"TS","document"),(km["tmp_r"],"R","document"),(km["tmp_g"],None,"gate")]]
     nodes[0]["label"]="renamed"
     put_draft(env,FA,1,nodes)
     assert before=={k:state(FA,k) for k in km.values()}
@@ -68,7 +68,7 @@ def test_unset_malformed_and_failed_account_read_leave_pending_without_losing_dr
     assert set(state(FB,other)[0])=={"execution","review"} and state(FB,other)[1].state=="pending_init"
     def fail(*a): raise RuntimeError("broken account SELECT")
     monkeypatch.setattr(rs,"account_roles",fail)
-    r=put_draft(env,FB,1,[node(other),node("tmp_b"),node("tmp_c","WP")])
+    r=put_draft(env,FB,1,[node(other),node("tmp_b"),node("tmp_c","TS")])
     for ref in ("tmp_b","tmp_c"): assert state(FB,r["key_map"][ref])[1].state=="pending_init"
 
 
@@ -206,6 +206,14 @@ def test_group_creation_common_and_type_precedence(env, doc_type):
     save_defaults()
     group_defaults(dict(instruction="aip_assignee", execution="aip_assignee", review="aip_assignee"))
     group_defaults(dict(execution="aip_card", review="not_used"), doc_type)
+    if doc_type == "WP":
+        # 0044 retired new WP cards; role defaults must not revive creation.
+        response = env["client"].put(f"/api/v1/flows/{FA}/graph/draft", headers=_h(),
+            json={"draft_version": 0, "nodes": [node("tmp_new", doc_type)], "edges": []})
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "work_plan_retired"
+        assert not _sql(env["db"], "SELECT * FROM graph_node_role_slots WHERE group_id=?", (FA,))
+        return
     result = put_draft(env, FA, 0, [node("tmp_new", doc_type)])
     slots, init, _ = state(FA, result["key_map"]["tmp_new"])
     assert slots["execution"].value.provider_id == "aip_card"

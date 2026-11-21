@@ -138,6 +138,7 @@
         "tests/features/designer/DesignerFlowCreateDialog.0104.spec.ts",
         "tests/features/designer/DesignerInitialState.0039.spec.ts",
         "tests/features/designer/DesignerInspector.0036.spec.ts",
+        "tests/features/designer/DesignerLayoutSizes.0056.spec.ts",
         "tests/features/designer/DesignerMiniMap.0049.spec.ts",
         "tests/features/designer/DesignerNotifications.0027.spec.ts",
         "tests/features/designer/DesignerResize.0046.spec.ts",

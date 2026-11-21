@@ -27,7 +27,7 @@ import pytest
 
 from test_fg_card_approval_0056 import _current, _resume, _run_id
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
-    AI, FA, _run_one_card, _sql, _start, db_path, decided, env, setting,
+    legacy_cards, AI, FA, _run_one_card, _sql, _start, db_path, decided, env, setting,
 )
 from test_fg_card_settings_review import (
     INSTRUCTION_RUN, REVIEW_RUN, WORK_RUN, _in_review, _review_status, _run_ended,
@@ -36,6 +36,10 @@ from test_fg_question_pending_0111 import (  # noqa: F401 — fixtures used by n
     QUESTION, _after_answers, _ai_run_finished, _answer, _asked_instruction, _asked_result, _attempts, _executions,
     _row, card_outputs_port, questions,
 )
+
+
+# Imported helpers do not inherit their module usefixtures marker.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 
 @pytest.fixture()

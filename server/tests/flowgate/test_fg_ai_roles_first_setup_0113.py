@@ -94,7 +94,15 @@ FIVE = {"tmp_t": ("T", "document"), "tmp_ts": ("TS", "document"), "tmp_wp": ("WP
 
 def five_cards(env, flow_id=FA):
     """run (T), test (TS), WP, requirement (R) and gate cards in a draft of ``flow_id``; returns ref -> node key."""
-    return put_draft(env, flow_id, 0, [node(ref, *kind) for ref, kind in FIVE.items()])["key_map"]
+    # WP creation was retired in 0044. Keep first-setup coverage for a stored
+    # legacy WP, without bypassing the live draft creation policy.
+    result = put_draft(env, flow_id, 0,
+                       [node(ref, "T" if kind[0] == "WP" else kind[0], kind[1])
+                        for ref, kind in FIVE.items()])
+    key = result["key_map"]["tmp_wp"]
+    _sql(env["db"], "UPDATE graph_draft_nodes SET doc_type='WP' WHERE group_id=? AND node_key=?", (flow_id, key))
+    _sql(env["db"], "DELETE FROM graph_node_role_slots WHERE group_id=? AND node_key=? AND role='instruction'", (flow_id, key))
+    return result["key_map"]
 
 
 def saved_again(env, km, version, *extra):

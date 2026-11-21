@@ -171,12 +171,11 @@
     },
     "tests/architecture/test_test_areas.py": {
       "eligible": true,
-      "measurement_run": "guard",
-      "seconds": 0.6300546992570162,
+      "seconds": 7.572161297313869,
       "seconds_by_marker": {
-        "fast": 0.6300546992570162
+        "fast": 7.572161297313869
       },
-      "sha256": "fa31c932b4b0a836c351023fe9b5cf0b0ffa0207d081e7bd7c98ba964ec65b6a"
+      "sha256": "5cd76f959e71880dddedae0b3d4a9b7d0768063a7bbeaacebb59b7d9dfc14280"
     },
     "tests/architecture/test_test_timings.py": {
       "eligible": true,
@@ -7299,6 +7298,62 @@
         "auto": 0.08652690006420016
       },
       "sha256": "c09737828b1d80d697968fa14b3a7776d06441a7cd816782806870579fe9c14a"
+    },
+    "tests/architecture/test_area_runner.py": {
+      "eligible": true,
+      "seconds": 3.424894201569259,
+      "seconds_by_marker": {
+        "auto": 3.424894201569259
+      },
+      "sha256": "ef4614268f6d272c96c1d1a5c189ecee7f1dd95d99ad6609643c9fb24a098f70"
+    },
+    "tests/flowgate/test_fg_ai_roles_l1_account.py": {
+      "eligible": true,
+      "seconds": 8.832590700592846,
+      "seconds_by_marker": {
+        "auto": 8.832590700592846
+      },
+      "sha256": "dd5eb90ab00380f50468c1a121a3de22170fc57273598d59433b0bc4aaed3f32"
+    },
+    "tests/flowgate/test_fg_ai_roles_first_setup_0113.py": {
+      "eligible": true,
+      "seconds": 17.858586699701846,
+      "seconds_by_marker": {
+        "auto": 17.858586699701846
+      },
+      "sha256": "cba6ef8df3f77faf665344e9e717623b160d61c11cc45791256cb3a1f71a22ff"
+    },
+    "tests/flowgate/test_fg_ai_roles_l1_card_init.py": {
+      "eligible": true,
+      "seconds": 6.719569301232696,
+      "seconds_by_marker": {
+        "auto": 6.719569301232696
+      },
+      "sha256": "65440078429ce1070641b3292868364565875b432cbcd8e4ea23a7e08e6fdcf4"
+    },
+    "tests/flowgate/test_fg_ai_roles_l1_card_write.py": {
+      "eligible": true,
+      "seconds": 16.801562400069088,
+      "seconds_by_marker": {
+        "auto": 16.801562400069088
+      },
+      "sha256": "f9637f3fb144b6f29188a1ef0b98eeb3d4135e617b8765b24971052268ed21b8"
+    },
+    "tests/flowgate/test_fg_ai_roles_db1_stores.py": {
+      "eligible": true,
+      "seconds": 3.3709296002052724,
+      "seconds_by_marker": {
+        "auto": 3.3709296002052724
+      },
+      "sha256": "80bd36caf7a2a107cc1b2a3631811b797c0b187db4658236b923c44d47a21160"
+    },
+    "tests/flowgate/test_fg_question_pending_0111.py": {
+      "eligible": true,
+      "seconds": 125.31882750149816,
+      "seconds_by_marker": {
+        "auto": 125.31882750149816
+      },
+      "sha256": "5512d19b69456aad28031d02460c432768ed500c00c2dd8240ff78fc33971d34"
     }
   },
   "measured_at": "2026-11-20T13:38:14.715636+00:00",

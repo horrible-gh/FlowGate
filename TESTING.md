@@ -10,6 +10,37 @@ flowgate.default.0394 — R0001 "테스트 코드 정리" §6·§7, NR0003 §12�
 
 ## 0. 영역을 골라 실행하기 (0053 A1·A2)
 
+### 2026-11-21: 실행 시간 상한
+
+저장소 루트에서 `tools/test_run.py`를 표준 진입점으로 사용한다.
+
+```text
+python tools/test_run.py work --changed=flowgate/gate_decisions/service.py --tier=veryfast
+python tools/test_run.py work --changed=flowgate/gate_decisions/service.py --tier=fast
+python tools/test_run.py work --changed=flowgate/gate_decisions/service.py
+python tools/test_run.py verify --area=git.merge
+python tools/test_run.py verify --all
+```
+
+- 평소 작업(`work`): 선택한 전체 범위의 실행 한 번에 **60초**. 여러 영역을 선택해도 합계 60초다.
+- 검증(`verify`): 선택된 영역을 하나씩 실행하며 **각 영역 300초**. 파일의 tier에 관계없이
+  해당 영역을 전부 실행한다. 120초 초과 파일과 install/e2e도 검증에서 빠지지 않는다.
+- 전체 검증(`verify --all`)도 같은 영역별 실행의 반복이다. 한 프로세스에 전체 테스트를 넣지 않는다.
+- 기동·수집·setup/call/teardown을 모두 상한에 포함한다. 초과하면 프로세스 트리를 종료하고
+  `timed_out: true`, 영역 종료 코드 124를 출력한다. 전체 명령도 실패(종료 코드 1)한다.
+  나머지 검증 영역은 계속 실행하고 마지막에 모든 영역 결과를 출력한다.
+- `--plan`으로 실제 파일 목록과 실행별 상한을 실행 전에 볼 수 있다.
+- `--changed`는 아래와 같이 **server 기준 상대 경로**다. 소스와 테스트 변경 경로를 모두 적는다.
+- 이 상한은 위 실행 도구에서 강제한다. 아래의 직접 `pytest` 예시는 선택·측정 진단용이며
+  직접 실행할 때는 호출자의 `timeout_seconds`를 평소 작업 60 / 검증 300으로 설정한다.
+- 전체 검증을 외부 명령 시간 제한이 있는 환경에서 실행할 때는 `--all` 한 번을 길게 허용하지 말고
+  `verify --area=<영역>`을 개별 명령으로 실행한다. 프로세스 종료 정리 시간은 별도로 조금 들 수 있다.
+
+분할은 실측으로 판단한다. 영역 검증이 5분을 넘거나 반복하는 평소 검사가 1분을 넘으면 분할한다.
+파일 2분 초과도 분할 대상이다. 15~23초 파일을 무조건 다시 쪼개지 않는다.
+기준선의 누락·실패는 0초나 통과로 취급하지 않는다. 아래 기존 측정 결과는 전체 수정 완료의 근거가 아니다.
+
+
 서버에서 바꾼 기능만 검증할 때는 `server/`에서 실행한다.
 
 ```text

@@ -619,13 +619,19 @@ def test_r13_r15_w15_the_run_row_links_to_the_ledger_execution(env):
     assert record_store.runs_for_exec("exe_9") == ["run1"]                                      # R-15
 
 
-def test_w15_before_165_the_run_row_is_written_without_the_links(old_env):
+def test_w15_optional_role_links_can_be_absent_from_an_identity_capable_schema(env):
     from modules.flow_gate.db import ai_invoke_runs
 
+    # Run identity (0138) is mandatory now. Exercise the optional 165 links
+    # independently instead of running the writer against a pre-identity DB.
+    with sqlite3.connect(env["path"]) as conn:
+        conn.execute("DROP INDEX idx_air_graph_exec")
+        conn.execute("ALTER TABLE ai_invoke_runs DROP COLUMN graph_exec_id")
+        conn.execute("ALTER TABLE ai_invoke_runs DROP COLUMN invocation_origin_kind")
     ai_invoke_runs.upsert({"run_id": "old", "group_id": "g1", "project_id": "p1", "doc_ref": "d", "mode": "single",
                            "started_at": T, "finished_at": T, "created_at": T, "updated_at": T,
                            "graph_exec_id": "exe_1", "invocation_origin_kind": "card_assigned"})
-    assert _rows(old_env, "SELECT run_id FROM ai_invoke_runs") == [{"run_id": "old"}]
+    assert _rows(env, "SELECT run_id FROM ai_invoke_runs") == [{"run_id": "old"}]
 
 
 def test_i17_the_run_retention_sweep_and_parent_deletes_leave_the_records(env):

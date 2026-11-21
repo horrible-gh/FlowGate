@@ -37,19 +37,31 @@ GIT = "modules/flow_gate/services/git/"
 GRAPH = "modules/flow_gate/graph_workflow/"
 
 
+# These suites were split without changing their source dependencies. Keep the
+# expected families explicit so a new unrelated source match still fails.
+GIT_TARGET = {f"git.target_{name}.{part}" for name, count in
+              (("core", 3), ("recovery", 2), ("candidates", 3))
+              for part in range(1, count + 1)}
+GIT_INTEGRATION = {"git.integration_contracts"} | {
+    f"git.integration_{name}.{part}" for name, count in
+    (("conflicts", 5), ("review", 4), ("worktrees", 3))
+    for part in range(1, count + 1)}
+GRAPH_PERSISTENCE = {f"graph.integration_persistence_{part}" for part in range(1, 10)}
+
+
 @pytest.mark.parametrize("changed, expected", [
     # A file owned by one sub-area: that sub-area plus the package catch-all, nothing else.
-    (GIT + "branch_merge.py", {"git.core", "git.merge"}),
-    (GIT + "worktree.py", {"git.core", "git.worktree"}),
-    (GRAPH + "services/run_service.py", {"graph.definition", "graph.run"}),
+    (GIT + "branch_merge.py", {"git.core", "git.merge"} | GIT_TARGET | GIT_INTEGRATION),
+    (GIT + "worktree.py", {"git.core", "git.worktree"} | GIT_INTEGRATION),
+    (GRAPH + "services/run_service.py", {"graph.definition", "graph.run"} | GRAPH_PERSISTENCE),
     # A shared part: every sibling whose source imports it runs too (0053, review of seq 99).
-    (GIT + "command.py", {"git.core", "git.merge", "git.recovery", "git.worktree"}),
-    (GIT + "lock_manager.py", {"git.core", "git.merge", "git.recovery", "git.worktree", "git.remote"}),
-    (GRAPH + "domain/graph_model.py", {"graph.definition", "graph.run", "graph.attempt"}),
+    (GIT + "command.py", {"git.core", "git.merge", "git.recovery", "git.worktree"} | GIT_TARGET | GIT_INTEGRATION),
+    (GIT + "lock_manager.py", {"git.core", "git.merge", "git.recovery", "git.worktree", "git.remote"} | GIT_TARGET | GIT_INTEGRATION),
+    (GRAPH + "domain/graph_model.py", {"graph.definition", "graph.run", "graph.attempt"} | GRAPH_PERSISTENCE),
     (GRAPH + "services/flow_guard.py",
-     {"graph.definition", "graph.run", "graph.attempt", "graph.root", "graph.workflow"}),
+     {"graph.definition", "graph.run", "graph.attempt", "graph.root", "graph.workflow"} | GRAPH_PERSISTENCE),
     # Imported by no sibling: stays inside the catch-all sub-area.
-    (GIT + "status.py", {"git.core"}),
+    (GIT + "status.py", {"git.core"} | GIT_INTEGRATION),
     (GRAPH + "api/canvas_routes.py", {"graph.definition"}),
 ])
 def test_shared_package_parts_select_the_sub_areas_that_import_them(changed, expected):

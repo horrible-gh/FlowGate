@@ -251,7 +251,7 @@ def test_a_written_instruction_that_asked_is_approved_and_its_result_stage_start
     _answer(questions, INSTRUCTION_RUN, how)
 
     job = _after_answers(env, key, execs, attempts)
-    assert job["stage"] == "result" and job["ref_doc_ids"] == [line_doc]   # no instruction stage again
+    assert job["stage"] == "result" and job["ref_doc_ids"] == [ROOT, line_doc]   # no instruction stage again
     assert _review_status(line_doc) == "approved"
     row = _row(env, key)
     assert (row["stage"], row["instruction_doc_id"]) == ("result", line_doc)
