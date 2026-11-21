@@ -12,3 +12,5 @@ export { default as RunResultWindow } from './runResult/RunResultWindow.vue'
 export { default as RunResultDetailWindow } from './runResult/RunResultDetailWindow.vue'
 export * from './runResult/runResultWatch'
 export { attachmentPendingLine } from './runResult/runResultView'
+// "내 AI" as a Designer window, opened from the taskbar menu card.
+export { default as MyAiWindow } from './windows/MyAiWindow.vue'

@@ -24,10 +24,10 @@ const initialWidth = Math.min(520, Math.max(300, window.innerWidth - 48))
 const initialY = Math.max(70, window.innerHeight - 330)
 defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 </script>
-<style>
-/* The window body is teleported to <body>, so these are prefixed instead of scoped. */
+<style scoped>
+/* Slot content keeps this component's scope when the shell teleports it; the panel's own parts are reached with :deep(). */
 .me-menu-window-hint { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--fg2-muted); }
-.me-menu-window .fgs-row { min-height: 0; padding: 8px 0; gap: 12px; flex-wrap: wrap; }
-.me-menu-window .fgs-row-ctrl { max-width: none; justify-content: flex-start; }
-.me-menu-window .fgs-row-ctrl .fgs-input { width: 180px; }
+.me-menu-window :deep(.fgs-row) { min-height: 0; padding: 8px 0; gap: 12px; flex-wrap: wrap; }
+.me-menu-window :deep(.fgs-row-ctrl) { max-width: none; justify-content: flex-start; }
+.me-menu-window :deep(.fgs-row-ctrl .fgs-input) { width: 180px; }
 </style>

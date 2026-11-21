@@ -311,6 +311,8 @@ import { getAvatarClass, getInitials, getKindToneClass, isModeSupported, modeKey
 
 // Emitted after a successful save so screens listing usable AI can reload.
 const emit = defineEmits<{ changed: [] }>()
+// The Designer's "내 AI" window opens on my own AI; the AI 관리 screen keeps the full list.
+const props = defineProps<{ initialOwnerFilter?: 'all' | 'system' | 'user' }>()
 
 const { t } = useI18n()
 const { user } = useCurrentUser()
@@ -335,7 +337,7 @@ const loaded = ref(false)
 const loadError = ref('')
 const saving = ref(false)
 const searchQuery = ref('')
-const ownerFilter = ref<OwnerFilter>('all')
+const ownerFilter = ref<OwnerFilter>(props.initialOwnerFilter ?? 'all')
 
 const dialogOpen = ref(false)
 const dialogSaveError = ref('')
@@ -382,6 +384,8 @@ async function load(): Promise<void> {
     myDefaultId.value = mine.default_provider_id ?? null
     execPolicy.value = isAdmin.value ? system.execution_policy ?? null : null
     repeatMax.value = execPolicy.value?.repeat_count_max ?? 0
+    // With no AI of my own yet, an initial "mine" filter would open on an empty list.
+    if (!loaded.value && props.initialOwnerFilter === 'user' && !myList.value.length) ownerFilter.value = 'all'
     loaded.value = true
   } catch (err: unknown) {
     loadError.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
@@ -648,7 +652,8 @@ function openAddDialog() {
   if (saving.value || deleting.value || addBlocked.value) return
   clearDialogErrors()
   editingProvider.value = null
-  editingOwner.value = ownerChoices.value[0]
+  // From the "내 AI" window a new AI is mine unless I choose otherwise.
+  editingOwner.value = props.initialOwnerFilter === 'user' && ownerChoices.value.includes('user') ? 'user' : ownerChoices.value[0]
   dialogOpen.value = true
 }
 
