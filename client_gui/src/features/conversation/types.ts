@@ -2,6 +2,10 @@
 // document whose body is a list of turns (v0.1 ConversationView, P0003 §0-2); the part keeps
 // those turns as they are and adds the frontend shapes it needs to show one timeline.
 
+import type { TurnAudio } from './voice/api'
+
+export type { TurnAudio }
+
 /** Validated server title obligation. Missing/invalid metadata never implies owed. */
 export interface ChatAutoTitle {
   state: 'owed' | 'claimed' | 'done' | 'manual' | 'failed'
@@ -43,6 +47,8 @@ export interface ConversationTurn {
   body: string
   /** flowgate.v02test.0029: the message images the turn points at (metadata only; bytes come from `url`). */
   images?: TurnImage[]
+  /** A voice message's recording (metadata only; the body already holds its transcript). */
+  audio?: TurnAudio
   /** Server attribution only; null / missing is unknown. */
   sourceRunId?: string | null
   basedOnSeq?: number | null

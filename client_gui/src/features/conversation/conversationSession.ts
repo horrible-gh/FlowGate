@@ -228,6 +228,8 @@ export interface FirstSendHold {
   sendAction: SendAction
   /** flowgate.v02test.0029: ids of the message images the first message carries. */
   images?: string[]
+  /** Id of the voice recording the first message carries. */
+  audio?: string
 }
 
 export interface ConversationSession {
@@ -449,6 +451,8 @@ export interface StoredSend {
   sendAction?: SendAction
   /** flowgate.v02test.0029: ids of the message images the message carries (sent again with the same key after F5). */
   images?: string[]
+  /** Id of the voice recording the message carries (sent again with the same key after F5). */
+  audio?: string
 }
 
 export function outboxStorageKey(userId: string, projectId: string): string {
@@ -543,6 +547,11 @@ function sameImageIds(a: readonly string[] | undefined, b: readonly string[] | u
   const left = a ?? []
   const right = b ?? []
   return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+/** Like the images: a key may only go out again with the voice recording it first went with. */
+function sameAudio(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? '') === (b ?? '')
 }
 
 /** flowgate.v02gui.0028: the server refused to make the chat for good (also the readOnly meanings: 403, disposed). */
@@ -643,6 +652,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       projectId: owner.projectId, groupId: owner.groupId, chatId: owner.chatId, intentId: owner.intentId, createIntentId: owner.createIntentId,
       phase, providerId: item.providerId, ...(item.sendAction ? { sendAction: item.sendAction } : {}),
       ...(item.images?.length ? { images: [...item.images] } : {}),
+      ...(item.audio ? { audio: item.audio } : {}),
     }
   }
   /** Writes the send as `phase` (starting to keep it when this session did not yet). */
@@ -1305,6 +1315,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         ...(entry.sendAction ? { sendAction: entry.sendAction } : {}),
         ...(entry.createIntentId ? { createIntentId: entry.createIntentId } : {}),
         ...(Array.isArray(entry.images) && entry.images.length ? { images: entry.images.filter((id) => typeof id === 'string') } : {}),
+        ...(typeof entry.audio === 'string' && entry.audio ? { audio: entry.audio } : {}),
       }
       const key = entry.chatId !== null ? scopedOwnerKey(scope, entry.chatId) : draftOwnerKey(scope, userId, entry.intentId!)
       if ((outbox.get(key) ?? []).some((p) => p.localId === item.localId)) continue
@@ -1881,7 +1892,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // A try of the same text in this draft (after a failure, or restored after F5) is that message again — with the
     // same images. Same text with other images (one taken out, one swapped in) is a new message: the failed bubble of
     // the old attempt is dropped, not sent again with the old images.
-    const same = all.find((p) => p.body === body && sameImageIds(p.images, hold.images))
+    const same = all.find((p) => p.body === body && sameImageIds(p.images, hold.images) && sameAudio(p.audio, hold.audio))
     const stale = all.filter((p) => p.body === body && p !== same && p.failed)
     for (const old of stale) forgetFailedSend(old.localId)
     const list = stale.length ? all.filter((p) => !stale.includes(p)) : all
@@ -1890,7 +1901,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       : { localId: '', idempotencyKey: '', body, basedOnSeq: 0, createdAt: new Date().toISOString(), failed: false,
           providerId: hold.providerId, ...(hold.providerOrigin ? { providerOrigin: hold.providerOrigin } : {}),
           sendAction: hold.sendAction, createIntentId: hold.createIntentId,
-          ...(hold.images?.length ? { images: [...hold.images] } : {}) }
+          ...(hold.images?.length ? { images: [...hold.images] } : {}), ...(hold.audio ? { audio: hold.audio } : {}) }
     if (!same) item.localId = item.idempotencyKey = newIdempotencyKey()
     publishOutbox(key, same ? list.map((p) => p.localId === same.localId ? item : p) : [...list, item])
     persistSend(item, scope, null, hold.intentId, 'creating')
@@ -1975,7 +1986,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       try {
         trace.mark('turn_start', { docId: chatId, attempt: attempt + 1 })
         const posting = source.postTurn(chatId, { body: item.body, idempotencyKey: item.idempotencyKey, basedOnSeq: item.basedOnSeq, traceId: trace.id,
-          ...(item.images?.length ? { images: [...item.images] } : {}) })
+          ...(item.images?.length ? { images: [...item.images] } : {}), ...(item.audio ? { audioId: item.audio } : {}) })
         if (refresh && attempt === 0) void reloadChats(trace)
         const res = await posting
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'ok' })
@@ -2075,13 +2086,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (receipt && snapshot && receipt.body.trim() === body && receipt.body === snapshot.body && receipt.revision === snapshot.revision &&
       receipt.owner.userId === snapshot.owner.userId && receipt.owner.projectId === snapshot.owner.projectId &&
       receipt.owner.groupId === snapshot.owner.groupId && receipt.owner.intentId === snapshot.owner.intentId &&
-      sameImageIds(receipt.images, snapshot.images)) return true
+      sameImageIds(receipt.images, snapshot.images) && sameAudio(receipt.audio, snapshot.audio)) return true
     // Composer resubmission of a failed message (same text AND same images) reuses its bubble, never a new key.
     // flowgate.v02test.0029: the same text with other images is a new message: the failed bubble of the old attempt is
     // dropped (a refused message was edited and is sent again as what is on screen now; one the server may have
     // stored shows up from the list again), and the current images go out under a new key.
     const sameBody = (outbox.get(owner) ?? []).filter((p) => p.body === body)
-    const failed = sameBody.find((p) => sameImageIds(p.images, snapshot?.images))
+    const failed = sameBody.find((p) => sameImageIds(p.images, snapshot?.images) && sameAudio(p.audio, snapshot?.audio))
     const stale = sameBody.filter((p) => p !== failed && p.failed)
     if (stale.length) {
       for (const old of stale) forgetFailedSend(old.localId)
@@ -2107,7 +2118,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const basedOnSeq = offScreen ? 0 : state.headSeq
     const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId,
       ...(providerOrigin ? { providerOrigin } : {}), sendAction,
-      ...(snapshot?.images?.length ? { images: [...snapshot.images] } : {}) }
+      ...(snapshot?.images?.length ? { images: [...snapshot.images] } : {}), ...(snapshot?.audio ? { audio: snapshot.audio } : {}) }
     traces.set(key, trace)
     if (target?.stopAi) stoppedSends.add(key)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })

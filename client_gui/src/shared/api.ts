@@ -290,6 +290,10 @@ const LONG_RUNNING_PATHS = [
   // 못했습니다" for its first call. The chat resends the same press (client_request_id) when even
   // this ceiling passes, so a slower admission is still recovered rather than started twice.
   /\/ai-invoke\/start(?:$|\?)/,
+  // Voice input: transcription, a voice message upload (transcribed before it answers), a live chunk, and the
+  // administrator calls that start or restart the local voice module all wait for that module.
+  /\/voice\/(?:transcriptions|test|streams|enabled|default|restart)(?:$|[/?])/,
+  /\/message-audio(?:$|\?)/,
 ]
 
 // flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a

@@ -512,6 +512,7 @@ interface RawTurn {
   stale_since_seq?: number | null
   created_at?: string | null
   images?: RawTurnImage[] | null
+  audio?: unknown
 }
 
 export interface RawTurnImage {
@@ -550,6 +551,7 @@ export function toTurnImages(raw: readonly RawTurnImage[] | null | undefined): T
 
 export function toTurn(raw: RawTurn): ConversationTurn {
   const images = toTurnImages(raw.images)
+  const audio = toTurnAudio(raw.audio)
   return {
     seq: Number(raw.seq) || 0,
     messageVersion: raw.message_version ?? 1,
@@ -559,6 +561,7 @@ export function toTurn(raw: RawTurn): ConversationTurn {
     displayName: raw.display_name ?? null,
     body: raw.body ?? '',
     ...(images.length ? { images } : {}),
+    ...(audio ? { audio } : {}),
     sourceRunId: textOrNull(raw.source_run_id),
     basedOnSeq: raw.based_on_seq ?? null,
     staleSinceSeq: raw.stale_since_seq ?? null,
@@ -611,11 +614,13 @@ export interface PostTurnInput {
   traceId?: string
   /** flowgate.v02test.0029: ids of uploaded message images (at most 5) the turn carries; never image bytes. */
   images?: string[]
+  /** Id of an uploaded voice recording the turn carries (its transcript is the body). */
+  audioId?: string
 }
 
 export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ turn: ConversationTurn | null; headSeq: number }> {
   const payload = { body: input.body, idempotency_key: input.idempotencyKey, based_on_seq: input.basedOnSeq,
-    ...(input.images?.length ? { images: input.images } : {}) }
+    ...(input.images?.length ? { images: input.images } : {}), ...(input.audioId ? { audio_id: input.audioId } : {}) }
   type Response = { turn?: RawTurn | null; head_seq?: number }
   const path = `${doc(chatId)}/conversation/turn`
   const data = await call(() => input.traceId
@@ -692,6 +697,7 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
  * instead of starting a second one; 409 `start_pending` means the first request is still being admitted.
  */
 import { beginChatActivity } from './flowChatActivity'
+import { toTurnAudio } from './voice/api'
 
 export async function startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, providerOrigin?: ProviderOrigin): Promise<string | null> {
   const parts = splitGroupId(chatId)

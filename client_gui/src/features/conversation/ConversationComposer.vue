@@ -35,6 +35,9 @@
       @dismiss-notice="attach.dismissNotice"
     />
 
+    <!-- Voice input: live partial text, "transcribing…" with 취소, and the last voice notice. -->
+    <ComposerVoiceNotice :voice="voice" />
+
     <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
       <textarea
         ref="inputEl"
@@ -49,6 +52,8 @@
         @paste="onPaste"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
+      <!-- Voice input: recording pill and mic (always rendered so the row keeps its grid columns). -->
+      <ComposerVoiceBar :voice="voice" :disabled="voiceDisabled" />
       <!-- flowgate.v02test.0029: while the AI answers and something is typed, the message can be sent (its AI call
            follows the answer); the stop stays next to it. -->
       <button
@@ -139,17 +144,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch, type DeepReadonly } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
 import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
+import ComposerVoiceBar from './ComposerVoiceBar.vue'
+import ComposerVoiceNotice from './ComposerVoiceNotice.vue'
 import { createComposerImages, isImageFile } from './composerImages'
 import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
+import { deleteMessageAudio, type TurnAudio } from './voice/api'
+import { installVoiceMessages } from './voice/messages'
+import { useVoiceInput } from './voice/useVoiceInput'
+import { loadVoice } from './voice/voiceStore'
 
 const props = defineProps<{
   /** The open chat; null while a new chat is a draft (its first send creates it). */
@@ -204,6 +215,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+installVoiceMessages(useI18n({ useScope: 'global' }))
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 function currentOwner(): DraftOwner | null {
@@ -337,6 +349,56 @@ function onDrop(event: DragEvent): void {
 
 onBeforeUnmount(() => attach.dispose())
 
+// ── Voice input: the mic records; the text goes into the input, or the recording is sent as a voice message ─────
+const voiceDisabled = computed(() => props.disabled || !!props.readOnly || props.sending)
+const voice = useVoiceInput({
+  flowId: () => props.groupId ?? null,
+  onText: insertText,
+  onAudio: sendAudio,
+})
+onMounted(() => { void loadVoice() })
+
+/** Appends transcribed text to the input (a space apart from what is typed) and keeps it as the draft. */
+function insertText(text: string): void {
+  const current = draft.value
+  const separator = current && !/\s$/.test(current) ? ' ' : ''
+  draft.value = `${current}${separator}${text}`
+  onInput()
+  void nextTick(() => {
+    autoGrow()
+    const el = inputEl.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange?.(draft.value.length, draft.value.length)
+  })
+}
+
+/**
+ * Sends an uploaded recording as its own message (body = the server's transcript, plus the audio id). What is typed
+ * in the input stays there. When the message cannot go out now, the transcript is put into the input instead and the
+ * unsent upload is removed, so nothing said is lost.
+ */
+async function sendAudio(audio: TurnAudio): Promise<boolean> {
+  const owner = visibleOwner
+  const body = audio.text.trim()
+  const blocked = !owner || !body || props.disabled || props.readOnly || props.sending || aiPending.value ||
+    [...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))
+  if (blocked) {
+    const flowId = props.groupId
+    if (flowId) void deleteMessageAudio(flowId, audio.audioId).catch(() => undefined)
+    if (body) insertText(body)
+    return false
+  }
+  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body, revision: -1, audio: audio.audioId }
+  const send = { snapshot, owners: [snapshot.owner] }
+  pending.add(send)
+  try {
+    return await props.onSend(body, snapshot, createSubmissionTrace())
+  } finally {
+    pending.delete(send)
+  }
+}
+
 async function submit(): Promise<void> {
   const trace = createSubmissionTrace()
   trace.mark('submit')
@@ -456,7 +518,8 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-pill {
   min-height: 43px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 39px;
+  /* input · voice (pill + mic, empty when voice input is not offered) · send */
+  grid-template-columns: minmax(0, 1fr) auto 39px;
   align-items: end;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius);
@@ -484,7 +547,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 
 /* flowgate.v02test.0029: send while the AI answers — the stop sits left of the send button. */
 .conv-pill.has-side-stop {
-  grid-template-columns: minmax(0, 1fr) 37px 39px;
+  grid-template-columns: minmax(0, 1fr) auto 37px 39px;
 }
 
 .conv-send {

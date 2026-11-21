@@ -29,6 +29,8 @@ export interface DraftSendSnapshot {
   revision: number
   /** flowgate.v02test.0029: ids of the uploaded message images sent with the text (the composer's ready thumbnails). */
   images?: string[]
+  /** Id of an uploaded voice recording sent as this message (the body is its transcript). */
+  audio?: string
   createIntentId?: string
   createdChatId?: string
 }
