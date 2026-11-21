@@ -76,6 +76,50 @@ describe('flow tab strip overflow (v02gui.0023)', () => {
     expect(listItems()).toHaveLength(0)
   })
 
+  it.each([0, 2])('closes before a capture handler stops propagation (button %s), preserving the outside action', async (button) => {
+    const w = mountStrip()
+    await setWidths(w, 900, 300)
+    await listButton(w).trigger('click')
+    expect(listItems()).toHaveLength(3)
+    const card = document.createElement('button')
+    document.body.appendChild(card)
+    let selected = false
+    card.addEventListener('pointerdown', (event) => {
+      selected = true
+      event.stopImmediatePropagation()
+    }, true)
+    const event = new MouseEvent('pointerdown', { button, bubbles: true, cancelable: true })
+    card.dispatchEvent(event)
+    await nextTick()
+    expect(listItems()).toHaveLength(0)
+    expect(selected).toBe(true)
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('does not close on a trigger pointerdown or reopen on its following click', async () => {
+    const w = mountStrip()
+    await setWidths(w, 900, 300)
+    await listButton(w).trigger('click')
+    await listButton(w).trigger('pointerdown')
+    expect(listItems()).toHaveLength(3)
+    await listButton(w).trigger('click')
+    expect(listItems()).toHaveLength(0)
+  })
+
+  it('keeps menu pointerdown inside and activates the selected flow on click', async () => {
+    const w = mountStrip()
+    await setWidths(w, 900, 300)
+    await listButton(w).trigger('click')
+    const item = listItems()[1]
+    item.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(listItems()).toHaveLength(3)
+    item.click()
+    await nextTick()
+    expect(w.emitted('activate')).toEqual([['b']])
+    expect(listItems()).toHaveLength(0)
+  })
+
   it('closes an open list when the tabs stop overflowing', async () => {
     const w = mountStrip()
     await setWidths(w, 900, 300)
