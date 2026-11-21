@@ -1467,7 +1467,7 @@ export default {
     files_more: '他 {n} 件を表示',
     files_count: '{n} ファイル',
     conflict: {
-      title_target: '競合 · {target} への反映停止',
+      title_target: '{target} への反映を一時停止 · 競合の解決が必要',
       count: '解決 {done} · 残り {open}（サーバー記録基準）',
       ai_again: '再実行',
       ai_other: '別の AI で',
@@ -1480,6 +1480,9 @@ export default {
       ai_server_default: 'サーバー既定 AI',
       ai_ended: 'AI 解決終了({status}) · {name} · 残り競合 {n} 件',
       blocked: {
+        missing_merge: '競合番号なし · Git 状態を更新してください',
+        load_failed: '競合ファイルを読み込めないため解決できません · 下のエラーを確認してください',
+        unavailable: '競合情報を確認できません · Git 状態を更新してください',
         read_only: '読み取り専用のため操作不可',
         forbidden: '権限なし',
         busy: '他の Git 処理中',
@@ -1488,6 +1491,7 @@ export default {
       ai: 'AI で解決',
       manual: '手動で解決',
       abort: 'マージを中断',
+      abort_hint: 'マージを閉じ、関連する承認も取り消します。記録は残ります。',
       abort_title: 'マージを中断',
       abort_message: '作業スペースをマージ前に戻します。グループブランチはそのまま残ります。',
       abort_cancel_approval: 'この承認（{sha} 固定）も取り消します。記録は残ります。',
@@ -1528,6 +1532,8 @@ export default {
       lines_hidden: '{n} 行省略',
     },
     reapprove: {
+      restart: '最初から承認し直す',
+      new_commit: '承認後に新しいコミットあり · {from} → {to}',
       pinned: '承認したコミット {sha}',
       pinned_unknown: '承認したコミット不明',
       head: '現在の HEAD {sha}',

@@ -1467,7 +1467,7 @@ export default {
     files_more: 'Show {n} more',
     files_count: '{n} files',
     conflict: {
-      title_target: 'Conflict · apply to {target} stopped',
+      title_target: 'Apply to {target} paused · resolve conflicts',
       count: 'Resolved {done} · left {open} (server record)',
       ai_again: 'Run again',
       ai_other: 'Another AI',
@@ -1480,6 +1480,9 @@ export default {
       ai_server_default: 'server default AI',
       ai_ended: 'AI resolve ended ({status}) · {name} · {n} conflicts left',
       blocked: {
+        missing_merge: 'Merge ID missing · refresh Git status',
+        load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',
+        unavailable: 'Conflict details unavailable · refresh Git status',
         read_only: 'Read only',
         forbidden: 'No permission',
         busy: 'Another Git action is running',
@@ -1488,6 +1491,7 @@ export default {
       ai: 'Resolve with AI',
       manual: 'Resolve manually',
       abort: 'Abort merge',
+      abort_hint: 'Closes the merge and cancels its linked approval. Records are kept.',
       abort_title: 'Abort merge',
       abort_message: 'Puts the workspace back to before the merge. The group branch is kept.',
       abort_cancel_approval: 'This approval (pinned at {sha}) is cancelled too. Its record is kept.',
@@ -1528,6 +1532,8 @@ export default {
       lines_hidden: '{n} lines hidden',
     },
     reapprove: {
+      restart: 'Restart approval',
+      new_commit: 'New commit since approval · {from} → {to}',
       pinned: 'Approved commit {sha}',
       pinned_unknown: 'Approved commit unknown',
       head: 'current HEAD {sha}',
