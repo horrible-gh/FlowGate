@@ -70,19 +70,29 @@ def _headers(text: str) -> list[str]:
 
 # ── D-4: what stays inline ───────────────────────────────────────────────────
 
-def test_section_is_five_lines_and_carries_the_fallback_facts():
-    """A worker that never calls help still learns the four things it cannot guess."""
-    body = _section(_build()).splitlines()[2:]
+def test_section_carries_the_fallback_facts_then_the_self_check_budget():
+    """A worker that never calls help still learns the things it cannot guess.
 
-    assert len(body) == 5
-    assert body[0] == "첫 행동으로 GET http://h/flowgate/api/v1/help/tools 를 호출해 각 도구의 사용법을 확인하세요."
-    assert body[1].startswith("디스크의 프로젝트 소스를 직접 편집하지 마세요")
+    The worker mention uses the block's brief form (``source_tools_brief``): the
+    unconditional "call /help/tools first" line is left out, the detail URL stays.
+    A TR step's Self-check budget line follows, separated by one blank line.
+    """
+    tool_block, sep, rest = _section(_build()).partition("\n\n")
+    body = tool_block.splitlines()[2:]
+
+    assert len(body) == 4
+    assert body[0].startswith("디스크의 프로젝트 소스를 직접 편집하지 마세요")
     # 0482 T0011 x 0492 D0004 D-2: default head_type="TR" is a MUTATING_STEP_TYPES
     # read_write kind, but `resolve_base_dirty` is bound to its own action_scope — a TR
     # worker's token would 403 on it, so the mention must not name it here.
-    assert body[2] == "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"
-    assert body[3] == "Authorization: Bearer RAW"
-    assert body[4] == "도구별 상세: GET http://h/flowgate/api/v1/help/tools/{name}"
+    assert body[1] == "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"
+    assert body[2] == "Authorization: Bearer RAW"
+    assert body[3] == "도구별 상세: GET http://h/flowgate/api/v1/help/tools/{name}"
+    assert not any(line.startswith("첫 행동으로") for line in body)
+
+    assert sep == "\n\n"
+    budget = rest.splitlines()
+    assert len(budget) == 1 and budget[0].startswith("Self-check: ")
 
 
 def test_no_disk_edit_line_sits_next_to_the_tool_names_not_inside_help():

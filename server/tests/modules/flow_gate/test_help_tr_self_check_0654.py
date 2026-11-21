@@ -126,12 +126,20 @@ def test_help_timeout_bounds_match_the_service():
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_canonical_example_passes_the_real_validation(locale):
-    example = _content(locale)["request"]["example"]
+    # The example's timeout is the card's per-run verify limit (no token here → the default
+    # limits), the same value the help lists as the field default and the one a run is capped
+    # at — so copying the example never asks for more time than the run will get.
+    from flowgate.card_settings.verify_limits import default_limits
+    run_limit = default_limits().run_timeout_sec
+    content = _content(locale)
+    example = content["request"]["example"]
     assert example == {
-        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": 180,
+        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": run_limit,
     }
+    defaults = {field["name"]: field["default"] for field in content["request"]["fields"]}
+    assert defaults["timeout_seconds"] == run_limit
     program, args, cwd, timeout = service._validate_request(example)
-    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", 180)
+    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", run_limit)
 
 
 @pytest.mark.parametrize("locale", LOCALES)
