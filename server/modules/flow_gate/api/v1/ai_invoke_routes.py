@@ -303,15 +303,6 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     prompt every non-timeout rework has always got, byte for byte.
     """
     doc = db_docs.get_by_id(doc_ref) or {} if doc_ref else {}
-    history = doc.get("rejection_history") or []
-    if isinstance(history, str):
-        try:
-            import json as _json
-            history = _json.loads(history) or []
-        except Exception:
-            history = []
-    last = reject_reason or doc.get("rejection_reason")
-    section = invoke_mention_service.build_rejection_section(history, last)
     # 0446 T0016 §4-1: read the group's newest finished run BEFORE this one starts. The run
     # being launched writes its own row only at finalize, so the row found here really is
     # the previous hop's. `previous_timeout_handoff` answers None for everything except a
@@ -320,10 +311,8 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     handoff = invoke_mention_service.build_previous_run_section(
         ai_invoke_service.previous_timeout_handoff(group_id, doc_ref), locale,
     )
-    # Both leading chunks already end in a blank line, so joining on "\n" leaves exactly one
-    # blank line between every pair — the spacing the rejection section alone produced.
-    leading = [chunk for chunk in (section, handoff) if chunk]
-    return "\n".join(leading) + "\n" + base if leading else base
+    # flowgate.v02test.0061 card 4: the rejection section and the join are the shared assembly.
+    return invoke_mention_service.compose_rework_mention(base, doc, reject_reason, handoff=handoff)
 
 
 def _explicit_request(route):

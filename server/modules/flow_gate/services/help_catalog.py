@@ -7,3 +7,4 @@ from .help.render import (BulkRequestError, _children_count, _design_type_rows, 
 from .help.render import build_index, build_item, build_child, build_bulk, enumerate_children
 from .help.visibility import decide_visibility
 from . import chat_help_content
+from . import tool_registry  # noqa: F401 - compatibility: callers patch help_catalog.tool_registry.resolve_registry

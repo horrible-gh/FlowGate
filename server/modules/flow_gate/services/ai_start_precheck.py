@@ -110,7 +110,7 @@ def unreadable_section(result: dict) -> str:
     """The section for ``precheck``'s result: every unreadable document, then the rules; "" when all are readable."""
     if not result["unreadable"]:
         return ""
-    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_RULES   # noqa: PLC0415
+    from modules.flow_gate.services.prompt_blocks.blocks.documents import BODY_UNREADABLE_RULES   # noqa: PLC0415
 
     lines = [SECTION_HEADER]
     lines += [f"- {u['doc_id']} ({u['title']}): {REASON_TEXT.get(u['reason'], u['reason'])}"

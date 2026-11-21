@@ -61,8 +61,8 @@ def leaf_content(area, leaf, ctx):
         keys = {"register": ("note", "options_requires", "example"), "precheck": ("before_asking", "registration_precheck", "search"), "answers": ("answers",), "policy": ("policy",)}[leaf]
         return {key: data[key] for key in keys if key in data}
     if area == "conversation" and leaf in ("turn", "encoding"):
-        from modules.flow_gate.services.chat_help_content import _encoding_probe_paragraph
-        probe = _encoding_probe_paragraph("help-example-not-a-live-token")
+        from modules.flow_gate.services import prompt_blocks
+        probe = prompt_blocks.detail("conversation.encoding", "help-example-not-a-live-token")
         encoding = "\n".join(probe).replace(probe[2], "<encoding_probe supplied in this invocation; never copy this placeholder>")
         if leaf == "encoding":
             return {"body": encoding}

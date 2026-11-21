@@ -17,6 +17,7 @@ from modules.flow_gate.services import (
 )
 
 from modules.flow_gate.services import chat_help_content
+from modules.flow_gate.services.prompt_blocks.blocks import documents as _documents_block
 
 _logger = logging.getLogger(__name__)
 from .locale import (FALLBACK_LOCALE, NOTICE_LINES, QUESTION_HELP_COPY, _AUTHORING_GUIDE_TITLES, _ITEM_NOTES, _TR_AUTHORING_GUIDE, _copy, normalize_locale)
@@ -103,9 +104,9 @@ _DOCUMENT_CONTENT_STATES: tuple[tuple[str, str], ...] = (
 )
 
 def _body_unreadable_rules() -> tuple[str, ...]:
-    from modules.flow_gate.services import mention_service   # noqa: PLC0415 - the rule owner, imported on use
+    from modules.flow_gate.services import prompt_blocks   # noqa: PLC0415 - the rule owner, imported on use
 
-    return mention_service.BODY_UNREADABLE_RULES
+    return prompt_blocks.detail("documents.unreadable")
 
 ANSWERS_HELP_COPY: dict[str, dict[str, str]] = {
     "ko": {
@@ -169,13 +170,13 @@ def _content_document_access(ctx: dict) -> dict:
             "section": {"method": "GET",
                         "url": f"{base}/document/{{doc_id}}/section?section_id=<section_id>",
                         "summary": "One section from that outline.",
-                        "rule": "Section reads accept exactly one of section, section_id, lines, or chars."},
+                        "rule": _documents_block.SECTION_READ_RULE},
             "relations": {"method": "GET", "url": f"{base}/document/{{doc_id}}/relations",
                           "summary": "Relationships without the body."},
             "content_search": {
                 "method": "GET",
                 "url": (f"{base}/search/documents/content?q=<keyword>{project_filter}"
-                        "&include_matches=true&context_lines=2&hits_per_doc=5"),
+                        + _documents_block.CONTENT_SEARCH_OPTIONS),
                 "summary": "Search bodies and receive match locations with context.",
             },
         },
@@ -265,8 +266,8 @@ def _content_document_attachments(ctx: dict) -> dict:
     }
 
     if ctx.get("action_scope") == "chat":
-        from modules.flow_gate.documents.attachments.request_tools import contract_mention as cli_mention
-        content["chat"] = {"sections": [cli_mention(base, "<YOUR_CHAT_TOKEN>")]}
+        from modules.flow_gate.services import prompt_blocks
+        content["chat"] = {"sections": [prompt_blocks.detail("attachments.upload_request", base, "<YOUR_CHAT_TOKEN>")]}
     return content
 
 def _content_doc_type(ctx: dict) -> dict:

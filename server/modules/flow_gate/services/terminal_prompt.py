@@ -247,8 +247,5 @@ def finalize_nudge(text, spec):
 
 
 def q_transport(locale):
-    return {
-        'ko': '## 원격 CLI Q 답변 규약\nFLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE 환경 변수는 없으므로 위 주소와 Bearer를 사용한다. 현재 작업 디렉터리의 UTF-8 파일로 요청 JSON을 준비한다. 위 answers 또는 허용된 escalate 엔드포인트에 보내고 성공 응답을 확인한다.',
-        'en': '## Remote CLI Q answer transport\nFLOWGATE_TOKEN, FLOWGATE_SCRATCH and FLOWGATE_API_BASE are unavailable; use the URL and Bearer above. Prepare request JSON in a UTF-8 file in the current working directory. Send it to the answers or permitted escalate endpoint above and verify success.',
-        'ja': '## リモートCLI Q回答規約\nFLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE環境変数はないため、上記URLとBearerを使う。現在の作業ディレクトリのUTF-8ファイルで要求JSONを用意する。上記answersまたは許可されたescalateエンドポイントに送信し、成功を確認する。',
-    }[normalize_locale(locale)]
+    from modules.flow_gate.services.prompt_blocks.blocks.submit import REMOTE_CLI_Q_ANSWER_TRANSPORT
+    return REMOTE_CLI_Q_ANSWER_TRANSPORT[normalize_locale(locale)]

@@ -548,8 +548,10 @@ def test_shared_rules_work_with_and_without_an_escalation_section(monkeypatch, p
 
 def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monkeypatch):
     from modules.flow_gate.services import ai_start_precheck, mention_service
+    from modules.flow_gate.services.prompt_blocks.blocks import documents as documents_block
 
-    monkeypatch.setattr(mention_service, "BODY_UNREADABLE_RULES", ("RULE X",))
+    # flowgate.v02test.0061 card 4: the one constant now lives in the prompt block registry.
+    monkeypatch.setattr(documents_block, "BODY_UNREADABLE_RULES", ("RULE X",))
     assert "RULE X" in mention_service._document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")
     assert _help_document_access(monkeypatch)["rules"] == ["RULE X"]
     section = ai_start_precheck.unreadable_section(
@@ -563,7 +565,7 @@ def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monke
     chat = "\n".join(invoke_mention_service._chat_lookup_sections(
         base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB))
     assert "RULE X" in chat
-    monkeypatch.setattr(mention_service, "BODY_UNREADABLE_ANSWER_REFERENCE", "SEMANTIC REFERENCE")
+    monkeypatch.setattr(documents_block, "BODY_UNREADABLE_ANSWER_REFERENCE", "SEMANTIC REFERENCE")
     answer = _answer_mention(monkeypatch, f"{FB}.0001-T")
     assert "RULE X" in answer
     assert answer.count("SEMANTIC REFERENCE") == 1

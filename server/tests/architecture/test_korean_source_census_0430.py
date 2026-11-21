@@ -217,7 +217,14 @@ FILE_LINE_CAPS: dict[str, int] = {
     # _QUESTION_PRECHECK_TEXT["ko"] adds exactly seven mention-copy lines (the check-before-asking steps every
     # Q-registration guide carries) with complete en/ja siblings. No comment or docstring Korean is added.
     # 0049 T0007: measured 230 after splitting the shared policy and adding its semantic reference.
-    "modules/flow_gate/services/mention_service.py": 230,
+    # 230 -> 214: flowgate.v02test.0061 card 4 moved the unread-body rules and their semantic reference
+    # (18 lines, measured 232 -> 214 with _korean_lines) verbatim into prompt_blocks/blocks/documents.py.
+    "modules/flow_gate/services/mention_service.py": 214,
+    # New files (flowgate.v02test.0061 card 4, the prompt block registry): relocated copy, no new Korean.
+    # documents.py = the 18 unread-body lines from mention_service.py; submit.py = the remote CLI contracts'
+    # ko entries from ai_invoke/worker.py (12 lines, 26 -> 14) and terminal_prompt.q_transport (1 line).
+    "modules/flow_gate/services/prompt_blocks/blocks/documents.py": 18,
+    "modules/flow_gate/services/prompt_blocks/blocks/submit.py": 13,
     # 24 -> 39: flowgate.v02.0064 T#2 (T-B1e). Measured: 38 before the change (drift), and T-B1e adds exactly 1 --
     # the answer mention's sentence pointing at the unread-body rules 3 and 4 (P0006 §2.9 ②, its exact wording).
     "modules/flow_gate/services/q_answer_invoke_service.py": 39,
@@ -335,6 +342,7 @@ def test_korean_source_census_stays_within_measured_caps():
 
 @pytest.mark.parametrize("rel", [
     "modules/flow_gate/services/mention_service.py",
+    "modules/flow_gate/services/prompt_blocks/blocks/documents.py",
 ])
 def test_shared_unread_policy_keeps_its_intentional_korean_budget(rel):
     count = len(_korean_lines(_SERVER_DIR / rel))
