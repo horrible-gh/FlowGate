@@ -3,26 +3,26 @@
     <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>{{ t('gui.taskbar.menu') }}</button>
     <button class="taskbar-item designer-item" type="button" aria-pressed="true"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
-    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><small>{{ t('gui.taskbar.minimized') }}</small><b>{{ entry.title }}</b></span></button>
+    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
     <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
-      <button v-if="popup === 'menu'" type="button" role="menuitem" class="settings-card" @click="openSettings"><span class="settings-card-heading">⚙ {{ t('gui.designer.top.header.settings') }}</span><span class="settings-card-body">{{ t('gui.accountMenu.settings') }}</span><i class="card-port" /></button>
+      <button v-if="popup === 'menu'" type="button" role="menuitem" class="menu-card" data-card="theme" :data-card-state="themeState" @click="openTheme"><span class="menu-card-heading">◐ {{ t('gui.taskbar.theme') }}<i v-if="themeState !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></span><span class="menu-card-body">{{ t('gui.taskbar.style') }}</span><i class="card-port" /></button>
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
+    <MeThemeWindow ref="themeWindow" :open="themeOpen" v-model:minimized="themeMinimized" @close="themeOpen = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { routerKey } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import { UI_SETTINGS_PATH, type UiSettingsResponse } from '@shared/aiFinishedCardRetention'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import MeThemeWindow from '@/features/settings/windows/MeThemeWindow.vue'
 import { modelessWindows, modelessStyle, normalizeTaskbarStyle, TASKBAR_STYLE_FIELD, setModelessTaskbar, removeModelessTaskbar, taskbarCapacity, type ModelessEntry } from '@/core/overlay/modelessRegistry'
 
 const { t } = useI18n()
-const router = inject(routerKey, null)
 const { user } = useCurrentUser()
 const root = ref<HTMLElement | null>(null)
 const menuTrigger = ref<HTMLButtonElement | null>(null)
@@ -49,7 +49,18 @@ async function toggle(which: 'menu' | 'overflow') {
   popupRoot.value?.querySelector<HTMLButtonElement>('button')?.focus()
 }
 function restore(entry: ModelessEntry) { close(); entry.restore() }
-function openSettings() { close(); void router?.push({ name: 'settings-me-account' }) }
+// Menu cards open a window over the Designer instead of leaving the page. A card whose window
+// is already open (or minimized) brings that window back rather than opening a second one.
+const themeWindow = ref<InstanceType<typeof MeThemeWindow> | null>(null)
+const themeOpen = ref(false)
+const themeMinimized = ref(false)
+const themeState = computed(() => !themeOpen.value ? 'closed' : themeMinimized.value ? 'minimized' : 'open')
+function openTheme() {
+  close()
+  if (!themeOpen.value) { themeOpen.value = true; return }
+  themeMinimized.value = false
+  themeWindow.value?.bringToFront()
+}
 function outside(event: Event) {
   if (event.target instanceof Node && !root.value?.contains(event.target)) close()
 }
@@ -121,9 +132,11 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 /* Cards keep the canvas-card size on a column grid instead of stretching across the board. */
 .menu-board { left: 10px; width: 360px; max-width: calc(100vw - 48px); min-height: 150px; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 174px)); gap: 12px; align-content: start; background-image: radial-gradient(var(--fg2-line-strong) 1px, transparent 1px); background-size: 16px 16px; }
 .taskbar-popup button { display: block; padding: 12px 16px; border: 1px solid var(--fg2-line-strong); border-left: 4px solid var(--kind-color, #6478dc); border-radius: 6px; background: var(--fg2-panel); color: var(--fg2-text); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
-.taskbar-popup .settings-card { position: relative; display: flex; flex-direction: column; width: 100%; height: 92px; padding: 0; border: 1.5px solid #94a3b8; border-radius: 7px; box-shadow: 0 6px 18px #0003; }
-.settings-card-heading { display: flex; align-items: center; width: 100%; height: 28px; padding: 0 9px; box-sizing: border-box; font-weight: 700; background: color-mix(in srgb, #94a3b8 16%, transparent); }
-.settings-card-body { padding: 8px 10px 0; line-height: 1.35; color: var(--fg2-muted); }
+.taskbar-popup .menu-card { position: relative; display: flex; flex-direction: column; width: 100%; height: 92px; padding: 0; border: 1.5px solid #94a3b8; border-radius: 7px; box-shadow: 0 6px 18px #0003; }
+.menu-card-heading { display: flex; align-items: center; width: 100%; height: 28px; padding: 0 9px; box-sizing: border-box; font-weight: 700; background: color-mix(in srgb, #94a3b8 16%, transparent); }
+.menu-card-body { padding: 8px 10px 0; line-height: 1.35; color: var(--fg2-muted); }
+/* A window that is open or minimized shows as one dot on its card, with no status wording. */
+.menu-card-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: #28b878; box-shadow: 0 0 6px #28b878; flex: none; }
 .card-port { position: absolute; right: -5px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--fg2-panel); border: 1.5px solid #94a3b8; }
 .overflow-list { right: 10px; width: min(360px, calc(100vw - 48px)); max-height: min(400px, 60vh); overflow: auto; }
 .overflow-list button { width: 100%; margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

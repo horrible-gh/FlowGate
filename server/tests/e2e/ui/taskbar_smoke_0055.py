@@ -99,7 +99,7 @@ def main():
             assert page.locator('[data-test="designer-header-settings"]').count() == 0
             bar.locator('.menu-trigger').click()
             assert bar.locator('[role="menuitem"]').count() == 1
-            card = bar.locator('.settings-card').bounding_box()
+            card = bar.locator('.menu-card').bounding_box()
             # The menu card keeps the canvas-card size and must not stretch across the board.
             assert card and 160 <= card['width'] <= 176 and abs(card['height'] - 92) <= 1, card
             print('CARD_OK', width, height, card)
@@ -124,20 +124,55 @@ def main():
         restored = context.request.patch(base+'/flowgate/api/v1/me/ui-settings', headers=headers, data={'designer_bottom_height':before['designer_bottom_height']})
         assert restored.ok
         print('DOCK_OK drag save reload restore')
-        page.locator('.menu-trigger').click()
-        page.locator('.settings-card').click()
-        page.wait_for_url('**/settings/me/account')
-        page.get_by_role('link', name='테마', exact=True).click()
-        page.locator('#taskbar-style').wait_for()
-        assert page.locator('#taskbar-style option').all_text_contents() == ['FlowGate']
-        page.get_by_role('button', name='저장', exact=True).click()
-        page.get_by_role('status').filter(has_text='저장').wait_for()
+        # The theme card opens a window over the Designer; the page stays where it is.
+        evidence = os.environ.get('TASKBAR_SMOKE_SHOTS')
+        for width, height in [(1568, 875), (1100, 760)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.locator('.menu-trigger').click()
+            card = page.locator('[data-card="theme"]')
+            assert card.get_attribute('data-card-state') == 'closed'
+            assert card.locator('[data-test="menu-card-dot"]').count() == 0
+            card_text = card.inner_text()
+            if evidence: page.screenshot(path=str(Path(evidence) / f'theme_menu_{width}x{height}.png'))
+            card.click()
+            window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="me-theme-window"]'))
+            window.wait_for()
+            assert '/designer' in page.url, page.url
+            window.locator('#taskbar-style-window').wait_for()
+            box = window.bounding_box()
+            assert box['x'] >= 0 and box['x'] + box['width'] <= width and box['y'] + box['height'] <= height - 50, (box, width, height)
+            assert window.locator('#taskbar-style-window option').all_text_contents() == ['FlowGate']
+            if evidence: page.screenshot(path=str(Path(evidence) / f'theme_window_{width}x{height}.png'))
+            window.locator('[data-modeless-action="minimize"]').click()
+            assert not window.is_visible()
+            item = page.locator('.minimized-item').filter(has_text='테마')
+            assert item.count() == 1
+            # The taskbar item shows the window title only; the card shows a dot, no status wording.
+            assert item.locator('.item-text').inner_text().strip() == '내 설정 · 테마', item.inner_text()
+            page.locator('.menu-trigger').click()
+            assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            assert card.inner_text() == card_text, (card_text, card.inner_text())
+            assert page.get_by_text('접힘').count() == 0
+            if evidence: page.screenshot(path=str(Path(evidence) / f'theme_minimized_{width}x{height}.png'))
+            card.click()
+            window.wait_for()
+            assert page.locator('[data-test="me-theme-window"]').count() == 1
+            assert window.bounding_box() == box, (box, window.bounding_box())
+            if width == 1100:
+                window.get_by_role('button', name='저장', exact=True).click()
+                window.get_by_role('status').filter(has_text='저장').wait_for()
+            window.locator('[data-modeless-action="close"]').click()
+            assert page.locator('[data-test="me-theme-window"]').count() == 0
+            print('THEME_WINDOW_OK', width, height, box)
         after = context.request.get(base+'/flowgate/api/v1/me/ui-settings', headers=headers).json()['settings']
         assert after['designer_taskbar_style'] == 'flowgate'
         for key in ('designer_left_width','designer_right_width','designer_bottom_height','ai_finished_card_retention_minutes'):
             assert before[key] == after[key], (key, before, after)
-        page.reload()
+        # The settings page shows the same panel.
+        page.goto(base + '/app/settings/me/theme')
         page.locator('#taskbar-style').wait_for()
+        assert page.locator('#taskbar-style option').all_text_contents() == ['FlowGate']
         assert page.locator('#taskbar-style').input_value() == 'flowgate'
         second = browser.new_context(viewport={'width':1568,'height':875})
         second_login = second.request.post(base+'/flowgate/auth/login', data={'username':'test','password':'test1234','remember_me':False})
