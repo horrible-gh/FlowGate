@@ -1560,6 +1560,8 @@ def sweep_all() -> dict:
             logger.warning("attachment request orphan sweep failed", exc_info=True)
         from modules.flow_gate.services.message_image_service import sweep_expired
         images_expired = sweep_expired()
+        from modules.flow_gate.services.message_audio_service import sweep_expired as sweep_audio_expired
+        sweep_audio_expired()
         return {"expired": expired, "orphans": orphans, "message_images_expired": images_expired}
 
 

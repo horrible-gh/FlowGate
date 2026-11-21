@@ -427,6 +427,13 @@ if ($dbReady) {
     Write-Host "    $Root\setup-ai.ps1"
 }
 
+if ($Interactive -and $dbReady) {
+    if ((Read-Host '음성 입력도 설치할까요? (y/N)') -match '^[Yy]') {
+        try { & $VenvPython (Join-Path $Root 'server\setup_voice.py') }
+        catch { Write-Host "[!] Voice setup did not complete: $_" }
+    }
+}
+
 # ── done ─────────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '──────────────────────────────────────────────────────────────'

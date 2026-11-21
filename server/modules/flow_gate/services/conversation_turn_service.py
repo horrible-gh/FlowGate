@@ -20,7 +20,8 @@ from modules.flow_gate.db import ai_providers
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
-from modules.flow_gate.services import encoding_probe, message_image_service
+from modules.flow_gate.services import encoding_probe, message_image_service, message_audio_service
+from modules.flow_gate.services.voice_errors import VoiceError
 from modules.flow_gate.storage import paths as storage_paths
 
 TURN_BODY_BYTE_MAX = 65_536
@@ -425,6 +426,7 @@ def _turn_wire(row: dict, *, images=None) -> dict:
         "display_name": row.get("display_name"),
         "locale": row.get("locale"),
         "body": "" if row.get("deleted_at") else row["body"],
+        "audio": message_audio_service.for_turn(row),
         "message_version": int(row.get("message_version") or 1),
         "edited_at": row.get("edited_at"),
         "deleted_at": row.get("deleted_at"),
@@ -492,8 +494,10 @@ def _result(doc_id: str, row: dict, resolved: dict, replayed: bool) -> dict:
 
 
 def _replay_or_conflict(
-    doc_id: str, existing: dict, body_hash: str, resolved: dict, images=None
+    doc_id: str, existing: dict, body_hash: str, resolved: dict, images=None, audio_id=None
 ) -> dict:
+    if existing.get("audio_id") != audio_id:
+        raise ConversationTurnError(409, "idempotency_key already used with different audio.")
     expected_images = [] if images is None else images
     actual_images = [i["image_id"] for i in message_image_service.for_turn(doc_id, existing["seq"])]
     if actual_images != expected_images:
@@ -695,8 +699,14 @@ def append_turn(
     locale: str = "ko",
     timing: Optional[TurnTiming] = None,
     images: Optional[list[str]] = None,
+    audio_id: Optional[str] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
+    if audio_id is not None:
+        try:
+            body_raw = message_audio_service.prepare(_validate_document_for_append(doc_id), actor, body_raw, audio_id)
+        except VoiceError as exc:
+            raise ConversationTurnError(exc.status_code, exc.code) from exc
     # flowgate.v02gui.0009: a worker's body ends with its token's encoding probe; it is
     # verified and removed here, so the stored turn (and its idempotency hash) never
     # carries it.
@@ -738,7 +748,7 @@ def append_turn(
     if existing is not None:
         if timing is not None:
             timing.mark("replay")
-        return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
+        return _replay_or_conflict(doc_id, existing, body_hash, resolved, images, audio_id)
 
     last_exc: Optional[BaseException] = None
     for attempt in range(SEQ_RETRY_MAX + 1):
@@ -770,6 +780,12 @@ def append_turn(
                     message_image_service.link(doc, assigned, actor.get("user_id"), images)
                 except message_image_service.MessageImageError as exc:
                     raise ConversationTurnError(exc.status, exc.code) from exc
+                if audio_id is not None:
+                    try:
+                        message_audio_service.link(doc, assigned, actor.get("user_id"), audio_id)
+                        row["audio_id"] = audio_id
+                    except VoiceError as exc:
+                        raise ConversationTurnError(exc.status_code, exc.code) from exc
                 previous_head = assigned - 1
                 if based > previous_head:
                     raise ConversationTurnError(
@@ -843,7 +859,7 @@ def append_turn(
             if existing is not None:
                 if timing is not None:
                     timing.mark("replay")
-                return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
+                return _replay_or_conflict(doc_id, existing, body_hash, resolved, images, audio_id)
             if attempt >= SEQ_RETRY_MAX:
                 break
             time.sleep(SEQ_RETRY_BACKOFF_MS[attempt] / 1000.0)

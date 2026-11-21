@@ -71,6 +71,9 @@ from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command
 # flowgate.chat.0017 CH0002: AI attachment upload requests, the user side (decision, preview, settings).
 from modules.flow_gate.api.v1.attachment_request_routes import router as _attachment_request_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
+from modules.flow_gate.api.v1.voice_routes import router as _voice_router
+from modules.flow_gate.api.v1.voice_stream_routes import router as _voice_stream_router
+from modules.flow_gate.api.v1.message_audio_routes import router as _message_audio_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
 from modules.flow_gate.api.v1.self_check_card_routes import router as _self_check_card_router
@@ -127,6 +130,10 @@ async def lifespan(app: FastAPI):
     app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
     app.state.shutdown_event.set()
+    from modules.flow_gate.services.voice_service import manager as voice_manager
+    from modules.flow_gate.services import voice_streams
+    await asyncio.to_thread(voice_streams.shutdown)
+    await asyncio.to_thread(voice_manager.shutdown)
     try:
         from modules.flow_gate.services import snapshot_materialization_service
         snapshot_materialization_service.shutdown()
@@ -276,6 +283,9 @@ app.include_router(_conversation_router, prefix=f"{CONTEXT}/api/v1", tags=["Conv
 # /chat-commands and /chat-activity paths first.
 app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatCommands"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
+app.include_router(_voice_router, prefix=f"{CONTEXT}/api/v1")
+app.include_router(_voice_stream_router, prefix=f"{CONTEXT}/api/v1")
+app.include_router(_message_audio_router, prefix=f"{CONTEXT}/api/v1")
 app.include_router(_attachment_request_router, prefix=f"{CONTEXT}/api/v1", tags=["AttachmentRequests"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])

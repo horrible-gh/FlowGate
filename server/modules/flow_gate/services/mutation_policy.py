@@ -346,7 +346,7 @@ _FLOW_ATTACHMENT_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachme
 _FLOW_ATTACHMENT_ZIP_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachments-zip/?$")
 
 
-_MESSAGE_IMAGE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/message-images(?:/[^/]+)?/?$")
+_MESSAGE_IMAGE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/message-(?:images|audio)(?:/[^/]+)?/?$")
 _SESSION_TURN_PATH = re.compile(r"^(?:/flowgate)?/api/v1/documents/[^/]+/conversation/turn/?$")
 
 

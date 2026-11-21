@@ -572,3 +572,5 @@ def run_all():
     remove_retired_source_bundle_storage()
     recover_chat_commands()
     start_attachment_requests()
+    from modules.flow_gate.services.voice_service import manager as voice_manager
+    threading.Thread(target=voice_manager.startup, name="voice-startup", daemon=True).start()
