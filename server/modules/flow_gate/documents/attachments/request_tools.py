@@ -86,7 +86,7 @@ def call(run: dict, tool_input: Any) -> tuple[int, dict]:
     return 201, svc.ai_result(row)
 
 
-def cli_mention(api_base: str, raw_token: str) -> str:
+def contract_mention(api_base: str, raw_token: str) -> str:
     """The section a CLI chat mention carries (``chat_run_hooks`` descriptor ``cli_mention``)."""
     base = api_base.rstrip("/")
     return "\n".join([
@@ -112,6 +112,10 @@ def cli_mention(api_base: str, raw_token: str) -> str:
         f"List shared files: GET {base}/flow/<this flow_id>/attachments (same Bearer).",
         "The response gives document read/copy URLs. Read selected files only; no automatic content injection.",
     ])
+
+
+def cli_mention(api_base: str, raw_token: str) -> str:
+    return contract_mention(api_base, raw_token)
 
 
 def chat_descriptor() -> dict:

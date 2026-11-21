@@ -93,7 +93,7 @@ def _names(body):
 
 
 def _hidden(body):
-    return {entry["name"]: entry["reason"] for entry in body["hidden"]}
+    return {entry["name"]: entry["reason"] for entry in body.get("hidden", [])}
 
 
 # 0684 T#4: Source Bundle is removed. Its two help items (source_bundles and the
@@ -127,41 +127,17 @@ def test_bundle_help_items_and_notice_are_gone_for_every_step(monkeypatch, scope
 def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
     body = client.get("/api/v1/help").json()
-
-    assert body["ok"] is True
-    assert body["form"] == "index"
-    assert body["version"] == help_catalog.VERSION
-    assert _names(body) == [
-        "notices", "group_documents", "document_access", "document_attachments", "doc_type",
-        "question", "submit", "source_tools", "design_template",
-    ]
-    assert _hidden(body) == {
-        **{name: "not_chat" for name in help_catalog.chat_help_content.ITEMS},
-        "authoring_guide": "no_guide_for_type",
-        "test_commands": "not_ts_type",
-        "tr_self_check": "not_tr_edit",
-        "changed_files_format": "not_mutating_type",
-    }
-    assert body["context"] == {
-        "doc_id": "flowgate.default.0372.0004-P",
-        "doc_type": "P",
-        "action_scope": "new",
-        "tool_kind": "read",
-        "source_mode": "remote",
-        "reason": None,
-    }
+    assert body["ok"] and body["form"] == "index"
+    assert _names(body) == ["notices", "documents", "attachments", "source_tools", "question", "submit", "design_template"]
+    assert "hidden" not in body and "context" not in body
     assert body["item_url"].endswith("/help/items/{name}")
-    assert body["child_url"].endswith("/help/items/{name}/{child}")
-    assert body["bulk_url"].endswith("/help?items={name1},{name2}")
-    assert body["detail_url"].endswith("/help?detail=true")
+    assert client.get("/api/v1/help/items/authoring_guide").status_code == 403
 
 
 def test_index_never_carries_an_item_body(monkeypatch):
-    client = _client(monkeypatch, _token(), step_type="P")
-    body = client.get("/api/v1/help").json()
+    body = _client(monkeypatch, _token(), step_type="P").get("/api/v1/help").json()
     for item in body["items"]:
-        assert set(item) == {"name", "title", "summary", "form", "children_count", "url"}
-        assert item["url"].endswith(f"/help/items/{item['name']}")
+        assert set(item) == {"name", "summary", "children_count"}
 
 
 def test_index_children_count_counts_only_the_tools_this_token_may_call(monkeypatch):
@@ -169,67 +145,45 @@ def test_index_children_count_counts_only_the_tools_this_token_may_call(monkeypa
     counts = {item["name"]: item["children_count"] for item in read_only["items"]}
     assert counts["source_tools"] == 8
     assert counts["design_template"] == 4
-    assert counts["notices"] is None
+    assert counts["notices"] == 0
 
 
 def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help").json()
-
-    assert "changed_files_format" in _names(body)
-    assert "step_verification_format" not in _names(body)
     assert "authoring_guide" in _names(body)
-    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists, so the item is listed.
-    assert "tr_self_check" in _names(body)
-    assert _hidden(body) == {
-        **{name: "not_chat" for name in help_catalog.chat_help_content.ITEMS},
-        "design_template": "not_design_type",
-        "test_commands": "not_ts_type",
-    }
-    assert body["context"]["tool_kind"] == "read_write"
-    counts = {item["name"]: item["children_count"] for item in body["items"]}
-    # 0092 adds move to the twelve kind-wide tools; resolve_base_dirty stays scope-bound.
-    assert counts["source_tools"] == 12
-    assert counts["authoring_guide"] == 1
+    children = client.get("/api/v1/help/items/submit").json()["children"]
+    assert {"changed_files", "self_check"} <= {item["name"] for item in children}
+    assert client.get("/api/v1/help/items/submit/test_commands").status_code == 404
+    assert {item["name"]: item["children_count"] for item in body["items"]}["source_tools"] == 12
 
 
 def test_index_for_a_ts_token_shows_the_verified_commands(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TS")
-    body = client.get("/api/v1/help").json()
-    assert "test_commands" in _names(body)
-    assert "authoring_guide" in _names(body)
-    # group 0390 R0001: TS is now a mutating step type, so it gets write tools and
-    # must report `## 변경 파일` like T/TR/TSR do.
-    assert "changed_files_format" in _names(body)
-    assert body["context"]["tool_kind"] == "read_write"
+    children = client.get("/api/v1/help/items/submit").json()["children"]
+    assert {"test_commands", "changed_files"} <= {row["name"] for row in children}
+    assert client.get("/api/v1/help/items/submit/self_check").status_code == 404
 
 
 def test_review_token_gets_read_tools_and_a_verdict_flavoured_submit(monkeypatch):
     client = _client(monkeypatch, _token("review"), step_type="D")
-    body = client.get("/api/v1/help").json()
-
-    assert body["context"]["tool_kind"] == "read"
-    submit = next(item for item in body["items"] if item["name"] == "submit")
-    assert submit["title"] == "판정 제출 방법"
-    assert _hidden(body)["design_template"] == "not_design_type"
+    submit = client.get("/api/v1/help/items/submit/format").json()["content"]
+    assert submit["action_scope"] == "review"
+    assert client.get("/api/v1/help/items/source_tools/write").status_code == 404
+    assert client.get("/api/v1/help/items/design_template").status_code == 403
 
 
 def test_local_source_project_drops_the_tools_item_entirely(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR", source_mode="local")
-    body = client.get("/api/v1/help").json()
-
-    assert "source_tools" not in _names(body)
-    assert _hidden(body)["source_tools"] == "source_mode_local"
-    assert body["context"]["reason"] == "source_mode_local"
-    assert body["context"]["tool_kind"] == "none"
-    # Source mode gates advertising only — the type-driven items keep their own answer.
-    assert "changed_files_format" in _names(body)
+    assert "source_tools" not in _names(client.get("/api/v1/help").json())
+    assert client.get("/api/v1/help/items/source_tools").status_code == 403
+    assert client.get("/api/v1/help/items/submit/changed_files").status_code == 200
 
 
 def test_a_step_that_touches_no_source_hides_the_tools_for_its_own_reason(monkeypatch):
     client = _client(monkeypatch, _token("test_run"), step_type="TS")
-    body = client.get("/api/v1/help").json()
-    assert _hidden(body)["source_tools"] == "token_scope_none"
+    assert "source_tools" not in _names(client.get("/api/v1/help").json())
+    assert client.get("/api/v1/help/items/source_tools").status_code == 403
 
 
 def test_console_user_jwt_sees_only_the_two_context_free_items(monkeypatch):
@@ -246,22 +200,16 @@ def test_console_user_jwt_sees_only_the_two_context_free_items(monkeypatch):
 # ── the one judgment: shown ⇔ allowed ────────────────────────────────────────
 
 @pytest.mark.parametrize("step_type", ["P", "TR", "TS", "N"])
-def test_every_listed_item_answers_and_every_hidden_item_403s(monkeypatch, step_type):
+def test_every_listed_item_answers_and_every_hidden_item_403s(monkeypatch, step_type, migrated_store):
     client = _client(monkeypatch, _token(), step_type=step_type)
-    body = client.get("/api/v1/help").json()
-
-    for name in _names(body):
+    index = client.get("/api/v1/help").json()
+    for name in _names(index):
         response = client.get(f"/api/v1/help/items/{name}")
-        assert response.status_code == 200, f"{name} was listed but answered {response.status_code}"
-        assert response.json()["name"] == name
-
-    for name, reason in _hidden(body).items():
-        response = client.get(f"/api/v1/help/items/{name}")
-        assert response.status_code == 403, f"{name} was hidden but answered {response.status_code}"
-        assert response.json()["error_message"] == (
-            f"Help item '{name}' is not available for this token"
-        )
-        assert reason
+        assert response.status_code == 200
+        for child in response.json().get("children", []):
+            assert client.get(f"/api/v1/help/items/{name}/{child['name']}").status_code == 200
+    for name in help_catalog.chat_help_content.ITEMS:
+        assert client.get(f"/api/v1/help/items/{name}").status_code == 403
 
 
 def test_unknown_name_is_404_before_any_permission_judgment(monkeypatch):
@@ -324,8 +272,9 @@ def test_design_template_list_points_at_the_type_being_written(monkeypatch):
 def test_source_tools_notes_point_at_the_items_path(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help/items/source_tools").json()
-    assert any("/help/items/source_tools/{name}" in note for note in body["notes"])
-    assert not any("/help/tools/{name}" in note for note in body["notes"])
+    assert "document_attachments" not in body
+    assert all(set(child) == {"name", "summary"} for child in body["children"])
+    assert client.get("/api/v1/help/items/attachments/read").status_code == 200
 
 
 # ── item bodies ──────────────────────────────────────────────────────────────
@@ -433,7 +382,7 @@ def test_document_attachments_advertises_the_copy_request_body(monkeypatch):
 
 def test_submit_carries_this_token_own_identity(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    content = client.get("/api/v1/help/items/submit").json()["content"]
+    content = client.get("/api/v1/help/items/submit/format").json()["content"]
     assert content["url"].endswith("/inbox")
     assert content["body"]["group_name"] == "flowgate.default.0372"
     assert content["body"]["module"] == "default"
@@ -577,7 +526,7 @@ def test_query_locale_beats_the_header(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
     body = client.get("/api/v1/help?locale=en", headers={"x-locale": "ja"}).json()
     assert body["locale"] == "en"
-    assert body["items"][0]["title"] == "Notices"
+    assert body["items"][0]["summary"] == "Notices and user policy"
 
 
 def test_unsupported_locale_folds_to_ko_without_falling_through(monkeypatch):
@@ -594,14 +543,15 @@ def test_the_token_locale_is_used_when_the_request_names_none(monkeypatch):
 def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
-    assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands", *help_catalog.chat_help_content.ITEMS}  # 0638 T#1: TR(new) lists tr_self_check
+    assert _names(body)[:2] == ["notices", "documents"]
+    assert "hidden" not in body
+    assert client.get("/api/v1/help/items/submit/test_commands").status_code == 404  # 0638 T#1: TR(new) lists tr_self_check
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
 def test_review_submit_dry_run_copy_uses_the_requested_locale(monkeypatch, locale):
     client = _client(monkeypatch, _token("review"), step_type="D")
-    body = client.get(f"/api/v1/help/items/submit?locale={locale}").json()
+    body = client.get(f"/api/v1/help/items/submit/format?locale={locale}").json()
 
     assert body["locale"] == locale
     assert body["content"]["dry_run"] == help_catalog._ITEM_NOTES[locale][
@@ -612,7 +562,7 @@ def test_review_submit_dry_run_copy_uses_the_requested_locale(monkeypatch, local
 def test_review_submit_dry_run_copy_is_not_fixed_to_english(monkeypatch):
     client = _client(monkeypatch, _token("review"), step_type="D")
     copies = {
-        locale: client.get(f"/api/v1/help/items/submit?locale={locale}").json()["content"]["dry_run"]
+        locale: client.get(f"/api/v1/help/items/submit/format?locale={locale}").json()["content"]["dry_run"]
         for locale in ("ko", "ja", "en")
     }
 
@@ -676,11 +626,11 @@ def test_a_failed_audit_insert_never_breaks_the_help_answer(monkeypatch):
 def test_the_legacy_question_route_and_the_question_item_share_one_supplier(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
     legacy = client.get("/api/v1/help/question").json()
-    item = client.get("/api/v1/help/items/question").json()
-    # Personalized help also carries the document-bound answer lookup contract.
-    assert item["content"] == {**legacy, "answers": help_catalog._answers_lookup({
-        "base_url": item["base_url"], "doc_id": _token()["doc_ref"], "locale": "ko",
-    })}
+    contents = {}
+    for leaf in ("register", "precheck", "answers", "policy"):
+        contents.update(client.get("/api/v1/help/items/question/" + leaf).json()["content"])
+    assert contents == {**legacy, "answers": help_catalog._answers_lookup({
+        "base_url": "/flowgate/api/v1", "doc_id": _token()["doc_ref"], "locale": "ko"})}
 
 
 # ── supplier failures stay supplier failures ─────────────────────────────────
@@ -815,7 +765,7 @@ def test_retired_verification_help_item_is_unknown(monkeypatch, locale, scope):
 @pytest.mark.parametrize("scope", ["new", "edit"])
 def test_submit_has_no_retired_required_flag_when_authoring_tr(monkeypatch, locale, scope):
     client = _client(monkeypatch, _token(scope), step_type="TR")
-    response = client.get("/api/v1/help/items/submit", headers={"X-Locale": locale})
+    response = client.get("/api/v1/help/items/submit/format", headers={"X-Locale": locale})
     assert response.status_code == 200, response.text
     content = response.json()["content"]
     assert "step_verification_required" not in content
@@ -837,8 +787,8 @@ def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypa
     bulk = client.get("/api/v1/help?detail=true", headers={"X-Locale": locale}).json()
     items = {item["name"]: item for item in bulk["items"]}
     assert "step_verification_format" not in items
-    assert "changed_files_format" in items
-    assert "tr_self_check" in items
+    assert "changed_files" in {row["name"] for row in items["submit"]["children"]}
+    assert "self_check" in {row["name"] for row in items["submit"]["children"]}
 
 
 # 0049 T0009: chat help is documentation even for read/execute mode.
@@ -858,7 +808,7 @@ def test_chat_detail_help_http_and_api_share_visibility_and_content(
     status, api_index = api_server_tools.read_help(run, "test-token", {})
     assert status == 200
     assert _names(api_index) == _names(index)
-    assert set(chat_help_content.ITEMS) <= set(_names(index))
+    assert {"conversation", "documents", "cards"} <= set(_names(index))
     bulk = client.get("/api/v1/help?items=" + ",".join(chat_help_content.ITEMS)).json()
     assert bulk["unavailable"] == []
     detail = client.get("/api/v1/help?detail=true").json()
@@ -874,7 +824,7 @@ def test_chat_detail_help_http_and_api_share_visibility_and_content(
         assert item["content"]["help_url"] == pointer
         assert item["content"]["sections"]
         assert next(x for x in bulk["items"] if x["name"] == name)["content"] == item["content"]
-        assert next(x for x in detail["items"] if x["name"] == name)["content"] == item["content"]
+        assert {"cards", "conversation", "documents"} <= {row["name"] for row in detail["items"]}
         status, api_item = api_server_tools.read_help(run, "test-token", {"item": name})
         assert status == 200
         assert api_item["content"] == item["content"]
@@ -898,7 +848,7 @@ def test_chat_help_never_reopens_card_or_q_responder_authoring(monkeypatch, scop
     assert not set(chat_help_content.ITEMS) & set(_names(index))
     assert {x["name"] for x in bulk["unavailable"]} == set(chat_help_content.ITEMS)
     for name in chat_help_content.ITEMS:
-        assert _hidden(index)[name] == "not_chat"
+        assert "hidden" not in index
         assert client.get(chat_help_content.help_item_url(name, "/api/v1")).status_code == 403
         status, _ = api_server_tools.read_help({"api_base_url": "/api/v1"}, "test-token", {"item": name})
         assert status == 403

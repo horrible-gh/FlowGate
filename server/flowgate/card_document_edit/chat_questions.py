@@ -452,7 +452,7 @@ def _chat_base(api_base: str) -> str:
     return base + "/api/v2/chat"
 
 
-def cli_mention_section(api_base: str, raw_token: str) -> str:
+def contract_mention_section(api_base: str, raw_token: str) -> str:
     base = _chat_base(api_base)
     return (
         "[Card questions (Q): list and answer]\n"
@@ -471,6 +471,10 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
         "guessing; never write the answer only in your turn and leave the question unanswered. Report refusals and "
         "errors as they are."
     )
+
+
+def cli_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_mention_section(api_base, raw_token)
 
 
 def descriptors() -> list:
