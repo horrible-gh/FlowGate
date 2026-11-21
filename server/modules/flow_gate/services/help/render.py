@@ -262,6 +262,9 @@ def build_index(ctx):
 def build_item(name, ctx):
     if "/" in name:
         return build_child(*name.split("/", 1), ctx)
+    if name not in CATALOG_ORDER and ctx.get("principal_kind") != "user_session":
+        # 0061 card 6: the old flat names (chat_control, document_access, ...) are not items any more.
+        raise HelpSupplierError("Unknown help item: " + name)
     if name in AREA_LEAVES or name in ("source_tools", "design_template", "authoring_guide"):
         payload = {"name": name, "form": "children", "children": enumerate_children(name, ctx)}
         if name == "design_template":
@@ -274,7 +277,11 @@ def build_child(name, child, ctx):
     if name in AREA_LEAVES:
         if not decide_visibility(name + "/" + child, ctx).visible:
             raise HelpSupplierError("Unavailable help leaf: " + name + "/" + child)
-        return {"name": name, "child": child, "form": "content", "content": leaf_content(name, child, ctx)}
+        payload = {"name": name, "child": child, "form": "content", "content": leaf_content(name, child, ctx)}
+        if (name, child) == ("submit", "test_commands") and not payload["content"].get("has_commands"):
+            # An empty registry is a normal answer, not a failure (L-0005 section 5); the flat item said so.
+            payload["notes"] = [_copy(_ITEM_NOTES, ctx["locale"], "test_commands_empty")]
+        return payload
     return _legacy_build_child(name, child, ctx)
 
 

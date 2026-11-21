@@ -159,7 +159,7 @@ def tools_summary(registry: dict, locale: str, base_url: str) -> dict:
     """``GET /help/tools`` for an AI: name, one line and path per tool, nothing else.
 
     The attachment block, the denied / absent operations, the notes and the examples are one call
-    deeper: ``/help/tools/{name}`` for an operation's request contract, ``/help/items/document_attachments``
+    deeper: ``/help/tools/{name}`` for an operation's request contract, ``/help/items/attachments/read``
     for what each kind may do with attachments. Only the *names* of the attachment operations this
     token can call stay here, so the list still answers "which file operations do I have?".
     """

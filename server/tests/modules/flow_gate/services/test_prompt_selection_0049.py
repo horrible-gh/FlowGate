@@ -44,15 +44,15 @@ def test_cli_and_api_situation_matrix(hooks, mode, unanswered, current_run):
     assert '/documents/{doc_id}' in text and '/ai-options' in text and '/roles' in text
     if mode != 'edit':
         descriptions = '\n'.join(t['description'] + t.get('prompt_hint', '') for t in visible)
-        for forbidden in ['/cards', '/revisions', 'retry_flow_card', 'restart_flow_run',
+        for forbidden in ['{flow_id}/cards', '/revisions', 'retry_flow_card', 'restart_flow_run',
                           'revise_document_by_id', 'create_new_document', 'place_flow_cards']:
             assert forbidden not in text
             assert forbidden not in descriptions
-        assert '/help/items/chat_control' not in text
-        assert '/help/items/chat_documents' not in text
+        assert '/help/items/cards/place' not in text
+        assert '/help/items/documents/edit' not in text
     else:
-        assert '/help/items/chat_control' in text
-        assert '/help/items/chat_documents' in text
+        assert '/help/items/cards/place' in text
+        assert '/help/items/documents/edit' in text
     # Presentation does not mutate the descriptors, handlers, schemas or permission gates.
     for original, result in zip(raw, selected):
         assert 'prompt_visible' not in original
@@ -92,10 +92,11 @@ def test_api_hook_uses_admitted_capability_and_stored_state(hooks, monkeypatch):
 
 
 def test_specific_help_survives_api_conversion():
-    for item in ['chat_control', 'chat_documents', 'chat_questions', 'chat_recovery', 'submit']:
-        prompt = 'Before this action read GET ' + BASE + '/help/items/' + item
+    for path in ['cards/place', 'documents/edit', 'cards/questions', 'conversation/recovery', 'submit/format']:
+        item, _, child = path.partition('/')
+        prompt = 'Before this action read GET ' + BASE + '/help/items/' + path
         converted = provider_api._api_help_prompt(prompt)
-        assert 'read_help with item=' + item in converted
+        assert 'read_help with item=' + item + ' and child=' + child in converted
         assert 'GET ' not in converted
     converted = provider_api._api_help_prompt('Keep artifacts in scratch. GET ' + BASE + '/help/items/submit')
     assert 'Keep artifacts in scratch.' in converted

@@ -718,7 +718,7 @@ def test_help_tools_answers_for_attachments_as_well_as_source_tools(env, action_
     assert named == set(tool_registry.ATTACHMENT_DISPLAY_ORDER)
     assert [op["name"] for op in block["absent"]] == list(tool_registry.ATTACHMENT_ABSENT_OPS)
     assert all(op["reason"] for op in block["denied"] + block["absent"])
-    assert block["help_item_url"].endswith("/help/items/document_attachments")
+    assert block["help_item_url"].endswith("/help/items/attachments/read")
 
     # The full registry notes still say it too, for the console and the help items.
     note_key = "attachments" if kind != "none" else "attachments_none"

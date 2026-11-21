@@ -26,13 +26,6 @@ INTRO = {
 }
 
 
-def help_item_url(name, base_url="/flowgate/api/v1"):
-    """Stable pointer for the next prompt-selection card (no prompt insertion here)."""
-    if name not in ITEMS and name != "document_attachments":
-        raise ValueError("unknown chat help item: " + name)
-    return base_url.rstrip("/") + "/help/items/" + name
-
-
 def content(name, ctx):
     base = ctx["base_url"]
     token = "<YOUR_CHAT_TOKEN>"
@@ -71,5 +64,4 @@ def content(name, ctx):
                     "<encoding_probe supplied in this invocation; never copy this placeholder>")]
     else:
         raise ValueError(name)
-    return {"intro": INTRO[ctx["locale"]], "sections": sections,
-            "help_url": help_item_url(name, base)}
+    return {"intro": INTRO[ctx["locale"]], "sections": sections}

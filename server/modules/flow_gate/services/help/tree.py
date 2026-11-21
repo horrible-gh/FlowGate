@@ -98,9 +98,14 @@ AREA_LEAVES = {
     "submit": {"format": "submit", "changed_files": "changed_files_format", "test_commands": "test_commands", "self_check": "tr_self_check"},
 }
 AREA_ORDER = ("notices", "conversation", "documents", "attachments", "source_tools", "cards", "question", "submit", "design_template", "authoring_guide")
+# 0061 card 6: the old flat item names (chat_control, chat_turn, document_access, document_attachments,
+# ...) are no longer addressable for worker/chat tokens -- ``CATALOG_ORDER`` is the public area list and
+# every other address is ``area/leaf``. ``LEGACY_ORDER`` survives only as (a) the console user-session
+# index, whose response is a human-facing contract and stays as it was, and (b) the internal supplier
+# keys the leaves are built from (the values of ``AREA_LEAVES``); no token can request them by name.
 LEGACY_ORDER = CATALOG_ORDER
-CATALOG_ORDER = tuple(dict.fromkeys((*AREA_ORDER, *LEGACY_ORDER)))
-_CATALOG = frozenset(CATALOG_ORDER)
+CATALOG_ORDER = AREA_ORDER
+_CATALOG = frozenset(LEGACY_ORDER)
 
 AREA_LEAVES["documents"]["edit_by_id"] = "chat_documents"
 for leaf in ("self_check_http", "self_check_request", "self_check_lifecycle", "self_check_errors_request", "self_check_errors_execution", "self_check_errors_recovery", "self_check_baseline", "self_check_parallel", "self_check_attempt"):

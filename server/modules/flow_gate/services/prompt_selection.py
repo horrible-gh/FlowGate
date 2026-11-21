@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from modules.flow_gate.services.chat_help_content import help_item_url
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +49,22 @@ _READ_DESCRIPTIONS = {
 }
 
 
-def _pointer(item, base):
+# The help leaf a write tool's contract lives in (0061 card 6: leaf addresses only).
+_TOOL_LEAF = {
+    'place_flow_cards': 'cards/place', 'start_flow_run': 'cards/run', 'set_card_roles': 'cards/roles',
+    'revise_card_document': 'documents/edit', 'revise_document_by_id': 'documents/edit_by_id',
+    'create_new_document': 'documents/edit_by_id',
+    'retry_flow_card': 'conversation/recovery', 'restart_flow_run': 'conversation/recovery',
+}
+
+
+def _pointer(topic, base):
     leaves = {
-        'chat_control': ('cards/place', 'cards/run', 'cards/roles'),
-        'chat_documents': ('documents/edit', 'documents/edit_by_id'),
-        'chat_recovery': ('conversation/recovery',),
-        'chat_questions': ('cards/questions',),
-    }[item]
+        'control': ('cards/place', 'cards/run', 'cards/roles'),
+        'documents': ('documents/edit', 'documents/edit_by_id'),
+        'recovery': ('conversation/recovery',),
+        'questions': ('cards/questions',),
+    }[topic]
     return "\n".join(f"GET {base.rstrip('/')}/help/items/{leaf}" for leaf in leaves)
 
 def _section(name, situation, base, token):
@@ -69,14 +77,14 @@ def _section(name, situation, base, token):
         lines = ['## Card information', f'GET {chat}/flows/{{flow_id}}/ai-options',
                  f'GET {chat}/flows/{{flow_id}}/nodes/{{node_key}}/roles', auth]
         if situation.can_write:
-            lines += [_pointer('chat_control', base)]
+            lines += [_pointer('control', base)]
         return '\n'.join(lines)
     if name == 'read_card_document':
         lines = ['## Document read', f'GET {chat}/flows/{{flow_id}}/nodes/{{node_key}}/slots/{{slot}}/document',
                  f'GET {chat}/documents/{{doc_id}}', auth,
                  'Read the full content and revision_no. Report refusals and errors honestly.']
         if situation.can_write:
-            lines += [_pointer('chat_documents', base),
+            lines += [_pointer('documents', base),
                       'For edits send expected_revision from the latest read and complete content; re-read on conflict.']
         return '\n'.join(lines)
     if name == 'read_flow_recovery_basis':
@@ -84,12 +92,12 @@ def _section(name, situation, base, token):
                  f'GET {chat}/flows/{{flow_id}}/nodes/{{node_key}}/basis', auth,
                  _READ_DESCRIPTIONS[name]]
         if situation.can_write:
-            lines += [_pointer('chat_recovery', base)]
+            lines += [_pointer('recovery', base)]
         return '\n'.join(lines)
     if name == 'list_card_questions':
         if situation.unanswered is False:
             return '\n'.join(['## Card question list', f'GET {chat}/questions', auth])
-        return '\n'.join(['## Card questions (Q): list and answer', _pointer('chat_questions', base), auth,
+        return '\n'.join(['## Card questions (Q): list and answer', _pointer('questions', base), auth,
                           'Answer BEFORE you submit your turn; submitting consumes this token. Reading mode may answer.'])
     return ''
 
@@ -109,9 +117,7 @@ def select_chat_guidance(tools, situation):
         if name in _READ_DESCRIPTIONS:
             tool['description'] = _READ_DESCRIPTIONS[name]
             tool.pop('prompt_hint', None)
-        item = ('chat_control' if name in _CONTROL_WRITE else
-                'chat_documents' if name in _DOCUMENT_WRITE else
-                'chat_recovery' if name in _RECOVERY_WRITE else None)
+        item = _TOOL_LEAF.get(name)
         if item:
             tool['description'] = f"{name}: before use, call read_help with item={item}. Report errors honestly."
             tool.pop('prompt_hint', None)
@@ -125,10 +131,10 @@ def select_chat_guidance(tools, situation):
             if situation.unanswered is False:
                 tool.pop('prompt_hint', None)
             else:
-                tool['prompt_hint'] = ('Before answering card questions, call read_help with item=chat_questions. '
+                tool['prompt_hint'] = ('Before answering card questions, call read_help with item=cards/questions. '
                                        'Answer before submitting the turn.')
         elif name == 'answer_card_question':
             tool['description'] = ('Answer a card question before submitting the turn. Reading mode may answer. '
-                                   'Before use, call read_help with item=chat_questions; report refusals honestly.')
+                                   'Before use, call read_help with item=cards/questions; report refusals honestly.')
         selected.append(tool)
     return selected

@@ -970,12 +970,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "전달 멘트",
         "none": "(없음)",
         "tail": (
-            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 후보에 없는 공급자를 steps[].provider_id 에 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 documents/group_list 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 후보에 없는 공급자를 steps[].provider_id 에 "
             "적지 마십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
         "tail_no_providers": (
-            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 documents/group_list 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
@@ -1015,13 +1015,13 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "Delivery note",
         "none": "(none)",
         "tail": (
-            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. Do not write a provider outside these "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect documents/group_list and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. Do not write a provider outside these "
             "candidates into steps[].provider_id.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
         ),
         "tail_no_providers": (
-            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. This project has no registered AI "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect documents/group_list and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. This project has no registered AI "
             "provider, so leave steps[].provider_id empty.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
@@ -1053,12 +1053,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "伝達メモ",
         "none": "(なし)",
         "tail": (
-            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。候補にないプロバイダーを "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、documents/group_list と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。候補にないプロバイダーを "
             "steps[].provider_id に書かないでください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
         "tail_no_providers": (
-            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。このプロジェクトには登録済みの AI "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、documents/group_list と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。このプロジェクトには登録済みの AI "
             "プロバイダーがないため、steps[].provider_id は空欄にしてください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
@@ -2262,7 +2262,7 @@ def build_mention(
             + "\nInspect change_summary after a successful save; report refusals honestly."
         )
         if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
-            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/changed_files_format")
+            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/submit/changed_files")
     else:
         # group 0372 set 3 (D-0003 §3-2 / §3-5): the request format, the field-by-field
         # example and the dry-run guide now live behind the `submit` help item, which
@@ -2281,7 +2281,7 @@ def build_mention(
         )
         if str(doc_type_value).upper() in tool_registry.MUTATING_STEP_TYPES:
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
-                url=f"{base}/help/items/changed_files_format"
+                url=f"{base}/help/items/submit/changed_files"
             )
         # group 0370 (merge): what the response CONTAINS is not a request format, so
         # D-0003 §3-1 keeps it inline — a worker cannot inspect a field it was never
