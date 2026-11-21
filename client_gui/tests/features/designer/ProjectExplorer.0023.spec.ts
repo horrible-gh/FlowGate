@@ -506,6 +506,8 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
           spec.startsWith('../../../components/ui/') ||
           // 0025 T0006 §4: the one Designer Explorer glyph set (shared with the File Explorer).
           spec === '../shared/ExplorerIcon.vue' ||
+          // flowgate.v02test.0060 T0005: the shared "다시 연결하는 중…" signal of a re-sent GET (as the File tab).
+          spec === '@shared/requestRecovery' ||
           spec.startsWith('./')
         expect(allowed, `${file}: ${spec}`).toBe(true)
       }
