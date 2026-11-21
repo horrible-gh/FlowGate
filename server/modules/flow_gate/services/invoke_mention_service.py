@@ -347,10 +347,7 @@ def build_conversation_mention(
         '  "body": "<your reply>",',
         f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
         '  "based_on_seq": <the head_seq you got from your last read>,',
-        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)},',
-        '  "body_sha256": "<optional: sha256 hex of body, UTF-8 bytes>",',
-        '  "body_chars": "<optional: character count of body>",',
-        '  "force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>"',
+        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
         "}",
     ]
     # flowgate.v02test.0023: an edit-mode chat names its commit; FlowGate commits at the run end.
@@ -381,7 +378,8 @@ def build_conversation_mention(
             after_seq=after_seq,
             through_seq=window.get("through_seq"),
         )
-    lines += conversation_turn_submission_lines(
+    from modules.flow_gate.services.prompt_blocks.blocks.conversation import conversation_turn_brief
+    lines += conversation_turn_brief(
         api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
         payload_lines=payload_lines, can_write=can_write, provider=provider,
     )
@@ -419,7 +417,8 @@ def build_conversation_mention(
         lines += ["", policy]
     from modules.flow_gate.services import message_image_delivery
     context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
-    text = terminal_prompt.prepare("\n".join(lines), kind="chat", locale=_locale(locale),
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    text = compose(["\n".join(lines)], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)

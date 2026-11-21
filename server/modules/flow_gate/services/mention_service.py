@@ -35,6 +35,7 @@ Insert a placeholder into next_type based on the head state:
 """
 from __future__ import annotations
 from modules.flow_gate.services import terminal_prompt
+from modules.flow_gate.services.prompt_blocks.compose import compose
 
 import json
 import logging
@@ -104,7 +105,7 @@ def _remote_source_crud_lines(
     kind: Optional[str] = None,
 ) -> list[str]:
     """Compatibility entry: ``prompt_blocks`` block ``source_tools.crud`` (the five 0349 mention lines)."""
-    return _source_tools_block.remote_source_crud_lines(
+    return _source_tools_block.source_tools_brief(
         base, raw_token, step_type, action_scope=action_scope, locale=locale, kind=kind
     )
 
@@ -230,7 +231,7 @@ def _document_lookup_lines(
     doc_id: str = "",
 ) -> list[str]:
     """Compatibility entry: ``prompt_blocks`` block ``documents.lookup``."""
-    return _documents_block.document_lookup_lines(base, raw_token, project=project, doc_id=doc_id)
+    return _documents_block.document_lookup_brief(base, raw_token, project=project, doc_id=doc_id)
 
 
 # ── Central help-index block (group 0372 set 3 — L-0005 §2-10) ────────────────
@@ -249,7 +250,7 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "목차의 항목 중 필요한 것을 GET {base}/help/items/{{name}} 으로 골라 받습니다.\n"
         "한 번에 모두 받으려면 GET {base}/help?detail=true 를 쓰세요.\n"
         "문서 첨부파일 목록·읽기·복사 방법은 별도 도구가 아니라 도움말 항목에 있습니다: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
     "ja": (
@@ -257,7 +258,7 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "目次から必要な項目を GET {base}/help/items/{{name}} で選んで取得します。\n"
         "表示可能な全項目を一度に取得するには GET {base}/help?detail=true を使ってください。\n"
         "文書添付ファイルの一覧・読み取り・コピー方法は専用ツールではなくヘルプ項目にあります: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
     "en": (
@@ -265,20 +266,16 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "Choose what you need from the index with GET {base}/help/items/{{name}}.\n"
         "To receive all visible items at once, use GET {base}/help?detail=true.\n"
         "Document attachment list/read/copy is not a separate tool — it is in the help item: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
 }
 
 
-def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
-    loc = template_provision.normalize_locale(locale)
-    from modules.flow_gate.services.prompt_blocks.blocks.cards import graph_state_read as cli_mention
-    return _section(
-        _HELP_INDEX_HEADER[loc],
-        _HELP_INDEX_TEXT[loc].format(base=base, token=raw_token),
-    ) + "\n\n" + cli_mention(base, None)
-
+def _help_index_section(base: str, raw_token: str, locale: str = "ko", *, kind="new") -> str:
+    from modules.flow_gate.services.prompt_blocks.compose import guidance
+    from modules.flow_gate.services.prompt_blocks.blocks.cards import graph_state_read
+    return guidance(base, raw_token, kind=kind) + "\n\n" + graph_state_read(base)
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
 # B0001 recurred because the choice-prohibition guard was body text only AND the
@@ -687,7 +684,7 @@ def _continuous_review_guide_body(
     set 3 — D-0003 §3-2 "move the question-registration example into the help").
     """
     loc = template_provision.normalize_locale(locale)
-    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question/register")
     return (
         f"{_CONTINUOUS_REVIEW_TEXT[loc]}\n"
         "\n"
@@ -714,7 +711,7 @@ def _clarification_guide_body(
 ) -> str:
     loc = template_provision.normalize_locale(locale)
     txt = _CLARIFY_TEXT[loc]
-    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question/register")
     body = (
         f"{txt['lead']}\n"
         "\n"
@@ -2258,7 +2255,7 @@ def build_mention(
         s5_body = (
             f"Artifact registration: POST {base}/inbox\n"
             f"Authorization: Bearer {raw_token}\n"
-            + _SUBMIT_POINTER_TEXT[loc].format(url=f"{base}/help/items/submit") + "\n"
+            + _SUBMIT_POINTER_TEXT[loc].format(url=f"{base}/help/items/submit/format") + "\n"
             + "Submission context (send complete document content):\n"
             + json.dumps(registration_context, ensure_ascii=False, indent=2)
             + rejection_required_notice
@@ -2280,7 +2277,7 @@ def build_mention(
             f"Artifact registration: POST {base}/inbox\n"
             f"Authorization: Bearer {raw_token}\n"
             f"\n"
-            f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+            f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
         )
         if str(doc_type_value).upper() in tool_registry.MUTATING_STEP_TYPES:
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
@@ -2302,7 +2299,7 @@ def build_mention(
         "never in the source tree, server cwd, or OS temp."
     )
     if not review_continuous:
-        s6_body += f" Submission file details: GET {base}/help/items/submit"
+        s6_body += f" Submission file details: GET {base}/help/items/submit/format"
 
     # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
     # It was already a bare one-line help URL; the always-visible `doc_type` entry of
@@ -2375,7 +2372,7 @@ def build_mention(
         # group 0372 set 3 (L-0005 §2-10): the central help-index block sits once per
         # mention, directly below the identity + guide blocks and above everything the
         # index can answer in depth.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="review" if review_continuous else "edit" if is_edit else "new"),
     ]
     # 0349 D0004 D-5: the tool section moves up to the highest slot it is allowed to take —
     # under the identity header and the continuous/clarification block (which tell the worker
@@ -2443,14 +2440,14 @@ def build_mention(
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=False)))
     else:
         sections.append(_section("Reminder", "Register necessary questions through Q; do not ask interactive questions. "
-                                 f"Read GET {base}/help/items/question before registering."))
+                                 f"Read GET {base}/help/items/question/register before registering."))
 
     task_kind = (
         "first_write" if is_edit and first_write else
         "rework" if is_edit and edit_reason == "rejected" else
         "edit" if is_edit else "preflight" if review_continuous else "new"
     )
-    return terminal_prompt.prepare("\n\n".join(sections), kind=task_kind, locale=locale)
+    return compose(sections, kind=task_kind, locale=locale)
 
 
 def build_mention_from_token_rec(
@@ -2635,7 +2632,7 @@ def build_workflow_decision_mention(
         "decision through the workflow decision API below. Do not edit the root document and\n"
         "do not create a report document. Report steps (NR/TR/TSR) are attached\n"
         "automatically to each N/T/TS step, so submit only the instruction and design\n"
-        f"steps. Valid type codes: GET {base}/help/items/doc_type"
+        f"steps. Valid type codes: GET {base}/help/items/documents/doc_type"
     )
     if continuous and not continuous_review_mode:
         # The decision is the first step of an unmanned chain: after it is saved the
@@ -2694,7 +2691,7 @@ def build_workflow_decision_mention(
         _section("Clarification guide", clarification_body),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention — once, right below the identity + guide blocks.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="workflow"),
     ]
     # 0349 D0004 D-3: a workflow_decide token already resolves to ["read", "grep"] server
     # side, but this mention never said so — the worker deciding a sequence could not read
@@ -2724,7 +2721,7 @@ def build_workflow_decision_mention(
         f"Submit the workflow decision: POST {base}/workflow/decide\n"
         f"Authorization: Bearer {raw_token}\n"
         f"\n"
-        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
     )
     sections.append(_section("Workflow decision submission", s5_body))
     # doc_type guide section — REMOVED (D-0003 §3-2 "dropped"): absorbed into the help index.
@@ -2734,7 +2731,7 @@ def build_workflow_decision_mention(
         # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
         # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
         sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
-    return terminal_prompt.prepare("\n\n".join(sections), kind='workflow', locale=locale)
+    return compose(sections, kind='workflow', locale=locale)
 
 
 # ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
@@ -2856,7 +2853,7 @@ def build_sequence_edit_mention(
         "Submit the FULL replacement pending list (not a diff) through the PATCH below. Report\n"
         "steps (NR/TR/TSR) are attached automatically to each N/T/TS step, so submit only the\n"
         "instruction and design steps. Do NOT edit the root document. Valid type codes:\n"
-        f"GET {base}/help/items/doc_type\n"
+        f"GET {base}/help/items/documents/doc_type\n"
         "You may not empty a decided workflow that has no locked\n"
         "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
         f"{metadata_rules}"
@@ -2876,7 +2873,7 @@ def build_sequence_edit_mention(
         f"Submit the sequence edit: PATCH {base}/workflow/sequence\n"
         f"Authorization: Bearer {raw_token}\n"
         f"\n"
-        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
     )
 
     sections = [
@@ -2884,7 +2881,7 @@ def build_sequence_edit_mention(
         _section("Clarification guide", _clarification_guide_body(base, doc_id, raw_token, locale)),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention. doc_type guide section — REMOVED (absorbed into the index).
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="sequence"),
         _section("Sequence edit instructions", s2_body),
         _section("Current sequence", seq_body),
         _section("Reference documents", s3_body),
@@ -2894,7 +2891,7 @@ def build_sequence_edit_mention(
         _section("Sequence edit submission", s5_body),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
     ]
-    return terminal_prompt.prepare("\n\n".join(sections), kind='sequence', locale=locale)
+    return compose(sections, kind='sequence', locale=locale)
 
 
 # ── Review-request mention builder ────────────────────────────────────────────
@@ -3096,7 +3093,7 @@ def build_review_mention(
         f"Submit your review: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
         "\n"
-        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}\n"
+        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}\n"
         f"{_REVIEW_FILE_SUBMIT_TEXT[loc]}"
     )
 
@@ -3138,7 +3135,7 @@ def build_review_mention(
         _section("Clarification guide", s8_body),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="review"),
     ]
     # 0349 D0004 D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
     # TR against the source it claims to have changed needs exactly that, and the mention
@@ -3165,7 +3162,7 @@ def build_review_mention(
     # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
-    return terminal_prompt.prepare("\n\n".join(sections), kind='review', locale=locale)
+    return compose(sections, kind='review', locale=locale)
 def build_work_plan_fill_mention(
     *,
     token_rec: dict,
@@ -3270,7 +3267,7 @@ def build_work_plan_fill_mention(
 
     doc_id = target_doc.get("doc_id") or ""
     return (
-        terminal_prompt.prepare(f"## {copy['title']}\n\n"
+        compose(f"## {copy['title']}\n\n"
         f"- target_doc_id: {doc_id}\n"
         f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
         f"- Authorization: Bearer {raw_token}\n\n"

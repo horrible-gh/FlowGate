@@ -343,7 +343,8 @@ def build_answer_mention(
         "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
         "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
     )
-    return terminal_prompt.prepare("\n".join(lines), kind='q_answer', locale='ko')
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    return compose(["\n".join(lines)], kind='q_answer', locale='ko')
 
 
 def issue_answer_token(

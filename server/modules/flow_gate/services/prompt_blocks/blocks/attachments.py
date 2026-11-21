@@ -39,5 +39,16 @@ def upload_request_contract(api_base: str, raw_token: str) -> str:
     ])
 
 
-register(Block("attachments.upload_request", brief=upload_request_contract, detail=upload_request_contract,
+def upload_request_brief(api_base, raw_token):
+    return "\n".join([
+        "## Attachment upload request", "---",
+        *upload_request_contract(api_base, raw_token).splitlines()[2:7],
+        f"POST {api_base.rstrip('/')}/attachment-requests",
+        f"GET {api_base.rstrip('/')}/help/items/attachments/upload_request",
+        f"GET {api_base.rstrip('/')}/help/items/attachments/request_rules",
+        f"Authorization: Bearer {raw_token}",
+    ])
+
+
+register(Block("attachments.upload_request", brief=upload_request_brief, detail=upload_request_contract,
                help_leaf="attachments/upload_request"))

@@ -51,14 +51,13 @@ _READ_DESCRIPTIONS = {
 
 
 def _pointer(item, base):
-    task = {
-        'chat_control': 'placing cards, starting a Flow, or changing roles',
-        'chat_documents': 'editing or creating documents',
-        'chat_recovery': 'retrying a card or restarting a Flow',
-        'chat_questions': 'answering card questions',
+    leaves = {
+        'chat_control': ('cards/place', 'cards/run', 'cards/roles'),
+        'chat_documents': ('documents/edit', 'documents/edit_by_id'),
+        'chat_recovery': ('conversation/recovery',),
+        'chat_questions': ('cards/questions',),
     }[item]
-    return f'Before {task}, read GET {help_item_url(item, base)} (API: read_help item={item}).'
-
+    return "\n".join(f"GET {base.rstrip('/')}/help/items/{leaf}" for leaf in leaves)
 
 def _section(name, situation, base, token):
     root = base.rstrip('/')
@@ -97,13 +96,15 @@ def _section(name, situation, base, token):
 
 def select_chat_guidance(tools, situation):
     """Copy descriptors, retaining handlers/schemas even when not advertised to the model."""
+    from modules.flow_gate.services.prompt_blocks.matrix import Facts, select
+    leaves = select(Facts("chat", situation.can_write, situation.unanswered, situation.current_run))
     selected = []
     for original in tools:
         tool = dict(original)
         name = tool['name']
         hidden = (not situation.can_write and name in (_CONTROL_WRITE | _DOCUMENT_WRITE | _RECOVERY_WRITE))
-        hidden |= situation.current_run is False and name in _RECOVERY
-        hidden |= situation.unanswered is False and name == 'answer_card_question'
+        hidden |= "conversation/recovery" not in leaves and name in _RECOVERY
+        hidden |= 'cards/questions' not in leaves and name == 'answer_card_question'
         tool['prompt_visible'] = not hidden
         if name in _READ_DESCRIPTIONS:
             tool['description'] = _READ_DESCRIPTIONS[name]

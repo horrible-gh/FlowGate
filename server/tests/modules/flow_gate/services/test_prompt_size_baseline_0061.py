@@ -428,7 +428,7 @@ def _measure_help(monkeypatch, persona: str) -> dict[str, int]:
         response = client.get(f"/api/v1/help/items/{name}")
         assert response.status_code == 200, (name, response.text[:300])
         sizes[f"help_item:{persona}:{name}"] = len(response.text)
-        if item.get("form") == "children":
+        if response.json().get("form") == "children":
             for child in response.json().get("children", []):
                 leaf = client.get(f"/api/v1/help/items/{name}/{child['name']}")
                 assert leaf.status_code == 200, (name, child["name"], leaf.text[:300])

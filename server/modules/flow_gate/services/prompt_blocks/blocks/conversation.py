@@ -87,7 +87,36 @@ def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
     return lines
 
 
-register(Block("conversation.turn", brief=conversation_turn_submission_lines,
+def conversation_turn_brief(*, api_base, doc_id, raw_token, token_id,
+                            payload_lines, can_write, provider):
+    from modules.flow_gate.services import encoding_probe
+    lines = [
+        "", "To reply, append ONE turn. Do NOT resubmit the conversation body.",
+        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
+        f"Authorization: Bearer {raw_token}", *payload_lines,
+        "based_on_seq: send head_seq from your last read, never a guess.",
+        "Write the body as a UTF-8 file; read it and post ASCII-only JSON (json.dumps defaults).",
+        "Never put the body or probe on a command line, console pipe, redirect, Set-Content or Out-File.",
+        "Make the LAST line of the body exactly this probe (the server removes it before saving):",
+        encoding_probe.probe_for(token_id),
+        'Preview: add "dry_run": true to the same request; no registration or token consumption.',
+        f"GET {api_base}/help/items/conversation/encoding",
+        f"GET {api_base}/help/items/conversation/turn",
+    ]
+    if can_write:
+        # Keep the existing commit contract verbatim; it is a prohibition/required field.
+        full = conversation_turn_submission_lines(
+            api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
+            payload_lines=[], can_write=True, provider=provider)
+        start = full.index("If you changed source files in this chat, put the commit message in commit_message:")
+        lines += full[start:]
+    else:
+        lines += (["display_name is a badge only and is not used to determine identity.",
+                   "Keep the pinned provider name." if provider else "If your model name is unknown, omit display_name."])
+    return lines
+
+
+register(Block("conversation.turn", brief=conversation_turn_brief,
                detail=conversation_turn_submission_lines, help_leaf="conversation/turn"))
 register(Block("conversation.encoding", brief=encoding_probe_paragraph, detail=encoding_probe_paragraph,
                help_leaf="conversation/encoding"))

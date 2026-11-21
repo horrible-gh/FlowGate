@@ -57,5 +57,11 @@ def remote_source_crud_lines(
     ]
 
 
-register(Block("source_tools.crud", brief=remote_source_crud_lines, detail=remote_source_crud_lines,
+def source_tools_brief(*args, **kwargs):
+    lines = remote_source_crud_lines(*args, **kwargs)
+    # Detail retains the original contract. A mention needs no unconditional index read.
+    return lines[1:] if lines else []
+
+
+register(Block("source_tools.crud", brief=source_tools_brief, detail=remote_source_crud_lines,
                help_leaf="source_tools"))

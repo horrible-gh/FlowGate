@@ -183,7 +183,7 @@ def test_old_owners_render_the_block_text():
                                                                  source_tools, submit)
     from flowgate.graph_read import tools as graph_read_tools
 
-    assert request_tools.contract_mention(BASE, "tok") == prompt_blocks.brief("attachments.upload_request", BASE, "tok")
+    assert request_tools.contract_mention(BASE, "tok") == prompt_blocks.detail("attachments.upload_request", BASE, "tok")
     assert attachments.upload_request_contract(BASE, "tok").startswith("## Attachment upload request\n---\n")
     assert graph_read_tools.cli_mention(BASE, None) == cards.graph_state_read(BASE, None)
     assert cards.graph_state_read(BASE).startswith("[Bound Graph state read]\nGET http://testserver/flowgate/api/v2/")
@@ -197,9 +197,10 @@ def test_old_owners_render_the_block_text():
     assert mention_service.BODY_UNREADABLE_RULES is documents.BODY_UNREADABLE_RULES
     assert mention_service.BODY_UNREADABLE_ANSWER_REFERENCE is documents.BODY_UNREADABLE_ANSWER_REFERENCE
     lines = mention_service._document_lookup_lines(BASE, "tok", project="p", doc_id="d")
-    assert lines == documents.document_lookup_lines(BASE, "tok", project="p", doc_id="d")
+    assert lines == documents.document_lookup_brief(BASE, "tok", project="p", doc_id="d")
     assert lines[-1] == "Authorization: Bearer tok"
-    assert tuple(lines[-1 - len(documents.BODY_UNREADABLE_RULES):-1]) == prompt_blocks.detail("documents.unreadable")
+    assert documents.BODY_UNREADABLE_RULES[4] in lines
+    assert len(lines) < len(documents.document_lookup_lines(BASE, "tok"))
     assert mention_service._remote_source_crud_lines(BASE, "", "T") == source_tools.remote_source_crud_lines(BASE, "", "T") == []
 
 
