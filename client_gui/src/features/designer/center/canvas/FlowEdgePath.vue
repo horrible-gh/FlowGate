@@ -26,13 +26,15 @@
       'flow-edge-issue': issue,
       'flow-edge-progressed': progressed && !running,
       'flow-edge-running': running,
-      'flow-edge-pending': !progressed && !running,
+      'flow-edge-waiting': waiting && !progressed && !running,
+      'flow-edge-pending': !waiting && !progressed && !running,
       'is-selected': selected,
     }"
     data-test="designer-canvas-edge"
     :data-edge-id="id"
+    :data-route="hasObstacles && !route ? 'unavailable' : 'ready'"
     :data-edge-class="edgeClass ?? ''"
-    :data-progress="running ? 'running' : progressed ? 'progressed' : 'pending'"
+    :data-progress="running ? 'running' : progressed ? 'progressed' : waiting ? 'waiting' : 'pending'"
     :data-protected="protectedTarget ? 'true' : 'false'"
     :data-selected="selected ? 'true' : 'false'"
     :data-deletable="deletable ? 'true' : 'false'"
@@ -44,7 +46,7 @@
     <path class="flow-edge-path" :d="path" data-test="designer-canvas-edge-path" />
     <path class="flow-edge-arrow" :d="arrow" data-test="designer-canvas-edge-arrow" />
     <g
-      v-if="selected && deletable"
+      v-if="path && selected && deletable"
       class="flow-edge-remove"
       role="button"
       :aria-label="t('gui.designer.center.edge.remove')"
@@ -58,7 +60,7 @@
       <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />
     </g>
     <g
-      v-else-if="selected && (progressed || protectedTarget)"
+      v-else-if="path && selected && (progressed || protectedTarget)"
       class="flow-edge-locked"
       :transform="`translate(${middle.x},${middle.y})`"
       data-test="designer-canvas-edge-locked"
@@ -74,6 +76,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Position, getBezierPath, type GraphNode } from '@vue-flow/core'
+import { routeEdge, routeDrawing } from './edgeRouting'
 import { edgeAnchors, nodeRect, type EdgeAnchors } from './edgeGeometry'
 
 const props = withDefaults(
@@ -93,6 +96,8 @@ const props = withDefaults(
     issue?: boolean
     /** What the last validation reported on this Edge (hover text). */
     issueText?: string
+    waiting?: boolean
+    obstacleNodes?: GraphNode[]
     progressed?: boolean
     selected?: boolean
     deletable?: boolean
@@ -110,6 +115,8 @@ const props = withDefaults(
     editable: false,
     issue: false,
     issueText: '',
+    waiting: false,
+    obstacleNodes: () => [],
     progressed: false,
     selected: false,
     deletable: false,
@@ -138,7 +145,12 @@ const ARROW_DIRECTION: Record<Position, [number, number]> = {
 
 // Where the Edge leaves and enters: the facing sides of the two cards (edgeGeometry.ts) when the
 // nodes are known — they follow a dragged card at once — else the anchors handed in.
-const anchors = computed<EdgeAnchors>(() =>
+const obstacles = computed(() => props.obstacleNodes.filter(node => node.id !== props.sourceNode?.id && node.id !== props.targetNode?.id))
+const hasObstacles = computed(() => !!props.sourceNode && !!props.targetNode && obstacles.value.length > 0)
+const route = computed(() => hasObstacles.value
+  ? routeEdge(nodeRect(props.sourceNode!), nodeRect(props.targetNode!), obstacles.value.map(nodeRect))
+  : null)
+const anchors = computed<EdgeAnchors>(() => route.value?.anchors ?? (
   props.sourceNode && props.targetNode
     ? edgeAnchors(nodeRect(props.sourceNode), nodeRect(props.targetNode))
     : {
@@ -148,8 +160,8 @@ const anchors = computed<EdgeAnchors>(() =>
         targetX: props.targetX,
         targetY: props.targetY,
         targetPosition: props.targetPosition,
-      },
-)
+      }
+))
 
 // The curve stops at the arrow's base so the line never pokes through the arrow tip.
 const lineEnd = computed(() => {
@@ -168,12 +180,15 @@ const bezier = computed(() =>
   }),
 )
 
-const path = computed(() => bezier.value[0])
+const routed = computed(() => route.value ? routeDrawing(route.value, ARROW_LENGTH) : null)
+// Overlapping cards can cover every port. Do not draw a misleading line through them.
+const path = computed(() => routed.value?.path ?? (hasObstacles.value ? '' : bezier.value[0]))
 
 /** Middle of the curve (getBezierPath's label point): where the remove / locked mark sits. */
-const middle = computed(() => ({ x: bezier.value[1], y: bezier.value[2] }))
+const middle = computed(() => (routed.value?.middle ?? { x: bezier.value[1], y: bezier.value[2] }))
 
 const arrow = computed(() => {
+  if (hasObstacles.value && !route.value) return ''
   const { targetX, targetY, targetPosition } = anchors.value
   const [dx, dy] = ARROW_DIRECTION[targetPosition]
   const { x, y } = lineEnd.value
@@ -265,17 +280,28 @@ const arrow = computed(() => {
   fill: var(--fg2-status-success-fg);
 }
 
+/* Arrived at a waiting join: amber, short stationary dashes (running keeps moving).
+ * Hover and selection retain this status; the hit path provides the selection halo. */
+.flow-edge-waiting .flow-edge-path,
+.flow-edge-waiting:hover .flow-edge-path {
+  stroke: #d99a20;
+  stroke-width: 2.4;
+  stroke-dasharray: 2 4;
+}
+.flow-edge-waiting .flow-edge-arrow,
+.flow-edge-waiting:hover .flow-edge-arrow { fill: #d99a20; }
+
 /* The selected Edge: a focus-coloured halo under its line, whatever its progress. */
 .flow-edge.is-selected .flow-edge-hit {
   stroke: color-mix(in srgb, var(--fg2-focus) 28%, transparent);
   stroke-width: 8;
 }
 
-.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-issue) .flow-edge-path {
+.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-waiting):not(.flow-edge-issue) .flow-edge-path {
   stroke: var(--fg2-focus);
 }
 
-.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-issue) .flow-edge-arrow {
+.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-waiting):not(.flow-edge-issue) .flow-edge-arrow {
   fill: var(--fg2-focus);
 }
 
