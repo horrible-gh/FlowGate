@@ -1,6 +1,6 @@
 """Attachment block: the attachment upload request contract a CLI chat mention carries.
 
-The help item ``document_attachments`` (chat context) and leaf ``attachments/upload_request``
+The leaves ``attachments/read`` and ``attachments/upload_request``
 render the same text from here (flowgate.v02test.0061 card 4).
 """
 from __future__ import annotations

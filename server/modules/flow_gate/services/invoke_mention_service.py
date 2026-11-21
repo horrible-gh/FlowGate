@@ -706,19 +706,19 @@ _PRE_INSTRUCTION_ATTACHMENT_LINES = {
         "이 단계에는 WorkPlan 사전지시 첨부 파일이 1개 있습니다.\n"
         "- 원래 파일명: {original}\n"
         "- 읽어야 할 대상: 문서 {doc_id}의 첨부 \"{filename}\""
-        " (도움말 document_attachments의 읽기 경로로 읽으세요)"
+        " (도움말 attachments/read의 읽기 경로로 읽으세요)"
     ),
     "en": (
         "This step has one WorkPlan pre-instruction attachment.\n"
         "- Original filename: {original}\n"
         "- Read target: attachment \"{filename}\" on document {doc_id}"
-        " (use the read path from the document_attachments help item)"
+        " (use the read path from the attachments/read help leaf)"
     ),
     "ja": (
         "このステップには WorkPlan 事前指示の添付ファイルが1つあります。\n"
         "- 元のファイル名: {original}\n"
         "- 読み取り対象: 文書 {doc_id} の添付 \"{filename}\""
-        " (document_attachments のヘルプ項目の読み取り経路を使用してください)"
+        " (attachments/read のヘルプ項目の読み取り経路を使用してください)"
     ),
 }
 

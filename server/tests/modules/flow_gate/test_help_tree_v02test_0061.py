@@ -63,10 +63,21 @@ def test_leaf_budgets(locale, scope):
     assert not failures, failures
 
 
-def test_alias_and_bulk_visibility():
+def test_old_flat_names_are_gone_and_bulk_visibility():
     ctx = context()
-    for name in ("chat_control", "chat_turn", "document_access", "document_attachments"):
-        assert render.build_item(name, ctx)["content"]
+    removed = set(tree.LEGACY_ORDER) - set(tree.CATALOG_ORDER)
+    assert {"chat_control", "chat_turn", "document_access", "document_attachments", "chat_documents",
+            "chat_recovery", "chat_questions", "group_documents", "doc_type", "changed_files_format",
+            "test_commands", "tr_self_check"} <= removed
+    for name in sorted(removed):
+        assert visibility.decide_visibility(name, ctx).reason == "unknown_item", name
+        with pytest.raises(tree.HelpSupplierError):
+            render.build_item(name, ctx)
+    # the console user session keeps the flat index it always had
+    session = dict(ctx, principal_kind="user_session")
+    assert visibility.decide_visibility("document_access", session).visible
+    assert visibility.decide_visibility("doc_type", session).visible
+    assert tuple(tree.CATALOG_ORDER) == tuple(tree.AREA_ORDER)
     items, unavailable = render.build_bulk(["documents/partial", "cards/roles", "documents/missing"], ctx)
     assert len(items) == 2
     assert unavailable[0]["http_status"] == 404

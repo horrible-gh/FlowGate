@@ -468,9 +468,10 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     if not item:
         assembled = help_catalog.build_index(ctx)
         return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "items": assembled["items"]}
-    if item not in help_catalog.CATALOG_ORDER:
+    decision = help_catalog.decide_visibility(item, ctx)
+    if decision.reason == "unknown_item":
         return 404, {"ok": False, "http_status": 404, "error_message": f"Unknown help item: {item}", "help_url": help_url()}
-    if not help_catalog.decide_visibility(item, ctx).visible:
+    if not decision.visible:
         return 403, {"ok": False, "http_status": 403, "error_message": f"Help item '{item}' is not available for this token", "help_url": help_url()}
     try:
         if child:

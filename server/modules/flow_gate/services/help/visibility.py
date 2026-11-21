@@ -20,7 +20,7 @@ from modules.flow_gate.services import chat_help_content
 
 _logger = logging.getLogger(__name__)
 from .locale import (normalize_locale)
-from .tree import (ALWAYS_VISIBLE, AUTHORING_SCOPES, CATALOG_ORDER, GUIDE_TYPES, MUTATING_TYPES, USER_SESSION_VISIBLE, _CATALOG)
+from .tree import (ALWAYS_VISIBLE, AUTHORING_SCOPES, CATALOG_ORDER, GUIDE_TYPES, LEGACY_ORDER, MUTATING_TYPES, USER_SESSION_VISIBLE, _CATALOG)
 
 class Decision(NamedTuple):
     visible: bool
@@ -177,12 +177,15 @@ def _legacy_visibility(name: str, ctx: dict) -> Decision:
     return Decision(False, "unknown_item")
 
 def visible_names(ctx: dict) -> list[str]:
-    """Catalog order, filtered — the source of the ``detail=true`` request list."""
-    return [name for name in CATALOG_ORDER if decide_visibility(name, ctx).visible]
+    """Public area names, filtered (the console session also keeps its flat legacy index)."""
+    order = CATALOG_ORDER
+    if ctx.get("principal_kind") == "user_session":
+        order = tuple(dict.fromkeys((*CATALOG_ORDER, *LEGACY_ORDER)))
+    return [name for name in order if decide_visibility(name, ctx).visible]
 
 
 def decide_visibility(name: str, ctx: dict) -> Decision:
-    from .tree import AREA_LEAVES, LEGACY_ORDER
+    from .tree import AREA_LEAVES
     if ctx.get("principal_kind") == "user_session" and name in LEGACY_ORDER:
         return _legacy_visibility(name, ctx)
     area, separator, leaf = name.partition("/")
@@ -195,4 +198,7 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if any(decide_visibility(name + "/" + leaf, ctx).visible for leaf in AREA_LEAVES[name]):
             return VISIBLE
         return Decision(False, "no_visible_children")
-    return _legacy_visibility(name, ctx)
+    if name in CATALOG_ORDER:
+        return _legacy_visibility(name, ctx)
+    # A removed flat name (chat_control, document_access, ...) is unknown, never "forbidden".
+    return Decision(False, "unknown_item")

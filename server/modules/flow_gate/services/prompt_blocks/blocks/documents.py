@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..registry import Block, register
 
-# The bounded-read details the help item ``document_access`` (``partial``) shows in structured form.
+# The bounded-read details the help leaf ``documents/partial`` shows in structured form.
 SECTION_READ_RULE = "Section reads accept exactly one of section, section_id, lines, or chars."
 CONTENT_SEARCH_OPTIONS = "&include_matches=true&context_lines=2&hits_per_doc=5"
 

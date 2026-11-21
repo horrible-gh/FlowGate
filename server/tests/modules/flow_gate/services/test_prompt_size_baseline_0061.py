@@ -326,11 +326,24 @@ def _report(key: str, measured: int, limit) -> None:
     print(f"SIZE|{key}|{measured}|{limit}")
 
 
+def pinned_ceiling(measured: int) -> int:
+    """The one limit a measurement may carry: measured + 10 % (integer ceiling).
+
+    Card 6 pins every limit to this value. A limit above it is padding (the next growth would fit
+    unseen) and a limit below the measurement is a failure, so changing a size means changing the
+    JSON to exactly this number -- and that edit shows in the diff.
+    """
+    return -(-measured * 11 // 10)
+
+
 def _check(section: str, key: str, measured: int) -> None:
     limit = load_baseline().get(section, {}).get(key)
     _report(key, measured, limit)
     assert limit is not None, f"no baseline limit for {key!r} ({measured} chars); add it to prompt_size_baseline_0061.json"
     assert measured <= limit, f"{key}: {measured} chars exceeds the limit {limit}"
+    assert limit == pinned_ceiling(measured), (
+        f"{key}: limit {limit} is not measured {measured} + 10% = {pinned_ceiling(measured)}; "
+        "re-pin it in prompt_size_baseline_0061.json")
 
 
 # ── prompt tests ─────────────────────────────────────────────────────────────
@@ -447,6 +460,8 @@ def test_help_response_sizes_within_baseline(monkeypatch, persona):
             problems.append(f"no baseline limit for {key} ({measured})")
         elif measured > limit:
             problems.append(f"{key}: {measured} > {limit}")
+        elif limit != pinned_ceiling(measured):
+            problems.append(f"{key}: limit {limit} != {pinned_ceiling(measured)} (measured {measured} + 10%)")
     assert not problems, "\n".join(problems)
     gone = [key for key in load_baseline().get("responses", {})
             if key.split(":")[1] == persona and key.startswith("help") and key not in sizes]
@@ -481,6 +496,8 @@ def test_turn_list_response_size_within_baseline(store, doc):  # noqa: F811
     for key, value in measured.items():
         if key in limits:
             assert value <= limits[key], f"{key}: {value} chars exceeds the limit {limits[key]}"
+            assert limits[key] == pinned_ceiling(value), (
+                f"{key}: limit {limits[key]} is not measured {value} + 10% = {pinned_ceiling(value)}")
     # A page that is not the entry call carries no head, participants or read boundary.
     assert measured["turns:worker_next_page:body_excluded"] < measured["turns:worker_first_page:body_excluded"]
     missing = [key for key in measured if key not in limits and not key.startswith("turns:worker_next_page")]

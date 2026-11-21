@@ -1428,7 +1428,7 @@ def _chat_tool_definitions() -> list[dict]:
         {
             "name": "read_help",
             "description": (
-                "Read personalized FlowGate Help in-process. Use item=document_access for "
+                "Read personalized FlowGate Help in-process. Use item=documents/access for "
                 "conversation forward/backward paging rules."
             ),
             "schema": api_server_tools.READ_HELP_SCHEMA,
@@ -1620,7 +1620,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 "The server fetched this invocation's configured conversation context window. "
                 "Reply from it directly. If `older_history` is present and earlier context is "
                 "needed, call `read_chat_history` with its `before_seq`; `read_help` with "
-                "item=document_access explains the paging contract."
+                "item=documents/access explains the paging contract."
                 # Only a run offered run_command is told about it (never a read-only chat).
                 + (" When the work needs a test, build or git command, call `run_command`; its "
                    "result (or the user's refusal) comes back here and you continue from it."
@@ -2565,7 +2565,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,
                 "tool": _CHAT_HISTORY_TOOL_NAME,
-                "help_item": "document_access",
+                "help_item": "documents/access",
             }
         return 200, merged
     except Exception as exc:

@@ -302,7 +302,7 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "2. 왜 그렇게 고쳤는가 — 설계 문서의 어느 결정을 따랐는지, 벗어났다면 그 이유.\n"
         "3. 어떻게 확인했는가 — 실행한 테스트 명령과 그 결과. 돌리지 못했으면 그 사실을 적습니다.\n"
         "4. 남은 것 — 이번에 하지 않은 범위와 그 이유.\n"
-        "5. 변경 파일 절 — 서식은 도움말 항목 changed_files_format 에 있습니다.\n"
+        "5. 변경 파일 절 — 서식은 도움말 submit/changed_files 에 있습니다.\n"
         "\n"
         "확인을 사용자에게 넘기지 마십시오. 재현·수정·측정까지 마친 뒤 제출합니다.\n"
     ),
@@ -313,7 +313,7 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "2. Why — which design decision you followed, and the reason for any deviation.\n"
         "3. How you verified it — the test commands you ran and their results. If you could not run them, say so.\n"
         "4. What is left — the scope you did not cover and why.\n"
-        "5. The changed-files section — its format is in the changed_files_format help item.\n"
+        "5. The changed-files section — its format is in the submit/changed_files help leaf.\n"
         "\n"
         "Do not hand verification back to the user. Reproduce, fix and measure before submitting.\n"
     ),
@@ -324,7 +324,7 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "2. なぜそう直したか — 設計文書のどの決定に従ったか、外れた場合はその理由。\n"
         "3. どう確認したか — 実行したテストコマンドとその結果。実行できなかった場合はその事実。\n"
         "4. 残ったもの — 今回対応しなかった範囲とその理由。\n"
-        "5. 変更ファイル節 — フォーマットはヘルプ項目 changed_files_format にあります。\n"
+        "5. 変更ファイル節 — フォーマットはヘルプ submit/changed_files にあります。\n"
         "\n"
         "確認をユーザーに委ねないでください。再現・修正・計測まで済ませてから提出します。\n"
     ),

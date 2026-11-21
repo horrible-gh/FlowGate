@@ -208,8 +208,9 @@ def test_every_listed_item_answers_and_every_hidden_item_403s(monkeypatch, step_
         assert response.status_code == 200
         for child in response.json().get("children", []):
             assert client.get(f"/api/v1/help/items/{name}/{child['name']}").status_code == 200
-    for name in help_catalog.chat_help_content.ITEMS:
-        assert client.get(f"/api/v1/help/items/{name}").status_code == 403
+    # chat-only leaves stay closed to a non-chat token: 403 (area hidden) or 404 (leaf not listed), never 200
+    for path in CHAT_LEAVES:
+        assert client.get(f"/api/v1/help/items/{path}").status_code in (403, 404), path
 
 
 def test_unknown_name_is_404_before_any_permission_judgment(monkeypatch):
@@ -326,7 +327,7 @@ def test_continuous_notices_use_scope_bounded_autonomy_in_every_locale(monkeypat
 
 def test_group_documents_answers_in_sequence_order(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
-    content = client.get("/api/v1/help/items/group_documents").json()["content"]
+    content = client.get("/api/v1/help/items/documents/group_list").json()["content"]
     assert [doc["doc_id"] for doc in content["documents"]] == [
         "flowgate.default.0372.0001-R",
         "flowgate.default.0372.0002-CH",
@@ -338,8 +339,8 @@ def test_group_documents_answers_in_sequence_order(monkeypatch):
 
 def test_document_access_advertises_the_bounded_reads(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
-    content = client.get("/api/v1/help/items/document_access").json()["content"]
-    partial = content["partial"]
+    content = client.get("/api/v1/help/items/documents/access").json()["content"]
+    partial = client.get("/api/v1/help/items/documents/partial").json()["content"]["partial"]
     assert partial["meta"]["url"].endswith("/document/{doc_id}/meta")
     assert partial["outline"]["url"].endswith("/document/{doc_id}/outline")
     assert partial["relations"]["url"].endswith("/document/{doc_id}/relations")
@@ -353,7 +354,7 @@ def test_chat_document_access_exposes_backward_conversation_history(monkeypatch)
     doc_id = "flowgate.default.0372.0002-CH"
     client = _client(monkeypatch, _token("chat", doc_ref=doc_id), step_type="CH")
     history = client.get(
-        "/api/v1/help/items/document_access"
+        "/api/v1/help/items/documents/access"
     ).json()["content"]["conversation_history"]
     assert history["forward"]["continue_with"] == "next_after_seq"
     assert history["backward"]["continue_with"] == "prev_before_seq"
@@ -370,7 +371,7 @@ def test_document_attachments_advertises_the_copy_request_body(monkeypatch):
     saying what to send it. A worker relying on help alone must be able to build the
     request without guessing (T0004 s.11/s.17/completion condition 14)."""
     client = _client(monkeypatch, _token(action_scope="resolve_base_dirty"), step_type="TR")
-    content = client.get("/api/v1/help/items/document_attachments").json()["content"]
+    content = client.get("/api/v1/help/items/attachments/read").json()["content"]
     copy = content["copy"]
     assert copy["method"] == "POST"
     assert copy["url"].endswith("/attachments/{name}/copy")
@@ -397,7 +398,7 @@ def test_submit_carries_this_token_own_identity(monkeypatch):
 
 def test_changed_files_format_states_the_exact_heading(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    content = client.get("/api/v1/help/items/changed_files_format").json()["content"]
+    content = client.get("/api/v1/help/items/submit/changed_files").json()["content"]
     assert content["required"] is True
     assert content["heading"] == "## 변경 파일"
     assert content["example"].startswith("## 변경 파일")
@@ -405,7 +406,7 @@ def test_changed_files_format_states_the_exact_heading(monkeypatch):
 
 def test_test_commands_with_an_empty_registry_is_a_normal_answer(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TS", commands_block="")
-    response = client.get("/api/v1/help/items/test_commands")
+    response = client.get("/api/v1/help/items/submit/test_commands")
     assert response.status_code == 200
     body = response.json()
     assert body["content"]["has_commands"] is False
@@ -417,11 +418,11 @@ def test_test_commands_with_an_empty_registry_is_a_normal_answer(monkeypatch):
 def test_bulk_returns_the_requested_items_in_the_requested_order(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get(
-        "/api/v1/help?items=notices,submit,changed_files_format"
+        "/api/v1/help?items=notices,submit,question"
     ).json()
 
     assert body["form"] == "bulk"
-    assert body["requested"] == ["notices", "submit", "changed_files_format"]
+    assert body["requested"] == ["notices", "submit", "question"]
     assert body["returned"] == 3
     assert [item["name"] for item in body["items"]] == body["requested"]
     assert body["unavailable"] == []
@@ -447,7 +448,7 @@ def test_bulk_returns_what_it_can_and_names_what_it_cannot(monkeypatch):
 
 def test_bulk_with_nothing_available_is_403_and_still_explains_each_name(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    response = client.get("/api/v1/help?items=design_template,test_commands")
+    response = client.get("/api/v1/help?items=design_template,submit/test_commands")
     assert response.status_code == 403
     body = response.json()
     assert body["ok"] is False
@@ -465,7 +466,8 @@ def test_bulk_of_pure_typos_is_404(monkeypatch):
 
 def test_bulk_over_the_cap_is_422_and_points_at_detail(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    names = ",".join(help_catalog.CATALOG_ORDER)  # catalog remains above the bulk limit
+    # the ten public areas are exactly the cap; one leaf more is over it
+    names = ",".join((*help_catalog.CATALOG_ORDER, "documents/access"))
     response = client.get(f"/api/v1/help?items={names}")
     assert response.status_code == 422
     assert "detail=true" in response.json()["error_message"]
@@ -642,7 +644,7 @@ def test_a_storage_failure_is_500_not_a_permission_error(monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(db_documents, "get_documents_by_group_id", boom)
-    response = client.get("/api/v1/help/items/group_documents")
+    response = client.get("/api/v1/help/items/documents/group_list")
     assert response.status_code == 500
     assert response.json()["ok"] is False
 
@@ -745,7 +747,7 @@ def test_design_template_resolves_a_body_against_the_real_schema(monkeypatch, mi
 def test_doc_type_item_matches_the_legacy_route_against_the_real_schema(monkeypatch, migrated_store):
     client = _real_client(monkeypatch, _token(), "P")
     legacy = client.get("/api/v1/help/doc_type").json()
-    item = client.get("/api/v1/help/items/doc_type").json()
+    item = client.get("/api/v1/help/items/documents/doc_type").json()
     assert item["content"]["types"] == legacy
 
 
@@ -783,7 +785,8 @@ def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypa
     assert guide.status_code == 200, guide.text
     text = json.dumps(guide.json(), ensure_ascii=False)
     assert "step_verification_format" not in text
-    assert "changed_files_format" in text
+    assert "submit/changed_files" in text
+    assert "changed_files_format" not in text
     bulk = client.get("/api/v1/help?detail=true", headers={"X-Locale": locale}).json()
     items = {item["name"]: item for item in bulk["items"]}
     assert "step_verification_format" not in items
@@ -792,13 +795,21 @@ def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypa
 
 
 # 0049 T0009: chat help is documentation even for read/execute mode.
+# 0061 card 6: addressed by leaf (``area/leaf``); the old flat chat_* names are gone.
+CHAT_LEAVES = ("cards/place", "cards/run", "cards/roles", "cards/questions", "conversation/recovery",
+               "conversation/turn", "documents/edit", "documents/edit_by_id")
+REMOVED_FLAT_NAMES = ("chat_control", "chat_recovery", "chat_turn", "chat_questions", "chat_documents",
+                      "document_access", "document_attachments", "group_documents", "changed_files_format",
+                      "test_commands", "tr_self_check", "doc_type")
+
+
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
 @pytest.mark.parametrize("source_access,command_access", [
     ("read", None), ("read", "execute"), ("read_write", "execute"),
 ])
 def test_chat_detail_help_http_and_api_share_visibility_and_content(
         monkeypatch, locale, source_access, command_access):
-    from modules.flow_gate.services import api_server_tools, chat_help_content
+    from modules.flow_gate.services import api_server_tools
     token = _token("chat", source_access=source_access, command_access=command_access,
                    continuation_locale=locale)
     client = _client(monkeypatch, token, step_type="CH")
@@ -809,29 +820,43 @@ def test_chat_detail_help_http_and_api_share_visibility_and_content(
     assert status == 200
     assert _names(api_index) == _names(index)
     assert {"conversation", "documents", "cards"} <= set(_names(index))
-    bulk = client.get("/api/v1/help?items=" + ",".join(chat_help_content.ITEMS)).json()
+    bulk = client.get("/api/v1/help?items=" + ",".join(CHAT_LEAVES)).json()
     assert bulk["unavailable"] == []
     detail = client.get("/api/v1/help?detail=true").json()
     assert detail["unavailable"] == []
-    for name in chat_help_content.ITEMS:
-        pointer = chat_help_content.help_item_url(name, index["base_url"] + "/")
-        route = "/api/v1/help/items/" + name
+    assert {"cards", "conversation", "documents"} <= {row["name"] for row in detail["items"]}
+    for path in CHAT_LEAVES:
+        route = "/api/v1/help/items/" + path
         response = client.get(route)
-        assert response.status_code == 200
+        assert response.status_code == 200, path
         item = response.json()
-        assert item["title"] == chat_help_content.TITLES[locale][chat_help_content.ITEMS.index(name)]
-        assert set(item["content"]) == {"intro", "sections", "help_url"}
-        assert item["content"]["help_url"] == pointer
-        assert item["content"]["sections"]
-        assert next(x for x in bulk["items"] if x["name"] == name)["content"] == item["content"]
-        assert {"cards", "conversation", "documents"} <= {row["name"] for row in detail["items"]}
-        status, api_item = api_server_tools.read_help(run, "test-token", {"item": name})
+        assert item["content"], path
+        assert "help_url" not in item["content"]
+        assert bulk["items"][CHAT_LEAVES.index(path)]["content"] == item["content"]
+        status, api_item = api_server_tools.read_help(run, "test-token", {"item": path})
         assert status == 200
         assert api_item["content"] == item["content"]
         assert client.get(route + "/unknown").status_code == 404
-    attachments = client.get("/api/v1/help/items/document_attachments").json()["content"]
-    assert "this chat's Flow" in attachments["chat"]["sections"][0]
-    assert "attachment_request_too_large" in attachments["chat"]["sections"][0]
+    request_rules = client.get("/api/v1/help/items/attachments/request_rules").json()["content"]
+    assert "this chat's Flow" in request_rules["sections"][0]
+    assert "attachment_request_too_large" in request_rules["sections"][0]
+
+
+@pytest.mark.parametrize("name", REMOVED_FLAT_NAMES)
+def test_removed_flat_help_names_are_unknown_for_every_worker_and_chat_token(monkeypatch, name):
+    from modules.flow_gate.services import api_server_tools
+    for token in (_token("chat", source_access="read_write", command_access="execute"), _token("edit"),
+                  _token("review"), _token("new")):
+        client = _client(monkeypatch, token, step_type="CH" if token["action_scope"] == "chat" else "TR")
+        monkeypatch.setattr(api_server_tools.token_service, "verify", lambda _raw, token=token: token)
+        assert client.get("/api/v1/help/items/" + name).status_code == 404
+        assert client.get("/api/v1/help/items/" + name + "/anything").status_code == 404
+        listed = client.get("/api/v1/help?items=" + name)
+        assert listed.status_code == 404
+        assert listed.json()["unavailable"] == [{"name": name, "http_status": 404, "reason": "unknown_item"}]
+        status, _ = api_server_tools.read_help({"api_base_url": "/api/v1"}, "test-token", {"item": name})
+        assert status == 404
+        assert name not in _names(client.get("/api/v1/help").json())
 
 
 @pytest.mark.parametrize("scope,extra", [
@@ -839,23 +864,24 @@ def test_chat_detail_help_http_and_api_share_visibility_and_content(
     ("new", {}), ("review", {}),
 ])
 def test_chat_help_never_reopens_card_or_q_responder_authoring(monkeypatch, scope, extra):
-    from modules.flow_gate.services import api_server_tools, chat_help_content
+    from modules.flow_gate.services import api_server_tools
     token = _token(scope, **extra)
     client = _client(monkeypatch, token, step_type="R")
     monkeypatch.setattr(api_server_tools.token_service, "verify", lambda _raw: token)
     index = client.get("/api/v1/help").json()
-    bulk = client.get("/api/v1/help?items=" + ",".join(chat_help_content.ITEMS)).json()
-    assert not set(chat_help_content.ITEMS) & set(_names(index))
-    assert {x["name"] for x in bulk["unavailable"]} == set(chat_help_content.ITEMS)
-    for name in chat_help_content.ITEMS:
+    bulk = client.get("/api/v1/help?items=" + ",".join(CHAT_LEAVES)).json()
+    assert not {"cards", "conversation"} & set(_names(index))
+    assert {x["name"] for x in bulk["unavailable"]} == set(CHAT_LEAVES)
+    assert all(x["http_status"] == 403 for x in bulk["unavailable"])
+    for path in CHAT_LEAVES:
         assert "hidden" not in index
-        assert client.get(chat_help_content.help_item_url(name, "/api/v1")).status_code == 403
-        status, _ = api_server_tools.read_help({"api_base_url": "/api/v1"}, "test-token", {"item": name})
-        assert status == 403
+        assert client.get("/api/v1/help/items/" + path).status_code in (403, 404)
+        status, _ = api_server_tools.read_help({"api_base_url": "/api/v1"}, "test-token", {"item": path})
+        assert status in (403, 404)
     assert "authoring_guide" not in _names(index)
 
 
-def test_chat_help_reuses_contract_renderers_and_has_stable_pointers():
+def test_chat_help_reuses_contract_renderers_and_has_no_flat_pointer():
     from modules.flow_gate.services import chat_help_content as chat_help
     from flowgate.chat_control import tools, recovery_tools
     from flowgate.card_document_edit import chat_tools, chat_questions
@@ -874,6 +900,16 @@ def test_chat_help_reuses_contract_renderers_and_has_stable_pointers():
         assert text in turn
     assert "<encoding_probe supplied in this invocation" in turn
     assert "help-example-not-a-live-token" not in turn
-    assert chat_help.help_item_url("document_attachments").endswith("/help/items/document_attachments")
+    # No flat-name pointer: the supplier answers a leaf, whose address the caller already has.
+    assert not hasattr(chat_help, "help_item_url")
+    assert set(chat_help.content("chat_turn", ctx)) == {"intro", "sections"}
     with pytest.raises(ValueError):
-        chat_help.help_item_url("unknown")
+        chat_help.content("unknown", ctx)
+
+
+def test_console_user_session_keeps_its_flat_index_unchanged(monkeypatch):
+    """0061 card 6 removes the flat names for worker/chat tokens only; the human console index is untouched."""
+    client = _client(monkeypatch, {"issued_to": "console", "_is_user_jwt": True})
+    assert client.get("/api/v1/help/items/document_access").status_code == 200
+    assert client.get("/api/v1/help/items/doc_type").status_code == 200
+    assert client.get("/api/v1/help/items/chat_control").status_code == 403

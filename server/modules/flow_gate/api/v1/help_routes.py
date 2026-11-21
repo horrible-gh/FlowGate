@@ -466,10 +466,9 @@ def get_help_item(request: Request, name: str, locale: Optional[str] = None):
     # Unknown before forbidden: a name that does not exist is a typo the worker can
     # fix from the index, and calling it a permission failure sends it looking for
     # a permission that was never the problem (P-0004 [failure 3]).
-    if name not in help_catalog.CATALOG_ORDER:
-        return _help_error(404, f"Unknown help item: {name}")
-
     decision = help_catalog.decide_visibility(name, ctx)
+    if decision.reason == "unknown_item":
+        return _help_error(404, f"Unknown help item: {name}")
     if not decision.visible:
         _record_help_event(auth, ctx, view="item", name=name, count=0, http_status=403)
         return _help_error(403, f"Help item '{name}' is not available for this token")
@@ -497,10 +496,9 @@ def get_help_item_child(
     if isinstance(auth, JSONResponse):
         return auth
 
-    if name not in help_catalog.CATALOG_ORDER:
-        return _help_error(404, f"Unknown help item: {name}")
-
     decision = help_catalog.decide_visibility(name, ctx)
+    if decision.reason == "unknown_item":
+        return _help_error(404, f"Unknown help item: {name}")
     if not decision.visible:
         _record_help_event(
             auth, ctx, view="child", name=name, child=child, count=0, http_status=403

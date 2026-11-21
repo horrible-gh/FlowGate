@@ -19,6 +19,7 @@ things set 3 changed on top of the earlier per-type reductions:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -31,15 +32,13 @@ _SERVER_DIR = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.services import help_catalog  # noqa: E402
+from modules.flow_gate.services.help import tree as help_tree  # noqa: E402
 from modules.flow_gate.services import mention_service  # noqa: E402
 
 _BASE = "http://h/flowgate/api/v1"
 _TOKEN_REC = {"project": "p", "group_id": "p.default.0372", "scratch_dir": "S"}
 _R_DOC = {"doc_id": "p.default.0372.0001-R", "type_code": "R", "seq": 1, "title": "r"}
 _DS_DOC = {"doc_id": "p.default.0372.0002-DS", "type_code": "DS", "seq": 2, "title": "d"}
-
-_HELP_HEADERS = {"ko": "## 도움말", "en": "## Help", "ja": "## ヘルプ"}
-
 
 @pytest.fixture(autouse=True)
 def _remote_mode(monkeypatch):
@@ -97,26 +96,30 @@ def _headers(text: str) -> list[str]:
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])
 @pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])
 def test_every_worker_mention_carries_the_help_block_once(build, locale):
+    # 0061 card 5: the block is one `## Help` header, the leaf addresses this call needs and the
+    # credential -- no "read the index first" and no detail=true instruction any more.
     out = build(locale)
-    header = _HELP_HEADERS[locale]
-    assert out.count(f"{header}\n") == 1
-    # The three pinned lines: index, item pick, detail=true — plus the credential.
-    assert f"GET {_BASE}/help" in out
-    assert f"GET {_BASE}/help/items/{{name}}" in out
-    assert f"GET {_BASE}/help?detail=true" in out
-    assert "Authorization: Bearer RAW" in out
+    assert out.count("## Help\n") == 1
+    block = out.split("## Help\n", 1)[1].split("\n\n", 1)[0]
+    leaves = re.findall(rf"GET {re.escape(_BASE)}/help/items/(\w+(?:/\w+)?)", block)
+    assert all(leaf.split("/")[0] in help_tree.AREA_ORDER for leaf in leaves)
+    if build is _build_new:
+        assert leaves
+    assert "Authorization: Bearer RAW" in block
+    assert f"GET {_BASE}/help\n" not in out and f"GET {_BASE}/help?detail=true" not in out
+    assert f"GET {_BASE}/help/items/{{name}}" not in out
 
 
 @pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])
 def test_help_block_sits_right_below_identity_and_guide(build):
     headers = _headers(build("ko"))
     assert headers[0] == "## Document information"
-    assert headers[2] == "## 도움말"
+    assert headers[2] == "## Help"
 
 
 def test_help_block_slot_holds_in_continuous_mode():
     headers = _headers(_build_new(continuous=True))
-    assert headers[:3] == ["## Document information", "## Continuous work", "## 도움말"]
+    assert headers[:3] == ["## Document information", "## Continuous work", "## Help"]
 
 
 # ── 1a. attachment discovery pointer (0523 T0004 §18) ────────────────────────
@@ -128,10 +131,16 @@ def test_help_block_slot_holds_in_continuous_mode():
 # attachment tool exists" without ever finding the item that says otherwise.
 
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])
-@pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])
-def test_help_block_points_at_the_document_attachments_item(build, locale):
+@pytest.mark.parametrize("build", [_build_new, _build_review])
+def test_help_block_points_at_the_attachments_leaf(build, locale):
     out = build(locale)
-    assert f"GET {_BASE}/help/items/document_attachments" in out
+    assert f"GET {_BASE}/help/items/attachments/read" in out
+
+
+@pytest.mark.parametrize("build", [_build_decide, _build_seq_edit])
+def test_calls_that_attach_nothing_carry_no_attachment_pointer(build):
+    # 0061 card 5 selection table: decide / sequence-edit never create a file.
+    assert f"{_BASE}/help/items/attachments/" not in build("en")
 
 
 # ── 2. doc_type guide absorbed into the index (D-0003 §3-2 "뺌") ─────────────
@@ -146,8 +155,8 @@ def test_standalone_doc_type_guide_section_is_gone(build):
 def test_decide_and_sequence_edit_point_at_the_doc_type_item_inline():
     # The instruction bodies still name where valid type codes come from — the
     # `doc_type` help item, not the retired standalone section.
-    assert f"GET {_BASE}/help/items/doc_type" in _build_decide()
-    assert f"GET {_BASE}/help/items/doc_type" in _build_seq_edit()
+    assert f"GET {_BASE}/help/items/documents/doc_type" in _build_decide()
+    assert f"GET {_BASE}/help/items/documents/doc_type" in _build_seq_edit()
 
 
 # ── 3. clarification / review-phase guides: address stays, JSON body moves ───
