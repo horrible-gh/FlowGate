@@ -548,7 +548,7 @@ export function testCardPresentation(
   const resultState = retry ? base : testSpecRunState(view)
   const counts = testSpecCounts(view)
   const failed = rows.filter((r) => r.status === 'FAIL' || r.status === 'BLOCKED').length
-  const manual = view?.cases.filter((c) => c.executionMode === 'manual' && !rows.some((r) => r.caseId === c.caseId && ['PASS', 'FAIL', 'BLOCKED'].includes(r.status ?? ''))).length ?? 0
+  const manual = view?.cases.filter((c) => !rows.some((r) => r.caseId === c.caseId && ['PASS', 'FAIL', 'BLOCKED'].includes(r.status ?? ''))).length ?? 0
   const pending = Math.max(failed, (counts?.fail ?? 0) + (counts?.blocked ?? 0)) + manual
   let stage: TestCardStage
   if (!hasScenario) stage = writing === 'initial' ? 2 : 1

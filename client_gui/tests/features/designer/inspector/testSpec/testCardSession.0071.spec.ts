@@ -90,6 +90,21 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = null; removeProjectEventStream(); document.body.innerHTML = ''; vi.useRealTimers() })
 
 describe('v8 shared test card session (0071 T1)', () => {
+  it('opens an existing report without run records and keeps completion blocked', async () => {
+    views.set(TS_DOC, tsDocument({ latest_result: null, effective_result: null, run_history: [], last_execution: null, tsr_doc_id: TSR_DOC }))
+    const w = await render()
+    expect(contexts.one.canOpen('report')).toBe(true)
+    expect(w.get('[data-test="test-spec-open"]').attributes('disabled')).toBeUndefined()
+    expect(w.get('[data-test="test-spec-missing-results"]').text()).toContain('케이스별 실행 결과')
+    expect(contexts.one.presentation.value.canFollow).toBe(false)
+  })
+  it('uses the bound report even when the test read has not found a report', async () => {
+    views.set(TS_DOC, tsDocument({ latest_result: null, effective_result: null, run_history: [], last_execution: null, tsr_doc_id: null }))
+    target.value = { ...target.value, cardDocuments: [...target.value.cardDocuments, { slot: 'report', docType: 'TSR', docId: TSR_DOC, title: 'Report', author: 'ai', status: 'open', docReviewStatus: null }] }
+    await render()
+    expect(contexts.one.canOpen('report')).toBe(true)
+    expect(contexts.one.presentation.value.canFollow).toBe(false)
+  })
   it('all consumers share one test read and one settings state, including an unbound card', async () => {
     const w = await render()
     expect(contexts.one).toBe(contexts.two)
@@ -98,13 +113,14 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(mocks.node).toHaveBeenCalledTimes(1)
     expect(w.findAll('[data-slot]')).toHaveLength(3)
     expect(w.find('[data-test="test-spec-details"]').exists()).toBe(false)
-    expect(w.get('[data-test="test-card-header-state"]').text()).toBe('확인 필요 1')
+    expect(w.get('[data-test="test-card-header-state"]').text()).toBe('확인 필요 3')
     expect(w.get('[data-test="settings-instruction-switch"]').attributes('role')).toBe('switch')
     expect(w.findAll('[data-test="inspector-menu-item"]')).toHaveLength(2)
   })
   it('starts before any report exists using the scenario TS and cancels the test run id', async () => {
     views.set(TS_DOC, tsDocument({ latest_result: null, effective_result: null, run_history: [], last_execution: null, tsr_doc_id: null }))
     const w = await render()
+    expect(w.find('[data-test="test-spec-missing-results"]').exists()).toBe(false)
     expect(w.get('[data-test="test-spec-run"]').attributes('disabled')).toBeUndefined()
     const wait = deferred(); const start = mocks.run.getMockImplementation()!
     mocks.run.mockImplementation(async () => { await wait.promise; return start() })
@@ -199,7 +215,8 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(card.writing.value).toBe('initial')
     expect(card.presentation.value.stage).toBe(2)
     expect(card.canOpen('scenario')).toBe(false)
-    expect(card.canOpen('report')).toBe(false)
+    // Reading an existing report stays available while the scenario is written.
+    expect(card.canOpen('report')).toBe(true)
   })
   it('direct commands enforce readonly, disposal, AI and document edit guards in order; cancel still works', async () => {
     await render(); const card = contexts.one
@@ -420,7 +437,7 @@ it('connected windows share stage-specific open reasons with menu and section ca
   // These files exist before component setup in a T2/T3 build.
   for (const key of connected) TEST_CARD_WINDOW_LOADERS[key] = async () => ({ default: defineComponent({ render: () => null }) })
   try {
-    views.set(TS_DOC, tsDocument({ cases: [], latest_result: null, effective_result: null }))
+    views.set(TS_DOC, tsDocument({ cases: [], latest_result: null, effective_result: null, tsr_doc_id: null }))
     const w = await render(); const card = contexts.one
     expect(card.openReason('scenario', false)).toBe('guard.unconnected')
     expect(card.openReason('scenario', true)).toBeNull()
