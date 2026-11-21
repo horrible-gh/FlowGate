@@ -12,7 +12,7 @@ vi.mock('@/features/document', async original => ({
   cardMemoList: (...a: unknown[]) => mocks.memos(...a), cardMemoUpdate: (...a: unknown[]) => mocks.update(...a), cardMemoCreate: (...a: unknown[]) => mocks.create(...a),
 }))
 import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
-import { approveGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/useGateApproval'
+import { approveGateTarget, cancelGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/useGateApproval'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import { gateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
 import { useGateDecision } from '@/features/designer/inspector/features/gateCard/useGateDecision'
@@ -67,7 +67,8 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); removeProjectEventStream() })
 
 describe('gate Inspector — D §8-10', () => {
-  it('cancels only after confirmation and shows the canceled receipt without approval', async () => {
+  it.each([null, 'revision'] as const)('cancels after confirmation with readOnly=%s and shows the canceled receipt', async readOnly => {
+    target = { ...target, readOnly }
     current.nodes[0].gate.can_cancel = true
     mocks.decide.mockImplementation(async () => current = { ...current, idleReason: 'stopped', nodes: [{
       ...current.nodes[0], status: 'pending', attemptId: null,
@@ -86,6 +87,31 @@ describe('gate Inspector — D §8-10', () => {
     expect(mocks.decide.mock.calls[0][2]).toBe('cancel')
     expect(w.find('[data-test="gate-cancel"]').exists()).toBe(false)
     expect(w.get('[data-test="gate-result-value"]').text()).toBe('취소됨')
+  })
+  it.each(['archived', 'conflict'] as const)('blocks Inspector and canvas cancellation for %s', async readOnly => {
+    target = { ...target, readOnly }
+    current.nodes[0].gate.can_cancel = true
+    const w = await show()
+    expect(w.get('[data-test="gate-cancel"]').attributes('disabled')).toBeDefined()
+    expect(await cancelGateTarget(target, `attempt_${id}`)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it('cancels a revision-view canvas gate using the fresh attempt and settings version', async () => {
+    target = { ...target, readOnly: 'revision' }
+    current.nodes[0].gate.can_cancel = true
+    saved.settingsVersion = 17
+    mocks.decide.mockResolvedValue(current)
+    expect(await cancelGateTarget(target, `attempt_${id}`)).toBe(true)
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(mocks.decide.mock.calls[0][2]).toBe('cancel')
+    expect(mocks.decide.mock.calls[0][4]).toMatchObject({ expected_attempt_id: `attempt_${id}`, expected_settings_version: 17 })
+  })
+  it.each(['stale-attempt', 'forbidden', 'decision-held'])('refuses canvas cancellation after reload: %s', async reason => {
+    target = { ...target, readOnly: 'revision' }
+    current.nodes[0].gate.can_cancel = reason !== 'forbidden'
+    current.nodes[0].gate.decision_in_progress = reason === 'decision-held'
+    expect(await cancelGateTarget(target, reason === 'stale-attempt' ? 'old-attempt' : `attempt_${id}`)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
   })
   it('hides pre-decision cancel while an approval is held', async () => {
     current.nodes[0].gate.decision_in_progress = true

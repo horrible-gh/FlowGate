@@ -357,8 +357,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 
 .flow-node-card.is-selected:not(.has-conflict) {
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 70%, transparent),
-    0 0 0 5px color-mix(in srgb, var(--flow-node-accent) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--flow-node-accent) 40%, transparent),
     0 8px 22px rgba(0, 0, 0, 0.53);
 }
 

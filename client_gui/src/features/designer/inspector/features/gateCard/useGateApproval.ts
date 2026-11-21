@@ -44,7 +44,7 @@ async function actOnGateTarget(target: InspectorTarget, action: 'confirm' | 'can
     if (!c || c.busy.value || Object.keys(c.pending.value).length || Object.keys(c.failures.value).length) return false
     if (!await c.reload() || c.status.value !== 'ready' || !c.node.value?.attemptId || c.settings.value?.settingsVersion === undefined) return false
     if (action === 'cancel') {
-      if (target.readOnly || c.node.value.attemptId !== attemptId || c.gate.value?.can_cancel !== true || c.gate.value.decision_in_progress) return false
+      if (target.readOnly === 'archived' || c.node.value.attemptId !== attemptId || c.gate.value?.can_cancel !== true || c.gate.value.decision_in_progress) return false
     } else if (gateDecisionReason(target, c.run.value, c.busy.value !== null || c.gate.value?.decision_in_progress === true) || Object.keys(c.failures.value).length) return false
     return await c.decide(action)
   } finally { scope.stop(); acquiring.delete(key) }

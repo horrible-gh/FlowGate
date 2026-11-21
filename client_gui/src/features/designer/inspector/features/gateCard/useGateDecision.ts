@@ -32,7 +32,7 @@ export function useGateDecision(target: () => InspectorTarget | null) {
     const c = context.value
     const current = target()
     const visible = current?.nodeType === 'gate' && c?.gate.value?.can_cancel === true && !c.gate.value.decision_in_progress
-    return { visible, enabled: visible && !current?.readOnly && busy.value === null && c?.status.value === 'ready'
+    return { visible, enabled: visible && current?.readOnly !== 'archived' && current?.readOnly !== 'conflict' && busy.value === null && c?.status.value === 'ready'
       && Object.keys(c.pending.value).length === 0 && !!c.node.value?.attemptId && c.settings.value?.settingsVersion !== undefined }
   })
   const attemptId = computed(() => context.value?.node.value?.attemptId ?? null)
