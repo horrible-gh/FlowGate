@@ -1,9 +1,9 @@
 """zdiff3 base-chunk propagation into server mentions.
 
-verifies _split_conflict_chunks and _build_conflict_mention preserve
-base markers actually observed in zdiff3 merge output by
-TestGitEndToEnd.test_conflict_resolve_flow: <<<<<<< HEAD / mainline version /
-Base marker: ||||||| line1 / line1 / ======= / group version / >>>>>>> group/branch.
+Checks that `_split_conflict_chunks()` and `_build_conflict_mention()` carry the base markers actually observed with
+the zdiff3 merge conflict style without loss. The zdiff3 marker strings below are exactly what
+git_integration_0115/test_git_end_to_end_conflict_resolve_flow.py observed in real git merge output (not invented) — `<<<<<<< HEAD` / `mainline version` / `||||||| line1` / `line1` /
+`=======` / `group version` / `>>>>>>> group/branch`.
 """
 from __future__ import annotations
 

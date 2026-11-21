@@ -283,7 +283,7 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
     expect(useProjectStore().currentProjectId).toBe('p')
     // Only the tree and project badge reads are allowed before a Flow opens; no Git / Conversation data.
     expect(getRequest.mock.calls.map(([url]) => url)).toEqual(expect.arrayContaining(['/api/v1/q', '/api/v1/ai-invoke/active-all']))
-    expect(getRequest.mock.calls.map(([url]) => String(url)).filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q')).toEqual([])
+    expect(getRequest.mock.calls.map(([url]) => String(url)).filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q' && url !== '/api/v1/me/ui-settings')).toEqual([])
   })
 
   // the File menu follows each command's own precondition — with the entered
@@ -455,12 +455,12 @@ describe('Designer initial state — only an open Flow continues into the Design
     // Hidden work parts get no context; only the new Project tree and badge may read.
     expect(w.find('[data-test="designer-right-pane-git"]').exists()).toBe(true)
     expect(w.find('[data-test="designer-right-pane-conversation"]').exists()).toBe(true)
-    expect(urls().filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q')).toEqual([])
+    expect(urls().filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q' && url !== '/api/v1/me/ui-settings')).toEqual([])
 
     // A plain click in the new Project adds no work-part reads; opening its Flow hands the Git part
     // the new context.
     await click(w, 'Beta')
-    expect(urls().filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q')).toEqual([])
+    expect(urls().filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q' && url !== '/api/v1/me/ui-settings')).toEqual([])
     await doubleClick(w, 'm')
     await doubleClick(w, 'Beta Flow')
     expect(isShown(get(w, 'designer-right-pane-git').element)).toBe(true)
@@ -521,6 +521,7 @@ describe('designerTop model — work target (0039 T#3)', () => {
       'project.new',
       'project.open',
       'designer.close',
+      'window.reset-layout',
       'help.shortcuts',
       'help.guide',
       'help.about',
@@ -540,6 +541,7 @@ describe('designerTop model — work target (0039 T#3)', () => {
       'flow.new',
       'flow.open',
       'designer.close',
+      'window.reset-layout',
       'help.shortcuts',
       'help.guide',
       'help.about',

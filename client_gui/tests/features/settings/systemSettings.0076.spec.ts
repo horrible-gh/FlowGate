@@ -50,7 +50,7 @@ const net = vi.hoisted(() => ({
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
   const fail = (status: number, data: unknown) => Object.assign(new Error(`HTTP ${status}`), { response: { status, data } })
-  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode', 'verify_max_runs', 'verify_run_timeout_sec'])
+  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode'])
   const MINUTES: Record<string, bigint> = { minute: 1n, hour: 60n, day: 1440n }
   const row = (key: string): Row => ({ setting_key: key, setting_value: net.rows[key].value, value_type: net.rows[key].type })
   const listRows = () => Object.keys(net.rows).sort().map(row)
@@ -83,15 +83,6 @@ vi.mock('@shared/api', async (importOriginal) => {
       const v = updates.ai_repeat_count_max
       if (!/^\s*[0-9]+\s*$/.test(String(v)) || Number(v) < 1 || Number(v) > 30) {
         throw fail(422, { detail: { code: 'ai_repeat_count_out_of_range', params: { min: 1, max: 30 } } })
-      }
-    }
-    if ('verify_max_runs' in updates && !(/^\s*[0-9]+\s*$/.test(String(updates.verify_max_runs)) && Number(updates.verify_max_runs) >= 1)) {
-      throw fail(422, { detail: { code: 'verify_max_runs_out_of_range', params: { min: 1 } } })
-    }
-    if ('verify_run_timeout_sec' in updates) {
-      const sec = Number(updates.verify_run_timeout_sec)
-      if (!/^[0-9]+$/.test(String(updates.verify_run_timeout_sec)) || sec < 60 || sec > 1800 || sec % 60 !== 0) {
-        throw fail(422, { detail: { code: 'verify_run_timeout_out_of_range', params: { min: 60, max: 1800, step: 60 } } })
       }
     }
     if ('scratch_ttl_value' in updates || 'scratch_ttl_unit' in updates) {
@@ -237,7 +228,7 @@ beforeEach(async () => {
     scratch_ttl_value: { value: '7', type: 'integer' },
     source_mode: { value: 'remote', type: 'string' },
     storage_root: { value: '/data/stored-root', type: 'string' },
-    // flowgate.v02test.0053 0003-T: the server always answers the two 검증 defaults (shipped 3 runs / 180 seconds).
+    // Rows an older server stored for the removed verification system setting (ignored).
     verify_max_runs: { value: '3', type: 'integer' },
     verify_run_timeout_sec: { value: '180', type: 'integer' },
   }
@@ -276,7 +267,7 @@ afterEach(() => {
   for (const body of patches()) {
     const keys = Object.keys((body as { updates: Record<string, string> }).updates).sort()
     expect(keys).not.toContain('storage_root')
-    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max'], ['verify_max_runs'], ['verify_run_timeout_sec']]).toContainEqual(keys)
+    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max']]).toContainEqual(keys)
   }
   wrapper?.unmount()
   wrapper = null
@@ -881,101 +872,20 @@ describe('사용자 — a re-read that fails after a change is not a success', (
   })
 })
 
-describe('flowgate.v02test.0053 0003-T (1-A) — 검증 defaults: verify_max_runs, verify_run_timeout_sec', () => {
-  const runs = '[data-testid="verify-runs-value"]'
-  const minutes = '[data-testid="verify-minutes-value"]'
-  const valueOf = (w: VueWrapper, selector: string) => (w.get(selector).element as HTMLInputElement).value
-
-  it('shows the two defaults — 3 times and 3 minutes (180 seconds) — in their own 검증 block', async () => {
+describe('flowgate.v02test.0053 0002-CH turn 68 — 검증 is managed per card only', () => {
+  it('the general screen has no 검증 block, even when an older server still answers its rows', async () => {
     const w = await open('/settings/system/general')
-    expect(w.get('[data-card="verify"] h3').text()).toBe('검증')
-    expect(valueOf(w, runs)).toBe('3')
-    expect(valueOf(w, minutes)).toBe('3')
-    expect(w.get('[data-testid="verify-runs-save"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-testid="verify-minutes-save"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-card="verify"]').exists()).toBe(false)
+    expect(w.find('[data-testid^="verify-"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('검증 최대 횟수')
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     expect(writes()).toEqual([])
   })
 
-  it('a server that has no such row yet shows the shipped defaults, not a failed load', async () => {
+  it('a server without those rows loads the screen as before', async () => {
     delete net.rows.verify_max_runs
     delete net.rows.verify_run_timeout_sec
     const w = await open('/settings/system/general')
     expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
-    expect(valueOf(w, runs)).toBe('3')
-    expect(valueOf(w, minutes)).toBe('3')
-  })
-
-  it('saves the count alone, as the string the API stores, then re-reads it', async () => {
-    const w = await open('/settings/system/general')
-    await type(w, runs, '7')
-    await click(w, '[data-testid="verify-runs-save"]')
-    expect(patches()).toEqual([{ updates: { verify_max_runs: '7' } }])
-    expect(stored('verify_max_runs')).toBe('7')
-    expect(w.find('[data-testid="verify-runs-saved"]').exists()).toBe(true)
-    expect(valueOf(w, minutes)).toBe('3')
-  })
-
-  it('types minutes and the API stores seconds: 10 → "600", and the box still reads 10', async () => {
-    const w = await open('/settings/system/general')
-    await type(w, minutes, '10')
-    await click(w, '[data-testid="verify-minutes-save"]')
-    expect(patches()).toEqual([{ updates: { verify_run_timeout_sec: '600' } }])
-    expect(stored('verify_run_timeout_sec')).toBe('600')
-    expect(valueOf(w, minutes)).toBe('10')
-    expect(w.find('[data-testid="verify-minutes-saved"]').exists()).toBe(true)
-  })
-
-  it('a stored 300 seconds is shown as 5 minutes', async () => {
-    net.rows.verify_run_timeout_sec = { value: '300', type: 'integer' }
-    const w = await open('/settings/system/general')
-    expect(valueOf(w, minutes)).toBe('5')
-  })
-
-  it.each([['runs', '0'], ['runs', 'abc'], ['runs', '2.5'], ['runs', ''], ['minutes', '0'], ['minutes', '31'], ['minutes', '1.5'], ['minutes', 'x']])(
-    '%s “%s” is told invalid on the screen and never sent',
-    async (name, text) => {
-      const w = await open('/settings/system/general')
-      await type(w, `[data-testid="verify-${name}-value"]`, text)
-      expect(w.find(`[data-testid="verify-${name}-invalid"]`).exists()).toBe(true)
-      expect(w.get(`[data-testid="verify-${name}-save"]`).attributes('disabled')).toBeDefined()
-      await click(w, `[data-testid="verify-${name}-save"]`)
-      expect(writes()).toEqual([])
-    },
-  )
-
-  it('the limits are accepted: 1 and 1000 times (no upper bound), 1 and 30 minutes', async () => {
-    const w = await open('/settings/system/general')
-    await type(w, runs, '1000')
-    await click(w, '[data-testid="verify-runs-save"]')
-    await type(w, minutes, '30')
-    await click(w, '[data-testid="verify-minutes-save"]')
-    await type(w, minutes, '1')
-    await click(w, '[data-testid="verify-minutes-save"]')
-    await type(w, runs, '1')
-    await click(w, '[data-testid="verify-runs-save"]')
-    expect(patches()).toEqual([
-      { updates: { verify_max_runs: '1000' } },
-      { updates: { verify_run_timeout_sec: '1800' } },
-      { updates: { verify_run_timeout_sec: '60' } },
-      { updates: { verify_max_runs: '1' } },
-    ])
-  })
-
-  it('a refusal from the server is shown in the screen’s words and the input stays as typed', async () => {
-    const w = await open('/settings/system/general')
-    net.failPatchWith = { status: 422, data: { detail: { code: 'verify_run_timeout_out_of_range', params: { min: 60, max: 1800, step: 60 } } } }
-    await type(w, minutes, '12')
-    await click(w, '[data-testid="verify-minutes-save"]')
-    expect(w.get('[data-testid="verify-minutes-error"]').text()).toContain('1~30분')
-    expect(valueOf(w, minutes)).toBe('12')
-    expect(stored('verify_run_timeout_sec')).toBe('180')
-  })
-
-  it('an unsaved 검증 input holds the screen like the other editors', async () => {
-    const w = await open('/settings/system/general')
-    await type(w, runs, '9')
-    expect(unloadHeld()).toBe(true)
-    await type(w, runs, '3')
-    expect(unloadHeld()).toBe(false)
   })
 })

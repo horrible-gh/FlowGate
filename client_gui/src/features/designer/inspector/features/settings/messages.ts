@@ -50,13 +50,12 @@ export default {
       review_default: '기본 검수 AI',
       missing: '{name} (없는 AI)',
       minutes: '{n}분',
-      system_default: '시스템 기본값',
       custom: '사용자 정의',
     },
-    // flowgate.v02test.0053 0003-T: the tooltips of the two 검증 options (blank = the system settings' default).
+    // flowgate.v02test.0053 0003-T: the tooltips of the two 검증 options (managed per card, default 3회 / 2분).
     verify: {
-      max_runs_hint: '카드별 검증 횟수 · 비우면 시스템 기본값 · 사용자 정의는 1 이상의 정수',
-      run_minutes_hint: '검증 1회 최대 시간(분) · 비우면 시스템 기본값 · 사용자 정의는 1~30분',
+      max_runs_hint: '카드별 검증 횟수 · 기본값 3회 · 사용자 정의는 1 이상의 정수',
+      run_minutes_hint: '검증 1회 최대 시간(분) · 기본값 2분 · 사용자 정의는 1~30분',
     },
     count: {
       until_pass: '통과할 때까지',
@@ -174,12 +173,11 @@ export default {
       review_default: 'Default review AI',
       missing: '{name} (AI gone)',
       minutes: '{n} min',
-      system_default: 'System default',
       custom: 'Custom',
     },
     verify: {
-      max_runs_hint: 'Verifications · blank: system default · custom: 1 or more',
-      run_minutes_hint: 'Minutes per run · blank: system default · custom 1 to 30',
+      max_runs_hint: 'Verifications per card · default 3 · custom: 1 or more',
+      run_minutes_hint: 'Minutes per verification · default 2 · custom 1 to 30',
     },
     count: {
       until_pass: 'Until it passes',
@@ -295,12 +293,11 @@ export default {
       review_default: '既定のレビュー AI',
       missing: '{name}(ない AI)',
       minutes: '{n}分',
-      system_default: 'システム既定値',
       custom: 'ユーザー定義',
     },
     verify: {
-      max_runs_hint: 'カードごとの検証回数 · 空欄はシステム既定値 · ユーザー定義は 1 以上の整数',
-      run_minutes_hint: '検証 1 回の最大時間(分) · 空欄はシステム既定値 · ユーザー定義は 1~30 分',
+      max_runs_hint: 'カードごとの検証回数 · 既定値 3 回 · ユーザー定義は 1 以上の整数',
+      run_minutes_hint: '検証 1 回の最大時間(分) · 既定値 2 分 · ユーザー定義は 1~30 分',
     },
     count: {
       until_pass: '合格するまで',

@@ -15,6 +15,7 @@ import {
   type UiSettingsResponse,
 } from '@shared/aiFinishedCardRetention'
 import i18n from '@shared/i18n'
+import { TASKBAR_STYLE_FIELD, type TaskbarStyle } from '@/core/overlay/modelessRegistry'
 
 export interface AuthSession {
   session_id: string
@@ -74,6 +75,10 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
 // ── Account and display: completed card retention time ─────────────────────────────────────────────
 
 export const getUiSettings = () => call(() => getRequest<UiSettingsResponse>(UI_SETTINGS_PATH), 'load_failed')
+
+/** Theme writes carry only their own field; dock sizes and retention remain untouched. */
+export const saveTaskbarStyle = (style: TaskbarStyle) =>
+  call(() => patchRequest<UiSettingsResponse>(UI_SETTINGS_PATH, { [TASKBAR_STYLE_FIELD]: style }), 'save_failed')
 
 /** PATCH only the retention field; nothing else rides along. */
 export const saveRetention = (minutes: number) =>

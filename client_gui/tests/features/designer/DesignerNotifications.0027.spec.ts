@@ -51,10 +51,21 @@ async function open(props = {}) {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { promise, resolve } }
 
 describe('Designer notifications', () => {
+  it('shows four running jobs and a capacity queue without counting retrieval', async () => {
+    const phases = ['running', 'running', 'running', 'running', 'queued_capacity', 'retrieving']
+    mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all')
+      ? { runs: phases.map((execution_phase, n) => ({ ...run, run_id: `run-${n}`, execution_phase })), paused: [] }
+      : feed }))
+    const w = await open()
+    expect(w.get('#notification-tab-runs').text()).toBe('실행 4')
+    expect(w.findAll('[data-test="notification-run"]')).toHaveLength(6)
+    expect(w.text()).toContain('대기 (Agent 자리 없음)')
+    expect(w.text()).toContain('결과 회수 중')
+  })
   it('shows all 120 snapshot rows and exact actionable tab counts independently of a 50-document feed', async () => {
     vi.mocked(qaOpenItems).mockResolvedValue(Array.from({ length: 120 }, (_, seq) => ({ doc_id: `p.m.${seq}.0001-T`, seq, title: 'Question', type_code: 'T' })))
     const w = await open()
-    expect(w.get('#notification-tab-runs').text()).toBe('실행 2')
+    expect(w.get('#notification-tab-runs').text()).toBe('실행 1')
     expect(w.get('#notification-tab-questions').text()).toBe('질의응답 99+')
     expect(w.get('#notification-tab-ai').text()).toBe('AI')
     await w.get('#notification-tab-questions').trigger('click')
@@ -147,7 +158,7 @@ describe('Designer notifications', () => {
   it('distinguishes an unknown project tree from a successful empty list and recovers when loaded', async () => {
     const w = await open({ project: null })
     expect(w.text()).toContain('Flow 목록을 확인할 수 없습니다')
-    expect(w.text()).not.toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+    expect(w.text()).not.toContain('실행·대기·결과 회수 중인 작업이 없습니다.')
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(0)
     await w.setProps({ project })
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(2)
@@ -174,7 +185,7 @@ describe('Designer notifications', () => {
     await flushPromises()
     expect(mocks.get).toHaveBeenCalledTimes(count + 2)
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(0)
-    expect(w.text()).toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+    expect(w.text()).toContain('실행·대기·결과 회수 중인 작업이 없습니다.')
   })
   it('does not replay a queued refresh after unmount', async () => {
     const pending = deferred<unknown>()
@@ -206,7 +217,7 @@ describe('Designer notifications', () => {
   })
   it('shows exactly three tabs, current-project runs, progress, paused state and working document links', async () => {
     const w = await open()
-    expect(w.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['실행 2', 'AI', '질의응답 1'])
+    expect(w.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['실행 1', 'AI', '질의응답 1'])
     expect(w.text()).toContain('현재 프로젝트 Alpha')
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(2)
     const rows = w.findAll('[data-test="notification-run"]')
@@ -316,7 +327,7 @@ describe('Designer notifications', () => {
     vi.mocked(qaOpenItems).mockResolvedValue([])
     mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all') ? { runs: [], paused: [] } : { ai_invoke_runs: { items: [] }, open_questions: { items: [] } } }))
     const w = await open()
-    expect(w.text()).toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+    expect(w.text()).toContain('실행·대기·결과 회수 중인 작업이 없습니다.')
     await w.get('#notification-tab-ai').trigger('click')
     expect(w.text()).toContain('AI 알림이 없습니다.')
     await w.get('#notification-tab-questions').trigger('click')
@@ -344,6 +355,6 @@ describe('Designer notifications', () => {
   it.each([['ko', '실행', '질의응답'], ['en', 'Runs', 'Q&A'], ['ja', '実行', '質疑応答']] as const)('provides %s tab labels', async (locale, runs, questions) => {
     i18n.global.locale.value = locale
     const w = await open()
-    expect(w.findAll('[role="tab"]').map((node) => node.text())).toEqual([runs + ' 2', 'AI', questions + ' 1'])
+    expect(w.findAll('[role="tab"]').map((node) => node.text())).toEqual([runs + ' 1', 'AI', questions + ' 1'])
   })
 })

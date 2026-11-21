@@ -1,4 +1,5 @@
-import { ref, type Ref } from 'vue'
+import { onScopeDispose, ref, watch, type Ref } from 'vue'
+import { subscribeProjectEvents } from '@/features/project/projectEvents'
 import {
   useProjectStore,
   type FlowAiActivity,
@@ -108,7 +109,7 @@ export function useFlowFileExplorer(projectId: Ref<string | null>, flow: Ref<Flo
     }
   }
 
-  async function reload() {
+  async function load() {
     const pid = projectId.value
     const gid = flow.value?.groupId ?? null
     const mySeq = ++seq
@@ -157,6 +158,51 @@ export function useFlowFileExplorer(projectId: Ref<string | null>, flow: Ref<Flo
     }
     await loadChanges(pid, gid, statusResult, stale)
   }
+
+  let disposed = false
+  let active: { key: string; promise: Promise<void> } | null = null
+  let pendingRecovery = false
+  let pendingRefresh = false
+  const currentKey = () => `${projectId.value}:${flow.value?.groupId}`
+  const failed = () => error.value || refreshError.value || !aiActivityKnown.value ||
+    changes.value.kind === 'error' ||
+    (changes.value.kind === 'unresolved' && changes.value.reason === 'base_unavailable')
+
+  function reload(): Promise<void> {
+    if (disposed) return Promise.resolve()
+    const key = currentKey()
+    if (active?.key === key) {
+      pendingRefresh = true
+      return active.promise
+    }
+    pendingRefresh = false
+    pendingRecovery = false
+    const promise = load().finally(() => {
+      if (active?.promise !== promise) return
+      active = null
+      const retry = !disposed && key === currentKey() && (pendingRefresh || (pendingRecovery && failed()))
+      pendingRecovery = false
+      if (retry) return reload()
+    })
+    active = { key, promise }
+    return promise
+  }
+
+  function recover() {
+    if (disposed || !projectId.value || !flow.value) return
+    if (active?.key === currentKey()) {
+      pendingRecovery = true
+    } else if (failed()) {
+      void reload()
+    }
+  }
+
+  const stop = watch([projectId, () => flow.value?.groupId], ([pid], _old, cleanup) => {
+    pendingRecovery = false
+    pendingRefresh = false
+    if (pid) cleanup(subscribeProjectEvents(pid, { events: [], event: () => {}, resync: recover }))
+  }, { immediate: true, flush: 'sync' })
+  onScopeDispose(() => { disposed = true; seq++; pendingRecovery = false; stop() })
 
   return {
     nodes, commit, loading, error, refreshError, changes,

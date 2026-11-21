@@ -56,7 +56,7 @@
       <LoadingState
         v-if="projectId && loading"
         size="sm"
-        :label="t('gui.designer.project_explorer.loading')"
+        :label="t(reconnecting ? 'gui.designer.project_explorer.reconnecting' : 'gui.designer.project_explorer.loading')"
         data-test="project-explorer-loading"
       />
       <ErrorState
@@ -89,6 +89,15 @@
             </Button>
           </template>
         </Alert>
+        <!-- A re-read over the shown tree whose GET is being re-sent says so. -->
+        <p
+          v-if="refreshing && reconnecting"
+          class="project-explorer-reconnecting"
+          role="status"
+          data-test="project-explorer-reconnecting"
+        >
+          {{ t('gui.designer.project_explorer.reconnecting') }}
+        </p>
         <ProjectTree
           v-if="filtered.project"
           :project="filtered.project"
@@ -115,8 +124,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRequestRecovery } from '@shared/requestRecovery'
 import Alert from '../../../components/ui/Alert.vue'
 import Button from '../../../components/ui/Button.vue'
 import EmptyState from '../../../components/ui/EmptyState.vue'
@@ -209,6 +219,15 @@ const refreshing = ref(false)
 const error = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
 const shownRefreshError = computed(() => refreshError.value ?? props.restoreError)
+
+// While the tree's GET is being re-sent (shared/api.ts GET retry) the first load and a
+// refresh say "다시 연결하는 중…" instead of only spinning, like the File tab. Cleared when the read ends or the
+// Project changes.
+const reconnecting = useRequestRecovery(
+  () => projectId.value ?? '',
+  () => loading.value || refreshing.value,
+  (notice) => !!projectId.value && notice.path === `/api/v1/projects/${encodeURIComponent(projectId.value)}/groups/tree`,
+)
 
 const includeArchived = ref(false)
 const query = ref('')
@@ -403,11 +422,17 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message.trim() : ''
 }
 
+// A connection-recovery signal (resync) that arrived while a read older than the
+// signal was still in flight. If that read fails, one more read follows; if it succeeds, the signal is spent.
+let pendingRecovery = false
+let disposed = false
+
 async function load(force: boolean) {
   const pid = projectId.value
   if (!pid) return
   const seq = ++requestSeq
   const silent = loaded.value
+  let again = false
   if (silent) refreshing.value = true
   else {
     loading.value = true
@@ -424,17 +449,63 @@ async function load(force: boolean) {
     if (seq !== requestSeq || pid !== projectId.value) return
     if (silent) refreshError.value = messageOf(err)
     else error.value = messageOf(err)
+    again = pendingRecovery
   } finally {
     if (seq === requestSeq) {
       loading.value = false
       refreshing.value = false
+      pendingRecovery = false
     }
   }
+  if (again && !disposed) refresh()
 }
 
 function refresh() {
   void load(true)
 }
+
+/** The tree is in a failed state: nothing shown (`error`) or the last refresh did not land (`refreshError`). */
+function failed(): boolean {
+  return error.value !== null || refreshError.value !== null
+}
+
+/**
+ * The project event hub's resync (the stream reopened, or a connection signal of the
+ * session). Only a failed tree is read again — a healthy tree does nothing, so a window focus never re-reads it.
+ * Decided on the next tick: the Designer's own resync handler bumps `refreshToken` for the same signal, and a read
+ * that started after the signal already is the recovery read, so no second GET is sent. A read older than the signal
+ * that is still in flight is followed by one more read if it fails (pendingRecovery).
+ */
+function recover(pid: string) {
+  const signalSeq = requestSeq
+  void nextTick(() => {
+    if (disposed || pid !== projectId.value) return
+    if (requestSeq !== signalSeq) return
+    if (loading.value || refreshing.value) {
+      pendingRecovery = true
+      return
+    }
+    if (failed()) refresh()
+  })
+}
+
+// This part follows the connection on its own instead of relying on the Designer's
+// archive-tree subscription. No event names: a group_view_refresh already reaches this part through the Designer's
+// `refreshToken`, so listening to it here would read the tree twice. Re-subscribed per Project, released on unmount.
+watch(
+  projectId,
+  (pid, _prev, onCleanup) => {
+    pendingRecovery = false
+    if (!pid) return
+    onCleanup(projectStore.subscribeProjectEvents(pid, { events: [], event: () => {}, resync: () => recover(pid) }))
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  disposed = true
+  pendingRecovery = false
+})
 
 watch(
   [projectId, () => props.includeTerminal, includeArchived],
@@ -575,6 +646,12 @@ defineExpose({ refresh })
 
 .project-explorer-refresh-error {
   margin: 0 4px 6px;
+}
+
+.project-explorer-reconnecting {
+  margin: 0 8px 6px;
+  font-size: 11px;
+  color: var(--fg2-muted);
 }
 
 @keyframes project-explorer-spin {

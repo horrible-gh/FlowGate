@@ -1375,7 +1375,9 @@ def _conflict_session_json(value, level: int = 0) -> str:
     pad = "  " * (level + 1)
     if isinstance(value, dict) and value:
         if not any(isinstance(v, (dict, list)) for v in value.values()):
-            return json.dumps(value, ensure_ascii=False)
+            # Location rows repeat many times. Keep one readable row per chunk,
+            # but omit redundant JSON spaces so transport guidance fits as well.
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         items = ",\n".join(
             f"{pad}{json.dumps(k, ensure_ascii=False)}: {_conflict_session_json(v, level + 1)}"
             for k, v in value.items()

@@ -443,9 +443,11 @@ def test_read_help_item_child_visibility_supplier_and_no_url(monkeypatch, tmp_pa
     ctx = {"base_url": "/flowgate/api/v1", "locale": "en"}
     monkeypatch.setattr(tools.token_service, "verify", lambda _raw: token)
     monkeypatch.setattr(tools.help_catalog, "resolve_context", lambda *_args: ctx)
-    monkeypatch.setattr(tools.help_catalog, "CATALOG_ORDER", ("visible", "hidden"))
+    # 0061 card 6: "unknown" is the visibility judgment's own reason, not a catalog-membership test.
     monkeypatch.setattr(tools.help_catalog, "decide_visibility",
-                        lambda name, _ctx: SimpleNamespace(visible=name == "visible"))
+                        lambda name, _ctx: SimpleNamespace(
+                            visible=name == "visible",
+                            reason={"visible": None, "hidden": "not_chat"}.get(name, "unknown_item")))
     monkeypatch.setattr(tools.help_catalog, "enumerate_children",
                         lambda *_args: [{"name": "child"}])
     monkeypatch.setattr(tools.help_catalog, "build_item",

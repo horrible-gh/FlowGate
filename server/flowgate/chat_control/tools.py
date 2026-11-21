@@ -102,9 +102,9 @@ _SETTINGS_OBJECT = {
         "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (T only)."},
         "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (T only)."},
         "verify_max_runs": {**_SETTING_INT, "description": "Verifications the card may use: a whole number of 1 or more "
-                                                           "(presets 3, 5, 10); null = the system default (T only)."},
-        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 3, 5, "
-                                                              "10, 20, 30); null = the system default (T only)."},
+                                                           "(presets 3, 5, 10); null = the default 3 (T only)."},
+        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 2, 3, "
+                                                              "5, 10, 20, 30); null = the default 2 (T only)."},
     },
     "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
 }
@@ -287,19 +287,33 @@ def options_call(run, tool_input):
     return _result(handle)
 
 
-def cli_mention(api_base, raw_token):
+def contract_planning(api_base, raw_token):
     base = str(api_base or "").rstrip("/")
     base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
     return "\n".join([
         "## Card run (control tower, stage 1)",
         "---",
         GUIDE,
-        "",
+        ""
+    ])
+
+
+def contract_ai_options(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"GET {base}/api/v2/chat/flows/{{flow_id}}/ai-options",
         f"Authorization: Bearer {raw_token}",
         "The AIs you may choose for your cards (`options`: id, name, kind) and the AI groups with role profiles",
         "(`role_groups`, for from_group only when the user names one). Read it before placing cards.",
-        "",
+        ""
+    ])
+
+
+def contract_place(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/cards",
         f"Authorization: Bearer {raw_token}",
         '{"cards": [{"label": "<card title>", "doc_type": "T", "roles": {"instruction": {"kind": "not_used"},',
@@ -310,7 +324,7 @@ def cli_mention(api_base, raw_token):
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
         "T only), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; both T only, null = the",
-        "system default). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
+        "default 3 / 2 minutes). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
         "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
@@ -319,7 +333,14 @@ def cli_mention(api_base, raw_token):
         "document (answer `root`). The answer gives each card's node_key and its instruction line: write the",
         "instruction with the card document edit (POST .../nodes/{node_key}/slots/instruction/document/revisions;",
         "content without front matter keeps the document's current front matter).",
-        "",
+        ""
+    ])
+
+
+def contract_run(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/runs",
         f"Authorization: Bearer {raw_token}",
         '{"allow_instruction_ai": false}',
@@ -327,7 +348,14 @@ def cli_mention(api_base, raw_token):
         "are refused (409 chat_run_instruction_missing) unless allow_instruction_ai is true. `waiting` lists cards",
         "that already wait and why (manual_write_wait = no AI on that card role); runs/current node_runs carry the",
         "same wait_reason / intervention later.",
-        "",
+        ""
+    ])
+
+
+def contract_roles(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"GET {base}/api/v2/chat/flows/{{flow_id}}/nodes/{{node_key}}/roles",
         f"Authorization: Bearer {raw_token}",
         "The instruction / execution / review AI of a work card this chat placed (any mode): each role's state and",
@@ -351,9 +379,18 @@ def cli_mention(api_base, raw_token):
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",
-        "is done, then read runs/current and the canvas. Neither call consumes this token.",
+        "is done, then read runs/current and the canvas. Neither call consumes this token."
     ])
 
+
+def cli_mention(api_base, raw_token):
+    return "\n".join([
+        contract_planning(api_base, raw_token),
+        contract_ai_options(api_base, raw_token),
+        contract_place(api_base, raw_token),
+        contract_run(api_base, raw_token),
+        contract_roles(api_base, raw_token),
+    ])
 
 def descriptors():
     from . import recovery_tools

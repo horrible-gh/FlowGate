@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#a78bfa"
     :open="!!data"
     :title="t('gui.aiRoles.setup')"
     :initial-x="initialX"

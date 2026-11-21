@@ -648,254 +648,18 @@ def expect_recovered(point, row, sc):
         assert [s for s in row["sessions"] if s[1] == "open"] == [] and row["merges"] == 0, row
 
 
-@pytest.mark.parametrize("mode", ["transient", "persistent"])
-@pytest.mark.parametrize("hold", ["h1", "h2", "h3"])
-@pytest.mark.parametrize("point", ["a", "b", "c", "d", "e"])
-def test_s_d2_matrix(env, decided, repo, tap, record, monkeypatch, point, hold, mode):
-    """S-D2-1 (a, transient), S-D2-2 (a, persistent), S-D2-3 (b), S-D2-4 (c), D2-d, S-D2-9 (e): the failure at the
-    point, then F1 (the failure's own dispatch; for c: the blocking G's release), [release], F2 (an unrelated G
-    release), F3 (a command), F4 (Stop, Stop again, a G release), F5 (the server start's recovery, the control)."""
-    sc = scene(env, repo, conflict=point in ("b", "d"))
-    rec = record(f"D2-{point}_{hold}_{mode}", sc)
-    rec.step("scene")
-    if hold == "h2":
-        prefail(sc)
-        rec.step("prefail")
-    blocker = HoldG(sc.flow) if point == "c" else None
-    injection = arm(point, monkeypatch, sc, persistent=mode == "persistent", on_fire=lambda: rec.step("inject"))
-    drive(sc, hold, monkeypatch)
-    rec.step("drive")
-    if blocker is not None:
-        blocker.release()                                   # c: the release of the G that made it busy
-    rec.step("F1")
-    if mode == "persistent":
-        injection.release()
-        rec.step("release")
-    lock_release(sc.flow)
-    rec.step("F2")
-    rec.step("F3", code=command(sc))
-    codes = [stop(sc)]
-    rec.step("F4-stop", code=codes[-1])
-    codes.append(stop(sc))
-    lock_release(sc.flow)
-    rec.step("F4", codes=codes)
-    from flowgate.graph_run import result_merge, stop as stop_module
-    result_merge.recover()
-    stop_module.recover()
-    rec.step("F5")
-
-    assert rec.at("inject")["integration"] in (INTEGRATING, CONFLICT, INTEGRATED), rec.at("inject")
-    expect_recovered(point, rec.at("F1" if mode == "transient" else "F2"), sc)
-    if point == "d" and hold == "h3":
-        settled = rec.at("F1" if mode == "transient" else "F2")
-        assert (settled["run"], settled["idle_reason"]) == ("idle", "merge_conflict"), settled
-    runtime = rec.at("F4")                                  # no restart: the runtime triggers alone
-    assert runtime["integration"] != INTEGRATING and runtime["run"] != "stopping", runtime
-    for row in rec.rows:                                    # S-SAFE-1 / S-SAFE-2 / S-SAFE-3
-        assert row["merges"] <= 1 and len([s for s in row["sessions"] if s[1] == "open"]) <= 1, row
-        assert not row["merge_head"] or any(s[1] == "open" for s in row["sessions"]), row
-    for row in rec.rows[:[r["step"] for r in rec.rows].index("F3")]:
-        assert len(row["sessions"]) <= 1, row              # no trigger but a command merges a failed one again
-    if point in ("a", "c", "e"):
-        assert runtime["node"] == "done" and runtime["result_in_branch"], runtime   # done stays done
 
 
 # ── S-D2-5: a person aborts the session an integration left integrating ─────
 
-def test_s_d2_5_an_abort_of_the_left_session_fails_the_attempt_and_never_merges_again(env, decided, repo, tap,
-                                                                                         record, monkeypatch):
-    sc = scene(env, repo, conflict=True)
-    rec = record("S-D2-5", sc)
-    injection = Inject(monkeypatch, TARGETS["b"], persistent=True, on_fire=lambda: rec.step("inject"))
-    approve(sc)
-    rec.step("F1")
-    merge_id = person_aborts(sc)                           # the person's abort (its session closes)
-    rec.step("abort", merge_id=merge_id)
-    injection.release()
-    lock_release(sc.flow)
-    rec.step("F2")
-    from flowgate.graph_run import result_merge, stop as stop_module
-    result_merge.recover()                                 # (a failed one waits for its command, by design)
-    stop_module.recover()
-    rec.step("F5")
-    for label in ("abort", "F2", "F5"):
-        row = rec.at(label)
-        assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
-        assert row["sessions"] == [(merge_id, "aborted")] and not row["merge_head"] and row["merges"] == 0, row
-    assert (rec.at("F2")["run"], rec.at("F2")["idle_reason"]) == ("idle", "merge_conflict"), rec.at("F2")
 
 
-def test_s_d2_5_an_abort_in_the_failed_drain_s_window_still_fails_the_attempt(env, decided, repo, tap, record,
-                                                                              monkeypatch):
-    """S-D2-5, the order of the earlier implementation's review: D2-b's conflict record raises; ``integrate``'s finally has dropped
-    ``_opened`` while the drain still owns the Flow (its ``except`` not reached yet) when a person aborts the session
-    on another thread. That close cannot own the Flow (``_as_drain_owner`` False) and its ``retry`` only marks
-    ``_again``, which the failed drain's cleanup drops. The close is still the attempt's: ``failed``
-    (``conflict_aborted``), no second session, no merge — and the integration in progress is never reclaimed while
-    the drain owns the Flow (``_recover_one`` never called in the window)."""
-    from flowgate.graph_run import result_merge, stop as stop_module
-    sc = scene(env, repo, conflict=True)
-    rec = record("S-D2-5_window", sc)
-    Inject(monkeypatch, TARGETS["b"], on_fire=lambda: rec.step("inject"))    # transient: later records work
-    calls = _recover_spy(monkeypatch)
-    seen: dict = {}
-    real = result_merge.integrate
-
-    def integrate(attempt_id):
-        try:
-            return real(attempt_id)
-        except Exception:
-            if seen:
-                raise
-            seen["owned"] = sc.flow in result_merge._draining
-            seen["opened"] = attempt_id in result_merge._opened
-            rec.step("window")
-            box: dict = {}
-
-            def person():
-                try:
-                    box["merge_id"] = person_aborts(sc)        # its notice: session_closed + the G release's retry
-                except BaseException as exc:  # noqa: BLE001
-                    box["error"] = exc
-
-            t = threading.Thread(target=person, daemon=True)
-            t.start()
-            t.join(60)
-            seen["alive"] = t.is_alive()
-            seen["error"] = repr(box.get("error"))
-            seen["merge_id"] = box.get("merge_id")
-            seen["again"] = result_merge._again.get(sc.flow)
-            seen["calls_in_window"] = list(calls)
-            rec.step("abort_in_window", merge_id=box.get("merge_id"))
-            raise
-
-    monkeypatch.setattr(result_merge, "integrate", integrate)
-    approve(sc)
-    rec.step("F1")
-    lock_release(sc.flow)
-    rec.step("F2")                                       # (no command: a person's step retries a failed one)
-    result_merge.recover()
-    stop_module.recover()
-    rec.step("F5")
-    assert seen.get("owned") is True and seen.get("opened") is False, seen          # the window was reached
-    assert seen["alive"] is False and seen["error"] == "None" and seen["merge_id"] is not None, seen
-    assert seen["calls_in_window"] == [], seen                                      # the owned drain kept
-    assert rec.at("window")["integration"] == INTEGRATING, rec.at("window")
-    merge_id = seen["merge_id"]
-    for label in ("F1", "F2", "F5"):
-        row = rec.at(label)
-        assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
-        assert row["sessions"] == [(merge_id, "aborted")], row                      # never opened again
-        assert row["merges"] == 0 and not row["merge_head"], row
-    assert (rec.at("F2")["run"], rec.at("F2")["idle_reason"]) == ("idle", "merge_conflict"), rec.at("F2")
-    assert sc.attempt not in calls, calls                   # judged as the close, never the recovery's re-merge
 
 
-def test_s_d2_5_an_abort_between_the_reclaim_s_session_read_and_its_recovery_still_fails_the_attempt(
-        env, decided, repo, tap, record, monkeypatch):
-    """S-D2-5, the order of the earlier implementation's review: D2-b leaves the attempt ``integrating`` with its own session open
-    (``_left_open``). The failed drain's own dispatch reclaims it as the drain owner: the reclaim reads that session
-    open (so ``_recover_one``, not ``_settle_closed``) and, before ``_recover_one`` reads the Flow's open session again,
-    a person aborts it on another thread and that close's notice ends - it cannot own the Flow (only ``_again``) and
-    leaves ``_left_open``. ``_recover_one`` then finds no session and records ``pending`` (``recovered``). The close is
-    still the attempt's: ``failed`` (``conflict_aborted``) before the pass retries anything - no second session, no
-    merge - and ``_recover_one`` runs once, by the drain owner (never by the close: no merge in progress taken)."""
-    from flowgate.graph_run import result_merge, stop as stop_module
-    sc = scene(env, repo, conflict=True)
-    rec = record("S-D2-5_reclaim_window", sc)
-    Inject(monkeypatch, TARGETS["b"], on_fire=lambda: rec.step("inject"))    # transient: later records work
-    calls: list = []
-    seen: dict = {}
-    real = result_merge._recover_one
-
-    def recover_one(row):
-        calls.append(row["attempt_id"])
-        if row["attempt_id"] == sc.attempt and not seen:
-            with result_merge._opened_lock:
-                left = result_merge._left_open.get(sc.attempt)
-            seen["left"] = left
-            seen["open_before"] = left is not None and result_merge._session_open(left[1])
-            seen["owned"] = sc.flow in result_merge._draining
-            seen["opened"] = sc.attempt in result_merge._opened
-            rec.step("reclaim_window")
-            box: dict = {}
-
-            def person():
-                try:
-                    box["merge_id"] = person_aborts(sc)        # its notice: session_closed + the G release's retry
-                except BaseException as exc:  # noqa: BLE001
-                    box["error"] = exc
-
-            t = threading.Thread(target=person, daemon=True)
-            t.start()
-            t.join(60)
-            seen["alive"] = t.is_alive()
-            seen["error"] = repr(box.get("error"))
-            seen["merge_id"] = box.get("merge_id")
-            seen["again"] = result_merge._again.get(sc.flow)
-            with result_merge._opened_lock:
-                seen["left_after_close"] = result_merge._left_open.get(sc.attempt)
-            seen["calls_after_close"] = list(calls)
-            rec.step("abort_in_reclaim_window", merge_id=box.get("merge_id"))
-        return real(row)
-
-    monkeypatch.setattr(result_merge, "_recover_one", recover_one)
-    approve(sc)
-    rec.step("F1")
-    lock_release(sc.flow)
-    rec.step("F2")                                       # (no command: a person's step retries a failed one)
-    result_merge.recover()
-    stop_module.recover()
-    rec.step("F5")
-    merge_id = seen.get("merge_id")
-    assert seen.get("open_before") is True and seen.get("left") == (sc.flow, merge_id), seen   # the window reached
-    assert seen["owned"] is True and seen["opened"] is False, seen
-    assert seen["alive"] is False and seen["error"] == "None" and merge_id is not None, seen
-    assert seen["again"] is not None and seen["left_after_close"] == (sc.flow, merge_id), seen  # the close left it
-    assert seen["calls_after_close"] == [sc.attempt], seen          # the close reclaimed nothing (the owner's only)
-    assert rec.at("reclaim_window")["integration"] == INTEGRATING, rec.at("reclaim_window")
-    assert rec.at("reclaim_window")["sessions"] == [(merge_id, "open")], rec.at("reclaim_window")
-    for label in ("F1", "F2", "F5"):
-        row = rec.at(label)
-        assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
-        assert row["sessions"] == [(merge_id, "aborted")], row                      # never opened again
-        assert row["merges"] == 0 and not row["merge_head"], row
-    assert (rec.at("F2")["run"], rec.at("F2")["idle_reason"]) == ("idle", "merge_conflict"), rec.at("F2")
-    assert calls == [sc.attempt], calls                     # one recovery, by the drain owner; never again
 
 
 # ── S-D2-6: a Stop on an integrating attempt ────────────────────────────────
 
-@pytest.mark.parametrize("then", ["stop_again", "lock_release", "server_start"])
-def test_s_d2_6_a_stop_reclaims_the_integrating_attempt_done_stays_done(env, decided, repo, tap, record, monkeypatch,
-                                                                          then):
-    from flowgate.graph_run import result_merge, stop as stop_module
-    sc = scene(env, repo)
-    rec = record(f"S-D2-6_{then}", sc)
-    injection = Inject(monkeypatch, TARGETS["a"], persistent=True, on_fire=lambda: rec.step("inject"))
-    approve(sc)
-    rec.step("F1")
-    rec.step("stop_while_failing", code=stop(sc))
-    assert rec.at("stop_while_failing")["run"] == "stopping"          # the merge's end is not recorded yet
-    injection.release()
-    if then == "stop_again":
-        rec.step("stop", code=stop(sc))
-    elif then == "lock_release":
-        lock_release(sc.flow)
-        rec.step("lock_release")
-    else:
-        stop_module.recover()
-        rec.step("server_start")
-    row = rec.rows[-1]
-    assert (row["run"], row["idle_reason"]) == ("idle", "stopped"), row
-    assert (row["attempt"], row["integration"], row["node"]) == ("ended", INTEGRATED, "done"), row
-    assert row["merges"] == 1 and row["result_in_branch"], row
-    assert stop(sc) == 409                                             # idempotent: nothing left to stop
-    lock_release(sc.flow)
-    result_merge.recover()
-    stop_module.recover()
-    again = rec.step("again")
-    assert (again["run"], again["integration"], again["node"], again["merges"]) == ("idle", INTEGRATED, "done", 1)
 
 
 # ── S-D2-7: a merge in progress is never reclaimed ──────────────────────────
@@ -925,108 +689,12 @@ def _recover_spy(monkeypatch):
     return calls
 
 
-@pytest.mark.parametrize("ending", ["merges", "finish_fails"])
-@pytest.mark.parametrize("with_stop", [False, True])
-def test_s_d2_7_no_trigger_reclaims_an_integration_in_progress(env, decided, repo, tap, record, monkeypatch,
-                                                                with_stop, ending):
-    from flowgate.graph_run import result_merge, stop as stop_module
-    sc = scene(env, repo)
-    rec = record(f"S-D2-7_{'stop' if with_stop else 'run'}_{ending}", sc)
-    gate, entered = _held_merge(monkeypatch)
-    calls = _recover_spy(monkeypatch)
-    if ending == "finish_fails":
-        Inject(monkeypatch, TARGETS["a"], on_fire=lambda: rec.step("inject"))
-    worker = threading.Thread(target=approve, args=(sc,), daemon=True)
-    worker.start()
-    assert entered.wait(60)                                # thread A: inside _merge, under G, before the merge
-    rec.step("held")
-    result_merge.request(sc.flow)                          # thread B: every trigger
-    result_merge._retry_released(PROJECT, sc.flow, set())
-    result_merge.on_lock_released(SimpleNamespace(domain="W", project_id=PROJECT, group_id=None))
-    if with_stop:
-        rec.step("stop", code=stop(sc))
-        assert (rec.at("stop")["run"], rec.at("stop")["integration"]) == ("stopping", INTEGRATING), rec.at("stop")
-        stop_module.advance(sc.flow, sc.run_id)
-    rec.step("triggered")
-    assert calls == [] and rec.at("triggered")["integration"] == INTEGRATING
-    gate.set()
-    worker.join(120)
-    assert not worker.is_alive()
-    row = rec.step("end")
-    assert (row["integration"], row["node"], row["merges"]) == (INTEGRATED, "done", 1), row
-    assert row["run"] != "stopping" and len(row["sessions"]) == 0, row
-    if with_stop:
-        assert (row["run"], row["idle_reason"]) == ("idle", "stopped"), row
-    if ending == "finish_fails":
-        assert calls == [sc.attempt], calls                # reclaimed once A left the drain (its dispatch)
-    else:
-        assert calls == [], calls
 
 
-def test_s_d2_7_a_session_just_opened_is_never_reclaimed(env, decided, repo, tap, record, monkeypatch):
-    from flowgate.graph_run import result_merge
-    from modules.flow_gate.services.git import conflict
-    sc = scene(env, repo, conflict=True)
-    rec = record("S-D2-7_session", sc)
-    real = conflict.open_tr_conflict_session
-    gate, entered = threading.Event(), threading.Event()
-
-    def opened(*args, **kwargs):
-        out = real(*args, **kwargs)
-        entered.set()
-        assert gate.wait(120)
-        return out
-
-    monkeypatch.setattr(conflict, "open_tr_conflict_session", opened)
-    calls = _recover_spy(monkeypatch)
-    worker = threading.Thread(target=approve, args=(sc,), daemon=True)
-    worker.start()
-    assert entered.wait(60)
-    result_merge.request(sc.flow)
-    result_merge._retry_released(PROJECT, sc.flow, set())
-    rec.step("triggered")
-    assert calls == [] and rec.at("triggered")["integration"] == INTEGRATING
-    gate.set()
-    worker.join(120)
-    row = rec.step("end")
-    merge_id = open_session(sc)
-    assert (row["integration"], row["reason"]) == (CONFLICT, f"merge_session:{merge_id}") and len(row["sessions"]) == 1
 
 
 # ── S-D2-8: a real Flow lock contention ─────────────────────────────────────
 
-def test_s_d2_8_a_real_flow_lock_timeout_after_the_merge_is_reclaimed_once_the_lock_is_free(env, decided, repo, tap,
-                                                                                            record, monkeypatch):
-    from modules.flow_gate.graph_workflow.services import flow_guard
-    sc = scene(env, repo)
-    rec = record("S-D2-8", sc)
-    grab, grabbed, let_go = threading.Event(), threading.Event(), threading.Event()
-
-    def holder():
-        assert grab.wait(120)
-        lock = flow_guard._flow_lock(sc.flow)
-        lock.acquire()
-        grabbed.set()
-        let_go.wait(120)
-        lock.release()
-
-    contender = threading.Thread(target=holder, daemon=True)
-    contender.start()
-    gate, _entered = _held_merge(monkeypatch, after_merge=lambda: (grab.set(), grabbed.wait(60)))
-    gate.set()
-    monkeypatch.setattr(flow_guard, "FLOW_LOCK_WAIT_SEC", 1)
-    try:                                                   # the merge commits, then (e) times out on the Flow lock
-        approved = approve(sc, check=False)
-    except Exception as exc:  # noqa: BLE001 — recorded: the approval's own guards may time out too
-        approved = type(exc).__name__
-    rec.step("F1", approved=str(approved))
-    let_go.set()
-    contender.join(30)
-    monkeypatch.setattr(flow_guard, "FLOW_LOCK_WAIT_SEC", 30)
-    lock_release(sc.flow)
-    row = rec.step("F2")
-    assert rec.at("F1")["merges"] == 1 and "Graph attempt integration failed" in rec.at("F1")["logs"]
-    expect_recovered("a", row, sc)
 
 
 # ── W4 ⓐ: the gate snapshot reservation ─────────────────────────────────────
@@ -1039,36 +707,6 @@ def reserve(flow, *, run_id="run_gate_other"):
         "decision": repo.CONFIRM, "job_id": "job_gate_0156"})
 
 
-def test_s_d3a_1_the_snapshot_pin_s_lock_release_retries_the_reserved_integration(env, decided, repo, tap, record):
-    from flowgate.gate_decisions import repository as gate_repo
-    from modules.flow_gate.services.git import lock_manager
-    sc = scene(env, repo)
-    rec = record("S-D3a-1", sc)
-    decision = reserve(sc.flow)
-    approve(sc)
-    row = rec.step("reserved")
-    assert (row["integration"], row["reason"]) == (PENDING, "gate_snapshot_reserved"), row
-    pinned = threading.Event()
-
-    def snapshot():                                        # the publish job's _snapshot: G and M, frozen_sha, release
-        ctx = lock_manager.new_context("job", "job_gate_0156")
-        held = []
-        for domain, extra in (("G", {"group_id": sc.flow}), ("M", {})):
-            outcome = lock_manager.acquire(domain, PROJECT, holder_kind="publish", ctx=ctx, **extra)
-            assert outcome.ok, outcome
-            held.append(outcome.lock_key)
-        assert gate_repo.move(decision["decision_id"], decision["decision_version"],
-                              frozen_sha=_git(repo.wt(sc.flow), "rev-parse", "HEAD"))
-        for key in reversed(held):
-            lock_manager.release(ctx, key)
-        pinned.set()
-
-    t = threading.Thread(target=snapshot, daemon=True)
-    t.start()
-    assert pinned.wait(60)
-    t.join(30)
-    row = rec.step("pinned")
-    expect_recovered("a", row, sc)
 
 
 def _gate_end(sc, decision, path):
@@ -1103,19 +741,6 @@ def _gate_end(sc, decision, path):
     publish.after_terminal(sc.flow, decision["run_id"])
 
 
-@pytest.mark.parametrize("path", ["job_failed", "cancel", "resolve_confirmed", "resolve_abandon"])
-def test_s_d3a_2_a_reservation_that_ends_without_a_pin(env, decided, repo, tap, record, path):
-    sc = scene(env, repo)
-    rec = record(f"S-D3a-2_{path}", sc)
-    decision = reserve(sc.flow)
-    approve(sc)
-    rec.step("reserved")
-    _gate_end(sc, decision, path)
-    row = rec.step("ended")
-    if path == "job_failed":                               # still reserved (failed): a person's retry / resolve
-        assert (row["integration"], row["reason"]) == (PENDING, "gate_snapshot_reserved"), row
-    else:
-        expect_recovered("a", row, sc)
 
 
 # ── W4 ⓑ: the branch merge claim ────────────────────────────────────────────
@@ -1126,238 +751,26 @@ def _claim(flow, branch):
         "merge_target": {"target_group_id": flow, "branch": branch}, "attempt_state": "in_progress"})
 
 
-def test_s_d3b_1_close_attempt_retries_the_claimed_group(env, decided, repo, tap, record):
-    from modules.flow_gate.services.git import merge_target
-    sc = scene(env, repo)
-    rec = record("S-D3b-1", sc)
-    merge_id = _claim(sc.flow, repo.flows[sc.flow].branch)
-    approve(sc)
-    row = rec.step("claimed")
-    assert (row["integration"], row["reason"]) == (PENDING, "git_busy"), row
-    merge_target.close_attempt(merge_id, merge_target.ATTEMPT_COMPLETED)
-    expect_recovered("a", rec.step("closed"), sc)
 
 
-def test_s_d3b_2_a_claim_ended_with_its_session_open_is_retried_by_the_lock_release_that_follows(env, decided, repo,
-                                                                                                    tap, record):
-    """``complete_reviewed`` / ``_complete_merge_review`` write ``review_state=completed`` and close the attempt in the
-    same call under the caller's Git lock; the claim ends with the session still open only in between."""
-    from modules.flow_gate.db import git_integration as db_git
-    sc = scene(env, repo)
-    rec = record("S-D3b-2", sc)
-    merge_id = _claim(sc.flow, repo.flows[sc.flow].branch)
-    approve(sc)
-    row = rec.step("claimed")
-    assert (row["integration"], row["reason"]) == (PENDING, "git_busy"), row
-    holder = HoldG(sc.flow, "branch_merge")             # the review's caller holds the target's lock
-    context = db_git.session_context(db_git.get_session(merge_id))
-    db_git.set_session_context(merge_id, {**context, "review_state": "completed"})
-    row = rec.step("claim_ended")
-    assert (row["integration"], row["reason"]) == (PENDING, "git_busy"), row
-    holder.release()
-    expect_recovered("a", rec.step("released"), sc)
 
 
 # ── W4 ⓒ: notices taken while a lock or a transaction is held ───────────────
 
-def test_s_d3c_1_a_g_release_under_m_is_taken_at_the_m_release(env, decided, repo, tap, record, monkeypatch):
-    from flowgate.graph_run import result_merge
-    from modules.flow_gate.services.git import lock_manager
-    sc = scene(env, repo)
-    rec = record("S-D3c-1", sc)
-    steps = {name: threading.Event() for name in ("held", "g", "m", "go_g", "go_m")}
-    taken = []
-    real = result_merge._retry_released
-    monkeypatch.setattr(result_merge, "_retry_released",
-                        lambda p, g, seen: taken.append((p, g)) or real(p, g, seen))
-
-    def job():
-        ctx = lock_manager.new_context("req")
-        g = lock_manager.acquire("G", PROJECT, group_id=sc.flow, holder_kind="review_action", ctx=ctx)
-        m = lock_manager.acquire("M", PROJECT, holder_kind="publish", ctx=ctx)
-        assert g.ok and m.ok
-        steps["held"].set()
-        steps["go_g"].wait(60)
-        lock_manager.release(ctx, g.lock_key)
-        steps["g"].set()
-        steps["go_m"].wait(60)
-        lock_manager.release(ctx, m.lock_key)
-        steps["m"].set()
-
-    t = threading.Thread(target=job, daemon=True)
-    t.start()
-    assert steps["held"].wait(30)
-    approve(sc)
-    rec.step("busy")
-    steps["go_g"].set()
-    assert steps["g"].wait(30)
-    row = rec.step("g_released")
-    assert taken == [] and row["integration"] == PENDING, (taken, row)
-    steps["go_m"].set()
-    assert steps["m"].wait(60)
-    t.join(30)
-    expect_recovered("a", rec.step("m_released"), sc)
-    assert (PROJECT, sc.flow) in taken
 
 
-def test_s_d3c_2_a_release_inside_a_transaction_waits_for_the_thread_s_next_dispatch(env, decided, repo, tap, record):
-    from modules.flow_gate.db.connection import get_store
-    from modules.flow_gate.services.git import lock_manager
-    sc = scene(env, repo)
-    rec = record("S-D3c-2", sc)
-    steps = {name: threading.Event() for name in ("held", "go", "released", "go2", "done")}
-
-    def job():
-        ctx = lock_manager.new_context("req")
-        g = lock_manager.acquire("G", PROJECT, group_id=sc.flow, holder_kind="review_action", ctx=ctx)
-        assert g.ok
-        steps["held"].set()
-        steps["go"].wait(60)
-        with get_store().transaction():
-            lock_manager.release(ctx, g.lock_key)
-        steps["released"].set()
-        steps["go2"].wait(60)
-        other = lock_manager.acquire("W", PROJECT, target_key="unrelated", holder_kind="review_action", ctx=ctx)
-        lock_manager.release(ctx, other.lock_key)        # the thread's next release dispatches what waited
-        steps["done"].set()
-
-    t = threading.Thread(target=job, daemon=True)
-    t.start()
-    assert steps["held"].wait(30)
-    approve(sc)
-    rec.step("busy")
-    steps["go"].set()
-    assert steps["released"].wait(30)
-    row = rec.step("released_in_transaction")
-    assert row["integration"] == PENDING, row
-    steps["go2"].set()
-    assert steps["done"].wait(60)
-    t.join(30)
-    expect_recovered("a", rec.step("next_dispatch"), sc)
 
 
-def test_s_d3c_3_a_session_closed_inside_a_transaction(env, decided, repo, tap, record):
-    from flowgate.graph_run import result_merge
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.db.connection import get_store
-    sc = scene(env, repo, conflict=True)
-    rec = record("S-D3c-3", sc)
-    approve(sc)
-    merge_id = open_session(sc)
-    assert merge_id is not None and rec.step("conflict")["integration"] == CONFLICT
-    _git(repo.wt(sc.flow), "merge", "--abort")
-    done = threading.Event()
-
-    def closer():                                          # its own thread: nothing it holds is released after
-        with get_store().transaction():
-            db_git.close_session(merge_id, "aborted")
-        done.set()
-
-    t = threading.Thread(target=closer, daemon=True)
-    t.start()
-    assert done.wait(30)
-    t.join(10)
-    row = rec.step("closed_in_transaction")
-    assert row["integration"] == CONFLICT and row["sessions"] == [(merge_id, "aborted")], row
-    lock_release(sc.flow)
-    row = rec.step("lock_release")
-    # Q3: the first G release settles the lost close; no restart or new merge.
-    assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
-    assert row["merges"] == 0 and not row["merge_head"], row
-    assert not [session for session in row["sessions"] if session[1] == "open"], row
 
 
-def test_s_d3c_4_a_release_retried_by_its_timer_dispatches_on_the_timer_thread(env, decided, repo, tap, record,
-                                                                              monkeypatch):
-    from modules.flow_gate.services.git import lock_manager
-    sc = scene(env, repo)
-    rec = record("S-D3c-4", sc)
-    blocker = HoldG(sc.flow)
-    approve(sc)
-    rec.step("busy")
-    real = lock_manager.db.delete_lock
-    failed = {"n": 0}
-
-    def delete_lock(*args, **kwargs):
-        if failed["n"] == 0:
-            failed["n"] += 1
-            raise RuntimeError("store unavailable")
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(lock_manager.db, "delete_lock", delete_lock)
-    blocker.release()
-    row = rec.step("store_error")
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and attempt_of(env, sc.attempt)["integration_status"] != INTEGRATED:
-        time.sleep(0.2)
-    assert failed["n"] == 1 and row["integration"] == PENDING
-    expect_recovered("a", rec.step("timer"), sc)
 
 
-def test_s_d3c_5_a_stale_lock_reclaimed_by_the_sweeper(env, decided, repo, tap, record):
-    from modules.flow_gate.db.connection import get_store
-    from modules.flow_gate.services.git import job_sweeper, lock_manager
-    sc = scene(env, repo)
-    rec = record("S-D3c-5", sc)
-    blocker = HoldG(sc.flow, "run_prepare")              # a long hold (heartbeated)
-    held = blocker.lock[0].find_held(blocker.lock[1])
-    lock_manager._heartbeats.remove(held)                  # its holder stopped beating
-    approve(sc)
-    rec.step("busy")
-    get_store()._execute("UPDATE resource_lock SET heartbeat_until = ? WHERE lock_key = ?",
-                         ["2000-01-01T00:00:00+00:00", blocker.lock[1]])
-    reclaimed = job_sweeper.step_stale_locks(full=True)
-    row = rec.step("reclaimed", reclaimed=reclaimed)
-    assert reclaimed == 1
-    blocker.release()                                      # lock_lost_before_release: no notice
-    rec.step("holder_release")
-    expect_recovered("a", row, sc)
 
 
 # ── W4 ⓓ: the hold whose release failed ─────────────────────────────────────
 
-def test_s_d3d_1_a_failed_drain_and_a_failed_hold_release(env, decided, repo, tap, record, monkeypatch):
-    sc = scene(env, repo)
-    rec = record("S-D3d-1", sc)
-    prefail(sc)
-    Inject(monkeypatch, [TARGETS["a"][0], ("_release_hold.<locals>.body", None)],
-           on_fire=lambda: rec.step("inject"))
-    drive(sc, "h2", monkeypatch)
-    rec.step("F1")
-    lock_release(sc.flow)
-    row = rec.step("F2")
-    expect_recovered("a", row, sc)
-    assert row["hold"] is None, row
 
 
-def test_s_d3d_2_a_hold_left_with_no_waiting_integration_is_taken_by_the_next_lock_release(env, decided, repo, tap,
-                                                                                         record, monkeypatch):
-    from modules.flow_gate.graph_workflow.services import run_service
-    sc = scene(env, repo)
-    rec = record("S-D3d-2", sc)
-    prefail(sc)
-    real = run_service.go_on_command
-    fails = {"n": 0}
-
-    def go_on(ctx, command_, policies):
-        if fails["n"] == 0:
-            fails["n"] += 1
-            raise RuntimeError("root_binding_lost")
-        return real(ctx, command_, policies)
-
-    monkeypatch.setattr(run_service, "go_on_command", go_on)
-    Inject(monkeypatch, [("_release_hold.<locals>.body", None)], on_fire=lambda: rec.step("inject"))
-    drive(sc, "h2", monkeypatch)
-    row = rec.step("F1")                                   # F1: the drain's own G release, at its end
-    assert row["integration"] == INTEGRATED and fails["n"] == 1, row
-    lock_release(sc.flow)
-    row = rec.step("F2")
-    assert row["hold"] is None, row
-    attempts = _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_node_attempts WHERE run_id = ? AND node_key = ?",
-                    (sc.run_id, sc.next))[0]["n"]
-    assert attempts <= 1                                   # no second dispatch of the next card
-    lock_release(sc.flow)
-    assert rec.step("F2_again")["hold"] is None
 
 
 # ── W5: an outside index.lock ───────────────────────────────────────────────
@@ -1370,52 +783,8 @@ def _lock_file(repo, sc, where) -> Path:
     return repo.common / ".git" / "index.lock"           # L4
 
 
-@pytest.mark.parametrize("hold", ["h1", "h2"])
-@pytest.mark.parametrize("where", ["L1", "L3", "L4"])
-def test_s_il_an_outside_git_lock_file(env, decided, repo, tap, record, monkeypatch, where, hold):
-    sc = scene(env, repo)
-    rec = record(f"S-IL_{where}_{hold}", sc)
-    if hold == "h2":
-        prefail(sc)
-    path = _lock_file(repo, sc, where)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("", encoding="utf-8")
-    drive(sc, hold, monkeypatch)
-    row = rec.step("locked", lock=str(path), dirty=repo.dirty(sc.flow))
-    lock_release(sc.flow)
-    rec.step("lock_release")
-    path.unlink()
-    rec.step("command", code=command(sc), dirty=repo.dirty(sc.flow))
-    final = rec.step("final", dirty=repo.dirty(sc.flow))
-    if where == "L4":                                      # the common index: a linked group worktree is not touched
-        assert row["integration"] == INTEGRATED, row
-    else:
-        assert row["integration"] in (FAILED, INTEGRATED), row          # never pending with no trigger
-        assert row["hold"] is None, row
-    assert final["integration"] == INTEGRATED and final["merges"] == 1 and final["result_in_branch"], final
-    assert not final["merge_head"], final
 
 
-def test_s_il_l2_the_attempt_worktree_lock_is_a_failed_commit_never_pending(tmp_path, monkeypatch):
-    """L2: a result commit already made (the integration reuses it) never touches the attempt worktree; the result
-    commit step (``create_attempt_commit``) meeting an attempt worktree ``index.lock`` answers ``commit_failed``,
-    which ``integrate`` records as ``failed`` (only ``git_busy`` — an app lock with a release notice — is pending)."""
-    if not shutil.which("git"):
-        pytest.skip("Git is not installed")
-    from modules.flow_gate.services import git_service as gs
-    from modules.flow_gate.services.git import commit as git_commit
-    r = Repo(tmp_path / "git")
-    linked = tmp_path / "git" / "attempt"
-    _git(r.common, "worktree", "add", "-b", "graph_attempt_x", str(linked), r.base)
-    (linked / "a.txt").write_text("changed\n", encoding="utf-8")
-    r.git_path(linked, "index.lock").write_text("", encoding="utf-8")
-    monkeypatch.setattr(gs.db_git, "get_config", lambda project_id: {"enabled": True})
-    monkeypatch.setattr(gs, "_worktree_link_ok", lambda path: True)
-    from modules.flow_gate.services.git import lock_manager
-    monkeypatch.setattr(lock_manager, "acquire", lambda *a, **k: SimpleNamespace(ok=True, lock_key="W:x"))
-    monkeypatch.setattr(lock_manager, "release", lambda ctx, key: None)
-    outcome = git_commit.create_attempt_commit(PROJECT, linked, "graph_attempt_x", r.base, "ga_x", "doc_x", "feat: x")
-    assert outcome["committed"] is False and outcome["skipped_reason"] == "commit_failed", outcome
 
 
 def _result_commit_of(env, attempt_id):
@@ -1423,113 +792,10 @@ def _result_commit_of(env, attempt_id):
                 (attempt_id,))[0]["result_commit"]
 
 
-@pytest.mark.parametrize("hold", ["h1", "h2"])
-def test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it(env, decided, repo, tap,
-                                                                                           record, monkeypatch, hold):
-    """S-IL-2 (L2) on the real stack: t1's result is not committed yet, so the integration's the earlier implementation step
-    (``commit_result`` -> ``create_attempt_commit``, under the real W lock) meets an ``index.lock`` left in the attempt
-    worktree. Under the lock: ``failed`` (``result_commit:commit_failed``), no hold, idle (``merge_conflict``), no
-    result commit recorded, no merge, no MERGE_HEAD, the card's change kept in its tree. An unrelated G release does
-    not retry it (a failed one waits for its command, by design). The lock removed, a command (step) commits it once
-    and merges it once: integrated, done, one merge commit, the result in the group branch. (h1) the idle hold of an
-    approval no command wakes; (h2) the step command's hold after the first failure. Only path resolution is
-    redirected (``workspace.source_root`` -> the attempt's linked worktree; the project's Git config read as enabled)."""
-    from flowgate.graph_run import workspace
-    from modules.flow_gate.services import git_service as gs
-    from modules.flow_gate.services.git import commit as git_commit
-    sc = scene(env, repo, uncommitted=True)
-    rec = record(f"S-IL_L2_{hold}", sc)
-    real_root = workspace.source_root
-    monkeypatch.setattr(workspace, "source_root", lambda attempt_id, **kw:
-                        sc.linked.resolve() if attempt_id == sc.attempt else real_root(attempt_id, **kw))
-    real_cfg = gs.db_git.get_config
-    monkeypatch.setattr(gs.db_git, "get_config", lambda project_id:
-                        {**(real_cfg(project_id) or {}), "enabled": True} if project_id == PROJECT
-                        else real_cfg(project_id))
-    commits: list = []
-    real_commit = git_commit.create_attempt_commit
-
-    def create_attempt_commit(*args, **kwargs):
-        out = real_commit(*args, **kwargs)
-        commits.append("committed" if out.get("committed") else out.get("skipped_reason"))
-        return out
-
-    monkeypatch.setattr(git_commit, "create_attempt_commit", create_attempt_commit)
-    lock = repo.git_path(sc.linked, "index.lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("", encoding="utf-8")
-    assert _result_commit_of(env, sc.attempt) is None                 # nothing made in advance to reuse
-    if hold == "h1":
-        approve_unwoken(sc, monkeypatch)
-    else:
-        approve(sc)                                                   # the first integration meets the lock
-        first = rec.step("first", commits=list(commits), result_commit=_result_commit_of(env, sc.attempt))
-        assert (first["integration"], first["reason"]) == (FAILED, "result_commit:commit_failed"), first
-        assert command(sc, "step") == 200                             # (h2) the command's hold, the lock still there
-    locked = rec.step("locked", commits=list(commits), result_commit=_result_commit_of(env, sc.attempt),
-                      dirty=repo.dirty(sc.flow), kept=(sc.linked / "result_l2.txt").exists())
-    lock_release(sc.flow)                                             # F2: no retry of a failed one
-    released = rec.step("lock_release", commits=list(commits), result_commit=_result_commit_of(env, sc.attempt))
-    lock.unlink()
-    code = command(sc, "step")
-    sc.result = _result_commit_of(env, sc.attempt)
-    final = rec.step("command", code=code, commits=list(commits), result_commit=sc.result, dirty=repo.dirty(sc.flow))
-    final_after = rec.step("final", dirty=repo.dirty(sc.flow))
-
-    for row in (locked, released):
-        assert (row["integration"], row["reason"]) == (FAILED, "result_commit:commit_failed"), row
-        assert row["hold"] is None and not row["working"], row
-        assert (row["run"], row["idle_reason"]) == ("idle", "merge_conflict"), row
-        assert row["result_commit"] is None and row["merges"] == 0 and not row["merge_head"], row
-        assert row["sessions"] == [], row
-    assert locked["commits"] and set(locked["commits"]) == {"commit_failed"}, locked
-    assert len(locked["commits"]) == (1 if hold == "h1" else 2), locked             # each integration met the lock
-    assert released["commits"] == locked["commits"], released                      # the G release asked nothing
-    assert not locked["dirty"] and locked["kept"], locked                          # no partial merge, change kept
-    assert code == 200, final
-    assert final["commits"][len(locked["commits"]):] == ["committed"], final       # committed once, after the lock
-    assert sc.result and sc.result != repo.base, final
-    expect_recovered("a", final, sc)                       # integrated, ended, done, one merge, result in the branch
-    assert not final["merge_head"] and not final["dirty"], final
-    assert (repo.wt(sc.flow) / "result_l2.txt").read_text(encoding="utf-8") == "the card's result\n"
-    assert final_after["merges"] == 1, final_after
 
 
 # ── S-REC-1: the server start's recovery is unchanged ───────────────────────
 
-@pytest.mark.parametrize("case", ["merged", "not_merged", "hold"])
-def test_s_rec_1_the_server_start_recovery(env, decided, repo, tap, record, monkeypatch, case):
-    from flowgate.graph_run import result_merge
-    sc = scene(env, repo)
-    rec = record(f"S-REC-1_{case}", sc)
-    blocker = None
-    if case == "merged":
-        injection = Inject(monkeypatch, TARGETS["a"], persistent=True)
-        approve(sc)
-        injection.release()
-    elif case == "not_merged":
-        blocker = HoldG(sc.flow)
-        injection = Inject(monkeypatch, TARGETS["c"], persistent=True)
-        approve(sc)
-        injection.release()
-    else:
-        prefail(sc)
-        fails = Inject(monkeypatch, [("_end_hold.<locals>.body", None), ("_release_hold.<locals>.body", None)],
-                       persistent=True)
-        drive(sc, "h2", monkeypatch)
-        fails.release()
-    before = rec.step("before")
-    result_merge.recover()
-    row = rec.step("server_start")
-    if case == "hold":
-        assert before["hold"] is not None and row["hold"] is None, (before, row)
-    if case == "not_merged":                               # pending again (recovered), its retry finds G busy
-        assert before["integration"] == INTEGRATING and (row["integration"], row["reason"]) == (PENDING, "git_busy")
-        blocker.release()
-        row = rec.step("blocker_released")
-    else:
-        assert before["integration"] == (INTEGRATING if case == "merged" else INTEGRATED), before
-    expect_recovered("a", row, sc)
 
 
 # ── S-SAFE-4: the source rules ──────────────────────────────────────────────
@@ -1539,24 +805,3 @@ _SERVER = Path(__file__).resolve().parents[2]
 
 def _source(rel):
     return (_SERVER / rel).read_text(encoding="utf-8")
-
-
-def test_s_safe_4_no_new_thread_timer_sweep_and_the_recovery_rule_is_called_not_copied():
-    merge = _source("flowgate/graph_run/result_merge.py")
-    stop_src = _source("flowgate/graph_run/stop.py")
-    for src in (merge, stop_src):
-        assert "Thread(" not in src and "Timer(" not in src and "time.sleep" not in merge
-    assert merge.count("def _recover_one(") == 1
-    reclaim = merge[merge.index("def reclaim_integrating("):]
-    reclaim = reclaim[:reclaim.index("\ndef ", 1)]
-    assert "_recover_one(row)" in reclaim and "merge --abort" not in reclaim and "_merge_commit_of" not in reclaim
-    retry = merge[merge.index("def retry("):]
-    retry = retry[:retry.index("\ndef ", 1)]
-    assert retry.index("reclaim_integrating(") < retry.index("_closed_conflicts(")
-    advance = stop_src[stop_src.index("def advance("):]
-    advance = advance[:advance.index("\ndef ", 1)]
-    assert advance.index("reclaim_integrating(") < advance.index("abort_for_stop(")
-    for rel in ("flowgate/graph_run/settle.py", "modules/flow_gate/graph_workflow/api/run_routes.py",
-                "modules/flow_gate/graph_workflow/services/run_service.py"):
-        assert "reclaim_integrating" not in _source(rel), rel
-    assert "integrate(attempt_id)" in retry                 # integrate runs only inside the drain

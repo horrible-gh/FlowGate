@@ -110,6 +110,51 @@ def assert_error(code, call):
     assert exc.value.code == code
 
 
+@pytest.mark.parametrize("status", ["DONE", "CANCELLED"])
+@pytest.mark.parametrize("tail", ["한", "𠮷", "\ufffd"])
+def test_oversized_utf8_report_finishes_and_retries(setup, monkeypatch, status, tail):
+    store, svc, creds = setup
+    enqueue(svc, job_id="large", attempt_id="a")
+    token = svc.claim(creds["agt_a"])["job"]["lease_token"]
+    svc.started(creds["agt_a"], "large", "a", token)
+    if status == "CANCELLED":
+        svc.request_cancel("large", "a")
+    monkeypatch.setattr(routes, "svc", lambda: svc)
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/flowgate/api/v1")
+    prefix = "x" * (jobs.OUTPUT_LIMIT_BYTES - 1)
+    payload = result(status, stdout=prefix + tail, stderr="한" * jobs.OUTPUT_LIMIT_BYTES)
+    with TestClient(app) as client:
+        url = "/flowgate/api/v1/agent/jobs/large/a/report"
+        auth = {"Authorization": "Bearer " + creds["agt_a"]}
+        body = {"lease_token": token, **payload}
+        response = client.post(url, headers=auth, json=body)
+        assert response.status_code == 200
+        assert response.json()["status"] == status
+        assert client.post(url, headers=auth, json=body).json()["idempotent"] is True
+        # A different discarded suffix is still a different terminal report.
+        assert client.post(url, headers=auth, json={**body, "stdout": prefix + tail + "other"}).status_code == 409
+    row = svc._get("large", "a")
+    assert row["stdout"] == prefix
+    assert row["stdout_truncated"] and row["stderr_truncated"]
+    assert len(row["stderr"].encode("utf-8")) <= jobs.OUTPUT_LIMIT_BYTES
+    assert row["lease_expires_at"] is None
+    assert AgentService(store).get("agt_a")["running_jobs"] == 0
+    assert payload["stdout_truncated"] is False
+
+
+def test_exact_output_limit_is_not_marked_truncated(setup):
+    _, svc, creds = setup
+    enqueue(svc, job_id="exact", attempt_id="a")
+    token = svc.claim(creds["agt_a"])["job"]["lease_token"]
+    svc.started(creds["agt_a"], "exact", "a", token)
+    text = "한" * (jobs.OUTPUT_LIMIT_BYTES // 3) + "x"
+    assert len(text.encode("utf-8")) == jobs.OUTPUT_LIMIT_BYTES
+    svc.report(creds["agt_a"], "exact", "a", token, result(stdout=text))
+    assert svc._get("exact", "a")["stdout"] == text
+    assert not svc._get("exact", "a")["stdout_truncated"]
+
+
 def test_migration_parity_and_sqlite_composite_key():
     for dialect in ("sqlite", "mysql", "postgres"):
         sql = (MIG / dialect / "124_agent_jobs.sql").read_text()

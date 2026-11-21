@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.services.agent_registry import AgentError, AgentService
+from modules.flow_gate.services.agent_registry import AgentError, AgentService, held_job_predicate, held_job_cutoff
 from modules.flow_gate.services.agent_registry import _row as _agent_row
 from modules.flow_gate.services.agent_registry import detail as _agent_detail
 from modules.flow_gate.services.agent_registry import digest as _agent_digest
@@ -258,8 +258,8 @@ class AgentJobService:
         )
         self.s._execute_affected(
             """UPDATE agent_jobs SET status='FAILED',end_reason='lease_expired',
-                   diagnostics='Started Agent Job lease expired',finished_at=?,updated_at=?,
-                   lease_expires_at=NULL WHERE status='STARTED' AND lease_expires_at<=? AND ai_run_id IS NULL""",
+                   diagnostics='Started Agent Job lease expired',finished_at=?,updated_at=?
+                   WHERE status='STARTED' AND lease_expires_at<=? AND ai_run_id IS NULL""",
             [ts, ts, ts],
         )
 
@@ -285,7 +285,7 @@ class AgentJobService:
             [],
         ):
             aid = row.get("target_agent_id")
-            agent = _agent_row(self.s, aid) if aid else None
+            agent = _agent_row(self.s, aid, at=now) if aid else None
             if agent:
                 info = _agent_detail(agent, at=now)
                 if info["online_status"] == "online" and info["running_jobs"] >= info["max_concurrent_jobs"]:
@@ -330,7 +330,7 @@ class AgentJobService:
             """UPDATE agent_jobs SET status='FAILED',end_reason='remote_termination_unconfirmed',
                    terminal_cause=?,diagnostics='AI Job ended without a terminal Agent report',
                    stdin_text='',command_line='',stdout=NULL,stderr=NULL,retrieval_state=?,scrubbed_at=?,
-                   finished_at=?,updated_at=?,lease_expires_at=NULL
+                   finished_at=?,updated_at=?
                    WHERE ai_run_id IS NOT NULL AND status IN ('CLAIMED','STARTED')
                    AND (lease_expires_at IS NULL OR lease_expires_at<=?
                         OR (cancel_requested=TRUE AND cancel_requested_at IS NOT NULL AND cancel_requested_at<=?))""",
@@ -339,19 +339,15 @@ class AgentJobService:
 
     def _claim_facts(self, agent_id, now):
         """What the server saw of one Agent, for claim_wait_cause. None = no such Agent."""
-        r = _agent_row(self.s, agent_id) if agent_id else None
+        r = _agent_row(self.s, agent_id, at=now) if agent_id else None
         if not r:
             return None
-        held = self.s._fetch_one(
-            "SELECT COUNT(*) AS n FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')",
-            [agent_id],
-        )
         return {"online": _agent_detail(r, at=now)["online_status"] == "online",
                 "heartbeat_at": r.get("current_heartbeat_at"),
                 "poll_at": r.get("last_claim_poll_at"),
                 "refusal_code": r.get("last_claim_refusal_code"),
                 "refusal_at": r.get("last_claim_refusal_at"),
-                "held": int((held or {}).get("n") or 0)}
+                "held": int(r.get("running_jobs") or 0)}
 
     def _claim_wait_cause(self, job, now, cache):
         """(claim_wait_cause, diagnostics) of a NEW AI-run Job whose claim wait ran out.
@@ -671,7 +667,9 @@ class AgentJobService:
             from modules.flow_gate.db import dialect
             lock = " FOR UPDATE" if getattr(self.s, "dialect", dialect.SQLITE) != dialect.SQLITE else ""
             capacity = self.s._fetch_one("SELECT max_concurrent_jobs FROM agents WHERE agent_id=?" + lock, [agent_id])
-            held = self.s._fetch_all("SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')" + lock, [agent_id])
+            held = self.s._fetch_all(
+                "SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND "
+                + held_job_predicate() + lock, [agent_id, held_job_cutoff(_now())])
             if len(held) >= capacity["max_concurrent_jobs"]:
                 return None
             candidates = self.s._fetch_all(
@@ -790,15 +788,20 @@ class AgentJobService:
         state = result.get("status")
         if state not in TERMINAL:
             raise AgentError(422, "validation_failed", "Terminal status is required")
+        # Fingerprint the original report: retries must match even when stored output
+        # is clipped, and two reports with different discarded tails must conflict.
+        fingerprint = _hash(result)
+        result = dict(result)
         for key in ("stdout", "stderr"):
-            if len(result[key].encode("utf-8")) > OUTPUT_LIMIT_BYTES:
-                raise AgentError(422, "output_too_large", key + " exceeds 1 MiB")
+            encoded = result[key].encode("utf-8")
+            if len(encoded) > OUTPUT_LIMIT_BYTES:
+                result[key] = encoded[:OUTPUT_LIMIT_BYTES].decode("utf-8", errors="ignore")
+                result[key + "_truncated"] = True
         exit_code = result["exit_code"]
         if state == "DONE" and exit_code != 0:
             raise AgentError(422, "validation_failed", "DONE requires exit_code 0")
         if state == "FAILED" and exit_code == 0:
             raise AgentError(422, "validation_failed", "FAILED cannot have exit_code 0")
-        fingerprint = _hash(result)
         with self.s.transaction():
             agent_id = self._auth(credential)
             ts = _stamp(_now())

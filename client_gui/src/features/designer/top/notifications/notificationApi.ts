@@ -6,6 +6,7 @@ export interface InvokeRun {
   groupId: string
   docId: string | null
   phase: string
+  executing?: boolean
   mode: string
   provider: string | null
   reached: number
@@ -47,7 +48,9 @@ export function normalizeActiveRuns(payload: unknown): InvokeRun[] {
     if (!runId || !groupId || run.status === 'finished') continue
     const chained = !!str(run.chain_id)
     rows.push({ key: runId, runId, groupId, docId: str(run.doc_ref),
-      phase: str(run.status) ?? 'unknown', mode: str(run.mode) ?? 'unknown',
+      phase: run.status === 'running' ? str(run.execution_phase) ?? 'running' : str(run.status) ?? 'unknown',
+      executing: (str(run.execution_phase) ?? str(run.status)) === 'running',
+      mode: str(run.mode) ?? 'unknown',
       provider: str(record(run.provider).name),
       reached: count(chained ? run.chain_docs_reached : run.docs_reached_so_far),
       target: count(chained ? run.chain_docs_target : run.docs_target), reason: null })

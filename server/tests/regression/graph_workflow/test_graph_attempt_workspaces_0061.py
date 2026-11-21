@@ -697,8 +697,8 @@ def test_help_describes_attempt_execution_only_for_mapped_tokens(repo, monkeypat
         ctx = {"principal_kind": "worker", "action_scope": "edit", "doc_type": "TR", "locale": locale,
                "base_url": "/flowgate/api/v1", "source_mode": "remote", "tool_kind": "read_write",
                "registry": None, "token_rec": token}
-        assert help_catalog.decide_visibility("tr_self_check", ctx).visible
-        return help_catalog.build_item("tr_self_check", ctx)["content"]
+        assert help_catalog.decide_visibility("submit/self_check", ctx).visible
+        return help_catalog._CONTENT_SUPPLIERS["tr_self_check"](ctx)
 
     for locale in ("ko", "en", "ja"):
         block = content(item.token, locale)["graph_attempt"]

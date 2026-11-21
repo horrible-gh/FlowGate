@@ -340,7 +340,8 @@ describe('DesignerShell — active Flow', () => {
     await get(w, 'designer-menubar').get('[data-tab="file"]').trigger('click')
     await settle()
     expect(w.find('[data-test="dfx-no-project"]').exists()).toBe(true)
-    expect(getRequest).not.toHaveBeenCalled()
+    // The person's saved Dock sizes are read on every entry; nothing of a Project is.
+    expect(getRequest.mock.calls.map(([url]) => url).filter((url) => url !== '/api/v1/me/ui-settings')).toEqual([])
   })
 })
 

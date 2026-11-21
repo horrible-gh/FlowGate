@@ -38,15 +38,8 @@ def stub(run, _input):
 
 
 def cli_mention(api_base, _raw_token):
-    base = api_base.rstrip("/")
-    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
-    return ("[Bound Graph state read]\n"
-            f"GET {base}/api/v2/ai/flows/{{flow_id}}/canvas\n"
-            f"GET {base}/api/v2/ai/flows/{{flow_id}}/runs/current\n"
-            "Use this run's existing worker/chat Bearer, never a user JWT. Only your bound group is readable; "
-            "a card worker sees only its active node/attempt. Chat canvas defaults to latest; view=revision "
-            "shows the execution definition. No write, execution, history or external-group access is granted. "
-            "These reads report stored state and never reconcile or start work. Never log the Bearer.")
+    from modules.flow_gate.services.prompt_blocks.blocks.cards import graph_state_read
+    return graph_state_read(api_base, _raw_token)
 
 
 def descriptors():

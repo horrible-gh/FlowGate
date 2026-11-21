@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#a78bfa"
     ref="shellRef"
     :open="open && result !== null"
     :title="windowTitle"

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from modules.flow_gate.services import message_image_service
+from modules.flow_gate.services import ai_response_slim, message_image_service
 from modules.flow_gate import conversation as legacy_conversation
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.documents import document_service
@@ -294,6 +294,10 @@ def list_turns(
         ),
         "me": _me_wire(doc_id, resolved) if include_head else None,
     }
+    if actor.get("kind") == "worker":
+        # An AI reads the page without the reader's own participant rows, read
+        # boundary and null / empty fields. A session reader (the screen) gets the page above as is.
+        return ai_response_slim.slim_turn_page(response)
     return response
 
 

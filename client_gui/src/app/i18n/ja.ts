@@ -1,4 +1,5 @@
 export default {
+  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "minimized": "最小化"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
@@ -644,9 +645,11 @@ export default {
       no_flows: 'フローがありません。',
       group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
+      reconnecting: '再接続中…',
     },
     // Designer File Explorer.
     file_explorer: {
+      reconnecting: '再接続中…',
       title: 'ファイル',
       tree_label: '現在のフローのファイルツリー',
       readonly: '読み取り専用',
@@ -844,8 +847,8 @@ export default {
           ai: 'AI',
           questions: '質疑応答',
         },
-        project_only: '現在のプロジェクト {name} の実行のみ表示します。',
-        empty_runs: '実行中・待機中の実行はありません。',
+        project_only: 'プロジェクト {name} のタスクです。実行数は実行中のAIタスクのみです。',
+        empty_runs: '実行・待機・結果回収中のタスクはありません。',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: '「{title}」カードのマージ競合 — 選択が必要',
@@ -875,6 +878,9 @@ export default {
         failure: '失敗',
         unknown: '状態不明',
         phases: {
+          queued_capacity: '待機（Agentの空きなし）',
+          retrieving: '結果回収中',
+          settling: '終了確認中',
           running: '実行中',
           queued: '待機中',
           starting: '開始中',
@@ -949,6 +955,7 @@ export default {
         zoom_out: '縮小',
         zoom_reset: '100%',
         density: '配置密度',
+        window_reset_layout: 'ウィンドウ配置をリセット',
         shortcuts: 'ショートカット',
         guide: '使い方ガイド',
         about: '製品情報',
@@ -1160,6 +1167,7 @@ export default {
       no_flow: '開いているフローなし',
       current: '現在',
       yesterday: '昨日',
+      reconnecting: '再接続中…',
       list_loading: 'チャット一覧を読み込み中...',
       list_failed: 'チャット一覧を読み込めませんでした。',
       list_empty: 'このフローにはチャットがありません。',
@@ -3384,13 +3392,6 @@ export default {
         lower_impact: '保存・一時停止された実行の繰り返し選択は、以後の実行/再開時に現在の上限で再評価されます。上限を超えた既存の選択は「レビューなし」または既定の再開回数として扱われることがあります。',
         lower_no_rewrite: 'この画面は実行ごとの保存値を変更したり、実行を再開したりしません。',
       },
-      // flowgate.v02test.0053 0003-T (1-A): the two 검증 defaults (verify_max_runs, verify_run_timeout_sec).
-      verify: {
-        title: '検証',
-        card_hint: 'カードで個別に決めていない場合はこの値に従います',
-        runs: { label: '検証 最大回数', hint: 'カード 1 枚が使える検証回数です。1 以上、既定値は 3 回です。', unit: '回', invalid: '{min} 以上の整数を入力してください。' },
-        minutes: { label: '検証 1回の最大時間', hint: '検証 1 回が動ける最大時間(分)です。1〜30、既定値は 3 分(180 秒)です。', unit: '分', invalid: '{min}〜{max} 分の整数を入力してください。' },
-      },
       leave: {
         title: '保存していない変更があります',
         unsaved: 'この画面を離れると、保存していない Scratch 保持期間 · AI 繰り返し上限の入力は失われます。',
@@ -3574,8 +3575,6 @@ export default {
       unknown_key: '不明な設定です。',
       invalid_value: '許可されていない値です。',
       ai_repeat_count_out_of_range: '繰り返し上限は 1〜30 の整数のみ保存できます。',
-      verify_max_runs_out_of_range: '検証 最大回数は 1 以上の整数のみ保存できます。',
-      verify_run_timeout_out_of_range: '検証 1回の最大時間は 1〜30 分の整数(分)のみ保存できます。',
       action_failed: 'リクエストを処理できませんでした。',
       agent_not_found: 'Agent が見つかりません。',
       enrollment_not_allowed: '使用中のリモート Agent のみ登録トークンを発行できます。',

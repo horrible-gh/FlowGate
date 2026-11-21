@@ -39,6 +39,5 @@ describe('the check card texts exist in ko / en / ja', () => {
     const m = messages[locale] as any
     expect(m.reason.old_approval_failed).toBeTruthy()
     expect(m.old_approval.open).toBeTruthy()
-    expect(m.old_approval.cancelled).toBeTruthy()
   })
 })

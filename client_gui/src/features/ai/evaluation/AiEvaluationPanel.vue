@@ -92,7 +92,7 @@
     </section>
 
     <!-- How the evaluation works: on demand, modeless so the list stays usable. -->
-    <ModelessShell
+    <ModelessShell kind-color="#a78bfa"
       :open="methodOpen"
       :title="t('gui.ai.evaluation.method_title')"
       :initial-x="methodX"

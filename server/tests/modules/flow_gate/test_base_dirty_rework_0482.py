@@ -292,12 +292,17 @@ def test_finalize_run_releases_the_project_lease_on_completion(monkeypatch, tmp_
     monkeypatch.setattr(project_ai_leases, "release", lambda project_id, run_id: released.append((project_id, run_id)))
     run = {
         "action_scope": "resolve_base_dirty", "project_id": "p1", "run_id": "run-1",
-        "group_id": None, "scratch_dir": str(scratch), "outcome": "complete",
+        "group_id": "p1.none.0000", "scratch_dir": str(scratch), "outcome": "complete",
         "started_mono": 0.0, "last_message": None, "last_message_seen": None,
         "chain_docs_accounted": True,
     }
+    from modules.flow_gate.db import ai_run_identity
+    from uuid import uuid4
+    run.update(run_id=ai_run_identity.allocate(), execution_nonce=str(uuid4()),
+               started_at="2026-11-20T00:00:00+00:00")
+    ai_run_identity.claim(run)
     svc._finalize_run(run)
-    assert released == [("p1", "run-1")]
+    assert released == [("p1", run["run_id"])]
 
 
 def test_finalize_run_skips_release_for_other_scopes(monkeypatch, tmp_path):
@@ -312,7 +317,13 @@ def test_finalize_run_skips_release_for_other_scopes(monkeypatch, tmp_path):
         "started_mono": 0.0, "last_message": None, "last_message_seen": None,
         "chain_docs_accounted": True,
     }
+    from modules.flow_gate.db import ai_run_identity
+    from uuid import uuid4
+    run.update(run_id=ai_run_identity.allocate(), execution_nonce=str(uuid4()),
+               started_at="2026-11-20T00:00:00+00:00")
+    ai_run_identity.claim(run)
     svc._finalize_run(run)
+    assert not run.get("identity_conflict")
     assert released == []
 
 

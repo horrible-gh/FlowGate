@@ -411,17 +411,17 @@ def _answer_mention(monkeypatch, doc_id):
 def test_the_answer_mention_carries_the_rules_and_keeps_the_escalation(env, monkeypatch):
     doc_id = f"{FB}.0001-T"
     lines = _answer_mention(monkeypatch, doc_id)
+    # The answer mention carries the brief (the "never quote an unread
+    # document" rule, the bounded reads and the two help leaves); the full rule list is documents/unreadable.
     lookup = [
         "", "[문서 조회 도구]",
-        "Read only the document data you need; use the full-document GET only when necessary:",
-        f"- Metadata without body: GET {BASE}/document/{doc_id}/meta",
-        f"- Outline without body: GET {BASE}/document/{doc_id}/outline",
-        f"- One section from that outline: GET {BASE}/document/{doc_id}/section?section_id=<section_id>",
-        f"- Relationships without body: GET {BASE}/document/{doc_id}/relations",
-        f"- Search bodies with match locations/context: GET {BASE}/search/documents/content"
-        "?q=<keyword>&project=flowgate&include_matches=true&context_lines=2&hits_per_doc=5",
-        "Section reads accept exactly one of section, section_id, lines, or chars.",
-        *RULES,                                            # always, right before the credential line
+        RULES[4],
+        f"GET {BASE}/document/{doc_id}/meta",
+        f"GET {BASE}/document/{doc_id}/outline",
+        f"GET {BASE}/document/{doc_id}/section?section_id=<section_id>",
+        f"GET {BASE}/search/documents/content?q=<keyword>&project=flowgate",
+        f"GET {BASE}/help/items/documents/partial",
+        f"GET {BASE}/help/items/documents/unreadable",
         f"Authorization: Bearer {TOKEN}",
     ]
     start = lines.index("[문서 조회 도구]") - 1
@@ -449,7 +449,10 @@ def test_the_chat_lookup_lines_carry_the_rules_too(monkeypatch):
     monkeypatch.setattr(mention_service, "_include_remote_source_crud", lambda _project: False)
     text = "\n".join(invoke_mention_service._chat_lookup_sections(
         base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB))
-    assert "\n".join([*RULES, f"Authorization: Bearer {TOKEN}"]) in text
+    # card 5: the chat lookup block is the brief; the whole rule list is the documents/unreadable leaf
+    assert RULES[4] in text
+    assert f"{BASE}/help/items/documents/unreadable" in text
+    assert f"Authorization: Bearer {TOKEN}" in text
 
 
 # ── V-B1e-5: the help item and the one rule constant ─────────────────────────
@@ -461,7 +464,7 @@ def _help_document_access(monkeypatch):
                         lambda *_a, **_k: {"kind": "read_only", "source_mode": "remote", "reason": None})
     ctx = help_catalog.resolve_context({"project": "flowgate", "group_id": FB, "doc_ref": f"{FB}.0001-T",
                                         "action_scope": "new"}, "ko", BASE)
-    return help_catalog.build_item("document_access", ctx)["content"]
+    return help_catalog._CONTENT_SUPPLIERS["document_access"](ctx)
 
 
 def test_the_help_item_document_access_carries_the_content_states_and_the_rules(monkeypatch):
@@ -513,11 +516,12 @@ def test_the_rules_do_not_force_an_unconditional_read_status_report(monkeypatch)
 @pytest.mark.parametrize("policy", ["", "Use the user decision policy."])
 def test_shared_rules_work_with_and_without_an_escalation_section(monkeypatch, policy):
     from modules.flow_gate.services import ai_start_precheck, invoke_mention_service, mention_service, question_policy
+    from modules.flow_gate.services.prompt_blocks.blocks import documents as documents_block
 
     monkeypatch.setattr(question_policy, "text", lambda *_a, **_k: policy)
     monkeypatch.setattr(mention_service, "_include_remote_source_crud", lambda _project: False)
     outputs = {
-        "lookup": "\n".join(mention_service._document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")),
+        "lookup": "\n".join(documents_block.document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")),
         "chat": "\n".join(invoke_mention_service._chat_lookup_sections(
             base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB)),
         "help": "\n".join(_help_document_access(monkeypatch)["rules"]),
@@ -526,13 +530,17 @@ def test_shared_rules_work_with_and_without_an_escalation_section(monkeypatch, p
         "answer": "\n".join(_answer_mention(monkeypatch, f"{FB}.0001-T")),
     }
     for name, output in outputs.items():
-        assert "\n".join(RULES) in output, name
+        if name in {"chat", "answer"}:  # card 5: these carry the brief and point at documents/unreadable
+            assert RULES[4] in output and "/help/items/documents/unreadable" in output, name
+        else:
+            assert "\n".join(RULES) in output, name
         # Shared rules must not point to a section absent from lookup/help/precheck,
         # nor assume the default three escalation conditions override a user policy.
         shared = "\n".join(RULES)
         assert "[사용자 판단 이관" not in shared
         assert "인프라·권한·지시의 모호성" not in shared
-        assert "이관 안내가 제공된 경우에만" in output
+        if name not in {"chat", "answer"}:
+            assert "이관 안내가 제공된 경우에만" in output
         permission = next(rule for rule in RULES if "403" in rule)
         assert "이 이유만으로 이관하지" in permission
         assert "이관 안내가 있으면" in permission
@@ -548,13 +556,19 @@ def test_shared_rules_work_with_and_without_an_escalation_section(monkeypatch, p
 
 def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monkeypatch):
     from modules.flow_gate.services import ai_start_precheck, mention_service
+    from modules.flow_gate.services.prompt_blocks.blocks import documents as documents_block
 
-    monkeypatch.setattr(mention_service, "BODY_UNREADABLE_RULES", ("RULE X",))
-    assert "RULE X" in mention_service._document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")
-    assert _help_document_access(monkeypatch)["rules"] == ["RULE X"]
+    # The one constant now lives in the prompt block registry.
+    # (card 7: the lookup brief quotes the named rule UNREAD_BODY_NO_QUOTE_RULE, no longer the fifth list entry, so
+    # the stand-in replaces that name too and the list may have any length)
+    stand_in = ("RULE 0", "RULE X")
+    monkeypatch.setattr(documents_block, "BODY_UNREADABLE_RULES", stand_in)
+    monkeypatch.setattr(documents_block, "UNREAD_BODY_NO_QUOTE_RULE", "RULE X")
+    assert "RULE X" in documents_block.document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")
+    assert _help_document_access(monkeypatch)["rules"] == list(stand_in)
     section = ai_start_precheck.unreadable_section(
         {"checked": 1, "unreadable": [{"doc_id": "d", "title": "t", "reason": "file_not_found"}]})
-    assert section == "[읽을 수 없는 문서]\n- d (t): 본문 파일이 없음\nRULE X"
+    assert section == "[읽을 수 없는 문서]\n- d (t): 본문 파일이 없음\n" + "\n".join(stand_in)
     assert ai_start_precheck.unreadable_section({"checked": 9, "unreadable": []}) == ""
     assert ai_start_precheck.REASON_TEXT == REASONS
     from modules.flow_gate.services import invoke_mention_service
@@ -563,7 +577,7 @@ def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monke
     chat = "\n".join(invoke_mention_service._chat_lookup_sections(
         base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB))
     assert "RULE X" in chat
-    monkeypatch.setattr(mention_service, "BODY_UNREADABLE_ANSWER_REFERENCE", "SEMANTIC REFERENCE")
+    monkeypatch.setattr(documents_block, "BODY_UNREADABLE_ANSWER_REFERENCE", "SEMANTIC REFERENCE")
     answer = _answer_mention(monkeypatch, f"{FB}.0001-T")
     assert "RULE X" in answer
     assert answer.count("SEMANTIC REFERENCE") == 1

@@ -58,7 +58,7 @@ def restart_call(run, data):
     return call(run, data, "restart")
 
 
-def cli_mention(api_base, raw_token):
+def contract_mention(api_base, raw_token):
     base = str(api_base or "").rstrip("/")
     base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
     return "\n".join(["## Explicit Flow recovery", GUIDE,
@@ -68,6 +68,10 @@ def cli_mention(api_base, raw_token):
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/restart",
         f"Authorization: Bearer {raw_token}",
         'POST body: {"request_id": "<unique id>", "expected_context": <context from the matching GET>}'])
+
+
+def cli_mention(api_base, raw_token):
+    return contract_mention(api_base, raw_token)
 
 
 def descriptors():

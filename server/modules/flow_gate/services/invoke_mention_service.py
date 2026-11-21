@@ -280,83 +280,11 @@ def _fold_notice(
     ]
 
 
-def _encoding_probe_paragraph(token_id: str) -> list[str]:
-    """the per-token encoding probe and the transport rule.
-
-    The probe proves the path, whatever language the body is in
-    (``encoding_probe``); with it the question-mark heuristic never runs.
-    """
-    from modules.flow_gate.services import encoding_probe
-
-    probe = encoding_probe.probe_for(token_id)
-    return [
-        "Encoding probe: make the LAST line of the body exactly this line. FlowGate checks it",
-        "and removes it before saving:",
-        f"{probe}",
-        "If it arrives intact, the path carried every Unicode character and no corruption check",
-        "runs, so any text is fine ('??' included), in any language. If it arrives damaged, the",
-        "turn is refused with the cause; fix the transport, not the text.",
-        "The same line works for a document body you save from this chat (card document or",
-        "doc_id revisions): put it as the last line of `content`; it is removed before saving.",
-        "Transport: write the body (probe line last) to a UTF-8 file, then send it with a script",
-        "that reads that file and posts ASCII-only JSON, e.g. Python",
-        "`json.dumps(payload).encode(\"ascii\")` (json.dumps escapes non-ASCII by default). Never",
-        "put the body or the probe on a command line, and never pass them through a console pipe,",
-        "redirect, Set-Content or Out-File: those can drop characters.",
-        "Without the probe, a body that looks corrupted (U+FFFD, mojibake, runs of '?') is",
-        "rejected. body_chars / body_sha256 are optional; compute them from that same file, probe",
-        "line included. A matching fingerprint is trusted over the question-mark heuristic. If the",
-        "fingerprint mismatches, or you must send the body as-is, put a reason (10+",
-        "non-whitespace characters) in force_encoding_reason; it never overrides a damaged probe.",
-    ]
-
-
-def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
-                                       payload_lines, can_write, provider):
-    """Shared CLI/help turn contract; callers supply examples, never another token."""
-    lines = [
-        "",
-        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
-        "longer where the conversation lives.",
-        "",
-        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
-        f"Authorization: Bearer {raw_token}",
-        "",
-        *payload_lines,
-        "",
-        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
-        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
-        "still kept in order and marked as written without having seen theirs.",
-        "",
-        *_encoding_probe_paragraph(token_id),
-        "",
-        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
-        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
-        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
-    ]
-    if can_write:
-        lines += [
-            "",
-            "If you changed source files in this chat, put the commit message in commit_message:",
-            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
-            "ends FlowGate commits the flow's worktree with that message and writes the result",
-            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
-            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
-            "without it the turn is refused with 422 commit_message_required, dry_run included,",
-            "and nothing is registered; resend the same turn with commit_message. Leave it out",
-            "only when there is nothing to commit.",
-        ]
-    if provider:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. The server",
-            "fixed it to the pinned provider name; keep the value shown above.",
-        ]
-    else:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. If you do not",
-            "know your own model name, omit the field.",
-        ]
-    return lines
+# The turn contract and the probe paragraph are prompt blocks.
+from modules.flow_gate.services.prompt_blocks.blocks.conversation import (  # noqa: E402
+    conversation_turn_submission_lines,
+    encoding_probe_paragraph as _encoding_probe_paragraph,
+)
 
 
 def build_conversation_mention(
@@ -419,10 +347,7 @@ def build_conversation_mention(
         '  "body": "<your reply>",',
         f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
         '  "based_on_seq": <the head_seq you got from your last read>,',
-        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)},',
-        '  "body_sha256": "<optional: sha256 hex of body, UTF-8 bytes>",',
-        '  "body_chars": "<optional: character count of body>",',
-        '  "force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>"',
+        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
         "}",
     ]
     # an edit-mode chat names its commit; FlowGate commits at the run end.
@@ -453,7 +378,8 @@ def build_conversation_mention(
             after_seq=after_seq,
             through_seq=window.get("through_seq"),
         )
-    lines += conversation_turn_submission_lines(
+    from modules.flow_gate.services.prompt_blocks.blocks.conversation import conversation_turn_brief
+    lines += conversation_turn_brief(
         api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
         payload_lines=payload_lines, can_write=can_write, provider=provider,
     )
@@ -491,7 +417,8 @@ def build_conversation_mention(
         lines += ["", policy]
     from modules.flow_gate.services import message_image_delivery
     context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
-    text = terminal_prompt.prepare("\n".join(lines), kind="chat", locale=_locale(locale),
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    text = compose(["\n".join(lines)], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)
@@ -586,6 +513,30 @@ def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     return "\n".join(parts)
 
 
+def _rejection_history(doc: dict) -> list:
+    history = doc.get("rejection_history") or []
+    if isinstance(history, str):
+        try:
+            history = json.loads(history) or []
+        except Exception:  # noqa: BLE001 — a malformed column must not block the rework
+            history = []
+    return history
+
+
+def compose_rework_mention(base: str, doc: dict, reject_reason: Optional[str], *, handoff: str = "") -> str:
+    """The one rework composition: rejection section, then the previous-run handoff, then ``base``.
+
+    ``build_rework_mention`` here and the route's
+    ``ai_invoke_routes.build_rework_mention`` each carried their own copy of this assembly. Both now
+    call this. Empty leading chunks are dropped, and when both are empty ``base`` comes back as is.
+    Both chunks already end in a blank line, so joining on "\n" leaves exactly one blank line
+    between every pair.
+    """
+    section = build_rejection_section(_rejection_history(doc), reject_reason or doc.get("rejection_reason"))
+    leading = [chunk for chunk in (section, handoff) if chunk]
+    return "\n".join(leading) + "\n" + base if leading else base
+
+
 def build_rework_mention(
     *,
     doc_id: str,
@@ -620,13 +571,6 @@ def build_rework_mention(
     from modules.flow_gate.db import documents as db_documents
 
     doc = db_documents.get_by_id(doc_id) or {}
-    history = doc.get("rejection_history") or []
-    if isinstance(history, str):
-        try:
-            history = json.loads(history) or []
-        except Exception:  # noqa: BLE001 — a malformed column must not block the rework
-            history = []
-    section = build_rejection_section(history, reject_reason or doc.get("rejection_reason"))
     base = _token_routes._build_mention_for_token(
         doc_ref=doc_id,
         group_id=group_id,
@@ -641,7 +585,7 @@ def build_rework_mention(
     )
     if not base:
         return None
-    mention = section + "\n" + base if section else base
+    mention = compose_rework_mention(base, doc, reject_reason)
     # re-applies the same item's WorkPlan pre-instruction — the
     # reviewer never sees this (its own prompt is a different assembly, review_mention.py),
     # only the worker being asked to fix the document does. May raise
@@ -762,19 +706,19 @@ _PRE_INSTRUCTION_ATTACHMENT_LINES = {
         "이 단계에는 WorkPlan 사전지시 첨부 파일이 1개 있습니다.\n"
         "- 원래 파일명: {original}\n"
         "- 읽어야 할 대상: 문서 {doc_id}의 첨부 \"{filename}\""
-        " (도움말 document_attachments의 읽기 경로로 읽으세요)"
+        " (도움말 attachments/read의 읽기 경로로 읽으세요)"
     ),
     "en": (
         "This step has one WorkPlan pre-instruction attachment.\n"
         "- Original filename: {original}\n"
         "- Read target: attachment \"{filename}\" on document {doc_id}"
-        " (use the read path from the document_attachments help item)"
+        " (use the read path from the attachments/read help leaf)"
     ),
     "ja": (
         "このステップには WorkPlan 事前指示の添付ファイルが1つあります。\n"
         "- 元のファイル名: {original}\n"
         "- 読み取り対象: 文書 {doc_id} の添付 \"{filename}\""
-        " (document_attachments のヘルプ項目の読み取り経路を使用してください)"
+        " (attachments/read のヘルプ項目の読み取り経路を使用してください)"
     ),
 }
 

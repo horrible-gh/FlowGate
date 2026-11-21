@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from modules.flow_gate.api.v1 import help_routes
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import events as db_events
-from modules.flow_gate.services import auth_outbound, remote_tool_service, token_service
+from modules.flow_gate.services import auth_outbound, remote_tool_service, token_service, tool_registry
 from modules.flow_gate.settings import source_mode_service
 
 
@@ -65,20 +65,26 @@ def test_list_read_write_read_none_shapes(monkeypatch, token_rec, expected_kind,
     assert body["kind"] == expected_kind
     assert [tool["name"] for tool in body["tools"]] == expected_names
     assert body["detail_url"].endswith("/help/tools/{name}")
-    scratch_notes = [note for note in body["notes"] if "0382" in note]
-    assert bool(scratch_notes) is (expected_kind == "read_write")
+    # An AI token reads the summary -- name, one line and path per tool, plus the
+    # names of the attachment operations it may call. The notes (scratch rule included), the
+    # attachment block and the examples are one call deeper (/help/tools/{name}).
+    assert all(set(tool) == {"name", "path", "summary"} for tool in body["tools"])
+    assert "notes" not in body and "document_attachments" not in body
+    assert body.get("attachments", []) == tool_registry.attachment_names(expected_kind)
 
 
 def test_query_locale_precedes_x_locale_and_invalid_folds_ko(monkeypatch):
     client = _client(monkeypatch, {"project": "flowgate", "action_scope": "review"})
     preferred = client.get("/api/v1/help/tools?locale=en", headers={"x-locale": "ja"})
-    assert preferred.json()["locale"] == "en"
-    assert preferred.json()["tools"][0]["summary"].startswith("Read a single")
+    assert preferred.json()["tools"][0]["summary"] == "Read a file"
 
     invalid = client.get("/api/v1/help/tools?locale=zh", headers={"x-locale": "ja"})
     assert invalid.status_code == 200
-    assert invalid.json()["locale"] == "ko"
-    assert invalid.json()["tools"][0]["summary"] == "원격 프로젝트 소스의 파일 하나를 읽는다."
+    assert invalid.json()["tools"][0]["summary"] == "파일 읽기"
+
+    # The full sentence of the same tool is still served, per tool, one call deeper.
+    detail = client.get("/api/v1/help/tools/read?locale=en").json()["tool"]
+    assert detail["summary"].startswith("Read a single")
 
 
 @pytest.mark.parametrize("name", ["read", "write"])

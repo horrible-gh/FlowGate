@@ -232,6 +232,12 @@ class Harness(SimpleNamespace):
         return result
 
     def observe(self):
+        # One read connection per observation, retaining the caller's transaction
+        # at T1. Every table is still queried on every observation: no stale cache.
+        with self.db.transaction():
+            return self._observe()
+
+    def _observe(self):
         tables={r['name'] for r in self.db._fetch_all("SELECT name FROM sqlite_master WHERE type='table'")}
         def rows(table, where=''):
             return self.db._fetch_all('SELECT * FROM '+table+where) if table in tables else []

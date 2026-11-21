@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell ref="shell" :open="true" :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))" :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))" :initial-width="initialWidth" :initial-height="initialHeight"
+  <ModelessShell kind-color="#e7a244" ref="shell" :open="true" :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))" :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))" :initial-width="initialWidth" :initial-height="initialHeight"
     :min-width="540" :min-height="350" :minimized="win.minimized" @update:minimized="win.minimized = $event" @close="requestClose">
     <template #header><span class="step-title" data-test="wp-step-title"><span class="step-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path :d="paletteIconPath('pencil')" /></svg></span><strong>{{ t('title') }}</strong><span class="step-title-context">{{ target ? t('heading', { card: cardLabel, doc: docLabel }) : '—' }}</span><span v-if="dirty" :title="t('dirty')">●</span></span></template>
     <div class="step-window" data-test="wp-step-window" :data-row="target?.rowId" :data-window="win.id">

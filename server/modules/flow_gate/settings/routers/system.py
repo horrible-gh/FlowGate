@@ -14,9 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from modules.flow_gate.rbac.decorators import require_permission
-from modules.flow_gate.settings import verify_policy
-from modules.flow_gate.settings.system_settings_service import (
-    VERIFY_RUNS_ERROR, VERIFY_TIMEOUT_ERROR, get_all, get_system_info, set_values)
+from modules.flow_gate.settings.system_settings_service import get_all, get_system_info, set_values
 from modules.flow_gate.storage.paths import describe_storage_root, get_storage_root_info
 
 router = APIRouter(prefix="/system", tags=["SystemSettings"])
@@ -29,7 +27,7 @@ class SettingsPatch(BaseModel):
             "Setting key-value pairs. Allowed keys: "
             "storage_root, log_retention_days, log_level, jwt_expiry_minutes, "
             "refresh_token_expiry_days, mail_smtp_host, mail_smtp_port, mail_from, "
-            "ai_repeat_count_max, verify_max_runs, verify_run_timeout_sec, scratch_ttl_value, scratch_ttl_unit"
+            "ai_repeat_count_max, scratch_ttl_value, scratch_ttl_unit"
         )
     )
 
@@ -80,20 +78,6 @@ def update_settings(body: SettingsPatch, user=Depends(require_permission("system
             raise HTTPException(
                 status_code=422,
                 detail={"code": "ai_repeat_count_out_of_range", "params": {"min": 1, "max": 30}},
-            )
-        # the two verification defaults get a stable code the client keys its i18n off of.
-        if str(exc) == VERIFY_RUNS_ERROR:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "verify_max_runs_out_of_range",
-                        "params": {"min": verify_policy.MAX_RUNS_MIN}},
-            )
-        if str(exc) == VERIFY_TIMEOUT_ERROR:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "verify_run_timeout_out_of_range",
-                        "params": {"min": verify_policy.TIMEOUT_MIN_SEC, "max": verify_policy.TIMEOUT_MAX_SEC,
-                                   "step": verify_policy.TIMEOUT_STEP_SEC}},
             )
         raise HTTPException(status_code=422, detail=str(exc))
     return {"updated": results}

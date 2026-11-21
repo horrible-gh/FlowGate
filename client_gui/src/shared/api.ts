@@ -21,6 +21,9 @@ interface RefreshResponse {
   token_type?: string
 }
 
+import { notifyGetRetry } from './requestRecovery'
+import { createConnectionRecovery } from './connectionRecovery'
+
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
   /** B4: how many times this GET was already re-sent after a transient failure. */
@@ -729,8 +732,26 @@ export const shouldRetryGet = (error: AxiosError): boolean => {
   return error.code === 'ERR_NETWORK' && count < GET_RETRY_MAX
 }
 
+// A raw axios request bypasses this instance's retry, diagnostics and refresh interceptors.
+// The endpoint performs an uncached-per-request DB read even when auth caches are warm.
+const connectionRecovery = createConnectionRecovery(
+  signal => axios.get(`${getBaseUrl()}/auth/connection-check`, {
+    signal, timeout: 5000,
+    headers: { Authorization: `Bearer ${window.__accessToken__ || sessionStorage.getItem('fg_access_token') || ''}` },
+  }),
+  () => window.dispatchEvent(new Event('fg:connection_recovered')),
+)
+
+const isRecoveryFailure = (error: AxiosError): boolean => {
+  const config = error.config
+  if (config?.method?.toLowerCase() !== 'get' || config.signal?.aborted || error.code === 'ERR_CANCELED') return false
+  return error.response ? GET_RETRY_STATUSES.has(error.response.status)
+    : isTimeoutError(error) || error.code === 'ERR_NETWORK'
+}
+
 api.interceptors.response.use(
   (response: AxiosResponse) => {
+    if (response.config.method?.toLowerCase() === 'get') connectionRecovery.success()
     if (treeTimings.has(response.config)) void flushPendingTreeReports()
     return response
   },
@@ -747,9 +768,12 @@ api.interceptors.response.use(
     if (originalRequest && shouldRetryGet(error)) {
       const attempt = originalRequest._getRetryCount ?? 0
       originalRequest._getRetryCount = attempt + 1
+      notifyGetRetry(originalRequest.url ?? '', originalRequest.params)
       await sleep(getRetryDelayMs(attempt))
       return api(originalRequest)
     }
+
+    if (isRecoveryFailure(error)) connectionRecovery.start()
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry) {
       return Promise.reject(error)

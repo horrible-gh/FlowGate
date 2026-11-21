@@ -45,6 +45,112 @@ Keep the existing census and its allowlist unchanged.
 
 ---
 
+### Selecting areas to run (0053 A1, A2)
+
+To verify only the server features you changed, run from `server/`.
+
+```text
+python -m pytest tests -q -rEf --changed=flowgate/gate_decisions/service.py --tier=veryfast
+python -m pytest tests -q -rEf --changed=flowgate/gate_decisions/service.py --tier=fast
+python -m pytest tests -q -rEf -n 2 --dist loadfile --changed=flowgate/gate_decisions/service.py
+python -m pytest tests -q -rEf -n 2 --dist loadfile --area=git.merge --tier=heavy
+```
+
+### Card worker test rules (0053)
+
+If a card changed server source, follow only these steps. Do not run the whole suite.
+
+1. **While editing**: `--changed=<changed paths> --tier=veryfast`. After finishing a chunk, `--tier=fast`.
+2. **When finishing the card**: pass only `--changed=<changed paths>` (= standard). Use it with
+   `-n 2 --dist loadfile` and `parallel_share 2`. Record this result as the TR's verification evidence.
+3. **Run heavy or slow only for these changes**, once, with the changed sub-area as `--area`.
+   - heavy: source of one sub-area changed across several files.
+   - slow: `sql/migrations/**`, `db_bootstrap.py`, `modules/flow_gate/db/connection.py`/`dialect.py`,
+     or `modules/flow_gate/services/git/**` changed.
+4. Pass **every changed file** to `--changed`, comma-separated (paths relative to `server`). Include
+   changed test files. Every path left out is verification left out.
+5. Do not use `--install-check` or `python -m pytest tests` without an area option in a card.
+6. If the client changed, run `npm run test:related -- <changed files>` and `npm run typecheck`.
+
+Send it as a Self-check request like this (a single `python`, no shell operators).
+
+```json
+{"program": "python",
+ "args": ["-m", "pytest", "tests", "-q", "-rEf", "-n", "2", "--dist", "loadfile",
+          "--changed=modules/flow_gate/services/git/branch_merge.py,tests/modules/flow_gate/test_x.py"],
+ "cwd": "server", "parallel_share": 2}
+```
+
+For parallel runs, also set `parallel_share` as the existing guidance says. The top-level areas are
+`ai`, `git`, `gate`, `selfcheck`, `document`, `conversation`, `graph`, `card`, `platform`, `db` and
+`guard`. The seven large areas are split into sub-areas (0053, 36 in total).
+
+| Top level | Sub-areas |
+|---|---|
+| ai | `ai.roles` `ai.run` `ai.invoke` `ai.agent` `ai.provider` |
+| git | `git.remote` `git.merge` `git.recovery` `git.worktree` `git.core` |
+| document | `document.edit` `document.tr2` `document.attach` `document.core` |
+| conversation | `conversation.question` `conversation.command` `conversation.chat` `conversation.mention` `conversation.turn` |
+| graph | `graph.attempt` `graph.run` `graph.definition` `graph.root` `graph.workflow` |
+| card | `card.workplan` `card.review` `card.settings` `card.completion` |
+| platform | `platform.auth` `platform.scratch` `platform.settings` `platform.api` |
+
+`--area` accepts several areas separated by commas. A top-level name (`--area=ai`) selects all of
+its sub-areas. `--changed` selects **only the sub-areas** matching the changed source. Source that
+cannot be assigned to a single sub-area (the shared DB foundation) selects several sub-areas.
+`services/git/**` and `graph_workflow/**` belong as a whole to `git.core` and `graph.definition`,
+but their **shared parts** (`command.py`, `lock_manager.py`, `refs.py`, `graph_model.py`,
+`flow_guard.py`, `errors.py` and so on) are also listed in the `source` of each sibling sub-area
+that imports them directly. So changing `git/command.py` runs merge, recovery and worktree along
+with git.core, while changing `git/branch_merge.py` runs only git.core and git.merge. When a sibling
+sub-area starts importing a shared part, add that file to the sub-area's `source` (`also` was not
+used because it would make any git source run all of git).
+A sub-area targets at most 40 test files and, up to standard, 60 seconds with 2 workers.
+`--changed` takes **paths relative to `server`**. Several paths together with `--area` form a
+union. A test file path selects that file's area. Unknown paths or areas fail before the run.
+Shared DB foundation changes select several areas, so verify them in TS when they exceed a small
+work budget.
+
+The `tests` lists in `tests/areas.toml` decide each file's primary area. When you add a new
+`test_*.py`, register it in the map too. For an exception, declare it as a string at the top of the
+module, such as `pytestmark = pytest.mark.area("gate")` (it also works inside a marker list). Areas
+are per file; a per-function area mark is not a selection criterion.
+Quote TOML sub-area names, as in `[area."conversation.chat"]`.
+`also` lists areas to verify together and expands one level only, from standard upward (veryfast
+and fast do not expand). `source` patterns may overlap across areas. Patterns apply to POSIX paths
+with fnmatch, and `*` also matches `/`.
+`tests/architecture/test_test_areas.py` checks for missing or duplicated mappings and empty patterns.
+
+Files outside the selected areas are excluded before import. selected/excluded in the summary
+count files in the map; collected counts files actually collected by this command (it may include
+tests skipped by tier). Without an area option everything is collected (tiers still stop at
+standard). Tiers follow the A3 measurement rules below. Do not read the old measurement table below
+as the runtime of the new areas.
+
+Run the client from `client_gui/`.
+
+```text
+npm run test:related -- src/features/git/api.ts
+npm run test:area -- git
+npm run test:area -- designer
+npm run test:areas:check
+npm run typecheck
+```
+
+`test:related` picks related specs from Vitest's import graph. It can miss structure checks that
+read files as text and dynamic dependencies, so verify such changes with `test:area` over the whole
+area. `test:area` accepts several areas separated by commas or spaces; the top-level name `designer`
+selects its three children. The areas are `shell`, `ai`, `conversation`, `document`, `git`,
+`project`, `settings`, `workplan`, `designer.inspector`, `designer.run` and `designer.canvas`. It
+fails without arguments or with an unknown area.
+Paths in `tests/areas.json` are relative to client_gui, and `*` also covers subpaths (the same as
+the server map). Register each new spec in exactly one area. The remaining designer.canvas files
+are kept as an explicit list, so update the list when adding one. `source` is a reference for the
+changed area; test:related uses imports, not this map.
+An area run also fails if it finds missing or duplicated entries or empty patterns in the whole map.
+`test:areas:check` and the server's `tests/architecture/test_test_areas.py` check the same ownership
+rules. `npm test` still runs everything. The client runtime budget has not been measured yet.
+
 ## 1. Execution tiers
 
 ### Why tiers?
@@ -61,15 +167,38 @@ behind R0001 §6: separate execution tiers instead of removing tests for being s
 ```bash
 cd server
 
-python -m pytest tests --tier=fast       # Quick regression checks during development
-python -m pytest tests --tier=standard   # Completion verification
-python -m pytest tests                   # Release / major refactoring (full, the default)
+python -m pytest tests --changed=<path> --tier=veryfast   # frequently while editing
+python -m pytest tests --changed=<path> --tier=fast       # right after finishing a chunk
+python -m pytest tests --changed=<path>                   # when finishing a card (= --tier=standard)
+python -m pytest tests --area=<area> --tier=heavy         # after a large change to that area
+python -m pytest tests --area=<area> --tier=slow          # risky changes such as migrations or git integration
+python -m pytest tests --install-check                    # install check: everything
 ```
 
-Without `--tier`, all tests run. The full default is intentional: existing commands
-and scripts must not silently start running fewer tests.
+There are five tiers and they are **cumulative**: choosing a tier also runs every tier below it
+(0053, 2026-11-20).
 
-| Tier | Purpose | Selected tests | Measured time |
+| Tier | Time per file | Target per sub-area (2 workers) | When |
+|---|---:|---:|---|
+| veryfast | 1 s or less | 10 s | frequently while editing code |
+| fast | 5 s or less | 30 s | right after finishing a chunk |
+| standard | 15 s or less | 60 s | when finishing a card (default) |
+| heavy | 30 s or less | 120 s | when finishing a card that changed that area substantially |
+| slow | 120 s or less | 300 s | only after risky changes such as DB migrations or git integration |
+
+Without `--tier` the tier is **standard**. The full tier, meaning "everything", was removed.
+`--tier=full` fails with a note to use `--install-check` for an install check.
+
+The **install check** (`--install-check`) runs everything regardless of tier. Files over 120 s in
+total, e2e and `@pytest.mark.install` belong to no tier and run only here. It is for a user who has
+just installed FlowGate, not for cards or daily work. The environment variable
+`FLOWGATE_REQUIRE_FULL_SUITE=1` is the same switch. In an install check, missing host capabilities
+are failures.
+
+The table below holds **2026-08 measurements** from the former three tiers (fast/standard/full),
+not the times of the current tiers.
+
+| Former tier | Purpose | Selected tests | Measured time |
 |---|---|---:|---:|
 | fast | During development | 1,614 | ~110 s |
 | standard | Completion verification | 2,822 | ~340 s |
@@ -97,16 +226,157 @@ a runtime improvement.
 
 `_tier_for_module` in `server/tests/conftest.py` assigns tiers in this order:
 
-1. An explicit `@pytest.mark.fast`, `.standard`, or `.full` wins. It may be applied
-   to a test, class, or module (`pytestmark`).
-2. Otherwise, classify mechanically from module source:
-   * fast: no `TestClient`, `subprocess`/Git, or `sleep(`.
-   * standard: no Git/subprocess and no e2e, dialect, migration, worktree, or git filename category.
-   * full: everything else.
+1. An explicit `@pytest.mark.veryfast`, `.fast`, `.standard`, `.heavy`, `.slow`, or `.install`
+   wins. It may be applied to a test, class, or module (`pytestmark`).
+2. If `tests/timings.json` has a valid serial record, the file total decides: 1 s or less
+   veryfast, 5 s or less fast, 15 s or less standard, 30 s or less heavy, 120 s or less slow, and
+   anything longer belongs to the install check.
+3. Without a record, with an incomplete one, or when the file hash changed, the tier is
+   **standard**, so an unmeasured file does not slip into the frequently run veryfast and fast
+   tiers. However:
+   * a file that uses `subprocess`/git, or whose name is in the dialect, migration, worktree, or
+     git category, is heavy;
+   * an e2e file belongs to the install check;
+   * a file with no baseline because it failed, but observed running over 60 s in M1
+     (`measurement.ineligible_files_over_60s` in `timings.json`), moves up to the tier matching
+     that time (slow or the install check).
+   Once measured, rule 2 puts it in place.
 
 Rules are preferable to a file list because a new file could otherwise fall into
 no tier. Rules classify every new file immediately; only exceptions need an
 explicit marker at the top of the file.
+
+### Per-file timing records and budget report (0053 A3)
+
+From `server/`, `--fg-timings-out=<path outside the repository>` writes the sum of
+setup/call/teardown per file as JSON. Under xdist the controller aggregates the reports in one
+place. Startup, import and collection time are not included, and a parallel total is not a serial
+measurement.
+
+```text
+python -m pytest tests -q --fg-timings-out=/tmp/flowgate-timings.json
+python tools/test_budget.py --timings /tmp/flowgate-timings.json
+```
+
+The first command runs from `server`, the second from the repository root. On Windows use a real
+temporary path outside the repository. Full measurements are done in the M1 measurement card; task
+verification measures only the affected files. Each run replaces the output; it is never merged
+into an earlier measurement automatically.
+
+`server/tests/timings.json` is the committed baseline, with version 1 and a files object. It holds
+the split serial records of the 515 valid files from the 2026-11-20 M1. Each key is a test path
+relative to `server`, and each value has seconds, seconds_by_marker (auto or an explicit marker
+name), sha256 and eligible. The output also records the measurement time and exit code. Serial
+results reviewed in M1 are applied to the baseline.
+
+Incomplete records (parallel runs, `-k`/`-m`, node id selection, skips, failures, interruptions)
+are never used as a baseline. A file with even one test skipped because of its tier has a skip, so
+it does not become a baseline either. To measure the heavy, slow and install-check files too, add
+`--install-check`. Every collected item of a file must report all three phases. When a file hash
+changes, its earlier record is ignored. An explicit tier marker always wins over a timing record.
+
+The budget report (`python tools/test_budget.py`) shows, per sub-area, the cumulative serial work
+time of each tier, the number of unmeasured files missing from that total (`+N`), and the number of
+install-check files. Time assigned by a marker counts toward that tier. When a sub-area has more
+than 40 files, or a tier's serial total ÷ 2 exceeds that tier's target, it is listed after `SPLIT:`
+as a candidate to split; this is not a failure. Serial total ÷ 2 is an ideal lower bound, not wall
+time, so confirm targets with a parallel measurement. With unmeasured files the total is
+incomplete.
+
+### M1 split serial measurement — 2026-11-20 (0053)
+
+Run without xdist on Windows 11, Python 3.14.2 and pytest 8.3.4. Because of the 1800-second limit
+on chat commands, files ran per area, then sequentially in batches of at most 20 and later 10
+files. Within each file everything ran without a tier limit (full at the time). The conditions
+differ from a regression run of everything in a single process.
+The measurement window was 08:38:00–14:16:08 (UTC+09), **5 hours 38 minutes 8 seconds** elapsed.
+
+837 files were run and 830 produced timing records. Only the 515 valid files went into `files` of
+`tests/timings.json`. The 315 ineligible files (failures, errors, skips, xfails and so on) and the
+7 without records were left out of the baseline. These 322 are classified by the no-record rule
+(rule 3 above) and are not treated as 0 seconds.
+
+The main measurement totaled **20,430 passed, 1,829 failed, 453 errors, 158 skipped, 1 xfailed**.
+Six more files had collection errors. The first, interrupted selfcheck-3/git-3 runs were replaced
+by remeasurements and excluded from the total, and the 19 passed recorder regression checks are not
+added to it either. These numbers come from split runs and do not mean the whole suite passes.
+Fixing the test failures found was not part of this measurement.
+
+The timing recorder hit an internal error when a test reported while `os.name` was temporarily
+changed, because it rebuilt the path at that point. It now reuses the per-node-id path computed at
+collection; a regression check that keeps the platform change through teardown and the 19 existing
+serial and parallel checks pass. The failed git-3 was remeasured and finished normally with 154
+passed and 2 failed. The changed recorder test file was updated with the latest hash and time from
+the verification run.
+
+Below is the **cumulative serial work time per tier** over valid records only, under the 11 areas
+and three tiers of the time (fast 5 s or less, standard 30 s or less, full everything). For the
+current sub-areas and five tiers, see `python tools/test_budget.py`. Import, collection and startup
+time are excluded. Every area has undetermined files, so whether a real area run meets its budget
+cannot be decided.
+
+| Area | Valid/total files | fast total (s) | standard total (s) | full total (s) | Undetermined files |
+|---|---:|---:|---:|---:|---:|
+| ai | 67/127 | 55.556 | 191.311 | 568.451 | 60 |
+| git | 65/102 | 27.454 | 228.186 | 2170.072 | 37 |
+| gate | 27/40 | 4.726 | 136.844 | 1483.001 | 13 |
+| selfcheck | 25/49 | 13.364 | 196.605 | 373.280 | 24 |
+| document | 59/92 | 22.199 | 201.878 | 1410.719 | 33 |
+| conversation | 69/115 | 37.837 | 263.895 | 679.773 | 46 |
+| graph | 84/117 | 31.967 | 331.881 | 1891.805 | 33 |
+| card | 36/78 | 6.534 | 177.238 | 1373.669 | 42 |
+| platform | 59/73 | 54.052 | 142.001 | 353.660 | 14 |
+| db | 8/16 | 4.620 | 25.097 | 129.303 | 8 |
+| guard | 16/28 | 10.478 | 51.476 | 124.674 | 12 |
+
+The fast total of valid records is 60 s or less in every area, but undetermined files and
+collection time are missing. For standard, even the ideal 2-worker lower bound is 131.948 s for
+conversation and 165.940 s for graph, over 120 s. The other areas' 2-worker wall time was not
+measured either, so none is judged as within budget.
+
+**49 valid files exceeded 60 seconds.** The ten longest are below. Among diagnostic records with
+failures or skips, 38 more files exceeded 60 seconds; they were kept out of the baseline and listed
+separately in `measurement.ineligible_files_over_60s` of `timings.json`.
+
+| Seconds | File (relative to server) |
+|---:|---|
+| 505.105 | `tests/flowgate/test_card_document_l3_states_0127.py` |
+| 493.723 | `tests/flowgate/test_fg_settings_retry_0126.py` |
+| 357.901 | `tests/flowgate/test_fg_integration_persistence_0156.py` |
+| 346.435 | `tests/test_fg_gate_run_resume_0132.py` |
+| 337.028 | `tests/test_fg_gate_push_sync_0132.py` |
+| 313.544 | `tests/modules/flow_gate/test_review_atomicity_0535.py` |
+| 272.201 | `tests/modules/flow_gate/test_branch_merge_attempt_0630.py` |
+| 260.253 | `tests/flowgate/test_card_document_l3_paths_0127.py` |
+| 207.825 | `tests/modules/flow_gate/test_system_agents_0076.py` |
+| 193.858 | `tests/flowgate/test_fg_document_rejection_0126.py` |
+
+Reproduce the full list of valid files over 60 seconds and the per-area budgets from the repository
+root.
+
+```text
+python tools/test_budget.py
+```
+
+The seven files without records are below. An independent collection recheck confirmed the same
+six collection errors.
+
+| File (relative to server) | Finding |
+|---|---|
+| `tests/integration/src_content/test_t509_src_content_routes.py` | Missing required Settings values ALLOWED_ORIGIN, CONTEXT, DB_TYPE |
+| `tests/modules/flow_gate/test_git_service_error_envelope_0233.py` | Same missing required Settings values |
+| `tests/modules/flow_gate/test_resolve_conflict_issue_lease_block_0447.py` | Same missing required Settings values |
+| `tests/modules/flow_gate/test_token_predecessor_parity_0061.py` | Same missing required Settings values |
+| `tests/test_remote_tool_move_0092.py` | Import of `test_remote_tool_group_worktree_routing_0671` fails |
+| `tests/test_test_card_gui_0094.py` | Import of `test_test_spec_0549` fails |
+| `tests/modules/flow_gate/test_mention_verification.py` | Only a `main` for direct runs, no pytest items |
+
+To read records of a large measurement file within output length limits, page the JSON like this.
+Continue until `next_offset` is null. This option does not change the source file.
+
+```text
+python tools/test_budget.py --timings <measurement JSON path> --records-offset 0 --records-limit 20
+```
 
 ### Client
 
@@ -310,11 +580,11 @@ soon as session functionality used it.
 `test_git_integration_0115.py` contains 107 tests. Without Git, all 107 disappear
 while the result still reports zero failures, just as a fully passing run does.
 Server tests therefore report host capabilities (Git, symlinks, API source tree,
-`run.bat`) and capability-related skip counts at the end. For release checks
+`run.bat`) and capability-related skip counts at the end. For install checks
 that must actually run the full suite, use:
 
 ```bash
-FLOWGATE_REQUIRE_FULL_SUITE=1 python -m pytest tests
+python -m pytest tests --install-check
 ```
 
 Missing host capabilities then fail instead of silently skipping tests.

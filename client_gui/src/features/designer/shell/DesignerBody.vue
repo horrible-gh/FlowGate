@@ -3,13 +3,16 @@
        get fixed widths from the layout state; the Center takes everything left over, down to
        its minimum. Narrower than that, only the Body scrolls sideways — columns never
        overlap. the earlier change: a resize handle sits on each Left / Right ↔ Center line
-       while that Dock is expanded; dragging it asks the Shell for a new Dock width. -->
+       while that Dock is expanded; dragging it asks the Shell for a new Dock width.
+       The widths passed in are the ones the person chose. When the Body is
+       too narrow for them and the Center minimum, the expanded Docks are drawn smaller here
+       (fitDockWidths) and the chosen widths are left alone; a wider Body shows them again. -->
   <div
     ref="bodyRef"
     class="designer-body"
     data-test="designer-body"
-    :data-left-width="leftWidth"
-    :data-right-width="rightWidth"
+    :data-left-width="fitted.left"
+    :data-right-width="fitted.right"
     :style="columns"
   >
     <slot name="left" />
@@ -17,29 +20,31 @@
       v-if="leftResizable"
       class="designer-body-resize is-left"
       axis="x"
-      :size="leftWidth"
+      :size="fitted.left"
       :grow="1"
       data-test="designer-left-resize"
       @resize="emit('resize-left', $event, bodyWidth())"
+      @resize-end="emit('resize-end')"
     />
     <slot name="center" />
     <DesignerResizeHandle
       v-if="rightResizable"
       class="designer-body-resize is-right"
       axis="x"
-      :size="rightWidth"
+      :size="fitted.right"
       :grow="-1"
       data-test="designer-right-resize"
       @resize="emit('resize-right', $event, bodyWidth())"
+      @resize-end="emit('resize-end')"
     />
     <slot name="right" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
-import { DESIGNER_CENTER_MIN_WIDTH } from './designerLayout'
+import { DESIGNER_CENTER_MIN_WIDTH, fitDockWidths, type DesignerFitKeep } from './designerLayout'
 
 const props = withDefaults(
   defineProps<{
@@ -51,14 +56,18 @@ const props = withDefaults(
     leftResizable?: boolean
     /** The right Dock is expanded, so its width can be dragged. */
     rightResizable?: boolean
+    /** The Dock dragged last keeps its width when the Body is too narrow. */
+    fitKeep?: DesignerFitKeep
   }>(),
-  { leftResizable: false, rightResizable: false },
+  { leftResizable: false, rightResizable: false, fitKeep: null },
 )
 
 // Each drag step carries the Body's own width, which the Shell's clamp keeps the Center's room in.
 const emit = defineEmits<{
   'resize-left': [width: number, bodyWidth: number]
   'resize-right': [width: number, bodyWidth: number]
+  /** A left / right handle was let go. */
+  'resize-end': []
 }>()
 
 const bodyRef = ref<HTMLElement | null>(null)
@@ -67,8 +76,34 @@ function bodyWidth(): number {
   return bodyRef.value?.clientWidth ?? 0
 }
 
+// The Body's own width, followed while the window changes size. 0 until it is
+// measured (and where there is no layout), which draws the chosen widths as they are.
+const measuredWidth = ref(0)
+let resizeObserver: ResizeObserver | null = null
+
+function measure(): void {
+  measuredWidth.value = bodyWidth()
+}
+
+onMounted(() => {
+  measure()
+  if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
+    resizeObserver = new ResizeObserver(measure)
+    resizeObserver.observe(bodyRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect?.()
+  resizeObserver = null
+})
+
+const fitted = computed(() =>
+  fitDockWidths(props.leftWidth, props.rightWidth, props.leftResizable, props.rightResizable, measuredWidth.value, props.fitKeep),
+)
+
 const columns = computed(() => ({
-  gridTemplateColumns: `${props.leftWidth}px minmax(${DESIGNER_CENTER_MIN_WIDTH}px, 1fr) ${props.rightWidth}px`,
+  gridTemplateColumns: `${fitted.value.left}px minmax(${DESIGNER_CENTER_MIN_WIDTH}px, 1fr) ${fitted.value.right}px`,
 }))
 </script>
 

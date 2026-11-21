@@ -1188,6 +1188,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
+  let pendingChatRecovery = false
+
   async function reloadChats(trace?: SubmissionTrace): Promise<void> {
     const scope = state.scope
     if (!scope) return
@@ -1195,6 +1197,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const request = ++chatsRequest
     const revisions = new Map(titleRevisions)
     const userId = draftUserId()
+    pendingChatRecovery = false
     state.chatsStatus = 'loading'
     state.chatsError = null
     try {
@@ -1215,16 +1218,26 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.chats = [...unlistedChats.values(), ...merged]
       titleGuard.listRevision++
       state.chatsStatus = 'ready'
+      pendingChatRecovery = false
     } catch (error) {
       trace?.mark('list_end', { result: 'error' })
-      if (disposed || gen !== scopeGen || request !== chatsRequest) return
+      if (disposed || gen !== scopeGen || request !== chatsRequest || userId !== draftUserId()) return
       state.chatsStatus = 'error'
       state.chatsError = messageOf(error)
+      if (pendingChatRecovery) {
+        pendingChatRecovery = false
+        await reloadChats()
+      }
     }
   }
 
   function recoverChatList(): Promise<void> {
-    if (disposed || !state.scope || state.chatsStatus !== 'error') return Promise.resolve()
+    if (disposed || !state.scope) return Promise.resolve()
+    if (state.chatsStatus === 'loading') {
+      pendingChatRecovery = true
+      return Promise.resolve()
+    }
+    if (state.chatsStatus !== 'error') return Promise.resolve()
     return reloadChats()
   }
 

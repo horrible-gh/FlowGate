@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
+import { notifyGetRetry } from '@shared/requestRecovery'
 import { registerAppMessages } from '@/app/i18n'
 import { ConversationPanel } from '@/features/conversation'
 import type { ConversationSession } from '@/features/conversation/conversationSession'
@@ -67,6 +68,53 @@ async function mountWithFailedList() {
 }
 
 describe('v02gui.0017 B3 — the failed chat list recovers by itself', () => {
+  it('remembers recovery while loading and merges repeated signals into one retry', async () => {
+    const { source, session, stream } = await mountWithFailedList()
+    let reject!: (error: unknown) => void
+    source.listChats.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+    const loading = session.recoverChatList()
+    await stream.reconnect()
+    await stream.reconnect()
+    expect(source.listChats).toHaveBeenCalledTimes(2)
+    reject(httpError(503, 'unavailable'))
+    await loading
+    expect(source.listChats).toHaveBeenCalledTimes(3)
+    expect(session.state.chatsStatus).toBe('ready')
+  })
+
+  it('consumes pending recovery even when that one retry also fails', async () => {
+    const { source, session, stream } = await mountWithFailedList()
+    let reject!: (error: unknown) => void
+    source.listChats.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+    source.listChats.mockRejectedValueOnce(httpError(503, 'still unavailable'))
+    const loading = session.recoverChatList()
+    await stream.reconnect()
+    reject(httpError(503, 'unavailable'))
+    await loading
+    expect(source.listChats).toHaveBeenCalledTimes(3)
+    expect(session.state.chatsStatus).toBe('error')
+  })
+
+  it('does not retry a successful read just because recovery arrived during loading', async () => {
+    const { source, session, stream } = await mountWithFailedList()
+    let resolve!: (chats: Awaited<ReturnType<typeof source.listChats>>) => void
+    source.listChats.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const loading = session.recoverChatList()
+    await stream.reconnect()
+    notifyGetRetry('/api/v1/documents', { project_id: 'other', group_id: 'other', type_code: 'CH' })
+    await flushPromises()
+    expect(wrapper!.text()).not.toContain('다시 연결하는 중')
+    notifyGetRetry('/api/v1/documents', { project_id: 'p', group_id: 'p.m.0001', type_code: 'CH' })
+    await flushPromises()
+    expect(wrapper!.text()).toContain('다시 연결하는 중')
+    resolve([])
+    await loading
+    await flushPromises()
+    expect(wrapper!.text()).not.toContain('다시 연결하는 중')
+    expect(source.listChats).toHaveBeenCalledTimes(2)
+    expect(session.state.chatsStatus).toBe('ready')
+  })
+
   it('reads the list again when the event stream reconnects', async () => {
     const { source, session, stream } = await mountWithFailedList()
     expect(stream.size).toBeGreaterThan(0) // subscribed although no chat is open

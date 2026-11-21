@@ -196,8 +196,20 @@ def _write_doc_file(storage_root: Path, rel_path: str, body: str) -> None:
     target.write_text(body, encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def document_write_gate():
+    """Register the real startup gate in this isolated app, then restore it."""
+    from flowgate.card_document_edit import write_gate
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(card_document_ports._handlers,
+                   card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+        yield
+
+
 @pytest.fixture(scope="module", autouse=True)
-def seed_data(tmp_db, storage_root):
+def seed_data(tmp_db, storage_root, patch_store, document_write_gate):
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.db import projects, users
@@ -333,7 +345,9 @@ def test_section_by_name_returns_the_heading_line_and_its_body(tmp_path):
     assert data["heading"] == "### 2.1 현재 구성"
     assert data["text"].startswith("### 2.1 현재 구성"), "제목 줄 자신도 포함한다"
     assert MARKER in data["text"]
-    assert data["lines"] == 4 and data["truncated"] is False and data["next_locator"] is None
+    # An AI token reads the answer without its empty fields -- no continuation
+    # means no ``next_locator`` key (the console-user shape keeps the null, see the test below).
+    assert data["lines"] == 4 and data["truncated"] is False and "next_locator" not in data
 
 
 def test_section_by_name_id_lines_and_chars_all_agree(tmp_path):
@@ -496,10 +510,54 @@ def test_meta_of_an_unreadable_body_is_still_200(tmp_path):
     })
     resp = _get(f"/api/v1/document/{doc_id}/meta", _bearer(tmp_path))
     assert resp.status_code == 200
+    # For an AI token the null fingerprint and outline url are left out.
     assert resp.json()["body"] == {
         "state": "file_path_missing", "present": False, "chars": 0, "lines": 0, "body_line_start": 1,
-        "section_total": 0, "content_sha256": None, "outline_url": None,
+        "section_total": 0,
     }
+
+
+def _console_user(monkeypatch):
+    from modules.flow_gate.api.v1 import document_routes
+
+    monkeypatch.setattr(
+        document_routes, "verify_bearer", lambda request: {"_is_user_jwt": True, "issued_to": "usr_test_001"}
+    )
+
+
+def test_a_console_user_keeps_every_field_of_meta_and_section(tmp_path, monkeypatch):
+    """Only an AI token is slimmed; a person's answer is byte for byte what it was."""
+    worker = _bearer(tmp_path)
+    ai_meta = _get(f"/api/v1/document/{DOC_NR}/meta", worker)
+    ai_section = _get(f"/api/v1/document/{DOC_NR}/section?section=2.1 현재 구성", worker)
+    _console_user(monkeypatch)
+    human_meta = _get(f"/api/v1/document/{DOC_NR}/meta", "console")
+    human_section = _get(f"/api/v1/document/{DOC_NR}/section?section=2.1 현재 구성", "console")
+
+    meta = human_meta.json()
+    for key in ("ai_review", "ai_review_history", "test_run", "test_run_history", "rejection_history"):
+        assert key in meta, key
+    assert meta["ai_review"] is None and meta["rejection_history"] == []
+    section = human_section.json()
+    assert section["next_locator"] is None and section["candidates"] == []
+
+    # The AI answer is the same answer with the empty fields taken away -- nothing else differs.
+    from modules.flow_gate.services import ai_response_slim
+
+    assert ai_meta.json() == ai_response_slim.drop_empty(meta)
+    assert ai_section.json() == ai_response_slim.drop_empty(
+        section, keep=ai_response_slim.SECTION_KEEP, whole=ai_response_slim.SECTION_WHOLE)
+    assert set(ai_meta.json()) < set(meta) and set(ai_section.json()) < set(section)
+    assert len(ai_meta.text) < len(human_meta.text)
+    print(f"SIZE|meta:ai_vs_console|{len(ai_meta.text)}|{len(human_meta.text)}")
+    print(f"SIZE|section:ai_vs_console|{len(ai_section.text)}|{len(human_section.text)}")
+
+
+def test_outline_keeps_an_empty_items_list_for_an_ai_token(tmp_path):
+    """A document without headings is 200 with ``items: []`` -- the empty list is the answer."""
+    data = _get(f"/api/v1/document/{DOC_PLAIN}/outline", _bearer(tmp_path)).json()
+    assert data["items"] == []
+    assert data["section_total"] == 0 and data["truncated"] is False
 
 
 def test_outline_of_an_unreadable_body_is_404(tmp_path):

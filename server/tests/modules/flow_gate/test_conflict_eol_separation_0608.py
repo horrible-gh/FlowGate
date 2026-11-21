@@ -21,7 +21,7 @@ the reviewed manifest and in the commit alike.
 ``TestReplay0594`` replays the real 0594 merge from this repository's own history (the
 same inputs as the review) and measures files / chunks / mention size. The connected
 finalize → session → resolve-token path is in
-test_git_integration_0115.py::TestGitEndToEnd::test_eol_only_conflict_is_separated_and_lf_survives_resolution_0608.
+git_integration_0115/test_git_end_to_end_eol_only_conflict_is_separated_and_lf_survives_resolution_0608.py.
 """
 from __future__ import annotations
 

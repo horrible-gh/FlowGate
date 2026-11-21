@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
+  <ModelessShell kind-color="#f0a23a" v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
     :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 660)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <!-- the kind, then — muted, as the write window names its card — which case: its id and title once. -->

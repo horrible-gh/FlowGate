@@ -68,7 +68,7 @@ def _rev(repo, ref):
 
 
 @pytest.fixture()
-def git_env(product, monkeypatch, tmp_path_factory, request):
+def git_env(product, monkeypatch, tmp_path_factory, request, git_repositories):
     """A real bare origin, the project's Git config and the Flow's provisioned group slot."""
     from modules.flow_gate.services import git_service as svc
     from modules.flow_gate.services.git import instance_registry as reg
@@ -98,15 +98,7 @@ def git_env(product, monkeypatch, tmp_path_factory, request):
             print("isolated gate worktree preparation failed:", args, result.stderr)
         return result
     monkeypatch.setattr(svc, "_run_git", diagnosed_git)
-    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
-    _git(["init", "--bare", "-b", "main", str(bare)])
-    _git(["init", "-b", "main", str(seed)])
-    (seed / "README.md").write_text("hello\n", encoding="utf-8")
-    (seed / "shared.txt").write_text("base\n", encoding="utf-8")
-    _git(["add", "-A"], cwd=seed)
-    _git(["commit", "-m", "init"], cwd=seed)
-    _git(["remote", "add", "origin", str(bare)], cwd=seed)
-    _git(["push", "origin", "main"], cwd=seed)
+    bare, seed = git_repositories("gate-publish-0085", tmp_path)
     svc.save_config(PROJECT, {"repo_url": bare.as_uri(), "provider": "generic", "base_branch": "main",
                               "default_finalize_action": "merge", "enabled": True})
     assert svc.ensure_worktree(PROJECT, "v02", FA) == "ok"

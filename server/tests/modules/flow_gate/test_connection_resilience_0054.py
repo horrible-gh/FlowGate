@@ -59,6 +59,70 @@ def test_real_auth_revocation_stays_401(monkeypatch):
     with pytest.raises(HTTPException) as error: middleware.verify_token('test')
     assert error.value.status_code==401
 
+def test_db_failure_logs_request_id_without_exception_secrets(caplog):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.api.request_observability import RequestIdMiddleware
+    from modules.flow_gate.db.resilience import auth_unavailable
+
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+
+    @app.get("/probe")
+    def probe():
+        db = SimpleNamespace(pool_max=0, pool=SimpleNamespace(getconn=lambda: Conn(True)),
+            _is_stale=lambda c: False, _discard=lambda c: None)
+        try:
+            _checkout(db)
+        except OperationalError:
+            raise auth_unavailable(OperationalError("secret SQL parameter"))
+
+    response = TestClient(app).get("/probe", headers={"X-Request-ID": "recovery-0060"})
+    assert response.status_code == 503
+    lines = [record.getMessage() for record in caplog.records if "database" in record.getMessage()]
+    assert len(lines) == 2
+    assert all("request_id=recovery-0060" in line and "type=OperationalError" in line for line in lines)
+    assert "secret SQL parameter" not in caplog.text
+
+
+def test_route_db_outage_is_503_and_other_errors_stay_500():
+    """0060: a route that loses the DB after the cached auth check must answer 503, not 500."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.api.request_observability import RequestIdMiddleware, unhandled_error_response
+
+    app = FastAPI()
+    app.add_exception_handler(Exception, unhandled_error_response)
+    app.add_middleware(RequestIdMiddleware)
+
+    @app.get("/db-down")
+    def db_down():
+        raise OperationalError("connection lost")
+
+    @app.get("/db-down-wrapped")
+    def db_down_wrapped():
+        try:
+            raise OperationalError("connection lost")
+        except OperationalError as exc:
+            raise RuntimeError("load failed") from exc
+
+    @app.get("/bug")
+    def bug():
+        raise RuntimeError("plain bug")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    for path in ("/db-down", "/db-down-wrapped"):
+        response = client.get(path, headers={"X-Request-ID": "outage-0060"})
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+        assert response.headers["X-Request-ID"] == "outage-0060"
+        assert "connection lost" not in response.text
+    response = client.get("/bug", headers={"X-Request-ID": "bug-0060"})
+    assert response.status_code == 500
+    assert "Retry-After" not in response.headers
+    assert response.headers["X-Request-ID"] == "bug-0060"
+
+
 def test_parallel_token_ids_and_owned_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(token_scratch.storage_paths,'get_storage_root',lambda:tmp_path)
     monkeypatch.setattr(token_scratch.db_projects,'get_by_id',lambda _: {'project_name':'Project'})

@@ -105,7 +105,7 @@ flowgate.v02.0037 replaced Right Dock's placeholder with the Tool Panel.
 `DesignerRightDock` owns a one-row Palette/Conversation/Git Tabs header and body,
 mounting 0030 `PalettePanel`, 0031/0032 `ConversationPanel`
 (`@/features/conversation`), and 0033 `DesignerGitPanel` (`@/features/git`).
-Layout's `activeRightTool` (default `palette`) owns selection. Each component
+Layout's `activeRightTool` (default `conversation`) owns selection. Each component
 mounts on first display, then hides during switching/collapse to preserve its
 session (Git gets `active=false` while hidden). Conversation/Git receive Shell's
 current Project and active FlowRef. The Inspector remains in Center's Bottom Dock

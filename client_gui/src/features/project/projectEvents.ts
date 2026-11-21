@@ -163,14 +163,14 @@ function healthy(hub: Hub): boolean {
   return hub.retry === null && hub.stream !== null && hub.stream.readyState === EventSource.OPEN
 }
 
-type Revive = 'token' | 'online' | 'visible' | 'focus'
+type Revive = 'token' | 'online' | 'visible' | 'focus' | 'recovered'
 
 /**
  * ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
  * open stream is kept (see the header). A token signal that brings no new token leaves a connecting stream to the
  * browser (shared/api.ts may send one rotation twice: its own and a sibling tab's).
  */
-function revive(reason: Revive) {
+export function revive(reason: Revive) {
   // EventSource can be gone while a hub lingers (a test environment that removed it): nothing to reconnect with.
   if (typeof EventSource === 'undefined') return
   for (const [projectId, hub] of [...hubs]) {
@@ -180,10 +180,12 @@ function revive(reason: Revive) {
       continue
     }
     if (reason === 'token' && hub.retry === null && hub.stream !== null && hub.token === currentToken()) continue
+    if (reason === 'recovered') hub.missed = true
     replace(projectId, hub)
   }
 }
 
+const onRecovered = () => revive('recovered')
 const onTokenRefreshed = () => revive('token')
 const onOnline = () => revive('online')
 const onFocus = () => revive('focus')
@@ -196,11 +198,13 @@ function watchConnection(on: boolean) {
   if (on === windowListening || typeof window === 'undefined') return
   windowListening = on
   if (on) {
+    window.addEventListener('fg:connection_recovered', onRecovered)
     window.addEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.addEventListener('online', onOnline)
     window.addEventListener('focus', onFocus)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
   } else {
+    window.removeEventListener('fg:connection_recovered', onRecovered)
     window.removeEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.removeEventListener('online', onOnline)
     window.removeEventListener('focus', onFocus)

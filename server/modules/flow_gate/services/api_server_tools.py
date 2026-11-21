@@ -460,12 +460,18 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     ctx = help_catalog.resolve_context(token_rec, locale, base_url)
     envelope = {"ok": True, "version": help_catalog.VERSION, "base_url": ctx["base_url"], "locale": ctx["locale"]}
     item, child = tool_input.get("item"), tool_input.get("child")
+    if item and "/" in item:
+        item, slash_child = item.split("/", 1)
+        if child and child != slash_child:
+            raise ToolError(422, "schema_validation_failed", "Conflicting help child")
+        child = slash_child
     if not item:
         assembled = help_catalog.build_index(ctx)
-        return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "context": help_catalog.context_envelope(ctx), "items": assembled["items"], "hidden": assembled["hidden"]}
-    if item not in help_catalog.CATALOG_ORDER:
+        return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "items": assembled["items"]}
+    decision = help_catalog.decide_visibility(item, ctx)
+    if decision.reason == "unknown_item":
         return 404, {"ok": False, "http_status": 404, "error_message": f"Unknown help item: {item}", "help_url": help_url()}
-    if not help_catalog.decide_visibility(item, ctx).visible:
+    if not decision.visible:
         return 403, {"ok": False, "http_status": 403, "error_message": f"Help item '{item}' is not available for this token", "help_url": help_url()}
     try:
         if child:

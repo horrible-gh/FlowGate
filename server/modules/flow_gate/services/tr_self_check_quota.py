@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from flowgate.card_settings.verify_limits import resolve_verify_limits, system_limits
+from flowgate.card_settings.verify_limits import default_limits, resolve_verify_limits
 from modules.flow_gate.db import tr_self_check_runs as runs
 
 
@@ -22,7 +22,7 @@ def resolve(token: dict | None, target: dict | None = None) -> dict:
             "SELECT m.*, r.group_id AS flow_id FROM graph_run_token_map m JOIN graph_runs r ON r.run_id = m.run_id"
             " WHERE m.token_id = ?", [token["token_id"]])
     limits = (resolve_verify_limits(mapping["flow_id"], mapping["node_key"])
-              if mapping else system_limits())
+              if mapping else default_limits())
     origin = None
     if token.get("ai_run_id") and store.table_exists("ai_role_invocations"):
         origin = store._fetch_one(

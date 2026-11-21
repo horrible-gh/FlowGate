@@ -581,7 +581,7 @@ def test_quota_three_starts_then_refusal_and_timeout_clamp(env):
     from modules.flow_gate.services import tr_self_check_quota as quota
     for remaining in (2, 1, 0):
         row = env.admit(DOCS[P][0], timeout_seconds=3600)
-        assert row["timeout_seconds"] == 180
+        assert row["timeout_seconds"] == 120                    # clamped to the card default of 2 minutes
         assert row["verification"]["remaining"] == remaining + 1
         assert queue.dispatch_once()
         final = service.public(_row(row["self_check_run_id"]))
@@ -605,7 +605,7 @@ def test_quota_waiting_superseded_cancelled_and_invalid_cost_nothing(env):
         env.admit(DOCS[P][0], timeout_seconds=0)
     third = env.admit(DOCS[P][0], timeout_seconds=10)
     assert third["verification"]["remaining"] == 3 and third["timeout_seconds"] == 10
-    assert third["verification"]["run_timeout_sec"] == 180
+    assert third["verification"]["run_timeout_sec"] == 120
 
 
 def test_quota_failed_and_timed_out_runs_count(env):

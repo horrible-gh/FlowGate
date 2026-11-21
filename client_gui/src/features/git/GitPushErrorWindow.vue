@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#52b788"
     :open="true"
     :title="win.title"
     :minimized="win.minimized"

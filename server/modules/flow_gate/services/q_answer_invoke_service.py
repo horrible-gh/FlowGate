@@ -324,7 +324,7 @@ def build_answer_mention(
             "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
         )
     # Refer to the shared policy by meaning; numbering changes must not alter this guidance.
-    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_ANSWER_REFERENCE
+    from modules.flow_gate.services.prompt_blocks.blocks.documents import BODY_UNREADABLE_ANSWER_REFERENCE
 
     lines.append(BODY_UNREADABLE_ANSWER_REFERENCE)
     lines.append(f"POST {escalate_url}")
@@ -343,7 +343,8 @@ def build_answer_mention(
         "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
         "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
     )
-    return terminal_prompt.prepare("\n".join(lines), kind='q_answer', locale='ko')
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    return compose(["\n".join(lines)], kind='q_answer', locale='ko')
 
 
 def issue_answer_token(

@@ -30,7 +30,9 @@ def _clarify(locale: str) -> str:
 @pytest.mark.parametrize("locale", _LOCALES)
 def test_prescription_directs_to_a_single_options_carrying_q(locale):
     body = _clarify(locale)
-    assert "options" in mention_service._CLARIFY_TEXT[locale]["positive"]
+    # The separate "positive" paragraph is folded into the guard paragraph.
+    assert "options" in mention_service._CLARIFY_TEXT[locale]["warn"]
+    assert "positive" not in mention_service._CLARIFY_TEXT[locale]
     # Remove the old workaround of splitting each option into a separate Q.
     assert "각 옵션을 질문으로 변환" not in body
     assert "turn each option into a question" not in body
@@ -39,12 +41,15 @@ def test_prescription_directs_to_a_single_options_carrying_q(locale):
 
 @pytest.mark.parametrize("locale", _LOCALES)
 def test_prohibition_block_is_unchanged(locale):
-    """Preserve every byte of the prohibition block; changing this assertion violates §2.6."""
+    """The core of the prohibition block (⚠️, Do NOT present choices, force-terminated) stays; breaking this violates
+    the prohibition rule. The prohibition and the prescription are one paragraph, and the guide says the prohibition once."""
     warn = mention_service._CLARIFY_TEXT[locale]["warn"]
     assert "⚠️" in warn
     assert "Do NOT present choices" in warn
     assert "force-terminated" in warn
     assert warn in _clarify(locale)
+    assert _clarify(locale).count("Do NOT present choices") == 1
+    assert _clarify(locale).count("force-terminated") == 1
 
 
 @pytest.mark.parametrize("locale", _LOCALES)
@@ -73,6 +78,9 @@ def test_reminder_keeps_prohibition_and_gains_options_prescription(locale):
     reminder = mention_service._no_choices_reminder(_API_BASE, _ANCHOR, locale)
     assert "⚠️" in reminder
     assert "options" in reminder
+    # The recency repeat is one line (prohibition + where to register)
+    assert "\n" not in reminder and "do NOT present choices" in reminder
+    assert f"POST {_API_BASE}/q/{_ANCHOR}/questions" in reminder
 
 
 @pytest.mark.parametrize("locale", _LOCALES)

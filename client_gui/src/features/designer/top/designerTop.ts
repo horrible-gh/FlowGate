@@ -61,6 +61,8 @@ export type DesignerTopCommand =
   | 'view.zoom-in'
   | 'view.zoom-out'
   | 'view.zoom-reset'
+  /** Window › Reset Window Layout — Dock sizes, both Docks shown, the first tab of each. */
+  | 'window.reset-layout'
   | 'help.shortcuts'
   | 'help.guide'
   | 'help.about'
@@ -290,6 +292,8 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
         separator,
         ...group.map((tab): DesignerMenuEntry => ({ kind: 'tab', tab })),
       ]),
+      separator,
+      item('window.reset-layout', 'window_reset_layout'),
     ],
   },
   {
@@ -483,12 +487,13 @@ export const NO_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: fal
 /**
  * Commands that never wait for a target (0039 confirmed design 15-designer-shell-initial-state-v7):
  * creating / opening a Project, closing the Designer, Help and the Header entries. The Window
- * menu is not a command list and stays available as a whole.
+ * menu stays available as a whole, its one command (Reset Window Layout) included.
  */
 const ALWAYS_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>([
   'project.new',
   'project.open',
   'designer.close',
+  'window.reset-layout',
   'help.shortcuts',
   'help.guide',
   'help.about',

@@ -28,14 +28,16 @@ const props = defineProps<{
   grow: 1 | -1
 }>()
 
-const emit = defineEmits<{ resize: [size: number] }>()
+// `resize-end` tells the parent the handle was let go (once per drag), which is
+// when the Shell saves the sizes.
+const emit = defineEmits<{ resize: [size: number]; 'resize-end': [] }>()
 
 const drag = createAxisResize({
   getValue: () => props.size,
   getPointerPos: (event) => props.grow * (props.axis === 'x' ? event.clientX : event.clientY),
   clamp: (value) => value,
   onChange: (value) => emit('resize', value),
-  onEnd: () => {},
+  onEnd: () => emit('resize-end'),
 })
 
 onBeforeUnmount(() => drag.dispose())

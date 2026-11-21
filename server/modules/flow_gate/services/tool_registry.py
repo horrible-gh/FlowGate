@@ -94,7 +94,7 @@ NOTES = {
         "none_scope": "이 작업 단계에는 원격 소스 도구가 배정되지 않았습니다. 소스 트리에 접근하지 말고 배정된 문서 작업만 수행하세요.",
         "none_local": "이 프로젝트는 원격 소스 접근을 사용하지 않습니다. 소스는 작업 환경에서 직접 다루고, 이 도구는 호출하지 마세요.",
         "none_user": "이 인증 주체에는 원격 소스 도구가 배정되지 않았습니다. 도구는 작업 토큰에만 배정됩니다.",
-        "attachments": "파일 관련이라도 문서 첨부파일은 이 소스 도구가 아닙니다. 첨부파일 목록/읽기/소스 복사는 이 응답의 document_attachments 블록과 GET /flowgate/api/v1/help/items/document_attachments 에 있습니다.",
+        "attachments": "파일 관련이라도 문서 첨부파일은 이 소스 도구가 아닙니다. 첨부파일 목록/읽기/소스 복사는 이 응답의 document_attachments 블록과 GET /flowgate/api/v1/help/items/attachments/read 에 있습니다.",
         "attachments_none": "이 단계는 문서 첨부파일 API도 쓸 수 없습니다. 소스 접근이 없는 토큰에는 첨부파일 접근도 없습니다.",
     },
     "ja": {
@@ -109,7 +109,7 @@ NOTES = {
         "none_scope": "この作業段階にはリモートソースツールが割り当てられていません。ソースツリーに触れず、割り当てられた文書作業のみ行ってください。",
         "none_local": "このプロジェクトはリモートソースアクセスを使用しません。ソースは作業環境で直接扱い、このツールは呼び出さないでください。",
         "none_user": "この認証主体にはリモートソースツールが割り当てられていません。ツールは作業トークンにのみ割り当てられます。",
-        "attachments": "ファイル関連であっても、文書の添付ファイルはこのソースツールではありません。添付ファイルの一覧/読み取り/ソースコピーはこのレスポンスの document_attachments ブロックと GET /flowgate/api/v1/help/items/document_attachments にあります。",
+        "attachments": "ファイル関連であっても、文書の添付ファイルはこのソースツールではありません。添付ファイルの一覧/読み取り/ソースコピーはこのレスポンスの document_attachments ブロックと GET /flowgate/api/v1/help/items/attachments/read にあります。",
         "attachments_none": "この段階では文書の添付ファイルAPIも使えません。ソースアクセスのないトークンには添付ファイルへのアクセスもありません。",
     },
     "en": {
@@ -124,7 +124,7 @@ NOTES = {
         "none_scope": "No remote source tool is assigned to this step. Do not touch the project source tree; carry out only the document work you were given.",
         "none_local": "This project does not use remote source access. Work with the source in your own environment and do not call these tools.",
         "none_user": "No remote source tool is assigned to this identity. Tools are assigned to work tokens only.",
-        "attachments": "Document attachments are file-related but they are not these source tools. Attachment list/read/copy-to-source live in this response's document_attachments block and at GET /flowgate/api/v1/help/items/document_attachments.",
+        "attachments": "Document attachments are file-related but they are not these source tools. Attachment list/read/copy-to-source live in this response's document_attachments block and at GET /flowgate/api/v1/help/items/attachments/read.",
         "attachments_none": "This step cannot use the document attachment API either. A token with no source access has no attachment access.",
     },
 }
@@ -750,7 +750,7 @@ def attachment_view(kind: str, locale: str, base_url: str) -> dict:
             for name in ATTACHMENT_ABSENT_OPS
         ],
         "detail_url": f"{base_url}/help/tools/{{name}}",
-        "help_item_url": f"{base_url}/help/items/document_attachments",
+        "help_item_url": f"{base_url}/help/items/attachments/read",
         "notes": [text["what"], text["not_source"], text["permission"], text["scope"]],
     }
 

@@ -179,18 +179,6 @@ export const saveRepeatCountMax = async (value: string) =>
     'save_failed',
   )).updated
 
-/**
- * flowgate.v02test.0053 0003-T (1-A): the two "검증" defaults, one key per PATCH — `verify_max_runs` (a count) or
- * `verify_run_timeout_sec` (seconds, whole minutes; the screen types minutes). Nothing else rides along.
- */
-export type VerifySettingKey = 'verify_max_runs' | 'verify_run_timeout_sec'
-
-export const saveVerifySetting = async (key: VerifySettingKey, value: string) =>
-  (await call(
-    () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, { updates: { [key]: value } }),
-    'save_failed',
-  )).updated
-
 // ── System › System Agent ─────────────────────
 // Only the /system/agents management family of api/v1/agent_routes.py (the one the old
 // client/src/settings AgentsView used). The Agent runtime routes /agent/enrollments and

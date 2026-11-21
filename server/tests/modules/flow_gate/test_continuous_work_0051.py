@@ -61,10 +61,10 @@ def test_continuous_mention_replaces_q_guard_ko():
     assert "Clarification guide" not in out
     assert "/questions" not in out
     # Operational sections are preserved. (the earlier change set 3: the standalone doc_type
-    # guide section was absorbed into the help index — the central "## 도움말" block
-    # is the discovery path now.)
+    # guide section was absorbed into the help index — the central help block
+    # is the discovery path now; v02test.0061 renamed its header to "## Help".)
     assert "## Artifact registration" in out
-    assert "## 도움말" in out
+    assert "## Help" in out
     # The bottom Reminder repeats the continuous directive, not the no-choices guard.
     assert "Do NOT present choices" not in out
 
@@ -302,6 +302,9 @@ def _wire_self_chain_advance(monkeypatch, *, is_admin=1, item_seq=2):
 
     monkeypatch.setattr(wds, "advance_workflow", _fake_advance)
     monkeypatch.setattr(inbox_routes, "_inbox_api_base", lambda _r: "http://h/flow_gate/api/v1")
+    # settle_completed_step reads the submitted document's revision_no before approving
+    # (the TR2 retry key is built from it); keep that read off the DB as well.
+    monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {"doc_id": _id, "revision_no": 1})
     return approve, captured
 
 

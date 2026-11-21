@@ -101,10 +101,13 @@ class TestConversationMention:
         assert "Just talk" not in text
         assert "Read the conversation context selected for this invocation" in text
         assert "Submit: POST http://h:1/api/v1/conversation/p.default.0001.0008-CH/turn" in text
-        assert "based_on_seq records what you had actually read" in text
+        # v02test.0061 card 5: the mention carries the brief turn contract; the full
+        # wording lives behind the conversation/turn help leaf.
+        assert "based_on_seq: send head_seq from your last read, never a guess." in text
+        assert "GET http://h:1/api/v1/help/items/conversation/turn" in text
         assert '"dry_run": true' in text
-        assert "body_sha256" in text
-        assert "body_chars" in text
+        # body_sha256 / body_chars (optional fingerprint) are explained behind the encoding leaf.
+        assert "GET http://h:1/api/v1/help/items/conversation/encoding" in text
 
     def test_old_full_body_contract_is_absent(self):
         text = self._build()
@@ -156,7 +159,7 @@ class TestConversationMention:
     def test_no_provider_asks_the_worker_to_fill_or_omit_display_name(self):
         text = self._build()
         assert '"display_name": "<your model name>"' in text
-        assert "omit the field" in text
+        assert "If your model name is unknown, omit display_name." in text
         assert "not used to determine identity" in text
 
     def test_known_provider_is_baked_into_display_name_verbatim(self, monkeypatch):
@@ -384,7 +387,7 @@ class TestEditTurnEndAddendum:
         clarify = mention_service._CLARIFY_TEXT[locale]
         assert clarify["lead"] in text
         assert clarify["warn"] in text
-        assert clarify["positive"] in text
+        assert "options" in clarify["warn"] and "positive" not in clarify   # 0061 card 7: one guard paragraph
         assert '/help/items/question' in text
         assert 'do not ask interactive questions' in text
 

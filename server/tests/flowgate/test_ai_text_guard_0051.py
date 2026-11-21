@@ -171,6 +171,13 @@ def test_login_session_on_the_route_is_not_checked(routes, monkeypatch):
 
 
 def test_question_guides_carry_the_transport_rule(store):
-    from modules.flow_gate.services import mention_service
+    from modules.flow_gate.services import help_catalog, mention_service
     for locale in ("ko", "ja", "en"):
-        assert guard.transport_rule(locale) in mention_service._question_precheck("http://test/api/v1", DOC, locale)
+        rule = guard.transport_rule(locale)
+        # the guides whose task is to register a Q (review phase, continuous work) say it inline
+        assert rule in mention_service._question_precheck("http://test/api/v1", DOC, locale)
+        # The ordinary Clarification guide names the help leaf that carries it
+        guide = mention_service._clarification_guide_body("http://test/api/v1", DOC, "raw", locale)
+        assert rule not in guide
+        assert "GET http://test/api/v1/help/items/question/register" in guide
+        assert help_catalog.build_question_content(locale)["transport"] == rule

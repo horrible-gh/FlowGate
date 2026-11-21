@@ -2,9 +2,15 @@
 //
 // Screen state owned by one DesignerShell instance: which left Explorer is showing, whether
 // the left Dock is collapsed, and the Dock sizes the Body / CenterColumn apply. It is not a
-// Pinia store and is never persisted — leaving the Designer and coming back starts again
-// from these initial values. Children receive it as props and ask the Shell to change it
-// through events.
+// Pinia store. Children receive it as props and ask the Shell to change it through events.
+//
+// The three Dock sizes (leftWidth / rightWidth /
+// bottomHeight) are saved per person through the project store (/me/ui-settings) — when a
+// resize handle is let go and on the Window › Reset window layout menu item — and read back when the Designer opens.
+// The tabs and the collapsed flags are not saved: they start again from the initial values.
+// These fields always hold the size the person chose. When the window has no room for it the
+// Body / CenterColumn draw it smaller (fitDockWidths / fitBottomHeight) and leave these fields
+// alone, so a larger window shows the chosen size again.
 //
 // The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
 // values. the earlier change: the Body / CenterColumn resize handles change these same fields
@@ -39,7 +45,8 @@ export interface DesignerLayoutState {
 
 /** Width of a collapsed Dock (the rail that keeps the expand button). */
 export const DESIGNER_RAIL_WIDTH = 40
-/** The Center column never shrinks below this; the Body scrolls sideways instead. */
+/** The Center column never shrinks below this; the Docks are drawn smaller first (fitDockWidths),
+ *  and below both Dock minimums the Body scrolls sideways. */
 export const DESIGNER_CENTER_MIN_WIDTH = 360
 
 /**
@@ -58,7 +65,7 @@ export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.fr
   activeLeftMode: 'project',
   leftCollapsed: false,
   leftWidth: 280,
-  activeRightTool: 'palette',
+  activeRightTool: 'conversation',
   rightCollapsed: false,
   rightWidth: 300,
   bottomHeight: 320,
@@ -101,6 +108,102 @@ export function clampRightWidth(layout: DesignerLayoutState, width: number, body
 export function clampBottomHeight(layout: DesignerLayoutState, height: number, columnHeight: number): number {
   const room = columnHeight - DESIGNER_WORKSPACE_MIN_HEIGHT
   return clampDockSize(height, DESIGNER_BOTTOM_MIN_HEIGHT, room, layout.bottomHeight)
+}
+
+/** The three saved Dock sizes, in px. */
+export interface DesignerDockSizes {
+  leftWidth: number
+  rightWidth: number
+  bottomHeight: number
+}
+
+/** The largest size the server keeps (ui_settings_service.DESIGNER_SIZE_MAX). */
+export const DESIGNER_DOCK_SIZE_MAX = 4000
+
+export const DESIGNER_DOCK_SIZE_DEFAULTS: Readonly<DesignerDockSizes> = Object.freeze({
+  leftWidth: DESIGNER_LAYOUT_DEFAULTS.leftWidth,
+  rightWidth: DESIGNER_LAYOUT_DEFAULTS.rightWidth,
+  bottomHeight: DESIGNER_LAYOUT_DEFAULTS.bottomHeight,
+})
+
+const DOCK_SIZE_MINIMUMS: Readonly<DesignerDockSizes> = Object.freeze({
+  leftWidth: DESIGNER_LEFT_MIN_WIDTH,
+  rightWidth: DESIGNER_RIGHT_MIN_WIDTH,
+  bottomHeight: DESIGNER_BOTTOM_MIN_HEIGHT,
+})
+
+export function dockSizesOf(layout: DesignerDockSizes): DesignerDockSizes {
+  return { leftWidth: layout.leftWidth, rightWidth: layout.rightWidth, bottomHeight: layout.bottomHeight }
+}
+
+export function sameDockSizes(a: DesignerDockSizes, b: DesignerDockSizes): boolean {
+  return a.leftWidth === b.leftWidth && a.rightWidth === b.rightWidth && a.bottomHeight === b.bottomHeight
+}
+
+/** A size that came from outside (the server): a whole number within its range, else the default. */
+export function normalizeDockSize(key: keyof DesignerDockSizes, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return DESIGNER_DOCK_SIZE_DEFAULTS[key]
+  if (value < DOCK_SIZE_MINIMUMS[key] || value > DESIGNER_DOCK_SIZE_MAX) return DESIGNER_DOCK_SIZE_DEFAULTS[key]
+  return value
+}
+
+/** The sizes the store read from the server; a missing or strange value is its default (R §2.3). */
+export function dockSizesFromStored(stored: { leftWidth: unknown; rightWidth: unknown; bottomHeight: unknown }): DesignerDockSizes {
+  return {
+    leftWidth: normalizeDockSize('leftWidth', stored.leftWidth),
+    rightWidth: normalizeDockSize('rightWidth', stored.rightWidth),
+    bottomHeight: normalizeDockSize('bottomHeight', stored.bottomHeight),
+  }
+}
+
+/** Which Dock keeps its width while the other gives way first; null = both give way in proportion. */
+export type DesignerFitKeep = 'left' | 'right' | null
+
+/**
+ * The left / right column widths to draw in a Body
+ * `bodyWidth` px wide. When the chosen widths and the Center minimum do not fit, the expanded
+ * Docks are drawn smaller, never below their minimums; a collapsed Dock (its rail) is not
+ * changed. Narrower than both minimums the Body scrolls sideways as before. `bodyWidth` 0 means
+ * "not measured yet" and changes nothing. Only what is drawn changes — never the chosen widths.
+ */
+export function fitDockWidths(
+  left: number,
+  right: number,
+  leftExpanded: boolean,
+  rightExpanded: boolean,
+  bodyWidth: number,
+  keep: DesignerFitKeep = null,
+): { left: number; right: number } {
+  const excess = left + right + DESIGNER_CENTER_MIN_WIDTH - bodyWidth
+  if (!(bodyWidth > 0) || excess <= 0) return { left, right }
+  const leftSlack = leftExpanded ? Math.max(0, left - DESIGNER_LEFT_MIN_WIDTH) : 0
+  const rightSlack = rightExpanded ? Math.max(0, right - DESIGNER_RIGHT_MIN_WIDTH) : 0
+  let leftTake: number
+  let rightTake: number
+  if (keep === 'left') {
+    rightTake = Math.min(excess, rightSlack)
+    leftTake = Math.min(excess - rightTake, leftSlack)
+  } else if (keep === 'right') {
+    leftTake = Math.min(excess, leftSlack)
+    rightTake = Math.min(excess - leftTake, rightSlack)
+  } else if (leftSlack + rightSlack <= excess) {
+    leftTake = leftSlack
+    rightTake = rightSlack
+  } else {
+    leftTake = Math.min(leftSlack, Math.round((excess * leftSlack) / (leftSlack + rightSlack)))
+    rightTake = Math.min(rightSlack, excess - leftTake)
+  }
+  return { left: Math.round(left - leftTake), right: Math.round(right - rightTake) }
+}
+
+/**
+ * The Bottom Dock height to draw in a Center column `columnHeight` px
+ * high: the chosen height, or what the Workspace minimum leaves (never below the Dock minimum).
+ * `columnHeight` 0 means "not measured yet" and changes nothing.
+ */
+export function fitBottomHeight(height: number, columnHeight: number): number {
+  if (!(columnHeight > 0)) return height
+  return Math.min(height, Math.max(DESIGNER_BOTTOM_MIN_HEIGHT, Math.round(columnHeight - DESIGNER_WORKSPACE_MIN_HEIGHT)))
 }
 
 /** Width the Body gives the left column for the current state. */

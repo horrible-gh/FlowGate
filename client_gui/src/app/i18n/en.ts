@@ -1,4 +1,5 @@
 export default {
+  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "minimized": "Minimized"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
@@ -548,7 +549,7 @@ export default {
         control: 'Control',
       },
       items: {
-        basic_design: 'Basic ***',
+        basic_design: 'Basic design',
         protocol: 'Protocol',
         logic: 'Logic',
         db_design: 'DB design',
@@ -644,9 +645,11 @@ export default {
       no_flows: 'No flows.',
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
+      reconnecting: 'Reconnecting…',
     },
     // Designer File Explorer.
     file_explorer: {
+      reconnecting: 'Reconnecting…',
       title: 'Files',
       tree_label: 'Current Flow file tree',
       readonly: 'Read-only',
@@ -844,8 +847,8 @@ export default {
           ai: 'AI',
           questions: 'Q&A',
         },
-        project_only: 'Only runs in the current project {name} are shown.',
-        empty_runs: 'No running or waiting runs.',
+        project_only: 'Tasks in project {name}. The run count includes only executing AI jobs.',
+        empty_runs: 'No executing, waiting or retrieving tasks.',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: 'The \'{title}\' card\'s merge conflict — a choice is needed',
@@ -875,6 +878,9 @@ export default {
         failure: 'Failed',
         unknown: 'Unknown status',
         phases: {
+          queued_capacity: 'Waiting (Agent at capacity)',
+          retrieving: 'Retrieving results',
+          settling: 'Confirming termination',
           running: 'Running',
           queued: 'Waiting',
           starting: 'Starting',
@@ -949,6 +955,7 @@ export default {
         zoom_out: 'Zoom Out',
         zoom_reset: '100%',
         density: 'Layout Density',
+        window_reset_layout: 'Reset Window Layout',
         shortcuts: 'Keyboard Shortcuts',
         guide: 'User Guide',
         about: 'About FlowGate',
@@ -1160,6 +1167,7 @@ export default {
       no_flow: 'No open flow',
       current: 'Current',
       yesterday: 'Yesterday',
+      reconnecting: 'Reconnecting…',
       list_loading: 'Loading chats...',
       list_failed: 'Could not load the chat list.',
       list_empty: 'This flow has no chats.',
@@ -2225,7 +2233,7 @@ export default {
     // special document views: type names, the work plan table, the test views.
     types: {
       DS: 'Design instruction',
-      D: 'Basic ***',
+      D: 'Basic design',
       P: 'Protocol',
       L: 'Logic',
       DB: 'Database design',
@@ -3180,9 +3188,9 @@ export default {
         local_disabled: 'Runs locally',
         disabled: 'Connections and enrollment refused',
         disabled_revoked: 'Credential revoked',
-        pending: 'Token *** {at}',
+        pending: 'Token expires {at}',
         unregistered: 'Needs an enrollment token',
-        reenroll: 'Token *** {at}',
+        reenroll: 'Token expires {at}',
         revoked: 'Needs re-enrollment',
         incompatible: 'v{version} request refused · {at}',
         online: 'Heartbeat {at}',
@@ -3243,8 +3251,8 @@ export default {
         disable_keeps: 'Its registration and credential stay. This is not a delete or a credential revoke.',
         disable_no_cancel: 'This is not a job cancel. Running work is not cancelled.',
         issue_replaces_pending: 'The previous pending enrollment token stops working at once.',
-        issue_replaces_any: 'Any pending token *** earlier stops working at once.',
-        issue_replaces_credential: 'Enrolling with the new token *** the current credential and replaces it.',
+        issue_replaces_any: 'Any pending token issued earlier stops working at once.',
+        issue_replaces_credential: 'Enrolling with the new token revokes the current credential and replaces it.',
         issue_once: 'The token is shown once on this screen right after issuing and cannot be fetched again.',
         issue_http: 'An HTTP connection needs the risk allowed on the Agent, and the token may be sent in plain text.',
         revoke_credential: 'The current credential is revoked; this agent can no longer connect.',
@@ -3382,13 +3390,6 @@ export default {
         lower_title_values: 'Repeat limit {from} → {to}',
         lower_impact: 'Repeat choices of saved or paused runs are re-evaluated against the current limit when they run or resume. An existing choice above the limit may be treated as no review or the default restart count.',
         lower_no_rewrite: 'This screen does not change what a run has stored, and it does not resume any run.',
-      },
-      // flowgate.v02test.0053 0003-T (1-A): the two 검증 defaults (verify_max_runs, verify_run_timeout_sec).
-      verify: {
-        title: 'Verification',
-        card_hint: 'A card that sets nothing of its own follows these values',
-        runs: { label: 'Max verifications', hint: 'How many verifications one card may use. 1 or more, default 3.', unit: 'times', invalid: 'Enter a whole number of {min} or more.' },
-        minutes: { label: 'Max time per verification', hint: 'The longest one verification may run, in minutes. 1 to 30, default 3 (180 seconds).', unit: 'min', invalid: 'Enter a whole number of minutes from {min} to {max}.' },
       },
       leave: {
         title: 'You have unsaved changes',
@@ -3573,8 +3574,6 @@ export default {
       unknown_key: 'Unknown setting.',
       invalid_value: 'Value not allowed.',
       ai_repeat_count_out_of_range: 'The repeat limit must be a whole number from 1 to 30.',
-      verify_max_runs_out_of_range: 'Max verifications must be a whole number of 1 or more.',
-      verify_run_timeout_out_of_range: 'Max time per verification must be a whole number of minutes from 1 to 30.',
       action_failed: 'The request could not be processed.',
       agent_not_found: 'The agent was not found.',
       enrollment_not_allowed: 'Only an enabled remote agent can get an enrollment token.',

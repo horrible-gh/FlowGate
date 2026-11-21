@@ -10,7 +10,11 @@
     "typecheck": "vue-tsc -b",
     "typecheck:app": "vue-tsc --noEmit --incremental false --composite false -p tsconfig.app.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:related": "vitest related --run",
+    "test:area": "node scripts/test-area.mjs",
+    "test:areas:check": "node scripts/test-area.mjs --check",
+    "test:area:unit": "node --test scripts/test-area-check.mjs"
   },
   "dependencies": {
     "@vue-flow/core": "1.48.2",

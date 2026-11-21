@@ -331,9 +331,11 @@ def _request(kind: str, share: int, rng: random.Random) -> dict:
                 "args": ["-q", "-p", "no:cacheprovider", "-p", "xdist.plugin", "-n", workers, "--dist", "loadfile",
                          "tests"]}
     if kind == "nested":
+        # --tier=slow: the nested tree has no timings and its test shells out, so it is heavy;
+        # the default tier (standard) would skip the nested run this harness needs.
         return {"program": "pytest", "parallel_share": share, "cwd": "nested/server", "timeout_seconds": 240,
-                "args": ["-q", "-p", "no:cacheprovider", "-p", "xdist.plugin", "-n", "2", "--dist", "loadfile",
-                         "tests"]}
+                "args": ["-q", "-p", "no:cacheprovider", "-p", "xdist.plugin", "--tier=slow", "-n", "2",
+                         "--dist", "loadfile", "tests"]}
     seconds = rng.choice(("1.5", "3"))
     timeout = 2 if seconds == "3" and rng.random() < 0.5 else 120               # some end by timeout
     return {"program": "python", "parallel_share": share, "cwd": "script", "timeout_seconds": timeout,

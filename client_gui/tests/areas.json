@@ -1,0 +1,213 @@
+{
+  "area": {
+    "shell": {
+      "source": [
+        "src/app/*",
+        "src/core/*",
+        "src/login/*",
+        "src/shared/*",
+        "src/components/*"
+      ],
+      "tests": [
+        "tests/app/*.spec.ts",
+        "tests/core/*.spec.ts",
+        "tests/login/*.spec.ts",
+        "tests/shared/*.spec.ts",
+        "tests/components/*.spec.ts"
+      ]
+    },
+    "ai": {
+      "source": [
+        "src/features/ai/*"
+      ],
+      "tests": [
+        "tests/features/ai/*.spec.ts"
+      ]
+    },
+    "conversation": {
+      "source": [
+        "src/features/conversation/*"
+      ],
+      "tests": [
+        "tests/features/conversation/*.spec.ts"
+      ]
+    },
+    "git": {
+      "source": [
+        "src/features/git/*"
+      ],
+      "tests": [
+        "tests/features/git/*.spec.ts"
+      ]
+    },
+    "project": {
+      "source": [
+        "src/features/project/*"
+      ],
+      "tests": [
+        "tests/features/project/*.spec.ts"
+      ]
+    },
+    "settings": {
+      "source": [
+        "src/features/settings/*"
+      ],
+      "tests": [
+        "tests/features/settings/*.spec.ts"
+      ]
+    },
+    "document": {
+      "source": [
+        "src/features/document/*",
+        "src/features/documentWindow/*"
+      ],
+      "tests": [
+        "tests/features/document/*.spec.ts",
+        "tests/features/documentWindow/*.spec.ts"
+      ]
+    },
+    "workplan": {
+      "source": [
+        "src/features/workPlanWindow/*",
+        "src/features/attachmentRequests/*"
+      ],
+      "tests": [
+        "tests/features/workPlanWindow/*.spec.ts",
+        "tests/features/attachmentRequests/*.spec.ts"
+      ]
+    },
+    "designer.inspector": {
+      "source": [
+        "src/features/designer/inspector/*"
+      ],
+      "tests": [
+        "tests/features/designer/inspector/*.spec.ts"
+      ]
+    },
+    "designer.run": {
+      "source": [
+        "src/features/designer/*"
+      ],
+      "tests": [
+        "tests/features/designer/run*.spec.ts",
+        "tests/features/designer/flowRun*.spec.ts",
+        "tests/features/designer/gate*.spec.ts",
+        "tests/features/designer/card*.spec.ts",
+        "tests/features/designer/stop*.spec.ts",
+        "tests/features/designer/completedAck*.spec.ts",
+        "tests/features/designer/autoApproval*.spec.ts",
+        "tests/features/designer/canvasApproval*.spec.ts",
+        "tests/features/designer/confirmCard*.spec.ts",
+        "tests/features/designer/headerStates*.spec.ts",
+        "tests/features/designer/selfEdgeRun*.spec.ts"
+      ]
+    },
+    "designer.canvas": {
+      "source": [
+        "src/features/designer/*"
+      ],
+      "tests": [
+        "tests/features/designer/afterReviewGone.0056.spec.ts",
+        "tests/features/designer/archiveReadOnly.0152.spec.ts",
+        "tests/features/designer/arrangeLayout.0059.spec.ts",
+        "tests/features/designer/autoLayoutCommands.0068.spec.ts",
+        "tests/features/designer/autoLayoutLateAnswer.0059.spec.ts",
+        "tests/features/designer/autoLayoutServerRead.0059.spec.ts",
+        "tests/features/designer/autoLayoutSession.0068.spec.ts",
+        "tests/features/designer/canvasLostWriteRecovery.0135.spec.ts",
+        "tests/features/designer/canvasSelection.0059.spec.ts",
+        "tests/features/designer/canvasViewControl.0059.spec.ts",
+        "tests/features/designer/contextMenuArrangeShell.0060.spec.ts",
+        "tests/features/designer/contextMenuAttach.0060.spec.ts",
+        "tests/features/designer/contextMenuAttachShell.0060.spec.ts",
+        "tests/features/designer/contextMenuGeneration.0060.spec.ts",
+        "tests/features/designer/contextMenuGesture.0060.spec.ts",
+        "tests/features/designer/contextMenuNativeBlock.0060.spec.ts",
+        "tests/features/designer/contextMenuParts.0060.spec.ts",
+        "tests/features/designer/contextMenuServerActions.0060.spec.ts",
+        "tests/features/designer/contextMenuStructure.0060.spec.ts",
+        "tests/features/designer/DesignerAccountMenu.0027.spec.ts",
+        "tests/features/designer/DesignerCenter.0026.spec.ts",
+        "tests/features/designer/designerCenterDraft.0045.spec.ts",
+        "tests/features/designer/designerCenterLayout.0045.spec.ts",
+        "tests/features/designer/designerCenterSession.0026.spec.ts",
+        "tests/features/designer/designerContextMenu.0060.spec.ts",
+        "tests/features/designer/DesignerEntrySelection.0039.spec.ts",
+        "tests/features/designer/DesignerFileExplorer.0024.spec.ts",
+        "tests/features/designer/DesignerFileMenu.0043.spec.ts",
+        "tests/features/designer/DesignerFlowCreateDialog.0104.spec.ts",
+        "tests/features/designer/DesignerInitialState.0039.spec.ts",
+        "tests/features/designer/DesignerInspector.0036.spec.ts",
+        "tests/features/designer/DesignerMiniMap.0049.spec.ts",
+        "tests/features/designer/DesignerNotifications.0027.spec.ts",
+        "tests/features/designer/DesignerResize.0046.spec.ts",
+        "tests/features/designer/designerSessionRestore.0105.spec.ts",
+        "tests/features/designer/DesignerShell.0025.spec.ts",
+        "tests/features/designer/DesignerShellArrange.0059.spec.ts",
+        "tests/features/designer/DesignerShellCenter.0026.spec.ts",
+        "tests/features/designer/DesignerShellDensityLate.0059.spec.ts",
+        "tests/features/designer/DesignerShellGitDiff.0066.spec.ts",
+        "tests/features/designer/DesignerShellInspector.0051.spec.ts",
+        "tests/features/designer/DesignerShellSelection.0059.spec.ts",
+        "tests/features/designer/DesignerShellViewControl.0059.spec.ts",
+        "tests/features/designer/DesignerToolPanel.0037.spec.ts",
+        "tests/features/designer/DesignerTop.0038.spec.ts",
+        "tests/features/designer/directionalLayout.0068.spec.ts",
+        "tests/features/designer/draftRedo.0059.spec.ts",
+        "tests/features/designer/edgeCurve.0068.spec.ts",
+        "tests/features/designer/fileExplorerModel.0024.spec.ts",
+        "tests/features/designer/firstRunAiSetup.0113.spec.ts",
+        "tests/features/designer/fixtureFlowGraphSource.0026.spec.ts",
+        "tests/features/designer/flowAttachmentErrors.0036.spec.ts",
+        "tests/features/designer/flowAttachmentOperations.0036.spec.ts",
+        "tests/features/designer/flowAttachmentPagehide.0036.spec.ts",
+        "tests/features/designer/flowAttachments.0030.spec.ts",
+        "tests/features/designer/flowAttachmentWindow.0030.spec.ts",
+        "tests/features/designer/FlowBaseBranchDialog.0104.spec.ts",
+        "tests/features/designer/FlowCanvasDraft.0045.spec.ts",
+        "tests/features/designer/FlowCanvasFixes.0045.spec.ts",
+        "tests/features/designer/FlowCanvasLayout.0045.spec.ts",
+        "tests/features/designer/flowTabChatMark.0020.spec.ts",
+        "tests/features/designer/flowTabMarks.0035.spec.ts",
+        "tests/features/designer/flowTabOverflowList.0023.spec.ts",
+        "tests/features/designer/flowTabs.0026.spec.ts",
+        "tests/features/designer/flowTabStripMarks.0035.spec.ts",
+        "tests/features/designer/graphEdit.0045.spec.ts",
+        "tests/features/designer/graphTimeMachineDialog.test0001.spec.ts",
+        "tests/features/designer/groupArchive.0027.spec.ts",
+        "tests/features/designer/groupDelete.0027.spec.ts",
+        "tests/features/designer/heldCardDrag.v02gui0020.spec.ts",
+        "tests/features/designer/kindSwitchCanvasRead.0013.spec.ts",
+        "tests/features/designer/mergeSurfaces.v02test0042.spec.ts",
+        "tests/features/designer/minimapGeometry.0049.spec.ts",
+        "tests/features/designer/moveDensity.0059.spec.ts",
+        "tests/features/designer/moveHistory.0059.spec.ts",
+        "tests/features/designer/nodeTitle.0064.spec.ts",
+        "tests/features/designer/nodeTitleCard.0064.spec.ts",
+        "tests/features/designer/NotificationAiTab.0013.spec.ts",
+        "tests/features/designer/NotificationCounts.0013.spec.ts",
+        "tests/features/designer/NotificationQuestions.0013.spec.ts",
+        "tests/features/designer/paletteCatalog.0030.spec.ts",
+        "tests/features/designer/PalettePanel.0030.spec.ts",
+        "tests/features/designer/pendingEdits.0020.spec.ts",
+        "tests/features/designer/ProjectExplorer.0023.spec.ts",
+        "tests/features/designer/ProjectExplorer.resync.0060.spec.ts",
+        "tests/features/designer/projectExplorerTree.0023.spec.ts",
+        "tests/features/designer/requestedReread.0156.spec.ts",
+        "tests/features/designer/revisionAdoption.0010.spec.ts",
+        "tests/features/designer/structure.0024.spec.ts",
+        "tests/features/designer/structure.0025.spec.ts",
+        "tests/features/designer/structure.0026.spec.ts",
+        "tests/features/designer/structure.0030.spec.ts",
+        "tests/features/designer/structure.0036.spec.ts",
+        "tests/features/designer/structure.0038.spec.ts",
+        "tests/features/designer/structure.0045.spec.ts",
+        "tests/features/designer/structure.0048.spec.ts",
+        "tests/features/designer/structure.0049.spec.ts",
+        "tests/features/designer/uncarriedChanges.v02gui0015.spec.ts",
+        "tests/features/designer/v01RunControl.test0001.spec.ts",
+        "tests/features/designer/vueFlowMapping.0026.spec.ts"
+      ]
+    }
+  }
+}

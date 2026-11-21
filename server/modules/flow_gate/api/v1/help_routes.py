@@ -27,6 +27,7 @@ from modules.flow_gate.db import events as db_events
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import (
+    ai_response_slim,
     auth_outbound,
     help_catalog,
     remote_tool_service,
@@ -154,21 +155,26 @@ def get_help_tools(request: Request, locale: Optional[str] = None):
         return auth
 
     base_url = outbound_api_base()
-    payload = {
-        "ok": True,
-        "version": tool_registry.VERSION,
-        "base_url": base_url,
-        "locale": normalized_locale,
-        "kind": registry["kind"],
-        "source_mode": registry["source_mode"],
-        "reason": registry["reason"],
-        "detail_url": f"{base_url}/help/tools/{{name}}",
-        "tools": registry["tools"],
-        "document_attachments": tool_registry.attachment_view(
-            registry["kind"], normalized_locale, base_url
-        ),
-        "notes": registry["notes"],
-    }
+    if ai_response_slim.is_ai_token(auth):
+        # An AI reads name + one line + path. The attachment block, denied /
+        # absent details, notes and examples are one call deeper (/help/tools/{name}).
+        payload = ai_response_slim.tools_summary(registry, normalized_locale, base_url)
+    else:
+        payload = {
+            "ok": True,
+            "version": tool_registry.VERSION,
+            "base_url": base_url,
+            "locale": normalized_locale,
+            "kind": registry["kind"],
+            "source_mode": registry["source_mode"],
+            "reason": registry["reason"],
+            "detail_url": f"{base_url}/help/tools/{{name}}",
+            "tools": registry["tools"],
+            "document_attachments": tool_registry.attachment_view(
+                registry["kind"], normalized_locale, base_url
+            ),
+            "notes": registry["notes"],
+        }
     _record_help_tools_event(
         auth,
         view="list",
@@ -413,10 +419,11 @@ def _help_index_response(auth: dict, ctx: dict) -> JSONResponse:
         "child_url": f"{base}/help/items/{{name}}/{{child}}",
         "bulk_url": f"{base}/help?items={{name1}},{{name2}}",
         "detail_url": f"{base}/help?detail=true",
-        "context": help_catalog.context_envelope(ctx),
         "items": assembled["items"],
-        "hidden": assembled["hidden"],
     })
+    if ctx.get("principal_kind") == "user_session":
+        payload["context"] = help_catalog.context_envelope(ctx)
+        payload["hidden"] = assembled["hidden"]
     _record_help_event(auth, ctx, view="index", count=len(assembled["items"]))
     return JSONResponse(content=payload)
 
@@ -459,10 +466,9 @@ def get_help_item(request: Request, name: str, locale: Optional[str] = None):
     # Unknown before forbidden: a name that does not exist is a typo the worker can
     # fix from the index, and calling it a permission failure sends it looking for
     # a permission that was never the problem (P-0004 [failure 3]).
-    if name not in help_catalog.CATALOG_ORDER:
-        return _help_error(404, f"Unknown help item: {name}")
-
     decision = help_catalog.decide_visibility(name, ctx)
+    if decision.reason == "unknown_item":
+        return _help_error(404, f"Unknown help item: {name}")
     if not decision.visible:
         _record_help_event(auth, ctx, view="item", name=name, count=0, http_status=403)
         return _help_error(403, f"Help item '{name}' is not available for this token")
@@ -490,10 +496,9 @@ def get_help_item_child(
     if isinstance(auth, JSONResponse):
         return auth
 
-    if name not in help_catalog.CATALOG_ORDER:
-        return _help_error(404, f"Unknown help item: {name}")
-
     decision = help_catalog.decide_visibility(name, ctx)
+    if decision.reason == "unknown_item":
+        return _help_error(404, f"Unknown help item: {name}")
     if not decision.visible:
         _record_help_event(
             auth, ctx, view="child", name=name, child=child, count=0, http_status=403
@@ -554,6 +559,6 @@ def get_help(
         return _help_bulk_response(auth, ctx, names)
 
     if detail == "true":
-        return _help_bulk_response(auth, ctx, help_catalog.visible_names(ctx))
+        return _help_bulk_response(auth, ctx, [item["name"] for item in help_catalog.build_index(ctx)["items"]])
 
     return _help_index_response(auth, ctx)

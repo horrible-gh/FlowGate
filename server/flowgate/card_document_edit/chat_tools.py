@@ -172,7 +172,7 @@ def _chat_base(api_base: str) -> str:
     return base + "/api/v2/chat"
 
 
-def cli_document_mention_section(api_base: str, raw_token: str) -> str:
+def contract_document_mention_section(api_base: str, raw_token: str) -> str:
     """doc_id read / existing-body edit / new-document create for CLI chat."""
     base = _chat_base(api_base)
     return (
@@ -193,7 +193,11 @@ def cli_document_mention_section(api_base: str, raw_token: str) -> str:
     )
 
 
-def cli_mention_section(api_base: str, raw_token: str) -> str:
+def cli_document_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_document_mention_section(api_base, raw_token)
+
+
+def contract_mention_section(api_base: str, raw_token: str) -> str:
     """L#3 §2.12: one section for both routes, independent of command permission."""
     base = api_base.rstrip("/")
     if base.endswith("/api/v1"):
@@ -216,3 +220,7 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
         "a read or edit succeeded; tell the user and suggest CLI chat, Designer or Agent. "
         "CLI chat has no API chat result-size limit."
     )
+
+
+def cli_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_mention_section(api_base, raw_token)
