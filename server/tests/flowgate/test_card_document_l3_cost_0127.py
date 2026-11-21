@@ -1,4 +1,4 @@
-"""0010-L 5.10: real lookup cost, 200 samples, exact 191st p95, no budget relaxation.
+"""5.10: real lookup cost, 200 samples, exact 191st p95, no budget relaxation.
 
 External DBs require explicitly provisioned isolated databases. No application DB
 configuration is used. Temporary tables shadow existing names on that connection.

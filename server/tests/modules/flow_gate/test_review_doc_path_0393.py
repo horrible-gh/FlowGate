@@ -1,17 +1,17 @@
-"""A review verdict may be submitted as a file, like every other document (0393 T0005 §2-7).
+"""A review verdict may be submitted as a file, like every other document.
 
 B0001's third suspicion — "문서처럼 파일형태 지원 부족?" — was not the cause of the three
-failures (NR0003 §4-4), but it was a real gap: document registration has had `doc_path`
+failures, but it was a real gap: document registration has had `doc_path`
 since D020 §7-5 while a review verdict could only be typed inline. The overall comment on a
 review is long Korean prose; pushed through a command line it turns into the ???? the
 encoding guard then rejects, which is a registration lost for a formatting reason.
 
-Covered here, matching T0005 §3 criterion 5 exactly:
+Covered here, matching the earlier implementation criterion 5 exactly:
   * success — the verdict is read out of a file inside the token's scratch directory,
   * a path outside the scratch directory → 422,
   * `content` and `doc_path` sent together → 400,
 plus the two neighbours that make the contract usable: a missing file → 422, and the
-backward-compatible inline shape (neither field) still registering, because T0005 §1 puts
+backward-compatible inline shape (neither field) still registering, because the earlier implementation puts
 the working [멘트 복사] review path out of bounds.
 
 The implementation reuses `validate_doc_path` and `_submission_text` rather than growing a
@@ -55,7 +55,7 @@ GROUP_ID = "flowgate.v02.0003"
 PROJECT = "flowgate"
 USER = "user-1"
 
-# The shape NR0003 recovered from the dead runs' scratch folders: a long Korean overall
+# The shape the review recovered from the dead runs' scratch folders: a long Korean overall
 # comment plus per-finding notes. This is the payload that could not be typed inline.
 def post_inbox(body: dict):
     """Submit legacy review cases through the mandatory dry-run preflight."""
@@ -103,7 +103,7 @@ def review_env(monkeypatch, tmp_path):
     insert = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
-    # 0535 T0007 §3: the review path claims its token and stores the review inside one
+    # the review path claims its token and stores the review inside one
     # store.transaction(). Both writes are mocked here (this file is about doc_path),
     # but the transaction itself is real, so the store has to be able to open one.
     db = build_live_sqlite_db(tmp_path / "flowgate.db")
@@ -230,7 +230,7 @@ def test_the_same_payload_inline_as_content_also_registers(review_env):
 
 
 
-# ── the shape that must NOT change (T0005 §1: the copy-mention review path) ───────────
+# ── the shape that must NOT change (the copy-mention review path) ───────────
 
 
 

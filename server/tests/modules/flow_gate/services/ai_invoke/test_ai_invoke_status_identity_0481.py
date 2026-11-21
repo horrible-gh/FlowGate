@@ -1,7 +1,7 @@
-"""flowgate.default.0481 T0010 rev3 — the run identity fields the browser polls on.
+"""the run identity fields the browser polls on.
 
 `ai_invoke_started` (the SSE frame) has shipped `project_id` + `action_scope` since
-T0010 #1, and the browser reads both: `payloadGroupKey` files a `resolve_base_dirty`
+#1, and the browser reads both: `payloadGroupKey` files a `resolve_base_dirty`
 card under `project:<id>`, and MainPanel's `activeGitOwnRun` keeps a
 `resolve_conflict` run's own screen mounted instead of covering it.
 
@@ -108,7 +108,7 @@ def test_a_run_without_a_scope_reports_none_rather_than_raising(monkeypatch):
     assert payload["project_id"] is None
 
 
-# ── T0004 (group 0579): last_activity_* rides beside last_progress_* ─────────
+# ── the earlier implementation (the earlier change): last_activity_* rides beside last_progress_* ─────────
 #
 # diagnostics.get_status is a pure read-model over `run` -- the watchdog
 # (provider_cli._progress_watchdog_loop) already writes last_activity_at/signal and

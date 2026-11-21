@@ -3,7 +3,7 @@
 Coverage:
 - Append one entry to rejection_history on the first rejection
 - Accumulate history on two consecutive rejections (ascending time order)
-- Correct the latest history entry's wording via single-item PATCH (0419 T0006: in
+- Correct the latest history entry's wording via single-item PATCH (the earlier implementation: in
   place, appending a corrections[] audit entry, no new history item)
 - Preserve the existing rejection_reason column value (compatibility)
 - Include the rejection_history field in GET responses
@@ -31,7 +31,7 @@ _MIGRATIONS = (
 )
 SCHEMA_SQL    = _MIGRATIONS / "001_flowgate_schema.sql"
 MIGRATION_031 = _MIGRATIONS / "031_rejection_history.sql"
-MIGRATION_037 = _MIGRATIONS / "037_rejection_id_backfill.sql"  # P0005/T0006
+MIGRATION_037 = _MIGRATIONS / "037_rejection_id_backfill.sql"  # 
 
 
 # ── DB fixture ────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ MIGRATION_037 = _MIGRATIONS / "037_rejection_id_backfill.sql"  # P0005/T0006
 def db_conn():
     """In-memory SQLite — schema + review column + migration 031 applied.
 
-    0419 T0006: check_same_thread=False because the PATCH-correction tests drive
+    check_same_thread=False because the PATCH-correction tests drive
     update_rejection_reason_endpoint (now async) via asyncio.run, and its DB work
     runs inside anyio.to_thread.run_sync on a worker thread; the shared connection
     is only ever touched sequentially (never concurrently), so this is safe.
@@ -291,7 +291,7 @@ class TestTransitionDocumentReviewHistory:
 # ── PATCH endpoint: update_rejection_reason_endpoint ─────────────────────────
 
 class TestPatchRejectionReasonHistory:
-    """0419 T0006: the PATCH endpoint now CORRECTS the latest rejection's wording in
+    """the PATCH endpoint now CORRECTS the latest rejection's wording in
     place instead of appending a new rejection_history entry, so only a document that
     is currently 'rejected' has anything to correct."""
 
@@ -458,7 +458,7 @@ class TestSSEPayloadRejectionHistory:
         assert sse_payload["rejection_history"] == history
 
     def test_endpoint_broadcast_enriches_rejection_history_provenance(self, db_conn, monkeypatch):
-        """0582 TR0006 rev1: document_review_transition_endpoint's own SSE broadcast
+        """document_review_transition_endpoint's own SSE broadcast
         (workflow.py, the human [반려]/[승인] action route) used to send
         _parse_rejection_history's raw items -- no rejection_provider/response_provider
         keys at all -- while GET /document already runs the SAME list through
@@ -544,7 +544,7 @@ class TestGetDocumentResponse:
         data = _json.loads(result.body)
         assert data["ok"] is True
         assert "rejection_history" in data
-        # 0582 T0005 §4: every item now also carries rejection_provider/response_provider
+        # every item now also carries rejection_provider/response_provider
         # (both null here — no review_id, no recorded response) via
         # pipeline_service.enrich_rejection_history_provenance.
         assert data["rejection_history"] == [
@@ -557,9 +557,9 @@ class TestGetDocumentResponse:
         assert "doc_review_status" in data
 
 
-# ── P0005 / T0006: rejection_id + AI response ────────────────────────────────
+# ── the plan / the earlier implementation: rejection_id + AI response ────────────────────────────────
 #
-# Reviewer rework (TR0007): the AI response to a rejection arrives WITH the inbox
+# Reviewer rework: the AI response to a rejection arrives WITH the inbox
 # re-submission of the rejected document and is attached to the most recent
 # rejection (pipeline_service.record_rejection_response). There is no dedicated
 # response API, no manual-input UI, and no separate SSE event — the inbox edit
@@ -573,7 +573,7 @@ from modules.flow_gate.workflow.pipeline_service import (
     record_rejection_response,
     AI_RESPONSE_MAX_LEN,
 )
-# T0005 2.1.5/2.2.2-2.2.6: the review_id anchor plumbing under test below.
+# 2.1.5/2.2.2-2.2.6: the review_id anchor plumbing under test below.
 from modules.flow_gate.api import inbox_routes
 from modules.flow_gate.workflow.pipeline_service import (
     is_review_row_id,
@@ -768,7 +768,7 @@ class TestBackfillMigration037:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.1.2/2.2.2/2.2.3 — the review_id normalization primitives, standalone
+# 2.1.2/2.2.2/2.2.3 — the review_id normalization primitives, standalone
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestIsReviewRowId:
@@ -798,7 +798,7 @@ class TestRejectionReviewKeyValueShapes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.1.5 — transition_document_review stores review_id only when it is given and valid
+# 2.1.5 — transition_document_review stores review_id only when it is given and valid
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestTransitionDocumentReviewStoresReviewId:
@@ -835,7 +835,7 @@ class TestTransitionDocumentReviewStoresReviewId:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.2.3-2.2.6 — record_rejection_response targets the NAMED review row
+# 2.2.3-2.2.6 — record_rejection_response targets the NAMED review row
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestRecordRejectionResponseByReviewId:
@@ -918,7 +918,7 @@ class TestRecordRejectionResponseByReviewId:
         assert self._history(db_conn)[0]["ai_response"] is None
 
     def test_absent_review_id_still_uses_the_legacy_latest_item_policy(self, db_conn, monkeypatch):
-        """The ONE legacy case: no field at all (a pre-T0005 mention, or an internal
+        """The ONE legacy case: no field at all (a pre-the earlier implementation mention, or an internal
         caller with no review row to name) — unaffected by an earlier item's review_id."""
         _patch_store_everywhere(db_conn, monkeypatch)
         self._reject("row 5", review_id=5)
@@ -935,7 +935,7 @@ class TestRecordRejectionResponseByReviewId:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.2.2 — the inbox boundary that reads the worker's review_id claim off the body
+# 2.2.2 — the inbox boundary that reads the worker's review_id claim off the body
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestSubmittedReviewIdBoundary:
@@ -954,8 +954,8 @@ class TestSubmittedReviewIdBoundary:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.2.2-2.2.3 — the real _handle_edit boundary (rejection review feedback, group
-# 0466 TR0006 rev0): TestSubmittedReviewIdBoundary above proves only the tiny extraction
+# 2.2.2-2.2.3 — the real _handle_edit boundary (rejection review feedback, group
+# ): TestSubmittedReviewIdBoundary above proves only the tiny extraction
 # helper; TestRecordRejectionResponseByReviewId above calls record_rejection_response
 # directly. Neither exercises the actual POST /api/v1/inbox "edit" path that threads a
 # worker-submitted review_id from the JSON body, through _handle_edit's
@@ -1237,7 +1237,7 @@ class TestRejectionResponseThroughRealInboxEdit:
         )
 
     def test_absent_review_id_field_still_updates_the_last_item_legacy_path(self, tmp_path):
-        """A pre-T0005 worker mention sends no review_id at all — _handle_edit must still
+        """A pre-the earlier implementation worker mention sends no review_id at all — _handle_edit must still
         pass the field's ABSENCE (None) through, not synthesize one, so the legacy
         history[-1] policy in record_rejection_response fires."""
         from modules.flow_gate.db import documents as db_docs
@@ -1258,7 +1258,7 @@ class TestRejectionResponseThroughRealInboxEdit:
         assert updated[0]["ai_response"] == "addressed the review comments"
 
     def test_revised_transition_broadcasts_the_response_in_rejection_history(self, tmp_path):
-        """flowgate.default.0561 T0004 AC-3/AC-4: the rejected->revised Step 9 SSE used to
+        """AC-3/AC-4: the rejected->revised Step 9 SSE used to
         carry only the bare status flip, no rejection_history key at all. DocHeader's
         fg:doc_review_status_changed listener only overwrites doc.rejection_history when the
         event payload carries that key, so a rework answer that record_rejection_response had
@@ -1288,7 +1288,7 @@ class TestRejectionResponseThroughRealInboxEdit:
         payload = status_events[0].payload
         assert payload["next_status"] == "revised"
         assert payload["rejection_history"][0]["ai_response"] == "addressed the review comments"
-        # 0582 TR0006 rev1: this broadcast used to carry parse_rejection_history's raw
+        # this broadcast used to carry parse_rejection_history's raw
         # item -- no rejection_provider/response_provider keys at all -- while GET
         # /document already ran the SAME item through enrich_rejection_history_provenance.
         # DocHeader's listener replaces its whole (enriched) rejection_history array with
@@ -1302,7 +1302,7 @@ class TestRejectionResponseThroughRealInboxEdit:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# 0458 T0007 §3.2 — the response lands on the rejection it answers, not on the last one
+# the response lands on the rejection it answers, not on the last one
 #
 # `history[-1]` was the whole targeting policy. It is right exactly while nothing else is
 # appended between the rejection and its answer — and a human rejection, or a second review
@@ -1360,13 +1360,13 @@ class TestRejectionReviewKey:
             assert rejection_review_key(value) == "", value
 
     def test_a_non_numeric_string_never_becomes_a_key(self):
-        """0458 T0008: the column is a positive integer, so "abc" (and a float or a
+        """the column is a positive integer, so "abc" (and a float or a
         digit-plus-noise string) cannot name a row no matter how a stored value spells it."""
         for value in ("abc", "244a", "3.5", "-1", "0"):
             assert rejection_review_key(value) == "", value
 
     def test_a_unicode_digit_string_int_cannot_parse_never_becomes_a_key(self):
-        """0458 T0008 rev3 rework: `str.isdigit()` is True for Unicode digit characters
+        """`str.isdigit()` is True for Unicode digit characters
         `int()` still cannot parse — the superscript "²" is the sharpest example
         (`"²".isdigit()` is True, `int("²")` raises ValueError). The old
         `text.isdigit() and int(text) > 0` check let that ValueError escape unhandled
@@ -1376,7 +1376,7 @@ class TestRejectionReviewKey:
             assert rejection_review_key(value) == "", value
 
     def test_an_overlong_digit_string_never_becomes_a_key(self):
-        """0458 T0008 rev3 rework: even a string of ordinary ASCII digits can make `int()`
+        """even a string of ordinary ASCII digits can make `int()`
         raise if it is absurdly long — Python 3.11+ caps str-to-int conversion at a few
         thousand digits to block algorithmic-complexity abuse. `isdigit()`/`isdecimal()` say
         nothing about length, so this is a second, independent way the naive check could
@@ -1510,7 +1510,7 @@ class TestRecordRejectionResponseTargeting:
     def test_a_non_numeric_string_cannot_match_even_an_identically_malformed_stored_value(
         self, db_conn, monkeypatch
     ):
-        """0458 T0008 rework: `document_reviews.id` is a positive integer, so "abc" cannot
+        """`document_reviews.id` is a positive integer, so "abc" cannot
         name a row — not even when a free-form/legacy history item happens to carry the exact
         same malformed string as its own `review_id`. Comparing two non-numeric strings for
         equality is not the same as either of them naming a real row; the claim must be
@@ -1529,7 +1529,7 @@ class TestRecordRejectionResponseTargeting:
     def test_a_value_int_cannot_parse_records_nothing_without_raising(
         self, db_conn, monkeypatch, review_id
     ):
-        """0458 T0008 rev3 rework: a Unicode digit string `int()` cannot parse ("²" passes
+        """a Unicode digit string `int()` cannot parse ("²" passes
         `str.isdigit()` but `int("²")` raises ValueError) and an absurdly long ASCII-digit
         string (Python 3.11+'s str-to-int conversion limit also raises ValueError) must both
         be treated the same as any other value that cannot name a row — folded to no match,
@@ -1688,7 +1688,7 @@ class TestInboxForwardsTheReviewId:
         assert inbox_routes._submitted_review_id({"review_id": " 244 "}) == " 244 "
         for value in (
             None, True, False, "", "   ", 3.5, [], {}, "\t\n", "abc", "244a", "-1", "0",
-            "²", "²⁴⁴", "9" * 5000,  # 0458 T0008 rev3: Unicode digits and overlong digit
+            "²", "²⁴⁴", "9" * 5000,  # Unicode digits and overlong digit
         ):                                                     # strings must not raise
             assert inbox_routes._submitted_review_id({"review_id": value}) is (
                 UNIDENTIFIABLE_REVIEW_ID

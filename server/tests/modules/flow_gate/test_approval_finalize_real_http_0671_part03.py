@@ -47,7 +47,7 @@ class TestApprovalFinalizeRealHttp0671:
     def test_http_stage_cause_retry_limits_and_per_attempt_audit(
         self, origin_repo, monkeypatch, case, stage, returncode, stderr, code, cause, limit,
     ):
-        """0134 T#1: real approval route, attempt ledger, claim/release and runner.
+        """real approval route, attempt ledger, claim/release and runner.
 
         Only the selected Git command's failure is injected. Both fetch and merge
         git_error remain retryable; ff-only timeout must not become divergence.

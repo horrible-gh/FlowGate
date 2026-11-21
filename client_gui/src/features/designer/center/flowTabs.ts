@@ -1,4 +1,4 @@
-// flowgate.v02.0026 — Flow Tabs rules (0003-D §3.1.2) as pure functions over an immutable
+// Flow Tabs rules as pure functions over an immutable
 // tab state. No Vue, no screen: the Center session holds the state and applies these.
 import type { FlowRef } from '@/features/project'
 
@@ -69,7 +69,7 @@ export function closeFlowTab(state: FlowTabsState, flowId: string): FlowTabsStat
 }
 
 /**
- * flowgate.v02gui.0001: moves an open tab so that it ends at `toIndex` in screen order (clamped to the tab range), the
+ * moves an open tab so that it ends at `toIndex` in screen order (clamped to the tab range), the
  * other tabs keeping their order. The active tab stays active; an unknown id or no move leaves the state unchanged.
  */
 export function moveFlowTab(state: FlowTabsState, flowId: string, toIndex: number): FlowTabsState {

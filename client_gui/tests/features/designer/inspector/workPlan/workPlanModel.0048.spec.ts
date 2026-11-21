@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#13 — the WP summary rules as tables (D#1 §8.5, §10.1 WP 요약 column, §10.2 T#13 row):
+ * the WP summary rules as tables (WP summary column, the earlier implementation row):
  * the Step summary (one row per card: pairs joined, providers, review count, server-assembled, started), the
  * progress tally, where the plan is edited, the operation classes (queries only), availability across card
  * kind × ownership × view with the read-only row of §8.5 for a Model without change operations, the keys of
@@ -139,8 +139,8 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
 
   const keys = [
     'title',
-    // flowgate.v02.0056 F1: the details' keys (rev, totals, assignment, per-card rows, open_hint, edit.*) are gone.
-    // flowgate.v02.0074 T#1: no_cards is gone too (no cards is a wordless dashed block).
+    // the details' keys (rev, totals, assignment, per-card rows, open_hint, edit.*) are gone.
+    // no_cards is gone too (no cards is a wordless dashed block).
     'progress',
     'unassigned',
     'error.unreadable',
@@ -156,9 +156,9 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
     expect(missing).toEqual([])
   })
 
-  // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): an undecided feature may be worded and drawn inactive;
+  // stage 2 (B14 as reset it): an undecided feature may be worded and drawn inactive;
   // the deploy strings exist with the reason they are inactive, and nothing names a replan or a memo.
-  // flowgate.v02.0074 T#5: the deploy is connected — no `deploy.unconnected`; the 재전개 ▾ items, the reasons (no target,
+  // the deploy is connected — no `deploy.unconnected`; the redeployment ▾ items, the reasons (no target,
   // deployed, not deployed and the common ones), the blockers, the failures and the cleanup dialog are worded.
   it.each(['ko', 'en', 'ja'] as const)('%s wording: ⇉ 전개 / 재전개 are worded with their inactive reason; no replan, delegation or memo wording', (locale) => {
     const messages = workPlanMessages[locale] as Record<string, unknown>
@@ -182,7 +182,7 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
     expect(lookup(messages, 'deploy.unconnected'), `${locale} deploy.unconnected`).toBeUndefined()
     // Menu items, the dialog and the failures are short single lines.
     for (const key of deployKeys) expect(String(lookup(messages, key)), `${locale} ${key}`).not.toContain('\n')
-    // flowgate.v02.0074 T#1 (R §1.1 · §1.2): no author badge and no no-cards text.
+    // (R ·): no author badge and no no-cards text.
     for (const key of ['author', 'author.human', 'no_cards']) expect(lookup(messages, key), `${locale} ${key}`).toBeUndefined()
     const words = JSON.stringify(messages)
     for (const word of ['재계획', '위임', '메모', 'AI 전달', 'replan', 'delegat', '再計画']) expect(words).not.toContain(word)

@@ -1,4 +1,4 @@
-"""Refusals of the R↔B root conversion in the flat P0006 §3.5 shape (0064 L0005 2.5~2.8).
+"""Refusals of the R↔B root conversion in the flat the plan shape.
 
 ``ConversionRefused`` is an ``HTTPException`` so a direct caller still sees its status code, but the
 route answers with ``response()``: ``{"error", "detail", "doc_id", ...}`` at the top level, the shape

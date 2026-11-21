@@ -1,6 +1,6 @@
-"""L#1 §2.11 storage interface for the T#2 legacy inbox adapter (certain non-cards only).
+"""L#1 storage interface for the the earlier implementation legacy inbox adapter (certain non-cards only).
 
-0127 CH0028: the chat doc_id path (``chat_documents``) uses the same storage with two
+the chat doc_id path (``chat_documents``) uses the same storage with two
 optional additions that the legacy inbox never sends: ``expected_revision`` (a stale base
 is the rule call's ``conflict``) and a request ``idempotency_key`` (the L#1 §2.5 replay /
 reuse / stale judgement, before the revision comparison, as in ``revise.judge_and_store``).

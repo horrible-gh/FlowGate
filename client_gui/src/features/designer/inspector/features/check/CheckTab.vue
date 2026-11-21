@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#12 — the check section of the documents tab (D#1 §10.2 T#12 row): the AC's check
+  <!-- the check section of the documents tab (row): the AC's check
        state and the Flow's Git reflection state (status, branch, ahead / behind, merge commit, a final
        approval Git finished without its approval, the final approval job still running), with
        "Git 패널 열기" (Host intent `show-tool: git`) for Git in detail and ↗ 열기 for the AC in its document window (✎ in its editor).
@@ -77,12 +77,12 @@ const lines = computed<InspectorSlotView[]>(() => {
   ]
 })
 
-/** ✎: the AC's document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the AC's document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id) })
 }
 
-/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

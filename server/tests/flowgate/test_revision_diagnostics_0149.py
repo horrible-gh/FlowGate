@@ -1,4 +1,4 @@
-"""0149 T-A1: real-row HTTP adoption diagnostics and unchanged policy/read effects."""
+"""T-A1: real-row HTTP adoption diagnostics and unchanged policy/read effects."""
 import json
 import pytest
 

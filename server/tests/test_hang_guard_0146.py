@@ -1,4 +1,4 @@
-"""flowgate.v02.0146 T#2 — the per-test hang guard (tests/hang_guard.py) fails a hanging test, by name, long before
+"""the per-test hang guard (tests/hang_guard.py) fails a hanging test, by name, long before
 the Self-check ceiling, and never turns the hang into a pass.
 
 The guard is exercised in a child pytest (``-p hang_guard``) over a throw-away test file, so the real suite is never

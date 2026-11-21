@@ -102,7 +102,7 @@ def test_active_query_includes_chats_even_when_first_live_run_is_a_card(monkeypa
 
 
 def test_active_query_reports_the_write_lock_apart_from_live_runs_0009_ch(monkeypatch):
-    """0026 (0009-CH): a chat answer or a stopped Flow's leftover run is `active` but holds no group lease, so the
+    """(CH): a chat answer or a stopped Flow's leftover run is `active` but holds no group lease, so the
     server takes a person's upload; `mutation_locked` follows the lease the write guard checks."""
     from modules.flow_gate.db import group_ai_leases
     from modules.flow_gate.services.ai_invoke import diagnostics

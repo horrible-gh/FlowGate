@@ -1,10 +1,10 @@
 """flowgate.default.0359 T0016 (4번 묶음): 끝난 실행을 나중에 다시 보기.
 
 Until this bundle a finished run was only reachable by its run_id, and that id
-lived nowhere a person could find it once the miniplayer card was gone (NR0003).
+lived nowhere a person could find it once the miniplayer card was gone.
 Bundles 1-3 already made the id findable again for the SAME chain (the paused
 row) and gave every finished run a row in `ai_invoke_runs` (DB0008) — this
-bundle adds the two read paths L0007 §2.10.2-3 promised on top of that data:
+bundle adds the two read paths the earlier implementation promised on top of that data:
 
   * GET /ai-invoke/{run_id} falls back to the DB row once the run has left
     memory (a restarted process, or an id from days ago), tagging the answer
@@ -247,7 +247,7 @@ def test_get_run_detail_prefers_memory_and_marks_not_persisted(fake_runs, monkey
     assert payload["persisted"] is False
     assert payload["run_id"] == "aiv_1"
     assert payload["status"] == "running"
-    # Existing status-payload fields (L0007 §2.13) must survive untouched.
+    # Existing status-payload fields must survive untouched.
     assert payload["timeout_sec"] == 3600
     assert payload["deadline_at"] == "2026-07-31T11:00:00+09:00"
 
@@ -358,7 +358,7 @@ def test_runs_route_denies_without_permission(client, monkeypatch):
 
 def test_runs_route_is_not_shadowed_by_run_id_route(client, monkeypatch):
     """/runs must resolve to the list handler, not read "runs" as a run_id — this
-    is the routing-order requirement L0007 §2.10.3 calls out by name."""
+    is the routing-order requirement the earlier implementation calls out by name."""
     monkeypatch.setattr(ai_invoke_routes, "has_permission", lambda *a, **kw: True)
     monkeypatch.setattr(ai_invoke_routes.ai_invoke_service, "list_runs",
                         lambda **kw: {"ok": True, "group_id": kw.get("group_id"),

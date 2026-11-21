@@ -1,4 +1,4 @@
-"""The end cleanup of a Flow's group slot and its restore (flowgate.v02.0085 T#3, D0007 §7.1 latter half).
+"""The end cleanup of a Flow's group slot and its restore (latter half).
 
 A gate keeps the group's work slot and branch: an intermediate gate never removes them, archive ON included. Only when
 the Flow's run is completed (every run target done) the cleanup may look at the slot. It is its own durable job
@@ -83,7 +83,7 @@ _LEASE_CLEARED = {"lease_owner": None, "lease_token": None, "lease_until": None}
 
 
 def keep_requests(group_id: str) -> list[str]:
-    """The decisions whose frozen settings ask to keep the group branch (D0007 §7.1)."""
+    """The decisions whose frozen settings ask to keep the group branch."""
     out = []
     for row in repo.decisions_of_group(group_id):
         if row["decision"] != repo.CONFIRM or row["status"] not in COUNTED_STATUSES:

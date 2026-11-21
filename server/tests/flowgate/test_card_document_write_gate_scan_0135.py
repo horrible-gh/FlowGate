@@ -1,4 +1,4 @@
-"""flowgate.v02.0135 T#3/T#4: the card document write gate's document walk is linear and finds the same rows.
+"""the card document write gate's document walk is linear and finds the same rows.
 
 ``write_gate.references()`` walks every document row twice per gated write -- once before and once inside the
 path namespace mutex -- and every document *creation* (a standalone chat, the document of a placed card) goes
@@ -57,7 +57,7 @@ def like(value, pattern):
 
 
 def oracle(paths=(), trees=()):
-    """The walk as it was before flowgate.v02.0135 (same matches, ~14 resolves and 4-8 settings reads per row)."""
+    """The walk as it was before the earlier change (same matches, ~14 resolves and 4-8 settings reads per row)."""
     paths = tuple(Path(p) for p in paths if p is not None)
     trees = tuple(Path(p).resolve() for p in trees if p is not None)
     names, identities = gate.path_index(paths)
@@ -220,7 +220,7 @@ def test_one_walk_resolves_each_directory_once(store, monkeypatch):
     assert len(calls) - walk <= 4
 
 
-# ── 0001-B A (flowgate.v02gui.0012): only rows that can match are walked ────────────────────────────────────────────
+# ── the earlier implementation A: only rows that can match are walked ────────────────────────────────────────────
 
 SOLO = "documents/p/main/m/0003/0005-R_document.md"
 
@@ -290,7 +290,7 @@ def test_hard_links_symbolic_links_and_unplain_names_still_walk_every_row(store,
         assert gate._name_filter([target.with_name(name)]) is None, name
 
 
-# ── 0001-B A, second pass (flowgate.v02gui.0012 0004-CH turn 49): the fixed cost of each walk ──────────────────────
+# ── the earlier implementation A, second pass: the fixed cost of each walk ──────────────────────
 
 def _plain_target(store, rel='documents/p/main/m/0004/0007-R_document.md'):
     target = store['roots']['p'] / rel
@@ -403,7 +403,7 @@ def test_a_file_usage_check_reads_each_projects_storage_root_once(store, monkeyp
 
 
 def using_file_oracle(abs_path, exclude_doc_ids=()):
-    """``files.document_using_file`` as it was before flowgate.v02gui.0012 0004-CH turn 60: every row read, the
+    """``files.document_using_file`` as it was before the earlier change the discussion: every row read, the
     target stat-ed and resolved again for each candidate (``files.same_file``)."""
     from modules.flow_gate.storage import files
     path = Path(abs_path)
@@ -422,7 +422,7 @@ def using_file_oracle(abs_path, exclude_doc_ids=()):
 
 
 def test_a_file_usage_check_reads_only_rows_that_may_have_its_name_and_answers_as_before(store, monkeypatch):
-    """flowgate.v02gui.0012 (0004-CH turn 60): an R<->B switch asks 4 times; each call read 4 columns of every row
+    """(CH): an R<->B switch asks 4 times; each call read 4 columns of every row
     (9,454 on stg) to keep the ~50 with the same name. The database now drops the rest; the answer is the same."""
     from modules.flow_gate.storage import files
     monkeypatch.setattr(files, 'get_store', lambda: store['db'])

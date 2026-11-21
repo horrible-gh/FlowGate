@@ -22,7 +22,7 @@ import pytest
 
 # Separate DB dependencies with TESTING=1
 os.environ.setdefault("TESTING", "1")
-# 0414 T0010: the two TestWorkflowDecideTransition cases import a route module, which builds
+# the two TestWorkflowDecideTransition cases import a route module, which builds
 # server/config.py Settings — and Settings has no defaults for these three. Every other suite
 # in server/tests already declares them at import time, so this file only passed when it
 # happened to run after one of them. Setting them here makes the file self-sufficient.
@@ -657,7 +657,7 @@ class TestRegisterWorkflowResultReviewTransition:
         mock_events.create = MagicMock(return_value={"id": 1})
         monkeypatch.setattr(el, "db_events", mock_events)
 
-        # workflow_sequences mock. 0457 T0005: the slot write is now the conditional
+        # workflow_sequences mock. the earlier implementation: the slot write is now the conditional
         # claim, which returns the item row as it stands afterwards — this stand-in
         # reports the claim as won so the registration proceeds.
         mock_wfseq = MagicMock()
@@ -671,7 +671,7 @@ class TestRegisterWorkflowResultReviewTransition:
         monkeypatch.setattr(
             db_wfseq_mod, "claim_item_result_doc_id", mock_wfseq.claim_item_result_doc_id
         )
-        # 0457 T0007: registration first asks whether the document already occupies
+        # registration first asks whether the document already occupies
         # some other slot (migration 090 makes two slots for one document a unique-index
         # violation). None = it does not, which is the case every test here describes.
         mock_wfseq.get_item_by_result_doc_id = MagicMock(return_value=None)
@@ -684,7 +684,7 @@ class TestRegisterWorkflowResultReviewTransition:
     def test_register_workflow_result_claims_the_slot(self, monkeypatch):
         """register_workflow_result() must write result_doc_id on the slot (DB004 §6.3).
 
-        0457 T0005: the write is the conditional claim rather than the unconditional
+        the write is the conditional claim rather than the unconditional
         set_item_result_doc_id, so that a slot holding a different document is refused
         instead of overwritten. What is asserted here is unchanged — this registration
         does put its document into slot 1.
@@ -838,7 +838,7 @@ class TestRegisterDocumentResultEndpoint:
         mock_wfseq_mod = MagicMock()
         import modules.flow_gate.db.workflow_sequences as db_wfseq_mod
         monkeypatch.setattr(db_wfseq_mod, "set_item_result_doc_id", MagicMock())
-        # 0457 T0005: registration claims the slot conditionally; the stand-in reports
+        # registration claims the slot conditionally; the stand-in reports
         # the slot as now holding the registered document (claim won).
         monkeypatch.setattr(
             db_wfseq_mod,
@@ -847,7 +847,7 @@ class TestRegisterDocumentResultEndpoint:
                 "id": item_id, "result_doc_id": result_doc_id,
             }),
         )
-        # 0457 T0007: registration first asks whether the document already occupies
+        # registration first asks whether the document already occupies
         # some other slot (migration 090 makes two slots for one document a unique-index
         # violation). None = it does not, which is the case every test here describes.
         monkeypatch.setattr(
@@ -1093,7 +1093,7 @@ class TestWorkflowDecideTransition:
             routes_mod, "decide_workflow",
             lambda **kw: {"status": "decided", "doc_id": kw["doc_id"], "sequence_count": 1, "head": None},
         )
-        # flowgate.v02.0045 S4: the route asks the Graph engine router first; this fake store
+        # S4: the route asks the Graph engine router first; this fake store
         # serves documents / groups only, so the contact is the unassigned-Flow pass-through.
         monkeypatch.setattr(routes_mod._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 
@@ -1137,7 +1137,7 @@ class TestWorkflowDecideTransition:
             routes_mod, "decide_workflow",
             lambda **kw: {"status": "decided", "doc_id": kw["doc_id"], "sequence_count": 1, "head": None},
         )
-        # flowgate.v02.0045 S4: unassigned-Flow pass-through of the Graph contact (see above).
+        # S4: unassigned-Flow pass-through of the Graph contact (see above).
         monkeypatch.setattr(routes_mod._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 
         from unittest.mock import MagicMock
@@ -1311,7 +1311,7 @@ class TestRecentGroupDocsAnchor:
         """Documents the buggy anchor: before_seq=parent R seq drops the memo."""
         import modules.flow_gate.db.documents as db_d
         self._insert_memo(db_conn)
-        parent_seq = 1  # R0001 is the group minimum
+        parent_seq = 1  # is the group minimum
         recent = db_d.fetch_recent_group_docs(group_id="G001", before_seq=parent_seq, limit=5)
         ids = {r["doc_id"] for r in recent}
         assert ids == {"P001-G001-R0001"}

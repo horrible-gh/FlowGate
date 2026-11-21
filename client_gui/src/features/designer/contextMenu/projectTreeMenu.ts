@@ -1,12 +1,12 @@
-// flowgate.v02.0060 — ① project tree menu: project / group / Flow (0006-D rev2 §5.3 ①). Snapshot +
-// availability + connected commands in, items and requests out. Flow 삭제 requests the existing
+// ① project tree menu: project / group / Flow (D ①). Snapshot +
+// availability + connected commands in, items and requests out. Flow Delete requests the existing
 // dispose (DC) only; the part has no permanent-delete command.
-// flowgate.v02gui.0027: the Group menu ends with 그룹 아카이브 (그룹 복원 for an archived Group) — a display-only archive
+// the Group menu ends with Archive Group (Restore Group for an archived Group) — a display-only archive
 // of the Group, independent of the Flow archive. Shown only where the host connects it; never offered for the
 // "All" bucket of Flows without a Group (`groupArchivable: false`).
-// flowgate.v02gui.0027 (0008-T): then 그룹 삭제 (danger), a single line — the item name only, no hint line under it
-// (v02test.0027 0005-T removed the Flow-count / 삭제 가능·불가 explanation). It stays enabled whatever the Flow count: a Group
-// with Flows opens the refusal window (with 대신 아카이브), and the server's answer is always the final word. Never for the
+// then Delete Group (danger), a single line — the item name only, no hint line under it
+// (v02test.0027 0005-T removed the Flow-count / deletable·불가 explanation). It stays enabled whatever the Flow count: a Group
+// with Flows opens the refusal window (with Archive instead), and the server's answer is always the final word. Never for the
 // "All" bucket.
 
 import { action as a, makeMenu, separator as s } from './model'

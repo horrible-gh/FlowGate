@@ -134,7 +134,7 @@ def test_an_excluded_card_is_never_requested_again_by_a_command(env, decided, mo
     loops, requests = len(_loops(starts)), len(ledger(env))
     command(env, "step")
     if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
-        # 0126: explicit reentry now covers these waits; attribution and older seqs remain fixed.
+        # explicit reentry now covers these waits; attribution and older seqs remain fixed.
         second = one(env, a, "result_review", 2)
         assert second is not None and len(assignments(env,a)) == rows + 1
         assert len(_loops(starts)) == loops + 1 and len(ledger(env)) == requests + 1
@@ -166,7 +166,7 @@ def test_a_command_requests_every_admitted_card_of_a_flow_again_and_nothing_of_a
         a: "review_not_passed:retry_exhausted", b: "review_not_passed:total_timeout",
         c: "review_not_passed:review_verdict_hold"}
     assert _run_row(env)["status"] == "idle"
-    _hold(env, c)  # 0126: verdict hold is retryable; the independent card Hold still blocks.
+    _hold(env, c)  # verdict hold is retryable; the independent card Hold still blocks.
     asked = []
     real = assigned_review.rerequest_review_locked
 

@@ -86,7 +86,7 @@ from test_fg_integration_persistence_0156 import (
 
 def test_s_d2_5_an_abort_between_the_reclaim_s_session_read_and_its_recovery_still_fails_the_attempt(
         env, decided, repo, tap, record, monkeypatch):
-    """S-D2-5, the order of TR0008 rev 1's review: D2-b leaves the attempt ``integrating`` with its own session open
+    """S-D2-5, the order found in review: D2-b leaves the attempt ``integrating`` with its own session open
     (``_left_open``). The failed drain's own dispatch reclaims it as the drain owner: the reclaim reads that session
     open (so ``_recover_one``, not ``_settle_closed``) and, before ``_recover_one`` reads the Flow's open session again,
     a person aborts it on another thread and that close's notice ends - it cannot own the Flow (only ``_again``) and

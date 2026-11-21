@@ -1,7 +1,7 @@
-"""The P0011 §1-4 error envelope as one exception type.
+"""The the plan error envelope as one exception type.
 
 Every attachment path fails through ``AttachmentError``. The route layer turns it into the
-exact JSON P0011 promised::
+exact JSON the plan promised::
 
     {"error": {"code": "...", "message": "...", "details": {...}}}
 
@@ -9,7 +9,7 @@ FastAPI's ``HTTPException`` cannot produce that shape — it always wraps the bo
 ``{"detail": ...}`` — so the routes return ``JSONResponse`` directly, the same thing
 ``tree_routes._err`` does for the source-download contract.
 
-``details`` never carries an absolute path or an internal exception string (P0011 §1-4).
+``details`` never carries an absolute path or an internal exception string.
 That is also why an unexpected crash goes through ``unexpected`` below: the caller gets a
 fixed ``reason`` word, and the traceback goes to the server log instead of the wire.
 """
@@ -72,12 +72,12 @@ def error_response(exc: AttachmentError) -> JSONResponse:
 
 # ── unexpected failures ─────────────────────────────────────────────────────────
 #
-# 0060 TR0017 rev2. The rework reason was a bare `500 (Internal Server Error)` seen while
+# The rework reason was a bare `500 (Internal Server Error)` seen while
 # uploading, and the forensics dead-ended for one reason: this package logged nothing, so
 # the server log held no trace of the request at all. Every 5xx now goes through here.
 #
 # `reason` is a closed vocabulary — 'storage' (filesystem), 'registry' (metadata store),
-# 'unexpected' (anything else). It is a category, not an exception string, so P0011 §1-4
+# 'unexpected' (anything else). It is a category, not an exception string, so the plan
 # still holds while the user-visible error stops being indistinguishable from a crash.
 
 UNEXPECTED_REASONS = ("storage", "registry", "unexpected")

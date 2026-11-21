@@ -68,7 +68,7 @@ def test_a_gate_card_keeps_its_own_confirm(pre_feature_attempts, env, gate_decid
     _admin_and_reviewer(env)
     t1, gate = _chain(env, [("T", LEE), ("gate", None)])
     _start(env)
-    # 0119 T-2 / T-3 rework: t1 completes automatically as submitted (review 'none'), no person's card approval
+    # T-2 / T-3 rework: t1 completes automatically as submitted (review 'none'), no person's card approval
     _human_result(env, t1, state="done")
     assert _node(env, gate)[0] == "open"
     _approval_route_gone(env, gate)
@@ -114,10 +114,10 @@ def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, deci
     assert _node(env, key) == ("review", result)
     assert _node_run(env, key)["intervention"] == {"kind": "needs_intervention",
                                                    "reason": "review_not_passed:review_count_exhausted"}
-    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
+    _approval_route_gone(env, key)                                       # T-3: no person's approval
     assert (_node(env, key)[0], _review_status(result)) == ("review", "rejected")
 def test_0056_T1_개정_rejected_root_is_input_and_its_card_is_done(env, decided):
-    """0056 T#1 개정: Run accepts rejected root input; its document stays rejected."""
+    """revised: Run accepts rejected root input; its document stays rejected."""
     from modules.flow_gate.db import documents as db_documents
 
     _admin_and_reviewer(env)
@@ -148,7 +148,7 @@ def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_in_intervent
     _work_run_ended(end_reason=end_reason, stop_code=stop_code)
     assert calls == []                                                   # no review loop
     assert (_node(env, key), _review_status(result)) == (("review", result), "pending_review")   # no approval
-    shown = _node_run(env, key)                                          # 0119 T-2: the AI's abnormal end
+    shown = _node_run(env, key)                                          # T-2: the AI's abnormal end
     assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
     assert shown["intervention"]["reason"].startswith("run_not_clean:")
     _approval_route_gone(env, key)

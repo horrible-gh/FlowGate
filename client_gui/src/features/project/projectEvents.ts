@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#2 — the project event hub (D#1 §7.1). One EventSource per project on the
+// the project event hub. One EventSource per project on the
 // existing screen push stream (`GET /api/v1/events/stream?project=…`, P0008 §8.1) shared by every
 // subscriber — the Canvas (flowCanvasEvents.ts, an adapter over this hub) and the Inspector. The
 // stream opens with the first subscription and closes with the last unsubscribe. Reconnects work as
 // the Canvas stream did before the hub: the browser retries an interrupted stream itself, a closed
 // one is opened again after PROJECT_STREAM_RETRY_MS with the current token, and every open after the
 // first tells each subscriber to resync (events may have been missed).
-// flowgate.v02gui.0031 T0005 ①: the stream also follows the session's connection signals. A token rotation
+// ①: the stream also follows the session's connection signals. A token rotation
 // (`fg:access_token_refreshed`, sent by shared/api.ts), the browser going online again and the tab being shown
 // again replace a stream that is not open — one the browser is retrying with the token pinned in its URL, a closed
 // one waiting for its reopen — with a new one carrying the current token at once, instead of leaving it to the
@@ -163,14 +163,14 @@ function healthy(hub: Hub): boolean {
   return hub.retry === null && hub.stream !== null && hub.stream.readyState === EventSource.OPEN
 }
 
-type Revive = 'token' | 'online' | 'visible' | 'focus'
+type Revive = 'token' | 'online' | 'visible' | 'focus' | 'recovered'
 
 /**
- * T0005 ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
+ * ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
  * open stream is kept (see the header). A token signal that brings no new token leaves a connecting stream to the
  * browser (shared/api.ts may send one rotation twice: its own and a sibling tab's).
  */
-function revive(reason: Revive) {
+export function revive(reason: Revive) {
   // EventSource can be gone while a hub lingers (a test environment that removed it): nothing to reconnect with.
   if (typeof EventSource === 'undefined') return
   for (const [projectId, hub] of [...hubs]) {
@@ -180,10 +180,12 @@ function revive(reason: Revive) {
       continue
     }
     if (reason === 'token' && hub.retry === null && hub.stream !== null && hub.token === currentToken()) continue
+    if (reason === 'recovered') hub.missed = true
     replace(projectId, hub)
   }
 }
 
+const onRecovered = () => revive('recovered')
 const onTokenRefreshed = () => revive('token')
 const onOnline = () => revive('online')
 const onFocus = () => revive('focus')
@@ -196,11 +198,13 @@ function watchConnection(on: boolean) {
   if (on === windowListening || typeof window === 'undefined') return
   windowListening = on
   if (on) {
+    window.addEventListener('fg:connection_recovered', onRecovered)
     window.addEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.addEventListener('online', onOnline)
     window.addEventListener('focus', onFocus)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
   } else {
+    window.removeEventListener('fg:connection_recovered', onRecovered)
     window.removeEventListener('fg:access_token_refreshed', onTokenRefreshed)
     window.removeEventListener('online', onOnline)
     window.removeEventListener('focus', onFocus)

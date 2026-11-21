@@ -21,10 +21,10 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free layout primitive (T0010 §5): splits its container into two areas along one
+// Domain-free layout primitive: splits its container into two areas along one
 // axis and lets the user drag (or arrow-key) the boundary between them. It owns the split
 // interaction only -- it never knows whether `#first`/`#second` hold Designer panels, Git
-// history, or anything else (T0010 §4), and never persists the result itself (T0010 §5.3,
+// history, or anything else, and never persists the result itself (the earlier implementation,
 // §16: no localStorage/API/store).
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createAxisResize } from '../../core/interaction/axisResize'
@@ -36,7 +36,7 @@ const props = withDefaults(
     /** `horizontal` = panes side by side with a vertical splitter bar (default);
      *  `vertical` = panes stacked with a horizontal splitter bar. */
     direction?: SplitDirection
-    /** Initial size, in px, of the first pane (T0010 §5.1 "initial size"). */
+    /** Initial size, in px, of the first pane ("initial size"). */
     initialSize?: number
     minSize?: number
     maxSize?: number

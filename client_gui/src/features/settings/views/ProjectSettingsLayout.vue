@@ -29,7 +29,7 @@
       </SettingsSubnav>
     </template>
 
-    <!-- 프로젝트를 고르기 전 · 목록을 못 읽었을 때 · 찾을 수 없을 때만. 고른 뒤에는 그 구역 화면만 보인다. -->
+    <!-- Only before selecting a project, when the list cannot be read, or when the project is missing. After selection, show only the section view. -->
     <section v-if="!selected" class="fgs-panel" data-panel="project-select">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="folder" size="lg" /></span>
@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-// 프로젝트 선택 영역 (flowgate.v02.0076 T#5, D §1.2 / §2.3): the parent of /settings/project and
+// project selection area: the parent of /settings/project and
 // /settings/project/:projectId/{general,paths,git}, shown to system administrators only (the access
 // guard and SettingsLayout decide that before this mounts). It reads the project list with the
 // existing GET /projects?status=all once per entry (../components/useProjectList) and keeps it
@@ -89,13 +89,13 @@
 //
 // - Screen (mockup ⑩, flowgate.v02.0077): the picker and 다시 불러오기 sit in the navigation above
 //   the project's sections; the 프로젝트 선택 panel is shown only while no listed project is open
-//   (hint, loading, failure, 찾을 수 없음), so a section is no longer stacked under a second panel.
+//   (hint, loading, failure, Not found), so a section is no longer stacked under a second panel.
 //   The picker names projects by their name; the ID stays in the URL.
-// - The picker shows active projects by default; 비활성 포함 adds the inactive ones. This filter is
+// - The picker shows active projects by default; include inactive adds the inactive ones. This filter is
 //   the screen's display rule only — the server's list is not a permission filter (D §0.2).
 // - No project in the URL: a selection hint, and no detail GET.
 // - A projectId in the URL is checked against the list's IDs. One that is not there is shown as
-//   찾을 수 없음 and no detail GET is sent for it. This is navigation / error handling, not a
+//   Not found and no detail GET is sent for it. This is navigation / error handling, not a
 //   permission check — the server's checks stay what they are.
 // - Only a listed project mounts its section view, keyed by the project: switching project unmounts
 //   the previous view, so its answers still out are dropped and nothing of it is shown for the next.

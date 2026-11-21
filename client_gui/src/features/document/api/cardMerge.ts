@@ -1,4 +1,4 @@
-// flowgate.v02test.0042 — a card result's merge into its Flow's branch, handled inside the card (the Inspector's
+// a card result's merge into its Flow's branch, handled inside the card (the Inspector's
 // '병합 · 충돌' tab) instead of the Git panel. User JWT only, the Graph envelope.
 //
 //   state    GET  /api/v1/flows/{flow_id}/nodes/{node_key}/merge           -> 200 merge state (below)

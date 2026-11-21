@@ -1,7 +1,7 @@
-"""flowgate.v02.0085 T#3 rework (review rej_01M5NT4F9CPN06M6): one focused regression test per defect of the
+"""(review rej_01M5NT4F9CPN06M6): one focused regression test per defect of the
 review, on the ``gate_publish`` harness and a real Git repository.
 
-flowgate.v02.0098 T#2 (TR0009): moved unchanged from ``test_fg_gate_publish_0085``, whose harness, fixtures
+moved unchanged from ``test_fg_gate_publish_0085``, whose harness, fixtures
 and shared helpers it imports. ``--dist loadfile`` gives one file to one worker, and the single file's serial
 time alone exceeded the 1800 s Self-check limit.
 From the end cleanup under its locks on, the cases are in ``test_fg_gate_publish_rework_recovery_0085``
@@ -28,10 +28,10 @@ from test_fg_gate_publish_0085 import (  # noqa: E402,F401
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary required")
 
 
-# ── T#3 rework: the review's defects, each with its focused regression test ──
+# ── the earlier implementation rework: the review's defects, each with its focused regression test ──
 
 def test_a_groups_gate_jobs_run_in_acceptance_order_and_hold_the_integration_until_their_pin(git_env):
-    """D0007 §7.3: one group's publishes run in their acceptance order, and a result integrated after an acceptance
+    """one group's publishes run in their acceptance order, and a result integrated after an acceptance
     never enters that decision's snapshot (the integration waits for the pin, then becomes the next one's)."""
     from flowgate.graph_run import result_merge
     from modules.flow_gate.db.connection import get_store

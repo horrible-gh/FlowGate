@@ -1,4 +1,4 @@
-"""Operation job storage (flowgate.default.0669 units 5a/5b; 0666 0010-DB §2.3/§4 (g)~(l), 0009-L §2.13~2.19.1).
+"""Operation job storage (the earlier change units 5a/5b; 0666 0010-DB / (g)~(l), the earlier implementation~2.19.1).
 
 ``operation_job`` (migration 131) CRUD and CAS writes. Every write that moves a job
 follows the contract of ``git_concurrency``: the WHERE carries the expected state
@@ -379,7 +379,7 @@ def cancel_unfrozen_waiting(job_id: str, now: str, result: str) -> int:
 
 
 def cancel_unstarted_gate_publish(job_id: str, now: str, note: str) -> int:
-    """flowgate.v02.0085 T#2 (D0007 §7.3 Stop): a ``gate_publish`` job no worker ever claimed (still waiting, never
+    """(Stop): a ``gate_publish`` job no worker ever claimed (still waiting, never
     run: no attempt, no lease) did nothing outside the DB, so it is cancelled at once; ``phase_note`` tells why."""
     return get_store()._execute_affected(
         "UPDATE operation_job "
@@ -393,7 +393,7 @@ def cancel_unstarted_gate_publish(job_id: str, now: str, note: str) -> int:
 
 
 def gate_publish_reopen(job_id: str, now: str) -> int:
-    """flowgate.v02.0085 T#3 (D0007 §7.2 retry): a parked ``gate_publish`` job (``recovery_required``, no live lease)
+    """(retry): a parked ``gate_publish`` job (``recovery_required``, no live lease)
     goes back to ``pending`` - the same job, its phase and evidence kept. A new claim gives it a new lease, so a lease
     of an earlier claim can never write again."""
     return get_store()._execute_affected(
@@ -409,7 +409,7 @@ def gate_publish_reopen(job_id: str, now: str) -> int:
 
 def gate_publish_close(job_id: str, now: str, status: str, result: str, note: Optional[str],
                        from_statuses: Iterable[str]) -> int:
-    """flowgate.v02.0085 T#3 (D0007 §7.3.1 / §7.3.2): end a ``gate_publish`` job that no writer holds (no live lease):
+    """end a ``gate_publish`` job that no writer holds (no live lease):
     ``succeeded`` (effects confirmed) or ``cancelled`` (no effect / recovery abandoned, told by ``phase_note``). One
     CAS: a job a worker claimed meanwhile is not closed (0 = the caller answers ``gate_job_active``)."""
     if status not in ("succeeded", "cancelled"):
@@ -426,7 +426,7 @@ def gate_publish_close(job_id: str, now: str, status: str, result: str, note: Op
 
 
 def gate_publish_park(job_id: str, now: str, code: str, note: str) -> int:
-    """flowgate.v02.0085 T#3 (D0007 §7.3 Stop): a waiting ``gate_publish`` job whose earlier claim already acted is
+    """(Stop): a waiting ``gate_publish`` job whose earlier claim already acted is
     parked in ``recovery_required`` (never retried on its own) for a person's retry or resolve."""
     return get_store()._execute_affected(
         "UPDATE operation_job "

@@ -1,14 +1,14 @@
-// flowgate.v02.0026 — per-Flow Canvas view state (0003-D §3.3.1): Viewport + single Selection.
+// per-Flow Canvas view state: Viewport + single Selection.
 // The zoom range lives here and only here (initial values from 0003-D §3.3.2, to be tuned
 // after the browser check).
 //
-// flowgate.v02.0059 T#1 (0011-CH contract A / B): the Selection is a set of Nodes
+// (CH contract A / B): the Selection is a set of Nodes
 // (`selectedNodeIds`); `selectedNodeId` stays as the value derived from it — the Node when exactly
 // one is selected, else null — so its readers (Inspector, MiniMap, Delete) are unchanged. Both are
 // only ever written together, through setViewSelection. A group of dragged Nodes is kept inside the
 // Canvas origin as a whole (clampGroupToCanvas), so its relative layout survives the bound.
 //
-// flowgate.v02.0059 0017-T: a drag moves in whole steps of the density's move step (stepGroupMove) — one
+// a drag moves in whole steps of the density's move step (stepGroupMove) — one
 // offset for every dragged Node, so a dragged selection keeps its relative layout as well.
 // 0018-TR rework: the step is a lattice of Graph points — the dragged card lands on one of them, and the
 // Canvas dot grid (canvasDotGrid) draws exactly those points, so a dropped card sits on a dot.
@@ -20,7 +20,7 @@ export interface CanvasViewport {
   readonly zoom: number
 }
 
-/** flowgate.v02.0049: the Canvas area in screen pixels (what the MiniMap shows as the visible area). */
+/** the Canvas area in screen pixels (what the MiniMap shows as the visible area). */
 export interface CanvasSize {
   readonly width: number
   readonly height: number
@@ -48,7 +48,7 @@ export function createCanvasViewState(): CanvasViewState {
 }
 
 /**
- * flowgate.v02.0059 T#1: sets a view's Selection (repeats dropped, order kept) and its derived
+ * sets a view's Selection (repeats dropped, order kept) and its derived
  * single Node. Whether anything changed.
  */
 export function setViewSelection(view: CanvasViewState, nodeIds: readonly string[]): boolean {
@@ -62,7 +62,7 @@ export function setViewSelection(view: CanvasViewState, nodeIds: readonly string
 }
 
 /**
- * flowgate.v02.0059 T#1 (contract B): dropped positions of a dragged group, moved together just
+ * (contract B): dropped positions of a dragged group, moved together just
  * enough that none is left of / above the Canvas origin — one offset for the whole group, so the
  * Nodes keep their relative layout. A single Node is clamped as before (each axis to 0 or more).
  * 0018-TR rework: with a move `step` the group is pushed in whole steps, so a card on the step lattice stays on it.
@@ -79,12 +79,12 @@ export function clampGroupToCanvas<T extends { readonly x: number; readonly y: n
 }
 
 /**
- * flowgate.v02.0059 0017-T: dragged positions moved in whole steps of `step` (the density's move step,
+ * dragged positions moved in whole steps of `step` (the density's move step,
  * top/designerTop.ts DENSITY_MOVE_STEP). 0018-TR rework: the anchor Node (the one under the pointer, else the
  * first) goes to the step lattice point nearest to where it was dragged — the Graph points whose x and y are
  * whole steps, which the Canvas draws as its dots (canvasDotGrid) — rounded the same in both directions. Every
  * other dragged Node gets the anchor's offset from its own start, so the Nodes keep their relative layout.
- * No step (자율형) leaves every position as it was dragged, and so does a start that is not known.
+ * No step (freeform) leaves every position as it was dragged, and so does a start that is not known.
  */
 export function stepGroupMove<T extends { readonly nodeId: string; readonly x: number; readonly y: number }>(
   moved: readonly T[],
@@ -126,7 +126,7 @@ export interface CanvasDotGrid {
  * whole `gap`s, so it moves and scales with the Canvas (pan / zoom) and a card dropped on the step lattice sits
  * on a dot. `gap` is the step itself, or its double (quadruple, ...) only while the step would be drawn closer
  * than CANVAS_GRID_MIN_SCREEN_GAP pixels (far zoomed out), so every dot is still a lattice point. No step
- * (자율형) = no lattice = no grid (null).
+ * (freeform) = no lattice = no grid (null).
  */
 export function canvasDotGrid(viewport: CanvasViewport, step: number | null | undefined): CanvasDotGrid | null {
   if (!step || !(step > 0) || !(viewport.zoom > 0)) return null

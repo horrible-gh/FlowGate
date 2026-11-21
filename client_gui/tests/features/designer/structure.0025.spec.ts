@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// flowgate.v02.0025 — source-level guards for the Designer Shell (0003-D §2.3/§7.1) that a
+// source-level guards for the Designer Shell that a
 // DOM test cannot see.
 const SRC = resolve(__dirname, '../../../src')
 const SHELL = join(SRC, 'features/designer/shell')
@@ -40,41 +40,41 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/projectExplorer\/ProjectExplorer\.vue$/,
       /^\.\.\/projectExplorer\/projectExplorerTree$/,
       /^\.\.\/fileExplorer\/DesignerFileExplorer\.vue$/,
-      // flowgate.v02.0026 — Designer Center (0003-D §2.3): the screen and the session only.
+      // Designer Center: the screen and the session only.
       /^\.\.\/center\/DesignerCenter\.vue$/,
       /^\.\.\/center\/designerCenterSession$/,
-      // flowgate.v02.0045 — the server Graph source the Shell hands to the Center session.
+      // the server Graph source the Shell hands to the Center session.
       /^\.\.\/center\/graph\/serverFlowGraphSource$/,
-      // flowgate.v02.0036 — bottom Inspector: the Frame and the Graph Node type it is given.
+      // bottom Inspector: the Frame and the Graph Node type it is given.
       /^\.\.\/inspector\/DesignerInspector\.vue$/,
       /^\.\.\/center\/graph\/flowGraph$/,
-      // flowgate.v02.0049 — bottom Minimap: the part and the Canvas view types it is given.
+      // bottom Minimap: the part and the Canvas view types it is given.
       /^\.\.\/minimap\/DesignerMiniMap\.vue$/,
       /^\.\.\/center\/canvasView$/,
-      // flowgate.v02.0037 — right Tool Panel: the Palette part and the public surfaces of the
+      // right Tool Panel: the Palette part and the public surfaces of the
       // Conversation and Git parts.
       /^\.\.\/palette\/PalettePanel\.vue$/,
-      // flowgate.v02.0045 S3 — the Shell reads a Palette drag dropped on the Canvas (D0004 §2.3).
+      // S3 — the Shell reads a Palette drag dropped on the Canvas.
       /^\.\.\/palette\/paletteCatalog$/,
       /^@\/features\/conversation$/,
       /^@\/features\/git$/,
-      // flowgate.v02.0059 T#2 — the v0.1 document read (features/document public surface) the Shell hands to the
-      // server Graph source, so 자동 배치 can follow a v0.1 sequence root's supersede chain.
+      // the v0.1 document read (features/document public surface) the Shell hands to the
+      // server Graph source, so auto-layout can follow a v0.1 sequence root's supersede chain.
       /^@\/features\/document$/,
-      // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
+      // top band: the Header / Menu Bar / Toolbar parts and their model.
       /^\.\.\/top\/Designer(Header|MenuBar|Toolbar)\.vue$/,
       /^\.\.\/top\/designerTop$/,
-      // flowgate.v02.0043 — File menu dialogs (Group / Flow 열기, 새 Group / Flow).
+      // File menu dialogs (Group / Flow Open, New Group / Flow).
       /^\.\.\/fileMenu\/Designer[A-Za-z]+Dialog\.vue$/,
-      // flowgate.v02.0060 T#2 — the Designer context menu (0006-D rev2 §4.2): its view and the host / area connectors.
+      // the Designer context menu: its view and the host / area connectors.
       /^\.\.\/contextMenu\/DesignerContextMenu\.vue$/,
       /^\.\.\/contextMenu\/attach\/designerMenuConnector$/,
-      // flowgate.v02.0046 — Dock resize handles: the shared single-axis drag interaction.
+      // Dock resize handles: the shared single-axis drag interaction.
       /^\.\.\/\.\.\/\.\.\/core\/interaction\/axisResize$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
-        // 0113 D §6.2: only the Shell hosts the shared first-run role surface/coordinator; 0113 T#5 (D 개정 §6.5): and the
+        // D: only the Shell hosts the shared first-run role surface/coordinator; the earlier implementation (D revision): and the
         // run result windows with their watch, from the same features/ai surface.
         const firstRunRoles = name === 'DesignerShell.vue' && spec === '@/features/ai'
         const runFailureParts = name === 'runFailureToast.ts' && /^\.\.\/center\/run\/(flowRunControl|runFailureDiagnostic)$/.test(spec)
@@ -89,8 +89,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
         expect(spec, name).not.toMatch(/projectExplorer\/(?!ProjectExplorer\.vue$|projectExplorerTree$)/)
         expect(spec, name).not.toMatch(/fileExplorer\/(?!DesignerFileExplorer\.vue$)/)
         expect(spec, name).not.toMatch(/designer\/shared\//)
-        // flowgate.v02.0045 S3: the Palette catalog's drag reader is the one Palette module the
-        // Shell may use besides the panel (the Palette -> Canvas drop bridge, D0004 §2.3).
+        // S3: the Palette catalog's drag reader is the one Palette module the
+        // Shell may use besides the panel (the Palette -> Canvas drop bridge, the design).
         expect(spec, name).not.toMatch(/palette\/(?!PalettePanel\.vue$|paletteCatalog$)|features\/(conversation|git)\//)
         expect(spec, name).not.toMatch(/^\.\.\/index$|^\.\.$|@\/features\/designer/)
       }
@@ -118,15 +118,15 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     const file = join(SRC, `app/i18n/${locale}.ts`)
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
-    // flowgate.v02.0030 added the Palette block, flowgate.v02.0036 the Inspector block,
-    // flowgate.v02.0038 the top band block, flowgate.v02.0043 the File menu dialogs block,
-    // flowgate.v02.0064 T#4 the card inline title edit block (P0006 §6.5 `gui.designer.nodeTitle.*`).
+    // added the Palette block, the earlier change the Inspector block,
+    // the top band block, the earlier change the File menu dialogs block,
+    // the card inline title edit block (`gui.designer.nodeTitle.*`).
     expect(Object.keys(messages.designer).sort()).toEqual([
       'center', 'file_explorer', 'file_menu', 'inspector', 'nodeTitle', 'palette', 'project_explorer', 'shell', 'top',
     ])
   })
 
-  // flowgate.v02.0046 TR0003 rev1 — jsdom lays nothing out, so the DOM tests cannot see where
+  // jsdom lays nothing out, so the DOM tests cannot see where
   // the Body's handles land. An absolutely placed grid item with only a start line spans to the
   // container's far edge (`grid-column: 1` = the whole Body), which put the left handle on the
   // Body's right edge in a real browser; each handle must name both lines of its Dock column.

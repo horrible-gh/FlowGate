@@ -1,4 +1,4 @@
-"""Stage assignments of a card run (flowgate.v02.0113 T#3, L-2 §2.1 ~ §2.6, §2.10, §2.13; P-1 §7).
+"""Stage assignments of a card run.
 
 A role card (RUN / TEST / PLAN) of an attempt opened while the assignment store is available records, for each stage it
 starts, who works it — one AI, a person, no review, or a wait — once (``(attempt_id, stage, seq)``, first writer wins),
@@ -16,7 +16,7 @@ and every later step reads that record instead of the card settings:
 - ``needs_dispatch`` (§2.10): what an explicit command does with an open node of an assigned attempt.
 - ``stage_plan`` / ``is_legacy_attempt`` / ``current_stage_assignment``: what the other consumers read.
 
-0038-T T#3 (0030-M §3.1, 0002-D 개정 §3.6-0 / §3.5.1-8):
+
 
 - the next stage follows the card's documents the same way for an AI and a person: a result stage whose report is
   already written (``written_result``: its line's report with a body, submitted or approved alike, never the attempt's
@@ -110,7 +110,7 @@ _PURPOSE_ROLE = {INSTRUCTION_WRITE: "instruction", INSTRUCTION_WRITE_RETRY: "ins
 # run event causes and token kinds (P-1 §7.1)
 EV_ASSIGNED, EV_FAILED, EV_TOKEN_FAILED = "stage_assigned", "stage_failed", "stage_token_issue_failed"
 TOKEN_NODE, TOKEN_INSTRUCTION, TOKEN_RESULT = "node", "instruction_stage", "result_supplement"
-# needs_dispatch answers (L-2 §2.10; 0038-T T#3 B-6: ``REINTERPRET`` is a new attempt for a waiting write stage whose
+# needs_dispatch answers (L-2; the earlier implementation the earlier implementation B-6: ``REINTERPRET`` is a new attempt for a waiting write stage whose
 # role changed — the old attempt's documents stay the card's, ``execution.reopen_attempt``)
 DISPATCH, RETRY_SAME_ATTEMPT, REOPEN_NEW_ATTEMPT, NONE = "dispatch", "retry_same_attempt", "reopen_new_attempt", "none"
 REINTERPRET = "reinterpret_wait"
@@ -241,7 +241,7 @@ def move(a: dict, to_state: str, *, fail_cause: Optional[str] = None, verdict: O
 
 def fail(a: dict, cause: str, ctx=None, *, detail: Optional[dict] = None) -> dict:
     """``a`` failed with ``cause`` (``stage_failed`` once, P-1 §7.1). DONE / FAILED rows stay as they are.
-    flowgate.v02.0140 T#1-3: ``detail`` — the safe detail of a refused start (``node_dispatch._start_failure_info``) —
+    ``detail`` — the safe detail of a refused start (``node_dispatch._start_failure_info``) —
     is kept on the ``stage_failed`` event as ``fail_detail``."""
     if a["stage_state"] in (DONE, FAILED):
         return a
@@ -328,7 +328,7 @@ def _rounds(count: Optional[int]) -> Optional[int]:
     """The review rounds of a stored count the card takes today, else None (no rounds of its own).
 
     A non-zero value of the card's own choices (``legacy.repeat_choices``: -1, 1..the configured max) — the same set
-    the card PATCH and the creation copy of the group's default count accept (flowgate.v02test.0027 0007-T), never a
+    the card PATCH and the creation copy of the group's default count accept, never a
     frozen (1, 2, 3, -1): a count the policy allows is run as stored. 0 and a value outside today's choices are None."""
     if count is None or count == 0:
         return None
@@ -511,7 +511,7 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
     return stored
 
 
-# flowgate.v02.0124 T#1 (0003-NR §5.1.3-4): what the ``stage_assigned`` event of a re-requested review carries — the
+# (NR): what the ``stage_assigned`` event of a re-requested review carries — the
 # ``seq`` it follows and the cause. ``rerequest_cause`` and not ``cause``: ``append_run_event`` spreads its extra keys over
 # the event's own payload, whose ``cause`` is ``stage_assigned``.
 REREQUEST_OF_SEQ, REREQUEST_CAUSE, USER_COMMAND = "rerequest_of_seq", "rerequest_cause", "user_command"
@@ -624,7 +624,7 @@ def _request(a: dict, job: dict) -> None:
 
 def instruction_line_document(flow_id: str, node: dict, plan: dict) -> dict:
     """``{doc_id, written}`` of the card's instruction line (TEST: its TS line) — an invalidated attempt's document
-    counts as none (0061 T#7)."""
+    counts as none."""
     if not plan.get("instruction_type"):
         return {"doc_id": None, "written": False}
     line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
@@ -702,7 +702,7 @@ def act_instruction_stage(ctx, node: dict, a: dict, issued_to: str, token: dict,
         doc_id, attempt_id = a["reused_doc_id"], a["attempt_id"]
 
         def proceed() -> None:
-            # 0113 T#3 rework: the opening's (or the command's) own settlement judged the node before this post-commit
+            # the opening's (or the command's) own settlement judged the node before this post-commit
             # step made its review assignment, and nothing judged the run again (an idle run stayed ``no_targets``):
             # the run is settled once the step is over, whatever it did.
             try:
@@ -760,10 +760,10 @@ _NOT_WRITTEN_STATES = ("rejected",)                 # judged not to pass: its re
 
 
 def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[str]) -> Optional[dict]:
-    """0038-T T#3 A (D 개정 §3.6-0-1 ~ 3): the card's report that satisfies its result stage — the result line's live
+    """A (D revision ~ 3): the card's report that satisfies its result stage — the result line's live
     document of the card with a body ("있음": the saved body, blank is none), whether still a draft, submitted or
     approved, never a cancelled or rejected one, nor the attempt's report baseline (A-2), nor a result an earlier
-    attempt of the run had bound (a Stop's or a reopening's history, 0061 T#7) — or None. A plan with an instruction
+    attempt of the run had bound (a Stop's or a reopening's history, the earlier implementation) — or None. A plan with an instruction
     whose baseline cannot be read raises ``report_baseline.BaselineUnavailable``: no report is taken on an unknown
     baseline (a plan without one never records a baseline)."""
     line, doc = report_line(flow_id, node, plan)
@@ -781,7 +781,7 @@ def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[st
 
 
 def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, plan: dict) -> Optional[str]:
-    """0038-T T#3 A-4: the result stage's report is written already — no writer is asked (no AI, no manual write). The
+    """A-4: the result stage's report is written already — no writer is asked (no AI, no manual write). The
     report is registered as the node's result with the node token (T-3 when the instruction spent it; a document that
     was submitted or judged already keeps its review state) and goes to this attempt's result review after the commit:
     a person's stage through the binder's ``person_result``, any other (an AI, a wait) through the review opening of a
@@ -825,7 +825,7 @@ def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, pla
 
 def act_result_stage(ctx, node: dict, a: dict, issued_to: str, instruction_doc_id: Optional[str], plan: dict,
                      token: Optional[dict] = None) -> Optional[str]:
-    """L-2 §2.5 ``act_result_stage``. Returns the dispatch error to record, or None. 0038-T T#3 A: a written report
+    """L-2 ``act_result_stage``. Returns the dispatch error to record, or None. the earlier implementation the earlier implementation A: a written report
     (``written_result``) is taken for every actor, before any writer is asked."""
     key, flow_id, run_id = node["node_key"], ctx.flow_id, ctx.run_id
     written = written_result(flow_id, node, plan, a["attempt_id"]) if a["stage_state"] != FAILED else None
@@ -885,7 +885,7 @@ def result_stage_start(ctx, node: dict, row: dict, instruction_doc_id: Optional[
 def needs_dispatch(ctx, row: dict) -> str:
     """``LEGACY`` (the current judgement), or what an explicit command does with the node.
 
-    0038-T T#3 B-5 / B-6 (rework): a failed stage is the command's explicit retry (``REOPEN_NEW_ATTEMPT``); a waiting
+    B-5 / B-6 (rework): a failed stage is the command's explicit retry (``REOPEN_NEW_ATTEMPT``); a waiting
     write stage — a person's manual write, an AI setup wait, an unavailable AI's wait — is resolved again only when
     ``reinterpret_due`` says so (``REINTERPRET``), else it keeps waiting (``NONE``: its attempt, assignment and tokens
     stay). A review stage's setup / unavailable wait (its document under review) keeps L-2 §2.10's new attempt."""
@@ -906,7 +906,7 @@ def needs_dispatch(ctx, row: dict) -> str:
     if a["stage"] == RESULT and a["actor"] == AI:
         failure = legacy.write_failure(row)
         if failure and failure != "question_pending":
-            # 0126 (B-1) + 0121: an explicit command after a failed write never leaves the card stuck. A writer that ended
+            # (B-1) + 0121: an explicit command after a failed write never leaves the card stuck. A writer that ended
             # with no result or a provider failure, whose write role still resolves to the recorded assignment, is
             # written again on the same attempt by the same AI (its workspace and commits kept; retry_target's original
             # snapshot). Every other failed end, and any such end whose write role changed, resolves a new assignment
@@ -929,7 +929,7 @@ WAIT_ACTORS = (PERSON, WAIT_SETUP, WAIT_UNAVAILABLE)                 # the waiti
 
 
 def _same_attempt_retry_due(ctx, node: dict, row: dict, a: dict, failure: str) -> bool:
-    """0121 / 0126: the failed AI writer the assignment a may be written again on its own attempt by an explicit command: its end
+    """the failed AI writer the assignment a may be written again on its own attempt by an explicit command: its end
     is a clean end with no result or a provider failure (the 0121 policy; no other end is retried in place) and the
     card's write role still resolves to the recorded assignment (same actor and AI). A role that changed, became
     unavailable, or cannot be read now is a new assignment (a new attempt) instead — never the old AI by default."""
@@ -958,7 +958,7 @@ def _same_assignment(a: dict, now: dict) -> bool:
 
 
 def reinterpret_due(ctx, node: dict, row: dict, a: dict) -> bool:
-    """0038-T T#3 B-5 / B-6 (D 개정 §3.5.1-3·4·8): a waiting write stage (the instruction or the result stage, waiting:
+    """B-5 / B-6 (D revision ·4·8): a waiting write stage (the instruction or the result stage, waiting:
     a person's manual write, an AI setup wait, an unavailable AI's wait) with no document in it is resolved again by
     the first command after its role changed — True when the stage's role resolves now (the card's values, read only:
     nothing initialized, nothing written) to another assignment (actor, AI) than the recorded one. A role that did not
@@ -1072,5 +1072,5 @@ def start_failed(job: dict) -> Optional[str]:
     if a is None or a["actor"] != AI:
         return None
     cause = job.get("start_failure") or START_FAILED
-    failed = fail(a, cause, detail=job.get("start_failure_info"))     # flowgate.v02.0140 T#1-3
+    failed = fail(a, cause, detail=job.get("start_failure_info"))     # 
     return "ai_unavailable:" + str(failed.get("fail_cause") or cause)

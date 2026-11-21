@@ -1,4 +1,4 @@
-"""Session adapter and shared append contract tests for group 0351."""
+"""Session adapter and shared append contract tests for the earlier change."""
 from __future__ import annotations
 
 from unittest.mock import patch

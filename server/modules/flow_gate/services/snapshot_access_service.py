@@ -168,7 +168,7 @@ def _authorize(run: dict, snapshot_id: str) -> dict:
 
 
 def _public_rejection_reason(row: dict) -> str | None:
-    """The human's rejection reason as a worker may see it (T0026 §2). It is typed text,
+    """The human's rejection reason as a worker may see it. It is typed text,
     so it passes the same error-mode scrub as every other worker-facing message: known
     server roots become markers and any other absolute path is dropped."""
     reason = row.get("rejection_reason")

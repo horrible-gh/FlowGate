@@ -35,7 +35,7 @@ def insert_review(
     """
     store = get_store()
     now = now_iso()
-    # 0535 T0007 §2: the INSERT and the readback of the row it created are ONE
+    # the INSERT and the readback of the row it created are ONE
     # transaction. Split apart they were two autocommitted calls, so a readback (or
     # driver) failure after a successful INSERT left the review row behind while the
     # caller answered 500 -- a durable half-write no retry could clean up.
@@ -50,7 +50,7 @@ def insert_review(
                 doc_id, revision_no, reviewer_id, verdict, findings_json, comment, reviewed_at, now, now,
                 review_run_id, requested_provider_id, actual_provider_id, actual_provider_name,
                 provider_source, attempt_no,
-                # fallback_used binds as a plain Optional[bool] (0535 T0005): the old
+                # fallback_used binds as a plain Optional[bool]: the old
                 # 1/0-int coercion here was written for SQLite, but PostgreSQL's
                 # fallback_used BOOLEAN column rejects an integer parameter outright
                 # ("column ... is of type boolean but expression is of type integer").
@@ -84,7 +84,7 @@ def insert_review(
 
 
 def review_provider_payload(row: dict) -> dict:
-    """The provider-provenance block every read surface exposes (0535 T0007 §2).
+    """The provider-provenance block every read surface exposes.
 
     Both surfaces (api/v1/document_routes._shape_review and
     documents/routers/documents._shape_review) build their review_provider block from
@@ -130,12 +130,12 @@ def get_latest_for_revision(doc_id: str, revision_no: int) -> Optional[dict]:
 
 
 def get_for_round(doc_id: str, revision_no: int, review_run_id: str) -> Optional[dict]:
-    """The verdict one AI review round already registered, or None (0583 T0004 §7).
+    """The verdict one AI review round already registered, or None.
 
     The round key is the same triple ``document_review_rounds`` claims, so this answers
     "which row won this round" -- for the duplicate-submission response, and for the
     barrier itself, which reads this table as well as the claim table so that a verdict
-    written before the claim table existed still closes its round (0583 TR0005 rev1).
+    written before the claim table existed still closes its round.
 
     Oldest first: §7 makes the FIRST durable verdict the round's result, so on legacy
     history that predates the barrier this names the row that actually won rather than the
@@ -160,7 +160,7 @@ def get_latest_by_doc(doc_id: str) -> Optional[dict]:
 def get_by_id(review_id: int) -> Optional[dict]:
     """Return one review row by its primary key.
 
-    0582 T0005 SS3: an automatic rejection stores only ``review_id`` (the review row it
+    SS3: an automatic rejection stores only ``review_id`` (the review row it
     came from) in ``documents.rejection_history`` -- this is the join a read path uses to
     resolve that id back to the review's ``actual_provider_name`` without duplicating the
     provider snapshot into the rejection item itself.
@@ -168,7 +168,7 @@ def get_by_id(review_id: int) -> Optional[dict]:
     return get_store()._fetch_one("SELECT * FROM document_reviews WHERE id = ?", [review_id])
 
 
-# ── flowgate.v02.0119 T#2 (T-1): who acted, read from the row (existing rows are never rewritten) ──
+# ── the earlier change the earlier implementation (T-1): who acted, read from the row (existing rows are never rewritten) ──
 
 def review_actor(row: dict) -> dict:
     """The actor of a review: the AI provider that ran it when the row carries provider evidence

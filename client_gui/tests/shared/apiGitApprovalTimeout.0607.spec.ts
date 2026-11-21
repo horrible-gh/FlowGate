@@ -1,9 +1,9 @@
 /**
- * flowgate.default.0607 T0004 §3.5 / §5 Case G·H — only a final approval that carries a
+ * Case G·H — only a final approval that carries a
  * `git_action` gets the Git-finalize ceiling; a plain approve on the same path keeps the
  * 30s default.
  *
- * NR0003 §6: `POST /documents/review_transitions/approve` matched none of the long-running
+ * `POST /documents/review_transitions/approve` matched none of the long-running
  * path rules, so an approval whose request ran fetch + merge + push was abandoned by the
  * browser at 30s while the server kept going. Asserted through the real axios instance
  * (stub adapter captures the config the interceptor produced), the same way

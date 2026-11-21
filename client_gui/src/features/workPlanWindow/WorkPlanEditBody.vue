@@ -287,32 +287,32 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0072 T#1 — the editing body of the work plan edit window (WorkPlanEditWindow): ① the quantity boxes
+// the editing body of the work plan edit window (WorkPlanEditWindow): ① the quantity boxes
 // with −/+ (0..20), ② the plan defaults — default AI, default note, [모두 적용], ③ the Steps by card: per row the AI
 // picker (v0.2 Select over the project's AIs read with the plan), the review button, the one-line note with its
 // server limit, the pre-instruction mark, and ✎. Cards move with ▲▼ or by dragging the grip; a started card is
 // pinned. Everything changes the editor's draft only — the server save is the window's [저장].
 // ✎ never opens anything here (no inline drawer): it emits `edit-step` with the row's identity and the window hands
-// it to the Step window (T#2). Pre-instruction and attachment are edited there, so this body only marks them.
-// flowgate.v02.0073 T#2 — the review is edited here, in one place: a row's review button shows its value (검수 없음,
-// 2회 · Opus) and opens the window's review popover (WorkPlanReviewPopover: count, reviewer, [완료]) for that row;
+// it to the Step window. Pre-instruction and attachment are edited there, so this body only marks them.
+// the review is edited here, in one place: a row's review button shows its value (No review,
+// 2 times · Opus) and opens the window's review popover (WorkPlanReviewPopover: count, reviewer, [완료]) for that row;
 // folding that row's card or minimizing the window (`minimized`) closes it.
 // The body has no colors of its own: v0.2 Button / IconButton / Select / Input and the theme tokens; a type's icon is
 // the Designer Palette's (WorkPlanTypeIcon).
-// flowgate.v02.0074 T#1 (R §2.1): with every quantity at 0 the 작업 순서 section is its header only — no text says so.
+// (R): with every quantity at 0 the task order section is its header only — no text says so.
 //
-// flowgate.v02.0073 T#1 — DS and T2 are not drawn (no quantity box, no card; the summary counts what is drawn) while
+// DS and T2 are not drawn (no quantity box, no card; the summary counts what is drawn) while
 // the body keeps them whole. Each shown card is a section: its header has the drag grip, the type icon, the card's
 // name (its quantity name and ordinal, e.g. 작업 1 — never a Step key) and ▲▼; it starts folded, and a click on the
 // header folds / unfolds it (screen state only, allowed while locked). Its compact document summary stays visible when expanded; AI values remain in each document row.
 // ▲▼ and drops use the positions among the shown cards (the editor's moveCard), so hidden cards keep their place.
-// Assumptions (no contract in R0001 / the mockup, NR §7(b)): hidden Steps are never named by their key — their
+// Assumptions (no contract in the requirement / the mockup, NR (b)): hidden Steps are never named by their key — their
 // unassigned count is a separate line, a capability finding or a field error of one says "표시하지 않는 단계".
-// flowgate.v02.0074 T#5 (D#1 §6.2): an N / T instruction row and a D / P / L / DB row carry one more icon left of ✎,
+// an N / T instruction row and a D / P / L / DB row carry one more icon left of ✎,
 // 「지시 생략」 (「설계 지시 생략」 on a design row): the editor writes the fixed text, saves once and deploys
-// (useWorkPlanEditor.omitStep). Its tooltip names it and, when it is off, why in a word (내용 있음 · 먼저 저장 · 전개 불가 · the
+// (useWorkPlanEditor.omitStep). Its tooltip names it and, when it is off, why in a word (Has content · Save first · Cannot deploy · the
 // window's lock); after a saved but failed deploy it is 「전개 재시도」. The row's last column holds the two icons.
-// flowgate.v02.0074 T0017 (card-owned stages, server/flowgate/work_plan_deploy/CARD_STAGES.md): a D / P / L / DB card is
+// (card-owned stages, server/flowgate/work_plan_deploy/CARD_STAGES.md): a D / P / L / DB card is
 // two Steps like an N / T card — its 「설계 지시」 (type DS, pair_role instruction) above its 「설계서」 (pair_role result).
 // Each row has its own AI, review, note and ✎; the 설계 지시 row also has 「설계 지시 생략」 (✓✓). Every card with an
 // instruction has the header's 「지시서 생략」 check: on, its instruction row and summary entry go and are not counted;
@@ -356,7 +356,7 @@ import {
 
 const props = defineProps<{
   editor: WorkPlanEditor
-  /** A Step window is registered (T#2): ✎ is enabled. */
+  /** A Step window is registered: ✎ is enabled. */
   stepEditAvailable: boolean
   /** The window is minimized (its body is not shown): the review popover closes. */
   minimized?: boolean
@@ -492,7 +492,7 @@ function renderError(error: WpFieldError): string {
   return renderWpFieldError(error, (key, params) => gt(key, params ?? {}))
 }
 
-// --- dragging a card by its grip (v0.1 0649 T#3) ---------------------------------------------------------------
+// --- dragging a card by its grip (v0.1 the earlier implementation) ---------------------------------------------------------------
 
 const DROP_END = '__end__'
 const dragged = ref<string | null>(null)

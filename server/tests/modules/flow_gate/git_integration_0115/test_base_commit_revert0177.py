@@ -76,7 +76,7 @@ class TestBaseCommitRevert0177(_Scenario):
         assert out["base_dirty"] == {
             "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
         }
-        # dirty 0개인데 base-commit → 멱등 성공 (§5 경합 케이스)
+        # base-commit with zero dirty files → idempotent success (§5 race case)
         out = svc.base_commit("baseprj", None)["result"]
         assert out["committed"] is False
         assert out["files"] == [] and out["remaining"] == []

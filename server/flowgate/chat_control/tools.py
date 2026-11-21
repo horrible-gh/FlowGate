@@ -1,13 +1,13 @@
 """API chat tools and the CLI mention section of the control tower (stage 1).
 
-flowgate.v02gui.0028: ``get_card_roles`` / ``set_card_roles`` read and change the AI roles of a work card this chat
+``get_card_roles`` / ``set_card_roles`` read and change the AI roles of a work card this chat
 placed (``card_roles``), the API twins of ``GET`` / ``PATCH .../nodes/{node_key}/roles``.
 
-flowgate.v02gui.0032 (decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
+(decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
 .../ai-options``) before placing, ``roles`` per card in ``place_flow_cards``; a group preset (``from_group`` of
 ``set_card_roles``) only when the user names the group.
 
-flowgate.v02gui.0032 (0002-CH seq 15-17): the run settings the AI tab shows next to the roles (review count, restarts,
+(CH seq 15-17): the run settings the AI tab shows next to the roles (review count, restarts,
 time limit; ``run_settings``) — ``settings`` per card in ``place_flow_cards`` and in ``set_card_roles``, their values and
 choices in ``get_card_roles``. The chat decides each card's review count itself."""
 from __future__ import annotations
@@ -230,7 +230,7 @@ def place_call(run, tool_input):
     def handle():
         flow_id, body = _split(tool_input)
         scope, group = authz.from_run(run, flow_id or (run or {}).get("group_id"))
-        # flowgate.v02gui.0028: the run's conversation document (bound to its current token by from_run) owns the cards.
+        # the run's conversation document (bound to its current token by from_run) owns the cards.
         return service.place(group, scope.user_id, body, (run or {}).get("locale"),
                              owner=authz.owner(scope, (run or {}).get("doc_ref")))
     return _result(handle)
@@ -287,19 +287,33 @@ def options_call(run, tool_input):
     return _result(handle)
 
 
-def cli_mention(api_base, raw_token):
+def contract_planning(api_base, raw_token):
     base = str(api_base or "").rstrip("/")
     base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
     return "\n".join([
         "## Card run (control tower, stage 1)",
         "---",
         GUIDE,
-        "",
+        ""
+    ])
+
+
+def contract_ai_options(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"GET {base}/api/v2/chat/flows/{{flow_id}}/ai-options",
         f"Authorization: Bearer {raw_token}",
         "The AIs you may choose for your cards (`options`: id, name, kind) and the AI groups with role profiles",
         "(`role_groups`, for from_group only when the user names one). Read it before placing cards.",
-        "",
+        ""
+    ])
+
+
+def contract_place(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/cards",
         f"Authorization: Bearer {raw_token}",
         '{"cards": [{"label": "<card title>", "doc_type": "T", "roles": {"instruction": {"kind": "not_used"},',
@@ -319,7 +333,14 @@ def cli_mention(api_base, raw_token):
         "document (answer `root`). The answer gives each card's node_key and its instruction line: write the",
         "instruction with the card document edit (POST .../nodes/{node_key}/slots/instruction/document/revisions;",
         "content without front matter keeps the document's current front matter).",
-        "",
+        ""
+    ])
+
+
+def contract_run(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/runs",
         f"Authorization: Bearer {raw_token}",
         '{"allow_instruction_ai": false}',
@@ -327,7 +348,14 @@ def cli_mention(api_base, raw_token):
         "are refused (409 chat_run_instruction_missing) unless allow_instruction_ai is true. `waiting` lists cards",
         "that already wait and why (manual_write_wait = no AI on that card role); runs/current node_runs carry the",
         "same wait_reason / intervention later.",
-        "",
+        ""
+    ])
+
+
+def contract_roles(api_base, raw_token):
+    base = str(api_base or "").rstrip("/")
+    base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
+    return "\n".join([
         f"GET {base}/api/v2/chat/flows/{{flow_id}}/nodes/{{node_key}}/roles",
         f"Authorization: Bearer {raw_token}",
         "The instruction / execution / review AI of a work card this chat placed (any mode): each role's state and",
@@ -351,9 +379,18 @@ def cli_mention(api_base, raw_token):
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",
-        "is done, then read runs/current and the canvas. Neither call consumes this token.",
+        "is done, then read runs/current and the canvas. Neither call consumes this token."
     ])
 
+
+def cli_mention(api_base, raw_token):
+    return "\n".join([
+        contract_planning(api_base, raw_token),
+        contract_ai_options(api_base, raw_token),
+        contract_place(api_base, raw_token),
+        contract_run(api_base, raw_token),
+        contract_roles(api_base, raw_token),
+    ])
 
 def descriptors():
     from . import recovery_tools

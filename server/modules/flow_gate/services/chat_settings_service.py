@@ -1,36 +1,36 @@
-"""Per-user chat settings and the conversation context window (group 0362, L0010).
+"""Per-user chat settings and the conversation context window (the earlier change, the earlier implementation).
 
 Three things live here and nowhere else:
 
-* **The numbers.**  L0010 §1 is the single source of truth for the minimum, maximum,
+* **The numbers.** the earlier implementation is the single source of truth for the minimum, maximum,
   default and preset turn counts, and for the two enum domains.  No other module —
   and no screen, and no schema (DB0011 §0) — restates them; the maximum is *derived*
   from the read-side page cap rather than typed a second time, so the day that cap
   moves this one moves with it.
 * **Reading and saving.**  ``resolve_chat_settings`` is deliberately the only reader,
-  shared by the settings endpoint and the two mention paths (L0010 §2-1).  Two readers
+  shared by the settings endpoint and the two mention paths. Two readers
   with two different repairs would show the user one value and apply another.
 * **The window.**  ``resolve_context_window`` turns (head, mode, N) into the
   invocation-local ``after_seq`` and the number of older turns folded before that window.
   A persisted provider read cursor is delivery/audit state, not cross-invocation model memory.
 
-Note the asymmetry between the two directions, which is intended (P0009 scenario 8):
+Note the asymmetry between the two directions, which is intended (scenario 8):
 an unknown value *arriving* in a PATCH is rejected with 422, but an unknown value
 already *sitting* in storage is quietly replaced by its default on the way out.  A
 setting must never be able to stop someone from talking to an AI.
 
-0515 T0009 (D0006, L0007, DB0008) adds a second, independent per-user setting --
+adds a second, independent per-user setting --
 ``source_access_mode`` -- living in its own ``user_chat_source_access`` storage
-(D0006 §2.1: kept separate so this table's own ``is_default``/legacy-migration
+(the design: kept separate so this table's own ``is_default``/legacy-migration
 meaning is never touched by it). :func:`resolve_chat_settings` merges the two
 storages on read; :func:`save_chat_settings` writes each patched half to its own
-storage inside one transaction when both arrive together (L0007 §2.2.2). The
+storage inside one transaction when both arrive together. The
 ``edit_once`` one-shot claim state machine (claim/commit/rollback) itself lives in
 ``db.user_chat_source_access`` and ``token_service``; this module only owns the
-stale/corrupted-marker recovery sweep (:func:`recover_stale_claim`, L0007 §2.4.4)
+stale/corrupted-marker recovery sweep (func:`recover_stale_claim`, the earlier implementation)
 and the settings-read/PATCH contract around it.
 
-0670 T0004 (ported to v0.2 as flowgate.v02.0032 T#1) adds a third independent per-user
+(ported to v0.2 as the earlier change the earlier implementation) adds a third independent per-user
 setting -- ``command_policy`` (chat command execution: always_approve / user_approval /
 reject, default user_approval) -- in its own ``user_chat_command_policy`` storage for the
 same reason as the source mode:
@@ -51,47 +51,47 @@ from modules.flow_gate.db.connection import get_store, now_iso
 
 _log = logging.getLogger(__name__)
 
-# -- L0010 §1-1 numeric parameters -------------------------------------------
+# -- the earlier implementation numeric parameters -------------------------------------------
 CONTEXT_TURNS_MIN = 1
-# NR0003 Rev.4 §4: no longer derived from TURN_LIMIT_MAX (the per-read page size of the
+# Rev.4: no longer derived from TURN_LIMIT_MAX (the per-read page size of the
 # conversation query).  Context turns are a *selection* range, so the cap is its own
 # number; a stored column has no CHECK on it, so raising it needs no migration.
 CONTEXT_TURNS_MAX = 999
 CONTEXT_TURNS_DEFAULT = 20
-# Drawn in the list; never used to decide anything (L0010 §1-1).
+# Drawn in the list; never used to decide anything.
 CONTEXT_TURNS_PRESETS = (5, 10, 15)
 
-# -- L0010 §1-2 enumerated parameters ----------------------------------------
+# -- the earlier implementation enumerated parameters ----------------------------------------
 # Byte-for-byte the strings the browser already keeps in localStorage.  Renaming them
 # on the way in would buy one translation table, and that table is the accident.
 SEND_ACTION_DOMAIN = ("copy_mention", "invoke_ai", "none")
 SEND_ACTION_DEFAULT = "none"
-# flowgate.v02test.0025: "checkpoint" = the chat's context checkpoint decides the window (message menu: from this
+# "checkpoint" = the chat's context checkpoint decides the window (message menu: from this
 # message / from the next one). Without a checkpoint in that chat the last CONTEXT_CHECKPOINT_FALLBACK_TURNS go.
 CONTEXT_MODE_DOMAIN = ("recent", "all", "checkpoint", "checkpoint_recent")
 CONTEXT_MODE_DEFAULT = "recent"
 CONTEXT_CHECKPOINT_FALLBACK_TURNS = 5
 
-# -- 0515 D0006 §2.2 domain -- kept in its own separate storage (§3.1) ------
-# flowgate.v02test.0026: "execute" sits between read_only and edit -- the chat may run FlowGate
+# -- the design domain -- kept in its own separate storage ------
+# "execute" sits between read_only and edit -- the chat may run FlowGate
 # commands (its user's command policy applies) but never edits source or documents.
 SOURCE_ACCESS_DOMAIN = ("read_only", "execute", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
-# -- 0670 T0004 / flowgate.v02.0032 T#1: chat command execution policy -- its own storage too ----------
+# -- the earlier implementation / the earlier change the earlier implementation: chat command execution policy -- its own storage too ----------
 COMMAND_POLICY_DOMAIN = ("always_approve", "user_approval", "reject")
 COMMAND_POLICY_DEFAULT = "user_approval"
 
-# 0515 T0009 §5: a claim marker older than this is eligible for stale recovery.
+# a claim marker older than this is eligible for stale recovery.
 ONE_SHOT_CLAIM_STALE_SEC = 600
 
-# The three columns user_chat_settings.upsert() owns (T0009 §3.1 -- restated, not
+# The three columns user_chat_settings.upsert owns (the earlier implementation -- restated, not
 # imported, from db.user_chat_settings.SETTING_COLUMNS: save_chat_settings must keep
 # working against a test double for that store that implements .get()/.upsert() only).
 _LEGACY_SETTING_FIELDS = ("send_action", "context_mode", "context_turns", "checkpoint_max_turns")
 
 # Validation order is fixed so that a request with several bad fields always reports
-# the same one (L0010 §2-2). source_access_mode is appended last (T0009 §3.3) -- the
+# the same one. source_access_mode is appended last -- the
 # three legacy fields keep their original relative order and error precedence.
 PATCH_FIELDS = (*_LEGACY_SETTING_FIELDS, "source_access_mode", "command_policy")
 
@@ -107,11 +107,11 @@ class ChatSettingsError(ValueError):
 
 
 def defaults() -> dict:
-    """The settings of somebody who has never saved (L0010 §2-1).
+    """The settings of somebody who has never saved.
 
     ``updated_at`` is None here and NOT NULL in the table on purpose: the null is the
     shape of "there is no row", not the value of a column (DB0011 §2-6). Unchanged by
-    0515 T0009 (§3.1) -- ``source_access_mode`` lives in its own storage and is merged
+    -- ``source_access_mode`` lives in its own storage and is merged
     in separately by :func:`resolve_chat_settings`, never inside this dict's own keys.
     """
     return {
@@ -124,7 +124,7 @@ def defaults() -> dict:
 
 
 def domain() -> dict:
-    """The limits the response carries so no screen has to hold its own copy (P0009 §0-3)."""
+    """The limits the response carries so no screen has to hold its own copy."""
     return {
         "send_action": list(SEND_ACTION_DOMAIN),
         "context_mode": list(CONTEXT_MODE_DOMAIN),
@@ -138,7 +138,7 @@ def domain() -> dict:
 
 
 def resolve_command_policy(user_id: Optional[str]) -> str:
-    """0670 T0004 / flowgate.v02.0032 T#1: the stored command policy, repaired to the default on the way out.
+    """the stored command policy, repaired to the default on the way out.
 
     Never raises -- like every other setting, a broken row must not stop a chat.
     """
@@ -159,7 +159,7 @@ def _normalize_enum(value: Any, allowed: tuple[str, ...], fallback: str) -> str:
 
 
 def _normalize_turns(value: Any) -> int:
-    """Repair a stored turn count on the way out (L0010 §2-1, §4-3).
+    """Repair a stored turn count on the way out.
 
     Above the cap the value is pulled *down to the cap*; below the floor it goes back
     to the default.  The two are not symmetric because their causes are not: a value
@@ -179,14 +179,14 @@ def _normalize_turns(value: Any) -> int:
 
 
 def resolve_chat_settings(user_id: Optional[str], scope: Optional[tuple[str, str]] = None) -> tuple[dict, bool]:
-    """Return (settings, is_default) for a user (L0010 §2-1).
+    """Return (settings, is_default) for a user.
 
     Only the odd field is reverted -- a broken ``context_mode`` does not drag
-    ``send_action`` back to its default with it (P0009 scenario 17).  And the repair
+    ``send_action`` back to its default with it (scenario 17). And the repair
     stays in memory: if reading wrote its correction back, the value that caused the
     trouble would already be gone by the time anybody looked at the table.
 
-    0515 T0009 §3.2: ``source_access_mode`` is read from its own storage and merged in
+    ``source_access_mode`` is read from its own storage and merged in
     on every path below, including both "never saved" branches -- its presence must
     never depend on whether a ``user_chat_settings`` row exists, and ``is_default``
     below is computed from that legacy row alone, exactly as before this T.
@@ -198,7 +198,7 @@ def resolve_chat_settings(user_id: Optional[str], scope: Optional[tuple[str, str
 
     if not user_id:
         # Nobody to look up. Same treatment as somebody who has never saved, rather
-        # than a second set of defaults living somewhere else (L0010 §5).
+        # than a second set of defaults living somewhere else.
         settings = defaults()
         settings["source_access_mode"] = source_access_mode
         settings["command_policy"] = command_policy
@@ -230,7 +230,7 @@ def resolve_chat_settings_safe(user_id: Optional[str], scope: Optional[tuple[str
     """Settings for the mention paths, which must never fail because of a setting.
 
     A failed lookup here would surface to the user as "the chat stopped working", with
-    nothing anywhere pointing at the settings table as the cause (L0010 §2-5, D0008
+    nothing anywhere pointing at the settings table as the cause (the earlier implementation, the design
     §3-4).  One warning line per request -- a stack trace per call would bury the very
     line that explains it.
     """
@@ -246,7 +246,7 @@ def resolve_chat_settings_safe(user_id: Optional[str], scope: Optional[tuple[str
 
 
 def validate_patch(patch: dict) -> None:
-    """Raise ChatSettingsError on the first bad field, in PATCH_FIELDS order (L0010 §2-2).
+    """Raise ChatSettingsError on the first bad field, in PATCH_FIELDS order.
 
     Unknown keys are refused rather than ignored.  Silently dropping one is how "I
     saved it and nothing changed" happens, and that has no trace to follow afterwards.
@@ -295,17 +295,17 @@ def validate_patch(patch: dict) -> None:
 
 
 def save_chat_settings(user_id: Optional[str], patch: dict, scope: Optional[tuple[str, str]] = None) -> dict:
-    """Validate, write the sent columns only, and answer with a fresh read (L0010 §2-2).
+    """Validate, write the sent columns only, and answer with a fresh read.
 
     An empty patch writes nothing and creates nothing -- an all-defaults row would flip
     ``is_default`` to false and shut the [on send] hand-over down for good (DB0011 §3-3).
     The response is re-read rather than echoed back so that a value the server had to
-    repair shows up on the screen immediately (P0009 scenario 5).
+    repair shows up on the screen immediately (scenario 5).
 
-    0515 T0009 §3.3: ``source_access_mode`` is written to its own storage. When a PATCH
+    ``source_access_mode`` is written to its own storage. When a PATCH
     carries both a legacy field and ``source_access_mode``, both writes happen inside one
-    ``store.transaction()`` (T0009 §3.3) so they land or fail together. A source-only
-    PATCH never touches (and never creates) the ``user_chat_settings`` row (T0009 §3.3,
+    ``store.transaction()`` so they land or fail together. A source-only
+    PATCH never touches (and never creates) the ``user_chat_settings`` row (the earlier implementation,
     §12.2) -- ``source_access_store.upsert`` is called on its own, outside any legacy
     upsert call.
     """
@@ -317,7 +317,7 @@ def save_chat_settings(user_id: Optional[str], patch: dict, scope: Optional[tupl
         # function must keep working against a test double that stands in for that
         # store's .get()/.upsert() surface only (see test_chat_settings_0362.py's
         # _MemoryStore), and _LEGACY_SETTING_FIELDS already has to name these three
-        # fields itself to split a mixed patch (T0009 §3.3).
+        # fields itself to split a mixed patch.
         legacy_patch = {key: patch[key] for key in _LEGACY_SETTING_FIELDS if key in patch}
         source_mode = patch.get("source_access_mode")
         command_policy = patch.get("command_policy")
@@ -334,16 +334,16 @@ def save_chat_settings(user_id: Optional[str], patch: dict, scope: Optional[tupl
                 if source_mode is not None:
                     source_access_store.upsert(user_id, *scope, source_mode, now)
                 if command_policy is not None:
-                    # 0670 T0004 / flowgate.v02.0032 T#1: own storage; a command-only PATCH leaves the legacy
+                    # own storage; a command-only PATCH leaves the legacy
                     # row (and therefore is_default) exactly as it was.
                     command_policy_store.upsert(user_id, command_policy, now)
     return settings_response(user_id, scope)
 
 
 def settings_response(user_id: Optional[str], scope: Optional[tuple[str, str]] = None) -> dict:
-    """The envelope both /me/chat-settings verbs answer with (P0009 scenario 1).
+    """The envelope both /me/chat-settings verbs answer with (scenario 1).
 
-    0515 T0009 §5.1: runs the stale/corrupted one-shot claim recovery sweep for this
+    runs the stale/corrupted one-shot claim recovery sweep for this
     user before reading, so a claim nobody will ever commit (a dead worker, a crashed
     tab) does not keep blocking a fresh ``edit_once`` claim forever.
     """
@@ -381,7 +381,7 @@ def _is_stale(claimed_at: Optional[str]) -> bool:
 
 
 def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
-    """Classify and repair one stale/corrupted ``edit_once`` claim marker (T0009 §5).
+    """Classify and repair one stale/corrupted ``edit_once`` claim marker.
 
     Returns one of ``NOTHING_TO_DO``, ``B_TYPE_CLEANED``, ``MISSING_RECOVERED``,
     ``REVOKED_RECOVERED``, ``LIVE_REVOKED``, ``CONSUMED_MARKER_CLEANED`` -- tests and
@@ -389,7 +389,7 @@ def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
     an ordinary AVAILABLE row.
 
     Called from :func:`settings_response` and from ``token_service.issue()``'s
-    pre-claim step (T0009 §5.1) -- no other call site should be added; both already
+    pre-claim step -- no other call site should be added; both already
     reach every user who could be looking at a stuck claim.
     """
     row = source_access_store.get(user_id, project_id, group_id)
@@ -434,7 +434,7 @@ def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
         return "MISSING_RECOVERED"
     if token_rec.get("consumed_at"):
         # edit_once must never be re-armed for a token that was genuinely used
-        # (T0009 §5, DB0008 §5.2) -- clear the marker only, and flag the invariant
+        # -- clear the marker only, and flag the invariant
         # this should not normally reach (a CLAIMED row surviving past commit()).
         source_access_store.commit(user_id, project_id, group_id, token_id, now_iso())
         _log.warning(
@@ -455,7 +455,7 @@ def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
         return "REVOKED_RECOVERED"
 
     # LIVE: ask token_service to revoke it. Its own claim-winner -> rollback wiring
-    # (T0009 §4.4) performs the marker rollback as soon as *some* caller's revoke
+    # performs the marker rollback as soon as *some* caller's revoke
     # actually wins the CAS -- including this one -- so no second rollback call is
     # needed here; re-calling rollback() afterwards would just be a harmless no-op.
     from modules.flow_gate.services import token_service
@@ -525,7 +525,7 @@ def resolve_context_window(
     A provider participant cursor records delivery history, not memory carried by a new
     model invocation, so it does not participate in this calculation.
 
-    flowgate.v02test.0025: the chat's context checkpoint (``chat_doc_settings_service``) applies in the
+    the chat's context checkpoint (``chat_doc_settings_service``) applies in the
     [checkpoint] mode only:
 
     * checkpoint set, ``checkpoint_include`` (from this message): ``after_seq = seq - 1``

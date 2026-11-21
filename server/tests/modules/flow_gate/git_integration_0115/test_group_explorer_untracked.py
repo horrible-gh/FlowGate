@@ -73,7 +73,7 @@ class TestGroupExplorerUntracked(_Scenario):
 
         wt = self._provision(svc)
         # A brand-new file (never git add-ed) plus a tracked edit — the exact asymmetry
-        # B0001 reports ("수정은 보이는데 신규만 안 보인다").
+        # the original bug report described ("edits show up but new files do not").
         (wt / "pkg").mkdir(exist_ok=True)
         (wt / "pkg" / "new_module.py").write_text("print('new')\n", encoding="utf-8")
         (wt / "README.md").write_text("hello\nchanged\n", encoding="utf-8")
@@ -126,7 +126,7 @@ class TestGroupExplorerUntracked(_Scenario):
 
 
     def test_changes_carry_per_file_line_counts(self, grpexp_origin):
-        """0325 T0006: the final-approval sidebar summarizes how big a group's change is,
+        """The final-approval sidebar summarizes how big a group's change is,
         so /changes now carries +/- per file. --name-status alone could not answer it.
         Tracked edits get their counts from `git diff --numstat`; an untracked file has no
         diff entry at all, so its added-lines count is read off disk."""
@@ -160,9 +160,8 @@ class TestGroupExplorerUntracked(_Scenario):
 
 
     def test_file_diff_returns_old_new_for_tracked_and_untracked(self, grpexp_origin):
-        """NR0003 (flowgate.default.0329): [변경사항 열기] must read through the SAME
-        old/new-content contract the 0326 file explorer uses (flowgate.default.0326
-        NR0005 §4) — the merge-base blob is the old side, the live worktree file is the
+        """The "Open changes" action must read through the SAME
+        old/new-content contract the file explorer uses — the merge-base blob is the old side, the live worktree file is the
         new side, and the client derives its own line diff from the two bodies. Binary
         is flagged on the side that actually is binary, never guessed from the pair.
         """

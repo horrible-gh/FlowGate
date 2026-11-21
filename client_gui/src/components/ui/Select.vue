@@ -6,8 +6,8 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free native select (T0004 §5.4): a plain label/value list. Provider selector,
-// Branch selector and similar domain pickers stay in their owning feature (T0004 §11).
+// Domain-free native select: a plain label/value list. Provider selector,
+// Branch selector and similar domain pickers stay in their owning feature.
 export interface SelectOption {
   value: string
   label: string

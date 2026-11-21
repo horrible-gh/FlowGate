@@ -19,7 +19,7 @@ def test_read_view_four_blocks_and_unique_files(monkeypatch,tmp_path):
     body={"edit_spec":spec,"baseline_fingerprint":tr2.target_fingerprint(spec,tmp_path)}
     view=tr2.read_view({"project_id":"p","group_id":"g","doc_id":"d"},body)
     assert set(view)=={"document","readiness","mutation","body","derived","approval","history","gate_admission"}
-    # Not pending review: the authoritative readiness never calls it ready (T0030 §7).
+    # Not pending review: the authoritative readiness never calls it ready.
     assert view["readiness"]["ready"] is False
     assert view["mutation"]=={"allowed":True,"reason":None}
     assert len(view["derived"]["files"])==1
@@ -29,7 +29,7 @@ def test_read_view_four_blocks_and_unique_files(monkeypatch,tmp_path):
     assert view["derived"]["live_precheck"]["anchors"] is None
 
 def test_read_view_without_a_readable_source_keeps_the_proposal(monkeypatch, tmp_path):
-    """T0030 §7: an unavailable worktree is an approval block, not a load failure."""
+    """an unavailable worktree is an approval block, not a load failure."""
     from modules.flow_gate.db import tr_commit_ledger
     from modules.flow_gate.documents import document_service
     from modules.flow_gate.db import tr2_approval_attempts

@@ -1,19 +1,16 @@
-"""이관 완료 대화(CH)의 전체 본문 교체 차단 — 세션 계열 저장 경로 (flowgate.default.0432).
+"""Block full-body replacement of migrated CH conversations through session save routes (0432).
 
-0344 TR0008 후속. 대화의 정본은 ``conversation_turns`` 표로 옮겨졌고(0432.0003-NR §3)
-``GET /documents/{doc_id}/content`` 는 이관된 대화에 대해 턴에서 만든 projection 을 준다.
-그런데 짝인 ``PATCH /documents/{doc_id}/content`` 에는 대화 판정이 없어, 그 글을 고쳐 저장하면
-아무도 읽지 않는 껍데기 파일이 바뀌고 사용자는 "저장했다"는 응답을 받은 채 대화는 하나도
-바뀌지 않은 화면을 보게 된다(NR §5·§7-1). 0344.0008-TR 이 이 마무리를 시도했다가 반려된 뒤
-후속이 없어 방치돼 있었다(NR §4).
+Follow-up to the earlier implementation: conversation_turns is canonical (0432.0003-NR), and
+GET document content projects those turns. PATCH lacked the conversation guard, so it
+saved an unread shell file and reported success while the visible conversation stayed
+unchanged (NR §5/§7-1). The rejected 0344.0008-TR attempt had no subsequent fix (NR §4).
 
-판정 조건은 0344.0005-L §2-16 원문 그대로 — 대화 타입이고 ``migration_state == "migrated"``
-일 때만. 이관되지 않은 대화(pending / in_progress / failed)는 아직 파일이 정본이라 걸지 않는다.
-봉투는 세션 계열의 현행 형식인 ``HTTPException(detail=...)`` 이다(0344.0004-P §0-5) — 워커 계열의
-``ok``/``error_message`` 봉투를 여기에 섞으면 이 라우터를 쓰는 화면의 오류 처리가 통째로 깨진다.
+Apply the exact 0344.0005-L §2-16 condition: conversation type and migration_state=migrated.
+Pending/in_progress/failed conversations still use canonical files and remain editable.
+Use the session-route HTTPException(detail=...) envelope (0344.0004-P §0-5), not the
+worker ok/error_message envelope, to preserve client error handling.
 
-판정 함수는 실제 DB(전체 마이그레이션이 적용된 sqlite)를 읽는다. ``migration_state`` 를 목으로
-바꾸면 진짜 게이트가 아니라 목을 시험하게 된다.
+Exercise the guard against fully migrated SQLite rather than mocking migration_state.
 """
 from __future__ import annotations
 
@@ -32,8 +29,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 _SERVER_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_SERVER_DIR))
 
-# 0344.0005-L §2-16 원문. 상수를 import 하지 않고 글자 그대로 적는다 — 상수와 시험이 같은
-# 곳을 보면 문구가 틀려도 둘이 나란히 틀린다. 이것은 화면이 받는 전선 위의 계약이다.
+# Literal contract from 0344.0005-L §2-16. Do not import the constant: sharing it
+# would let the test and implementation agree on wrong wording. Pin the UI wire contract.
 _MESSAGE = (
     "This conversation no longer accepts a full-body edit. "
     "Append one turn: POST /api/v1/conversation/{doc_id}/turn"
@@ -89,7 +86,7 @@ class _DB:
 
 @pytest.fixture
 def store(migrated_sqlite_db):
-    """전체 마이그레이션이 적용된 sqlite 를 라이브 STORE 자리에 끼운다."""
+    """Install a fully migrated SQLite store as the live STORE."""
     from modules.flow_gate.db import connection
 
     db_path = migrated_sqlite_db("conversation_full_body_edit_0432.db")
@@ -165,8 +162,8 @@ def _mark_migrated(doc_id: str) -> None:
 
 
 def _save(monkeypatch, doc: dict, content: str = "wholesale rewrite"):
-    """라우터 함수를 직접 부른다 — 이 파일의 이웃(test_document_content_editability.py)이
-    쓰는 방식과 같다. 대화 판정만은 목이 아니라 위 store 픽스처의 진짜 DB 를 읽는다."""
+    """Call the router directly, as test_document_content_editability.py does.
+    The conversation decision still reads the real database in the store fixture."""
     from modules.flow_gate.documents.routers import documents as routes
 
     monkeypatch.setattr(routes.document_service, "get_document", lambda _doc_id: doc)
@@ -191,13 +188,13 @@ def test_migrated_conversation_rejects_a_full_body_save(store, monkeypatch, tmp_
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == _MESSAGE.format(doc_id=doc["doc_id"])
-    # 껍데기 파일조차 건드리지 않는다.
+    # Do not touch even the shell file.
     assert Path(doc["file_path"]).read_text(encoding="utf-8") == "# Original body"
 
 
 def test_the_rpc_wrapper_takes_the_same_block(store, monkeypatch, tmp_path):
-    """PATCH /documents/content (RPC 형태)도 같은 함수를 거치므로 같은 409 다 —
-    화면 단추를 지워도 옛 즐겨찾기와 직접 호출이 이 문으로 들어온다."""
+    """The RPC PATCH documents/content path uses the same guard and returns the same 409.
+    Old bookmarks and direct callers still reach it even if the UI button disappears."""
     from modules.flow_gate.documents.routers import documents as routes
 
     doc = _seed_doc("testfbe-__ALL__-0001-CH0002", tmp_path / "ch2.md")
@@ -218,7 +215,7 @@ def test_the_rpc_wrapper_takes_the_same_block(store, monkeypatch, tmp_path):
 
 
 def test_legacy_conversation_still_saves(store, monkeypatch, tmp_path):
-    """conversation_docs 행이 없는 대화는 pending — 아직 파일이 정본이라 그대로 저장된다."""
+    """Without a conversation_docs row, the conversation is pending and its canonical file remains writable."""
     from modules.flow_gate.db import conversation_turns
 
     doc = _seed_doc("testfbe-__ALL__-0001-CH0003", tmp_path / "ch3.md")
@@ -231,7 +228,7 @@ def test_legacy_conversation_still_saves(store, monkeypatch, tmp_path):
 
 
 def test_failed_migration_conversation_still_saves(store, monkeypatch, tmp_path):
-    """이관 실패(failed)도 migrated 가 아니다 — 파일이 정본으로 남아 있으므로 막지 않는다."""
+    """Failed migration is not migrated: retain writes to the still-canonical file."""
     from modules.flow_gate.db import conversation_turns
 
     doc = _seed_doc("testfbe-__ALL__-0001-CH0004", tmp_path / "ch4.md")
@@ -245,7 +242,7 @@ def test_failed_migration_conversation_still_saves(store, monkeypatch, tmp_path)
 
 
 def test_non_conversation_document_still_saves(store, monkeypatch, tmp_path):
-    """대화가 아닌 문서에는 판정이 끼어들지 않는다(회귀)."""
+    """Leave non-conversation documents unaffected (regression)."""
     doc = _seed_doc("testfbe-__ALL__-0001-R0001", tmp_path / "r1.md", type_code="R")
 
     result = _save(monkeypatch, doc, content="ordinary edit lands")

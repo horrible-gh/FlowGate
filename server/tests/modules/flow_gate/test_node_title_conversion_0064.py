@@ -1,4 +1,4 @@
-"""0064 T-B4b — an R↔B conversion keeps the card title states (L0005 2.17-2 / 2.17-3, V-B4b-1 conversion part).
+"""T-B4b — an R↔B conversion keeps the card title states (2.17-2 / 2.17-3, V-B4b-1 conversion part).
 
 On the R↔B conversion suite's real SQLite DB and temp storage (``test_root_conversion_number_swap_0064`` /
 ``test_root_conversion_succession_0064`` fixtures and helpers): a title state is keyed by (Flow, node key), and

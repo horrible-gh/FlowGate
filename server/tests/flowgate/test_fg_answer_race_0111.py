@@ -1,9 +1,9 @@
-"""flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2 / A-4) — a card step that goes on once its questions are
+"""(T-A2, NR the earlier change A-2 / A-4) — a card step that goes on once its questions are
 answered is taken under ``legacy.person_hold`` with ``idle_ok`` in every phase (``question_wait._answered``: instruction,
 review, work, no_result), so a run judged idle between the wake and the step never refuses it; and the run read's
 reconciliation of an approved instruction whose result stage was refused (the 0084 state after seq 11).
 
-On the same real SQLite DB, routes and fixtures as ``test_fg_question_pending_0111`` (T#2). The race is injected in order
+On the same real SQLite DB, routes and fixtures as ``test_fg_question_pending_0111``. The race is injected in order
 (``racing_wake``): the wake (``legacy.wake_graph_run``) is followed at once by the run's settle
 (``run_service.settle_if_needed`` through ``legacy.settle_graph_run``, as a run read's), which is asserted to have judged
 the run idle before the step runs — 0084 seq 8 -> 9.
@@ -66,7 +66,7 @@ def question_index(questions, monkeypatch):
 
 @pytest.fixture()
 def racing_wake(env, monkeypatch):
-    """0084 seq 8 -> 9: the wake, then at once a settle that judges the run idle (nothing works yet). -> the
+    """seq 8 -> 9: the wake, then at once a settle that judges the run idle (nothing works yet). -> the
     (woken, run status after the settle) of each wake."""
     from flowgate.card_settings import legacy_adapter as legacy
 
@@ -217,7 +217,7 @@ def _once_and_unrefused(env, racing_wake):
     assert _refusals(env) == []
 
 
-# ── instruction phase (T#2's continuation, kept) ─────────────────────────────
+# ── instruction phase ('s continuation, kept) ─────────────────────────────
 
 def test_an_answered_written_instruction_raced_idle_starts_its_result_stage_once(env, decided, monkeypatch, questions,
                                                                                 racing_wake):
@@ -337,7 +337,7 @@ def _answered_writer_reviewed(env, monkeypatch, questions, racing_wake):
 # ── A-4: the run read right after the result stage was refused ───────────────
 
 def _refused_result_stage(env, monkeypatch, questions):
-    """The 0084 state after seq 11, made by the continuation as it was before T#2 (``_answered`` -> ``_after_instruction``):
+    """The 0084 state after seq 11, made by the continuation as it was before the earlier implementation (``_answered`` -> ``_after_instruction``):
     the wake (seq 8), its approval's hold judged on the running run, the settle that judges it idle inside that hold (seq
     9), the instruction's approval (seq 10) and the result stage refused on the idle run (seq 11, ``result_stage`` /
     ``run_idle``). -> (node key, the instruction)."""

@@ -70,7 +70,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 class TestGitEndToEnd(_Scenario):
     @needs_node_syntax
     def test_review_gate_vue_validates_both_script_and_script_setup_blocks(self, origin_repo):
-        # 0481 TR0009 rev2 (AI review finding 2): a valid SFC may carry BOTH a
+        # AI review finding: a valid SFC may carry BOTH a
         # `<script setup>` and an ordinary `<script>` block — Vue's own compiler
         # merges them at build time. `checkVue` used to pick only ONE via
         # `descriptor.scriptSetup || descriptor.script`, so a syntax error in

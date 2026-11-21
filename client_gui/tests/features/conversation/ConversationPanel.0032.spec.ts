@@ -6,8 +6,8 @@ import { ConversationPanel } from '@/features/conversation'
 import type { CommandRequestActivity, WorkChangeActivity } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0032 — what the Conversation panel shows on the production contract
-// (D0006 §6.1–§6.3): server command states and reasons, run change files with their stored
+// what the Conversation panel shows on the production contract
+// : server command states and reasons, run change files with their stored
 // diff, decision recovery and [새 채팅] during an AI run.
 registerAppMessages(i18n)
 
@@ -185,7 +185,7 @@ describe('[새 채팅] (D0006 §6.1, §6.3)', () => {
     await button.trigger('click')
     await flushPromises()
     expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
-    // flowgate.v02.0047: the draft's first send creates the chat.
+    // the draft's first send creates the chat.
     await find('conv-input').setValue('다른 이야기')
     await find('conv-composer').trigger('submit')
     await flushPromises()

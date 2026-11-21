@@ -1,31 +1,31 @@
 <template>
-  <!-- flowgate.v02.0036 — bottom Inspector Frame (0035 v7): the common frame every Node shares.
-       No Node selected: an empty area — no text (flowgate.v02.0042), header or tabs. A Node
+  <!-- bottom Inspector Frame (v7): the common frame every Node shares.
+       No Node selected: an empty area — no text, header or tabs. A Node
        selected: header (40px) + tabs (32px) fixed above a scrolling Content area — 72px before
        the content.
-       flowgate.v02.0039 T#3: `unselected` (the Designer has no work target yet) leaves only the
+       `unselected` (the Designer has no work target yet) leaves only the
        bottom frame — an empty header bar, no line, no tabs and no Content.
-       flowgate.v02.0048 T#1 (D#1 §5): the one injection point of the Inspector features. The
+       the one injection point of the Inspector features. The
        Frame turns the selection into an InspectorTarget and lays out registry contributions
        for the header and tab Content in `order`. The Frame knows no feature and calls no API;
        a feature's Host intent leaves as the `host` event.
-       flowgate.v02.0048 T#3 (D#1 §7.3): the header follows the target. When the target document's
+       the header follows the target. When the target document's
        review status, an AI run of its Flow or its documents change on the server, the Frame asks
        for the Flow to be read again quietly (`refresh-flow`); the new selection then gives the
        header and the Canvas card the same values. The Frame keeps no copy of the server state.
-       flowgate.v02.0051 stage 2: two more header places from the registry — the kind badge part
+       stage 2: two more header places from the registry — the kind badge part
        (`headerKind`, the first that applies) and the ⋯ menu items (`headerMenu`, in `order`).
-       flowgate.v02.0051 stage 3: every selected Node keeps the four v7 tabs. Missing data
+       stage 3: every selected Node keeps the four v7 tabs. Missing data
        receives an empty state and unconnected settings a disabled state. Card slots lead the
        document tab; the card slot opens the existing document screen for full detail.
-       flowgate.v02.0053 T#6: the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
+       the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
        take input over the whole tab; a `fill` tab's section takes the body's
        free height.
        flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
        without one the header keeps its dim, disabled ✎ 메모.
-       flowgate.v02.0070 T#1 (B1): the host also carries the card title save (`save-title`, the Center column's) — the
+       (B1): the host also carries the card title save (`save-title`, the Center column's) — the
        header edits the card's title in its title area and saves it through the host.
-       flowgate.v02.0150: the features' modeless windows hosts (`windows`) are drawn outside the selection branches, for
+       the features' modeless windows hosts (`windows`) are drawn outside the selection branches, for
        as long as the Frame lives: a selection change (a click on the Canvas, another card, no card) or a tab change never
        unmounts a window; only its own close / save / cancel closes it. -->
   <section
@@ -141,19 +141,19 @@ const props = withDefaults(
   defineProps<{
     /** The selected Node with its Flow and project (Center session), or null when nothing is selected. */
     selection: FlowGraphSelection | null
-    /** The Designer has no work target yet (0039 T#3): frame only. */
+    /** The Designer has no work target yet: frame only. */
     unselected?: boolean
     /** The feature registry; tests swap in a fixture registry. */
     registry?: InspectorRegistry
-    /** flowgate.v02.0070 T#1: saves a card's own title (the session's); null = no title edit opens. */
+    /** saves a card's own title (the session's); null = no title edit opens. */
     saveTitle?: ((flowId: string, nodeKey: string, raw: string) => Promise<NodeTitleSaveOutcome>) | null
     /**
-     * flowgate.v02.0072 TR0012 rev1: any Flow's run lock as the Center session knows it now (its run marks); null = only
+     * any Flow's run lock as the Center session knows it now (its run marks); null = only
      * the selection tells it (its own Flow; any other Flow is not confirmed).
      */
     flowRunLock?: WorkPlanFlowRunLock | null
     /**
-     * flowgate.v02.0083 T#3: any shown card's latest node run as the Center session knows it now; null = only the selection
+     * any shown card's latest node run as the Center session knows it now; null = only the selection
      * tells it (its own card).
      */
     cardRun?: WorkPlanCardRun | null
@@ -183,7 +183,7 @@ const host: InspectorHost = {
 }
 provide(INSPECTOR_HOST, host)
 
-// flowgate.v02.0053 T#6: the tab Content element, for parts that take input over the whole tab.
+// the tab Content element, for parts that take input over the whole tab.
 const bodyElement = ref<HTMLElement | null>(null)
 provide(INSPECTOR_BODY, { element: bodyElement })
 
@@ -191,7 +191,7 @@ provide(INSPECTOR_BODY, { element: bodyElement })
 // shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
 const readTarget = computed(() => toInspectorTarget(props.selection))
 const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
-// flowgate.v02test.0002 T-b (rej_01M6R14HCES8QJJ5): the shown target for the parts, also between their tabs; null once
+// T-b (rej_01M6R14HCES8QJJ5): the shown target for the parts, also between their tabs; null once
 // the Frame ends. The Frame still knows no feature: a part decides what the selection means for it.
 const frameAlive = ref(true)
 provide(INSPECTOR_SELECTION, {
@@ -202,7 +202,7 @@ provide(INSPECTOR_SELECTION, {
 onBeforeUnmount(() => {
   frameAlive.value = false
 })
-// flowgate.v02.0072 T#3: and the shown target's read-only verdict for the work plan windows of its Flow.
+// and the shown target's read-only verdict for the work plan windows of its Flow.
 watch(
   readTarget,
   (current) => {
@@ -211,7 +211,7 @@ watch(
   },
   { immediate: true },
 )
-// flowgate.v02.0072 TR0012 rev1: an open work plan window follows its own Flow's run lock whatever is selected — no
+// an open work plan window follows its own Flow's run lock whatever is selected — no
 // card, another card or another Flow. Read from the session while the Frame lives; once it ends nothing tells it and
 // the windows stay locked.
 onBeforeUnmount(
@@ -221,7 +221,7 @@ onBeforeUnmount(
     return current?.flowId === flowId ? (current.editLock ?? null) : 'unknown'
   }),
 )
-// flowgate.v02.0083 T#3: and the WP card of a plan window its latest node run, also when another card or Flow is selected
+// and the WP card of a plan window its latest node run, also when another card or Flow is selected
 // (the selected card's own read when the session tells none).
 onBeforeUnmount(
   provideWorkPlanCardRun((flowId, nodeKey) => {
@@ -263,7 +263,7 @@ function onDocumentContentChanged(event: Event): void {
 onMounted(() => window.addEventListener('fg:document_content_changed', onDocumentContentChanged))
 onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', onDocumentContentChanged))
 
-// flowgate.v02.0068 T#1: the Frame lives as long as the Designer — its end is the Designer's end for the document
+// the Frame lives as long as the Designer — its end is the Designer's end for the document
 // upload / download (uploads of this Designer end quietly); another project forgets the buttons' document state.
 let lastIoProject: string | null = null
 watch(
@@ -278,7 +278,7 @@ watch(
 onBeforeUnmount(leaveDocumentIo)
 
 const contributions = computed(() => contributionsFor(registry, target.value))
-// flowgate.v02.0150: every windows host of the registry, whatever applies to the selection; each hears the selection.
+// every windows host of the registry, whatever applies to the selection; each hears the selection.
 const windowHosts = registry.entries.filter((entry) => entry.windows)
 const windowTarget = computed(() => (props.unselected ? null : target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))
@@ -305,7 +305,7 @@ const tabs = computed(() => {
   })
 })
 
-// flowgate.v02test.0042: one visibility / tone supplier per registration, set up once like the tab numbers; each sees the
+// one visibility / tone supplier per registration, set up once like the tab numbers; each sees the
 // target only while its registration applies.
 const scopedTarget = (entry: (typeof registry.entries)[number]) =>
   computed(() => (target.value && registrationApplies(entry, target.value) ? target.value : null))
@@ -357,10 +357,10 @@ const tabContent = computed(() => {
     : entries
 })
 const emptyTabMessage = computed(() => {
-  // flowgate.v02.0053 T#6 (0053 CH): Q&A of a Node without a document is an empty
+  // (CH): Q&A of a Node without a document is an empty
   // area — no "no linked document" sentence.
   if (!target.value?.docId && activeTab.value === 'qna') return ''
-  // flowgate.v02.0053 T#7 (0053 CH §4): every card with settings has its form now (a Graph card, just placed
+  // (CH): every card with settings has its form now (a Graph card, just placed
   // or done); a Node with none (a work plan card, a v0.1 document outside the sequence) keeps an empty
   // settings area — no "why not" sentence (the 0052 T#2 reasons, "v0.1 단계에 속하지 않은 Node" among them).
   if (activeTab.value === 'settings') return ''
@@ -437,7 +437,7 @@ function selectTab(key: string) {
   background: #10243e;
 }
 
-/* flowgate.v02test.0042: a coloured tab label — blue: progress only; red: a person must choose. */
+/* a coloured tab label — blue: progress only; red: a person must choose. */
 .designer-inspector-tabs :deep(.ui-tab[data-tone="info"]) {
   color: #7cc0ff;
   font-weight: 700;
@@ -448,7 +448,7 @@ function selectTab(key: string) {
   font-weight: 700;
 }
 
-/* 시안 v7: the coloured tab is underlined in its own colour when selected (not the default blue). */
+/* mockup v7: the coloured tab is underlined in its own colour when selected (not the default blue). */
 .designer-inspector-tabs :deep(.ui-tab.is-active[data-tone="info"]) {
   border-bottom-color: #7cc0ff;
 }

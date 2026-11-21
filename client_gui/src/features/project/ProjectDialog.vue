@@ -58,18 +58,18 @@
 </template>
 
 <script setup lang="ts">
-// Project Dialog -- Project Feature's top-level Modal (WP0005 T#2 §2.1/§2.2/§3). App
+// Project Dialog -- Project Feature's top-level Modal. App
 // never passes an `open` prop here: the store owns Dialog open/close truth already
-// (T#1 §5, D0004 §1.2/§4.1), so opening this Dialog from anywhere (Sidebar/Dashboard in
-// T#3) means calling the public `useProjectStore().openDialog()`, and this component
+// , so opening this Dialog from anywhere (Sidebar/Dashboard in
+// ) means calling the public `useProjectStore().openDialog()`, and this component
 // only ever reads `store.dialogOpen` reactively.
 //
 // Dialog-local state lives here, not in the store: `searchQuery` and `selectedId` (the
-// candidate a row-click picks, distinct from `store.currentProject` -- D0004 §2.1/§3.3,
+// candidate a row-click picks, distinct from `store.currentProject` -- the design,
 // T#1 §5 doc-comment). Only an explicit "열기"/double-click ever calls
-// `store.setCurrentProject()` (T#2 §3); a plain row click only ever updates `selectedId`.
+// `store.setCurrentProject()`; a plain row click only ever updates `selectedId`.
 //
-// flowgate.v02.0040: nothing is pre-selected or marked current when the Dialog opens —
+// nothing is pre-selected or marked current when the Dialog opens —
 // `selectedId` stays null until the person picks a row. "열기" also raises the store's
 // one-shot explicit-open signal and emits `opened`; this feature stays router-free, so the
 // App Shell (the single mount, reached from both Sidebar and Dashboard) does the move to the
@@ -100,7 +100,7 @@ const searchQuery = ref('')
 const selectedId = ref<string | null>(null)
 const createDialogOpen = ref(false)
 const searchInputRef = ref<InstanceType<typeof Input> | null>(null)
-// flowgate.v02.0088 F05: a toast keeps the created Project's name, not a sentence translated at
+// a toast keeps the created Project's name, not a sentence translated at
 // creation time — the sentence is built in the current locale whenever it renders, and the
 // Project name itself is only interpolated, never translated.
 interface CreatedToast {
@@ -125,11 +125,11 @@ const filteredProjects = computed<Project[]>(() => {
 })
 
 // Every time this Dialog opens, Dialog-local state starts clean and search results are
-// unfiltered again (D0004 §3.1/§3.2) -- closing it never leaves stale search text or a
+// unfiltered again -- closing it never leaves stale search text or a
 // stale selection behind for the next open. Initial focus itself is ModalShell's own
 // concern via `data-modal-autofocus` on the search input above, not duplicated here.
 //
-// Closing also cascades to the create child Modal (T#2 §9 child lifecycle): this parent
+// Closing also cascades to the create child Modal (child lifecycle): this parent
 // can close via more than an explicit "취소"/X on the child itself -- Escape, a backdrop
 // click, or a programmatic store.closeDialog() (e.g. from the create-success flow's own
 // caller, or a future outside trigger) can all flip `store.dialogOpen` to false while the
@@ -148,15 +148,15 @@ watch(
     }
     searchQuery.value = ''
     selectedId.value = null
-    // flowgate.v02.0043: the Designer's File › 새 Project opens this Dialog asking for the create
-    // child right away. The entry point stays admin-only (D0004 §3.6), so for anyone else the
+    // the Designer's File › New Project opens this Dialog asking for the create
+    // child right away. The entry point stays admin-only, so for anyone else the
     // request is dropped and the Dialog opens as it always does.
     createDialogOpen.value = store.takeCreateRequest() && isAdmin.value
   },
 )
 
 // A search that hides the current selection candidate must not keep it selected out of
-// sight (D0004 §3.5, T#2 §4).
+// sight.
 watch(filteredProjects, (list) => {
   if (selectedId.value && !list.some((p) => p.id === selectedId.value)) {
     selectedId.value = null
@@ -168,7 +168,7 @@ function selectProject(project: Project): void {
 }
 
 // The only place this component calls into the store's current-Project mutation --
-// picking a row alone (selectProject above) never does (D0004 §3.3/§3.4, T#2 §3).
+// picking a row alone (selectProject above) never does.
 function openProject(project: Project): void {
   store.setCurrentProject(project)
   store.requestExplicitOpen(project.id)
@@ -183,7 +183,7 @@ function dismissToast(id: string | number): void {
 // "/" jumps focus to search, but only while this Dialog is actually topmost (the create
 // child Modal is not open) and only while focus is not already inside a text field --
 // typing a literal "/" character into the description Textarea, for example, must stay a
-// literal "/" (T#2 §4).
+// literal "/".
 function onDocumentKeydown(event: KeyboardEvent): void {
   if (event.key !== '/') return
   if (!store.dialogOpen || createDialogOpen.value) return
@@ -199,7 +199,7 @@ function onDocumentKeydown(event: KeyboardEvent): void {
 onMounted(() => document.addEventListener('keydown', onDocumentKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown))
 
-// Create success (D0004 §3.6/§5.4, T#2 §6): close the child Modal, let the person see the
+// Create success: close the child Modal, let the person see the
 // new Project immediately (clearing search in case active text would hide it), make it
 // the Dialog-local selection candidate, keep this parent Dialog open, and leave
 // `currentProject` untouched -- only an explicit "열기" changes that.

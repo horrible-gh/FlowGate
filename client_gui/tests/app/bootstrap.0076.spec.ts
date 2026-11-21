@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
 import type { SystemUsersResponse } from '@/features/settings/types'
 
-// flowgate.v02.0076 T#1 (D §1.2, §5.2 V03): the real start of /app. src/app/main.ts runs as the
+// (D, V03): the real start of /app. src/app/main.ts runs as the
 // browser runs it (token recovery, /auth/me, router install, router.isReady, mount on #app).
 // Only the transport (@shared/api) is replaced; it records every request and holds /auth/me
 // until the test answers it, so "응답 전" is the state a direct entry or a refresh really shows.
@@ -167,7 +167,7 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
     expect(managementRequests()).toEqual(['GET /api/v1/system/users'])
   }, 15000)
 
-  // flowgate.v02.0076 T#4 registered 시스템 Agent: like 사용자, its view and its one GET start only now.
+  // flowgate.v02.0076 T#4 registered System Agent: like 사용자, its view and its one GET start only now.
   it('/settings/system/agents, answer A → the view mounts and starts its GET only after the answer', async () => {
     const router = await startApp('/settings/system/agents')
     expectStartupLoadingOnly(router, '/settings/system/agents')
@@ -214,7 +214,7 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
   }, 15000)
 })
 
-// flowgate.v02gui.0017 B2: F5 while the server restarts — /auth/me fails without a verdict (network
+// B2: F5 while the server restarts — /auth/me fails without a verdict (network
 // error, 5xx). The session may be valid, so the access token stays, the app opens on the requested
 // URL instead of /login, and /auth/me is asked again in the background.
 describe('bootstrap without a verdict keeps the session (v02gui.0017 B2)', () => {

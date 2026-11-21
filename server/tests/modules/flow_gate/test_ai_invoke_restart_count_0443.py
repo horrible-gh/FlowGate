@@ -327,7 +327,7 @@ def test_migration_086_adds_restart_max_attempts_column(test_db):
 # Before this migration's CHECK widening, run["attempts_max"] == -1 reached
 # _persist_run_record -> db_runs.upsert() -> a real INSERT whose CHECK only allowed
 # NULL or >= 1. The IntegrityError was swallowed by _persist_run_record's own
-# try/except (L0007 §5), so the hop finished normally but left no durable row at
+# try/except, so the hop finished normally but left no durable row at
 # all. A fake/dict-backed store (as used elsewhere in this repo's ai-invoke tests)
 # has no CHECK constraint and would stay green through that regression -- this test
 # goes through the real migrated schema instead, exactly as

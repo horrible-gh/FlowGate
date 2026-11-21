@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0127 T#5 — the card document transport (0009-L §2.11 ~ §2.15): the /api/v2 coordinates, the exact request
+ * the card document transport: the /api/v2 coordinates, the exact request
  * bodies (whole-body, TS cases, TS brief), the validated success and the structured read. No v1 path is ever used.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'

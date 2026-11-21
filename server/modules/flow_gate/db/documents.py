@@ -52,7 +52,7 @@ def list_documents(
 def list_live_roots(project_id: str, group_id: str, type_code: str, limit: int = 1) -> list[dict]:
     """Rows of ``type_code`` (R/B) in a group that are live roots: not cancelled, not superseded.
 
-    0064 L0005 2.10 P4: the narrow fallback of the parent-root lookup, the same order as ``list_documents``.
+    2.10 P4: the narrow fallback of the parent-root lookup, the same order as ``list_documents``.
     """
     return get_store()._fetch_all(
         "SELECT * FROM documents WHERE project_id = ? AND group_id = ? "
@@ -69,13 +69,13 @@ def find_by_content_fingerprint(
 ) -> Optional[dict]:
     """Return one document whose body fingerprint matches, optionally excluding a group.
 
-    Backs the inbox duplicate-body guard (B0106 / NR0003): a substantial body
+    Backs the inbox duplicate-body guard: a substantial body
     byte-identical to an existing document in a *different* group is the
     submission-layer contamination signature (correct title, stale/reused body).
 
     ``key`` selects which fingerprint to match: the default ``content_sha256``
     (byte-exact) or ``content_sha256_norm`` (whitespace-normalized near-duplicate,
-    NR0003 §5.1c). Both live inside the meta JSON rather than a dedicated column,
+    c). Both live inside the meta JSON rather than a dedicated column,
     so this matches a stable substring with LIKE — no schema migration and
     dialect-portable (the same literal lands in sqlite/mysql/postgres). Returns the
     earliest-created match so the guard's error names the original.
@@ -206,7 +206,7 @@ def delete(doc_id: str) -> None:
     # DELETE (connection.transaction() enables `PRAGMA foreign_keys = ON`). Outside a
     # transaction the live sqlite backend leaves FKs OFF, so declared ON DELETE
     # SET NULL / CASCADE actions would not fire and could orphan dependent rows
-    # (NR0122 §5 / B0001 rec #3). transaction() is reentrant, so callers that already
+    # (rec #3). transaction is reentrant, so callers that already
     # opened a transaction (e.g. document_service.delete_document) pass straight
     # through without nesting.
     with store.transaction():
@@ -370,7 +370,7 @@ def get_documents_by_group_id(
 def get_latest_tr_commit_message(group_id: str, statuses: tuple) -> Optional[str]:
     """Commit-message draft of the most recent accepted TR in a group.
 
-    flowgate.default.0173 L0004 §2.4 rank 1: the resolver's top fallback. Only TRs
+    rank 1: the resolver's top fallback. Only TRs
     whose doc_review_status is in ``statuses`` (approved / wf_done) qualify; the
     latest by created_at, doc_id-desc tiebreak, with a non-empty draft wins.
     Returns None when there is no qualifying draft.
@@ -453,7 +453,7 @@ def search_documents(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """Title/doc_id text search with optional metadata facets (R0001 Phase 1).
+    """Title/doc_id text search with optional metadata facets (Phase 1).
 
     Multi-dialect safe: uses ``LOWER(col) LIKE ?`` which behaves identically on
     SQLite / MySQL / PostgreSQL (no FTS syntax → no dialect.py branching needed).
@@ -493,7 +493,7 @@ def list_documents_for_fulltext(
 ) -> list[dict]:
     """Return facet-filtered documents (no text predicate) for body full-text search.
 
-    R0001 Phase 2: the body markdown lives on the filesystem (no ``content`` column),
+    Phase 2: the body markdown lives on the filesystem (no ``content`` column),
     so the content-search service reads each candidate file rather than matching in
     SQL. This helper applies only the cheap metadata facets (project/type/status, the
     same prefix-``type_code LIKE`` semantics as the Phase 1 endpoint) to narrow the
@@ -588,7 +588,7 @@ def get_rejected_documents_with_reasons() -> list[dict]:
 
 
 def get_outbox_documents(group_id: str = None) -> list[dict]:
-    OUTBOX_TYPES = ("R", "B", "AC", "RJ")  # group 0022 §7.3: A/V removed (doc types retired)
+    OUTBOX_TYPES = ("R", "B", "AC", "RJ")  # : A/V removed (doc types retired)
     placeholders = ",".join(["?"] * len(OUTBOX_TYPES))
     params = list(OUTBOX_TYPES)
     where_extra = ""
@@ -603,8 +603,8 @@ def get_outbox_documents(group_id: str = None) -> list[dict]:
 
 
 def get_inbox_process_documents(group_id: str = None, doc_type: str = None) -> list[dict]:
-    INBOX_PROCESS_TYPES = ("AR", "DS", "D", "DB", "P", "L", "DC", "N", "NR",  # group 0022 §7.3: Q removed
-                           "T", "TR", "TV", "TVR", "VR", "M", "CH")  # L0044.0008 §2: conversation
+    INBOX_PROCESS_TYPES = ("AR", "DS", "D", "DB", "P", "L", "DC", "N", "NR",  # : Q removed
+                           "T", "TR", "TV", "TVR", "VR", "M", "CH")  # : conversation
     placeholders = ",".join(["?"] * len(INBOX_PROCESS_TYPES))
     params = list(INBOX_PROCESS_TYPES)
     where_extra = ""
@@ -811,7 +811,7 @@ TREE_DOC_COLUMNS = (
     "doc_id, project_id, group_id, module, type_code, title,"
     " file_path, direction, doc_review_status,"
     " origin_provider_name, origin_ai_run_id,"
-    " status, superseded_by"   # 0064 T#4 (L0005 2.10 P8): the final-approval mark counts live roots only
+    " status, superseded_by"   # the final-approval mark counts live roots only
 )
 
 
@@ -873,7 +873,7 @@ def get_tree_summary_rows(project_id: str) -> list[dict]:
 def get_linked_result_documents_map() -> dict[str, list[dict]]:
     """Group every NR/TR document by the target_id it references.
 
-    Batch counterpart of get_linked_result_documents() (0276 NR0003 finding 3: the
+    Batch counterpart of get_linked_result_documents (the review: the
     brief/queue path called the single-target version once per open document —
     N+1 ①②③ — and *each* call already scanned all NR/TR rows and re-read the
     memo file of every row with an empty target_id). Building the whole map costs
@@ -917,7 +917,7 @@ def get_followup_type_map(types: tuple) -> dict[str, set]:
     """Return target_id -> set of follow-up type_codes, for the given types.
 
     Batch counterpart of get_documents_by_target_id() for the existence checks in
-    detect_workflow_gaps()/get_pending_nr_tr_documents() (0276 NR0003 finding 3,
+    detect_workflow_gaps/get_pending_nr_tr_documents (the review,
     N+1 ④): those callers only ask "does a follow-up of type X exist for this
     target?", which one DISTINCT query answers for every target at once.
     """
@@ -939,7 +939,7 @@ def get_followup_type_map(types: tuple) -> dict[str, set]:
 def get_documents_by_ids(doc_ids: list) -> dict[str, dict]:
     """Return a doc_id -> document map for the given ids.
 
-    Batch counterpart of get_document_by_id() (0276 NR0003 finding 3, N+1 ⑤: the
+    Batch counterpart of get_document_by_id (the review, N+1 ⑤: the
     action queue resolved one document per conflict event). Chunked to stay under
     SQLite's historical 999 bind-variable limit.
     """
@@ -964,7 +964,7 @@ def get_documents_by_ids(doc_ids: list) -> dict[str, dict]:
 
 
 def group_root_wf_done(group_id: str) -> bool:
-    """True when the group's workflow root (R/B) reached final approval (0459 T0005 §2-2).
+    """True when the group's workflow root (R/B) reached final approval.
 
     The single DB reading of "this group is over". git_service's finalize state and the
     ai-invoke stale-card cleanup both need it, and a service reaching into another
@@ -982,7 +982,7 @@ def group_root_wf_done(group_id: str) -> bool:
 
 
 def groups_root_wf_done(group_ids: list) -> set:
-    """Batch form of :func:`group_root_wf_done` (0282 NR0003 finding 1): one IN query
+    """Batch form of:func:`group_root_wf_done`: one IN query
     instead of one probe per group, for callers that judge a whole screen of groups."""
     if not group_ids:
         return set()

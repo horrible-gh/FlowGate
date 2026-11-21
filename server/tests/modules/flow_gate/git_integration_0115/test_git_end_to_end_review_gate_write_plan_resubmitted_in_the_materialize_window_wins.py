@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_resubmitted_in_the_materialize_window_wins(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev5 (AI review finding, the plan half): the stale check is
+        # AI review finding, the plan half: the stale check is
         # not the only input that has to be atomic with what it authorizes — so is
         # the plan being applied. `_materialize_pending_conversation_run` reads the
         # run detail BEFORE taking the project lock, and `submit_review_write_plan`

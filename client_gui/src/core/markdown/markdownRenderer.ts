@@ -1,4 +1,4 @@
-// flowgate.v02.0113 T#5 — the GFM renderer of the document viewer (features/documentWindow/MdViewer.vue: GitHub-Flavored
+// the GFM renderer of the document viewer (features/documentWindow/MdViewer.vue: GitHub-Flavored
 // Markdown, a code block in its copy wrapper) as one shared factory, so the run result details render the AI messages
 // with the same renderer. `safe` is for text no person wrote in this screen (an AI's message): raw HTML in it is shown as
 // text and a link or image whose address is not http(s) / mailto / a page anchor is shown as its text only.

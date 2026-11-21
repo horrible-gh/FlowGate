@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — AI resolving card (0033-D §3.3). Progress is the conflicts answer's
+// AI resolving card. Progress is the conflicts answer's
 // files whose server-counted markers reached 0 over all files — counted, never estimated
 // (an AI that submits everything at once shows 0 until the end, G4).
 import { computed } from 'vue'

@@ -1,5 +1,5 @@
 <template>
-  <!-- A card with a destination is a real link (T0011 §14: clickable vs. informational cards
+  <!-- A card with a destination is a real link (the earlier implementation: clickable vs. informational cards
        must differ semantically); one without is an inert, aria-disabled article. -->
   <RouterLink v-if="card.to" :to="card.to" custom v-slot="{ href, navigate }">
     <a :href="href" class="dash-card" :class="cardClasses" :data-card-key="card.key" @click="onClick(navigate, $event)">
@@ -33,7 +33,7 @@ const title = computed(() => t(`gui.dashboard.cards.${props.card.key}.title`))
 const desc = computed(() => t(`gui.dashboard.cards.${props.card.key}.desc`))
 const action = computed(() => t(`gui.dashboard.cards.${props.card.key}.action`))
 
-// Same unmodified-left-click check as the Sidebar's Project entry (T0010 §1): a plain click
+// Same unmodified-left-click check as the Sidebar's Project entry: a plain click
 // on the Project card opens the Project Dialog in place; a modified click (ctrl/meta/shift,
 // middle button) falls through to the real /projects href untouched.
 function isPlainClick(event: MouseEvent): boolean {
@@ -47,9 +47,9 @@ function isPlainClick(event: MouseEvent): boolean {
   )
 }
 
-// This card stays a presentational leaf (T0011 §9: app/dashboard/* pulls in no domain
+// This card stays a presentational leaf (the earlier implementation: app/dashboard/* pulls in no domain
 // feature/store) -- it only emits; the caller (DashboardView) owns the Project Feature's
-// public open interface (D0004 §4.1).
+// public open interface.
 function onClick(navigate: (e: MouseEvent) => void, event: MouseEvent): void {
   if (props.card.key === 'projects' && isPlainClick(event)) {
     event.preventDefault()

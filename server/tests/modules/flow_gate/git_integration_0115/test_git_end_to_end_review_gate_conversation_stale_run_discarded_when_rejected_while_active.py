@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_conversation_stale_run_discarded_when_rejected_while_active(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev4 (AI review finding): a human can [반려] (reject) the
+        # AI review finding: a human can reject the
         # candidate a conversation run is still answering — reject_and_return_
         # to_resolver never checks pending_conversation_run_id. Once such a run
         # later finishes, its answer must be discarded as `stale_run`, never
@@ -138,7 +138,7 @@ class TestGitEndToEnd(_Scenario):
         # rev6: kept, under a line that names what moved (here: the reject ended the wait
         # and refroze nothing, so the candidate identity is gone too).
         stale = next(t for t in context["conversation"] if t["status"] == "stale_run")
-        # 0578 T0006 §2.2: same two facts, read off the contract instead of the sentence.
+        # Same two facts, read off the contract instead of the sentence.
         # [반려] leaves review_state None, so `review_state` is absent from the params and
         # the surfaces say "the approval wait ended" without naming a state.
         assert stale["message"] == "이 답은 이미 버려진 후보에 대한 것입니다."

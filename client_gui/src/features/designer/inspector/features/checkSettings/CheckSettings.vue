@@ -1,5 +1,5 @@
 <template>
-  <!-- D0007 §6: archive and Git reflection, saved immediately. -->
+  <!-- archive and Git reflection, saved immediately. -->
   <div class="inspector-check-settings" data-test="inspector-check-settings" :data-connected="shown.connected ? 'true' : 'false'">
     <InspectorReadFailure v-if="readFailure" :reason="readFailure" @retry="reload" />
     <template v-else>
@@ -11,7 +11,7 @@
         </InspectorControlRow>
       </InspectorBlock>
 
-      <!-- flowgate.v02test.0002 R0001 #2: the approved Git box (flowgate_git_settings_mockup.html). Its box, rows and
+      <!-- #2: the approved Git box (flowgate_git_settings_mockup.html). Its box, rows and
            target area are styled here only (scoped below); the shared block/row/segment and both switches (Toggle) are
            unchanged. -->
       <InspectorBlock :title="t(k('git.title'))" class="inspector-check-settings-git" data-test="check-settings-git">
@@ -158,14 +158,14 @@ const safetyLock = computed(() => props.view ? !props.view.connected : (shown.va
 const refreshing = computed(() => !props.view && (card.status.value === 'loading' || card.refreshing.value))
 
 /**
- * Nothing can change now (a safety lock): the controls are off, the lock reason their tooltip. flowgate.v02.0148 T#2: a save
+ * Nothing can change now (a safety lock): the controls are off, the lock reason their tooltip. the earlier change the earlier implementation: a save
  * on its way (the changes are queued) or a read in flight (the shown values stay) does not switch any control off.
  */
 const off = computed(() => safetyLock.value)
 
 const reasonText = computed(() => (safetyLock.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
-// flowgate.v02test.0020: names offered without a confirmed list are labelled unverified (the server judges them on save).
+// names offered without a confirmed list are labelled unverified (the server judges them on save).
 const targetOptions = computed(() => shown.value.targetOptions.map(value => ({ value,
   label: shown.value.optionsSource === 'unverified' ? t(k('target.unverified_option'), { name: value }) : value })))
 /** The shown name is no option (unavailable, or nothing to show): it is drawn over the control, never added to it. */
@@ -233,7 +233,7 @@ function retry(field: string) {
   white-space: nowrap;
 }
 
-/* flowgate.v02test.0002 R0001 #2 - the Git box. Font sizes, control heights, paddings and gaps are the shared ones
+/* #2 - the Git box. Font sizes, control heights, paddings and gaps are the shared ones
    (InspectorBlock / InspectorControlRow / InspectorSegment / Select / Toggle), like the archive row above it; only the
    layout is kept here: the rows' top alignment, the target area and the switches wrapping, the scope segment never
    clipping a longer label, and the overlay of an unavailable target name. The block is the container (no viewport

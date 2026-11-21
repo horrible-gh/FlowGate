@@ -1,4 +1,4 @@
-"""Durable AI attachment upload requests (migration 181, flowgate.chat.0017 CH0002).
+"""Durable AI attachment upload requests (migration 181, the earlier change the discussion).
 
 One row per file an AI run handed over for a person's approval. The row is the single
 source of truth for the decision: the browser renders it and posts a decision, nothing

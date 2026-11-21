@@ -69,11 +69,11 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_explicit_apply_applies_anchored_write_plan(self, origin_repo, monkeypatch):
-        # 0481 TR0009 rev2 (AI review finding 1): T0008 item 1 and its completion
+        # AI review finding 1: the explicit-apply requirement and its completion
         # criteria require a human-requested apply to consume an anchored
         # edit/create-file plan, validate it in isolation, atomically apply it,
         # and produce a NEW frozen candidate/fingerprint — not a 409 refusal.
-        # This exercises the whole path: [수정 적용] starts a run, the worker
+        # This exercises the whole path: the apply-changes button starts a run, the worker
         # submits a plan through the SAME endpoint a real resolve_conflict
         # worker token would call (svc.submit_review_write_plan — its run has no
         # write tool at all), and once the run is observed finished the plan is

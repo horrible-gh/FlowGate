@@ -1,8 +1,8 @@
 <template>
-  <!-- flowgate.v02.0048 T#1 — empty / loading / error state of an Inspector section (D#1 §2.2
+  <!-- empty / loading / error state of an Inspector section (the earlier implementation
        parts). Display only: the caller decides the state and the message, and owns what a retry
        does (the `retry` event). Without a message the Frame's common wording is used.
-       flowgate.v02.0051 — `disabled`: the v7 item exists but its operation is not connected yet
+       `disabled`: the v7 item exists but its operation is not connected yet
        (0051-R §2.3: shown as an inactive state, never removed and never a working-looking button). -->
   <div class="inspector-pane-state" data-test="inspector-pane-state" :data-state="state">
     <LoadingState v-if="state === 'loading'" size="sm" :label="message ?? t('gui.designer.inspector.pane.loading')" />

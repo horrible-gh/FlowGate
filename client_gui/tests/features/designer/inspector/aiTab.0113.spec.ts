@@ -61,7 +61,7 @@ async function tab(panel: 'ai' | 'settings', kind = 'run') {
   wrapper = mount(SettingsTab, { props: { target: target(kind === 'plan' ? 'WP' : kind === 'test' ? 'TS' : 'T'), panel }, global: { plugins: [i18n] } })
   await flushPromises(); return wrapper
 }
-/** flowgate.v02gui.0029 (0003-CH C안): opens one AI row's ⚙ and answers its window. */
+/** (CH Coff): opens one AI row's ⚙ and answers its window. */
 async function gear(w: VueWrapper<any>, role: string) {
   await w.get(`[data-gear="${role}"]`).trigger('click'); await flushPromises()
   return w.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`)

@@ -1,4 +1,4 @@
-"""flowgate.v02.0156 T#2 (T0007) — the code integration's persistence: an attempt left ``integrating`` / ``pending`` / a
+"""the code integration's persistence: an attempt left ``integrating`` / ``pending`` / a
 hold left by a failure the drain could not record, reproduced condition by condition, and the runtime recovery that
 reuses the existing paths (the drain, the Stop, the lock release / session close notices).
 
@@ -51,7 +51,7 @@ pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results", "
 
 @pytest.fixture(autouse=True)
 def conflict_kept_as_session_0042(monkeypatch):
-    """flowgate.v02test.0042: these scenarios cover a conflict kept as the group's session. Since 0042 a merge keeps it
+    """these scenarios cover a conflict kept as the group's session. Since 0042 a merge keeps it
     only for a person's resolution request (``resolve_requested``; otherwise it is deferred with no session), so the
     scenarios' merges run as that request's merge. A clean merge is the same either way."""
     from flowgate.graph_run import result_merge
@@ -147,7 +147,7 @@ class Repo:
         return linked, _git(linked, "rev-parse", "HEAD")
 
     def attempt_tree_uncommitted(self, branch: str) -> Path:
-        """An attempt's tree whose result is not committed yet (its result commit is T#8's ``commit_result``, in
+        """An attempt's tree whose result is not committed yet (its result commit is the earlier implementation's ``commit_result``, in
         the integration): a tracked change and a new file, on the attempt's own branch."""
         self.attempts += 1
         linked = self.tmp / f"attempt{self.attempts}"
@@ -293,7 +293,7 @@ def result_doc(flow, seq, typ="T"):
 
 def registers(env, flow, key, seq=81, typ="T"):
     """A person's card registers its result with the node's token (the inbox's order: the Graph contact, then the
-    token's consume — the result's authorship by the attempt, which T#8's ``commit_result`` checks)."""
+    token's consume — the result's authorship by the attempt, which the earlier implementation's ``commit_result`` checks)."""
     from modules.flow_gate.graph_workflow.api import v01_contact
     from modules.flow_gate.services import token_service
 
@@ -311,7 +311,7 @@ def scene(env, repo, flow=FA, *, conflict=False, seq=81, uncommitted=False) -> S
     attempt is a prepared worktree attempt (``input_commit`` the run base, its mode record) whose result is a real
     commit on its own branch; ``conflict``: that result and a later group branch commit change the same line. t1's
     result is registered: t1 in review, waiting for its approval. ``uncommitted``: t1's result is still an
-    uncommitted change of its tree (no ``result_commit``: the integration's T#8 step commits it, W5 L2)."""
+    uncommitted change of its tree (no ``result_commit``: the integration's the earlier implementation step commits it, W5 L2)."""
     from flowgate.graph_run import result_merge, workspace
     from modules.flow_gate.graph_workflow.store import run_store
 

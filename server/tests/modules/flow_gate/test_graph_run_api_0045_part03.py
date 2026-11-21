@@ -48,7 +48,7 @@ from tests.modules.flow_gate.test_graph_run_api_0045 import (
 )
 
 def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decided):
-    # flowgate.v02.0083 T#1 (0056 T#1 개정): the rejected bound root is the run's input, done at start;
+    # (revised): the rejected bound root is the run's input, done at start;
     # gn_d opens at once and its token issue to u_ghost (no users row) fails. No root revision is needed.
     res = start(env, FH)
     assert res.status_code == 201
@@ -61,7 +61,7 @@ def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decide
     _sql(env["db"], "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
                     "VALUES ('u_ghost', 'u_ghost', 'g@x', 'x', 't', 't')")
     rid = run["run_id"]
-    # 0061 T#7: the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
+    # the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
     seen = len(run_events(env))
     assert control(env, rid, "resume").status_code == 200
     d = nodes_of(current(env, FH))["gn_d"]

@@ -1,11 +1,11 @@
 /**
- * flowgate.v02.0056 F2-2 — v0.2 card memos in the documents tab (O3 0009-TR §4-5; not the v0.1 M document), with
+ * v0.2 card memos in the documents tab (O3 the earlier implementation; not the v0.1 M document), with
  * `@shared/api` mocked:
  * - the rules (cardMemoModel): the title 1..200 on one line, the body ≤ 20000, a change sends the changed fields
  *   only, [AI가 참조] OFF by default, every refusal sorted by error.code / the 422 field and worded in ko · en · ja;
  *   lengths in Unicode code points as the server counts them (emoji at and over the limits; a change checks only
  *   the fields it sends, so an ai_ref change of a stored memo is never refused before sending);
- * - the lines (0017-CH): each memo one card line like the document lines (메모 · AI 참조 · title), no section head;
+ * - the lines (0017-CH): each memo one card line like the document lines (메모 · AI reference · title), no section head;
  *   the header ✎ 메모 opens a new memo; a memo line has the document line's buttons — 열기 reads the memo ([삭제] ·
  *   [편집] · [닫기]), ✎ opens its form (title · body · [AI가 참조], [삭제] · [저장] · [닫기], no hint) — and the trash
  *   icon, which deletes after one confirm; the list read again after every write (no server event);
@@ -195,7 +195,7 @@ describe('the card memo rules (cardMemoModel, flowgate.v02.0056 F2-2)', () => {
     expect(cardMemoFailure(error({ code: 'card_memos_unavailable', status: 409 }))).toMatchObject({ key: 'unavailable' })
     expect(cardMemoFailure(error({ code: 'flow_access_denied', status: 403 }))).toMatchObject({ key: 'forbidden' })
     expect(cardMemoFailure(error({ network: true }))).toMatchObject({ key: 'network' })
-    // flowgate.v02.0118 T#3: a confirmed (revision) view keeps the memos writable; only a conflict locks them.
+    // a confirmed (revision) view keeps the memos writable; only a conflict locks them.
     expect(cardMemoLockedReason({ readOnly: 'revision' })).toBeNull()
     expect(cardMemoLockedReason({ readOnly: 'conflict' })).toBe('locked.conflict')
     expect(cardMemoLockedReason({ readOnly: null })).toBeNull()

@@ -1,4 +1,4 @@
-"""Design-template help pointer and submission gate — group 0372 set 2."""
+"""Design-template help pointer and submission gate — the earlier change set 2."""
 from __future__ import annotations
 
 import json

@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — Base-relative change status (0024-D §8.3). The domain mapping
+// Base-relative change status. The domain mapping
 // (status letter -> tone/label) lives here in the feature; the chip itself is the shared
 // domain-free Badge primitive.
 import { computed } from 'vue'

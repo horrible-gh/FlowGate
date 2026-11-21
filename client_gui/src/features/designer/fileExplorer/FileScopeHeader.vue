@@ -8,9 +8,9 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — scope context of the file tree (0024-D §4): the optional Group
+// scope context of the file tree: the optional Group
 // label / branch and the read-only / AI-busy state, so "why can't I change anything" has a
-// visible answer. 0025 T0006 §6: the active Flow name is not repeated here (the Project
+// visible answer. the earlier implementation: the active Flow name is not repeated here (the Project
 // tree already marks it), and nothing renders when there is nothing to tell.
 import { useI18n } from 'vue-i18n'
 import Badge from '../../../components/ui/Badge.vue'

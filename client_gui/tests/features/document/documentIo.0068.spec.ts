@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#1 — what features/document adds for the document upload / download (0068 D §3.1, L §2.14 /
+ * what features/document adds for the document upload / download (0068 D, L /
  * §2.15): the buttons' document read keeps `download_available` (a boolean only) beside the record — the record
  * itself stays as other readers compare it — and the download is the existing canonical Markdown download as a
  * blob; a refusal (also a blob) is read back into its JSON envelope before it is thrown.

@@ -1,6 +1,6 @@
-"""Request-scoped read memoization + per-request query accounting (0291 NR0003 P3-1 / 4-8).
+"""Request-scoped read memoization + per-request query accounting.
 
-NR0003 finding 5: within a single request the same row is read repeatedly with the same
+within a single request the same row is read repeatedly with the same
 parameters — ``users`` 3x, ``documents WHERE doc_id='…0010-AC'`` 3x, ``documents WHERE
 group_id AND seq=7`` 3x, ``workflow_return_points WHERE group_id`` 2x, ``projects`` 2x,
 ``project_settings`` 2x. There is one cause: every service entry point queries on its own
@@ -9,7 +9,7 @@ and none of them knows the others already read it.
 Bolting another TTL cache onto this is the wrong answer. The 5-second TTL used by
 ``meta_cache`` / ``auth_cache`` is **time-based**, so it leaks at the second boundary, and
 widening coverage multiplies the "a read right after a write sees the old value" risk by
-the number of tables. That is why NR0003 P3-1 named request scope — **it has no staleness
+the number of tables. That is why the review P3-1 named request scope — **it has no staleness
 risk in principle.** The cache is discarded wholesale at the request boundary, so its maximum lifetime is one request, and writes inside it are cleared by rule 2 below.
 
 Policy
@@ -39,14 +39,14 @@ Policy
    default makes failures order-dependent. The 0291 tests turn it on explicitly to verify it.
    ``FLOWGATE_REQUEST_CACHE`` forces it either way (``1``/``0``).
 
-Instrumentation (NR0003 4-8)
+Instrumentation
 -----------------
 
-The same scope counts **queries, cache hits and writes per request**. NR0003 §1-2 stated
+The same scope counts **queries, cache hits and writes per request**. the review stated
 that endpoint attribution was an "estimate", because the SQL log carries no request
 correlation id and entries were grouped by time adjacency. The scope IS the request boundary, so counting here is a measurement, not an estimate.
 
-Planting a correlation id in the SQL log itself (NR0003 4-8's original plan) was not chosen.
+Planting a correlation id in the SQL log itself (4-8's original plan) was not chosen.
 The log is emitted by the third-party ``sqloader``, outside this tree. Aggregating at the
 request boundary answers the same questions ("how many queries does this endpoint use?",
 "how much did P1-P3 reduce it on the same scale?") without touching the package.

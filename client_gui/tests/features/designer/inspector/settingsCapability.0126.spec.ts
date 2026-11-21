@@ -1,4 +1,4 @@
-// 0126 T#4: component tests use a settings transport fixture; these are not browser F5 evidence.
+// component tests use a settings transport fixture; these are not browser F5 evidence.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }))
@@ -53,7 +53,7 @@ describe('settings-only current revision capability A1/A2/A5', () => {
     expect(target().readOnly).toBe('revision')
     expect(target().settingsReadOnly).toBeNull()
     expect(target().settingsContext).toEqual(context)
-    // flowgate.v02.0130: the view never turns the card's settings off; the server's capability decides.
+    // the view never turns the card's settings off; the server's capability decides.
     expect(target({ viewRevisionNo:0 }).settingsReadOnly).toBeNull()
     expect(target({ run:undefined }).settingsReadOnly).toBeNull()
     expect(target({ run:{runId:'run_1',status:'idle'} }).settingsReadOnly).toBeNull()

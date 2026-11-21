@@ -1,6 +1,6 @@
 """flowgate.v02.0065 TR0011 — the `Git 연결` save against the real settings service.
 
-The client_gui connect window (DesignerGitPanel) saves with exactly the six fields T0010 §1
+The client_gui connect window (DesignerGitPanel) saves with exactly the six fields the earlier implementation
 allows: repo_url, provider, username, secret, base_branch and enabled=true. This runs that
 body through the route model (`GitConfigPut.model_dump(exclude_unset=True)`, as
 `put_git_config` does) into `save_config`, over settings stored earlier with Git off, and
@@ -11,7 +11,7 @@ translate_url, author_* , tr_scope_stage and the secret (sent as null) follow th
 `body.get("default_finalize_action") or "wait"`, so a connect over settings whose default
 finalize action is `merge` / `push` turns it into `wait`. That is the server contract as it
 stands — this task changes no server code — and the test pins it so the effect is visible;
-whether the action must be kept is registered as a Q on TR0011.
+whether the action must be kept is registered as a Q on the earlier implementation.
 """
 from __future__ import annotations
 

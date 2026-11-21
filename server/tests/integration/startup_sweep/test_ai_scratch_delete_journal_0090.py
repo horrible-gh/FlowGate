@@ -1,4 +1,4 @@
-"""T#2 short adapters for T#1's isolated delete-state fixture; no Git/lock experiment."""
+"""short adapters for the earlier implementation's isolated delete-state fixture; no Git/lock experiment."""
 from __future__ import annotations
 
 import json

@@ -54,7 +54,7 @@ WRITE_PURPOSES = invocations.WRITE_PURPOSES
 
 
 def _shown_prev(record):
-    """flowgate.v02test.0004 T#2: the previous call shown for a record. A record stored before T#2 may name a start
+    """the previous call shown for a record. A record stored before the earlier implementation may name a start
     refused at admission (``admission_refused``: nothing launched) as its previous call; it is shown with the previous
     call it would name now — what ``invocations._links`` picks for its link kind among launched records before it:
     ``stage_retry`` the unit's last; ``rework_of`` the unit's last review round; ``review_of`` the unit's last rework,

@@ -1,4 +1,4 @@
-"""Deterministic markdown render + artifact/compat routes (group 0351, T4).
+"""Deterministic markdown render + artifact/compat routes (the earlier change, T4).
 
 Same lightweight in-memory-SQLite harness as test_conversation_query_0351.py: a real
 074-schema DB for conversation_turns/conversation_docs, with document_service.get_document
@@ -145,7 +145,7 @@ def _seed(count: int, speaker: str = "user", key: str = "user:u1", display_name=
         )
 
 
-# ── 결정론 (완료 기준 1) ───────────────────────────────────────────────────────
+# ── Determinism (acceptance criterion 1) ──
 
 def test_rendering_twice_is_byte_identical_and_fingerprint_is_stable(store, doc):
     _seed(3)
@@ -184,7 +184,7 @@ def test_ordering_is_seq_ascending_regardless_of_created_at(store, doc):
     assert rendered["content"].index("turn 1") < rendered["content"].index("turn 2")
 
 
-# ── 옛 파일과의 왕복 (완료 기준 1) ──────────────────────────────────────────────
+# ── Round trip with legacy files (acceptance criterion 1) ──
 
 def test_migrate_then_render_round_trips_a_legacy_markdown_body(store, monkeypatch):
     from modules.flow_gate import conversation as legacy_conversation
@@ -217,7 +217,7 @@ def test_migrate_then_render_round_trips_a_legacy_markdown_body(store, monkeypat
     assert rendered["content"] == legacy_content
 
 
-# ── 오류 분기 ──────────────────────────────────────────────────────────────────
+# ── Error branches ──
 
 def test_render_rejects_missing_and_non_conversation_documents(store, monkeypatch):
     _patch_doc(monkeypatch, doc_row={"type_code": "D"})
@@ -230,7 +230,7 @@ def test_render_rejects_missing_and_non_conversation_documents(store, monkeypatc
     assert missing.value.status_code == 404
 
 
-# ── GET .../conversation/markdown (완료 기준: 호환 모드 / 실패 문서) ───────────
+# ── GET .../conversation/markdown (compatibility mode / failed documents) ──
 
 def _markdown_client() -> TestClient:
     from modules.flow_gate.auth.middleware import get_current_user
@@ -280,7 +280,7 @@ def test_markdown_route_404_and_400(store, monkeypatch):
     assert resp.status_code == 404
 
 
-# ── GET .../content 호환 모드 (P0003 시나리오 15) ──────────────────────────────
+# ── GET .../content compatibility mode (scenario 15) ──
 
 def _content_client() -> TestClient:
     from modules.flow_gate.auth.middleware import get_current_user
@@ -361,7 +361,7 @@ def test_content_route_shape_is_unchanged_for_non_conversation_documents(store, 
     assert "projection" not in body
 
 
-# ── 그룹 마감 산출물 고정 (완료 기준 5 위임 사항 ①) ────────────────────────────
+# ── Freeze group-close artifacts (acceptance criterion 5, delegated item 1) ──
 
 def test_snapshot_group_conversations_writes_migrated_ch_files_and_skips_failed(store, monkeypatch, tmp_path):
     migrated_path = tmp_path / "migrated.md"

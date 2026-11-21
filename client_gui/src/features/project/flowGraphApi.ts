@@ -1,4 +1,4 @@
-// flowgate.v02.0045 S3+S4 — Graph saver transport (D0004 §2.3 features/project): the Graph
+// S3+S4 — Graph saver transport (features/project): the Graph
 // definition API of P0008 §5 / §6 — read the definition, save the draft (whole replacement),
 // validate it and confirm it. snake_case stays inside this file; every request carries this
 // tab's `x-canvas-client-id` (flowCanvasApi.ts) so the SSE events it causes are told apart.
@@ -97,7 +97,7 @@ function toDefinitionNode(raw: Raw): FlowGraphDefinitionNode {
     paletteItemId: str(raw.palette_item_id),
     label: str(raw.label) ?? '',
     assignee: toAssignee(raw.assignee),
-    // flowgate.v02.0061 T#15: every node of the draft and the revision says whether its card is held (T#11).
+    // every node of the draft and the revision says whether its card is held.
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
   }
 }
@@ -156,7 +156,7 @@ export async function saveFlowGraphDraft(flowId: string, input: FlowGraphDraftIn
     const data = response.data ?? {}
     const keyMap: Record<string, string> = {}
     for (const [k, v] of Object.entries(data.key_map ?? {})) if (typeof v === 'string') keyMap[k] = v
-    // flowgate.v02.0053 T#5: the saved draft nodes' card lines (T#1), so a placed card shows them at once.
+    // the saved draft nodes' card lines, so a placed card shows them at once.
     const lines = data.card_documents
     const cardDocuments = lines && typeof lines === 'object' && !Array.isArray(lines)
       ? Object.fromEntries(Object.entries(lines as Raw).map(([key, value]) => [key, toCardDocuments(value)]))
@@ -171,7 +171,7 @@ export async function saveFlowGraphDraft(flowId: string, input: FlowGraphDraftIn
       ...(cardDocuments ? { cardDocuments } : {}),
     }
   } catch (error) {
-    // flowgate.v02.0135 T#4: no answer (e.g. the 30 s timeout) — the server may still store this draft (as the next version).
+    // no answer (e.g. the 30 s timeout) — the server may still store this draft (as the next version).
     if ((wrapError(error, '') as Error & { network?: boolean }).network) {
       markUnansweredCanvasWrite(flowId, { kind: 'draft', draftVersion: input.draftVersion + 1 })
     }

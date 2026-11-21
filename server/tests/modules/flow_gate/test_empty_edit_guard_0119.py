@@ -1,6 +1,6 @@
 """0119 / B0001 — "돌아갈수 없는 워크플로" (decided-but-empty zombie sequence) guard.
 
-NR0003 root cause: edit_workflow_pending accepted an empty new_items list. When a workflow
+root cause: edit_workflow_pending accepted an empty new_items list. When a workflow
 was decided but not yet started (every step still pending, nothing locked) and the user
 deleted ALL steps, the sequence dropped to ZERO items — a decided-but-empty "zombie":
   - re-decide is blocked by already_decided (the sequence row still exists),
@@ -87,7 +87,7 @@ def test_empty_edit_with_a_locked_item_is_allowed(monkeypatch):
 def test_nonempty_edit_recovers_an_empty_sequence(monkeypatch):
     """§6-B recovery: an already-empty sequence accepts new pending steps via edit.
 
-    0208 R0001 (NR0003 §3-3): edit_workflow_pending is symmetric with decide_workflow —
+    edit_workflow_pending is symmetric with decide_workflow —
     it runs _expand_auto_reports, so a bare instruction step (T) auto-attaches its report
     step (TR). A single requested "T" is therefore stored as ["T", "TR"] and pending_count
     reflects the actual stored item count (2). Prior to 0208 the edit path did not expand,
@@ -134,7 +134,7 @@ def test_patch_route_maps_empty_guard_to_400(monkeypatch):
         "doc_id": _id, "group_id": "flowgate.default.0119",
     })
     monkeypatch.setattr(routes, "_disposed_group_response", lambda *_a, **_k: None)
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(
@@ -171,7 +171,7 @@ def test_patch_route_broadcasts_group_refresh_after_success(monkeypatch):
         "doc_review_status": "wf_in_progress",
     })
     monkeypatch.setattr(routes, "_disposed_group_response", lambda *_a, **_k: None)
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(routes, "edit_workflow_pending", lambda **_k: {

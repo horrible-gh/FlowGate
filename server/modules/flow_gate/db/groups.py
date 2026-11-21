@@ -194,7 +194,7 @@ def insert_group(
 def update_work_base_ref(group_id: str, work_base_ref: str) -> None:
     """Persist a new durable Base Branch for an already-existing group.
 
-    flowgate.default.0613 TR0014 rev2: callers must already have confirmed the
+    callers must already have confirmed the
     group is not locked (git.group_work_base.group_work_base_locked) -- this is
     a plain, unconditional write.
     """
@@ -207,7 +207,7 @@ def update_work_base_ref(group_id: str, work_base_ref: str) -> None:
 def list_open_groups_by_work_base(project_id: str, work_base_ref: str) -> list[dict]:
     """Groups of ``project_id`` that still pin ``work_base_ref`` for their lifecycle.
 
-    flowgate.default.0613 T0013: a stored work base is re-read by worktree
+    a stored work base is re-read by worktree
     provisioning, H1/H2 retry, restart/reprovision and terminal reopen, so it
     stays referenced until the group reaches a terminal status (CLOSED /
     DISCARDED, or the legacy CANCELLED) or is soft-deleted. NULL rows are legacy

@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_rejects_one_sided_drop(self, origin_repo):
-        # 0478 T0012 completion (i): a base-having chunk where BOTH sides changed
+        # Completion (i): a base-having chunk where BOTH sides changed
         # something over the common ancestor, but the submitted content keeps only
         # one of them (markers all gone) → 422 conflict_side_dropped, nothing written.
         from modules.flow_gate.db import git_integration as db_git

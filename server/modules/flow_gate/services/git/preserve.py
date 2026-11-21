@@ -1,4 +1,4 @@
-"""Preservation refs for human-approved resolution merge commits (flowgate.v02.0153 T#2).
+"""Preservation refs for human-approved resolution merge commits.
 
 A resolution merge commit that a person approved is pinned under
 ``refs/flowgate/preserve/...`` immediately BEFORE the first remote contact (push), so a
@@ -7,7 +7,7 @@ make the only copy of that resolution unreachable. The ref is a plain shared ref
 (``refs/flowgate/*`` lives in the common Git directory of every linked worktree), so
 it keeps the commit and both of its parents reachable from the base repository.
 
-Contract (T0007 §3-§5):
+Contract:
 
 * :func:`ensure_preserved` validates the commit (object, exactly two parents
   ``[base_head, merge_head]``, the expected remote head is an ancestor of
@@ -45,7 +45,7 @@ RESULT_CREATED = "created"
 RESULT_SAME = "same"
 RESULT_VERIFIED = "verified"
 
-# Failure reasons (T0007 §3.1). ``last_error.reason`` is always one of these.
+# Failure reasons. ``last_error.reason`` is always one of these.
 REASON_MERGE_COMMIT_MISSING = "merge_commit_missing"
 REASON_COMMIT_MISSING = "commit_missing"
 REASON_PARENT_MISMATCH = "parent_mismatch"
@@ -66,14 +66,14 @@ STAGE_CREATE = "create"
 STAGE_VERIFY = "verify"
 STAGE_RECONCILE_GATE = "reconcile_gate"
 STAGE_RESET_GATE = "reset_gate"
-STAGE_REPUSH = "repush"            # T#3 §3.3 (a): re-verification before a reconcile re-push
-STAGE_INTEGRATION = "integration"  # T#3 §3.3 (c): the integration commit could not be pinned
+STAGE_REPUSH = "repush"            # (a): re-verification before a reconcile re-push
+STAGE_INTEGRATION = "integration"  # (c): the integration commit could not be pinned
 
 # Round-closing reasons recorded in ``preserve_history``.
 CLOSE_RE_REVIEW = "re_review"
 CLOSE_REMOTE_UNCHANGED = "reconcile_remote_unchanged"
-CLOSE_REMOTE_CONFLICT = "reconcile_remote_conflict"      # T#3 §3.5: handed back with new conflicts
-CLOSE_REMOTE_UNVERIFIED = "reconcile_remote_unverified"  # T#3 §3.5: clean, but not auto-verifiable
+CLOSE_REMOTE_CONFLICT = "reconcile_remote_conflict"      # handed back with new conflicts
+CLOSE_REMOTE_UNVERIFIED = "reconcile_remote_unverified"  # clean, but not auto-verifiable
 
 # Context keys this module owns.
 KEY_REF = "preserve_ref"
@@ -131,7 +131,7 @@ def parse_preserve_ref(ref: str) -> Optional[tuple[int, int]]:
 
 def preserve_ref_namespace() -> str:
     """The namespace every preservation ref lives under, for READ-ONLY listings
-    (``for-each-ref``) outside this module — 0153 T#4's orphan guard reads it to find a
+    (``for-each-ref``) outside this module — the earlier implementation's orphan guard reads it to find a
     merge's refs on disk. Deletion stays this module's alone (§5.2/§5.4)."""
     return PRESERVE_REF_PREFIX
 
@@ -144,7 +144,7 @@ def _git(repo: Path, args: list[str]):
 
 
 def _detail(proc) -> Optional[str]:
-    """T#1 rule: scrubbed stderr (the shared runner already masked it), last useful
+    """rule: scrubbed stderr (the shared runner already masked it), last useful
     line, at most 300 characters. Never argv, config or secrets."""
     gs = _gs()
     text = gs._scrub(getattr(proc, "stderr", None) or "")
@@ -395,7 +395,7 @@ def close_round(context: dict, reason: str, *, now: str) -> bool:
 
 def failure_error(context: dict, result: dict, stage: str, *, now: str,
                   instance_id: Optional[str]) -> dict:
-    """§3.4 ``last_error`` of a preserve failure. A T#1 ``push_remote_unknown`` that
+    """``last_error`` of a preserve failure. A the earlier implementation ``push_remote_unknown`` that
     was there before (directly, or already carried by an earlier preserve failure) is
     kept verbatim under ``prior_push_error``."""
     error = {
@@ -417,7 +417,7 @@ def failure_error(context: dict, result: dict, stage: str, *, now: str,
     return error
 
 
-# ── Integration commits (flowgate.v02.0153 T#3 §3.3 (c)) ─────────────────────
+# ── Integration commits (the earlier change the earlier implementation (c)) ─────────────────────
 # A reconcile that found the remote ahead with another group's commit builds an
 # integration commit I = commit-tree(T, -p publish_commit, -p F) off-tree and pins it
 # here BEFORE the local branch moves to it. The resolution ref of the round is left
@@ -577,13 +577,13 @@ def _session_target_branch(context: dict) -> Optional[str]:
 def release_preserved_ref(repo: Path, ref: str, expected_sha: str, *, now: str,
                           session: Optional[dict] = None, branch: Optional[str] = None,
                           context: Optional[dict] = None) -> dict:
-    """The ONLY way a preservation ref is deleted (T0007 §5.4) — explicit, never wired
+    """The ONLY way a preservation ref is deleted — explicit, never wired
     to an automatic path or scheduler. Allowed only when the owning session is closed
     as completed, the local ``refs/remotes/origin/<branch>`` already contains
     ``expected_sha`` (no remote request) and the retention period is over. The delete
     is a CAS on ``expected_sha``. Returns ``{"released": bool, "reason": str}``.
 
-    The delete is a session ref move, so it runs through ``_run_session_git`` (T#1
+    The delete is a session ref move, so it runs through ``_run_session_git`` (the earlier implementation
     §5.3): success or failure, ``ref_operations`` of the owning session gets the
     operation, reason, time, instance and the real return code, persisted at once.
     A caller that holds the session's live ``context`` passes it so the audit entry is

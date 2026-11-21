@@ -10,7 +10,7 @@ const line = (slot: string, docId: string | null, docType = 'TS') => ({ slot, do
 describe('0044 live document buttons', () => {
   it('deduplicates shared TS documents and prefers the instruction owner regardless of slot order', () => {
     const docs = cardDocumentButtons({ cardDocuments: [line('scenario', 'a'), line('instruction', 'a'), line('report', 'b', 'TSR'), line('report', null)], document: null })
-    // flowgate.v02test.0041: the shared TS document keeps one 지시서 button and gets its own 시나리오 button right after it.
+    // flowgate.v02test.0041: the shared TS document keeps one instruction button and gets its own 시나리오 button right after it.
     expect(docs.map(d => [d.docId, d.ownerSlot, d.report, !!d.scenario])).toEqual([['a', 'instruction', false, false], ['a', 'scenario', false, true], ['b', 'report', true, false]])
     expect(cardDocumentButtons({ cardDocuments: [], document: null })).toEqual([])
   })

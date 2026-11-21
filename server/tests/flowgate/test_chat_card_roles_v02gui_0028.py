@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0028 — chat card AI roles: a chat reads and changes the instruction / execution / review AI of the
+"""chat card AI roles: a chat reads and changes the instruction / execution / review AI of the
 work cards it placed itself (``flowgate.chat_control.card_roles``), never another card, never the account defaults.
 
 On the card settings harness (real SQLite DB with every migration, real Graph draft saves, real role stores):
@@ -470,7 +470,7 @@ def test_tools_and_cli_mention_offer_the_card_role_api():
 
     by_name = {t["name"]: t for t in tools.descriptors()}
     assert {"get_card_roles", "set_card_roles"} <= set(by_name)
-    # flowgate.v02gui.0032: roles or from_group (a named AI group's preset) — the server judges which is there
+    # roles or from_group (a named AI group's preset) — the server judges which is there
     assert by_name["set_card_roles"]["schema"]["required"] == ["node_key", "expected_settings_version"]
     assert set(by_name["set_card_roles"]["schema"]["properties"]["roles"]["properties"]) == {"instruction", "execution", "review"}
     assert all(callable(t["handler"]) for t in by_name.values())

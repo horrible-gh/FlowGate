@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0011 (S1+S2) — server Graph source, Graph model mapping and the Center
+ * (S1+S2) — server Graph source, Graph model mapping and the Center
  * session's layout save (P0008 §3 / §4): saved Viewport restore, movable Node moves, batched
  * debounced save, re-read on ignored keys or a failed save, one save per Flow on the wire, the
  * background re-read of a Graph changed in another tab / device (S2-4, §8.3), and re-reads that
@@ -65,7 +65,7 @@ describe('server Graph source (S1)', () => {
     expect(source.isSample).toBe(false)
     expect((await source.loadGraph('p', 'f9')).flowId).toBe('f9')
     await source.loadGraph('p', 'f9', 'draft')
-    // TR0020 rev5: every Canvas read leaves conversations out (no memo card for a new conversation).
+    // every Canvas read leaves conversations out (no memo card for a new conversation).
     expect(CANVAS_COLLAPSE).toEqual(['conversation'])
     expect(reads).toEqual([['f9', 'latest', ['conversation']], ['f9', 'draft', ['conversation']]])
     const result = await source.saveLayout!('p', 'f9', { positions: [{ nodeId: 'doc:a', x: 1, y: 2 }], viewport: { x: 0, y: 0, zoom: 1 } })
@@ -76,7 +76,7 @@ describe('server Graph source (S1)', () => {
   it('Vue Flow input: only movable Nodes are draggable and Edges carry their class', () => {
     const graph = toFlowGraph(canvas())
     expect(toVueFlowNodes(graph, null).map((n) => n.draggable)).toEqual([true, true, false])
-    // flowgate.v02.0045 T0019: both ends are done, so the execution Edge is progressed. TR0020 rev4:
+    // both ends are done, so the execution Edge is progressed. the earlier implementation:
     // the reference relation is kept in the Graph but not drawn (no dashed fan-out from a document).
     expect(toVueFlowEdges(graph).map((e) => [e.id, e.data])).toEqual([
       ['seq:doc:a>slot_b', { edgeClass: 'execution', progressed: true, deletable: false }],

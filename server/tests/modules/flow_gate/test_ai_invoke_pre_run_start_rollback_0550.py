@@ -1,4 +1,4 @@
-"""0550 regression: unexpected start failures do not strand a group AI lease."""
+"""regression: unexpected start failures do not strand a group AI lease."""
 from __future__ import annotations
 
 import pytest
@@ -333,7 +333,7 @@ def test_allocator_failure_precedes_admission_resources_0138(monkeypatch, scope)
     monkeypatch.setattr(admission.db_group_ai_leases, "acquire", forbidden)
     monkeypatch.setattr(admission._svc(), "_create_scratch", forbidden)
     monkeypatch.setattr(admission, "_register_run", forbidden)
-    # 0139: version 0 now self-activates (aiv2_ namespace); an unknown version still refuses.
+    # version 0 now self-activates (aiv2_ namespace); an unknown version still refuses.
     ai_run_identity.get_store()._execute("UPDATE ai_run_id_contract SET version = 99")
     with pytest.raises(RuntimeError, match="incompatible_version"):
         admission.start_run(**kwargs)

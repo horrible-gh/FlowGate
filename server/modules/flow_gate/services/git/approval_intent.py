@@ -1,6 +1,6 @@
 """Deferred final-approval intent carried by a conflict merge session.
 
-flowgate.default.0555 T0008 (T#2), contract in D0005 §3.5/§3.6/§3.8/§3.9.
+contract in the design
 
 A final approval whose Git finalize ends in a conflict cannot be decided inside
 that one request: a person still has to resolve the conflict and a reviewer still
@@ -10,7 +10,7 @@ merge finishes, WHICH approval does it finish".
 
 That record is an **approval intent**.  It lives in the `context` JSON of the merge
 session the conflict opened, written by the same INSERT that creates the session
-(``create_session(context=...)``), so the "session without an intent" orphan D0005
+(``create_session(context=...)``), so the "session without an intent" orphan the design
 §3.5 calls out cannot exist: either both rows land or neither does.  No new table,
 no in-memory registry — the session row is already durable, already survives a
 process restart, and is already what the merge-review completion path reads.
@@ -22,7 +22,7 @@ those are different facts with different lifetimes (§3.8).
 ``db_git`` is reached through the ``git_service`` facade inside each function rather
 than imported at module scope: a top-level binding would shadow the name the test
 corpus patches on ``git_service`` and silently exempt this module from it (0550
-NR0025 권고2, enforced by ``test_git_facade_seam_scope_0550``).
+enforced by ``test_git_facade_seam_scope_0550``).
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ CLEAN_RETRY_ACTIONS = frozenset({"merge", "merge_only", "push", "commit_push", "
 
 # The authority for this approval was checked when the intent was recorded, by the
 # orchestrator's own precheck, against the live permissions of `requested_by`.  The
-# deferred half re-checks the facts D0005 §3.8 lists (document, group, type, state,
+# deferred half re-checks the facts the design lists (document, group, type, state,
 # intent ownership) — not the permission grant, which is what the stored intent IS.
 _DEFERRED_PERMISSIONS = frozenset({"document.approve"})
 
@@ -82,7 +82,7 @@ def find_intent_session(group_id: str) -> tuple[Optional[dict], Optional[dict]]:
     """The newest session of this group that still carries an unconsumed intent.
 
     The open session is the answer while the conflict is being worked on.  After
-    ``_complete_merge_review`` closes the session, a D0005 §3.9 re-approval still
+    ``_complete_merge_review`` closes the session, a the design re-approval still
     has to find the very same intent on the now-closed row — so closed sessions are
     searched too, newest first, and the first one still holding an intent wins.
     """
@@ -229,7 +229,7 @@ def consume_clean_retry(group_id: str, approval_intent_id: str) -> bool:
 
 
 def group_is_final_approval_bound(group_id: str) -> bool:
-    """D0005 §3.11 — is this group's Git work coupled to a waiting final approval?
+    """is this group's Git work coupled to a waiting final approval?
 
     Judged at read time from the one fact that defines it (an open merge session
     carrying an intent), never stored as its own flag: a second copy of this would
@@ -276,7 +276,7 @@ def consume_intent(merge_id: int, approval_intent_id: str) -> bool:
 
     Called from inside the approval transaction (``commit_final_approval``'s
     consume hook), so a False here rolls the AC approval and the root completion
-    back with it — D0005 §3.8's "the conditional update is the last safety net"
+    back with it — the design's "the conditional update is the last safety net"
     under the project Git lock that already serialised the callers.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -299,13 +299,13 @@ def consume_intent(merge_id: int, approval_intent_id: str) -> bool:
 
 
 def discard_intent(merge_id: int, *, reason: str = "merge_abort") -> Optional[dict]:
-    """Drop the intent a merge abort invalidates (D0005 §3.6 B10).
+    """Drop the intent a merge abort invalidates.
 
     The abort ends the Git attempt the approval was riding on, so the approval has
     to start over from a fresh id — the discarded one is kept only as a trace and
     is never reusable, because nothing reads it back.
 
-    0668 T0004: the sweep's TTL abort and orphan close end the attempt just the same
+    the sweep's TTL abort and orphan close end the attempt just the same
     and discard through here too (``reason`` records which of them did).
     """
     from modules.flow_gate.services import git_service as _gs
@@ -394,13 +394,13 @@ def commit_deferred_approval(group_id: str, merge_id: int, intent: dict) -> dict
     """Finish the parked approval now that the merge really is terminal.
 
     Called by the merge-review completion path while it still owns the project Git
-    lock (D0005 §3.6 B7/B8).  The AC approval, the root completion and the intent
+    lock. The AC approval, the root completion and the intent
     consume are one transaction: all three or none.  Git is never undone here — a
     failed transaction leaves merged Git + a pending AC + a live intent, which is
     exactly the §3.9 state a re-approval knows how to finish.
     """
     # Deferred import: the Git service must not take a hard dependency on the
-    # workflow package (D0005 §5 — the import cycle is why this is a hook).
+    # workflow package (the import cycle is why this is a hook).
     from modules.flow_gate.workflow.pipeline_service import commit_final_approval
 
     doc, reason = validate_intent(intent, group_id=group_id, merge_id=merge_id)

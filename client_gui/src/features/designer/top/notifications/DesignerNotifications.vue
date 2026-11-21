@@ -1,6 +1,6 @@
 <template>
   <section ref="panel" id="designer-notifications" class="designer-notifications" :style="position" role="dialog" :aria-label="t('gui.designer.top.header.notifications')" @keydown.esc.stop.prevent="close(true)">
-    <!-- 0016-CH (시안 basodrr4 B안): one head row — the three tabs as a segmented control (icon, label, count; the
+    <!-- 0016-CH (mockup basodrr4 option B): one head row — the three tabs as a segmented control (icon, label, count; the
          selected one filled), then refresh / close as small icon buttons. -->
     <div class="notification-head">
       <div role="tablist" :aria-label="t('gui.designer.top.header.notifications')" class="notification-tabs" @keydown="tabKey">
@@ -59,7 +59,7 @@ const rows = computed(() => {
   const flows = new Map(props.project?.groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow.name] as const)) ?? [])
   return runs.value.filter((run) => flows.has(run.groupId)).map((run) => ({ ...run, flowName: flows.get(run.groupId)! }))
 })
-// flowgate.v02test.0042: card result merges waiting in this project's Flows (the runs tab lists them; a merge that only
+// card result merges waiting in this project's Flows (the runs tab lists them; a merge that only
 // waits keeps the Flow "running" with no AI run, so the list was empty before).
 const mergeItems = ref<CardMergeItem[]>([])
 const mergeRows = computed(() => {
@@ -68,7 +68,7 @@ const mergeRows = computed(() => {
 })
 const counts = computed(() => {
   const base = notificationCounts(rows.value, questions.value)
-  return { ...base, runs: base.runs + mergeRows.value.length, bell: base.bell + mergeRows.value.length }
+  return { ...base, runs: base.runs, bell: base.bell + mergeRows.value.length }
 })
 /** [열기] of a merge row: the card's '병합 · 충돌' tab (the Designer's one "open this card's merge" event). */
 function openMerge(item: CardMergeItem & { flowName: string }) {
@@ -170,7 +170,7 @@ onMounted(() => { place(); void focusTab(); window.addEventListener('resize', pl
 onBeforeUnmount(() => { disposed = true; generation++; unsubscribe?.(); clearInterval(timer); window.removeEventListener('resize', place); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape) })
 </script>
 <style scoped>
-/* 0016-CH (시안 basodrr4 B안): the raised card popover; type sizes and text colours come from theme.css only. */
+/* 0016-CH (mockup basodrr4 option B): the raised card popover; type sizes and text colours come from theme.css only. */
 .designer-notifications { position: fixed; z-index: 100; width: min(480px, calc(100vw - 16px)); max-height: calc(100dvh - 70px); overflow: auto; box-sizing: border-box; padding: 12px 10px 10px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-pop-radius); background: var(--fg2-pop-surface); color: var(--fg2-text); box-shadow: var(--fg2-pop-shadow); font-size: var(--fg2-fs-body); line-height: 1.45; overflow-wrap: anywhere; }
 .notification-head { display: flex; align-items: center; gap: 6px; margin: 0 2px 10px; }
 .notification-tabs { display: flex; flex: 1; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-inset-radius); background: var(--fg2-inset-bg); }

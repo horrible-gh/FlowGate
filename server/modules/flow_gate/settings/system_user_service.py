@@ -1,4 +1,4 @@
-"""System › 사용자 (flowgate.v02.0020, 시안 13).
+"""System › 사용자 (flowgate.v02.0020, draft 13).
 
 Users are system-wide identities. This service adds what the screen needs on top of the older
 user_admin_service: the state each row shows (active / invited / disabled), 2FA, workspaces and

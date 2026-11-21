@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_side_drop_not_hidden_by_same_line_elsewhere(self, origin_repo):
-        # 0602 T0004 C6 — the reverse defect NR0003 §8 flagged in the OLD validator: it
+        # The reverse defect found in the OLD validator: it
         # tested whole-file line membership, so a chunk that genuinely dropped one side
         # could slip through if that side's text happened to also appear, unrelated,
         # elsewhere in the same file. The check must be chunk-local.

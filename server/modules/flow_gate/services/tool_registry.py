@@ -16,12 +16,12 @@ READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log", "show", "
 WRITE_TOOLS = frozenset({"write", "patch", "move", "remove", "resolve_base_dirty"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
 
-# Tools that belong to ONE action scope rather than to a kind (0482 T0011 x 0507/0492).
+# Tools that belong to ONE action scope rather than to a kind (x 0507/0492).
 # `resolve_base_dirty` reads its project identity from the run token and
 # `remote_tool_service._exec_resolve_base_dirty` answers 403 to any token whose
 # action_scope is not `resolve_base_dirty`. Leaving it in the plain read_write list
 # advertised it to every TR/TSR/TS worker, which is precisely the "handed a tool its
-# live token would 403 on" break D0004 D-2 forbids, so the kind decides the generic
+# live token would 403 on" break the design D-2 forbids, so the kind decides the generic
 # tools and the scope adds its own on top.
 SCOPE_BOUND_TOOLS: dict[str, frozenset] = {
     "resolve_base_dirty": frozenset({"resolve_base_dirty"}),
@@ -94,7 +94,7 @@ NOTES = {
         "none_scope": "이 작업 단계에는 원격 소스 도구가 배정되지 않았습니다. 소스 트리에 접근하지 말고 배정된 문서 작업만 수행하세요.",
         "none_local": "이 프로젝트는 원격 소스 접근을 사용하지 않습니다. 소스는 작업 환경에서 직접 다루고, 이 도구는 호출하지 마세요.",
         "none_user": "이 인증 주체에는 원격 소스 도구가 배정되지 않았습니다. 도구는 작업 토큰에만 배정됩니다.",
-        "attachments": "파일 관련이라도 문서 첨부파일은 이 소스 도구가 아닙니다. 첨부파일 목록/읽기/소스 복사는 이 응답의 document_attachments 블록과 GET /flowgate/api/v1/help/items/document_attachments 에 있습니다.",
+        "attachments": "파일 관련이라도 문서 첨부파일은 이 소스 도구가 아닙니다. 첨부파일 목록/읽기/소스 복사는 이 응답의 document_attachments 블록과 GET /flowgate/api/v1/help/items/attachments/read 에 있습니다.",
         "attachments_none": "이 단계는 문서 첨부파일 API도 쓸 수 없습니다. 소스 접근이 없는 토큰에는 첨부파일 접근도 없습니다.",
     },
     "ja": {
@@ -109,7 +109,7 @@ NOTES = {
         "none_scope": "この作業段階にはリモートソースツールが割り当てられていません。ソースツリーに触れず、割り当てられた文書作業のみ行ってください。",
         "none_local": "このプロジェクトはリモートソースアクセスを使用しません。ソースは作業環境で直接扱い、このツールは呼び出さないでください。",
         "none_user": "この認証主体にはリモートソースツールが割り当てられていません。ツールは作業トークンにのみ割り当てられます。",
-        "attachments": "ファイル関連であっても、文書の添付ファイルはこのソースツールではありません。添付ファイルの一覧/読み取り/ソースコピーはこのレスポンスの document_attachments ブロックと GET /flowgate/api/v1/help/items/document_attachments にあります。",
+        "attachments": "ファイル関連であっても、文書の添付ファイルはこのソースツールではありません。添付ファイルの一覧/読み取り/ソースコピーはこのレスポンスの document_attachments ブロックと GET /flowgate/api/v1/help/items/attachments/read にあります。",
         "attachments_none": "この段階では文書の添付ファイルAPIも使えません。ソースアクセスのないトークンには添付ファイルへのアクセスもありません。",
     },
     "en": {
@@ -124,7 +124,7 @@ NOTES = {
         "none_scope": "No remote source tool is assigned to this step. Do not touch the project source tree; carry out only the document work you were given.",
         "none_local": "This project does not use remote source access. Work with the source in your own environment and do not call these tools.",
         "none_user": "No remote source tool is assigned to this identity. Tools are assigned to work tokens only.",
-        "attachments": "Document attachments are file-related but they are not these source tools. Attachment list/read/copy-to-source live in this response's document_attachments block and at GET /flowgate/api/v1/help/items/document_attachments.",
+        "attachments": "Document attachments are file-related but they are not these source tools. Attachment list/read/copy-to-source live in this response's document_attachments block and at GET /flowgate/api/v1/help/items/attachments/read.",
         "attachments_none": "This step cannot use the document attachment API either. A token with no source access has no attachment access.",
     },
 }
@@ -317,11 +317,11 @@ EXAMPLE_BODIES = {
     "remove": {"path": "app/obsolete.py", "recursive": False},
 }
 
-# Worker-mention lines (0349 D0004 D-4/D-5, P0005 [notes], stage-2 mention tool section wording).
+# Worker-mention lines (D-4/D-5, the plan [notes], stage-2 mention tool section wording).
 # The mention keeps only what a worker that never calls help must still know: call help
 # first, do not touch the disk, the tool names, the token, and where the detail lives.
 # Everything else moved into the help responses above. The registry owns the strings;
-# assembling them into a mention paragraph belongs to the mention builders (D0004 §1).
+# assembling them into a mention paragraph belongs to the mention builders.
 MENTION_LINES = {
     "ko": {
         "first_action": "첫 행동으로 GET {url} 를 호출해 각 도구의 사용법을 확인하세요.",
@@ -384,7 +384,7 @@ CAUTIONS["resolve_base_dirty"] = {
 EXAMPLE_BODIES["resolve_base_dirty"] = {"decisions": [{"path": "app/main.py", "action": "commit"}], "complete": True, "commit_message": "fix: resolve base changes"}
 EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty", "status": "resolved", "remaining": [], "commit": "0123456789abcdef"}
 
-# ── Document attachments (0523 T0004 §17) ───────────────────────────────────
+# ── Document attachments ───────────────────────────────────
 # An attachment hangs off a DOCUMENT, not off the source tree, so it is not a /remote/*
 # operation and must stay out of DISPLAY_ORDER (test_tool_catalog_parity_0356 pins that
 # tuple to remote_tool_service.OPS, and remote_tool_service has no attachment op to pin).
@@ -392,8 +392,8 @@ EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty
 # operations do I have?" surface every worker is told to call first: while that answer
 # spoke only for the source tree, a worker asked to touch a document's attachment read
 # the six read tools, read the "investigation only" note, and concluded that attachments
-# cannot be reached at all — which is what 0523 TR0005 was rejected for twice.
-# flowgate.chat.0017 CH0002: ``attachment_upload_request`` hands a file the worker produced to a
+# cannot be reached at all — which is what the earlier implementation was rejected for twice.
+# ``attachment_upload_request`` hands a file the worker produced to a
 # person for approval (it is attached to the worker's own card only once approved). It is not
 # ``attachment_upload``, which stays a Console-only action and stays named in ATTACHMENT_ABSENT_OPS.
 ATTACHMENT_DISPLAY_ORDER = ("attachment_list", "attachment_read", "attachment_copy", "attachment_upload_request")
@@ -406,7 +406,7 @@ ATTACHMENT_ROUTES: dict[str, tuple[str, str]] = {
 # Which effective kinds may call each operation. This is the SAME read/read_write
 # judgment the worker routes themselves make (document_routes._attachment_read_kind, and
 # the copy route's read_write check), so this catalog can never advertise an operation
-# the server would answer 403 to — the D0004 D-2 rule the source tools already follow.
+# the server would answer 403 to — the the design D-2 rule the source tools already follow.
 ATTACHMENT_KINDS: dict[str, frozenset] = {
     "attachment_list": frozenset({"read", "read_write"}),
     "attachment_read": frozenset({"read", "read_write"}),
@@ -422,7 +422,7 @@ ATTACHMENT_SCOPE = {
 }
 # Attachment operations that exist on the Console screen but are NOT on the worker
 # surface at all. Named out loud so "control an attachment" gets a complete answer from
-# help instead of the worker having to infer absence from silence (T0004 §19's "unknown
+# help instead of the worker having to infer absence from silence (the earlier implementation's "unknown
 # must never be answered as none", applied to the capability list itself).
 ATTACHMENT_ABSENT_OPS = ("attachment_upload", "attachment_delete")
 
@@ -669,7 +669,7 @@ ATTACHMENT_EXAMPLE_RESPONSES = {
 }
 
 
-# 0092: one catalog entry supplies /help/tools, /help source_tools and mentions.
+# one catalog entry supplies /help/tools, /help source_tools and mentions.
 for _locale, _summary, _source, _target, _caution in (
     ("ko", "일반 파일 하나를 덮어쓰기 없이 이동하거나 이름을 바꾼다.",
      "이동할 일반 파일의 소스 루트 상대 경로.", "목표 파일의 소스 루트 상대 경로. 필요한 상위 디렉터리는 자동 생성한다.",
@@ -728,11 +728,11 @@ def attachment_entry(name: str, locale: str, base_url: str) -> dict:
 def attachment_view(kind: str, locale: str, base_url: str) -> dict:
     """The document-attachment half of "which file operations do I have?".
 
-    ``operations`` carries only what this kind may actually call, the same D0004 D-2 rule
+    ``operations`` carries only what this kind may actually call, the same the design D-2 rule
     the source-tool list follows. ``denied`` and ``absent`` then say out loud what is NOT
     callable and why, so an empty or short ``operations`` list can never be read as
     "attachments cannot be reached from here" — the wrong conclusion this block exists to
-    prevent (0523 TR0005 rejections of 2026-09-04).
+    prevent (rejections of 2026-09-04).
     """
     text = ATTACHMENT_VIEW_NOTES[locale]
     allowed = attachment_names(kind)
@@ -750,7 +750,7 @@ def attachment_view(kind: str, locale: str, base_url: str) -> dict:
             for name in ATTACHMENT_ABSENT_OPS
         ],
         "detail_url": f"{base_url}/help/tools/{{name}}",
-        "help_item_url": f"{base_url}/help/items/document_attachments",
+        "help_item_url": f"{base_url}/help/items/attachments/read",
         "notes": [text["what"], text["not_source"], text["permission"], text["scope"]],
     }
 
@@ -801,7 +801,7 @@ def attachment_detail_notes(name: str, locale: str) -> list[str]:
 
 
 def tool_names(kind: str, action_scope: Optional[str] = None) -> list[str]:
-    """Tool names for a kind, in display order (P0005 §0-4).
+    """Tool names for a kind, in display order.
 
     ``action_scope`` only ever ADDS the scope-bound tools of `SCOPE_BOUND_TOOLS`; it
     can never widen a kind. Omitting it therefore stays the conservative answer (the
@@ -825,15 +825,15 @@ def kind_for_step(
     step_type: Optional[str] = None,
     lookup_failed: bool = False,
 ) -> tuple[str, Optional[str]]:
-    """The one kind judgment (D0004 §3-1 / P0005 §0-4), source mode NOT applied.
+    """The one kind judgment, source mode NOT applied.
 
     Callers that already know the step type (the mention builders, which are building the
     mention *for* that step) pass it directly; callers holding only a token go through
-    ``kind_for_token``. Source mode gates advertising only, never permission (D0004 D-1),
+    ``kind_for_token``. Source mode gates advertising only, never permission,
     so it is layered on top by ``resolve_registry`` rather than folded in here.
 
     A failed step lookup is always demoted to ``read`` — advertising narrower than reality
-    costs an unused tool, advertising wider hands the worker a 403 (D0004 D-6).
+    costs an unused tool, advertising wider hands the worker a 403.
     """
     if action_scope in {"review", "workflow_decide", "chat", "resolve_conflict"}:
         return "read", None
@@ -851,8 +851,8 @@ def kind_for_step(
 def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
     """``kind_for_step`` for a caller that holds a token but not its step type.
 
-    0515 T0009 §7: a chat (CH) token's kind is decided from its own fixed
-    ``source_access`` column (D0006 §2.3) when that column is set to a real value --
+    a chat (CH) token's kind is decided from its own fixed
+    ``source_access`` column when that column is set to a real value --
     never from ``kind_for_step``'s scope/step-type table, which has no notion of a
     per-user source-access setting. ``None``/legacy/damaged falls through to the
     existing ``kind_for_step`` fallback below, which already answers ``read`` for
@@ -870,7 +870,7 @@ def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
     return kind_for_step(action_scope, step_type, lookup_failed)
 
 
-# flowgate.v02test.0026 (0001-B §7): what a chat token may do with FlowGate commands.
+# what a chat token may do with FlowGate commands.
 COMMAND_ACCESS_EDIT = "edit"          # read_write token (edit, or an edit_once that won its claim)
 COMMAND_ACCESS_EXECUTE = "execute"    # execute-mode token: commands only, source stays read
 

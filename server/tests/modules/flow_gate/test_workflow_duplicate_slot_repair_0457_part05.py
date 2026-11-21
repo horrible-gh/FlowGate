@@ -96,7 +96,7 @@ def test_linking_a_document_to_a_second_empty_slot_is_refused(repaired_db):
 
     with _store_over(repaired_db):
         with pytest.raises(WorkflowDocumentAlreadyLinkedError) as excinfo:
-            _register(5675, TR_FOUR)     # slot 7 is empty; 0005-TR is already in slot 4
+            _register(5675, TR_FOUR)     # slot 7 is empty; the earlier implementation is already in slot 4
 
     exc = excinfo.value
     assert exc.error["code"] == "workflow_document_already_linked"
@@ -126,9 +126,9 @@ def test_a_document_may_still_re_register_into_its_own_slot(repaired_db):
     rows_after = len([r for r in _ledger(repaired_db) if r["item_id"] == SLOT_SIX])
     assert rows_after == rows_before + 1
 def test_the_occupancy_conflict_keeps_its_own_meaning(repaired_db):
-    """T0005's refusal is a different one and must not be blurred into the new code.
+    """'s refusal is a different one and must not be blurred into the new code.
 
-    Slot 6 holds 0007-TR; a document that is in no slot at all tries to take it. Nothing
+    Slot 6 holds the earlier implementation; a document that is in no slot at all tries to take it. Nothing
     about uniqueness is involved — this is the eviction guard, and it must still answer
     `workflow_slot_occupied`.
     """

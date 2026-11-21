@@ -1,4 +1,4 @@
-"""Group (module) key rename — the database half (flowgate.v02gui.0012 0001-B item B).
+"""Group (module) key rename — the database half.
 
 A module's name is part of every key of its groups: ``groups.module``, ``documents.module``,
 ``id_counter.module``, ``project_modules.name`` / ``module_id`` (``{project}:{module}``), every
@@ -17,7 +17,7 @@ This module only does the database part, inside the caller's transaction:
   primary key is needed and rows are never matched by position.
 
 The walk keeps the number of statements small, because every statement is a round trip inside the
-transaction that holds the module's Flow locks (0004-CH: ~2,150 statements made a rename take 8 s
+transaction that holds the module's Flow locks (the discussion: ~2,150 statements made a rename take 8 s
 even with no group). It reads the schema with one query, searches each table with one query that
 covers all of its text columns, and writes each changed column with one ``CASE`` UPDATE per chunk of
 values instead of one UPDATE (one table scan) per value.
@@ -357,7 +357,7 @@ def module_in_use(store, project_id: str, name: str) -> Optional[dict]:
     ``{"group_id": ..., "title": ...}`` names the group the client should show; a name only a
     ``project_modules`` row (an empty group) or stray documents/ids hold reports that instead.
 
-    flowgate.v02test.0040 T0007: an archived group still holds its name (archiving is display only: its
+    an archived group still holds its name (archiving is display only: its
     groups, documents and numbering keep the name, so reusing it would collide with their ids). The
     ``group`` / ``module`` holders say so (``archived``, ``archived_at`` from ``project_modules``), because
     the default tree hides archived groups and the user could not otherwise tell what holds the name.

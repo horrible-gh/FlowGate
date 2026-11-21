@@ -43,7 +43,7 @@ from tests.architecture.migrations.test_migration_numbering import (
 )
 
 class TestFilenameCarryOver:
-    """`migrations` 표의 파일 이름을 옮기는 동작 자체를 확인한다."""
+    """Verify filename carry-over in the migrations table itself."""
 
     @staticmethod
     def _make_db(tmp_path, applied: list[str] | None) -> str:
@@ -75,7 +75,7 @@ class TestFilenameCarryOver:
             conn.close()
 
 def test_real_migrator_reboot_after_095_carryover_does_not_rerun_it(tmp_path):
-    """반려 사유("duplicate column name: operator_api_base")가 이관 뒤 사라지는가."""
+    """Carry-over removes the rejection: duplicate column name: operator_api_base."""
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     db_path = _fresh_real_db(tmp_path, "reboot_095.db")
@@ -103,7 +103,7 @@ def test_real_migrator_reboot_after_095_carryover_does_not_rerun_it(tmp_path):
     except Exception as exc:  # pragma: no cover - failure path is the point
         pytest.fail(f"095 이력 DB 의 재부팅이 이관 뒤에도 실패했다: {exc}")
 def test_without_the_095_carryover_it_really_does_rerun_and_fail(tmp_path):
-    """대조군. 반려 사유가 실제로 재현되는가."""
+    """Control: reproduce the original rejection."""
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     db_path = _fresh_real_db(tmp_path, "control_095.db")
@@ -117,7 +117,7 @@ def test_without_the_095_carryover_it_really_does_rerun_and_fail(tmp_path):
     finally:
         conn.close()
 
-    # apply_migration_renames() 를 일부러 호출하지 않는다.
+    # Deliberately omit apply_migration_renames().
     with pytest.raises(Exception) as caught:
         DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
 
@@ -141,7 +141,7 @@ def test_a_fresh_db_gets_the_whole_chat_command_shape_and_reboots(tmp_path):
     assert indexes == CHAT_COMMAND_INDEXES
     assert {*MAIN_CHAT_FILES, TRUNCATION_FILE} <= applied
 def test_a_main_first_db_boots_v02_and_keeps_its_rows(tmp_path):
-    """STG 이력. 이 DB 에서 v0.2 부팅이 idx_chat_cmd_run already exists 로 섰다."""
+    """STG history where v0.2 boot failed with idx_chat_cmd_run already exists."""
     db_path = _db_from_history(tmp_path, "chat_main_first", _main_first_history())
     _insert_command_row(db_path)
 
@@ -154,13 +154,13 @@ def test_a_main_first_db_boots_v02_and_keeps_its_rows(tmp_path):
     assert [(r["request_id"], r["stdout_tail"], r["anchor_seq"], r["stdout_truncated"]) for r in rows] == [
         ("ccr_history", "out", 3, 0)
     ]
-    assert _boot_like_config(db_path) == []  # 재부팅은 아무것도 하지 않는다
+    assert _boot_like_config(db_path) == []  # Reboot makes no changes.
 def test_a_v02_first_db_carries_its_copies_over_and_boots(tmp_path):
-    """10-06~10-08 v0.2 이력. 장부의 137/138 은 136/137 로 옮겨 적힐 뿐 다시 실행되지 않는다.
+    """v0.2 history from 10-06 to 10-08: carry 137/138 to 136/137 without rerunning.
 
-    SQLite 의 157 은 표를 재생성하며 두 이력에 공통인 컬럼만 옮기므로, 이 이력의 기존 행은
-    truncated 표시만 0 으로 돌아간다(출력 tail 은 남는다). PostgreSQL/MySQL 의 157 은
-    ADD COLUMN IF NOT EXISTS 라 값도 남는다.
+    SQLite 157 rebuilds the table and copies only columns shared by both
+    histories, resetting truncated flags to zero while preserving output tails.
+    PostgreSQL/MySQL 157 uses ADD COLUMN IF NOT EXISTS and preserves the flags.
     """
     db_path = _db_from_history(tmp_path, "chat_v02_first", _v02_first_history())
     _insert_command_row(db_path, {"stdout_truncated": 1})
@@ -178,12 +178,12 @@ def test_a_v02_first_db_carries_its_copies_over_and_boots(tmp_path):
     ]
     assert _boot_like_config(db_path) == []
 def test_without_the_carryover_a_v02_first_db_really_reruns_136_and_fails(tmp_path):
-    """대조군. 위 초록불이 "136 재실행이 원래 무해해서"가 아님을 보인다."""
+    """Control: prove the pass does not depend on rerunning 136 being harmless."""
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     db_path = _db_from_history(tmp_path, "chat_v02_control", _v02_first_history())
 
-    # reconcile_renamed_migrations() 를 일부러 호출하지 않는다.
+    # Deliberately omit reconcile_renamed_migrations().
     with pytest.raises(Exception) as caught:
         DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
 

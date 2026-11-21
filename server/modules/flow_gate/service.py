@@ -820,7 +820,7 @@ def build_chain_tree(
 ) -> tuple[list[dict], list[str]]:
     """Return BFS-ordered chain node list based on L001 §4-3.
 
-    0064 T#4 (L0005 2.10 P9): a document made by a succession conversion (``meta.converted_from``) is no
+    a document made by a succession conversion (``meta.converted_from``) is no
     root candidate; its tree parent is the document it succeeded, so the chain keeps one root.
     """
     warnings: list[str] = []
@@ -1422,7 +1422,7 @@ def get_handover(ctx: BriefContext | None = None) -> dict:
     ctx = ctx or BriefContext()
     # Same rule as db.get_pending_nr_tr_documents(): open N/T documents with no
     # NR/TR follow-up. Resolved from the prefetched map instead of one query per
-    # open document (0276 NR0003 finding 3).
+    # open document.
     pending = [
         doc for doc in ctx.open_docs
         if doc.get("type") in ("N", "T") and not ctx.has_followup(doc["doc_id"], ("NR", "TR"))
@@ -1470,7 +1470,7 @@ def _with_latest_event(docs: list[dict], ctx: "BriefContext | None" = None) -> l
     doc_ids = [d["doc_id"] for d in docs]
     # This runs once per gap category and once per queue category (12 times per
     # /brief), over heavily overlapping document sets. The context memoises the
-    # union so the repeats cost nothing (0276 NR0003 finding 3).
+    # union so the repeats cost nothing.
     latest_map = ctx.latest_events(doc_ids) if ctx else db.get_latest_events_map(doc_ids)
 
     enriched: list[dict] = []
@@ -1676,7 +1676,7 @@ def build_action_queue(ctx: BriefContext | None = None) -> dict:
     needs_result = _find_target_docs_with_no_followup(open_t, ("NR", "TR"), ctx)
 
     # One query for every conflict event's document instead of one per event
-    # (0276 NR0003 finding 3, N+1 ⑤). Insertion order still follows the event order.
+    # (N+1 ⑤). Insertion order still follows the event order.
     conflict_docs_map: dict[str, dict] = {}
     conflict_events = db.get_conflict_events(50)
     conflict_doc_map = db.get_documents_by_ids(

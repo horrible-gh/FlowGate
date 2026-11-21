@@ -79,7 +79,7 @@ def refuse():
     raise HTTPException(status_code=409, detail='card_document_edit_required')
 
 
-# flowgate.v02gui.0011 (0004-CH): internal housekeeping locations under the global storage root S0.
+# (CH): internal housekeeping locations under the global storage root S0.
 # The delete journal G (S0/.flowgate-gc, storage/filesystem.py) and the token / AI-run scratch roots
 # (S0/work/<project>/tok_*, S0/scratch/<project>/aiv*_*) hold lock files, journal records and scratch
 # trees, never a document. Yet every file operation of a scratch delete (lock open/unlink, journal
@@ -172,7 +172,7 @@ def candidates(doc, reference=None):
 def candidate_paths(doc, roots, resolve=None):
     """The resolved candidates of one row (as ``candidates``, without the jail) for a walk of every row.
 
-    ``roots`` is the walk's memo: each project's storage root is read and resolved once per walk (0135 T#3/T#4);
+    ``roots`` is the walk's memo: each project's storage root is read and resolved once per walk;
     ``resolve`` the walk's shared resolver (``storage_paths.memo_resolver``).
     """
     project_id = doc['project_id']
@@ -189,7 +189,7 @@ def references(paths=(), trees=()):
     Containment checks walk a candidate's ancestors rather than comparing it with
     every file. The inode index additionally catches hard links outside the tree.
 
-    flowgate.v02.0135 T#3/T#4: this walks every document row, twice per gated write (the
+    this walks every document row, twice per gated write (the
     second time under the path namespace mutex). It used to read the storage settings 4-8
     times and resolve each path ~14 times per row: on the stg store (9,090 rows, PostgreSQL)
     one walk took 237 s / 54,541 queries (29 s with the request cache), so every document
@@ -259,7 +259,7 @@ def references(paths=(), trees=()):
         refuse()
 
 
-# 0001-B A, second pass (flowgate.v02gui.0012 0004-CH turn 49): after the name filter a card type switch on stg still
+# A, second pass: after the name filter a card type switch on stg still
 # took ~7 s (R<->B) and a save ~4.4 s: every walk kept a fixed cost -- the whole documents table (9,454 rows, ~13 MB
 # with every column) and a listing of every row's directory (1,343) to rule out links -- and a switch walks 7-9 times.
 # A filtered walk now reads only the four columns it decides on and the full rows of the rows it walks; the
@@ -270,7 +270,7 @@ _WALK_SQL = ("SELECT doc_id, project_id, branch, file_path FROM documents "
              "WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
 _FULL_ROWS_CHUNK = 200
 # A walk slower than this writes one timing line to logs/default.log (logger flowgate.write_gate.timing): the
-# breakdown (database read, directory listings, full rows, matching) that 0001-B A could only estimate from outside.
+# breakdown (database read, directory listings, full rows, matching) that the earlier implementation A could only estimate from outside.
 SLOW_WALK_MS = 150
 _timing_log = None
 
@@ -361,7 +361,7 @@ def _plain_name(name):
 def _name_filter(paths):
     """The casefolded names of the targets when a row can match them only through its own name, else None.
 
-    0001-B A (flowgate.v02gui.0012): a walk still cost ~0.75-1.1 s for 9,000 rows on the Windows stg host, almost
+    A: a walk still cost ~0.75-1.1 s for 9,000 rows on the Windows stg host, almost
     all of it building and resolving each row's candidate paths, ~4-7 walks per document write. A row whose file
     name differs from every target name can match only if it is a link (caught by ``_cannot_match``) or a hard link
     of a target (nlink > 1: then every row is walked, as before). A target that is itself a link, or whose name is
@@ -758,7 +758,7 @@ def module_rename(group_ids, docs, call, lock_wait_sec=None):
     non-card document, the row locks, then the path namespace. ``call`` runs inside that one transaction.
     Locks are taken in sorted order like ``guard_scope``; in-process locks first, never inside a transaction.
 
-    flowgate.v02test.0040 T0005: ``lock_wait_sec`` (the caller's; default ``FLOW_LOCK_WAIT_SEC``) bounds the waiting
+    ``lock_wait_sec`` (the caller's; default ``FLOW_LOCK_WAIT_SEC``) bounds the waiting
     for all the in-process locks together, not each one: one deadline is set before the first lock and every acquire
     waits only for what is left of it (0 once it has passed: a free lock is still taken, a held one is not waited
     for). Waiting with the locks already taken therefore never adds up beyond ``lock_wait_sec`` — per-lock waits of

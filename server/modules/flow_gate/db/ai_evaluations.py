@@ -1,12 +1,12 @@
 """AI Evaluation runs: a judge AI scores a target AI on a real Scratch task
-(flowgate.v02.0017 T0002 §3, migration 129).
+(migration 129).
 
 lifecycle   pending -> preparing -> running -> reviewing -> completed
             any active state -> failed | cancelled
 Result (score, per-criterion scores, review) is separate from the lifecycle.
 Migration 130: an optional human review on a completed evaluation (its score, when present, is
 the final score) and reusable evaluation sets (ai_evaluation_sets).
-Migration 135 (flowgate.v02.0017 CH0006 (4)): evaluations and sets belong to no project; there is
+Migration 135 (the earlier change the discussion ): evaluations and sets belong to no project; there is
 one list for the whole system.
 """
 from __future__ import annotations

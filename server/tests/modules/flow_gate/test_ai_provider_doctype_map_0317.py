@@ -1,4 +1,4 @@
-"""flowgate.default.0317 (R0001 -> NR0003 -> D0004 -> T0005 구현): per-document-type AI
+"""(> the review -> the design -> the earlier implementation implementation): per-document-type AI
 provider assignment for the continuous chain.
 
 Covers the storage/resolver/API contract:
@@ -6,7 +6,7 @@ Covers the storage/resolver/API contract:
   • validation (duplicate type, empty type, unknown/disabled provider -> 422 array)
   • resolve_doctype_provider (the hop decider): mapped+enabled -> id; unmapped/disabled -> None
   • FK cascade: a provider dropped from the routing chain drops its assignment
-  • ai_invoke hop wiring: _prioritize_chain (배정 우선 + 폴백 tail) and
+  • ai_invoke hop wiring: _prioritize_chain (assignment first + fallback tail) and
     _resolve_continuation_hop_provider (auto-approved N/T -> paired report assignment)
 
 Uses TESTING=1 with a file-backed SQLite DB, mirroring test_ai_settings_api.py.
@@ -30,7 +30,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 @pytest.fixture(scope="module")
 def test_db_path(migrated_sqlite_db):
-    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): shared conftest.py factory."""
+    """shared conftest.py factory."""
     return migrated_sqlite_db(
         "test_doctype_map.db",
         seed_sql="""
@@ -52,10 +52,10 @@ def mock_db(test_db_path):
             self._conn.execute("PRAGMA foreign_keys = ON")
 
         def _execute(self, sql, params=None):
-            # 0406 T0022 작업 4: 실패한 문장을 롤백하지 않으면 sqlite 는 쓰기 트랜잭션을
-            # 연 채로 둔다. 그러면 이 파일이 테스트마다 새로 여는 다음 연결이
-            # "database is locked" 로 죽는다 — 실패한 것은 한 문장뿐인데 뒤따르는
-            # 픽스처가 통째로 무너진다. 진짜 저장소는 이미 이렇게 동작한다.
+            # task 4: failing statements must roll back the SQLite write transaction.
+            # Otherwise the connection opened for the next test encounters
+            # database is locked: one failed statement brings down the entire next fixture.
+            # The production store already rolls back this way.
             try:
                 self._conn.execute(sql, params or [])
             except Exception:
@@ -89,10 +89,10 @@ def mock_db(test_db_path):
             "modules.flow_gate.db.projects",
             "modules.flow_gate.db.ai_providers",
             "modules.flow_gate.db.ai_provider_doctype_map",
-            # 0406 T0022 작업 4: request_auto_resume 은 이제 홉 핸드오프 의도를 durable
-            # 정지행으로도 남긴다. 이 모듈을 같이 갈아끼우지 않으면 그 쓰기가 진짜
-            # 저장소로 새 연결을 열고, 이 파일의 TestStore 연결과 같은 sqlite 파일을
-            # 두고 잠금 경합을 일으켜 다음 픽스처가 "database is locked" 로 죽는다.
+            # task 4: request_auto_resume now persists handoff intent
+            # as a durable paused row. Replace this module too, or it opens a real-store
+            # connection to the same SQLite file as TestStore, introducing lock contention
+            # and failing the next fixture with database is locked.
             "modules.flow_gate.db.ai_invoke_paused_chains",
             "modules.flow_gate.rbac.decorators",
         )
@@ -259,7 +259,7 @@ class TestResolver:
         ids = _make_three_providers()
         save_doctype_providers("proj_001", [{"doc_type": "TR", "provider_id": ids["Opus"]}])
         # Disable Opus after the assignment; the resolver must degrade to default (None),
-        # not pin a provider the run engine cannot launch (D0004 §3).
+        # not pin a provider the run engine cannot launch.
         save_project_settings(
             "proj_001", "custom",
             [_cli(name="Fable", id=ids["Fable"]),
@@ -324,7 +324,7 @@ class TestHopWiring:
         assert svc._resolve_continuation_hop_provider("proj_001", "x") is None
 
     def test_ai_direct_selected_item_seq_resolve_hop_maps_to_report_type(self, monkeypatch):
-        # 0352 T0004 §2/§3.5: an ai_direct N/T head that IS in the auto-approve selection
+        # an ai_direct N/T head that IS in the auto-approve selection
         # folds to its paired report type for doc-type provider resolution too — matching
         # what auto_approved does for every N/T, just scoped to this one selected step.
         from modules.flow_gate.services import ai_invoke_service as svc
@@ -364,7 +364,7 @@ class TestHopWiring:
 
 
 class TestPerHopRespawn:
-    """0317 TR0011 (Q153 opt-1): the unmanned continuous chain re-spawns a worker per hop so
+    """(Q153 opt-1): the unmanned continuous chain re-spawns a worker per hop so
     each step re-resolves its OWN provider, instead of one provider process self-continuing
     through every hop (the rejection: 3 documents all "Anthropic Claude Sonnet 5"). These
     exercise the boundary handoff — has_active_run (engine vs copy-mention), the auto-resume
@@ -453,16 +453,16 @@ class TestPerHopRespawn:
         assert calls == []
         # ...and the stale queue is consumed so it cannot fire on a later run.
         assert svc.peek_auto_resume(gid) is None
-        # 0406 T0022 작업 4: 큐는 버리되 **의도는 버리지 않는다.** 이 분기는 지금까지
-        # 아무것도 남기지 않아, 재개할 좌표도 없고 핸드오프로 releasing 이 된 lease 도
-        # 풀리지 않았다. 이제 사유를 stop_code 로 구분해 durable 정지행으로 park 한다.
+        # task 4: discard the queue entry but preserve the intent.
+        # Previously this branch left no resume coordinates or release for a handoff lease.
+        # Now park durably with a stop_code distinguishing the cause.
         assert len(parked) == 1
         _run, pending, code = parked[0]
         assert code == "timeout"
         assert pending["doc_ref"] == "d"
 
     def test_maybe_resume_parks_the_intent_when_the_spawn_itself_fails(self, monkeypatch):
-        """0406 T0022 작업 4: _spawn_auto_resume 예외는 지금까지 로그 한 줄로 끝났다."""
+        """task 4: _spawn_auto_resume exceptions previously left only a log line."""
         from modules.flow_gate.services import ai_invoke_service as svc
 
         gid = "flowgate.default.0317"
@@ -489,7 +489,7 @@ class TestPerHopRespawn:
         assert calls == []
 
     def test_maybe_resume_carries_base_provider_id(self, monkeypatch):
-        # 0317 T0013 결함 ③: the header default pin must ride the run forward so an
+        # defect 3: the header default pin must ride the run forward so an
         # override-less re-spawned hop still runs on the user's chosen default.
         from modules.flow_gate.services import ai_invoke_service as svc
 
@@ -513,7 +513,7 @@ class TestPerHopRespawn:
         assert pending["provider_overrides"] == {"2": "aip_opus"}
 
     def test_spawn_passes_base_provider_id_and_overrides_to_start_run(self, monkeypatch):
-        # 0317 T0013 결함 ③: _spawn_auto_resume must hand the base pin to start_run as
+        # defect 3: _spawn_auto_resume must hand the base pin to start_run as
         # provider_id so an override-less step resolves to it (not doc-type / default chain).
         from modules.flow_gate.services import ai_invoke_service as svc
 
@@ -527,12 +527,12 @@ class TestPerHopRespawn:
         })
         assert captured["provider_id"] == "aip_default"
         assert captured["continuation_provider_overrides"] == {"2": "aip_opus"}
-        # And the instruction mode is still preserved across the re-spawn (결함 ② stays fixed).
+        # Preserve instruction mode across respawn too (defect 2 remains fixed).
         assert captured["continuation_instruction_mode"] == "auto_approved"
 
 
 class TestPerStepOverrideOffByOne:
-    """0317 T0013 auto-approved regression: the override lookup folds an instruction
+    """auto-approved regression: the override lookup folds an instruction
     head to its paired report row before keying the override map. _expand_auto_reports lays
     each report step (TR) right after its instruction step (T), each with its OWN item_seq;
     at a hop boundary the effective head is the T slot, but the worker fills the following TR

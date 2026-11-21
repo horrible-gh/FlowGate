@@ -1,6 +1,6 @@
 """One encoding gate for the texts an AI worker token writes as JSON values.
 
-flowgate.v02test.0051: chat turns, documents, inbox submissions and step labels each
+chat turns, documents, inbox submissions and step labels each
 grew their own corruption check, one path at a time, and question / answer
 registration never got one. A local CLI on a Windows console that puts Korean on the
 command line posts ``?? ????``; it was stored as a question and as an answer, and the

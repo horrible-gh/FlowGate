@@ -255,7 +255,7 @@ describe('Designer common context menu (0060)', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(host.current.value).toBeNull()
   })
-  // flowgate.v02.0060 T#1 (Q 459): a multi-selection / blank Canvas menu is never empty now; an empty model (no item, or
+  // (Q 459): a multi-selection / blank Canvas menu is never empty now; an empty model (no item, or
   // only run items not connected) still opens nothing and the outer Canvas does not take the same event over.
   it('does not consume empty/excluded targets or fall back from an empty inner model to the outer canvas', async () => {
     const { host } = await setup()
@@ -298,7 +298,7 @@ describe('Designer common context menu (0060)', () => {
     expect(submenuPosition({ left: 10, right: 200, top: 50 }, { width: 190, height: 260 }, { width: 300, height: 800 })).toEqual({ x: 8, y: 50 })
   })
 
-  // flowgate.v02.0060 T#1 (Q 459, WP 0012 [C]): 연결 예정 / 미구현 items are shown in place with the disabled look; the
+  // awaiting integration / unimplemented items are shown in place with the disabled look; the
   // reason is the tooltip and the accessible description only (ko / en / ja), and they never request.
   it.each([
     ['ko', '연결 예정', '미구현'], ['en', 'Coming soon', 'Not implemented'], ['ja', '接続予定', '未実装'],
@@ -371,9 +371,9 @@ describe('Designer common context menu (0060)', () => {
 
 })
 
-// flowgate.v02.0060 T#1 (WP 0012 §1, §6): the 11 kinds drawn as the mockup's menuDefs (flowgate-v02-context-menu-v2.html,
+// the 11 kinds drawn as the mockup's menuDefs (flowgate-v02-context-menu-v2.html,
 // transcribed here: icon + words per item, '|' a .fg-ctx-line, '!' danger, '›' a submenu with its children), with the
-// T#1 state of each item (run / 연결 예정 / 미구현). paletteBlank, insDoc, insAttach, git and chat are not in scope.
+// state of each item (run / awaiting integration / unimplemented). paletteBlank, insDoc, insAttach, git and chat are not in scope.
 describe('the 11 kinds against the mockup menuDefs (T#1)', () => {
   const G = ['≋ 수정 확인', '↶ 되돌리기!', '◷ 이력']
   const C = ['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업', '테스트', '확인'].map((label) => '＋ ' + label)

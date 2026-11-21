@@ -1,11 +1,11 @@
-"""Screen-load SQL reduction (flowgate.default.0282 NR0003) — unit suite.
+"""Screen-load SQL reduction — unit suite.
 
 Covers:
-  - 발견 1: _groups_root_wf_done / _group_ac_doc_ids batch helpers return
+  - finding 1: _groups_root_wf_done / _group_ac_doc_ids batch helpers return
     exactly what the per-group probes (_group_root_wf_done / _group_ac_doc_id)
     return, so project_git_status's loop-of-queries → one-IN-query swap cannot
     change any slot's transition or any pending row's [open] target.
-  - 발견 2: db/meta_cache TTL cache for projects.get_by_id /
+  - finding 2: db/meta_cache TTL cache for projects.get_by_id /
     git_integration.get_config — off by default under TESTING, on with an
     explicit FLOWGATE_META_CACHE_TTL, invalidated by every write path, and
     copy-out so caller-side mutation cannot poison the cache.
@@ -160,7 +160,7 @@ G3 = "qredprj.default.0003"
 G_MISSING = "qredprj.default.9999"
 
 
-# ── 발견 1: batch helpers ≡ per-group probes ─────────────────────────────────
+# ── finding 1: batch helpers ≡ per-group probes ─────────────────────────────────
 
 class TestBatchWfDone:
     def test_matches_single_probe_per_group(self, seed):
@@ -195,7 +195,7 @@ class TestBatchAcDocIds:
         assert svc._group_ac_doc_ids([]) == {}
 
 
-# ── 발견 2: metadata TTL cache ───────────────────────────────────────────────
+# ── finding 2: metadata TTL cache ───────────────────────────────────────────────
 
 class TestMetaCachePolicy:
     def test_disabled_by_default_under_testing(self):

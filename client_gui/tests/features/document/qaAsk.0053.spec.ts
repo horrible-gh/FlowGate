@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#6 — the two v0.1 Q&A endpoints the Inspector now wraps so a person can ask and an AI
+ * the two v0.1 Q&A endpoints the Inspector now wraps so a person can ask and an AI
  * answers (0053 CH §2): the request each sends (path, body), the snake_case answer -> camelCase, and how the
  * ai-request admission refusals (the ai-invoke envelope with a flat `code`) are read next to the q routes'
  * own refusals.

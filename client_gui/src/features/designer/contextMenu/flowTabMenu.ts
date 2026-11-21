@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — ③ Flow tab menu (0006-D rev2 §5.3 ③): close / close others / close all for the
+// ③ Flow tab menu (D ③): close / close others / close all for the
 // right-clicked tab id (not the active tab); the blank tab strip has close all only.
 
 import { action as a, makeMenu } from './model'

@@ -1,5 +1,5 @@
-"""Group slot cleanup job (flowgate.default.0669 unit 7a; 0666 0008-D §3.6.1, §3.7.2,
-0009-L §2.25, §2.28, §4.4).
+"""Group slot cleanup job (the earlier change unit 7a; the design,,
+).
 
 After a final approval lands (merged / pushed), the Group's slot is torn down by a
 ``worktree_cleanup`` job instead of inline under the old project mutex. Phases (L 2.28):
@@ -221,7 +221,7 @@ def _slot_record(base_root: Path, state: dict, project_name: str, approvals: lis
         r = _rev(base_root, f"refs/remotes/origin/{branch}")
         remote_sha = r if isinstance(r, str) else None
     if reason == REASON_DISPOSED:
-        # 0192 T0005: the disposed work is intentionally thrown away (-D).
+        # the disposed work is intentionally thrown away (D).
         branch_delete = bool(branch_sha)
     else:
         branch_delete = bool(branch_sha) and _branch_delete_rule(base_root, state, branch, status)

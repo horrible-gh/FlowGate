@@ -1,4 +1,4 @@
-// Gate jobs use the existing Git error/detail screen and its common actions (D0007 §6/7.3).
+// Gate jobs use the existing Git error/detail screen and its common actions.
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, inject, ref, shallowRef, watch, type InjectionKey } from 'vue'
 import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateRecover, type RunCurrent, type RunGateState, type RunGateRecoveryRequest } from '@/features/document'
@@ -6,7 +6,7 @@ import { checkOperationErrorKey } from '@/features/document'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
 export interface GateOperation { runId: string; nodeKey: string; gate: RunGateState }
 /**
- * flowgate.v02.0132 T#4: how an accepted retry (202) ended once the decision failed again: `same` = the same error code
+ * how an accepted retry  ended once the decision failed again: `same` = the same error code
  * as before the retry ("수락됐지만 같은 이유로 다시 실패"), `changed` = another one. `code` is the new error code.
  */
 export interface RetryOutcome { readonly kind: 'same' | 'changed'; readonly code: string | null }
@@ -22,7 +22,7 @@ export function retryOutcomeText(outcome: RetryOutcome | null, t: (key: string) 
 }
 /**
  * The text that says why trying again does not help and where to press next, shown under {@link retryOutcomeText}
- * (flowgate.v02test.0052 0008 할 일 5): `same` = nothing changed, `changed` = read the new cause, a closed merge session
+ * (task 5): `same` = nothing changed, `changed` = read the new cause, a closed merge session
  * = cancel this approval and approve again on the check card. Null without an outcome.
  */
 export function retryNextText(outcome: RetryOutcome | null, t: (key: string) => string): string | null {
@@ -35,7 +35,7 @@ export function retryNextText(outcome: RetryOutcome | null, t: (key: string) => 
 export const CLOSED_SESSION_CODE = 'merge_conflict_aborted'
 
 /**
- * flowgate.v02test.0052 (0008 할 일 4): the held decision's merge session is closed (the conflict was aborted). [재시도] and
+ * flowgate.v02test.0052 (0008 task 4): the held decision's merge session is closed (the conflict was aborted). [재시도] and
  * [다시 반영] only read that closed session again (`publish.py` `_merge_outcome` → `merge_conflict_aborted`), so they can
  * never succeed — the card turns them off and leads to cancelling this approval and approving again.
  */
@@ -60,7 +60,7 @@ export interface AbortFlowSession {
 }
 
 /**
- * flowgate.v02test.0052 (0008 할 일 1): the conflict card's [병합 중단] ends like [새 커밋으로 다시 승인]: ① close the
+ * flowgate.v02test.0052 (0008 task 1): the conflict card's [병합 중단] ends like [새 커밋으로 다시 승인]: ① close the
  * conflict review (merge abort), ② cancel the approval parked on it (`cancelAfterAbort`, only when the server now says it
  * is cancelable), ③ leave the guidance "확인 카드에서 [승인]" in `reapproval` (code = why ② failed, null = done). Steps
  * run in this order and stop at the first refusal: a refused abort changes nothing; a refused cancel leaves the closed
@@ -131,7 +131,7 @@ export async function cancelOperationOfGroup(groupId: string, operation: GateOpe
 }
 
 /**
- * flowgate.v02.0132 T#4 (review): whether a held decision is parked again — the server's work on it ended in a failure
+ * (review): whether a held decision is parked again — the server's work on it ended in a failure
  * and waits for a person (decision `failed` / `recovery_required`, its job `recovery_required`, no Git work going on).
  * The accepted retry (202) itself is none of it: the decision is `accepted` with its version raised, the job `pending`
  * (`git_active`) and the error code still the earlier job's (`recovery.flags` falls back to the job's code); a transient
@@ -145,7 +145,7 @@ export function parkedAgain(gate: RunGateState): boolean {
 }
 
 /**
- * flowgate.v02gui.0004 — a held decision whose Git work stopped on the merge conflict the Git tab's conflict card
+ * a held decision whose Git work stopped on the merge conflict the Git tab's conflict card
  * shows (job parked on `gate_conflict`, or a recovery in `conflict`). That card speaks for it; it is not listed again
  * as a separate "Git 작업 실패" card.
  */
@@ -174,7 +174,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     return gate?.decision_in_progress && gate.recovery && (gate.recovery.error_code || ['failed', 'recovery_required'].includes(gate.recovery.status))
       ? [{ runId: run.value!.runId, nodeKey: node.nodeKey, gate }] : []
   }))
-  /** flowgate.v02gui.0004: the held decision parked on the open merge conflict, if any. */
+  /** the held decision parked on the open merge conflict, if any. */
   const conflictOperation = computed<GateOperation | null>(() => {
     for (const node of run.value?.nodes ?? []) {
       const gate = node.gate
@@ -261,7 +261,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
         run.value = answer; pending = null; selected.value = null
         // 202: the retry is accepted, the work goes on in the background; remember what it was sent at to tell its end.
         if (request.action === 'retry') retried.value = { ...retried.value, [recovery.decision_id]: { version: recovery.decision_version, code: recovery.error_code } }
-        // flowgate.v02test.0052 (0008 할 일 4·6): a cancelled approval leaves the way on — approve again on the check card.
+        // (task 4·6): a cancelled approval leaves the way on — approve again on the check card.
         if (request.action === 'cancel') reapproval.value = { decisionId: recovery.decision_id, code: null, nodeKey: operation.nodeKey }
         pruneRetried()
       }
@@ -277,7 +277,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     } finally { busy.value = false }
   }
   /**
-   * flowgate.v02gui.0004 §B step 2 (0001-B 결정 사항): after the conflict review was closed, read the run again and
+   * §B step 2 (B decisions): after the conflict review was closed, read the run again and
    * cancel the decision that was parked on it — only when the server now says it is cancelable. The answer is the
    * refusal / reason code to show, or null when the decision was cancelled (or had already ended on its own). The
    * new approval is never sent from here: the person presses [승인] on the check card.

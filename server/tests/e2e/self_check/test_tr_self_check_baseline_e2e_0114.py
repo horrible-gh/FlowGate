@@ -1,4 +1,4 @@
-"""flowgate.v02.0114 T#3: baseline reuse end to end on real Self-check runs (D 0006 9.2-5 (a)(f),
+"""baseline reuse end to end on real Self-check runs (the earlier implementation 9.2-5 (a)(f),
 9.2-6 (a)(b)(c)(d)).
 
 One work unit, through the real pieces: ``token_service.issue`` records the pre-change anchor
@@ -105,7 +105,7 @@ def flow(migrated_sqlite_db, monkeypatch, tmp_path):
     monkeypatch.setattr(token_service, "to_storage_relative", lambda path, project: str(path))
     monkeypatch.setattr(token_service.token_scratch, "create", lambda project, token_id, path: None)
     monkeypatch.setattr(token_service.token_scratch, "sweep_on_issue", lambda project: None)
-    # 0053 1-B: requests are queued; this server's queue worker starts them from their snapshot.
+    # requests are queued; this server's queue worker starts them from their snapshot.
     monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
     monkeypatch.setattr(service.policy, "host_capacity", lambda host=None: (1, 0))
     queue.start(1)

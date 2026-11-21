@@ -1,4 +1,4 @@
-"""Parallel Git lock scenarios on the real domain-lock store (flowgate.default.0669 T0003).
+"""Parallel Git lock scenarios on the real domain-lock store.
 
 Real resource_lock rows on SQLite, real threads, no mocked lock manager:
 1. different groups run in parallel without ``busy``

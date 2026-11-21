@@ -1,4 +1,4 @@
-"""flowgate.v02.0124 T#2 (0003-NR §5.3, §6.7~9 server side) — the command result tells which cards block a run that waits
+"""(NR, ~9 server side) — the command result tells which cards block a run that waits
 for a person's intervention: ``command_result.blocking`` (``node_key``, ``title``, ``doc_type``, ``kind``, ``reason`` as the
 card's intervention tells it, ``release`` judged from the stage assignment rows).
 
@@ -58,7 +58,7 @@ def test_s1_a_no_op_command_lists_the_blocking_card_with_its_reason_and_release(
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
     EXCLUDED[case](env, a, result, first)
     if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
-        # 0126: these cases now have a real execution target and an outstanding review request.
+        # these cases now have a real execution target and an outstanding review request.
         command(env,"step")
         r=_latest(env)
         assert r["state"]=="running" and [n["node_key"] for n in r["nodes"]]==[a]

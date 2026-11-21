@@ -28,7 +28,7 @@
     </div>
 
     <template v-else>
-      <!-- One list over system AI and my AI in my order (flowgate.v02test.0025): any card can be dragged above any other.
+      <!-- One list over system AI and my AI in my order: any card can be dragged above any other.
            For an administrator the system AI's relative order is also the fallback order (linked). -->
       <section class="detail-panel">
         <div class="detail-toolbar">
@@ -272,7 +272,7 @@
 // AI 관리 list (flowgate.v02.0017 CH0006 (2)): system AI and my AI in ONE list, each card marked
 // with its owner and its 2x2 execution mode. System AI is edited by administrators only and read
 // by everyone; my AI is edited by its owner. Saves stay per owner (each list is a full save).
-// flowgate.v02test.0025: the list is shown in my own order (/me/ai-order) and any card can be dragged above any other —
+// the list is shown in my own order (me/ai-order) and any card can be dragged above any other —
 // system or mine, local or remote. That order is what every AI selection list shows. An ordinary user's drag changes
 // only their order; an administrator's drag also saves the system AI's relative order as the fallback order (the
 // server links the two in one transaction and says so, and this screen then tells the administrator).
@@ -328,7 +328,7 @@ type OwnerFilter = (typeof OWNER_FILTERS)[number]
 const systemList = ref<ProviderItem[]>([])
 const myList = ref<ProviderItem[]>([])
 const systemDefaultId = ref<string | null>(null)
-// My default AI; null = follow the system default (flowgate.v02.0017 CH0006 (3)).
+// My default AI; null = follow the system default (the earlier change the discussion ).
 const myDefaultId = ref<string | null>(null)
 const loading = ref(false)
 const loaded = ref(false)

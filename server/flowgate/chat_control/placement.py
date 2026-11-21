@@ -14,7 +14,7 @@ Without an explicit anchor: the single edge ``work card -> unstarted confirm car
 single tail (a card with no successor). Anything else is ambiguous and names the candidates; the caller passes ``after``.
 
 A definition with no card yet (a new group: the Canvas draws its bug / requirement document as a free document node)
-starts from the Flow's root (0002-CH turn 48): the chain begins with a new start card of the root's type
+starts from the Flow's root (CH): the chain begins with a new start card of the root's type
 (``root_type``), as a person drags the root onto the Designer first. Its requirement line shows the existing root
 (``card_documents.lines``) and the first confirmation binds it (``root_binding``). ``after`` may then only name that
 root's document node (``root_keys``). With no root the definition stays unplaceable (``chat_cards_flow_empty``).

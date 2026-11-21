@@ -1,4 +1,4 @@
-"""flowgate.v02.0074 T#4 — the work plan deploy: a WP card's plan becomes Designer cards (D0006 §3.1 ~ §3.6, §3.8).
+"""the work plan deploy: a WP card's plan becomes Designer cards.
 
 On the real SQLite DB, routes and fixtures of ``test_fg_card_settings`` (card documents and card settings registered
 as ``startup`` registers them) with the deploy routes (``flowgate.work_plan_deploy.routes``) mounted beside them:
@@ -270,7 +270,7 @@ def test_mixed_design_cards_each_take_their_own_steps_text_as_their_design_instr
     ds = _line_doc(dep, _key_of(answer, "D#1"))
     assert _doc_row(ds)["type_code"] == "DS"
     assert not _has_body(_line_doc(dep, _key_of(answer, "TS#1")))         # TS: no pre-instruction transfer
-    # the card ids, not the order, link the cards: D#2 moved first keeps its card
+    # the card ids, not the order, link the cards: the earlier implementation moved first keeps its card
     del plan
 
 
@@ -651,11 +651,11 @@ def test_a_retyped_or_duplicated_card_is_kept_and_never_written(dep):
     value = get_store()._fetch_one("SELECT value_json FROM graph_node_settings WHERE node_key = ? AND field = "
                                    "'wp_source'", [t])["value_json"]
     _sql(dep["db"], "UPDATE graph_node_settings SET value_json = ? WHERE node_key = ? AND field = 'wp_source'",
-         (value, d))                                                          # d now claims T#1 as well
+         (value, d))                                                          # d now claims the earlier implementation as well
     dup = _execute(dep, wp_doc, "cleanup")
     assert {c["node_key"]: c["result"] for c in dup["cards"] if c["card_id"] == "T#1"} == {
         d: "kept_duplicate", t: "kept_duplicate"}
-    # D#1 has no card of its own now: it is made again; the T#1 duplicates are neither written nor removed
+    # has no card of its own now: it is made again; the the earlier implementation duplicates are neither written nor removed
     assert [c["card_id"] for c in _cards(dup, "create")] == ["D#1"] and dup["removed_node_keys"] == []
 
 
@@ -1029,7 +1029,7 @@ def test_a_cleanup_that_removes_the_tail_and_adds_chains_the_new_card_after_the_
     wp_key, wp_doc, _km = _flow(dep)
     _write_plan(wp_doc, {"T": 2})
     t1, t2 = _execute(dep, wp_doc, "first")["created_node_keys"]
-    _write_plan(wp_doc, {"T": 1, "N": 1}, bump=True)                         # T#2 goes, N#1 comes
+    _write_plan(wp_doc, {"T": 1, "N": 1}, bump=True)                         # goes, N#1 comes
     answer = _execute(dep, wp_doc, "cleanup")
     [n1] = answer["created_node_keys"]
     assert answer["removed_node_keys"] == [t2]
@@ -1102,7 +1102,7 @@ def _no_instruction_drafts(monkeypatch):
 
     real = lines._line_document
 
-    def skip(group, node_, slot, made, registered, user_id, locale=None):     # 0088: the save's locale goes on
+    def skip(group, node_, slot, made, registered, user_id, locale=None):     # the save's locale goes on
         if slot.slot == cs.INSTRUCTION:
             return None, False
         return real(group, node_, slot, made, registered, user_id, locale)
@@ -1230,7 +1230,7 @@ def test_the_final_graph_must_fit_the_draft_saves_node_limit_in_first_add_and_cl
     refused("add")
     refused("cleanup")                                                      # nothing to remove, one more card
     _write_plan(wp_doc, {"N": 1}, bump=True)
-    answer = _execute(dep, wp_doc, "cleanup")                               # T#1 goes, N#1 comes: 300 again
+    answer = _execute(dep, wp_doc, "cleanup")                               # goes, N#1 comes: 300 again
     assert answer["removed_node_keys"] == [t1] and len(answer["created_node_keys"]) == 1
     assert len(_draft(dep)[0]) == DRAFT_NODES_MAX
     _assert_one_chain(dep, wp_key, answer["created_node_keys"])
@@ -1259,7 +1259,7 @@ def test_a_final_graph_with_an_edge_to_a_missing_node_is_refused_before_any_writ
 
 
 
-# ── flowgate.v02.0088 T#1: the instruction documents a deploy makes are titled in its request's language ────────
+# ── the earlier change the earlier implementation: the instruction documents a deploy makes are titled in its request's language ────────
 
 INSTRUCTION_NAMES = {"ko": "지시서", "ja": "指示書", "en": "Instruction"}
 

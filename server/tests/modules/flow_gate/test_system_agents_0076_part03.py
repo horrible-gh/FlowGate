@@ -27,7 +27,7 @@ from tests.modules.flow_gate.test_system_agents_0076 import (
 )
 
 def test_remote_workdir_is_saved_read_back_and_cleared_0135(env):
-    # flowgate.v02.0135 CH0006: per-Agent remote working directory, set / re-read / cleared.
+    # per-Agent remote working directory, set / re-read / cleared.
     a = env.h("A")
     created = _create(env, REMOTE_BODY)
     aid = created["agent_id"]

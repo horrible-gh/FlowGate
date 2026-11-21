@@ -51,7 +51,7 @@ except ImportError:
 import db_bootstrap as dbb
 from db_bootstrap import BootstrapDBError
 
-# 0273 NR0003 P1-1: resolved from $DB_TYPE instead of assuming SQLite, so a
+# resolved from $DB_TYPE instead of assuming SQLite, so a
 # mysql/postgres install can seed its first admin. main() re-resolves this from
 # the environment before connecting; the sqlite default keeps the helpers below
 # usable with a plain sqlite3 connection handed in directly (as the 0272 tests

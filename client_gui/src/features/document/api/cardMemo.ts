@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — v0.2 card memos (O3 flowgate.v02.0056.0009-TR §4-5). A memo belongs to a card (the
+// v0.2 card memos. A memo belongs to a card (the
 // Flow's node), not to a document: it is no v0.1 M document (memo.ts keeps the v0.1 one), makes no document and
 // starts no AI. A memo with `ai_ref` on is handed to the card's AI runs (instruction · result · review · rework),
 // to a single AI call on the card's documents and to the Q&A AI answers of them.

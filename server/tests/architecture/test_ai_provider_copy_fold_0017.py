@@ -1,5 +1,5 @@
-"""Migration 131 folds a project's copy of a system AI into that system AI (flowgate.v02.0017
-CH0006 #46/#48) instead of promoting it as "<name> · <project>" into the shared system list."""
+"""Migration 131 folds a project's copy of a system AI into that system AI (the earlier change
+#46/#48) instead of promoting it as "<name> · <project>" into the shared system list."""
 from __future__ import annotations
 
 import hashlib

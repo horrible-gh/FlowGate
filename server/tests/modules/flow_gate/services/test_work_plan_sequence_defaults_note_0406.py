@@ -1,4 +1,4 @@
-"""0406 T0009 — defaults.note fallback and note-source priority."""
+"""defaults.note fallback and note-source priority."""
 from __future__ import annotations
 
 import pytest
@@ -59,7 +59,7 @@ def test_step_note_has_priority_over_defaults_note():
 
 
 def test_pair_note_goes_to_the_result_row_and_defaults_still_fill_the_instruction():
-    """0408 M0019 재반려 2 — 결과 단계의 멘트는 결과 줄에 남고, 지시 줄은 공통 멘트를 받는다."""
+    """second rejection, item 2: result notes stay on result rows; instruction rows receive the common note."""
     rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
@@ -148,8 +148,8 @@ def test_missing_invalid_or_blank_defaults_preserves_empty_note_and_note_missing
 
 
 def test_shared_note_reuses_normalization_and_control_character_removal():
-    # 0406 T0022 작업 6: 후보 생성은 표시 경로다 — 자르지 않고 그대로 나른다. 상한을 넘긴
-    # 값은 [저장]에서 note_too_long 으로 거절되며, 그 판정은 저장 경로가 한다.
+    # Candidate generation is a display path: preserve untrimmed input; saving rejects oversize values.
+    # [저장] rejects this value with note_too_long; the save path owns that validation.
     body = "가" * (wpseq.NOTE_MAX_CHARS + 50)
     rows, _, _ = _rows({
         "defaults": {"note": " \x00" + body + "\n"},
@@ -179,7 +179,7 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
         "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
         "pre_instruction_text", "pre_instruction_attachment",
         "source_freshness", "source_current_revision_no",
-        # 0649 T#1 (NR0003 O0/O1): the card the row serves, its stored id, and whether the
+        # the card the row serves, its stored id, and whether the
         # save must keep it in place.
         "source_wp_card_id", "item_id", "protected",
     }

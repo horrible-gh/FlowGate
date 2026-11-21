@@ -1,4 +1,4 @@
-"""v02gui.0015 T2 (NR0006 §2.3, §6-5, §6-6): a new attempt does not take an earlier attempt's uncommitted changes --
+"""v02gui.0015 T2: a new attempt does not take an earlier attempt's uncommitted changes --
 and says so.
 
 An attempt starts from its predecessors' results or the run base, never from an earlier attempt of its own node, and

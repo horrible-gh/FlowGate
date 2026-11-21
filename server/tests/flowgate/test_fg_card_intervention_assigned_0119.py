@@ -1,4 +1,4 @@
-"""flowgate.v02.0119 T#3 (T-2 rework) — the assigned path (L-2) of a card nothing completes: its system errors retried
+"""(T-2 rework) — the assigned path (L-2) of a card nothing completes: its system errors retried
 within their limit, the instruction stage's system errors shown, a system error never read as a person's wait, and the
 whole intervention path of an AI card from its automatic rework to its completion after a memo.
 
@@ -172,7 +172,7 @@ def _instruction_reviewed(env, monkeypatch, starts):
 
 def test_an_instruction_whose_automatic_approval_keeps_failing_is_a_system_error_retried_up_to_the_limit(
         env, decided, monkeypatch, starts):
-    from flowgate.card_completion import instruction as card_instruction   # 0119 T-3: the completion's own approval
+    from flowgate.card_completion import instruction as card_instruction   # T-3: the completion's own approval
 
     key, instruction, ir = _instruction_reviewed(env, monkeypatch, starts)
     monkeypatch.setattr(card_instruction, "approve", lambda *a, **k: _refused(None))
@@ -190,7 +190,7 @@ def test_an_instruction_whose_automatic_approval_keeps_failing_is_a_system_error
 
 
 def test_an_instruction_whose_automatic_approval_failed_once_goes_on_to_its_result_stage(env, decided, monkeypatch, starts):
-    from flowgate.card_completion import instruction as card_instruction   # 0119 T-3: the completion's own approval
+    from flowgate.card_completion import instruction as card_instruction   # T-3: the completion's own approval
 
     key, instruction, ir = _instruction_reviewed(env, monkeypatch, starts)
     real = card_instruction.approve

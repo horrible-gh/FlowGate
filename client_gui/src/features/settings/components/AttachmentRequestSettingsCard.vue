@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.chat.0017 CH0002 — limits of AI attachment upload requests. System: the defaults every project inherits.
+  <!-- limits of AI attachment upload requests. System: the defaults every project inherits.
        Project: an optional override per item — an empty field inherits the system value (shown as its placeholder).
        The server clamps everything to its safety ceilings and validates again; these limits apply to AI requests only
        (a person's own upload keeps its fixed limits). -->

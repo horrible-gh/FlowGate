@@ -1,14 +1,13 @@
-"""원격 삭제 도구 — 삽을 고친다 (0382 B0001 §3 / NR0003 제안 5).
+"""Remote deletion tooling fixes (proposal 5).
 
-질의에 적힌 503 의 정체가 여기다. 261개를 지우려던 작업자는 세 가지 벽에 부딪혔다.
+The worker trying to remove 261 artifacts encountered three obstacles:
 
-* ``remove`` 는 파일 하나만 지운다 → 폴더를 주면 404, 261번 불러야 한다.
-* git 이 만든 개체 파일은 읽기 전용이라 ``os.remove`` 가 PermissionError 를 낸다.
-* 그 오류가 503 "서버가 **일시적으로** 요청을 처리할 수 없습니다"로 나갔다. 작업자는
-  "일시적"이라는 말을 믿고 3번 재시도했고, 영원히 안 될 일이었다.
+* remove handled only one file, returning 404 for directories and requiring 261 calls.
+* Read-only Git objects caused os.remove to raise PermissionError.
+* The error became a misleading temporary-server-failure 503, prompting three futile retries.
 
-세 가지를 각각 고정한다. 재귀 삭제는 열되 **도구가 남긴 흔적으로 판정되는 경로에만**
-연다(제안 5-c 의 안전한 쪽) — 화면·제출 검사와 같은 규칙을 본다.
+Pin each correction. Allow recursive deletion only for paths recognized as tool artifacts
+(the safe option in proposal 5-c), using the same rules as the UI and submission validator.
 """
 from __future__ import annotations
 
@@ -43,7 +42,7 @@ def root(monkeypatch):
     remove_tree(path)
 
 
-# ── 읽기 전용 파일도 지워진다 (제안 5-a) ─────────────────────────────────────
+# ── Delete read-only files too (proposal 5-a) ──
 
 def test_remove_clears_the_readonly_bit_and_succeeds(root):
     target = root / "locked.txt"
@@ -56,7 +55,7 @@ def test_remove_clears_the_readonly_bit_and_succeeds(root):
     assert not target.exists()
 
 
-# ── 폴더째 지울 수단 (제안 5-c) ──────────────────────────────────────────────
+# ── Remove a whole directory (proposal 5-c) ──
 
 def test_nonempty_directory_without_recursive_keeps_the_old_404(root):
     (root / "server" / ".test-tmp-0313").mkdir(parents=True)
@@ -72,7 +71,7 @@ def test_recursive_removes_a_tool_artifact_tree_and_counts_it(root):
     for index in range(3):
         blob = debris / f"obj{index}"
         blob.write_bytes(b"z")
-        os.chmod(blob, stat.S_IREAD)  # git 개체와 같은 읽기 전용 상태
+        os.chmod(blob, stat.S_IREAD)  # Read-only like a Git object
 
     extra, _ = rts._exec_remove(
         {"path": "server/.test-tmp-0313", "recursive": True}, root
@@ -154,7 +153,7 @@ def test_recursive_refuses_a_real_source_directory(root):
 
     assert caught.value.status == 422
     assert caught.value.details["reason"] == "not_tool_artifact"
-    # 거절했으면 아무것도 안 지운다.
+    # A rejected request deletes nothing.
     assert (root / "server" / "modules" / "app.py").exists()
 
 
@@ -186,7 +185,7 @@ def test_recursive_must_be_a_boolean_and_string_false_never_recurses(root):
         )
     assert caught.value.status == 422
 
-    # 실행 함수를 직접 부르는 내부 경로도 문자열을 참으로 승격하지 않는다.
+    # Direct internal execution must not treat a string as boolean true.
     with pytest.raises(rts._OpError) as caught:
         rts._exec_remove(
             {"path": "server/.test-tmp-0313", "recursive": "false"}, root
@@ -195,7 +194,7 @@ def test_recursive_must_be_a_boolean_and_string_false_never_recurses(root):
     assert (root / "server" / ".test-tmp-0313").exists()
 
 
-# ── "재시도하면 될 일"과 "재시도해도 안 될 일"이 다른 답을 낸다 (제안 5-b) ───
+# ── Distinguish retryable and permanent failures (proposal 5-b) ──
 
 def test_locked_path_answers_409_not_a_temporary_503(root, monkeypatch):
     target = root / "held.txt"

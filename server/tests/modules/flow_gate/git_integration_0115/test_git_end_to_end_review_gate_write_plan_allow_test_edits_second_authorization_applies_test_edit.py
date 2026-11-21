@@ -70,7 +70,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_allow_test_edits_second_authorization_applies_test_edit(self, origin_repo, monkeypatch):
         # 0009-TR rev3 (AI review finding 2): the human's second explicit action
-        # (L0007 §2.7's [테스트 편집 포함 재지시]) starts a run with
+        # (the "re-instruct including test edits" action) starts a run with
         # allow_test_edits=true, and ONLY such a run may put a test-path
         # operation directly in operations[] — where it goes through the exact
         # same anchored-apply/rollback engine as any product-code edit.

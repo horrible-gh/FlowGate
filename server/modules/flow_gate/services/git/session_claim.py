@@ -1,4 +1,4 @@
-"""Merge-session claim / lease (flowgate.v02.0153 T#4, T0011 §4).
+"""Merge-session claim / lease.
 
 A claim is the DB record "this instance is doing the automatic processing (sweep, startup
 or reconcile) of this merge session right now". It is held for one processing pass and

@@ -1,4 +1,4 @@
-"""0145 T#1: immutable result-slot coordinates, captured before a worker can submit.
+"""immutable result-slot coordinates, captured before a worker can submit.
 
 The ledger uses existing workflow events (no schema or historical data rewrite).
 Legacy new tokens are never reinterpreted as edits: a mapped result writer must

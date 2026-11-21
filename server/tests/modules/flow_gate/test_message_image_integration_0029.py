@@ -1,4 +1,4 @@
-"""flowgate.v02test.0029 T0009: one pass from the composer's upload to the CLI prompt.
+"""one pass from the composer's upload to the CLI prompt.
 
 The per-card tests each stub the neighbouring layer. This chain keeps the real routes,
 the real SQLite links and the real worker prompt boundary, and only replaces what needs

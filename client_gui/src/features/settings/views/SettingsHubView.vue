@@ -25,7 +25,7 @@
               {{ t('gui.settings.access_denied') }}
             </Alert>
 
-            <!-- 확인 필요 (시스템 관리자): GET /system/agents 한 번, 상태를 고치러 시스템 Agent 로 간다 -->
+            <!-- Needs attention (system administrators): one GET /system/agents; open System Agents to fix the state -->
             <div v-if="showAttention" class="fgs-sec" data-testid="hub-attention">
               <div class="fgs-sec-head">
                 <h3>{{ t('gui.settings.hub.attention') }} <span v-if="attention.length" class="count">{{ t('gui.settings.hub.attention_count', { n: attention.length }) }}</span></h3>
@@ -88,7 +88,7 @@
 // cards, and Workspace is gone. A refused settings URL lands here with a notice.
 // 확인 필요 (mockup ⑩): for a system administrator only, the overview reads GET /system/agents once
 // and lists the Agents that need a look (waiting for enrollment, refused, offline, a capability
-// allowed but not reported); 확인 opens that Agent in 시스템 Agent. Anyone else's overview sends
+// allowed but not reported); 확인 opens that Agent in System Agent. Anyone else's overview sends
 // nothing. An answer that arrives after leaving, or after the administrator role went, is dropped.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
@@ -113,7 +113,7 @@ const router = useRouter()
 const menu = useSettingsMenu()
 const { notice, clearNotice } = useSettingsAccessNotice()
 
-// ── 확인 필요: 시스템 Agent 화면을 열 수 있는 사람(시스템 관리자)에게만 ──
+// ── Needs attention: only for users who can open System Agents (system administrators) ──
 const showAttention = computed(() => menu.value.some((page) => page.routeName === 'settings-system-agents'))
 const agentList = ref<SystemAgent[] | null>(null)
 const attentionError = ref('')

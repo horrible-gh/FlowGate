@@ -1,14 +1,14 @@
 // flowgate.v02.0048 T#4 — ↗ 열기 (D#1 §9.2). Every Inspector feature opens a document through this
 // one function, so where a document is shown is decided here only.
-// flowgate.v02.0053 T#3 — the document opens in this tab, in its own modeless document window (MD
+// the document opens in this tab, in its own modeless document window (MD
 // Viewer, ✎ editing in the same window; features/documentWindow). The v0.1 new-tab path is gone: no
 // second tab, no second sign-in, no v0.1 screen. One window per document — opening it again brings
 // the open window back.
 // - `view` (↗): the document as it reads.
 // - `edit` (✎): straight to the window's text editor.
-// flowgate.v02.0056 F1 — a document's 검수·반려 이력 opens the same way, in its own modeless window
+// a document's review·rejection history opens the same way, in its own modeless window
 // (openDocumentHistory, from the history button of a document line).
-// flowgate.v02.0056 F2-2 — the row actions of a card line open their windows here too (openCardLineAction):
+// the row actions of a card line open their windows here too (openCardLineAction):
 // [작성] of a line without a document opens its write window (O3 0009-TR §4-2), [AI 호출] of a line with one the
 // document's AI call window (§4-3). The lines written there stand for the card's lines until the Canvas read
 // shows them (cardLinesWritten / settleCardLinesWritten, used by the Frame), and a line tells an AI run on its
@@ -18,11 +18,11 @@
 // for a document an upload guards opens its window in the view (0068 L §2.13), and the Frame tells when the
 // Designer is left or the project changes (leaveDocumentIo / forgetDocumentIo).
 // flowgate.v02.0072 T#3 — a work plan card's 「작업계획」 line opens the plan in the v0.2 work plan edit window
-// (features/workPlanWindow, T#1, reached through the document window surface; its Step ✎ opens the T#2 Step window),
+// (features/workPlanWindow, the earlier implementation, reached through the document window surface; its Step ✎ opens the the earlier implementation Step window),
 // not in the document window: open and ✎ alike, one window per plan, opening it again brings it back. The window
 // reads its Flow's verdict: read only as the Inspector last showed the Flow (the ownership conflict / revision view —
 // the Frame notes it on every target it shows, noteWorkPlanOpener), and the Flow's run lock as the Designer knows it
-// now (TR0012 rev1: the Frame's reader, provideWorkPlanFlowRunLock), whatever is selected — no card, another card or
+// now (the Frame's reader, provideWorkPlanFlowRunLock), whatever is selected — no card, another card or
 // another Flow. A run status not confirmed, or no Designer to tell it, locks the window too. A save of the plan asks
 // the Designer to read that Flow's Canvas again.
 // flowgate.v02.0083 T#3 (D-1) — a WP card's 「작업계획」 line also hands the window its card (`card`): the latest node run of
@@ -56,7 +56,7 @@ import { slotLineCard, type SlotLineCard } from './parts/slotStateView'
 
 export type OpenDocumentMode = DocumentWindowMode
 
-/** flowgate.v02.0070 T#4 (B4) — how a document opens; without options it opens as before (following its chain). */
+/** (B4) — how a document opens; without options it opens as before (following its chain). */
 export interface OpenDocumentOptions {
   /**
    * That very id as history (the 「전환 전 문서」 link): the window does not follow the document's supersede chain and is
@@ -69,18 +69,18 @@ export interface OpenDocumentOptions {
    */
   readonly target?: InspectorTarget | null
   /**
-   * flowgate.v02.0127 T#5 (0009-L §2.11): the card coordinates of the line the opener pressed, taken from its target
+   * the card coordinates of the line the opener pressed, taken from its target
    * and that line's slot when pressed (`cardDocumentContext`). Without them the window can view but not edit — there
    * is no v1 save fallback and the current selection is never read again to fill them.
    */
   readonly card?: CardDocumentContext | null
 }
 
-/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → 지시서). */
+/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → instruction). */
 const SHARED_SLOT_OWNER: Readonly<Record<string, string>> = { scenario: 'instruction' }
 
 /**
- * flowgate.v02.0127 T#5 (§2.11) — the card coordinates of a document opened from `target`: its flow, the stored card's
+ * — the card coordinates of a document opened from `target`: its flow, the stored card's
  * node key and the owner slot of the line the document sits on. `ownerSlot` is the pressed line's slot when the opener
  * knows it; otherwise it is found by the document id among the target's lines, and a sharing line resolves to the line
  * that owns the document. Null when the target is not a stored card or no line carries the document (never guessed).
@@ -112,7 +112,7 @@ export function openDocument(docId: string, mode: OpenDocumentMode = 'view', opt
   openDocumentWindow(docId, 'view', { exact: true, aside })
 }
 
-/** flowgate.v02.0072 T#3 — what an opener tells the work plan edit window: read only, the Flow's run lock, or nothing. */
+/** what an opener tells the work plan edit window: read only, the Flow's run lock, or nothing. */
 export type WorkPlanOpenerLock = 'read_only' | 'run_locked' | null
 
 /** The opener's verdict of a target: read only (conflict / revision view) wins over the run lock (also `unknown`). */
@@ -122,7 +122,7 @@ export function workPlanOpenerLock(target: Pick<InspectorTarget, 'readOnly' | 'e
 }
 
 /**
- * flowgate.v02.0072 TR0012 rev1 — a Flow's run lock as the Designer knows it now (the Center session's run marks): `run`
+ * a Flow's run lock as the Designer knows it now (the Center session's run marks): `run`
  * (running / paused / stopping), `unknown` (not confirmed: being read, failed, or the Flow is not open) or null.
  */
 export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | 'archived' | null
@@ -130,11 +130,11 @@ export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | 'archi
 /** Why the Inspector last showed each Flow read only, or null (reactive: an open window follows it). */
 const workPlanReadOnlyFlows = reactive(new Map<string, InspectorReadOnly>())
 
-/** flowgate.v02.0083 T#3 — the WP card a work plan window reads (WorkPlanEditRequest `card`). */
+/** the WP card a work plan window reads (WorkPlanEditRequest `card`). */
 export type WorkPlanCardView = NonNullable<ReturnType<NonNullable<WorkPlanEditRequest['card']>>>
 
 /**
- * flowgate.v02.0083 T#3 — a Graph card's latest node run as the Designer knows it now (the Center session's run read and
+ * a Graph card's latest node run as the Designer knows it now (the Center session's run read and
  * Canvas read), or null when its Flow's Graph is not shown.
  */
 export type WorkPlanCardRun = (flowId: string, nodeKey: string) => Omit<WorkPlanCardView, 'flowId' | 'nodeKey' | 'conflict'> | null
@@ -145,14 +145,14 @@ const workPlanCardRunReader = shallowRef<WorkPlanCardRun | null>(null)
 /** The Frame's reader of the Flows' run locks while it is mounted (reactive: an open window follows it). */
 const workPlanRunLockReader = shallowRef<WorkPlanFlowRunLock | null>(null)
 
-/** flowgate.v02.0072 T#3 — the Frame notes the read-only verdict of every target it shows (by its Flow). */
+/** the Frame notes the read-only verdict of every target it shows (by its Flow). */
 export function noteWorkPlanOpener(target: InspectorTarget | null): void {
   if (!target) return
   if (workPlanReadOnlyFlows.get(target.flowId) !== target.readOnly) workPlanReadOnlyFlows.set(target.flowId, target.readOnly)
 }
 
 /**
- * flowgate.v02.0072 TR0012 rev1 — the Frame tells the work plan windows every Flow's run lock, not only the selected
+ * the Frame tells the work plan windows every Flow's run lock, not only the selected
  * one's. Returns the undo (the Frame's end: the run status is then not known, and the windows stay locked).
  */
 export function provideWorkPlanFlowRunLock(reader: WorkPlanFlowRunLock): () => void {
@@ -163,7 +163,7 @@ export function provideWorkPlanFlowRunLock(reader: WorkPlanFlowRunLock): () => v
 }
 
 /**
- * flowgate.v02.0083 T#3 — the Frame tells the work plan windows every shown card's latest node run. Returns the undo (the
+ * the Frame tells the work plan windows every shown card's latest node run. Returns the undo (the
  * Frame's end: no card is known, and the run card's plan locks as any plan).
  */
 export function provideWorkPlanCardRun(reader: WorkPlanCardRun): () => void {
@@ -173,7 +173,7 @@ export function provideWorkPlanCardRun(reader: WorkPlanCardRun): () => void {
   }
 }
 
-/** flowgate.v02.0083 T#3 — the WP card `nodeKey` of the Flow as an open work plan window reads it now, or null. */
+/** the WP card `nodeKey` of the Flow as an open work plan window reads it now, or null. */
 export function workPlanCardOf(flowId: string, nodeKey: string): WorkPlanCardView | null {
   const run = workPlanCardRunReader.value?.(flowId, nodeKey) ?? null
   return run ? { ...run, flowId, nodeKey, conflict: workPlanReadOnlyFlows.get(flowId) === 'conflict' } : null
@@ -192,7 +192,7 @@ export function forgetWorkPlanOpeners(): void {
 }
 
 /**
- * flowgate.v02.0072 T#3 — opens (or brings back) the work plan edit window of the target's plan document. A save
+ * opens (or brings back) the work plan edit window of the target's plan document. A save
  * reads the Flow's Canvas again (the host's refresh-flow); the card's summary also reads the plan again on the
  * server's refresh events.
  */
@@ -201,7 +201,7 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
   noteWorkPlanOpener(target)
   const flowId = target.flowId
   const line = target.cardDocuments.find((item) => item.docId === docId)
-  // flowgate.v02.0083 T#3: a Graph WP card hands its card (its node key, read from the session as it changes).
+  // a Graph WP card hands its card (its node key, read from the session as it changes).
   const nodeKey = (target.cardDocType ?? '').trim().toUpperCase() === 'WP' ? inspectorCardNodeKey(target) : null
   openWorkPlanEditWindow({
     docId,
@@ -216,7 +216,7 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
 }
 
 /**
- * flowgate.v02.0074 T#2 — what the Inspector tells a work plan window of the Flow: the Flow's verdict (workPlanFlowLock)
+ * what the Inspector tells a work plan window of the Flow: the Flow's verdict (workPlanFlowLock)
  * and, after a save, the host's read of that Flow's Canvas. openWorkPlan and the opener the Frame registers for a window
  * asked for by the document [업로드] (setWorkPlanEditOpener) both hand it.
  */
@@ -227,18 +227,18 @@ export function workPlanOpener(flowId: string, host: InspectorHost | null): Pick
   }
 }
 
-/** flowgate.v02.0074 T#2 — the Frame registers its opener while it lives (the undo is returned). */
+/** the Frame registers its opener while it lives (the undo is returned). */
 export { setWorkPlanEditOpener }
 
 /** flowgate.v02.0068 T#1 — the [업로드][다운로드] group of one document (a document line's `io` slot). */
 export { DocumentIoGroup }
 
-/** flowgate.v02.0068 T#1 — the Designer is left: running uploads / downloads end quietly (L §2.11). */
+/** the Designer is left: running uploads / downloads end quietly (L). */
 export function leaveDocumentIo(): void {
   documentIoLeave()
 }
 
-/** flowgate.v02.0068 T#1 — another project: what the buttons knew about documents is read again (L §2.15). */
+/** another project: what the buttons knew about documents is read again (L). */
 export function forgetDocumentIo(): void {
   documentIoForget()
 }
@@ -251,7 +251,7 @@ export function openDocumentHistory(docId: string): void {
 /** The line of a card a row action was pressed on (what the slot list hands back). */
 export interface CardLineActionLine {
   readonly name: string
-  /** flowgate.v02.0088 F14/F15: the key `name` was made from (UI only; see InspectorSlotView.nameKey). */
+  /** the key `name` was made from (UI only; see InspectorSlotView.nameKey). */
   readonly nameKey?: string | null
   readonly id?: string | null
   /** The card line (its slot) behind the row. */
@@ -259,8 +259,8 @@ export interface CardLineActionLine {
 }
 
 /**
- * flowgate.v02.0056 F2-2 — what the card's own line (`cardSlot`) adds to a row of its documents tab (slotLineCard):
- * 문서 없음 with [작성], 비어 있음, the history number and [AI 호출] — drawn running while an AI run works on the
+ * what the card's own line (`cardSlot`) adds to a row of its documents tab (slotLineCard):
+ * 문서 없음 with [작성], Empty, the history number and [AI 호출] — drawn running while an AI run works on the
  * document. Only a stored card that is not read only offers the actions.
  */
 export function cardLineRow(target: InspectorTarget, row: { readonly id?: string | null; readonly empty?: boolean }, cardSlot: string): SlotLineCard {
@@ -314,14 +314,14 @@ export function openCardLineAction(target: InspectorTarget, line: CardLineAction
   }
 }
 
-/** flowgate.v02.0056 F2-2 — the lines of the target's card written from here and not yet shown by the Canvas read. */
+/** the lines of the target's card written from here and not yet shown by the Canvas read. */
 export function cardLinesWritten(target: InspectorTarget | null): readonly InspectorCardDocument[] {
   const nodeKey = inspectorCardNodeKey(target)
   return target && nodeKey ? writtenCardLines(target.flowId, nodeKey) : []
 }
 
 /**
- * flowgate.v02.0056 F2-2 — the Canvas read of the target's card as the Inspector shows it: written lines it shows
+ * the Canvas read of the target's card as the Inspector shows it: written lines it shows
  * now are dropped, and a line waiting to be opened (a refused [작성]) opens its document.
  */
 export function settleCardLinesWritten(target: InspectorTarget | null): void {

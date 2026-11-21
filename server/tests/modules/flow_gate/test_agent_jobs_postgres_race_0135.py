@@ -1,4 +1,4 @@
-"""Remote Agent Job claim races across INDEPENDENT PostgreSQL sessions (opt-in; flowgate.v02.0135 T#1 / T 3-4).
+"""Remote Agent Job claim races across INDEPENDENT PostgreSQL sessions (opt-in; the earlier change the earlier implementation / T 3-4).
 
 test_agent_jobs_postgres_0135.py runs the real route + service on PostgreSQL, but on one connection with session
 TEMP tables, so it cannot show what PostgreSQL's row locks and READ COMMITTED re-checks do when two sessions race

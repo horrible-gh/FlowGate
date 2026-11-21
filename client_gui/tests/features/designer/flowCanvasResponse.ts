@@ -1,4 +1,4 @@
-// flowgate.v02.0045 — a server Canvas read (P0008 §3, S1 shape) for Shell-level tests whose
+// a server Canvas read (S1 shape) for Shell-level tests whose
 // `@shared/api` getRequest mock now also receives GET /api/v1/flows/{flowId}/canvas from the
 // Designer's server Graph source. Two document Nodes joined by one reference Edge.
 

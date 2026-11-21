@@ -1,4 +1,4 @@
-// flowgate.v02.0088 F01~F05: the Project screens translate their own words, so their specs mount them with the app's
+// ~F05: the Project screens translate their own words, so their specs mount them with the app's
 // i18n (the shared instance with the gui catalog registered, as main.ts does). Every test starts in ko — the
 // existing assertions read the ko words — and a test that checks another language switches it itself.
 import { config } from '@vue/test-utils'

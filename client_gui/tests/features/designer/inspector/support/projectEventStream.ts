@@ -1,12 +1,12 @@
 /**
- * flowgate.v02.0048 T#3 — the event hub mock of the shared Inspector test support (D#1 §12.3).
+ * the event hub mock of the shared Inspector test support.
  * It replaces the browser EventSource, so the real project event hub (features/project
  * projectEvents.ts) runs under the test: subscriptions open real hub connections, and the test
  * pushes server frames into them, drops / reopens the stream and counts the connections.
  *
  *   const stream = installProjectEventStream()   // in beforeEach
  *   stream.open()                                // the server accepted the stream
- *   stream.emit('doc_review_status_changed', { docId: 'flowgate.v02.0048.0011-TR' })
+ *   stream.emit('doc_review_status_changed', { docId: 'the earlier change' })
  *   stream.reconnect()                           // a dropped stream opened again: subscribers resync
  *   removeProjectEventStream()                   // in afterEach, after every subscriber is unmounted
  */

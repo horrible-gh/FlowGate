@@ -1,4 +1,4 @@
-"""0061 T#4 regression fixtures. TR compiles; behavior runs belong to the test WP/TSR.
+"""regression fixtures. TR compiles; behavior runs belong to the test WP/TSR.
 
 The ledger uses real SQLite migration 151/152 and conditional SQL. Process/dispatcher,
 token reclamation, clock, and policy callbacks are controlled without launching AI.
@@ -68,7 +68,7 @@ class Store:
 @pytest.fixture
 def db(monkeypatch):
     store = Store()
-    # 0132 T#3: gate activity and recovery stores must use this isolated catalog too.
+    # gate activity and recovery stores must use this isolated catalog too.
     from modules.flow_gate.db import connection
     monkeypatch.setattr(connection, "STORE", store)
     # The parent tables' non-ledger behavior is supplied by mocks below.
@@ -82,7 +82,7 @@ def db(monkeypatch):
             dispatch_mention_id TEXT, dispatch_error_code TEXT, stage TEXT, instruction_doc_id TEXT,
             result_event_floor INTEGER, updated_at TEXT);
     """)
-    # 0064 T-B4d: 154 adds the token map kind run_store.map_token writes (DB0007 §2.2.1).
+    # T-B4d: 154 adds the token map kind run_store.map_token writes.
     for version in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql", "154_graph_run_token_map_kind.sql"):
         store.db.executescript((MIGRATIONS / "sqlite" / version).read_text(encoding="utf-8"))
     # Apply the deployed attempt result schema; this suite has no real commit ledger.

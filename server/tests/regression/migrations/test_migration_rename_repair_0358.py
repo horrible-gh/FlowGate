@@ -1,4 +1,4 @@
-"""flowgate.default.0358 R0001 4번째 반려 — a renamed migration must not run twice.
+"""flowgate.default.0358 R0001 fourth rejection — a renamed migration must not run twice.
 
 The rejected boot log is one line:
 

@@ -26,11 +26,11 @@
 </template>
 
 <script setup lang="ts">
-// One Project row inside ProjectList (WP0005 T#2 §2.1/§2.3). Purely presentational: it
+// One Project row inside ProjectList. Purely presentational: it
 // never decides what "select" or "open" means (that is ProjectDialog's job) and never
 // touches the store itself. `selected` (the Dialog-local candidate the person picked) is a
-// non-color-only signal — a visible checkmark plus aria-pressed (D0004 §2.3/§3.3, T#2 §8) —
-// so it is never expressed by border/background color alone. flowgate.v02.0040: the row no
+// non-color-only signal — a visible checkmark plus aria-pressed —
+// so it is never expressed by border/background color alone. the earlier change: the row no
 // longer marks the store's current Project ("현재" Badge / aria-current); nothing is shown as
 // chosen until the person picks a row.
 //
@@ -38,9 +38,9 @@
 // role="option"/"listbox"): ProjectList renders a plain <ul>, so this <li> carries no ARIA
 // widget role that constrains it to a single focusable descendant. The selectable area and
 // the explicit "열기" action are two sibling native <button>s (the latter the shared Button
-// primitive, D0004 §1.3/§4.2 "일반 액션 → Button/IconButton"), never one nested inside the
-// other, and each is independently Tab/Enter/Space-operable (T#2 §8 "row 내부 interactive
-// element를 잘못 중첩하지 않는다" and 접근성 조건 — a role=option li with two native buttons
+// primitive, the design "General actions → Button/IconButton"), never one nested inside the
+// other, and each is independently Tab/Enter/Space-operable (the earlier implementation "Do not incorrectly nest interactive
+// elements inside a row" and accessibility requirements — a role=option li with two native buttons
 // inside it would both flatten under assistive tech and not match the single-focus/arrow-key
 // contract a listbox widget declares). Selection state itself is exposed as aria-pressed on
 // the one focusable control the state actually belongs to (project-row-main), not on the
@@ -64,7 +64,7 @@ const { t } = useI18n()
 // go stale and never reflect it.
 const formattedUpdatedAt = computed(() => props.project.updatedAt?.slice(0, 10) ?? '')
 
-// Project 식별 색상 (D0004 §2.3): purely a supplementary identity cue alongside the name —
+// Project identity color: purely a supplementary identity cue alongside the name —
 // never the only signal for anything (selected stays a checkmark, per §8). A
 // Project's `color` is nullable at the model level, so a neutral fallback swatch keeps the
 // dot from disappearing or rendering as `background: null`.

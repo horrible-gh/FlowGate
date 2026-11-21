@@ -92,7 +92,7 @@ afterEach(() => {
   delete window.__accessToken__
 })
 
-// T0010 (T#3) §1/§2/§4: Sidebar and Dashboard both open the one Project Dialog App.vue
+// Sidebar and Dashboard both open the one Project Dialog App.vue
 // mounts, through the feature's public `openDialog()` interface, without ever routing to a
 // /projects screen.
 describe('T#3 App Shell entry points open the single Project Dialog (T0010 §1/§2/§4)', () => {
@@ -150,7 +150,7 @@ describe('T#3 App Shell entry points open the single Project Dialog (T0010 §1/�
     expect(document.querySelectorAll('.ui-modal-overlay')).toHaveLength(1)
 
     // Closing and reopening from the *other* entry point still drives the same overlay --
-    // there is exactly one ProjectDialog mounted in the App Shell (T0010 §2).
+    // there is exactly one ProjectDialog mounted in the App Shell.
     clickOn('.pd-head .ui-icon-btn')
     await wrapper.vm.$nextTick()
     expect(document.querySelector('.ui-modal-overlay')).toBeNull()
@@ -208,7 +208,7 @@ describe('T#3 App Shell entry points open the single Project Dialog (T0010 §1/�
 
       const projectRow = wrapper.get('[data-test="project-explorer-tree"] [data-explorer-row]')
       expect(projectRow.attributes('aria-selected')).toBe('true')
-      // flowgate.v02.0042: the selection is shown, but only an open Flow is the work target.
+      // the selection is shown, but only an open Flow is the work target.
       expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('true')
     })
   }

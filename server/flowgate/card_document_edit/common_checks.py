@@ -28,7 +28,7 @@ def identity_frontmatter(text, doc, rule, current_body):
         raise invalid("invalid_content", "content", "document_identity_changed", doc)
 
 
-# flowgate.v02gui.0009: origins whose text crossed a worker's own transport (a console,
+# origins whose text crossed a worker's own transport (a console,
 # a shell, a hand-built curl) and can therefore have lost characters. Every other origin
 # is a browser session (``designer``) or FlowGate itself (deploy, recovery, generated
 # bodies ...), UTF-8 end to end in any language, and is never corruption-checked.

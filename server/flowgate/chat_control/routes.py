@@ -1,9 +1,9 @@
 """CLI chat transport of the control tower (stage 1). Authentication runs before the body is parsed.
 
-flowgate.v02gui.0028: ``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles`` — the AI roles of a work
+``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles`` — the AI roles of a work
 card this chat placed (``card_roles``).
 
-flowgate.v02gui.0032: ``GET /api/v2/chat/flows/{flow_id}/ai-options`` — the AIs (and AI groups with role profiles) a
+``GET /api/v2/chat/flows/{flow_id}/ai-options`` — the AIs (and AI groups with role profiles) a
 chat may pick before it places cards (``placement_roles.options``), any mode."""
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from modules.flow_gate.graph_workflow.api import envelope
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+from modules.flow_gate.services import ai_response_slim
 
 from . import authz, card_roles, placement_roles, service, recovery
 
@@ -78,18 +79,20 @@ async def post_run(flow_id: str, request: Request):
 async def get_ai_options(flow_id: str, request: Request):
     def handle():
         caller = authz.caller_from_bearer(_bearer(request), flow_id, write=False)
-        return placement_roles.options(caller.scope.user_id, caller.group["group_id"])
+        # A chat reads this list without its empty fields (same names, same meaning).
+        return ai_response_slim.slim_ai_options(
+            placement_roles.options(caller.scope.user_id, caller.group["group_id"]))
 
     return await run_in_threadpool(response, request, handle)
 
 
-# flowgate.v02gui.0028: the AI roles of a card this chat placed (``card_roles``).
+# the AI roles of a card this chat placed (``card_roles``).
 
 @router.get("/flows/{flow_id}/nodes/{node_key}/roles")
 async def get_card_roles(flow_id: str, node_key: str, request: Request):
     def handle():
         caller = authz.caller_from_bearer(_bearer(request), flow_id, write=False)
-        return card_roles.view(caller, node_key)
+        return ai_response_slim.slim_card_roles(card_roles.view(caller, node_key))
 
     return await run_in_threadpool(response, request, handle)
 

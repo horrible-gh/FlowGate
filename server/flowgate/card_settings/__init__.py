@@ -1,6 +1,6 @@
-"""Card run settings (flowgate.v02.0053 T#2): the settings every Designer card (Node) keeps.
+"""Card run settings: the settings every Designer card (Node) keeps.
 
-v0.2 feature package (D0006 §2.1). The settings used to live on v0.1 sequence rows, so a card placed
+v0.2 feature package. The settings used to live on v0.1 sequence rows, so a card placed
 on a Graph Flow had none; now each card keeps its own. The Graph workflow
 (``modules.flow_gate.graph_workflow``) is existing code: it only calls ``card_settings_ports`` when it
 hands a node out and binds its result, the AI invoke engine only calls ``ai_run_end_hooks`` when a run
@@ -10,9 +10,9 @@ ends, and ``integration.register`` (startup) connects those ports to this packag
                     result type, what follows a result and the review loop request
     settings        read a card / change one value / what a node's AI start takes / its result type
     review_stage    what follows a node's AI run: the instruction stage's approval and the result stage
-                    (flowgate.v02.0056 T#2), the card's AI review, then the approval (or a person's)
+                    , the card's AI review, then the approval (or a person's)
     routes          GET / PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings
-    repository      the ``graph_node_settings`` table (migration 146) and which card a node key is; 0061 T#11
+    repository the ``graph_node_settings`` table (migration 146) and which card a node key is; the earlier implementation
                     also every card's Hold (field ``hold``), whose rules are ``flowgate.graph_run.hold``'s
     legacy_adapter  the Graph envelope, Flow guard, run state, AI policy, review loop and approval, called only
     integration     port handler registration

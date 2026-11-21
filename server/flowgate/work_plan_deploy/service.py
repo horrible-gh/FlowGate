@@ -1,4 +1,4 @@
-"""Work plan deploy: status, preview and execution (flowgate.v02.0074 T#4, D0006 §3.1 ~ §3.6).
+"""Work plan deploy: status, preview and execution.
 
 **Where.** The cards go to the Graph draft of the WP card's own Flow (``graph_service.write_draft``: the draft save's
 ownership, run lock, version, protected node and card document rules), never to a v0.1 sequence. The Flow must be
@@ -21,7 +21,7 @@ item limits, keys, edge ends) before anything is written, else the blocker ``dep
 **Consistency.** Preview and execution hold the WP save lock (``work_plan_locks``); execution then takes the Flow
 guard and, inside it, the WP document's row lock, re-reads the revision (409 ``wp_changed``), the plan bytes (their
 digest, ``plan_digest``) and the pre-instruction files (409 ``wp_attachment_unreadable``), and keeps all three locks
-to its commit. The answer order of an execution is D0006 §3.6.4: rejections, ``wp_changed``, *no change* (200 with
+to its commit. The answer order of an execution is the design: rejections, ``wp_changed``, *no change* (200 with
 nothing written — a resend, a double click, the second of two requests), mode, graph baseline
 (``draft_version_conflict``), blockers, a cleanup that would remove more than the preview showed
 (``deploy_preview_stale``), then the writes.
@@ -110,7 +110,7 @@ def _wp_card(flow_id: str, doc_id: str, record: dict) -> Optional[str]:
 
 
 def _refusal(state: State) -> Optional[legacy.GraphApiError]:
-    """The first rejection of D0006 §3.6.4 row 1 / §3.6.6 (permission is the route's), or None."""
+    """The first rejection of the design row 1 / (permission is the route's), or None."""
     try:
         legacy.require_writable(state.flow_id)
     except legacy.GraphApiError as exc:
@@ -233,7 +233,7 @@ class Work:
     creates: list = field(default_factory=list)        # targets to make, plan order
     fills: list = field(default_factory=list)          # instruction writes on existing cards
     settings: list = field(default_factory=list)       # explicit instruction modes on existing cards
-    role_redeploys: list = field(default_factory=list)  # (key, kind, plan_roles), 0113 T#2
+    role_redeploys: list = field(default_factory=list)  # (key, kind, plan_roles), the earlier implementation
     removes: list = field(default_factory=list)        # node keys to remove (cleanup)
     blockers: list = field(default_factory=list)
     chain: Optional[deploy_chain.Chain] = None
@@ -527,7 +527,7 @@ def _refusal_block(exc: legacy.GraphApiError) -> dict:
 # ── status / preview ─────────────────────────────────────────────────────────
 
 def status(doc_id: str) -> dict:
-    """``GET .../work-plan/deploy``: whether the plan can deploy and its counts (D0006 §5)."""
+    """``GET .../work-plan/deploy``: whether the plan can deploy and its counts."""
     with legacy.plan_save_lock(doc_id):
         return legacy.with_read_snapshot(lambda: _status(doc_id))
 
@@ -772,7 +772,7 @@ def _create_line(state: State, key: str, node: dict, slot, target, instructions:
     """The instruction line has no document even after the draft save: one is made with the body (the card line
     write's own creation) and linked, with the deploy's body save evidence in the same transaction — so the cleanup
     may take it back like any line only the deploy wrote. Its file goes with a rollback (``write_new_file``).
-    flowgate.v02.0088: its title is decided once, in the request's ``locale``, and that one title is the body's
+    its title is decided once, in the request's ``locale``, and that one title is the body's
     heading and the document's row and front matter title (``resolved_title``)."""
     title = card_docs_legacy._title(node.get("label") or "", slot, locale)
     body = legacy.instruction_text.instruction_body(title, instructions[target.card_id], locale)

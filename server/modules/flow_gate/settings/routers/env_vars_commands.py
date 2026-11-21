@@ -12,7 +12,7 @@ DELETE /api/v1/commands/{command_id}
 POST   /api/v1/commands/{command_id}/resolve
 POST   /api/v1/commands/{command_id}/execute
 
-RBAC (flowgate.default.0623 T0004 §2), evaluated on the system scope:
+RBAC, evaluated on the system scope:
   read     = project.settings.read  — GET lists, POST .../resolve
   mutation = system.settings.manage or project.settings.edit
              — POST/PUT/DELETE, POST .../execute
@@ -302,7 +302,7 @@ def execute_command(
 
     # Merge env_overrides (e.g. FLOWGATE_TOKEN, FLOWGATE_SCRATCH) into the subprocess env.
     # Always an explicit env under the CLI allowlist -- with or without overrides the
-    # command never inherits the server's secrets (v02.0089 T0004).
+    # command never inherits the server's secrets (v02.0089 the earlier implementation).
     env_overrides: Optional[Dict[str, str]] = (body or {}).get("env_overrides")
     overrides = {str(k): str(v) for k, v in env_overrides.items()} if env_overrides else {}
     env = process_runner.child_env(overrides, policy=process_runner.CHILD_ENV_POLICY_CLI)

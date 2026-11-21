@@ -1,6 +1,6 @@
-"""flowgate.default.0504 T0004: a reviewed WorkPlan T after a gate-approved step (NR0003 §8/§10).
+"""a reviewed WorkPlan T after a gate-approved step.
 
-0504 NR0003: a TR whose review `pass` approved it INSIDE the gate made the next WorkPlan T the
+a TR whose review `pass` approved it INSIDE the gate made the next WorkPlan T the
 head only after the gate had already decided "work". The plain path's advance_workflow then
 created that T as `pending_review` (its step has a review count) and refused to issue past it
 (`head_in_progress`): the successor rolled back at admission, the TR's review run was recorded
@@ -16,7 +16,7 @@ assertion is about what the gate and the chain then DO with that document.
 
   F1  run_review_gate / the question-park resume derive the gate again after a settle
   F2  start_chain_at_instruction_review starts a chain at the head T's review hop;
-      a failed or raced start takes back only its own queued intent (TR0005 rev1)
+      a failed or raced start takes back only its own queued intent
   F3  a refused advance parks on `advance_blocked` with its reason; the ai_invoke channel
       reaches the app's file log
   F4  a chain completed by the gate is recorded `chain_completed`, never re-parked
@@ -124,7 +124,7 @@ class TestGateAfterSettledStep:
         assert len(wp["review"]) == 1
         queued, gate = wp["review"][0]
         assert gate["slot"]["doc_id"] == T_DOC and gate["slot"]["item_seq"] == 6
-        # Queue first, then launch (L0008 §2.4), with the T's OWN progress, judged cold:
+        # Queue first, then launch, with the T's OWN progress, judged cold:
         # the TR's rounds_before=1 must not read as the T's "review left nothing".
         assert wp["queued"] and wp["queued"][-1]["last_stage"] == svc.REVIEW_HOP_KIND
         assert queued["rounds_before"] == 0
@@ -380,7 +380,7 @@ class TestChainStartOnReviewedInstruction:
         assert queued["rounds_before"] == 0
 
     def test_11b_a_t_already_pending_review_is_reviewed_too(self, world, start_env):
-        """The state the incident left (0014-T pending_review): starting again reviews it."""
+        """The state the incident left (T pending_review): starting again reviews it."""
         world.fill(6, T_DOC)
         assert _start() is not None
         assert [gate["slot"]["doc_id"] for _b, gate in start_env["review"]] == [T_DOC]
@@ -487,7 +487,7 @@ def _pending_for_other_owner():
 
 
 class TestChainStartIntentOwnership:
-    """0504 TR0005 rev1: a failed or raced chain start owns exactly its own intent."""
+    """a failed or raced chain start owns exactly its own intent."""
 
     def test_11f_a_failed_launch_takes_both_halves_of_its_intent_back(
             self, world, durable_start, monkeypatch):

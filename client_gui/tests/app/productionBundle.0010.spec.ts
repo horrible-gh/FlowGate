@@ -3,7 +3,7 @@ import { statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-// T0009 TR0010 rev2: the /app production bundle crashed at module init with
+// the /app production bundle crashed at module init with
 // "Class extends value undefined is not a constructor or null". vite.config.ts aliased
 // axios onto `require.resolve('axios')` = axios/dist/node/axios.cjs (the Node build), which
 // pulls https-proxy-agent -> agent-base, whose `class Agent extends require('events')

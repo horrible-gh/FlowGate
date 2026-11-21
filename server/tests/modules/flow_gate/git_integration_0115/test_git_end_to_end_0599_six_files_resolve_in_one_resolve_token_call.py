@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_0599_six_files_resolve_in_one_resolve_token_call(self, origin_repo, monkeypatch):
-        """0604 T0008 §11.12 (완료 조건): the real 0599 merge, reproduced by zdiff3 in a
+        """Completion condition: the real 0599 merge, reproduced by zdiff3 in a
         throwaway repo, resolves all six files in ONE resolve-token call; all-ours and
         all-theirs stay rejected with or without declarations."""
         from modules.flow_gate.db import git_integration as db_git
@@ -110,8 +110,8 @@ class TestGitEndToEnd(_Scenario):
         merge_id = finalized["result"]["merge_id"]
         conflicts = {f["path"]: f for f in svc.list_conflicts(group, merge_id)["files"]}
         assert sorted(conflicts) == sorted(paths)
-        # Same chunk layout as the live session 97 (D0005 V1), except WorkPlanEditor.vue:
-        # its ours side carries 23 stray LF lines in a CRLF file, and since 0608 T0005
+        # Same chunk layout as the live session 97, except WorkPlanEditor.vue:
+        # its ours side carries 23 stray LF lines in a CRLF file, and since the line-ending fix
         # the finalize merge re-merges such a file on normalised line endings, which
         # drops the one chunk that was only that line-ending difference (8 → 7).
         # work_plan.py (two stray CRLF lines) is re-merged too, keeping its 5 chunks.
@@ -151,7 +151,7 @@ class TestGitEndToEnd(_Scenario):
                     out.append(line)
             return "".join(out)
 
-        # §11.12 / D0005 완료 조건 3: all-ours and all-theirs are rejected with or
+        # Completion condition 3: all-ours and all-theirs are rejected with or
         # without declarations, and nothing is written. (a) one side picked in EVERY
         # chunk of the real markers: every file is a violation, listed in one 422.
         for label in ("ours", "theirs"):
@@ -205,7 +205,7 @@ class TestGitEndToEnd(_Scenario):
         assert result["status"] == "resolved_pending_review"
         assert result["remaining_conflicts"] == []
         assert all(row["resolved"] for row in db_git.session_files(merge_id))
-        # 0608 T0005: byte-exact, in each file's own line ending (the base branch's).
+        # Byte-exact, in each file's own line ending (the base branch's).
         # Until then this compared CR-insensitively because resolve_conflicts wrote in
         # text mode — which is how the real 0599 merge (6132cf58) turned the three LF
         # i18n files, work_plan.py and test_work_plan_0395.py CRLF, and WorkPlanEditor.vue

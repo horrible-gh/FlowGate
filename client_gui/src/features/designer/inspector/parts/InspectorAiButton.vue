@@ -1,6 +1,6 @@
 <template>
   <!-- 0017-CH: [AI 호출] is the robot icon (Phosphor Icons, MIT — the same `robot` glyph v0.1 used), its
-       words the tooltip; a running call turns it into a spinner. flowgate.v02.0094: moved out of InspectorSlotList as it
+       words the tooltip; a running call turns it into a spinner. the earlier change: moved out of InspectorSlotList as it
        was, so a card that draws its own lines (the test card) shows the same button. -->
   <IconButton
     :label="label"

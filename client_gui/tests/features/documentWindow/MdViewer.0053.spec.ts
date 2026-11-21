@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0053 T#3 — the v0.1 MD Viewer moved into v0.2 (features/documentWindow/MdViewer.vue): GFM
+ * the v0.1 MD Viewer moved into v0.2 (features/documentWindow/MdViewer.vue): GFM
  * rendering with the frontmatter and the leading next-document header stripped, the copy buttons (body /
- * code block — flowgate.v02.0056 F1 took the "with header" copy away), a document whose file is not written
+ * code block — the earlier change F1 took the "with header" copy away), a document whose file is not written
  * yet shown as an empty document (no
  * "no file" text), a failed read with a retry, and the reload on `fg:document_content_changed`.
  */
@@ -89,7 +89,7 @@ describe('MdViewer (flowgate.v02.0053 T#3)', () => {
     expect(content.text()).not.toContain('next_type')
     expect(content.text()).not.toContain('title:')
     expect(el(w, 'md-viewer-copy').attributes('title')).toBe('Markdown 복사')
-    // flowgate.v02.0056 F1 (0056 CH §5): the body copy is the one copy — no "with header" button.
+    // (CH): the body copy is the one copy — no "with header" button.
     expect(el(w, 'md-viewer-copy-header').exists()).toBe(false)
     expect(w.findAll('.md-viewer__toolbar button')).toHaveLength(1)
   })
@@ -103,7 +103,7 @@ describe('MdViewer (flowgate.v02.0053 T#3)', () => {
     expect(w.text()).toBe('')
   })
 
-  // flowgate.v02.0070 T#3 (B3): the window footer picks its actions from the state the viewer reports.
+  // (B3): the window footer picks its actions from the state the viewer reports.
   it.each([
     ['# 본문', 'body'],
     ['---\ntitle: 빈 문서\n---\n', 'empty'],

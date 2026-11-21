@@ -237,7 +237,31 @@ def r018_store(r018_db):
 
 @pytest.fixture(scope="module")
 
-def seed(r018_db):
+def document_write_gate():
+
+    """Register the real startup gate in this isolated app, then restore it."""
+
+    from flowgate.card_document_edit import write_gate
+
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+
+
+    with pytest.MonkeyPatch.context() as mp:
+
+        mp.setitem(card_document_ports._handlers,
+
+                   card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+
+        yield
+
+
+
+
+
+@pytest.fixture(scope="module")
+
+def seed(r018_db, document_write_gate):
 
     """Seed test data."""
 
@@ -329,7 +353,7 @@ def seed(r018_db):
 
 
 
-    # Documents (5 in group 0001, seq 1~5)
+    # Documents (5 in the earlier change, seq 1~5)
 
     doc_types = [("R", 1), ("M", 2), ("DS", 3), ("T", 4), ("R", 5)]
 
@@ -423,7 +447,10 @@ def _issue_bearer(tmp_path, continuation_locale=None) -> str:
 
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+    # token_scratch only accepts <storage>/work/<project>/<token_id>, so point the
+    # storage root at tmp_path instead of overriding the scratch path itself.
+
+    with patch.dict(os.environ, {"FLOWGATE_STORAGE_DIR": str(tmp_path / "storage")}):
 
         issued = token_service.issue(
 
@@ -864,7 +891,7 @@ class TestMentionSections:
 
     def test_section_order(self):
 
-        """Section order per D027 §6, as amended by group 0372 set 3 (D-0003 §3-2 /
+        """Section order per D027, as amended by the earlier change set 3 (D-0003 /
         L-0005 §2-10): the central help block sits right below the guide block, and
         the standalone doc_type guide section is absorbed into the help index."""
 
@@ -876,7 +903,7 @@ class TestMentionSections:
 
             "## Clarification guide",
 
-            "## 도움말",
+            "## Help",
 
             "## Instruction to include next document header",
 
@@ -906,7 +933,7 @@ class TestMentionSections:
 
     def test_section_4_absent_when_no_docs(self):
 
-        """Recent documents in group — REMOVED (D-0003 §3-2 "뺌"): absent with no docs."""
+        """Recent documents in group — REMOVED (D-0003 §3-2 "removed"): absent with no docs."""
 
         mention = self._build_mention(group_recent_docs=[])
 
@@ -916,7 +943,7 @@ class TestMentionSections:
 
     def test_section_4_absent_even_when_docs_exist(self):
 
-        """group 0372 set 3: the section stays removed even when recent docs are
+        """set 3: the section stays removed even when recent docs are
         supplied. The always-visible `group_documents` help item covers this now, and
         group_recent_docs is accepted only for caller compatibility (D-0003 §3-2)."""
 
@@ -937,7 +964,7 @@ class TestMentionSections:
 
 
     def test_section_5_post_prefill(self):
-        """group 0372 set 3 (D-0003 §3-2/§3-5): the `new` registration section keeps
+        """set 3 (D-0003): the `new` registration section keeps
         only the address, the credential, and a pointer to the `submit` help item — the
         full POST body/example moved behind that help item."""
         mention = self._build_mention()
@@ -952,7 +979,7 @@ class TestMentionSections:
         assert '"action": "new"' not in reg_section
 
     def test_section_5_token_context_uses_canonical_ids(self):
-        """group 0372 set 3: canonical-id resolution for the POST body now lives
+        """set 3: canonical-id resolution for the POST body now lives
         entirely behind the `submit` help item (help_catalog._prev_doc_id) — the mention
         itself no longer carries doc-id fields to get wrong. This just confirms the
         section still builds cleanly from a token_rec-based call."""
@@ -984,7 +1011,7 @@ class TestMentionSections:
         assert '"target_id"' not in reg_section
 
     def test_section1_reflects_predecessor_when_head_context_doc_given(self):
-        """R0001/T0004: Section 1 'Document information' reflects the step's predecessor
+        """'Document information' reflects the step's predecessor
         document (e.g. NR step -> the N), while target_id / prev_doc_id stay bound to the
         sequence-owning R (the spine)."""
         from modules.flow_gate.services.mention_service import build_mention_from_token_rec
@@ -1022,7 +1049,7 @@ class TestMentionSections:
         assert "next_type: NR" in mention
         # Threading fields stay on the spine R.
         assert "target_id: R0001" in mention
-        # group 0372 set 3: prev_doc_id no longer appears inline — the submission
+        # set 3: prev_doc_id no longer appears inline — the submission
         # section now points at the `submit` help item instead of a POST example.
         assert "help/items/submit" in mention
         assert '"prev_doc_id"' not in mention
@@ -1186,7 +1213,7 @@ class TestMentionSections:
 
     def test_reference_get_section_carries_real_token(self):
 
-        """T0002 (group 0074): the Reference documents GET note must embed the real
+        """(the earlier change): the Reference documents GET note must embed the real
 
         worker token, not the literal <YOUR_TOKEN> placeholder. Otherwise the worker
 
@@ -1377,7 +1404,7 @@ class TestMentionSections:
 
     def test_section_7_doc_type(self):
 
-        """group 0372 set 3 (D-0003 §3-2 "뺌"): the standalone doc_type guide section is
+        """set 3 (D-0003 "removed"): the standalone doc_type guide section is
         gone — the always-visible `doc_type` entry of the help index (taught by the
         central Help block) absorbs it."""
 
@@ -1388,17 +1415,20 @@ class TestMentionSections:
         assert "/help/doc_type" not in mention
 
         # The central help block replaces it as the discovery path (L-0005 §2-10).
-        assert "## 도움말" in mention
-        assert "/help/items/{name}" in mention
-        assert "?detail=true" in mention
+        # v02test.0061 card 5: the block lists the needed leaf addresses directly,
+        # with no {name} placeholder and no detail=true instruction.
+        assert "## Help" in mention
+        assert "http://localhost:8000/ctx/flow_gate/api/v1/help/items/" in mention
+        assert "/help/items/{name}" not in mention
+        assert "?detail=true" not in mention
 
 
 
     def test_section_8_q_mention(self):
 
-        """R0001/T0004: the clarification guide is hoisted to the top (right after
+        """the clarification guide is hoisted to the top (right after
         Document information, before the next-document instruction) and carries the
-        no-choices guard. B0001/NR0003: it embeds a ready-to-send query POST (document-
+        no-choices guard. the regression/the review: it embeds a ready-to-send query POST (document-
         bound query data, NOT a Q document) instead of a GET /help/question pointer."""
 
         mention = self._build_mention()
@@ -1428,9 +1458,9 @@ class TestMentionSections:
 
         assert "force-terminated" in mention
 
-        # B0001/NR0003: the sanctioned alternative is the query POST address aligned
-        # with the live mechanism — not a "Q document". group 0372 set 3 (D-0003 §3-2
-        # "질의 등록 예시는 도움말로"): the placeholder JSON body moved behind the
+        # the sanctioned alternative is the query POST address aligned
+        # with the live mechanism — not a "Q document". the earlier change set 3 (D-0003
+        # "move question-submission examples to help"): the placeholder JSON body moved behind the
         # `question` help item; the address + credential stay inline.
 
         assert "/q/" in mention and "/questions" in mention
@@ -1443,13 +1473,23 @@ class TestMentionSections:
 
         assert "/help/question" not in mention
 
-        # NR0003 recency: the no-choices guard is repeated at the bottom.
+        # Recency: the bottom Reminder still repeats the Q-only redirect.
+
+        # The guide states the no-choices guard once;
+
+        # the Reminder carries the short Q redirect instead of a second copy.
 
         idx_reminder = mention.find("## Reminder")
 
         assert idx_reminder > idx_q, "Reminder section must be at the bottom, after the hoisted guide"
 
-        assert mention.count("do NOT present choices") + mention.count("Do NOT present choices") >= 2
+        assert mention.count("Do NOT present choices") == 1
+
+        reminder = mention[idx_reminder:]
+
+        assert "do not ask interactive questions" in reminder
+
+        assert "help/items/question/register" in reminder
 
         # rejection (2026-06-15): the prohibition alone was ignored. The guard must
         # pair "no choices" with an explicit positive redirect — write a Q to get a
@@ -1459,7 +1499,7 @@ class TestMentionSections:
         assert "next action" in mention
 
     def test_clarification_guide_follows_locale(self):
-        """B0001 rev2 (reject "some mention text stays hardcoded in Korean even when the locale changes"): the clarification
+        """(reject "some mention text stays hardcoded in Korean even when the locale changes"): the clarification
         guide + reminder prose must follow the worker locale. For en/ja the guide
         must NOT leak Korean; for ja it must be Japanese; the English keyword anchors
         stay present in every locale."""
@@ -1564,7 +1604,7 @@ class TestHelpDocType:
         """Each item includes the type_code, name, series, and description fields.
 
         No 'locale' field is baked into the item — the row never carried a real
-        per-item locale, so echoing a fixed value there was a lie (T0017)."""
+        per-item locale, so echoing a fixed value there was a lie."""
 
         client = self._build_help_client()
 
@@ -1598,7 +1638,7 @@ class TestHelpDocType:
 
     def test_doc_type_honors_request_locale(self, seed, tmp_path):
 
-        """T0017: the doc_type list must follow the worker token's continuation_locale
+        """the doc_type list must follow the worker token's continuation_locale
 
         instead of always querying with the ko default."""
 
@@ -1654,7 +1694,7 @@ class TestHelpDocType:
 
 
     def test_doc_type_description_honors_request_locale(self, seed, tmp_path):
-        """T0019: the description text is stored per locale (like type_name) and
+        """the description text is stored per locale (like type_name) and
         must follow the worker token's continuation_locale instead of always
         being None (the field previously had no backing column at all)."""
 

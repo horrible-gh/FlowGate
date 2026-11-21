@@ -2,7 +2,9 @@
   <Teleport to="body">
     <div
       v-if="open"
+      v-show="!(isMinimized && modelessTaskbarHeight > 0)"
       ref="panelRef"
+      :data-taskbar-style="modelessTaskbarHeight > 0 ? modelessStyle : undefined"
       class="ui-modeless-panel"
       :class="{ 'is-minimized': isMinimized }"
       :style="panelStyle"
@@ -44,13 +46,14 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free non-blocking overlay shell (T0006 §6). Coexists with the base screen —
+// Domain-free non-blocking overlay shell. Coexists with the base screen —
 // no backdrop, no focus trap, background stays fully interactive. Owns only position/
 // size/minimized/open-close/drag-resize lifecycle; it knows nothing about Git branches,
-// AI runs, Projects, Documents or Approvals (T0006 §6/§15).
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+// AI runs, Projects, Documents or Approvals.
+import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import i18n from '@shared/i18n'
 import IconButton from './IconButton.vue'
+import { modelessStyle, modelessTaskbarHeight, registerModeless, unregisterModeless } from '../../core/overlay/modelessRegistry'
 import { allocateOverlayZIndex } from '../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../core/overlay/focusReturn'
 
@@ -58,6 +61,7 @@ const props = withDefaults(
   defineProps<{
     open: boolean
     title?: string
+    kindColor?: string
     initialX?: number
     initialY?: number
     initialWidth?: number
@@ -67,11 +71,11 @@ const props = withDefaults(
     draggable?: boolean
     resizable?: boolean
     closeOnEscape?: boolean
-    // Optional `v-model:minimized` (flowgate.v02.0033 C1): a caller that owns the minimized
+    // Optional `v-model:minimized`: a caller that owns the minimized
     // state (e.g. a window list shown elsewhere) passes it in and hears every toggle. Left
     // unset, the shell keeps minimized state to itself exactly as before.
     minimized?: boolean
-    // flowgate.v02.0088 F06: explicit accessible names for the shell's own controls. Each one
+    // explicit accessible names for the shell's own controls. Each one
     // given wins over the default, which follows the app's current language (gui.common.*).
     minimizeLabel?: string
     restoreLabel?: string
@@ -79,6 +83,7 @@ const props = withDefaults(
   }>(),
   {
     title: '',
+    kindColor: 'var(--fg2-accent, #6478dc)',
     initialX: 120,
     initialY: 120,
     initialWidth: 420,
@@ -97,7 +102,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ close: []; 'update:minimized': [value: boolean] }>()
 
-// flowgate.v02.0088 F06: the default accessible names read the shared i18n instance directly
+// the default accessible names read the shared i18n instance directly
 // (this shell is domain-free and is mounted with or without the app's i18n plugin), so they
 // follow a language switch while the window stays open. The English words remain only as the
 // last resort when the app catalog is not registered at all.
@@ -109,6 +114,19 @@ const restoreName = computed(() => props.restoreLabel ?? controlName('gui.common
 const closeName = computed(() => props.closeLabel ?? controlName('gui.common.close', 'Close'))
 
 const panelRef = ref<HTMLElement | null>(null)
+const registryId = Symbol('modeless')
+const headerTitle = ref('')
+let titleObserver: MutationObserver | null = null
+watch(panelRef, (panel) => {
+  titleObserver?.disconnect()
+  const title = panel?.querySelector('.ui-modeless-title')
+  const update = () => { headerTitle.value = title?.textContent?.trim() ?? '' }
+  update()
+  if (title && typeof MutationObserver !== 'undefined') {
+    titleObserver = new MutationObserver(update)
+    titleObserver.observe(title, { childList: true, subtree: true, characterData: true })
+  }
+}, { flush: 'post' })
 const x = ref(props.initialX)
 const y = ref(props.initialY)
 const width = ref(props.initialWidth)
@@ -132,9 +150,21 @@ function setMinimized(value: boolean): void {
   emit('update:minimized', value)
 }
 
+watchEffect(() => {
+  if (!props.open) { unregisterModeless(registryId); return }
+  registerModeless({ id: registryId, title: props.title || headerTitle.value || 'Window',
+    color: props.kindColor, minimized: isMinimized.value, restore: () => {
+      setMinimized(false)
+      bringToFront()
+      void nextTick(() => panelRef.value?.focus({ preventScroll: true }))
+    } })
+})
+watch(modelessTaskbarHeight, () => { if (props.open) clampPosition() })
+watch(isMinimized, (value, old) => { if (old && !value) bringToFront() })
+
 // Keeps at least this many px of the titlebar reachable so a panel dragged toward an
-// edge can never fully leave the viewport (T0006 §6 "viewport 밖으로 완전히 사라지지
-// 않도록 최소 제약").
+// edge can never fully leave the viewport (the earlier implementation "Minimum constraints to prevent disappearing
+// completely outside the viewport").
 const MIN_VISIBLE = 80
 
 function clamp(value: number, min: number, max: number): number {
@@ -143,12 +173,14 @@ function clamp(value: number, min: number, max: number): number {
 
 function clampPosition(): void {
   const viewportWidth = window.innerWidth
-  const viewportHeight = window.innerHeight
+  const viewportHeight = window.innerHeight - modelessTaskbarHeight.value
   x.value = clamp(x.value, -(width.value - MIN_VISIBLE), Math.max(0, viewportWidth - MIN_VISIBLE))
   y.value = clamp(y.value, 0, Math.max(0, viewportHeight - MIN_VISIBLE))
 }
 
 const panelStyle = computed(() => ({
+  '--modeless-kind-color': props.kindColor,
+  maxHeight: modelessTaskbarHeight.value > 0 ? `calc(100vh - ${y.value + modelessTaskbarHeight.value}px)` : undefined,
   left: `${x.value}px`,
   top: `${y.value}px`,
   width: `${width.value}px`,
@@ -227,7 +259,7 @@ function onResizeEnd(): void {
 }
 
 /* ────────────────────────────────── ESC ─────────────────────────────────── */
-// A separate contract from ModalShell (T0006 §6): this listens on the panel itself,
+// A separate contract from ModalShell: this listens on the panel itself,
 // not on `document`, so ESC only closes the panel while focus is inside it and never
 // while the user is typing somewhere else on the still-interactive base screen.
 function onEscape(): void {
@@ -236,8 +268,8 @@ function onEscape(): void {
 }
 
 /* ───────────────────────────── open / close ─────────────────────────────── */
-// No focus trap and no forced initial focus (T0006 §6 "focus trap 금지" /
-// "focus 정책 명확화"): opening never steals focus from whatever the user is doing on
+// No focus trap and no forced initial focus (the earlier implementation "No focus trap" /
+// "Explicit focus policy"): opening never steals focus from whatever the user is doing on
 // the base screen. Closing returns focus to the trigger only as a courtesy, and only
 // if focus was still inside this panel — if the user had already moved on, forcing
 // focus back to the trigger would undo their own navigation.
@@ -247,6 +279,7 @@ watch(
   () => props.open,
   (isOpen, wasOpen) => {
     if (isOpen && !wasOpen) {
+      if (wasOpen === false) setMinimized(false)
       triggerElement = captureFocusedElement()
       zIndex.value = allocateOverlayZIndex()
       // `initialX`/`initialY` are the caller's values, unchecked against the current
@@ -267,6 +300,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  unregisterModeless(registryId)
+  titleObserver?.disconnect()
   window.removeEventListener('resize', clampPosition)
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup', onDragEnd)
@@ -274,7 +309,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onResizeEnd)
 })
 
-// flowgate.v02.0067 T#1: `geometry()` / `setGeometry()` let a caller read and set the panel's place
+// `geometry()` / `setGeometry()` let a caller read and set the panel's place
 // and size after it was created (the initial props are read once) — the Git window fits itself to a
 // smaller viewport this way without re-creating its body. `setGeometry` takes the size as given, so
 // a caller may go below `minWidth` / `minHeight` to stay on a small screen; the position is clamped
@@ -291,7 +326,7 @@ function setGeometry(next: { x: number; y: number; width: number; height: number
   clampPosition()
 }
 
-// flowgate.v02.0053 T#3: the optional `actions` slot puts a caller's own titlebar buttons right before
+// the optional `actions` slot puts a caller's own titlebar buttons right before
 // minimize / close (the document window's ✎), and `bringToFront()` lets a caller raise a panel that is
 // already open (a second request for the same document). Both stay domain-free.
 defineExpose({ bringToFront, geometry, setGeometry })
@@ -300,6 +335,7 @@ defineExpose({ bringToFront, geometry, setGeometry })
 <style scoped>
 .ui-modeless-panel {
   position: fixed;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: var(--fg2-panel);
@@ -320,6 +356,11 @@ defineExpose({ bringToFront, geometry, setGeometry })
   cursor: move;
   user-select: none;
   flex: none;
+}
+
+[data-taskbar-style="flowgate"] .ui-modeless-titlebar {
+  box-shadow: inset 0 3px 0 var(--modeless-kind-color);
+  background: color-mix(in srgb, var(--modeless-kind-color) 8%, var(--fg2-panel));
 }
 
 .is-minimized .ui-modeless-titlebar {

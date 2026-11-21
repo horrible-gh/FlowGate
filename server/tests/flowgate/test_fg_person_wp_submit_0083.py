@@ -1,15 +1,15 @@
-"""flowgate.v02.0083 T#3 (0015-WP T#3, 0014-CH turn 8 D-2 / D-3) — a work plan (WP) card a person writes, through the
+"""(WP the earlier implementation, the discussion D-2 / D-3) — a work plan (WP) card a person writes, through the
 routes its work plan window calls: the plan is written and saved in its editor (``PUT /documents/{doc}/work-plan``), then
 [제출] is the card line write of its plan line (``POST /flows/{flow}/nodes/{key}/slots/plan/document``, no body): the
 card's own draft on the line — no new document — is registered with the node's dispatch token (the token claimed, the
-document submitted) and the Graph told, so the result binder binds it and the T#4 step follows (the card's review, or
+document submitted) and the Graph told, so the result binder binds it and the the earlier implementation step follows (the card's review, or
 with review 'none' its automatic approval) and the next card opens. After a rejection the author saves the plan again
 and [제출] is the v0.1 ``review_transitions/mark_revised`` route, which hands it to a new review.
 
-Nothing here calls ``v01_contact`` itself: every step is a real HTTP route (the T#4 suite told the binder directly and
-missed that no route reached it — 0014-CH turn 8 §1).
+Nothing here calls ``v01_contact`` itself: every step is a real HTTP route (the the earlier implementation suite told the binder directly and
+missed that no route reached it — the discussion).
 
-Covered (0020-T 검증 2·3·4·5 and 8, on the server):
+Covered (T checks 2·3·4·5 and 8, on the server):
 1. saved -> submitted -> reviewed once (or review 'none') -> approved -> the next card opens; the line keeps its one plan;
 2. another card's AI working in the same Flow neither refuses the save nor the submission (no group lease is held);
    an AI run holding the Flow's group lease still refuses the save (423, the mutation policy is not changed);
@@ -18,7 +18,7 @@ Covered (0020-T 검증 2·3·4·5 and 8, on the server):
 5. a plan of no work set is refused (422 ``empty_body``) and changes nothing; a second submission registers nothing
    more; a plan line takes no text (422 ``not_for_this_slot``).
 
-On the T#4 suite's real SQLite DB, routes and fixtures (the card settings suites' env, the recorder of the AI invoke
+On the the earlier implementation suite's real SQLite DB, routes and fixtures (the card settings suites' env, the recorder of the AI invoke
 admission ``reviews``, ``_admitted`` / ``_passes`` / ``_verdict`` / ``_hop_ends`` / ``_loop_ended``).
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ from test_fg_wp_ai_run_0083 import _opus, _plan_line, _run_status, _start_ai_run
 from test_fg_person_wp_review_0083 import (  # noqa: F401 — reviews: the recorder fixture
     AUTHOR_STOP, REVIEWER, _admitted, _hop_ends, _loop_ended, _passes, _person_wp, _stage, _verdict, _wp_body, reviews,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -192,7 +192,7 @@ def test_2_another_card_s_ai_working_neither_locks_the_save_nor_the_submission(e
 
 
 def test_2_an_ai_run_holding_the_group_lease_still_refuses_the_save_423(env, decided, reviews, monkeypatch):
-    """The mutation policy is not changed (0020-T): a non-Graph AI run holding the Flow's group lease refuses the save."""
+    """The mutation policy is not changed: a non-Graph AI run holding the Flow's group lease refuses the save."""
     wp, _t2 = _person_wp(env, 0)
     plan = _plan_line(env, wp)
     _lease(monkeypatch, "air_single_other_doc")

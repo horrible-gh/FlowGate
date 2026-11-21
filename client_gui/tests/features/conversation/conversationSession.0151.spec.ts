@@ -19,7 +19,7 @@ import type {
 } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0151 T-A2 (NR Rev.4 §2.6-2, §2.6-3, §2.8): a run the polling would give up on is checked against the
+// T-A2 (NR Rev.4): a run the polling would give up on is checked against the
 // server's active run first, a catch-up re-reads the activities, and the final activity read is retried. The fake
 // source plays the server and Vitest's fake timers move RUN_POLL_MS / RUN_POLL_MAX; nothing reaches a real server.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
@@ -392,7 +392,7 @@ describe('0151 T-A2 §2.6-3: catch-up reads turns, activities, then history', ()
     await flushPromises()
     expect(session.state.activeChatId).toBe(B)
     expect(snapshot()).toEqual(before)
-    // flowgate.v02gui.0009: the AI run of A's message still starts — for A, off screen; B shows nothing of it.
+    // the AI run of A's message still starts — for A, off screen; B shows nothing of it.
     expect(fake.source.startChatRun).toHaveBeenCalledTimes(1)
     expect(fake.source.startChatRun).toHaveBeenCalledWith(A, expect.any(String), expect.any(String), expect.any(String))
     expect(session.running.value).toBe(false)

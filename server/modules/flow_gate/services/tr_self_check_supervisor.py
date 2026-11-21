@@ -48,7 +48,7 @@ def _tail(pipe, output: bytearray, progress=None) -> None:
 
 
 def _leader_exited(proc: subprocess.Popen) -> bool:
-    """Has the target (the group leader) exited? Asked WITHOUT reaping it (0080 T#1): while
+    """Has the target (the group leader) exited? Asked WITHOUT reaping it: while
     the leader is unreaped its PID -- and so the group's number -- cannot be reused, so a
     group found under that number is still the one the target's setsid made."""
     if proc.returncode is not None:
@@ -122,7 +122,7 @@ def _terminate(proc: subprocess.Popen, leader_start: str | None) -> None:
 
 
 def _limit(cpu_limit) -> frozenset | None:
-    """flowgate.v02.0114 T#4 (D 0006 3.5 (2)): narrow this supervisor to the lowest
+    """(the earlier implementation 3.5 ): narrow this supervisor to the lowest
     ``cpu_limit`` processors it may use before the target exists; the target and its
     descendants inherit the set. None = no limit. Raises when it cannot be set exactly."""
     if cpu_limit is None:

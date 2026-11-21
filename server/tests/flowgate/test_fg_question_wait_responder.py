@@ -1,4 +1,4 @@
-"""T0013: Graph question responders use an independent reviewer/default or await a person."""
+"""Graph question responders use an independent reviewer/default or await a person."""
 from __future__ import annotations
 
 import os

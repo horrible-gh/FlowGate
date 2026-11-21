@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0053 T#5 — a placed card's document lines reach the Inspector at once. The server makes a
- * card's documents in the draft save that adds the card (T#1) and answers them (`card_documents`); the
+ * a placed card's document lines reach the Inspector at once. The server makes a
+ * card's documents in the draft save that adds the card and answers them (`card_documents`); the
  * Center does not read its own save's Canvas change again, so the save answer is what puts the lines (and
  * the first line a person writes, as the node's document) on the shown Graph:
  *

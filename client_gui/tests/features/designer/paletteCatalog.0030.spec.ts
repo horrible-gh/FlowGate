@@ -14,7 +14,7 @@ import {
 } from '@/features/designer/palette/paletteCatalog'
 import { DEFAULT_PALETTE_ICON, PALETTE_ICON_CHOICES, paletteIconPath } from '@/features/designer/palette/paletteIcons'
 
-// flowgate.v02.0030 — Palette model (R0001 §2): default items, grouping, user-defined item
+// Palette model: default items, grouping, user-defined item
 // creation and the drag payload.
 
 class FakeTransfer {

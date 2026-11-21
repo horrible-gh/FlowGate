@@ -1,5 +1,5 @@
 // flowgate.v02.0053 T#5 — the 조사 card's settings value its lines follow: a card whose settings omit the
-// instruction (T#2 `instruction` = omit) has no 지시서 line (v7). Read when the card is selected — no server
+// instruction (`instruction` = omit) has no instruction line (v7). Read when the card is selected — no server
 // event announces a settings change, and the settings tab is another tab, so coming back reads again. A
 // Node the server keeps no settings for (a document Node, a card not saved yet) or a failed read keeps the
 // line.

@@ -1,4 +1,4 @@
-"""flowgate.default.0503 T0007 -- native assertion engine and case evidence (T2).
+"""native assertion engine and case evidence.
 
 Covers the T's completion-condition test list (section 9):
   * parse_test_cases: assert-less legacy cases keep assert_mode=None; the six known
@@ -10,7 +10,7 @@ Covers the T's completion-condition test list (section 9):
     "stdout is not JSON" / "path not found" grading-time mismatch paths that must NOT
     raise or 422.
   * _execute_case: exit_code==0 with a mismatching assert still yields result="fail"
-    (NR0003's legal combination) -- with a fake Popen so exit_code is deterministic,
+    ('s legal combination) -- with a fake Popen so exit_code is deterministic,
     the same recipe test_test_run_0138.py's timeout test uses.
   * db/test_runs.py: insert_run / mark_case_finished / list_cases roundtrip preserves
     assert_mode/actual/comparison_result against a real sqlite DB with every migration

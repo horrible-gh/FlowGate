@@ -117,7 +117,7 @@
 
 <script setup lang="ts">
 // Evaluation sets: a fixed task (instruction + constraints) so several AIs can run the same task.
-// The dialog checks the same limits as the server (../limits.ts, flowgate.v02.0017 T0004 §5)
+// The dialog checks the same limits as the server (../limits.ts, the earlier change the earlier implementation)
 // before saving, and shows which field the server rejected and why when it still does.
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from test_graph_attempt_runs_0061 import db, ai_run, request  # noqa: F401 — the shared T#4 fixture
+from test_graph_attempt_runs_0061 import db, ai_run, request  # noqa: F401 — the shared the earlier implementation fixture
 from flowgate.graph_run import execution, execution_store as ledger, fencing, settle, stop, workspace
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import graph_source_hooks
@@ -21,7 +21,7 @@ _RECOVER_STOP = stop.recover
 
 @pytest.fixture
 def fenced(db, monkeypatch):
-    # The run columns a Stop writes (the T#4 fixture keeps only the ledger's).
+    # The run columns a Stop writes (the the earlier implementation fixture keeps only the ledger's).
     for column in ("stopped_at TEXT", "updated_at TEXT", "finished_at TEXT",
                    "last_event_seq INTEGER DEFAULT 0", "revision_no INTEGER DEFAULT 1"):
         if column.split()[0] not in {r["name"] for r in db._fetch_all("PRAGMA table_info(graph_runs)")}:
@@ -394,7 +394,7 @@ def test_pause_route_keeps_t2_behaviour_and_stop_route_is_stop():
     assert threading.Event  # the run fixtures' cancel events
 
 
-# ── 0017-TR revision 2: Q439 idle exceptions, the run-end hand-off, owned ends, gate-held approvals, Q440 ──────────
+# ── the earlier implementation revision 2: Q439 idle exceptions, the run-end hand-off, owned ends, gate-held approvals, Q440 ──────────
 
 def _guard_in(db, monkeypatch, *modules):
     def guard(_flow, body):
@@ -407,7 +407,7 @@ def _guard_in(db, monkeypatch, *modules):
 def test_idle_takes_a_persons_own_token_registration_only(fenced, monkeypatch):
     fenced._execute("UPDATE graph_runs SET status='idle', idle_reason='error'")
     monkeypatch.setattr(graph_source_hooks, "binding", lambda token: fenced.attempt)
-    fencing.require_token({"token_id": "dispatch"}, "inbox_new")             # L0009 E-23: the node's own token
+    fencing.require_token({"token_id": "dispatch"}, "inbox_new")             # E-23: the node's own token
     fencing.require_token({"token_id": "dispatch", "ai_run_id": ""}, "inbox_edit")
     with pytest.raises(graph_source_hooks.GraphAttemptInactive):
         fencing.require_token({"token_id": "ai", "ai_run_id": "air_1"}, "inbox_new")
@@ -511,7 +511,7 @@ def test_runtime_invalidation_tolerates_its_own_shared_hold():
 
 
 def test_an_ended_attempts_line_document_is_no_output():
-    # 0119 T-3: the line reads moved from the removed card approval to the completion's outputs
+    # T-3: the line reads moved from the removed card approval to the completion's outputs
     from flowgate.card_completion import outputs
     stale = {"slot": "instruction", "doc_id": "old_t", "doc_review_status": "pending_review", "stale": True}
     assert not outputs.is_target(stale)

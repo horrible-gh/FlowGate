@@ -1,4 +1,4 @@
-"""TR2-managed source ownership and ordinary-mutation guard (flowgate.default.0641)."""
+"""TR2-managed source ownership and ordinary-mutation guard."""
 from __future__ import annotations
 
 import json

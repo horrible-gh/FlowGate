@@ -1,13 +1,13 @@
-"""flowgate.default.0578 T0006 — merge-review turns store MEANING, not a Korean sentence.
+"""merge-review turns store MEANING, not a Korean sentence.
 
-NR0003 F1 measured that every server-authored turn in the merge-review conversation was
+The review measured that every server-authored turn in the merge-review conversation was
 assembled as a finished Korean sentence and frozen into ``context['conversation']``: the
 screen could never show it in another language, and an en/ja worker replaying the history
 read Korean. F2 measured the other half — a review-message turn runs asynchronously and
 the locale the reviewer started it in was not written down anywhere, so nothing downstream
 could honour it.
 
-This file pins both halves as a contract (T0006 §2):
+This file pins both halves as a contract:
 
   * the nine server-authored events are stored as ``message_code`` + ``message_params``,
     with ``message`` holding only what a human or a model actually wrote;
@@ -63,7 +63,7 @@ def _has_hangul(text: str) -> bool:
     return any("가" <= ch <= "힣" or "ㄱ" <= ch <= "ㆎ" for ch in text)
 
 
-# ── the in-memory review session (same shape as 0481 T0010's harness) ──────────────
+# ── the in-memory review session (same shape as the earlier implementation's harness) ──────────────
 
 def _context(**overrides) -> dict:
     context = {
@@ -126,7 +126,7 @@ def _materialize(monkeypatch, context: dict):
     try:
         git_service.get_merge_review(GROUP, MERGE_ID)
     except git_service.GitServiceError:
-        pass  # a settled review refuses the read, but still materializes (0481 T0010 rev4)
+        pass  # a settled review refuses the read, but still materializes
     return context["conversation"][-1]
 
 
@@ -361,7 +361,7 @@ def test_stale_run_names_which_check_fired_approval(monkeypatch):
     assert turn["message_code"] == "review_stale_run"
     assert turn["message_params"]["changed"] == ["approval_settled"]
     assert turn["message_params"]["review_state"] == "completed"
-    # The answer survives, verbatim — 0481 T0010 rev6's point, kept.
+    # The answer survives, verbatim — the earlier implementation's point, kept.
     assert turn["message"] == "수정했습니다."
 
 
@@ -391,7 +391,7 @@ def test_stale_run_reports_the_discarded_plan_and_never_applies_it(monkeypatch):
     )
 
     assert turn["message_params"]["plan_discarded"] is True
-    assert applied == []                      # L0007 §2.9 unchanged: never applied
+    assert applied == []                      # unchanged: never applied
     assert context.get("pending_conversation_run_id") is None
 
 
@@ -553,7 +553,7 @@ def test_the_run_start_folds_an_unsupported_header_to_the_default(monkeypatch):
 
 @pytest.fixture
 def invoke_world(monkeypatch, tmp_path):
-    """start_run's collaborators, faked (the 0481 T0010 rev5 fixture's shape)."""
+    """start_run's collaborators, faked (the the earlier implementation fixture's shape)."""
     from modules.flow_gate.services import ai_invoke_service as svc
 
     issued: list[dict] = []
@@ -1027,7 +1027,7 @@ def test_settled_approval_of_an_unknown_review_state_uses_a_localized_fallback_w
 # ── review finding — rendered notices must be bounded like the old stored message ──
 
 def test_the_history_bounds_a_large_rendered_notice_like_the_old_message_was(monkeypatch):
-    # T0006 §4-5: only `message`/`body` was ever bounded by
+    # only `message`/`body` was ever bounded by
     # `_REVIEW_CONVERSATION_MAX_TURN_CHARS`; the rendered notice was appended unbounded,
     # so a large write plan's `paths` (interpolated verbatim) produced an unbounded line
     # where the former stored sentence would have been truncated.

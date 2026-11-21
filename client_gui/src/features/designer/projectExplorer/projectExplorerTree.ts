@@ -1,4 +1,4 @@
-// flowgate.v02.0023 — Designer Project Explorer display tree (R0001 §2.2/§2.3, D0002 §6/§9).
+// Designer Project Explorer display tree.
 //
 // The Project Explorer does not own tree data. It reads the canonical flat group tree the
 // project store caches (`useProjectStore().fetchGroupTree`) and derives a read-only display
@@ -64,11 +64,11 @@ export interface ProjectExplorerFlowEvent extends ProjectExplorerGroupEvent {
   flowName: string
 }
 
-/** The one row the user last clicked. Selection is not activation (D0002 §10). */
+/** The one row the user last clicked. Selection is not activation. */
 export type ExplorerSelection = { kind: 'project' | 'group' | 'flow'; id: string } | null
 
 /**
- * flowgate.v02.0043 — what the Designer asks the Project Explorer to show after a File menu
+ * what the Designer asks the Project Explorer to show after a File menu
  * action: the selection to set (or clear) and the rows to open / close, by id. `seq` makes
  * every request distinct, so the same request made twice is applied twice.
  */
@@ -78,7 +78,7 @@ export interface ExplorerStateRequest {
   expand?: readonly string[]
   collapse?: readonly string[]
   /**
-   * flowgate.v02.0105 T#1: false = the selection is set without opening the rows above it (the F5 restore gives the
+   * false = the selection is set without opening the rows above it (the F5 restore gives the
    * open Groups as they were). Omitted = they are opened with it, as a File menu opening does.
    */
   reveal?: false

@@ -65,7 +65,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     with monkeypatch.context() as m:
         # each step alone stays inside the 1 s budget; the basis and the stored target's judgement together do not
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 1.0)
-        # flowgate.v02test.0020: the background computation does not finish either (its own budget runs out)
+        # The background computation does not finish either (its own budget runs out)
         m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.3)
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         m.setattr(mt, "_verdict", lambda *a, **k: _time.sleep(0.6) or real_verdict(*a, **k))
@@ -91,7 +91,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     mt.reset_check_targets()
     with monkeypatch.context() as m:
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.5)
-        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.0)     # flowgate.v02test.0020: nothing finishes behind it
+        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.0)     # nothing finishes behind it
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         missed = _check_view(proj, gid, "gone", refresh=False)
         assert mt.settle_check_targets(10)

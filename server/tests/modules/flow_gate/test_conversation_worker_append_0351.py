@@ -1,4 +1,4 @@
-"""Worker conversation adapter trust-boundary tests for group 0351."""
+"""Worker conversation adapter trust-boundary tests for the earlier change."""
 from __future__ import annotations
 
 from unittest.mock import patch

@@ -62,7 +62,7 @@ def test_personal_enrollment_authentication_and_invalid_scope_fields(env):
     assert env.heartbeat(aid, credential).status_code == 200
     current = env.client.get(ME+"/"+aid, headers=env.h("M")).json()
     assert current["online_status"] == "online" and current["owner_user_id"] == "usr_ag_m0076"
-    # flowgate.v02test.0019: a connected Agent with no Job in progress is deleted (was 409); its
+    # a connected Agent with no Job in progress is deleted (was 409); its
     # credential is revoked in the same transaction, so it can no longer connect.
     assert env.client.delete(ME+"/"+aid, headers=env.h("M")).status_code == 204
     assert env.heartbeat(aid, credential).status_code == 401
@@ -70,7 +70,7 @@ def test_personal_enrollment_authentication_and_invalid_scope_fields(env):
 
 
 def test_deleted_personal_agent_never_authenticates_or_enrolls(env):
-    # flowgate.v02gui.0008: an enroll committing between delete()'s credential and enrollment
+    # an enroll committing between delete's credential and enrollment
     # revocations can leave an active credential (and a consumed token) on a deleted Agent. Simulate
     # the survivors directly: neither may authenticate, heartbeat, claim nor enroll. History stays.
     from modules.flow_gate.api.v1.agent_job_routes import router

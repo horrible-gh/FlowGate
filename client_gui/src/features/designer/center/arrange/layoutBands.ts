@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#2 (0005-L §2.4 ~ §2.6) — coordinates by direction. A card sits on the start side of its lane
+// coordinates by direction. A card sits on the start side of its lane
 // and of its stage (horizontal: top / left, vertical: left / top); each stage starts far enough after the one
 // before it for the card sizes (G_FLOW) and for every forward edge into it to face the direction:
 // flow distance of the centres ≥ |lane distance of the centres| + DIR_MARGIN, so the unchanged facingSide gives

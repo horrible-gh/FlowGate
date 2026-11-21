@@ -1,8 +1,8 @@
 /**
  * flowgate.v02.0053 T#8 — a card added with the Palette [+] (카드 추가) and placed is a Custom card (Graph `custom`
  * node) that works like a 조사 card, whichever Palette category it was added to (설계 · 업무 · 제어): placed, it is
- * never a gate, and the real Frame and registry show it as the 조사 card is shown — the same tabs, the 지시서 ·
- * 레포트 lines with the document icon and ✎, the same settings form, the Q&A input row —
+ * never a gate, and the real Frame and registry show it as the 조사 card is shown — the same tabs, the instruction ·
+ * report lines with the document icon and ✎, the same settings form, the Q&A input row —
  * titled with the name a person gave it. (The server side — no `rule_undecided/custom_node`, the run and its
  * result — is server/tests/test_fg_custom_card_0053.py.)
  */
@@ -50,7 +50,7 @@ const FLOW = 'flowgate.v02.0060'
 const NAME = 'API 오류 코드 설계'
 
 /**
- * The run card fields of the server (T#2 fields.py), nothing stored: the server keeps both cards as run cards.
+ * The run card fields of the server (fields.py), nothing stored: the server keeps both cards as run cards.
  * flowgate.v02.0056 F2-1: the progress-after-review field is gone (O1 0005-TR §4-3), the 지시 AI is added (O2 §4-1).
  */
 const RUN_FIELDS: readonly [string, unknown, readonly unknown[] | null][] = [
@@ -101,7 +101,7 @@ function line(slot: string, docType: string, docId: string, author: 'human' | 'r
   return { slot, docType, author, docId, title: `카드 · ${slot}`, status: 'draft', docReviewStatus: null }
 }
 
-/** A card just placed, as the Canvas has it once its save answered (T#1 lines, the 지시서 as its document). */
+/** A card just placed, as the Canvas has it once its save answered (lines, the instruction as its document). */
 function placed(
   key: string,
   spec: { nodeType: string; docType: string | null; paletteItemId: string; label: string; kind: string },

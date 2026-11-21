@@ -1,11 +1,11 @@
-// flowgate.v02.0026 — sample Graph source (0003-D §3.2.3), the Center session's default until
+// sample Graph source, the Center session's default until
 // a server Graph API exists. Any Flow id (real project Flows included) gets one of a few
 // differently shaped sample Graphs, picked from the Flow id so the same Flow always shows the
 // same Graph and switching tabs shows a different one. The samples are built directly as
 // FlowGate Graph Model values — no imitation of a server response, so no server format is
 // decided here. Node / Edge ids carry the Flow id as a prefix so tabs never share ids.
 //
-// Titles are Korean UI text: the Flow object is never called Flow / 흐름 / 플로 (T0006 §3).
+// Titles are Korean UI text: the Flow object is never called Flow / Flow / Flo.
 import type { FlowGraph, FlowGraphEdge, FlowGraphNode } from './flowGraph'
 import type { FlowGraphSource } from './flowGraphSource'
 
@@ -23,7 +23,7 @@ interface SampleGraph {
   edges: Array<[from: string, to: string]>
 }
 
-// Free placement with branches and joins — never one row (R0001 §4: no sequence-first UI).
+// Free placement with branches and joins — never one row (no sequence-first UI).
 // Columns are 260px apart like 03-designer-shell (176px card + 84px Edge).
 const SAMPLES: readonly SampleGraph[] = [
   // Branching progress: one requirement, two investigations, one plan fanning out again.

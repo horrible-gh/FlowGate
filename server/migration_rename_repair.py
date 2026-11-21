@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stop a renamed migration file from being applied a second time.
 
-0358 R0001, 4th rejection. sqloader's DatabaseMigrator tracks applied migrations
+sqloader's DatabaseMigrator tracks applied migrations
 by the *filename string* alone (`migrations.filename`): on every boot it re-globs
 the migration directory and applies every file whose name is not in that table.
 It compares nothing else — not the number, not the contents, not a checksum. So
@@ -37,10 +37,10 @@ same-number, same-slug variant of that name. Nothing is executed and nothing is
 skipped that has not demonstrably already run — a name is only ever accepted as
 "already applied" when the table proves it ran under the sibling spelling.
 
-flowgate.default.0452 adds the other half of that history. A number collision is not
+adds the other half of that history. A number collision is not
 always fixed with a letter — sometimes the file *moves*, and then the number is
 exactly what changed. `080_workflow_sequence_provider.sql` moved to `081_…` when
-0413 T0007 resolved its collision with `080_ai_invoke_prompt_audit.sql`, and to
+resolved its collision with `080_ai_invoke_prompt_audit.sql`, and to
 `081a_…` when that ordinal turned out to be taken as well. A same-number match
 cannot see any of that, so the dev deployment re-ran the file and died on boot,
 twice in a row:

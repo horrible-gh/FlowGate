@@ -1,7 +1,7 @@
-"""flowgate.v02.0085 T#3 (D0007 §7.2 / §7.3; §8-7): the end cleanup of the confirm gate's ``gate_publish`` job on a
+"""the end cleanup of the confirm gate's ``gate_publish`` job on a
 real Git repository.
 
-flowgate.v02.0098 T#2 (TR0009): moved unchanged from ``test_fg_gate_publish_0085``, whose harness, fixtures
+moved unchanged from ``test_fg_gate_publish_0085``, whose harness, fixtures
 and shared helpers it imports. ``--dist loadfile`` gives one file to one worker, and the single file's serial
 time alone exceeded the 1800 s Self-check limit.
 The retry / cancel / permission / credential / recovery close cases (§8-12 to §8-18) are in
@@ -54,7 +54,7 @@ def test_an_old_archive_never_lets_a_newer_head_go(git_env, case):
         assert _states(env)[keys[2]] == "open"
         _confirm(env, run_id, keys[2], "g2", expect=200)                     # hold, archive OFF: done at once
     assert _run_status(env, run_id) == {"status": "idle", "idle_reason": "completed"}
-    assert _cleanups(env) == [] and _run_cleanup(env)["status"] == "succeeded"     # its own job (D0007 §7.1)
+    assert _cleanups(env) == [] and _run_cleanup(env)["status"] == "succeeded"     # its own job
     records = _cleanups(env)
     assert len(records) == 1
     rec = records[0]

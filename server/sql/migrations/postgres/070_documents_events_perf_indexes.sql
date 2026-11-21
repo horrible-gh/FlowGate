@@ -1,13 +1,13 @@
 -- 070_documents_events_perf_indexes.sql
--- flowgate.default.0291 (R0001 → N0002 → NR0003 → T0010): NR0003 권고 P2 — 쿼리 단가.
+-- flowgate.default.0291 (R0001 → N0002 → NR0003 → T0010): NR0003 recommendation P2 — per-query cost.
 --
--- SQLite 원본(sql/migrations/sqlite/070_documents_events_perf_indexes.sql)의 PostgreSQL
--- 판이다. 근거·컬럼 순서·각 인덱스가 어느 쿼리를 덮는지는 원본 주석에 있다.
+-- PostgreSQL version of the SQLite original (sql/migrations/sqlite/070_documents_events_perf_indexes.sql).
+-- See the original comments for rationale, column order, and the queries each index covers.
 --
--- 방언 차이는 BEGIN/COMMIT 제거 하나뿐이다(기존 생성물과 동일한 처리). PostgreSQL 은
--- 이 스키마의 문자열 컬럼을 전부 TEXT 로 두고, TEXT 인덱싱에 prefix 길이가 필요 없으며
--- (MySQL 판과 다른 점), 인덱스 컬럼의 DESC 방향과 CREATE INDEX IF NOT EXISTS 를 모두
--- 지원한다. 그래서 SQLite 원본의 DDL 을 그대로 쓴다.
+-- The only dialect difference is removing BEGIN/COMMIT (as in existing generated migrations). PostgreSQL keeps
+-- all string columns in this schema as TEXT, requires no prefix length for TEXT indexes
+-- (unlike MySQL), and supports both DESC index-column direction and CREATE INDEX IF NOT EXISTS.
+-- Therefore the SQLite original's DDL is used unchanged.
 
 CREATE INDEX IF NOT EXISTS idx_documents_group_seq
     ON documents(group_id, seq);

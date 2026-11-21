@@ -1,6 +1,6 @@
-"""0454 T0006 — `GET /projects/{id}/groups/tree?include_terminal=false` prunes terminal subtrees.
+"""`GET /projects/{id}/groups/tree?include_terminal=false` prunes terminal subtrees.
 
-B0001: "releasing the completed-hide toggle is slow". The explorer hides final-approved (AC)
+"releasing the completed-hide toggle is slow". The explorer hides final-approved (AC)
 and discarded (DC) groups by default, but the server sent them anyway — every load, SSE
 refresh and retry carried the terminal subtrees over the wire and through JSON.parse only for
 the client to filter them straight back out.
@@ -16,7 +16,7 @@ What is pinned here:
 3. **Shape invariants.** Original relative order, no nested `children`, no duplicate ids, and
    every surviving non-root node still finds its parent inside the result.
 4. **Termination.** Cyclic and duplicated `parent_id` data cannot hang the walk.
-5. **The measurement** T0006's completion criteria ask for: one representative load-scale
+5. **The measurement** the earlier implementation's completion criteria ask for: one representative load-scale
    fixture serialized under both variants, with node counts and UTF-8 byte counts. No timing
    threshold decides pass/fail here — the numbers are recorded, the invariants are asserted.
 """
@@ -51,7 +51,7 @@ from modules.flow_gate.api.v1.tree_routes import build_overview_summary, prune_t
 
 @pytest.fixture(autouse=True)
 def _reset_raw_tree_cache():
-    """`_get_raw_tree_nodes` (T0007 rev4, `force`-aware since rev5) joins concurrent NON-FORCED
+    """`_get_raw_tree_nodes` (`force`-aware since) joins concurrent NON-FORCED
     callers for the same project_id onto one in-flight `process_service.get_group_tree()` call,
     but keeps nothing once that call returns (rev3's flat TTL cache was replaced — see the module
     comment above `_get_raw_tree_nodes`). `_raw_tree_inflight` is normally empty between tests
@@ -66,7 +66,7 @@ def _reset_raw_tree_cache():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Synthetic flat-tree fixtures (T0006 §1.3 — the helper is exercised without a DB)
+# Synthetic flat-tree fixtures (the helper is exercised without a DB)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _node(node_id, parent_id, node_type, **extra):
@@ -256,7 +256,7 @@ class TestPruneHelper:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Route contract (T0006 §1.1) — the handler is a plain def, called directly
+# Route contract — the handler is a plain def, called directly
 # ══════════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture
@@ -309,9 +309,9 @@ class TestRouteContract:
         # for the real-HTTP omission case this class cannot exercise.
         body = tree_routes.get_groups_tree("p", branch="feature-x", include_terminal=False, include_summary=False)
         assert set(body) == {"data"}
-        # 0454 T0007 rev3 review fix: rev2 had added `overview_summary` here UNCONDITIONALLY,
+        # review fix: had added `overview_summary` here UNCONDITIONALLY,
         # which changed the `include_terminal=true` (default) response for every pre-existing
-        # caller — exactly what T0006 §1.1 ("그대로 반환한다") rules out (review finding on rev2).
+        # caller — exactly what the earlier implementation ("return unchanged") rules out (review finding on).
         # rev5 folds the aggregate back into this same envelope, but ONLY behind the opt-in
         # `include_summary` flag — see TestOverviewSummary below.
         assert set(body["data"]) == {"nodes"}
@@ -461,7 +461,7 @@ class TestRouteOverHttp:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Overview summary (T0007) — the aggregate that replaced the full-tree preload
+# Overview summary — the aggregate that replaced the full-tree preload
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # 0007-TR rev0 kept the MainPanel overview cards (총 문서 수 / 진행 중 / 타입 분포) populated by
@@ -473,7 +473,7 @@ class TestRouteOverHttp:
 # client cache was never refetched on an ordinary refresh (both rev1 review findings). rev2 rode
 # `overview_summary` inside the `/groups/tree` response itself UNCONDITIONALLY, which fixed both
 # of rev1's problems but changed the `include_terminal=true` (default) response for every
-# pre-existing `/groups/tree` caller — exactly what T0006 §1.1 rules out (review finding on rev2).
+# pre-existing `/groups/tree` caller — exactly what the earlier implementation rules out (review finding on).
 #
 # rev3 put `get_groups_tree_overview_summary` back as its own route (rev1's shape), and had both
 # it and `get_groups_tree` read the raw node list through `_get_raw_tree_nodes`. rev3's version of
@@ -896,7 +896,7 @@ class TestRawTreeNodes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Load-scale measurement (T0006 completion criteria) -- one fixture, both variants
+# Load-scale measurement (completion criteria) -- one fixture, both variants
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Same shape and size as the 0449 load fixture (2 modules x 84 groups x 34 documents +
@@ -964,7 +964,7 @@ def _seed_load_db(conn: sqlite3.Connection):
                 if doc_index == 0:
                     type_code = "R"
                     # The R doc at wf_done is what makes the group final-approved
-                    # (process_service.get_group_tree, D0002 §2).
+                    # (process_service.get_group_tree, the design).
                     review = "wf_done" if _is_final_approved(group_index) else "approved"
                 elif doc_index == 1 and _is_discarded(group_index):
                     # A file-less DC record is what makes a group discarded.
@@ -1052,7 +1052,7 @@ def load_variants() -> dict:
     }
 
 def test_hidden_memo_scope_and_latest_created_contract():
-    """T0006 §10: scoped SQL returns latest visible memo, skips terminal docs,
+    """scoped SQL returns latest visible memo, skips terminal docs,
     while the unchanged full-tree path retains both documents' memo payloads."""
     from unittest.mock import patch
 
@@ -1148,7 +1148,7 @@ class TestLoadScaleVariants:
         assert pruned_ids == [n["id"] for n in full if n["id"] in set(pruned_ids)]
 
     def test_record_the_transfer_measurement(self, load_variants, record_property):
-        """The numbers T0006's completion criteria ask to be recorded.
+        """The numbers the earlier implementation's completion criteria ask to be recorded.
 
         Deliberately NOT a timing threshold: the assertions are on counts and monotonic
         direction only, and the measured values are printed so the work report can quote

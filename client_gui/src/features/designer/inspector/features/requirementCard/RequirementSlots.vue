@@ -51,7 +51,7 @@ function lineOf(slot: RequirementSlot): InspectorSlotView {
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
-    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line (the
+    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · Empty · the history number · [AI 호출] of the card's own line (the
     // root document line is the card's `requirement` line).
     ...cardLineRow(props.target, slot, slot.key === 'document' ? 'requirement' : slot.key),
   }
@@ -63,12 +63,12 @@ function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key === 'document' ? 'requirement' : line.key) })
 }
 
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key === 'document' ? 'requirement' : line.key) })
 }
 
-/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

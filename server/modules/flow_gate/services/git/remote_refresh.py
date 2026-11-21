@@ -1,4 +1,4 @@
-"""Fetch-only remote refresh (0066 D#1 §3-7, E12).
+"""Fetch-only remote refresh.
 
 Under R alone: origin is synced with the configuration and ``fetch --prune origin``
 refreshes the remote-tracking refs (a branch deleted on origin loses its stale tracking

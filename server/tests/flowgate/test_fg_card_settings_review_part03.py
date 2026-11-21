@@ -77,7 +77,7 @@ def test_a_card_review_rejection_is_no_node_event_and_the_card_is_locked_while_i
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
                     "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
     result_binder.reconcile_if_needed(FA, "flowgate")                    # the review ended rejected:
-    assert _node(env, key) == ("review", result)                          # no node event (flowgate.v02.0056 T#1)
+    assert _node(env, key) == ("review", result)                          # no node event
     assert get_settings(env, FA, key)["locked"] is False
 def test_the_review_loop_of_a_passed_result_is_read_from_its_row(env, decided, monkeypatch):
     from modules.flow_gate.services import ai_run_end_hooks

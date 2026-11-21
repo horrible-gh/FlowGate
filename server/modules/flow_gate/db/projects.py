@@ -20,7 +20,7 @@ def _get_by_id_db(project_id: str) -> Optional[dict]:
 
 
 def get_by_id(project_id: str) -> Optional[dict]:
-    """TTL-cached read (0282 NR0003 finding 2) — one screen load called this 11
+    """TTL-cached read — one screen load called this 11
     times from independent entry points. Returns a copy so a caller mutating
     its row cannot poison the cache; every writer below invalidates."""
     row = meta_cache.project_cache().get_or_load(
@@ -38,7 +38,7 @@ def list_projects(is_active: int | None = None) -> list[dict]:
     return store._fetch_all("SELECT * FROM projects ORDER BY project_id")
 
 
-# 0282 NR0003 finding 2 (tail item): the information_schema/table_exists probe for
+# (tail item): the information_schema/table_exists probe for
 # project_modules ran once per list_modules call. Migrations only ever CREATE
 # this table, so remember the positive answer for the process lifetime; a False
 # keeps re-probing, which stays correct while migrations are still landing.
@@ -53,7 +53,7 @@ def _project_modules_table_exists(store) -> bool:
 
 
 def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
-    """Batch counterpart of list_modules() (0559 NR0003 §7 권고1, B0001).
+    """Batch counterpart of list_modules.
 
     ``_attach_project_modules()`` called list_modules() once per project, so
     ``GET /projects?status=active`` cost 1 + 2N queries (operations measurement:

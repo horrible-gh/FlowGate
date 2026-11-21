@@ -1,4 +1,4 @@
-"""Central actor-aware mutation policy and route inventory metadata (group 0378)."""
+"""Central actor-aware mutation policy and route inventory metadata (the earlier change)."""
 from __future__ import annotations
 
 import json
@@ -86,7 +86,7 @@ def principal_from_request(request: Request) -> MutationPrincipal:
 
 
 def _lease_run_live(run_id: Optional[str]) -> bool:
-    """0401 NR0003 SS3 cause 3 / T0004 item 4: is the lease's OWN run still alive?
+    """SS3 cause 3 / the earlier implementation: is the lease's OWN run still alive?
 
     Shares ai_invoke_service.is_run_live so the 423 body and the screen it drives
     can never again say two different things. Deferred import -- mutation_policy is
@@ -268,7 +268,7 @@ async def resolve_request_group(
     doc_id = _find(body, {"doc_id", "doc_ref", "document_id", "target_doc_id"})
     if not doc_id:
         doc_id = _path_candidate(path, ("documents", "document", "workflow", "queries"))
-    # 0394 T0016 item 4: this reads one document from the DB — run off the event loop for the
+    # this reads one document from the DB — run off the event loop for the
     # same reason as the dispatch comment above.
     resolved = await anyio.to_thread.run_sync(group_id_from_doc_id, doc_id)
     if resolved:
@@ -291,12 +291,12 @@ _PERSONAL_PATHS = (
 def is_policy_control_path(path: str) -> bool:
     """Run start/resume, cancel/pause, the manual lease release, and the explicit
     paused-chain release all own the lease lifecycle, so none of them may self-block
-    (0401 T0004 item 2 adds the lease-release case; 0459 T0007 §2-7 adds the paused-
+    (the earlier implementation adds the lease-release case; the earlier implementation adds the paused-
     chain DELETE -- its own internal active-run/lease conflict judgement in
     release_paused_chain still runs, this only keeps the group mutation lease
     middleware from pre-empting it).
 
-    0529 B0001 adds the finished-card removal for the same reason as the paused DELETE:
+    adds the finished-card removal for the same reason as the paused DELETE:
     clearing a leftover card is how a user gets rid of the wreckage a stuck group left
     behind, so the very lease that group is holding must not be what refuses it. The
     service still makes its own judgement -- a run that is genuinely still live answers
@@ -312,20 +312,20 @@ def is_policy_control_path(path: str) -> bool:
     )
 
 
-# flowgate.v02.0032 T#1 (D0006 §3.10.3): the two human routes the group AI-run lease must
+# the two human routes the group AI-run lease must
 # never block. [new chat] creates a standalone CH (no worktree, no sequence; the number
 # is protected by the numbering CAS/retry), and a command decision is how the user
 # answers the very run that holds the lease while it waits. Matched with or without the
 # /flowgate context prefix. The CLI `POST /chat-commands` is NOT exempt: its worker token
 # passes the lease check as the lease owner.
 _CONVERSATION_CREATE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/?$")
-# flowgate.v02.0047: the one AI title of a just-created standalone CH. The first send may
+# the one AI title of a just-created standalone CH. The first send may
 # start the chat's AI run at once, and the title write must not then be refused by it;
 # the handler only ever touches that CH's title, compare-and-set.
 _CONVERSATION_AUTO_TITLE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/[^/]+/auto-title/?$")
 _CHAT_COMMAND_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands/[^/]+/decision/?$")
 _CHAT_COMMAND_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands(?:/[^/]+)?/?$")
-# flowgate.chat.0017 CH0002: AI attachment upload requests. A person's decision is how the
+# AI attachment upload requests. A person's decision is how the
 # user answers a request while (or after) the AI that made it works in the same group, so the
 # AI-run lease must never refuse it -- the handler checks perm_document_update, the archived /
 # disposed group and the document guard itself. The AI's own intake only stages a file in a
@@ -336,7 +336,7 @@ _ATTACHMENT_REQUEST_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachme
 _ATTACHMENT_REQUEST_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/?$")
 # The bulk decision (approve all / reject all) runs every item through the same single decision.
 _ATTACHMENT_REQUEST_BULK_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/decisions/?$")
-# flowgate.v02test.0024 B: a chat error record is the user's own history of a refused request
+# B: a chat error record is the user's own history of a refused request
 # (a send, an AI call, a command decision) -- often refused while the chat's own AI run holds
 # the lease. It writes only a per-user event row, so the lease must not refuse it.
 _CHAT_ERROR_RECORD_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-activity/[^/]+/errors/?$")
@@ -351,7 +351,7 @@ _SESSION_TURN_PATH = re.compile(r"^(?:/flowgate)?/api/v1/documents/[^/]+/convers
 
 
 def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
-    """Explicit lease exemptions (D0006 §3.10.3), next to -- not inside --
+    """Explicit lease exemptions, next to -- not inside --
     ``is_policy_control_path``, whose ai-invoke meaning stays unchanged. The handlers
     still check permission and group state themselves."""
     verb = str(method or "").upper()
@@ -384,7 +384,7 @@ def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResou
         return "group", "message_images_lease_exempt"
     if _SESSION_TURN_PATH.search(path):
         return "group", "conversation_turn_lease_exempt"
-    # flowgate.v02.0032 T#1 (D0006 §3.10.3): explicit reasons for the Conversation routes.
+    # explicit reasons for the Conversation routes.
     if _CONVERSATION_CREATE_PATH.search(path):
         return "group", "conversation_create_lease_exempt"
     if _CONVERSATION_AUTO_TITLE_PATH.search(path):
@@ -460,11 +460,11 @@ class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
         if (
             request.method.upper() not in MUTATION_METHODS
             or is_policy_control_path(request.url.path)
-            # flowgate.v02.0032 T#1 (D0006 §3.10.3): [new chat] and command decisions.
+            # [new chat] and command decisions.
             or is_group_lease_exempt_path(request.url.path, request.method)
         ):
             return await call_next(request)
-        # 0394 T0016 item 4: the two steps below read the DB synchronously (token lookup, lease
+        # the two steps below read the DB synchronously (token lookup, lease
         # lookup) and write to it (heartbeat). dispatch is an async function **every** mutating
         # request passes through, so calling those reads inline stalls every other request for
         # that duration — the exact defect 0275/0279 removed from route handlers, still sitting
@@ -489,14 +489,14 @@ class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
 async def _record_denied_mutation(
     exc: MutationPolicyError, request: Request, principal: Optional[MutationPrincipal] = None,
 ) -> None:
-    """Leave the refusal on the AI run that owns the lease (0393 B0001 / T0005 §2-6).
+    """Leave the refusal on the AI run that owns the lease.
 
     Until now a denial was a bare 403/423 on the wire and nothing else: the run record kept
-    an empty error list and exit code 0, so the only account of B0001's three dead reviews
+    an empty error list and exit code 0, so the only account of the regression's three dead reviews
     was a sentence each worker volunteered in its last message. The lease names the run, so
     the run can be told.
 
-    Two hard constraints, both from T0005 §2-6:
+    Two hard constraints, both from the earlier implementation:
 
     * `dispatch` is async. Calling the DB/registry write inline would trip the event-loop
       blocking guard (`test_event_loop_blocking_*`), and wrapping it in a helper does not
@@ -512,10 +512,10 @@ async def _record_denied_mutation(
     code = str(exc.error.get("code") or "")
     operation = f"{request.method.upper()} {request.url.path}"
     # WHOSE refusal this is decides where it lands. A worker turned away is the run failing
-    # (B0001) — that belongs in the run's own error list and ends the run. A person turned
+    # — that belongs in the run's own error list and ends the run. A person turned
     # away is the lease doing its job while the AI works; filing that as the AI's error
     # would put a row on nearly every run and would eventually relabel a healthy run as
-    # failed. Both are still recorded, in the two different places (T0005 §2-6).
+    # failed. Both are still recorded, in the two different places.
     by_worker = principal is not None and principal.kind == "worker"
 
     def _mark() -> None:

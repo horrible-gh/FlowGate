@@ -1,4 +1,4 @@
-"""2026-09-23 incident (flowgate.default.0594 / merge_id=100): a resolve_conflict mention
+"""2026-09-23 incident (merge_id=100): a resolve_conflict mention
 duplicated every conflicted file's full content into both `chunks` and `raw_content`, with no
 size cap. On this merge it produced a ~3.94M-char prompt (measured on the real
 aiv_20260923_000487 / aiv_20260923_000485 runs) that every provider fast_fail'd as "too long"
@@ -22,7 +22,7 @@ Two independent fixes, tested at two levels:
      1,048,576-char ceiling and the 500,000-char guard, so it is exactly the case work item 4
      says the guard (not a batch resolver) must catch in this T.
 
-0608 T0005: the mention is now tool-driven past a small size (chunk locations, text read
+the mention is now tool-driven past a small size (chunk locations, text read
 through /remote/read), so that 0594-scale set no longer reaches the guard; the guard itself
 is unchanged — see the last test.
 """
@@ -271,7 +271,7 @@ class TestConflictMentionMaxCharsIsConservativeVsKnownProviderLimits:
         stand-in still built a mention over the 500,000-char guard (the real merge_id=100
         conflict measured 1,809,923 chars), and the guard was what caught it.
 
-        0608 T0005 replaced that with the tool-driven mention: once the chunk text is past
+        replaced that with the tool-driven mention: once the chunk text is past
         CONFLICT_INLINE_CHUNKS_MAX_CHARS the mention carries each chunk's location and the
         worker reads the text through /remote/read. The same 10 × 16,000-line stand-in now
         stays under 10,000 chars — without touching the guard, which stays at 500,000 as

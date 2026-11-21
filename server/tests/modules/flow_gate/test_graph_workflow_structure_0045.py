@@ -1,7 +1,7 @@
-"""flowgate.v02.0045 T0011 / T0013 / T0015 — source-level guards for the Graph Workflow package.
+"""source-level guards for the Graph Workflow package.
 
-D0004 §2.1 (one responsibility per file, fixed dependency direction, pure domain) with the
-L0009 §1.5 numbers, and the v0.1 touch points of D0004 §4.3: route registration (S1~S5) and the
+(one responsibility per file, fixed dependency direction, pure domain) with the
+numbers, and the v0.1 touch points of the design: route registration (S1~S5) and the
 S4 engine-router delegation calls (one import + one call per contact). S5's document node
 executor only calls the existing token service (D0004 §2.2 "호출만").
 """
@@ -18,7 +18,7 @@ SERVER_GRAPH_FILE_MAX_LINES = 400
 SERVER_GRAPH_ROUTE_FILE_MAX_LINES = 250
 
 LAYERS = ("api", "services", "projection", "store", "domain")
-# layer -> Graph layers it may import (D0004 §2.2 dependency flow)
+# layer -> Graph layers it may import (dependency flow)
 ALLOWED_GRAPH_LAYERS = {
     "api": {"api", "services", "domain"},
     "services": {"services", "projection", "store", "domain"},
@@ -33,13 +33,13 @@ ALLOWED_OUTSIDE = {
         "modules.flow_gate.db.connection", "modules.flow_gate.db.groups", "modules.flow_gate.db.documents",
         "modules.flow_gate.api.v1.events", "modules.flow_gate.services.work_plan_apply_service",
         "modules.flow_gate.process_service", "modules.flow_gate.services.token_service",
-        # S5 AI node start (D0004 §3.4, L0009 §2.6.6): the existing AI invoke and its mention, called only.
+        # S5 AI node start: the existing AI invoke and its mention, called only.
         "modules.flow_gate.services.ai_invoke_service", "modules.flow_gate.services.mention_service",
-        # flowgate.v02.0056 T#3: the card memo port the AI node start's mention asks (stdlib only, D0006 §2.3).
+        # the card memo port the AI node start's mention asks (stdlib only, the design).
         "modules.flow_gate.services.card_memo_hooks",
-        # flowgate.v02.0064 T-B1e: the body precheck the AI node start's mention asks (L0005 2.14), called only.
+        # T-B1e: the body precheck the AI node start's mention asks, called only.
         "modules.flow_gate.services.ai_start_precheck",
-        # flowgate.v02.0064 T-B4d: the card title port (inbox candidate) and the mention's title request wording.
+        # T-B4d: the card title port (inbox candidate) and the mention's title request wording.
         "modules.flow_gate.services.node_title_hooks",
     ),
     "projection": (
@@ -134,9 +134,9 @@ def test_route_registration_is_the_only_main_py_touch_point():
     ]
 
 
-# D0004 §4.3: v0.1 file -> number of contacts in it. Each contact is a delegation call to
+# v0.1 file -> number of contacts in it. Each contact is a delegation call to
 # graph_workflow.api.v01_contact (decide / sequence save / advance / inbox / review).
-# flowgate.v02.0048 D#2 §4.2: + the R↔B root-type conversion (guarded like a sequence save).
+# + the R↔B root-type conversion (guarded like a sequence save).
 V01_CONTACT_FILES = {
     "modules/flow_gate/api/v1/workflow_decision_routes.py": 3,
     "modules/flow_gate/api/inbox_routes.py": 1,

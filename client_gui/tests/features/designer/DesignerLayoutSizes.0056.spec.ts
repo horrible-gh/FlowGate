@@ -1,6 +1,5 @@
 /**
- * flowgate.v02test.0056 — the Designer's Dock sizes are saved per person, and 창 › 창 배치 초기화
- * (R 0056.0001 §2 / §3).
+ * The Designer's Dock sizes are saved per person, and Window › Reset window layout restores them.
  *
  * The Shell is mounted as in DesignerResize.0046 (real Explorers, real project store, only the
  * HTTP layer `@shared/api` mocked). jsdom lays nothing out, so the "window too small" drawing is

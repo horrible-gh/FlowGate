@@ -1,4 +1,4 @@
-// flowgate.v02.0030 — Palette glyph table (MirageGlass 03-designer-shell, right Palette and the
+// Palette glyph table (MirageGlass 03-designer-shell, right Palette and the
 // "카드 추가" icon picker). Every glyph is SVG path data on a 24x24 box drawn with
 // stroke="currentColor", the same form as center/canvas/flowNodeKinds.ts, so a Palette item's
 // icon key can travel with a drag and be drawn by whoever receives it.

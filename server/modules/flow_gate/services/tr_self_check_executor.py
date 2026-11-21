@@ -41,12 +41,12 @@ class ExecutionResult:
     cancelled: bool
     stdout_tail: str
     stderr_tail: str
-    # flowgate.v02.0114 T#4 (D 0006 3.5 (2)): the POSIX supervisor found a process of the run
+    # (the earlier implementation 3.5 ): the POSIX supervisor found a process of the run
     # running on more processors than the run's limit and ended the tree. Never a success.
     cpu_limit_violated: bool = False
 
 
-# Four-way process judgement (flowgate.v02.0080 T#1, NR0007 §5-0 ①). start_identity's None
+# Four-way process judgement (①). start_identity's None
 # mixes "the OS says there is no such process" with "the lookup failed"; releasing a run on
 # the second is exactly the bug, so the Self-check proof path judges with identity_state.
 MATCH = "match"         # the recorded process is alive (same PID, same start marker)
@@ -206,12 +206,12 @@ class ProcessControl:
         self.progress = None
 
     def cancel(self) -> bool:
-        """Deliver the stop. False = it could not be delivered (0080 T#2: reported to the
+        """Deliver the stop. False = it could not be delivered (the earlier implementation: reported to the
         canceller); the worker's tree proof still decides whether the run may end."""
         with self._lock:
             if self.owner:
                 # The Job, not the direct child: a target that already exited may have left
-                # descendants in it (0080 T#1).
+                # descendants in it.
                 return self._terminate_job()
             if self.proc.poll() is not None:
                 # The supervisor is gone; it already cleared the group (its finally) or the
@@ -227,7 +227,7 @@ class ProcessControl:
             return False
 
     def _terminate_job(self) -> bool:
-        """TerminateJobObject, retried (NR0007 §5 item 3-c). If it keeps failing, the direct
+        """TerminateJobObject, retried (c). If it keeps failing, the direct
         child is killed through its own handle -- still open, so its PID cannot have been
         reused -- and False reports the failure: Job members other than the direct child
         may survive, and the run's tree proof then keeps the run held."""
@@ -259,14 +259,14 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
           record: Callable[[str, dict], None] | None = None,
           cpu_limit: int | None = None) -> tuple[ProcessControl, dict]:
     """``job_name`` (Windows): create the run's Job under that name so a later server can open
-    it and prove it empty (Self-check, 0080 T#1). A name already in use fails the spawn.
+    it and prove it empty (Self-check, the earlier implementation). A name already in use fails the spawn.
 
-    ``cpu_limit`` (0114 T#4): the run's reservation R. The whole tree is limited to R logical
+    ``cpu_limit``: the run's reservation R. The whole tree is limited to R logical
     processors before the target runs any code -- the Job's affinity (Windows), the
     supervisor's own processor set inherited by the target (POSIX). A limit that cannot be set
     fails the spawn like an owner that cannot be set up; no tree runs without it.
 
-    ``record(stage, ownership)`` (Self-check, 0080 T#3) persists what is known before it is
+    ``record(stage, ownership)`` (Self-check, the earlier implementation) persists what is known before it is
     needed: ``"spawning"`` right before the first Popen, ``"spawned"`` right after each Popen
     -- on Windows before the Job assignment. A failing record fails the spawn.
 

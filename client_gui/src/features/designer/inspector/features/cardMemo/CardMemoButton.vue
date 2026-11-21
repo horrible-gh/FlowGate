@@ -2,7 +2,7 @@
   <!-- flowgate.v02.0056 (0017-CH) — the header ✎ 메모 of a Graph card: opens a new card memo window (what the
        documents tab's memo [+] did). A card not stored yet, or a read-only view, keeps the button disabled with the
        reason as its tooltip.
-       flowgate.v02.0150: the memo windows are not drawn here (the header goes with the selection) but by the Frame's
+       the memo windows are not drawn here (the header goes with the selection) but by the Frame's
        windows host (CardMemoWindows), so a selection change or a click elsewhere never closes them. -->
   <button
     type="button"

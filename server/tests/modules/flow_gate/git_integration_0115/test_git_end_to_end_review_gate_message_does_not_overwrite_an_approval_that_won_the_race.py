@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_message_does_not_overwrite_an_approval_that_won_the_race(
         self, origin_repo,
     ):
-        # 0481 TR0009 rev5 (AI review finding, same class): `send_review_message`
+        # AI review finding (same class): `send_review_message`
         # validated the session, then started the AI run — a slow call — and only
         # then wrote the pending bookkeeping back from the context it had read
         # BEFORE the run started. An approval completing in that window was

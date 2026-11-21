@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — merge awaiting approval card (0033-D §3.7, Q 394). Filled from GET
+// merge awaiting approval card. Filled from GET
 // review; approve / reject availability is the server's can_approve / can_reject as-is.
 // Reject pins the project's default AI (no picker in R/v7) and is disabled without one.
 import { computed } from 'vue'

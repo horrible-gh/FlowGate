@@ -40,7 +40,7 @@ def test_an_ambiguous_slug_is_left_pending(applied, disk):
     assert find_renamed_migrations(applied, disk) == []
 @pytest.mark.parametrize("history", _MOVED_HISTORIES)
 def test_the_rejected_boot_reproduces_for_every_history_without_the_repair(tmp_path, history):
-    """대조군 — 반려 사유가 세 이력 모두에서 글자 그대로 재현된다."""
+    """Control case: reproduce the rejection reason verbatim for all three histories."""
     from sqloader.migrator import DatabaseMigrator
     from sqloader.sqlite3 import SQLiteWrapper
 

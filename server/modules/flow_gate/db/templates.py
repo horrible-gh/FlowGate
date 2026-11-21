@@ -249,10 +249,10 @@ def delete_template(id: int) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Template-body provision / management (group 0024 — D0010/P0011/P0012/L0013/DB0014)
+# Template-body provision / management
 # document_type_template_contents holds one markdown body per (template_id, locale).
 # These functions are the SQL realisation of DB0014 §4 (the templates_db.* / types_db.*
-# semantic contracts L0013 §2 declared). Path/usable() checks live in the app layer.
+# semantic contracts the earlier implementation declared). Path/usable checks live in the app layer.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # SUPPORTED_LOCALES order (ko, ja, en) — used for deterministic enumeration ordering.
@@ -265,7 +265,7 @@ def is_design_type(type_code: str) -> bool:
     """DB0014 §4-1 — single source of truth for 'is this a valid design type?'.
 
     True iff document_types has (type_code, series='design'). Shared by the
-    Next-Step provision gate and the resolver (L0013 §5-6 equivalence invariant).
+    Next-Step provision gate and the resolver (equivalence invariant).
     """
     row = get_store()._fetch_one(
         "SELECT 1 FROM document_types "
@@ -313,7 +313,7 @@ def available_locales(template_id: int) -> list[str]:
 
 
 def template_owned_by(template_id: int, project_id: str) -> bool:
-    """P0011 §5 ownership gate — template_id belongs to project_id (else 404).
+    """ownership gate — template_id belongs to project_id (else 404).
 
     Global rows (project_id IS NULL) are not project-scoped management targets.
     """
@@ -326,7 +326,7 @@ def template_owned_by(template_id: int, project_id: str) -> bool:
 
 
 def registry_with_locales(project_id: str, type_code: str) -> Optional[dict]:
-    """P0011 E1 — registry row for (project, type) + held locales (ko,ja,en order)."""
+    """E1 — registry row for (project, type) + held locales (ko,ja,en order)."""
     row = get_store()._fetch_one(
         "SELECT id, project_id, type_code, is_active, uploaded_by, uploaded_at "
         "FROM document_type_templates "
@@ -341,7 +341,7 @@ def registry_with_locales(project_id: str, type_code: str) -> Optional[dict]:
 
 
 def list_content_meta(template_id: int) -> list[dict]:
-    """P0011 E2 — locale bodies (excluding raw content), byte-accurate, ko/ja/en order."""
+    """E2 — locale bodies (excluding raw content), byte-accurate, ko/ja/en order."""
     # Byte size is computed in Python: SQLite's LENGTH(CAST(content AS BLOB)) is not
     # portable (MySQL/PostgreSQL lack a BLOB cast); the locale rows are few (ko/ja/en).
     rows = get_store()._fetch_all(
@@ -357,7 +357,7 @@ def list_content_meta(template_id: int) -> list[dict]:
 
 
 def get_content_row(template_id: int, locale: str) -> Optional[dict]:
-    """P0011 E3 — single locale body, full content row."""
+    """E3 — single locale body, full content row."""
     return get_store()._fetch_one(
         "SELECT template_id, locale, content, updated_by, updated_at "
         "FROM document_type_template_contents "
@@ -367,7 +367,7 @@ def get_content_row(template_id: int, locale: str) -> Optional[dict]:
 
 
 def ensure_registry(project_id: str, type_code: str, user_id: str | None) -> int:
-    """P0011 E4 (a) — ensure a registry row exists (is_active=0 on create),
+    """E4 (a) — ensure a registry row exists (is_active=0 on create),
     preserving is_active/uploaded_* if it already exists. Returns the row id.
     """
     store = get_store()
@@ -389,7 +389,7 @@ def ensure_registry(project_id: str, type_code: str, user_id: str | None) -> int
 def upsert_content(
     template_id: int, locale: str, content: str, user_id: str | None
 ) -> bool:
-    """P0011 E5 — register/replace a locale body (no redeploy, idempotent timestamp).
+    """E5 — register/replace a locale body (no redeploy, idempotent timestamp).
 
     Returns True if a new row was inserted (created), False if it updated/no-op.
     DB0014 §4-6 E5: unchanged content re-PUT keeps updated_by/at (idempotent).
@@ -416,7 +416,7 @@ def upsert_content(
 
 
 def count_other_locales(template_id: int, locale: str) -> int:
-    """P0011 E6 (a) — number of bodies in OTHER locales (ko-fallback delete guard)."""
+    """E6 (a) — number of bodies in OTHER locales (ko-fallback delete guard)."""
     row = get_store()._fetch_one(
         "SELECT COUNT(*) AS others FROM document_type_template_contents "
         "WHERE template_id = ? AND locale <> ?",
@@ -426,7 +426,7 @@ def count_other_locales(template_id: int, locale: str) -> int:
 
 
 def delete_content(template_id: int, locale: str) -> bool:
-    """P0011 E6 (b) — delete a locale body. Returns True if a row existed."""
+    """E6 (b) — delete a locale body. Returns True if a row existed."""
     store = get_store()
     existed = store._fetch_one(
         "SELECT 1 FROM document_type_template_contents "
@@ -442,7 +442,7 @@ def delete_content(template_id: int, locale: str) -> bool:
 
 
 def set_template_active(template_id: int, project_id: str, is_active: int) -> bool:
-    """P0011 E7 — activation toggle (project-scoped). Returns True if a row matched."""
+    """E7 — activation toggle (project-scoped). Returns True if a row matched."""
     store = get_store()
     matched = store._fetch_one(
         "SELECT 1 FROM document_type_templates WHERE id = ? AND project_id = ?",

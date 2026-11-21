@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0125 T#2 — a `needs_intervention` card whose review attempts are used up
+ * a `needs_intervention` card whose review attempts are used up
  * (`review_not_passed:review_count_exhausted`, Q #544) tells the user how it is released: one sentence in ko / en / ja,
  * shown by the Canvas card title and the Inspector pill tooltip alike. The menu `다음 단계` / `전체 실행` path stays the
  * only release: one `startRun` (step / full) and no other request (no stopRun, no resume), no extra button.

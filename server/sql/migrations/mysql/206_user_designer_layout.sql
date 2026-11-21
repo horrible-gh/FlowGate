@@ -1,5 +1,5 @@
 -- 206_user_designer_layout.sql
--- flowgate.v02test.0056 (R 0056.0001 2 "크기 저장"): one row per user for the Designer's three dock sizes --
+-- Saved dock sizes: one row per user for the Designer's three dock sizes --
 -- left panel width, right panel width, bottom panel height, in px. Read and written through
 -- GET/PATCH /api/v1/me/ui-settings (designer_left_width / designer_right_width / designer_bottom_height).
 --

@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_stale_run_discarded_when_approved_while_active(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev4 (AI review finding): L0007 §2.9 requires a
+        # AI review finding: the review design requires a
         # re-instruction run's result to be discarded as `stale_run` when the
         # review it was launched against is no longer the one on screen. A human
         # can approve the CURRENTLY pending snapshot while a conversation run
@@ -161,11 +161,11 @@ class TestGitEndToEnd(_Scenario):
         roles = [(t["role"], t["status"]) for t in review["conversation"]]
         assert ("ai", "stale_run") in roles
         assert not any(t["role"] == "ai" and t["status"] == "accepted" for t in review["conversation"])
-        # 0481 T0010 rev6 (rejection 3): the PLAN is still discarded, but the ANSWER is
+        # After a rejected review: the PLAN is still discarded, but the ANSWER is
         # kept. Before this the operator got only "the approval target changed, instruct
         # again" -- twice in the rejected transcript -- and never saw what the run said.
         stale = next(t for t in review["conversation"] if t["status"] == "stale_run")
-        # 0578 T0006 §2.2: the answer is CONTENT and stays byte-for-byte; the three things
+        # The answer is CONTENT and stays byte-for-byte; the three things
         # rev6 added to the sentence (which check fired, that it answers an older
         # candidate, that the plan was discarded) are now params, so they survive a locale
         # change instead of being frozen in Korean.

@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_eol_only_conflict_is_separated_and_lf_survives_resolution_0608(self, origin_repo, monkeypatch):
-        """0608 T0005, connected: a real finalize whose main side flipped one file to CRLF
+        """Connected: a real finalize whose main side flipped one file to CRLF
         (the 6132cf58 shape) opens a session in which that file is already merged and
         marked resolved; the mention lists only the real conflict, by location; and the
         LF file resolved through the resolve-token route stays LF."""

@@ -1,11 +1,11 @@
-"""Unit 1b of the group-lock migration (flowgate.default.0669 chat seq 18/27; 0666 0009-L §2.3~2.9).
+"""Unit 1b of the group-lock migration (chat seq 18/27; the earlier implementation~2.9).
 
 1. lock_key / order check / re-entry (L 2.1.2, 2.3.3, 2.4)
 2. acquire / release on resource_lock (L 2.5)
 3. (removed in unit 9c: the legacy bridge and Gate no longer exist)
 4. stale reclaim of a DEAD owner's row (L 2.9)
 5. unit 2 callers: ordinary source mutation and a spec run's preparing copy hold G (D 3.9,
-   3.10; 0684 T#4 replaced the retired Source Bundle ensure with the run_prepare holder)
+   3.10; the earlier implementation replaced the retired Source Bundle ensure with the run_prepare holder)
 """
 from __future__ import annotations
 

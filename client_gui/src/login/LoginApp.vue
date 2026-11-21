@@ -60,7 +60,7 @@
         <h1 id="fg-login-title" class="fg-login-title">{{ t('auth.login.redirecting') }}</h1>
       </div>
 
-      <!-- R0001 §2: status and error messages sit at the bottom of the card, as in the mockup. -->
+      <!-- status and error messages sit at the bottom of the card, as in the mockup. -->
       <div
         v-if="status"
         class="fg-login-status"
@@ -125,7 +125,7 @@ const syncDocumentLanguage = () => {
 }
 watch(locale, syncDocumentLanguage)
 
-// flowgate.v02.0020: an invitation link from 시스템 › 사용자 (/login?invite=<token>) opens the
+// flowgate.v02.0020: an invitation link from "시스템" › "사용자" (/login?invite=<token>) opens the
 // password step.
 onMounted(() => {
   syncDocumentLanguage()

@@ -76,7 +76,7 @@ class TestFinalizeActionContract0331(_Scenario):
         )
         # Deliberately untouched. The axis UI reads `action_axes` (below), so the
         # legacy choice lists stay frozen as the fallback an older client renders
-        # (NR0005 §8 "additive"); widening them would change what that client
+        # ("additive"); widening them would change what that client
         # shows without it knowing the new semantics. The project default stays
         # narrow because its DB CHECK still only allows merge/push/wait.
         assert svc.DEFAULT_FINALIZE_ACTION_VALUES == ("merge", "push", "wait")
@@ -89,7 +89,7 @@ class TestFinalizeActionContract0331(_Scenario):
 
         state = svc.get_finalize_state(git_active_group)["state"]
         axes = state["action_axes"]
-        # Approved v4 order — 머지 → 커밋 → 대기 — comes from the server, so the
+        # Approved v4 order — merge → commit → wait — comes from the server, so the
         # three finalize surfaces cannot drift into different orders.
         assert axes["scopes"] == ["merge", "commit", "none"]
         assert axes["matrix"] == {

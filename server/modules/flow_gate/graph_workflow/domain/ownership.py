@@ -1,4 +1,4 @@
-"""Flow ownership judgement (D0004 §3.1, L0009 §2.2.1) — a pure function of two facts."""
+"""Flow ownership judgement — a pure function of two facts."""
 from __future__ import annotations
 
 

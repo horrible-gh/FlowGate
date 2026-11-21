@@ -1,5 +1,5 @@
 -- 136_workspaces.sql  (mysql)
--- flowgate.v02.0020 TR (시안 11~14). Same meaning as sqlite/136: workspaces, workspace_members,
+-- flowgate.v02.0020 TR (draft 11~14). Same meaning as sqlite/136: workspaces, workspace_members,
 -- workspace_project_access, workspace_ai_allowlist, projects.workspace_id, users.last_login_at and
 -- the invitation columns. Existing projects move into the default workspace 'FlowGate Workspace';
 -- existing project roles are kept as per-person exceptions where they differ from the role

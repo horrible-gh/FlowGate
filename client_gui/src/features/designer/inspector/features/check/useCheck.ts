@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#12 — the check card's state and operations (D#1 §7.2 / §7.3, §8.2, §10.2 T#12 row).
+// the check card's state and operations (the earlier implementation row).
 // Three reads through useInspectorResource: the AC's review state (status, group disposed), the group's
 // Git reflection state as the final approval sees it (`git/finalize?context=approval`) and whether an
 // AI run owns the group (`/ai-invoke/active`). The final approval calls the existing v0.1 approve with

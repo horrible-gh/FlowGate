@@ -1,4 +1,4 @@
-"""Pure decision table of the non-destructive push reconciliation (flowgate.v02.0153 T#3).
+"""Pure decision table of the non-destructive push reconciliation.
 
 ``reconcile_push_session`` gathers facts step by step (local checkout state, the
 ``ls-remote`` probes, an optional ``fetch`` and two ancestry checks) and asks
@@ -8,9 +8,9 @@ give the same :class:`Decision`. A ``need_*`` action means "gather this fact, th
 ask again"; every other action is terminal for the current cycle and the executor
 performs exactly that action.
 
-The order of the checks is T0009 §3.2:
+The order of the checks is the earlier implementation:
 
-1. (lock, kind re-check and the T#2 preservation gate run before this table)
+1. (lock, kind re-check and the the earlier implementation preservation gate run before this table)
 2. cycle budget spent (counted before this cycle) → ``exhausted`` without any remote
    contact
 3. local checkout: HEAD == publish commit, no MERGE_HEAD, clean tracked files;

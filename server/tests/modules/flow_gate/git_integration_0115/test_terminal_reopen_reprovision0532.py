@@ -99,16 +99,16 @@ class TestTerminalReopenReprovision0532(_Scenario):
 
         wt = src_root("GitTermProj", "gittermprj_default_0100")
         assert wt.is_dir()
-        # C1 is preserved (T0007 §4 condition 2) ...
+        # C1 is preserved (condition 2) ...
         assert (wt / "c1.txt").read_text(encoding="utf-8") == "c1 content\n"
-        # ... AND the later base commit is NOT silently dropped (T0007 §4 condition 1).
+        # ... AND the later base commit is NOT silently dropped (condition 1).
         assert (wt / "b2.txt").read_text(encoding="utf-8") == "later base work\n"
         log = _git(["log", "--format=%H"], cwd=wt).splitlines()
         assert c1 in log
 
 
     def test_reopen_fails_closed_when_the_base_no_longer_contains_c1(self, terminal_reopen_origin):
-        """T0007 §11 fail-closed — if the current base does not contain C1 as an
+        """Fail-closed: if the current base does not contain C1 as an
         ancestor (the base/history relationship cannot be trusted), reopen must refuse
         rather than guess which commit to fork from."""
         from modules.flow_gate.services import git_service as svc

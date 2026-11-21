@@ -1,4 +1,4 @@
-"""Document body diagnosis and recovery (0064 T-B1d; L0005 2.11~2.13, P0006 §2.6~§2.8, DB0007 §2.4).
+"""Document body diagnosis and recovery.
 
 ``diagnose_scope`` only reads: document rows, files, revision backups, review rows and events. It writes no
 row, no file and no ``id_counter``. ``recover_one`` is the one judgement behind the single ``regenerate``
@@ -9,7 +9,7 @@ and only then the row's ``file_path`` changes (DB first) and the new file is wri
 Number, title, status, approval and references never change.
 
 A refusal is ``RecoveryRefused``: nothing was changed. The single route answers it with the existing
-envelopes (P0006 §2.7), the bulk route carries it as ``refusal`` and goes on with the next document (§2.8).
+envelopes, the bulk route carries it as ``refusal`` and goes on with the next document.
 """
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ NOT_RECOVERABLE = frozenset({FIX_STORAGE_ROOT, READ_ERROR_MANUAL})
 RELINKS = frozenset({RELINK_OPPOSITE, RELINK_STANDARD})
 RESTORED_FROM = {RESTORE_REVISION: "revision", REGENERATE_STUB: "metadata", REGENERATE_CARD_DRAFT: "card_draft",
                  RELINK_OPPOSITE: "relinked_opposite", RELINK_STANDARD: "relinked_standard"}
-# L0005 1.3 ``body_lost`` (also the value the ``doc_body_recovered`` note keeps) -> P0006 ``body_loss``.
+# 1.3 ``body_lost`` (also the value the ``doc_body_recovered`` note keeps) -> the plan ``body_loss``.
 BODY_LOSS = {"false": "none", "possible": "possible", "true": "lost"}
-# ``get_storage_root_info`` source -> the P0006 §2.6 name; the configured value keys of each source.
+# ``get_storage_root_info`` source -> the the plan name; the configured value keys of each source.
 ROOT_SOURCES = {"environment": "env", "project": "project_setting", "system": "system_setting",
                 "default": "default"}
 _CONFIGURED_SOURCES = (("system", "system_setting"), ("project", "project_setting"), ("env", "env"),
@@ -115,10 +115,10 @@ def _branch(doc: dict) -> str:
     return (doc.get("branch") or "main") or "main"
 
 
-# ── storage root (L0005 2.11.6) ──────────────────────────────────────────────
+# ── storage root ──────────────────────────────────────────────
 
 def storage_root_info(project_id: Optional[str]) -> dict:
-    """The effective storage root, its source and every configured value (P0006 §2.6 ``storage_root``)."""
+    """The effective storage root, its source and every configured value (``storage_root``)."""
     info = storage_paths.get_storage_root_info(project_id)
     return {
         "effective": info["effective"],
@@ -142,7 +142,7 @@ def find_under_other_roots(doc: dict, root: dict) -> Optional[dict]:
     if raw.startswith("/storage/"):
         raw = raw[len("/storage/"):]
     elif not raw or Path(raw).is_absolute() or _DRIVE_RE.match(raw):
-        return None                                   # absolute paths are not checked (L0005 2.11.6)
+        return None                                   # absolute paths are not checked
     seen = [root["effective"]]
     for key, source in _CONFIGURED_SOURCES:
         value = root["configured"].get(key)
@@ -154,7 +154,7 @@ def find_under_other_roots(doc: dict, root: dict) -> Optional[dict]:
     return None
 
 
-# ── relink candidates (L0005 2.11.3 / 2.11.5) ────────────────────────────────
+# ── relink candidates ────────────────────────────────
 
 def standard_location(doc: dict) -> Path:
     """Where the document's file belongs: a card document where its generator files it (WP included),
@@ -232,7 +232,7 @@ def standard_location_candidate(doc: dict) -> Optional[Path]:
     return path if front_matter_matches(path, doc) else None
 
 
-# ── card origin and the untouched evidence (L0005 2.11.4) ────────────────────
+# ── card origin and the untouched evidence ────────────────────
 
 def _has_rows(table: str, doc_id: str) -> bool:
     from modules.flow_gate.db.connection import get_store
@@ -296,7 +296,7 @@ def card_origin(doc: dict) -> dict:
             "body_lost": "false" if proven else "possible"}
 
 
-# ── diagnosis (L0005 2.11.1 / 2.11.2) ────────────────────────────────────────
+# ── diagnosis ────────────────────────────────────────
 
 def read_state(doc: dict) -> str:
     """The body read state; a read error is this document's ``read_error``, never the whole diagnosis's."""
@@ -310,7 +310,7 @@ def read_state(doc: dict) -> str:
 
 
 def diagnose_doc(doc: dict, reason: str, root: dict) -> dict:
-    """The recovery method of one unreadable document, in the fixed order of L0005 2.11.2 / 4.3."""
+    """The recovery method of one unreadable document, in the fixed order of the earlier implementation 2.11.2 / 4.3."""
     origin = card_origin(doc)
     found = {"reason": reason, "origin": origin, "candidate": None, "evidence": None, "body_lost": None}
     if reason == "read_error":
@@ -377,7 +377,7 @@ def _project_documents(project_id: str):
 
 
 def diagnose_scope(group_id: Optional[str] = None, project_id: Optional[str] = None) -> dict:
-    """P0006 §2.6: every document of a Flow, or of a project read DIAG_SCAN_PAGE rows at a time to the end."""
+    """every document of a Flow, or of a project read DIAG_SCAN_PAGE rows at a time to the end."""
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.db import projects as db_projects
@@ -419,7 +419,7 @@ def diagnose_scope(group_id: Optional[str] = None, project_id: Optional[str] = N
     }
 
 
-# ── recovery (L0005 2.12 / 2.13) ─────────────────────────────────────────────
+# ── recovery ─────────────────────────────────────────────
 
 def card_front_matter(project_id: str, module: str, flow_id: str, doc_type: str, code: str, title: str) -> str:
     """The front matter of a card document's empty draft (the card document generator and its recovery)."""
@@ -499,7 +499,7 @@ def recover_one(doc_id: str, expected_method: Optional[str], actor: str) -> dict
 
 
 def _recover_legacy(doc_id: str, expected_method: Optional[str], actor: str) -> dict:
-    """Recover one document's body by the method its diagnosis gives now (L0005 2.12)."""
+    """Recover one document's body by the method its diagnosis gives now."""
     from modules.flow_gate.documents import document_service
     from modules.flow_gate.graph_workflow.services.flow_guard import run_in_document_guard
 
@@ -562,13 +562,13 @@ def _apply(doc: dict, reason: str, found: dict, actor: str) -> dict:
     before = doc.get("file_path") or ""
     after = storage_paths.to_storage_relative(target, project_id)
     if data is not None:
-        # Another row pointing at the target uses it even while its file is missing (L0005 2.3.1); this row
+        # Another row pointing at the target uses it even while its file is missing; this row
         # may point at it already (a recorded location) and is not another user.
         user = document_using_file(target, own)
         if user is not None:
             raise _in_use(target, project_id, user)
     # Only the path (and the file name derived from it): recovery applies no editability check, unlike
-    # ``document_service.update_document`` (L0005 2.12 — a final approved or closed document recovers too).
+    # ``document_service.update_document`` (2.12 — a final approved or closed document recovers too).
     updated = db_documents.update(doc["doc_id"], {"file_path": after})
     if data is not None:                          # this row points at the target already (DB first)
         try:
@@ -599,7 +599,7 @@ def _apply(doc: dict, reason: str, found: dict, actor: str) -> dict:
 
 
 def recover_bulk(selections: list[tuple[str, Optional[str]]], actor: str) -> dict:
-    """P0006 §2.8: one transaction per document, in the request order; a refusal or a failure of one document
+    """one transaction per document, in the request order; a refusal or a failure of one document
     never stops the next."""
     results, counts = [], {"recovered": 0, "refused": 0, "failed": 0}
     for doc_id, expected_method in selections:

@@ -1,4 +1,4 @@
-"""0156 T6 preparation refusal E2E. Explicit CLI only; never collected by pytest.
+"""preparation refusal E2E. Explicit CLI only; never collected by pytest.
 
 python server/tests/flowgate/e2e_0156/preparation_harness.py SCRATCH build
 python server/tests/flowgate/e2e_0156/preparation_harness.py SCRATCH conflict lan all baseline

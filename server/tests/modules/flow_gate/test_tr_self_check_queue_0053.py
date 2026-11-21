@@ -1,4 +1,4 @@
-"""flowgate.v02test.0053 1-B (T0005): the Self-check queue -- queued requests, snapshot runs, no G.
+"""1-B: the Self-check queue -- queued requests, snapshot runs, no G.
 
 Real pieces: a fully migrated SQLite store (migration 201), a throwaway git repository standing
 in for the managed worktree (committed, modified, untracked and ignored files), the real
@@ -406,4 +406,4 @@ def _queued_row(project, doc, n):
 
 
 
-# 0053 1-C: quotas apply at spawn, not admission/claim, and survive reconnects.
+# quotas apply at spawn, not admission/claim, and survive reconnects.

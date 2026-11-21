@@ -98,7 +98,7 @@ def test_readiness_after_a_reopen_requires_a_new_revision(env):
     t2 = auto_approved_t2(group)
     doc_id = submit_tr2(group, t2)
     assert approve(client, doc_id, 1, request_key="reopen:0110").status_code == 200
-    # 0660 T0004 §3: a real reopen (status AND commit cancel). Flipping only the status
+    # a real reopen (status AND commit cancel). Flipping only the status
     # is the RC3 state, which test_tr2_lifecycle_0660 covers as revert_pending.
     user = {"user_id": USER, "is_admin": 1, "username": "tr2reviewer"}
     workflow_rework_service.reopen_to_target(

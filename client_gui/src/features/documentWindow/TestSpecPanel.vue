@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0053 T#4 — the test scenario's view: the v0.1 TestSpecPanel
+// the test scenario's view: the v0.1 TestSpecPanel
 // (client/src/main/components/documents/TestSpecPanel.vue) read only. Kept: the Case count and required
 // count, the latest verdict, the intro, one block per Case (id, title, category, execution mode, required,
 // its result or "pending" while a run is live) and the Case fields in the v0.1 order. Not carried over: the

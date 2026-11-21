@@ -1,11 +1,11 @@
 """Dialect-agnostic replacement for migration 037_rejection_id_backfill.sql.
 
-B0091 / T0004. The SQL form of this backfill was authored in SQLite-only JSON DML
+The SQL form of this backfill was authored in SQLite-only JSON DML
 (``json_each`` table-valued function, the virtual ``key``/``value`` columns,
 ``json_group_array``, ``json_array_length`` and ``||`` concatenation). None of
 those translate to MariaDB/PostgreSQL, so the converted ``mysql``/``postgres``
 migrations failed at parse time (error 1064 near the reserved word ``key``) and
-blocked startup on those backends entirely (NR0003).
+blocked startup on those backends entirely.
 
 The transform is therefore moved here, where it runs once at startup after the
 schema migrations against the live connection — identical on every dialect. The
@@ -27,7 +27,7 @@ import json
 from ..dialect import SQLITE, translate
 from ...workflow.rejection_identity import legacy_rejection_id
 
-# The four response fields introduced alongside the rejection_id (P0005 / T0006).
+# The four response fields introduced alongside the rejection_id.
 # They are initialised to NULL when absent and preserved when present.
 _RESPONSE_FIELDS = (
     "ai_response",

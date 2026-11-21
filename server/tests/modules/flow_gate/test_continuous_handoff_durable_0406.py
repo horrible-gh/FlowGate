@@ -1,4 +1,4 @@
-"""0406 T0022 — durable continuous handoff, worker visibility, and prompt audit."""
+"""durable continuous handoff, worker visibility, and prompt audit."""
 from __future__ import annotations
 
 import hashlib
@@ -122,8 +122,8 @@ def test_request_auto_resume_persists_the_complete_i3_bundle(monkeypatch):
 
 
 def test_request_auto_resume_persists_the_provider_pin(monkeypatch):
-    """flowgate.default.0501 T0004 필수2: continuation_provider_pinned is real state (the
-    0448 force_all pick), distinct from continuation_base_provider_id -- _run()'s own
+    """required item 2: continuation_provider_pinned is real state (the
+    force_all pick), distinct from continuation_base_provider_id -- _run's own
     "complete i3 bundle" fixture above does not set it, so a regression that dropped just
     this one field would still show every other assertion in that test green. An ordinary
     hop boundary (request_auto_resume -> _write_handoff_row), not a pause/resume path.
@@ -196,7 +196,7 @@ def test_startup_marks_memory_lost_handoff_resumable(monkeypatch):
 def test_prompt_audit_records_source_length_and_hash(monkeypatch):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 7})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: {"item_seq": 3, "type": "TR"})
-    # This item_seq carries no pre-instruction of its own (0554 T0014 §5's fail-closed check
+    # This item_seq carries no pre-instruction of its own (the earlier implementation's fail-closed check
     # needs a real row to read, not an unmocked store, to reach that "no pre-instruction"
     # conclusion instead of a lookup-failure error).
     monkeypatch.setattr(
@@ -250,10 +250,10 @@ def test_prompt_audit_fields_round_trip_by_run_id(monkeypatch):
     assert got["prompt_final_sha256"] == "b" * 64
 
 
-# ── 응답이 사실을 말하는가 (작업 1·3) ──────────────────────────────────────────
-# 실행이 끝난 뒤 "N/T 가 사라졌다"와 "TR 워커가 정상 실행됐다"를 가르려면, 그 사실이
-# 응답과 실행 기록에 실려 있어야 한다. 위 두 시험이 고정한 것은 판정 자체였고,
-# 아래는 그 판정 결과가 호출자에게 실제로 도달하는지다.
+# The response reflects the actual state.
+# Distinguish instruction folding from successful TR worker execution after completion:
+# the response and execution record must preserve the outcome. The tests above
+# pin the decision; those below verify that callers actually receive it.
 
 def _wire_advance(monkeypatch, head_item_seq=4, head_type="NR"):
     doc = {
@@ -298,11 +298,11 @@ def test_advance_response_names_the_real_worker_and_the_auto_handled_slots(monke
         continuation_instruction_mode="auto_approved",
     )
 
-    # 서버가 대신 처리한 칸과, 이 홉의 워커가 실제로 채운 칸이 따로 실린다.
+    # Report server-handled slots separately from slots filled by this hop worker.
     assert result["auto_handled_item_seqs"] == [3]
     assert result["worker_item_seq"] == 4
     assert result["worker_document_type"] == "NR"
-    # 요청이 명시적으로 골랐으므로 정규화는 발동하지 않았다.
+    # The request selected this explicitly, so normalization did not run.
     assert result["continuation_instruction_mode"] == "auto_approved"
     assert result["continuation_instruction_mode_requested"] == "auto_approved"
     assert result["continuation_instruction_mode_fallback_applied"] is False
@@ -310,7 +310,7 @@ def test_advance_response_names_the_real_worker_and_the_auto_handled_slots(monke
 
 
 def test_missing_mode_still_folds_to_auto_approved_but_says_so(monkeypatch):
-    """작업 2: 하위호환은 유지한다. 조용한 것만 그만둔다."""
+    """Task 2: preserve compatibility while making the outcome observable."""
     _wire_advance(monkeypatch)
     monkeypatch.setattr(wds, "_auto_complete_instruction_heads", lambda **_kw: [])
     logged = []
@@ -325,7 +325,7 @@ def test_missing_mode_still_folds_to_auto_approved_but_says_so(monkeypatch):
     assert result["continuation_instruction_mode"] == "auto_approved"
     assert result["continuation_instruction_mode_requested"] is None
     assert result["continuation_instruction_mode_fallback_applied"] is True
-    # 자동처리된 칸이 하나도 없어도 정규화 발동은 기록한다 — 그것이 작업 2 가 요구한 기록이다.
+    # Record normalization even with no auto-handled slots, as required by task 2.
     assert logged and logged[0]["mode_fallback_applied"] is True
 
 
@@ -353,7 +353,7 @@ def test_normalization_fallback_reaches_the_event_log(monkeypatch):
 
 
 def test_nothing_to_report_writes_no_event(monkeypatch):
-    """정상 ai_direct 홉마다 이벤트가 쌓이면 그 기록은 곧 읽히지 않는다."""
+    """Recording every normal ai_direct hop would drown out useful events."""
     events = []
     from modules.flow_gate.workflow import event_logger
 
@@ -369,7 +369,7 @@ def test_nothing_to_report_writes_no_event(monkeypatch):
 
 
 def test_durable_row_survives_until_the_next_hop_actually_starts(monkeypatch):
-    """작업 4: 지우는 시점이 계약이다 — spawn 이 성공한 **뒤에만** 지운다."""
+    """Task 4: delete only after spawn succeeds; timing is part of the contract."""
     run = _run()
     order = []
     monkeypatch.setattr(svc, "_write_handoff_row",
@@ -393,16 +393,16 @@ def test_clear_only_removes_this_runs_system_row(monkeypatch):
                         lambda group, stop_run_id: deleted.append((group, stop_run_id)))
 
     svc._clear_handoff_row("flowgate.default.0406", "aiv_0406")
-    # run_id 를 모르면 아무것도 지우지 않는다 — 남의 정지행을 지우느니 남기는 편이 낫다.
+    # Unknown run_id: delete nothing.
     svc._clear_handoff_row("flowgate.default.0406", None)
 
     assert deleted == [("flowgate.default.0406", "aiv_0406")]
 
 
 def test_audit_columns_exist_in_the_real_schema_and_round_trip(migrated_sqlite_db):
-    """작업 5: 가짜 저장소는 마이그레이션 080 이 없어도 초록이다.
+    """Task 5: a fake store passes even without migration 080.
 
-    그래서 진짜 스키마로 한 번 더 왕복한다 — 열이 없으면 여기서 OperationalError 로 터진다.
+    Exercise the real schema too; missing columns raise OperationalError here.
     """
     import sqlite3
     from modules.flow_gate.db import connection as db_connection
@@ -455,7 +455,7 @@ def test_audit_columns_exist_in_the_real_schema_and_round_trip(migrated_sqlite_d
         assert got["continuation_instruction_mode_fallback_applied"] is True
         assert got["prompt_user_message_length"] == len(applied)
         assert got["prompt_user_message_sha256"] == hashlib.sha256(applied.encode()).hexdigest()
-        # 원문은 어디에도 없다 — 길이와 해시만 남긴다는 것이 작업 5 의 계약이다.
+        # Preserve only length and hash, never the original text, as required by task 5.
         assert applied not in " ".join(str(v) for v in got.values())
 
         detail = svc._run_detail_from_row(got)
@@ -469,12 +469,12 @@ def test_audit_columns_exist_in_the_real_schema_and_round_trip(migrated_sqlite_d
 
 
 def test_worker_crash_parks_the_intent_instead_of_dropping_it(monkeypatch):
-    """작업 4: spawn 하지 않는 세 번째 분기 — 워커 자체가 터진 경우.
+    """Task 4: the third non-spawn branch, when the worker itself crashes.
 
-    NR0021 §5 의 표에서 이 줄만 ``clear_auto_resume`` 이었다. 큐를 비우는 것은 맞다(터진
-    홉을 자동으로 이어 달리게 하면 안 된다). 그러나 그때 lease 는 이미 ``begin_handoff`` 로
-    바뀌어 있고 ``_finalize_run`` 은 pending 이 보이면 release 를 건너뛰므로, 그냥 비우면
-    그 그룹의 다음 실행이 lease 만료까지 막힌다.
+    used clear_auto_resume only here. Clearing the queue is correct because
+    a crashed hop must not auto-continue. But begin_handoff already changed the lease,
+    and _finalize_run skips release while pending exists. Clearing only the queue
+    would block the group's next run until lease expiry.
     """
     from modules.flow_gate.services import ai_invoke_service as service
 
@@ -485,7 +485,7 @@ def test_worker_crash_parks_the_intent_instead_of_dropping_it(monkeypatch):
     with service._auto_resume_lock:
         service._auto_resume[run["group_id"]] = _pending()
 
-    # _worker 의 except 분기가 하는 일만 그대로 재현한다 (프로바이더 실행 없이).
+    # Reproduce the _worker exception path without invoking a provider.
     crashed_pending = service.pop_auto_resume(run.get("group_id"))
     assert crashed_pending is not None
     crashed_code = run.get("stop_code") or service.HOP_HANDOFF_FAILED_STOP_CODE

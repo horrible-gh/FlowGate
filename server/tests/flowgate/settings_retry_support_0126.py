@@ -1,4 +1,4 @@
-"""0126 T#5 A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
+"""Real settings routes, SQLite assignments/ledger, AI admission recorder.
 No external model, deployed server, or existing user data is used.
 """
 import json
@@ -34,7 +34,7 @@ def new_settings(env, key):
 
 def _submitted_ai_instruction(env,monkeypatch,provider):
     """0158: the instruction AI's write as a submitted document (``pending_review``), as an edit submission leaves it.
-    ``_ai_writes_instruction`` alone writes the body only; its review start then submits it itself (flowgate.v02test.0015,
+    ``_ai_writes_instruction`` alone writes the body only; its review start then submits it itself (
     the case below), which is not this recovery case."""
     import test_fg_ai_roles_l2_review as l2_review
     from modules.flow_gate.db import documents as db_documents

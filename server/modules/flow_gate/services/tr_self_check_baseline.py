@@ -1,4 +1,4 @@
-"""Baseline reuse judgement for Self-check runs (flowgate.v02.0114 T#3, D 0006 3.4).
+"""Baseline reuse judgement for Self-check runs.
 
 ``judge`` decides from two stored run records, the after-run's pre-change anchor and an
 ancestry check whether a baseline run may stand in for re-running the regression before the

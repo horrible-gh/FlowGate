@@ -1,5 +1,5 @@
-"""flowgate.v02.0114 T#3: the pre-change anchor, the run row's new evidence columns, and the
-token issue point they hang on (D 0006 3.3, 7.2, 9.2-5 (c)(f), 9.2-6 (c)-(h)).
+"""the pre-change anchor, the run row's new evidence columns, and the
+token issue point they hang on (the earlier implementation 3.3, 7.2, 9.2-5 (c)(f), 9.2-6 (c)-(h)).
 
 Runs on a fully migrated SQLite through the real ``token_service.issue`` / ``consume`` and
 the real workflow head lookup (sequence B -> T(approved) -> TR(pending)). The group worktree

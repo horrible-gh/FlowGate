@@ -1,4 +1,4 @@
-"""Card completion port handler: how the Graph workflow reaches this package (flowgate.v02.0119 T#2, T-1; D0006 §2.3).
+"""Card completion port handler: how the Graph workflow reaches this package.
 
 ``modules.flow_gate.graph_workflow.services.card_completion_ports`` defines the Graph's port; the composition root
 (``startup.py``) calls :func:`register` once at startup, which also records when the service was installed (the boundary
@@ -12,7 +12,7 @@ server's start (``startup.start_card_completion_integration``): with no handler 
     unsettled       before a run read: a written record of the Flow that the reconciliation must settle
     settle          inside the reconciliation's guard: the Flow's written records that no longer answer their node turn
                     ``superseded`` (done with them: ``applied``)
-    pending_outputs result binding (flowgate.v02.0119 T#4, T-3): the card's required outputs other than the result not
+    pending_outputs result binding: the card's required outputs other than the result not
                     complete yet (``outputs.pending_outputs``: the instruction the card uses, not approved)
 """
 from __future__ import annotations

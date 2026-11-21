@@ -57,7 +57,7 @@ def test_context_version_historical_unconfirmed_and_structure_protection(env, de
     for context in [dict(before['context'],run_id='old-run'),dict(before['context'],graph_revision_no=0),
                     dict(before['context'],graph_revision_no=2),{'run_id':None,'graph_revision_no':None,'draft_version':None}]:
         r=env['client'].get(url(key),params={'context':json.dumps(context)},headers=_h())
-        # flowgate.v02.0130: the screen's view never locks the card; the answer names the server's context.
+        # the screen's view never locks the card; the answer names the server's context.
         assert r.status_code == 200 and r.json()['locked'] is False and r.json()['context'] == before['context']
         assert r.json()['context_matches'] is False
         bad=dict(before,context=context)

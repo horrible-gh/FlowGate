@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
+  <ModelessShell kind-color="#f0a23a" v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 300)" :initial-y="geometry('y', 110)" :initial-width="geometry('width', 760)" :initial-height="geometry('height', 560)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <template #header>{{ t(k('title')) }} <small>{{ t(k('to_next')) }}</small></template>
@@ -90,7 +90,7 @@ h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
 .line { margin: 0; color: var(--fg2-muted); font-size: 12px; }
 .mk { width: 8px; height: 8px; border-radius: 2px; } .mk.defect { background: var(--fg2-status-danger-fg); } .mk.other { background: var(--fg2-status-success-fg); }
 .item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--fg2-line); }
-/* flowgate.v02.0094: a case id in the line's own type, muted (no monospace of its own). */
+/* a case id in the line's own type, muted (no monospace of its own). */
 .id { color: var(--fg2-muted); white-space: nowrap; }
 .sub { display: flex; flex-direction: column; gap: 3px; width: 100%; font-size: 12px; } .mute { color: var(--fg2-muted); }
 .evidence-list { display: flex; flex-wrap: wrap; gap: 5px; } .evidence { padding: 1px 7px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius-sm); font-size: 11px; }

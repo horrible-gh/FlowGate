@@ -1,4 +1,4 @@
-"""Regression coverage for group 0437 continuous-work and CH-reference prompts."""
+"""Regression coverage for the earlier change continuous-work and CH-reference prompts."""
 from __future__ import annotations
 
 import pytest

@@ -1,7 +1,7 @@
 """Approval job progress, conflict hand-off meaning and provider failure reasons
 (flowgate.default.0674 T0004 §2-2, §2-4, §2-5, §2-6 and §4 "서버").
 
-0674 NR0003 measured what the screen could not see: a conflict AI run that ended
+The review measured what the screen could not see: a conflict AI run that ended
 ``finished / exited / outcome=none`` with ``stop_code``/``stop_reason`` NULL while its own
 output said ``Selected model is at capacity`` (D1's server half), a final approval job whose
 waiting states (freeze_wait / blocked / retry_wait / recovery_required) reached no screen

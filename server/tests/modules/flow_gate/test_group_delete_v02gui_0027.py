@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0027 (0008-T) — delete an empty Group (module) only.
+"""delete an empty Group (module) only.
 
 Real SQLite with every migration, the real FlowGateStore, the real module routes and the real tree
 builders; only authentication and the SSE delivery are replaced. Covers the route (200 / 409

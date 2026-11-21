@@ -2,7 +2,7 @@ import { serverLogout } from '@shared/api'
 import { announceAuthSessionEnded } from '@shared/authSessionSignal'
 import { setCurrentUser, useCurrentUser } from './currentUser'
 
-// Sign out of this browser (flowgate.v02.0076 T#2, D §2.2): the existing POST /auth/logout
+// Sign out of this browser: the existing POST /auth/logout
 // through the shared serverLogout(), then the same local clean-up v0.1's UserMenu does. The
 // current session is ended this way, never by DELETE /auth/sessions/{sid} (the server answers
 // that with 409 current_session_use_logout).
@@ -12,7 +12,7 @@ import { setCurrentUser, useCurrentUser } from './currentUser'
 
 const LOGIN_PATH = '/login'
 
-// flowgate.v02.0105 T#1: the user's keys of this browser tab's sessionStorage go too (the Designer's F5 snapshot).
+// the user's keys of this browser tab's sessionStorage go too (the Designer's F5 snapshot).
 export function clearStoredAuth(username: string | null): void {
   if (username) {
     for (const storage of [localStorage, sessionStorage]) {
@@ -31,7 +31,7 @@ export function clearStoredAuth(username: string | null): void {
 
 export async function logout(): Promise<void> {
   const username = useCurrentUser().user.value?.username ?? null
-  // flowgate.v02test.0036 T#1: stop the session's work BEFORE the server call, so nothing new (a Flow attachment
+  // stop the session's work BEFORE the server call, so nothing new (a Flow attachment
   // delete whose five seconds run out) is sent while the sign-out is on the way.
   announceAuthSessionEnded()
   try {

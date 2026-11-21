@@ -1,6 +1,6 @@
-"""0273 — the install-time bootstrap must work on every supported engine.
+"""the install-time bootstrap must work on every supported engine.
 
-NR0003 P1-1: create_dev_user.py and check_db_ready.py opened the DB with
+create_dev_user.py and check_db_ready.py opened the DB with
 `import sqlite3`, so all three install paths skipped the admin bootstrap when
 DB_TYPE was mysql or postgres. A `DB_TYPE=postgres` install therefore ran to
 completion with zero accounts able to log in.

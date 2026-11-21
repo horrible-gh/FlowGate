@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_allows_both_sides_kept(self, origin_repo):
-        # 0478 T0012 completion (ii): the ordinary "markers just gone" GREEN path is
+        # The ordinary "markers just gone" GREEN path is
         # untouched when both sides' added lines survive — exact line reproduction of
         # the original chunk is not required, only that each side's contribution is
         # present somewhere in the submitted content.
@@ -104,7 +104,7 @@ class TestGitEndToEnd(_Scenario):
 
         # both sides' lines present, reordered and paraphrased around — not a byte-for-byte
         # reproduction of the original chunk — must still pass.
-        # 0481 T0008: opt into the pre-existing immediate-merge behavior (see the
+        # Opt into the pre-existing immediate-merge behavior (see the
         # note in test_conflict_resolve_flow above) — this test is about the
         # side-drop content check, not the review gate.
         svc.record_auto_authority(group, merge_id, True)

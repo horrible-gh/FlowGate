@@ -1,4 +1,4 @@
-"""Restart-orphan document review loop recovery (flowgate.default.0486 T0019)."""
+"""Restart-orphan document review loop recovery."""
 from __future__ import annotations
 
 import os
@@ -229,7 +229,7 @@ def test_loop_failure_is_logged_without_losing_orphan_run(monkeypatch, caplog):
 
 @pytest.mark.parametrize("stage", ["review", "rework"])
 def test_abandoned_run_stops_active_loop_once_with_retry_exhausted(recovery_db, stage):
-    """flowgate.v02test.0014: the post-process recovery's loop close is the same one-way CAS."""
+    """the post-process recovery's loop close is the same one-way CAS."""
     run_id = f"aiv_abandoned_{stage}"
     db_loops.insert(loop_row(run_id, stage))
     before = db_loops.get(run_id)

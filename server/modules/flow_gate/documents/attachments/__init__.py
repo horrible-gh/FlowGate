@@ -1,12 +1,12 @@
 """Document attachments — storage, registry and the six request paths.
 
-flowgate.default.0060: D0010 (design) → P0011 (contract) → L0012 (logic) → DB0013 (schema)
-→ T0016 (this implementation).
+(design) → the plan (contract) → the earlier implementation (logic) →  (schema)
+→ the earlier implementation (this implementation).
 
 Layout, in dependency order:
 
   constants  §1     — every number and policy table, one copy of each
-  errors     §1-4   — the P0011 error envelope as an exception
+  errors — the the plan error envelope as an exception
   naming     §2-2~4 — sanitize / extension policy / dedupe / Content-Disposition
   registry   DB §4  — the `attachments` table, exactly the queries DB0013 lists
   locator    §2-1,6 — the single gate: where the room is, and is this row really ours

@@ -1,7 +1,7 @@
 <template>
-  <!-- flowgate.v02.0051 stage 2 — the 작업계획 card's header actions (0035 v7 plan.m.*: ⇉ 전개 on a plan
+  <!-- flowgate.v02.0051 stage 2 — the 작업계획 card's header actions (0035 v7 plan.m.*: ⇉ deployment on a plan
        not deployed yet, ⇉ 재전개 ▾ on a deployed plan).
-       flowgate.v02.0074 T#5 (D#1 §6.1) — they deploy the plan onto the Flow's Graph draft (T#4 API). Two icon buttons
+       they deploy the plan onto the Flow's Graph draft (API). Two icon buttons
        of the ⋯ button's kind (IconButton sm, secondary) with no text label: [전개], and [재전개 ▾] opening its two items
        「추가분 전개」 · 「정리 포함 재전개」 (each with its own state and tooltip). The tooltips name the operation and, when
        it is off, why. Only 「정리 포함 재전개」 asks once (ModalShell sm: how many cards go, how many stay) and then runs

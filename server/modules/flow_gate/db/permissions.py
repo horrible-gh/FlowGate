@@ -7,7 +7,7 @@ from .connection import get_store, now_iso
 def _invalidate_permission_cache() -> None:
     """Drop rbac.permission_service's cache after a role_permissions change.
 
-    0276 T0009: that cache holds resolved permission sets for 30 minutes and was
+    that cache holds resolved permission sets for 30 minutes and was
     only invalidated on role *assignment*. Editing a role's permissions changes
     what every holder of that role may do, so it has to clear too. Imported
     lazily — the db package must not import rbac at module load time.

@@ -1,4 +1,4 @@
-"""Per-group work-base update regression (0626 T0004)."""
+"""Per-group work-base update regression."""
 import subprocess
 from pathlib import Path
 
@@ -202,7 +202,7 @@ def test_nondefault_conflict_uses_group_update_session(tmp_path, monkeypatch):
     result = git_service.update_from_base(GROUP)["result"]
     assert {k: result[k] for k in ("status", "merge_id", "conflict_files")} == {
         "status": "conflict", "merge_id": 42, "conflict_files": ["v1.txt"]}
-    assert result["source_ref"] == "v0.2" and result["source_sha"]   # 0665 T0004 pinned source
+    assert result["source_ref"] == "v0.2" and result["source_sha"]   # pinned source
     assert captured["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
     assert captured["gid"] == GROUP
     assert git(group, "diff", "--name-only", "--diff-filter=U") == "v1.txt"

@@ -9,10 +9,10 @@ import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 import { decideSettingsAccess } from '@/features/settings/access'
 import type { SystemUsersResponse } from '@/features/settings/types'
 
-// flowgate.v02.0076 T#1 (D §1.2, §5.2 V01–V04): the real /app router — its settings routes,
+// (D, V01–V04): the real /app router — its settings routes,
 // installAuthGuard and installSettingsAccessGuard — with SettingsLayout and the real settings
-// views. Only the transport (@shared/api) is replaced, and it records every request, so "API
-// 요청 0" is checked on the request list itself rather than on a mocked view.
+// views. Only the transport (@shared/api) is replaced, and it records every request, so "zero API
+// requests" is checked on the request list itself rather than on a mocked view.
 
 const net = vi.hoisted(() => ({
   requests: [] as string[],
@@ -116,7 +116,7 @@ async function enterDirectly(url: string): Promise<VueWrapper> {
 const location = () => window.location.pathname + window.location.search + window.location.hash
 const hrefs = (w: VueWrapper) => w.findAll('a[href]').map((a) => a.attributes('href') ?? '')
 const settingsRequests = () => net.requests.filter((r) => r !== 'GET /auth/me')
-/** flowgate.v02.0077: an administrator's overview reads the Agent list once for 확인 필요 (시안 ⑩). */
+/** flowgate.v02.0077: an administrator's overview reads the Agent list once for 확인 필요 (mockup ⑩). */
 const HUB_ADMIN_READ = ['GET /api/v1/system/agents']
 
 function expectNoManagementDom(w: VueWrapper): void {
@@ -182,7 +182,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '테마', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 에이전트', '사용자', '전체 프로젝트'])
     expectNoRetiredOrInertEntries(hub)
@@ -192,7 +192,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'project', 'system'])
     expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
-    // flowgate.v02.0077 (시안 ⑩): the four pages under their group headings — headings only, no extra entry.
+    // (mockup ⑩): the four pages under their group headings — headings only, no extra entry.
     expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '실행 자원', '계정 · 프로젝트'])
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
     for (const key of ['storage', 'environment', 'logs', 'security', 'info', 'workspace']) {
@@ -204,7 +204,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     setCurrentUser(person)
     const hub = await enterDirectly('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me'])
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '테마', '에이전트', '보안 · 세션'])
     expect(hrefs(hub).filter((href) => /\/settings\/(system|project)/.test(href))).toEqual([])
     expect(hub.find('[data-testid="settings-hub-empty"]').exists()).toBe(false)
     expectNoRetiredOrInertEntries(hub)

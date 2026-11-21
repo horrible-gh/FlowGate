@@ -1,4 +1,4 @@
-"""flowgate.default.0665 T0004 — recorded work-base commits, one scope floor, merge target.
+"""recorded work-base commits, one scope floor, merge target.
 
 Real git end-to-end (bare origin + service base checkout, same harness as
 test_git_merge_target_0594.py) on a temporary SQLite with the real migrations. Every
@@ -6,7 +6,7 @@ test builds its OWN project, so nothing leaks between cases.
 
 Fixture shape: ``main`` and ``v0.2`` on origin, where ``v0.2`` carries commits ``main``
 does not have (``v02_only_*.txt``).  A group forked from ``v0.2`` used to report that
-whole ``main..v0.2`` history as its own change (B0001).
+whole ``main..v0.2`` history as its own change.
 
   A   main-based group keeps its result
   B   v0.2 group: scope / changes / file diff / review package / TR check /

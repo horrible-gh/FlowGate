@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.11 표 교체 · §3.13 신설) — on screen, a card is running only when the
+ * (M, the design revision table replaced; added) — on screen, a card is running only when the
  * server says it actually runs (`node_running`: an AI execution of it requested / running, or its AI review):
- * - the chip: an open card the server says is not running waits (작성 대기 / 응답 대기, or its 0113 wait — 지시서 / 결과
+ * - the chip: an open card the server says is not running waits (작성 대기 / 응답 대기, or its 0113 wait — instruction / 결과
  *   작성 대기 by the writing role, AI 설정 필요, AI 사용 불가); a review card neither running nor awaiting approval waits (대기);
  *   only the running states carry ◌; pending is 준비, done 완료. Without `node_running` the 0083 counts decide as before.
  * - the running line into a node follows `node_running` when sent (a waiting open node is reached, not running).

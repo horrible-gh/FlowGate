@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §4.2, T §2 W1~W2, §3 R8~R10) — the run commands while an automatic Q&A
+ * (NR the earlier change, T W1~W2, R8~R10) — the run commands while an automatic Q&A
  * responder answers the open Flow's idle run:
  *
  * - the server's `qa_responding` reaches the run the header reads (the run read `toFlowRun`, the Canvas read's run block

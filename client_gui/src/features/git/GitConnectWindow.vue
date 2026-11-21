@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#52b788"
     :key="placement.seq"
     :open="open"
     :title="t('gui.git.connect.title')"
@@ -138,7 +138,7 @@ let connectWindowSeq = 0
 </script>
 
 <script setup lang="ts">
-// flowgate.v02.0065 — Git 연결 modeless (0065-R §3.2, v12 `#gitConnectWindow`) on the shared
+// flowgate.v02.0065 — "Git 연결" modeless (0065-R §3.2, v12 `#gitConnectWindow`) on the shared
 // ModelessShell, like the 0033 windows. The fields, their order and the footer follow the
 // mockup; nothing else (no extra settings, toggle or description).
 //

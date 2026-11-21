@@ -40,7 +40,7 @@ def test_v17_revoke_invalidates_the_credential_and_the_pending_token(env):
     print(f"V17 revoke: 200 -> credential {after['credential_status']}, enrollment {after['enrollment_status']}; old credential heartbeat {hb.status_code}; old pending token enroll {enroll.status_code}")
     assert hb.status_code == 401 and enroll.status_code == 409
 def test_v17_delete_with_registration_history_removes_it_from_the_list_and_keeps_history_0019(env):
-    # flowgate.v02test.0019: registration history no longer blocks deleting (was 409
+    # registration history no longer blocks deleting (was 409
     # agent_has_registration_history). The row, its ID and the history stay; deleted_at is set.
     a = env.h("A")
     unregistered = _create(env, REMOTE_BODY)["agent_id"]

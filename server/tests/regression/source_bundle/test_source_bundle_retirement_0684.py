@@ -1,4 +1,4 @@
-"""0684 T#4: Source Bundle final removal (D#1 §2-2, §7; 0672 NR0003 §7 stage 4).
+"""Source Bundle final removal (the review stage 4).
 
 What is pinned here:
 

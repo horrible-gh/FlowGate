@@ -1,7 +1,7 @@
 """Remote tool read — line-based selector and unknown-field rejection
-(group 0507 T0004 / NR0003).
+.
 
-NR0003: an AI worker asked for start_line=1590/end_line=1640 (~50 lines) on a
+an AI worker asked for start_line=1590/end_line=1640 (~50 lines) on a
 196KB source file. Because those fields were not in the read contract, they
 were silently dropped and the whole file came back — prompt tokens for the
 next model call jumped from ~15K to ~72K. This file covers the fix:
@@ -62,7 +62,7 @@ def test_read_allowed_fields_are_unaffected_by_the_unknown_field_check(env):
     assert status == 200
 
 
-# ── start_line/end_line — the NR0003 regression itself ──────────────────────
+# ── start_line/end_line — the the review regression itself ──────────────────────
 
 def test_read_line_range_returns_only_the_requested_lines_not_the_whole_file(env):
     env.make_grant(["read"])

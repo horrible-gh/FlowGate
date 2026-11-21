@@ -261,7 +261,7 @@ def test_summary_uses_final_approval_after_all_sequence_slots_complete(
 
 
 def test_summary_excludes_discarded_group_from_active_workflows(dashboard_store):
-    # R0079.0001: discarding a group creates a file-less DC record but never flips
+    # discarding a group creates a file-less DC record but never flips
     # the requirement out of wf_in_progress, so the discarded group used to keep
     # showing in the dashboard "워크플로 현황" list. The DC record must drop it.
     _seed_base(dashboard_store)
@@ -286,7 +286,7 @@ def test_summary_excludes_discarded_group_from_active_workflows(dashboard_store)
 
 
 def test_summary_skips_active_requirement_without_sequence(dashboard_store):
-    # B0001 (group 0122): a workflow with no sequence row (orphan requirement, e.g.
+    # (the earlier change): a workflow with no sequence row (orphan requirement, e.g.
     # after "워크플로 전부 삭제") must be SKIPPED rather than raising and 500-ing the
     # whole dashboard. The read path is partial-failure tolerant now.
     _seed_base(dashboard_store)
@@ -301,7 +301,7 @@ def test_summary_skips_active_requirement_without_sequence(dashboard_store):
 
 
 def test_summary_skips_empty_sequence(dashboard_store):
-    # State B from NR0122 §4: sequence row kept but every step deleted (empty
+    # State B from the review: sequence row kept but every step deleted (empty
     # sequence). Must be skipped, not fatal.
     _seed_base(dashboard_store)
     dashboard_store.conn.execute("DELETE FROM workflow_sequence_items")
@@ -314,7 +314,7 @@ def test_summary_skips_empty_sequence(dashboard_store):
 
 
 def test_summary_renders_healthy_workflows_alongside_malformed(dashboard_store):
-    # Core B0001/0122 guarantee: one malformed workflow does not hide the healthy
+    # Core the regression/0122 guarantee: one malformed workflow does not hide the healthy
     # ones — the dashboard renders the good rows and drops only the bad one.
     _seed_base(dashboard_store)
     # Add a second, healthy group with a valid one-step sequence.
@@ -349,7 +349,7 @@ def test_summary_renders_healthy_workflows_alongside_malformed(dashboard_store):
 def test_summary_survives_malformed_workflow_end_to_end(dashboard_store):
     # End-to-end: get_dashboard_summary returns 200-shaped data with the recent
     # activity card intact even though the only workflow is malformed (was a full
-    # 500 before B0001/0122).
+    # 500 before the regression/0122).
     _seed_base(dashboard_store)
     dashboard_store.conn.execute("DELETE FROM workflow_sequences")
     dashboard_store.conn.commit()

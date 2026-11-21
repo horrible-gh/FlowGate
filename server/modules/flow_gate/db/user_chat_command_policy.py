@@ -1,4 +1,4 @@
-"""CRUD for the user_chat_command_policy table (flowgate.default.0670 T0004; v0.2 port flowgate.v02.0032 T#1).
+"""CRUD for the user_chat_command_policy table (v0.2 port the earlier change the earlier implementation).
 
 One row per user holding the chat command execution policy. Kept in its own table
 for the same reason ``user_chat_source_access`` is: saving the command policy alone

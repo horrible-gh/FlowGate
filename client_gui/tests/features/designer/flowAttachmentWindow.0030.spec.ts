@@ -363,7 +363,7 @@ describe('Flow attachment host', () => {
   })
 })
 
-// flowgate.v02test.0036 T#1 (R1): the staged delete belongs to the Flow work manager, not to the window.
+// (R1): the staged delete belongs to the Flow work manager, not to the window.
 describe('Flow attachment window close / reopen (flowgate.v02test.0036)', () => {
   const hostProps = { flowId: 'A', projectId: 'p', title: 'Flow A', isReadOnly: () => false }
   const rowsOf = (w: ReturnType<typeof mount>) => w.findAll('[data-test="flow-attachment-row"]')

@@ -1,6 +1,6 @@
-"""flowgate.default.0684 T#3 — one official result source and a chain that waits on the run.
+"""one official result source and a chain that waits on the run.
 
-D#1 §3-8 / §3-9 (0684.0006-D), CH S6:
+(0684.0006-D), CH S6:
 
 * An automated Case gets its official result from a server run only. A person (UI) or a
   test_run token may record results for manual/external Cases only; a result for an
@@ -331,7 +331,7 @@ def test_a_fail_that_ends_while_the_chain_binds_goes_to_failure_origin_review(
     assert tsr_head["consumed"] == [handed["token_id"]]
     recorded = env.db_test_runs.latest_by_doc(TS_ID)
     assert recorded["overall"] == "FAIL" and recorded["triggered_via"] == "token"
-    # D#1 §3-9: the chain's FAIL is classified by failure-origin review, not left to a human.
+    # the chain's FAIL is classified by failure-origin review, not left to a human.
     assert env.dispatched == [recorded["run_id"]]
     assert env.db_test_runs.get_run(recorded["run_id"])["error"] == "failure_origin_pending"
     assert worker["ended_before_binding"] is False  # it waited for the chain to be bound

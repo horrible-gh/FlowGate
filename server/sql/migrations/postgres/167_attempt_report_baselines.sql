@@ -1,4 +1,4 @@
--- 167_attempt_report_baselines.sql — flowgate.v02.0113 0038-T T#3 (0030-M §3.1, 0002-D 개정 §3.6-0-2: the report baseline) (PostgreSQL)
+-- 167_attempt_report_baselines.sql — flowgate.v02.0113 0038-T T#3 (0030-M §3.1, 0002-D revision §3.6-0-2: the report baseline) (PostgreSQL)
 -- Additive only.
 --   graph_attempt_report_baselines  one row per attempt: the card's report as it was when the attempt of a card that
 --                                   uses an instruction opened with none written (its report line document, revision,

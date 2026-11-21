@@ -60,7 +60,7 @@ class TestRealSelfCheckOverlap:
         run = _start_check(selfcheck_stubs, tr_sc, _worktree(g_sc), 25.0)
         _wait_running(selfcheck_stubs, tr_sc, run["self_check_run_id"])
         assert not any(r["domain"] == "G" and r["holder_kind"] == "selfcheck"
-                       for r in gc.list_locks_in_scope(PROJECT))    # 0053 1-B: no G
+                       for r in gc.list_locks_in_scope(PROJECT))    # no G
 
         base = _base()
         origin_before = _origin_head(origin_repo)

@@ -1,4 +1,4 @@
-"""Card completion (flowgate.v02.0119 T#2, T-1; 0004-CH seq 9 §1 · seq 11 교체 2 · seq 13 정정 2).
+"""Card completion (T-1; the discussion seq 9 · seq 11 replacement 2 · seq 13 correction 2).
 
 The completion record is the only source of "this node is done" in a Graph run. A node's ``review -> done`` has three
 submission causes, plus revision-bound Graph human approval:
@@ -11,7 +11,7 @@ submission causes, plus revision-bound Graph human approval:
 ``requested_by`` is the Graph run's issuer (``started_by``) and only that (it is never the actor, nor the card's
 assignee). ``verdict_id`` is the passing review row.
 
-Order (T-1 정합성):
+Order (T-1 consistency):
 
     ① ``record`` — the row is written and committed, idempotently: the key ``(run_id, node_key, attempt_id,
        result_doc_id)`` holds one live row, so a repeated review pass, a retried job or two run commands racing write

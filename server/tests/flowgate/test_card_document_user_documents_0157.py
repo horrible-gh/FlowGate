@@ -1,6 +1,6 @@
-"""flowgate.v02.0157: the Designer's standalone (non-card) document read / revision by doc_id.
+"""the Designer's standalone (non-card) document read / revision by doc_id.
 
-Real SQLite, files, CAS, revisions, events and contacts (the 0127 T#1 ``env`` fixture). Only auth,
+Real SQLite, files, CAS, revisions, events and contacts (the the earlier implementation ``env`` fixture). Only auth,
 permission and notifications are mocked there. A card-bound document keeps the coordinate routes.
 """
 import json
@@ -172,7 +172,7 @@ def test_input_contract_auth_first_and_missing_document_not_created(env):
 
 
 def test_a_plain_markdown_upload_keeps_the_current_front_matter_on_both_designer_routes(env):
-    """flowgate.v02gui.0003: an uploaded ``.md`` without front matter is saved under the document's own front matter."""
+    """an uploaded ``.md`` without front matter is saved under the document's own front matter."""
     card_url = f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
     plain = "# 제목\n\n일반 Markdown 본문\n"
     card = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,

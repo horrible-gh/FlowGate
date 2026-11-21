@@ -1,6 +1,6 @@
-"""AI invoke / turn integration of the Conversation contract (flowgate.v02.0032 T#1).
+"""AI invoke / turn integration of the Conversation contract.
 
-D0006 §2.3 (generic hook ports, composition root, handler failures never fail a run,
+(generic hook ports, composition root, handler failures never fail a run,
 no-op without registration), §3.3/§3.4 (API tool and CLI transport), §3.7 (cancel,
 finalize, startup recovery), §3.9 (reply re-anchor), §5.1 (HTTP routes) and completion
 conditions 1-4, 8, 10, 14 and 26 end to end.
@@ -101,13 +101,13 @@ def test_non_chat_runs_never_reach_the_handlers(clean_hooks):
 
 
 def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
-    # flowgate.v02test.0023: Graph reads (0145) and the control tower tools come before run_command;
+    # Graph reads  and the control tower tools come before run_command;
     # the attachment request (chat.0017) right after it. Kept apart from the order-agnostic checks below.
     integration.register()
     names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
     at = names.index("run_command")
-    # flowgate.v02gui.0028: the card role read / change follow the control tower tools.
-    # flowgate.v02gui.0032: then the AI list read before a placement.
+    # the card role read / change follow the control tower tools.
+    # then the AI list read before a placement.
     assert names[:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
                           "get_card_roles", "set_card_roles", "get_ai_options", "read_flow_recovery_basis",
                           "retry_flow_card", "restart_flow_run"]
@@ -140,7 +140,7 @@ def _source(rel):
 def test_engine_call_sites_are_in_place():
     admission = _source("modules/flow_gate/services/ai_invoke/admission.py")
     assert admission.index("chat_run_hooks.chat_run_start(run)") < admission.index("    _register_run(run, chain)")
-    # flowgate.v02.0152: no worktree snapshot inside the /ai-invoke/start request any more ...
+    # no worktree snapshot inside the /ai-invoke/start request any more ...
     start_run = admission[admission.index("def start_run("):admission.index("def _normalized_instruction_mode(")]
     assert "_chat_start_tree(" not in start_run and "start_snapshot(" not in start_run
     assert '"source_start_tree": None,' in start_run
@@ -170,7 +170,7 @@ def test_start_hook_grants_the_capability_and_prepare_snapshots(env):
     chat_run_hooks.chat_run_start(run)
     assert run["chat_command_capability"] is True
     assert run["chat_start_seq"] == 1
-    # flowgate.v02.0152: admission's hook stays cheap -- the snapshot is the worker's prepare step.
+    # admission's hook stays cheap -- the snapshot is the worker's prepare step.
     assert "source_start_tree" not in run and "source_change_capture" not in run
     chat_run_hooks.chat_run_prepare(run)
     assert run["source_start_tree"] and run["source_change_capture"] == c.CAPTURE_READY
@@ -446,15 +446,15 @@ def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
     writer = _mention(True)
     for marker in ["/canvas", "/runs/current", "/attachment-requests", "/documents/{doc_id}", "/ai-options"]:
         assert marker in reader and marker in writer
-    assert "/help/items/chat_documents" not in reader
-    assert "/help/items/chat_documents" in writer
+    assert "/help/items/documents/edit" not in reader
+    assert "/help/items/documents/edit" in writer
     assert "/revisions" not in reader and "place_flow_cards" not in reader
     assert "## Command execution" in writer and "## Command execution" not in reader
 
 
 @pytest.mark.parametrize("registered", [True, False])
 def test_execute_mention_offers_commands_without_write(env, registered):
-    """flowgate.v02test.0026: an execute token is told how to run commands and that it may
+    """an execute token is told how to run commands and that it may
     not change source; it is never offered the edit-mode commit message."""
     if registered:
         integration.register()

@@ -43,11 +43,11 @@ from tests.architecture.migrations.test_migration_numbering import (
 )
 
 def test_every_sqlite_migration_applies_in_name_order():
-    """정렬 순서 그대로 전부 적용해 본다.
+    """Execute every migration in filename order.
 
-    번호를 바꾼다는 것은 적용 순서를 건드릴 수 있다는 뜻이다(예: tokens 는 042a·062a·
-    064·075 에서 네 번 재생성되고, 그 사이의 ADD COLUMN 이 앞뒤로 밀리면 재생성이
-    없는 열을 SELECT 하게 된다). 예외를 삼키지 않고 돌려서 그 사고를 여기서 잡는다.
+    Renumbering can change execution order. For example, tokens is rebuilt
+    four times in 042a/062a/064/075; moving an intervening ADD COLUMN can make
+    a rebuild SELECT a missing column. Do not swallow exceptions here.
     """
     conn = sqlite3.connect(":memory:")
     try:
@@ -59,7 +59,7 @@ def test_every_sqlite_migration_applies_in_name_order():
     finally:
         conn.close()
 class TestFilenameCarryOver:
-    """`migrations` 표의 파일 이름을 옮기는 동작 자체를 확인한다."""
+    """Verify filename carry-over in the migrations table itself."""
 
     @staticmethod
     def _make_db(tmp_path, applied: list[str] | None) -> str:
@@ -109,8 +109,8 @@ class TestFilenameCarryOver:
         assert self._names(path) == before
 
     def test_a_db_without_the_tracking_table_is_left_alone(self, tmp_path):
-        # 새 설치. 표가 없으므로 옮길 것도 없고, 표를 만들어서도 안 된다 —
-        # sqloader 가 곧이어 자기 손으로 만든다.
+        # Fresh install: no table means nothing to migrate; do not create it here.
+        # sqloader will create the table itself immediately afterward.
         path = self._make_db(tmp_path, None)
 
         assert apply_migration_renames("sqlite3", sqlite_path=path) == 0
@@ -131,8 +131,8 @@ class TestFilenameCarryOver:
         assert not Path(path).exists()
 
     def test_a_stale_old_row_beside_the_new_one_is_dropped(self, tmp_path):
-        # 운영자가 새 파일을 손으로 적용했거나, 이전 이관이 중간에 끊긴 경우.
-        # 파일당 한 행이라는 상태를 되찾아야 한다.
+        # An operator applied the new file manually, or an earlier carry-over stopped.
+        # Restore exactly one ledger row per file.
         old, new = RENAMES[0]
         path = self._make_db(tmp_path, [old, new])
 
@@ -140,8 +140,8 @@ class TestFilenameCarryOver:
         assert self._names(path) == {new}
 
     def test_a_db_that_never_saw_the_old_names_is_untouched(self, tmp_path):
-        # 새 이름으로 처음부터 적용된 DB. `news`는 중복될 수 있다(수렴 항목) —
-        # 파일 하나에 행 하나이므로 집합으로 정리해서 만든다.
+        # A database initially migrated under the new names; convergent entries may
+        # duplicate news, so use a set to create exactly one row per file.
         news = sorted({new for _, new in RENAMES})
         path = self._make_db(tmp_path, news)
 

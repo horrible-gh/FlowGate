@@ -1,4 +1,4 @@
-"""flowgate.v02test.0023 -- a chat that changes source leaves a commit (0023-CH0002 rule).
+"""a chat that changes source leaves a commit (rule).
 
 The person is never asked for anything:
 
@@ -8,7 +8,7 @@ The person is never asked for anything:
 3. the outcome -- a commit, or why it failed and what is left -- is written into the
    conversation as a FlowGate turn (speaker ``system``).
 
-flowgate.v02test.0033: rule 1 is enforced -- an edit-mode reply without a message while
+rule 1 is enforced -- an edit-mode reply without a message while
 the worktree holds changes is refused (422 ``commit_message_required``); repository
 configuration directories (``.github/``) are work, not debris; and files the debris rule
 keeps out of the commit are named in the FlowGate turn instead of vanishing.

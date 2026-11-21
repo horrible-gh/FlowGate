@@ -1,4 +1,4 @@
-"""Document GET answers field — document-bound container model (group 0022 Q/A/V revamp).
+"""Document GET answers field — document-bound container model (Q/A/V revamp).
 
 Cases:
   1. doc + container + items + answers -> returns Q/A pairs

@@ -83,7 +83,7 @@ def test_e18_the_same_submission_saved_twice_is_judged_once(env, decided):
 
 def test_an_instruction_whose_automatic_approval_is_refused_stays_in_its_stage_until_the_retry_approves_it(
         env, decided, monkeypatch, starts):
-    """E-25 / L-2 §2.7.3, revised by flowgate.v02.0119 T#3 / T#4 (T-2 / T-3): the refusal is B-1 ``approval_refused``
+    """E-25 / L-2, revised by the earlier change the earlier implementation / the earlier implementation (T-2 / T-3): the refusal is B-1 ``approval_refused``
     (this submission's mark) and the card stays in its instruction stage — a system error, no result stage behind an
     unapproved instruction (it was left to a card approval that no longer exists). The instruction's approval is the
     v0.2 completion's own (``card_completion.instruction``, by the system); once the cause is gone the next run read

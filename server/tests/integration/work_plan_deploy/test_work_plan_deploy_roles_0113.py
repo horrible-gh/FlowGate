@@ -1,4 +1,4 @@
-"""0113 T#2 D: WP role priority, read isolation, no duplicate hook, redeploy and off."""
+"""D: WP role priority, read isolation, no duplicate hook, redeploy and off."""
 import json
 import pytest
 from test_work_plan_deploy_0074 import db_path,env,dep,_flow,_write_plan,_execute,_preview,_doc_row,_sql,FA

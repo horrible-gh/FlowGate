@@ -1,4 +1,4 @@
-"""Card document port handlers: how the Graph workflow reaches this package (D0006 §2.3 / §4.1).
+"""Card document port handlers: how the Graph workflow reaches this package.
 
 ``modules.flow_gate.graph_workflow.services.card_document_ports`` defines the ports; the
 composition root (``startup.py``) calls :func:`register` once at startup.

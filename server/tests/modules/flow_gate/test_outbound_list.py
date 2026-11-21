@@ -179,8 +179,8 @@ def seed_data(tmp_db):
         "owner_id": "usr_test_001",
         "status": "open",
     })
-    # 0410 T0008: a second document with an AI-provider snapshot, alongside the
-    # legacy null R0001 above, so list responses can be asserted for both states.
+    # a second document with an AI-provider snapshot, alongside the
+    # legacy null the requirement above, so list responses can be asserted for both states.
     db_docs.create({
         "doc_id": "T0002",
         "project_id": "testprj",
@@ -361,8 +361,8 @@ def test_list_documents_bad_sort_400(seed_data, tmp_path):
 
 
 def test_list_documents_offset_includes_origin_snapshot(seed_data, tmp_path):
-    """0410 T0008: offset branch carries origin_provider_name/origin_ai_run_id,
-    explicit null (not omitted) for the legacy R0001 row."""
+    """offset branch carries origin_provider_name/origin_ai_run_id,
+    explicit null (not omitted) for the legacy the requirement row."""
     client = _build_client()
     raw = _issue_bearer(tmp_path)
 
@@ -382,7 +382,7 @@ def test_list_documents_offset_includes_origin_snapshot(seed_data, tmp_path):
 
 
 def test_list_documents_before_includes_origin_snapshot(seed_data, tmp_path):
-    """0410 T0008: the before-cursor branch carries the same two keys as offset."""
+    """the before-cursor branch carries the same two keys as offset."""
     client = _build_client()
     raw = _issue_bearer(tmp_path)
 

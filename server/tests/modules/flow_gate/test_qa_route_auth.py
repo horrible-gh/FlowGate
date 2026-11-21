@@ -1,4 +1,4 @@
-"""Q/A T-API write endpoints — worker-token auth (group 0022 TR0009 rev0 rejection regression).
+"""Q/A T-API write endpoints — worker-token auth (rejection regression).
 
 Rejection reason: the guide (Q document guide) tells the worker to register a question by calling
 POST /q/{doc_id}/questions with an inbox/edit token, but the endpoint only validated
@@ -205,7 +205,7 @@ def seed_data(tmp_db):
 def _edit_token(doc_ref: str, tmp_path, *, ai_run_id: str | None = None) -> str:
     """Issue an inbox/edit token (the token a worker actually holds)."""
     from modules.flow_gate.services import token_service
-    # 0661 T0004 (harness repair): token_scratch.create refuses any scratch path outside the
+    # (harness repair): token_scratch.create refuses any scratch path outside the
     # storage root, and pytest's tmp_path never is one -- the on-disk scratch directory is
     # irrelevant to these route tests, so its creation is stubbed alongside _scratch_dir.
     with (

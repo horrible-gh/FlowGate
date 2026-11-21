@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_conversation_message_appends_ai_turn(self, origin_repo, monkeypatch):
-        # D0006 §3.7/§3.9 / L0007 §2.9: a propose-only question during pending
+        # A propose-only question during pending
         # review starts a bound run and, once it finishes, its last message is
         # folded into the conversation on the next read — without moving the
         # review off resolved_pending_review or touching the fingerprint.

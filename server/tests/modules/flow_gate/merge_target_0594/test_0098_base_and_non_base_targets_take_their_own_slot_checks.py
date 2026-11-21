@@ -58,7 +58,7 @@ def test_0098_base_and_non_base_targets_take_their_own_slot_checks(proj, check_b
     _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
     assert {_judge(proj, gid, n)["target_branch"] for n in ("main", "feature/v0.2.0")} == {"main", "feature/v0.2.0"}
     # the project base checkout off its branch (or detached) refuses every target, the inherited one too.
-    # flowgate.v02test.0020 rev2: the list does not read the checkout's branch; the names stay listed and the
+    # The list does not read the checkout's branch; the names stay listed and the
     # single judgement of a save / confirm / run refuses them
     for off in (["checkout", "feature/v0.2.0"], ["checkout", "--detach", "main"]):
         _git(off, cwd=proj.base)

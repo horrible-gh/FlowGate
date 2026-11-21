@@ -1,6 +1,6 @@
-// (A) 유지 — 0394 T0016 / NR0003 §6.3 "전역 불변식을 지키는 가드".
-// flowgate.v02gui.0024: v0.1(client/)이 없어지면서 이 검사도 client_gui 기준으로 옮겼습니다.
-// 공용 카탈로그(src/shared/i18n)의 ko/en/ja 키·자리표시자 일치와 문구 규칙을 봅니다.
+// (A) Retained — the earlier implementation / the review "Guards for global invariants".
+// after removing v0.1 (client), move this check to client_gui as well.
+// Check matching ko/en/ja keys and placeholders, and wording rules in the shared catalog (src/shared/i18n).
 import en from '@shared/i18n/en'
 import ja from '@shared/i18n/ja'
 import ko from '@shared/i18n/ko'
@@ -35,7 +35,7 @@ function koreanSyllableKeys(messages: Map<string, string>): string[] {
     .map(([key]) => key)
 }
 
-// 0399 M0020 반려 — 화면에 나가는 문구에는 동그라미 글자(㉮ ㈀ ① Ⓐ …) 같은 장식 기호를 쓰지 않는다.
+// 0399 M0020 rejection — displayed text must not contain decorative symbols such as circled characters (㉮ ㈀ ① Ⓐ …).
 const ENCLOSED_SYMBOL = /[①-⓿㈀-㋿]/
 
 function enclosedSymbolKeys(messages: Map<string, string>): string[] {

@@ -1,6 +1,6 @@
-"""flowgate.default.0517 T#2 rework (TR0021 rev2): successor-lineage connected regression.
+"""successor-lineage connected regression.
 
-The prior TR0021 revision proved chain-lineage capability succession only by hand-typing
+The prior the earlier implementation revision proved chain-lineage capability succession only by hand-typing
 the same ``chain_id`` string into two independently-built fixture dicts — a predecessor
 "run" dict and a "successor" dict that never came from any FlowGate continuation code.
 The human rejection for that revision named this out explicitly: the successor must be

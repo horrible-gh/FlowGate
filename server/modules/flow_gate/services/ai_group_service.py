@@ -1,4 +1,4 @@
-"""AI Group validation, CRUD and the canonical nested read model (flowgate.v02.0017 T0002 §4).
+"""AI Group validation, CRUD and the canonical nested read model.
 
 An AI Group is a team the user composes: a name, an optional description, members (AI
 connections), user-defined roles and a many-to-many member/role mapping, plus an optional
@@ -9,7 +9,7 @@ separate layer (`runtime_binding`). They only pre-fill the Start dialog; the run
 the concrete providers it was started with and records the group id as provenance only, so
 editing a group never changes a run that already started.
 
-Groups belong to no project (CH0006 (4)): there is one list for the whole system, built from the
+Groups belong to no project (the discussion ): there is one list for the whole system, built from the
 system AI every project can run. A team can be switched OFF (not selectable at Start) and one
 team can be the default (pre-selected at Start). A member's fit is the mean, over its roles, of its latest
 evaluation scores on the criteria each role relies on (all criteria when a role names none).
@@ -65,7 +65,7 @@ def _description(value, invalid_code: str) -> str | None:
     return value.strip() or None
 
 
-# flowgate.v02.0129 CH0012: the signed-in user a group is read or edited for. Groups are shared,
+# the signed-in user a group is read or edited for. Groups are shared,
 # but a user's own runnable AI is available only to its owner (approved (B)); the routes set this.
 _viewer: contextvars.ContextVar[str | None] = contextvars.ContextVar('ai_group_viewer', default=None)
 
@@ -86,7 +86,7 @@ def _registry_provider(provider_id: str) -> dict | None:
 
 def _available(user_id: str | None = None) -> dict[str, dict]:
     """The AI a group may use: every enabled system AI (the chain is the same in every project),
-    plus the viewer's own runnable AI (flowgate.v02.0129 CH0012)."""
+    plus the viewer's own runnable AI."""
     user_id = user_id or _viewer.get()
     providers = ai_settings_service.resolve_global()['providers'] + ai_settings_service.personal_selectable(user_id)
     return {p['id']: p for p in providers}

@@ -1,4 +1,4 @@
-"""flowgate.fileforge.0001 TR0005 — remote-read worktree fallback regression tests."""
+"""remote-read worktree fallback regression tests."""
 from __future__ import annotations
 
 import logging

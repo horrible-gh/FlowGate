@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#10 — the kind switch's call in features/document/api/kindSwitch.ts (D#1 §6.3, §12.1;
+ * the kind switch's call in features/document/api/kindSwitch.ts (the earlier implementation;
  * D#2 §3.3 / §3.4): the request sent to the existing v0.1 converter (PATCH /documents/{doc_id}/root-type),
  * its answer -> camelCase (the new identity, or the same row when the type was already asked), and how
  * a refusal is read — the converter's / guards' detail strings, the mutation policy envelope and the

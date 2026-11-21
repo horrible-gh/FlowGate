@@ -1,4 +1,4 @@
-"""The Self-check queue (flowgate.v02test.0053 1-B, T0005).
+"""The Self-check queue.
 
 ``run_self_check`` puts the request in this queue and returns at once (status ``queued``); the
 caller goes on with its work. What the request tests is a copy of the worktree taken at that

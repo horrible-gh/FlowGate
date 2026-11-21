@@ -1,6 +1,6 @@
-"""flowgate.default.0519 T0005/TR0001 — the model_name-driven CLI preset builder.
+"""the model_name-driven CLI preset builder.
 
-T0001 asked for ONE server-side place that knows what a claude/codex/copilot command line
+The review asked for ONE server-side place that knows what a claude/codex/copilot command line
 looks like, so a magic-tool client can later turn `kind + model_name + permission state`
 into a canonical `cli_command` without owning any CLI's flags itself. This covers the new
 pieces that make that true:

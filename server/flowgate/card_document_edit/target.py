@@ -9,7 +9,7 @@ CARD, NON_CARD, UNAVAILABLE = "CARD", "NON_CARD", "UNAVAILABLE"
 _log = logging.getLogger(__name__)
 
 
-EDIT_PORT = "card_document_edit"  # T#2 integration registers this named service port.
+EDIT_PORT = "card_document_edit"  # integration registers this named service port.
 
 
 def card_edit_port_registered():

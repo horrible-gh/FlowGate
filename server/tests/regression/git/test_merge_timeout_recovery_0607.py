@@ -1,5 +1,5 @@
 """A merge git really made must never be lost to a timeout or a re-click —
-flowgate.default.0607 T0004 (NR0003).
+
 
 The incident (0600, 2026-09-23): the AC final approval's ``git merge --no-ff``
 wrote its merge commit, then Git for Windows ran a foreground ``git gc --auto``
@@ -14,7 +14,7 @@ is produced by letting git really run and then handing the caller the same
 ``returncode=-1, stderr="timeout_expired"`` that ``_run_git`` returns on a kill —
 the git facts are genuine, only the verdict is lost, which is exactly the incident.
 
-Cases (T0004 §5): A normal merge · B merge commit made, command "timed out" ·
+Cases: A normal merge · B merge commit made, command "timed out" ·
 C real conflict (even when the command also "timed out") · D already merged locally
 but unpushed · E push failure (fresh merge and pre-existing merge) · F real no-work
 (including a work-less branch cut from an unpushed local base, which must NOT be
@@ -446,7 +446,7 @@ class TestMergeTimeoutRecovery0607:
         def _killed_after_commit(args, **kwargs):
             result = original(args, **kwargs)
             if _is_merge_no_ff(args):
-                # NR0003 §8: a merge killed after its commit still had MERGE_HEAD.
+                # a merge killed after its commit still had MERGE_HEAD.
                 (base / ".git" / "MERGE_HEAD").write_text(tip + "\n", encoding="utf-8")
                 return subprocess.CompletedProcess(args, -1, "", "timeout_expired")
             return result
@@ -562,7 +562,7 @@ class TestMergeTimeoutRecovery0607:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        # 0669 unit 6b: a rejected push is a 5xx -- the approval stays a queued job (retry_wait)
+        # unit 6b: a rejected push is a 5xx -- the approval stays a queued job (retry_wait)
         # instead of failing the request, and the intent is not lost.
         assert status == 200, payload
         assert payload["approval"]["approved"] is False
@@ -685,7 +685,7 @@ class TestMergeTimeoutRecovery0607:
         _root, ac_id = _group_with_work(group, "g.py", "g = 1\n")
         assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is False
 
-        # 0669 unit 6b: an approval that cannot publish (R is held elsewhere) stays a live
+        # unit 6b: an approval that cannot publish (R is held elsewhere) stays a live
         # job whose Group is frozen -- that is what "still in flight" means now.
         with hold_lock("R", PROJECT, holder_kind="publish"):
             status, payload = _final_approve(ac_id)

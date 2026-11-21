@@ -68,7 +68,7 @@ def test_list_open_items(store):
                             asker_kind="human", created_by="u1")
     items = q_service.list_open_items(project_id="p")
     assert any(it["doc_id"] == DOC and it["title"] == "열린질의" for it in items)
-    # TR0005 rework: each row carries the host document's type_code so the dashboard
+    # each row carries the host document's type_code so the dashboard
     # opens the real document (not a Q-tree viewer). DOC is a 'D' document.
     row = next(it for it in items if it["doc_id"] == DOC)
     assert row["type_code"] == "D"
@@ -118,7 +118,7 @@ def test_list_open_items_excludes_completed_or_inactive_groups_but_keeps_history
                             asker_kind="human", created_by="u1")
     store.execute("UPDATE groups SET deleted_at='2026-06-13T00:00:00Z' WHERE group_id='p.none.0003'")
 
-    # (D) B0001 core case: a COMPLETED workflow group whose root R is wf_done, but
+    # (D) the regression core case: a COMPLETED workflow group whose root R is wf_done, but
     #     whose still-open question lives on a NON-root child doc (T, merely
     #     'approved'). The group was never manually closed (status stays 'draft').
     #     Keying the exclusion off the group root — not the child doc — is what
@@ -165,7 +165,7 @@ def test_list_open_items_excludes_completed_or_inactive_groups_but_keeps_history
     # kept: genuinely active work
     assert active_doc in returned_doc_ids
     assert active_child_doc in returned_doc_ids
-    # excluded: completed / inactive work (incl. the B0001 child-doc leak)
+    # excluded: completed / inactive work (incl. the the regression child-doc leak)
     assert wf_done_doc not in returned_doc_ids
     assert closed_doc not in returned_doc_ids
     assert deleted_doc not in returned_doc_ids

@@ -96,7 +96,7 @@ def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
     start(env)
     d1 = _doc(FG, 2, "D")
     submit(FG, d1, "D", token_of(env))
-    decide_review(FG, d1, "reject", "rejected")                      # flowgate.v02.0056 T#1: no node event
+    decide_review(FG, d1, "reject", "rejected")                      # no node event
     assert nodes_of(current(env))["gn_d"]["status"] == "review"
     d2 = _doc(FG, 3, "D", "rejected")                              # revision of d1, rejected, both unreported
     db_documents.set_superseded_by(d1, d2)

@@ -1,13 +1,13 @@
-"""Pool sizing + per-request load reduction (flowgate.default.0288 NR0003) — unit suite.
+"""Pool sizing + per-request load reduction — unit suite.
 
-TR0005 fixed the sqloader side (권고 1). This covers the two flowgate-side
+fixed the sqloader side (recommendation 1). This covers the two flowgate-side
 recommendations that were left open:
 
-  - 권고 2 / 발견 4: server/config.py forwarded nothing to sqloader, so the
+  - recommendation 2 / finding 4: server/config.py forwarded nothing to sqloader, so the
     PostgreSQL pool stayed at the library defaults (5 parallel queries,
     pool 1..5) no matter what the environment said — 40 AnyIO worker threads
     competing over 5 slots, and pool_min=1 forcing a reconnect per query.
-  - 권고 3 / 발견 5: the worker-token hash lookup ran once per authenticated
+  - recommendation 3 / finding 5: the worker-token hash lookup ran once per authenticated
     request, and GET /document's Q&A block ran 2 + N queries for N questions.
 
 Environment mirrors test_screen_load_query_reduction_0282.py: TESTING=1 and a
@@ -170,7 +170,7 @@ def clean_token_cache(tmp_db):
     auth_cache.invalidate_tokens()
 
 
-# ── 권고 2 / 발견 4: pool settings reach sqloader ────────────────────────────
+# ── recommendation 2 / finding 4: pool settings reach sqloader ────────────────────────────
 
 class TestPoolSettingsDefaults:
     def _settings(self, **overrides):
@@ -189,7 +189,7 @@ class TestPoolSettingsDefaults:
         s = self._settings()
         # The point of the change: not sqloader's 5 / 1 / 5.
         assert s.DB_MAX_PARALLEL_QUERIES == 20
-        # flowgate.v02.0137 T0004 §4-3: pool_min follows max_parallel_queries — any
+        # pool_min follows max_parallel_queries — any
         # lower value still opened and closed a connection per query above it.
         assert s.DB_POOL_MIN == 20
         assert s.DB_SERVER_PROCESSES == 3
@@ -273,7 +273,7 @@ class TestPoolSettingsForwarding:
         assert "pool_min" not in my and "pool_max" not in my
 
 
-# ── 권고 3 / 발견 5a: the worker-token lookup is cached ──────────────────────
+# ── recommendation 3 / finding 5a: the worker-token lookup is cached ──────────────────────
 
 def _issue_token(token_id: str, token_hash: str) -> None:
     from modules.flow_gate.db import tokens as db_tokens
@@ -384,7 +384,7 @@ class TestTokenLookupCache:
         assert again["issued_to"] == "tester"
 
 
-# ── 권고 3 / 발견 5b: GET /document's Q&A block is one query ─────────────────
+# ── recommendation 3 / finding 5b: GET /document's Q&A block is one query ─────────────────
 
 class TestAnswersForDocumentBatching:
     def _seed_doc(self, doc_id: str, questions: list[tuple[str, list[str]]]) -> None:

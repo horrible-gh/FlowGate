@@ -1,7 +1,7 @@
 <template>
-  <!-- flowgate.v02.0056 F2-2 — the card's memos in its documents tab (O3 0009-TR §4-5; v0.2 memos, not the v0.1 M
+  <!-- the card's memos in its documents tab (O3 the earlier implementation; v0.2 memos, not the v0.1 M
        document). A stored card only.
-       flowgate.v02.0056 (0017-CH) — no section head: each memo is one line of the same card as the document lines
+       (CH) — no section head: each memo is one line of the same card as the document lines
        above it (InspectorSlotRow: 메모 · [AI 참조] · title · buttons), in written order, with the buttons of a document
        line — the document icon opens the memo to read (the name too), ✎ opens its form — and the trash icon, which
        deletes it after one confirm. A new memo is written from the header ✎ 메모 (CardMemoButton). -->
@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0056 F2-2 — display of the card memos (useCardMemo reads and deletes; the windows are useCardMemoWindows').
+// display of the card memos (useCardMemo reads and deletes; the windows are useCardMemoWindows').
 import { computed, ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'

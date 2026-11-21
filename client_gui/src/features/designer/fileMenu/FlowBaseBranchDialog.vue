@@ -1,5 +1,5 @@
 <template>
-  <!-- Same frame as File › 새 Flow (DesignerFlowCreateDialog): header + ✕, labelled branch fields, right-aligned actions. -->
+  <!-- Same frame as File › New Flow (DesignerFlowCreateDialog): header + ✕, labelled branch fields, right-aligned actions. -->
   <ModalShell :open="open" size="md" surface-class="flow-base-dialog" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="fbd-head">

@@ -1,4 +1,4 @@
-/** flowgate.v02gui.0031 T0005 §3 — serves connection-recovery.v02gui0031.html for the Playwright scenarios.
+/** serves connection-recovery.v02gui0031.html for the Playwright scenarios.
  * node tests/browser/connection-recovery.v02gui0031.serve.mjs <api-base-url>   (cwd: client_gui)
  * Prints `READY <page url>` once listening; stops when stdin closes (the scenario script owns it). The fixture talks
  * to <api-base-url> (the scenario's fake FlowGate server) as VITE_API_BASE_URL. Vite's cache stays in node_modules.

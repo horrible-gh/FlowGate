@@ -83,7 +83,7 @@ def test_an_archive_cut_off_after_its_ref_is_never_canceled_as_without_effect(gi
     d = _decision(env, did)
     assert (d["status"], d["last_error_code"]) == ("recovery_required", "stop_requested")      # never canceled
     assert _job_row(env, job_id)["status"] == "recovery_required"
-    # 0132 T#3: an unknown parked effect preserves the reservation, but no longer holds Stop in flight.
+    # an unknown parked effect preserves the reservation, but no longer holds Stop in flight.
     assert _run_status(env, run_id) == {"status": "idle", "idle_reason": "stopped"}
     assert _states(env)[g] == "open"
     # Explicit resolution still preserves the archive ref and records the recovery obligation.

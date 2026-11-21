@@ -18,7 +18,7 @@ from modules.flow_gate.storage import paths as storage_paths
 
 
 TEST_PROJECT_ID = "proj-t509"
-# 0382 B0001: this was `Path(__file__).resolve().parent / "_scratch_t509_src"` — a
+# this was `Path(__file__).resolve().parent / "_scratch_t509_src"` — a
 # scratch tree *inside* server/tests. `rmtree(ignore_errors=True)` hid every failed
 # cleanup, so anything Windows refused to delete stayed in the repository waiting for
 # the next finalize to commit it. The root now lives outside the repository.
@@ -73,9 +73,9 @@ def test_src_content_patch_updates_existing_file(monkeypatch):
     payload = patch_res.json()
     assert payload["path"] == "docs/editable.md"
     assert payload["content_length"] == 5
-    # 0176 T0010: the save response carries the advisory base-checkout dirty status
+    # the save response carries the advisory base-checkout dirty status
     # (benign default for a git-disabled project). Pre-existing stale expectation
-    # fixed alongside flowgate.default.0226 — the route behavior is unchanged.
+    # fixed alongside the earlier change — the route behavior is unchanged.
     assert payload["base_git"] == {"enabled": False, "dirty": False, "files": []}
     assert file_path.read_text(encoding="utf-8") == "after"
 

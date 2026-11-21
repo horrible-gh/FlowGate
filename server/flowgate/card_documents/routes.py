@@ -1,5 +1,5 @@
-"""HTTP adapter of the card documents (flowgate.v02.0056 T#3). Mounted under the ``/flowgate`` context like the
-Graph routes; same envelope (P0008 §1.2 / §1.3), user JWT only, the v0.1 document create permission.
+"""HTTP adapter of the card documents. Mounted under the ``/flowgate`` context like the
+Graph routes; same envelope, user JWT only, the v0.1 document create permission.
 
     POST /api/v1/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document    {"content": <text> | null}
 

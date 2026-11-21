@@ -1,4 +1,4 @@
-"""0159 T#2: runtime orphan recovery, migrated SQLite and real card/Graph paths.
+"""runtime orphan recovery, migrated SQLite and real card/Graph paths.
 
 No sleeps, server restart or external AI. Clock advances through explicit timestamps.
 """

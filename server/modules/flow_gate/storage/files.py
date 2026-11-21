@@ -1,6 +1,6 @@
-"""New document files and shared identity checks (0064 T-B1a, L0005 2.2/2.3).
+"""New document files and shared identity checks.
 
-0064 T#3 (L0005 2.6 / 2.7.1): a file is removed by the transaction that made it (rollback) or that let it go
+a file is removed by the transaction that made it (rollback) or that let it go
 (commit) only while its path still holds that very file (``file_identity``), and only under the durable lock the
 next writer of that path takes (``cleanup_runner``). The transaction's own lock is gone by the time its callbacks
 run, so another server process may already have moved the file aside and staged its own at the same path.
@@ -58,7 +58,7 @@ _CASEFOLD_TO_ASCII = ("ß", "ſ", "ẞ", "K", "ﬀ", "ﬁ", "ﬂ", "ﬃ", "ﬄ
 def _same_name_filter(name: str):
     """(SQL condition, params) keeping at least every row whose stored file name casefolds to ``name``, or None.
 
-    flowgate.v02gui.0012 (0004-CH turn 60): an R<->B switch asks this 4 times (the staged body before the CAS, the body
+    (CH): an R<->B switch asks this 4 times (the staged body before the CAS, the body
     write, the new-file check and the old body after the commit), and each call read 4 columns of every document row
     (9,454 on stg) only to keep the ~50 with the same file name. The database now drops the rows that cannot have it;
     the Python check below stays the judge, so the rows it sees are a superset and the answer is the same.
@@ -76,9 +76,9 @@ def _same_name_filter(name: str):
 
 
 def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
-    """``{doc_id, project_id}`` of the row that uses this very file (L0005 2.3.1), or None.
+    """``{doc_id, project_id}`` of the row that uses this very file, or None.
 
-    A link is in use without a row to name (0064 T-B1d, P0006 §2.7 ``used_by_doc_id``): both values are None.
+    A link is in use without a row to name (T-B1d, the plan ``used_by_doc_id``): both values are None.
     """
     path = Path(abs_path)
     if path.is_symlink() or (path.exists() and path.stat().st_nlink > 1):
@@ -90,7 +90,7 @@ def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
         rows = get_store()._fetch_all(_USING_FILE_SQL)
     else:
         rows = get_store()._fetch_all(_USING_FILE_SQL + narrowed[0], narrowed[1])
-    # flowgate.v02gui.0012 (0001-B A, second pass): each same-name row read the storage settings again (project
+    # (B A, second pass): each same-name row read the storage settings again (project
     # override, then system setting) to find its project's root; a card save checks 2-4 files against ~50 such rows
     # on stg. The root is now read once per project and call; the candidates and their order are unchanged.
     roots = {}
@@ -200,9 +200,9 @@ def write_new_file(abs_path, data: bytes, exclude_doc_ids=()) -> None:
     Call inside the outer transaction, never inside a savepoint. Existing referenced
     files (including links) are refused without any movement or byte changes. The rollback
     removes the file only while the path still holds it, under the guard's durable lock
-    (0064 T#3): a retry in another process that moved it aside keeps its own file.
+    : a retry in another process that moved it aside keeps its own file.
     ``exclude_doc_ids``: the rows of this very write, already pointed at the path in the same
-    transaction (0064 T-B1d recovery updates the row first, L0005 2.12); they do not make it in use.
+    transaction (T-B1d recovery updates the row first, the earlier implementation 2.12); they do not make it in use.
     A caller that names its rows so has every other row checked even while the path holds no file: a
     row pointing at a missing file still uses that path. Without them (a caller whose row may point at
     the path already) only an existing file is checked, as before.
@@ -248,7 +248,7 @@ def overwrite_file(abs_path, data: bytes) -> None:
             tmp.unlink(missing_ok=True)
 
 
-# ── restorable replacement (flowgate.v02.0074 T#4, D0006 §3.6.5) ─────────────
+# ── restorable replacement ─────────────
 
 KEEP_SUFFIX = ".keep-{pid}-{utc_ms}"
 

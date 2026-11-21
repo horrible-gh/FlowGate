@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_anchor_mismatch_is_rejected(self, origin_repo, monkeypatch):
-        # 0481 TR0009 rev2: an anchor that does not occur exactly
+        # An anchor that does not occur exactly
         # `expected_count` times in the CURRENT file must fail apply — this is
         # the whole point of anchoring instead of trusting a line number or
         # trusting the model's own claim about the file's content.

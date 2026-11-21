@@ -1,4 +1,4 @@
-"""0066 E1--E3: real Git index/files and HTTP contract, mocked application metadata."""
+"""E1--E3: real Git index/files and HTTP contract, mocked application metadata."""
 from __future__ import annotations
 
 import json

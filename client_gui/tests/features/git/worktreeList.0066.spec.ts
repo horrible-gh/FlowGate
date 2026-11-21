@@ -14,7 +14,7 @@ import {
 } from '@/features/git/worktreeList'
 import { worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#6 — the pure list of the changed-files accordion (0066 D#2 §3-6).
+// the pure list of the changed-files accordion.
 const options = (overrides: Partial<WorktreeListOptions> = {}): WorktreeListOptions => ({
   search: '',
   filter: 'all',
@@ -132,7 +132,7 @@ describe('worktreeList — hidden Stage (§3-6(0)) and selection (§3-6(4))', ()
     expect(stagedProtectedRows(status)).toBe(3)
   })
 
-  // flowgate.v02.0067 T#2 (0067-R §4-3): a managed / protected row is never checked, not even for its
+  // a managed / protected row is never checked, not even for its
   // Stage release — its own `−` and the full unstage stay its way out.
   it('selects only what a row may do: stage, or release its Stage — never a managed or protected row', () => {
     const status = worktreeStatus({

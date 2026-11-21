@@ -1,4 +1,4 @@
-/** flowgate.v02.0132 T#4 (NR §4.4.3): a gate with Git work going on locks the Flow like a running run; an idle run with a parked gate is editable. */
+/** (NR): a gate with Git work going on locks the Flow like a running run; an idle run with a parked gate is editable. */
 import { describe, expect, it } from 'vitest'
 import { editLockOf, flowRunMarks, isGateGitActive, isRunLocked } from '@/features/designer/center/run/flowRunLock'
 import type { FlowRunInfo } from '@/features/designer/center/graph/flowGraphSource'

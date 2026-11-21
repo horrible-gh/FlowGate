@@ -1,4 +1,4 @@
-"""0159 T#3: migrated SQLite, read-only R4/R5 and isolated recovery to completion.
+"""migrated SQLite, read-only R4/R5 and isolated recovery to completion.
 
 External AI is a recorder; clocks are injected. No sleeps, restarts or deployed DB.
 """

@@ -7,7 +7,7 @@ import { CHAT_EVENT_COALESCE_MS, type ChatEventSubscription, type SubscribeChatE
 import { createConversationSession, type ConversationSession } from '@/features/conversation/conversationSession'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02gui.0031 T0005 ②③ — after a connection failure the open chat came back only with F5:
+// ②③ — after a connection failure the open chat came back only with F5:
 // ② the browser going online again recovered the chat list only (connection.restored), never the open chat's turns,
 //    run and history — only a stream reconnect did;
 // ③ a chat whose first read failed (turnsStatus 'error') was skipped by every automatic recovery (session.recover

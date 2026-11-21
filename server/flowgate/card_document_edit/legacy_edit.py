@@ -90,7 +90,7 @@ def edit(req):
                 # Legacy CH retains its full-body/migration guard, unlike card CH.
                 from .agent_rules import AgentRule
                 rule = AgentRule(req, type_rules.MarkdownRule(req))
-            # flowgate.v02gui.0009: the inbox body file may end with the token's encoding probe.
+            # the inbox body file may end with the token's encoding probe.
             probe = common_checks.split_probe(req.content, req.origin)
             text = rule.prepare(probe.text, fresh, body)
             from modules.flow_gate.api import inbox_routes as inbox

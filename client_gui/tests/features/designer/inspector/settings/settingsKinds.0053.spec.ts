@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0053 T#7 — which Nodes have a settings form (inspectorSettingsKind) and the registry condition
+ * which Nodes have a settings form (inspectorSettingsKind) and the registry condition
  * that puts the settings parts on them (`settingsKinds`): every Graph card by the kind the server keeps its
- * settings by (T#2 `fields.card_kind` — Custom runs, a gate is a check, a document card goes by its type),
+ * settings by (`fields.card_kind` — Custom runs, a gate is a check, a document card goes by its type),
  * just placed or done alike — a done card by its own (definition) type, not by the result its run bound (N → NR,
  * T → TR, TS → TSR); a v0.1 Flow's Node as before (run / test only as a sequence step).
  */
@@ -46,7 +46,7 @@ describe('inspectorSettingsKind (flowgate.v02.0053 T#7)', () => {
     ['document', 'B', 'requirement'],
     ['gate', null, 'check'],
     ['custom', null, 'run'],
-    // flowgate.v02.0072 T#3: a Graph work plan card keeps the plan settings.
+    // a Graph work plan card keeps the plan settings.
     ['document', 'WP', 'plan'],
     ['document', 'NR', null],
     ['document', 'TR', null],
@@ -73,7 +73,7 @@ describe('inspectorSettingsKind (flowgate.v02.0053 T#7)', () => {
     expect(inspectorSettingsKind({ ...v01Step, slot: null })).toBeNull()
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'test' })).toBe('test')
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'test', slot: null })).toBeNull()
-    // flowgate.v02.0072 T#3: a v0.1 Flow's work plan Node has no store (only a Graph WP card keeps plan settings).
+    // a v0.1 Flow's work plan Node has no store (only a Graph WP card keeps plan settings).
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'plan' })).toBeNull()
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'plan', slot: null })).toBeNull()
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'requirement', slot: null })).toBe('requirement')
@@ -122,7 +122,7 @@ describe('settingsKinds (registry condition)', () => {
     ['요구사항', 'document', 'R', ['requirementSettings']],
     ['버그', 'document', 'B', ['requirementSettings']],
     ['확인', 'gate', null, ['checkSettings']],
-    // flowgate.v02.0072 T#3: the settings tab draws the WP card's switch and run block.
+    // the settings tab draws the WP card's switch and run block.
     ['작업계획', 'document', 'WP', ['settings']],
   ] as const)('a just placed %s card gets its settings parts', (_name, nodeType, docType, parts) => {
     expect(partsOf(card(nodeType, docType))).toEqual(parts)

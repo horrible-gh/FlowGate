@@ -11,7 +11,7 @@ Endpoints:
   DELETE /flowgate/api/v1/projects/{project_id}/modules/{name}       Empty Group delete (v02gui.0027)
 
 Document identifier format: {module}/{group_code}/{seq}/{doc_code}
-  e.g.) server/0001/1/R0001
+  e.g.) server/0001/1/the requirement
 """
 from __future__ import annotations
 
@@ -437,7 +437,7 @@ def create_module(request: Request, project_id: str, body: _CreateModuleBody):
 class _PatchModuleBody(BaseModel):
     # Display name. Omitted (or unchanged) keeps the current title.
     title: Optional[str] = None
-    # New exposed identifier (flowgate.v02gui.0012 0001-B item B). Omitted keeps it.
+    # New exposed identifier. Omitted keeps it.
     name: Optional[str] = None
 
 
@@ -676,7 +676,7 @@ def restore_module(request: Request, project_id: str, module_name: str):
     return _change_module_archive(request, project_id, module_name, False)
 
 
-# ── DELETE /projects/{project_id}/modules/{module_name} (v02gui.0027 0008-T) ──────────────────
+# ── DELETE /projects/{project_id}/modules/{module_name} (v02gui.0027 the earlier implementation) ──────────────────
 
 _COUNT_MODULE_FLOWS = (
     "SELECT COUNT(*) AS n FROM groups g WHERE g.project_id = ? AND g.module = ? AND g.deleted_at IS NULL"

@@ -12,7 +12,7 @@ import '../aiBaseSelect.css'
 import { installAiRoleMessages } from './messages'
 import type { AiRoleValue, AiRoleOption } from './types'
 const props = defineProps<{ modelValue: AiRoleValue | null; providers: readonly AiRoleOption[]; label: string; displayName?: string | null; state?: string; cause?: string | null; disabled?: boolean; plain?: boolean }>()
-// flowgate.v02.0113 T#4: `plain` (the Inspector AI tab) draws the select only — no ⚠ beside an unavailable AI.
+// `plain` (the Inspector AI tab) draws the select only — no ⚠ beside an unavailable AI.
 const emit = defineEmits<{ 'update:modelValue': [value: AiRoleValue] }>()
 const composer = useI18n({ useScope: 'global' }); installAiRoleMessages(composer)
 const { t } = composer

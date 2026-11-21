@@ -1,4 +1,4 @@
-"""0066 T#3 — fetch-only refresh (D#1 §3-7, E12).
+"""fetch-only refresh.
 
 Remote-tracking refs move (pruned: a branch deleted on origin loses its tracking ref);
 nothing local does: no ff-only of the base branch, the base checkout and the Group

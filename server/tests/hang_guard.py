@@ -1,4 +1,4 @@
-"""Per-test hang guard for the server suite (flowgate.v02.0146 T#2).
+"""Per-test hang guard for the server suite.
 
 A test that hangs (a Git/subprocess call, a ``threading.Event`` nobody sets, a poll loop without exit)
 used to be noticed only when the whole Self-check hit its 1800 s ceiling, with no hint which test it was.

@@ -1,7 +1,7 @@
-"""Unmanned-chain test-run wiring (group 0150).
+"""Unmanned-chain test-run wiring (the earlier change).
 
 Covers the chain entrance and scope-inheritance delta on top of test_test_run_0138.py:
-the inbox action allowlist (the dead-code 400 fixed in T0004), the chain envelope on the
+the inbox action allowlist (the dead-code 400 fixed in the earlier implementation), the chain envelope on the
 202, advance_workflow's TSR-head test_run token, and the TSR auto-approve gate.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 from inbox_client import post_inbox
 
-# 0394 T0004 (NR0003 §13-5): these used to drive the inbox by handing a hand-rolled
+# these used to drive the inbox by handing a hand-rolled
 # request object to the module-private handlers under `asyncio.run(...)`. That bound the
 # suite to the handlers being coroutines, and it broke the day they became plain `def`s
 # run on a worker thread — an internal change that left the HTTP contract untouched.
@@ -19,7 +19,7 @@ from inbox_client import post_inbox
 
 
 def test_inbox_action_allowlist_accepts_test_run(monkeypatch):
-    # Regression for the group 0150 NR0003 §4 finding: action=="test_run" was dispatched
+    # Regression for the the review finding: action=="test_run" was dispatched
     # below an allowlist that rejected it, so the chain entrance 400'd before the handler.
     from modules.flow_gate.api import inbox_routes
 
@@ -38,7 +38,7 @@ def test_inbox_action_allowlist_accepts_test_run(monkeypatch):
 def test_inbox_action_allowlist_still_rejects_unknown():
     resp = post_inbox({"action": "bogus"})
     assert resp.status_code == 400
-    # 0503: the allowlist gained failure_origin_review, so the sentence it prints did too.
+    # the allowlist gained failure_origin_review, so the sentence it prints did too.
     assert resp.json()["error_message"] == (
         "action must be new, edit, review, test_run, or failure_origin_review"
     )
@@ -49,7 +49,7 @@ def _chain_token_rec(target_seq=7):
         "token_id": "tok-1",
         "project": "flowgate",
         "issued_to": "user-1",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": "flowgate.default.0150",
         "action_scope": "test_run",
@@ -276,7 +276,7 @@ def test_chain_auto_approve_tsr_requires_continuation_token(monkeypatch):
 
 
 def test_cancelled_chain_run_never_triggers_auto_approve_repair_notify_or_next_token(monkeypatch, tmp_path):
-    """flowgate.default.0358 T0004 완료 기준 / 위험 1: a cancelled run inside an
+    """acceptance criteria / risk 1: a cancelled run inside an
     unmanned chain must not silently resurrect the chain. _maybe_chain_auto_approve_tsr
     (the only path to the next chain token, via advance_workflow's TSR-head wiring) is
     reachable only from assemble_tsr's own tail call (:1679) — this pins that a

@@ -154,7 +154,7 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
         if node is not None and node.node_type == "gate":
             return False
         # Human-only attempts never prepare a workspace. Do not infer this from
-        # NULL input_source alone: pre-T#8 Git attempts still require attribution.
+        # NULL input_source alone: pre-the earlier implementation Git attempts still require attribution.
         if (attempt.get("workspace_prepared") is False
                 and not attempt.get("input_commit") and not attempt.get("input_source")):
             return False
@@ -171,7 +171,7 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
     if missing:
         block("commit_attribution_missing", attempt_ids=sorted(missing))
     # A bound root deliberately has no attempt/token/Git result. Legacy progressed
-    # nodes without attempts must not silently bypass the pre-T#8 attribution guard.
+    # nodes without attempts must not silently bypass the pre-the earlier implementation attribution guard.
     missing_nodes = [key for key in sorted(affected) if key not in attempts
                      and nodes[key]["status"] in ("done", "open", "review")
                      and not nodes[key].get("root_bound")]

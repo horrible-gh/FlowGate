@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_create_file_operation(self, origin_repo, monkeypatch):
-        # 0481 TR0009 rev2: `create_file` adds a path the frozen candidate did
+        # `create_file` adds a path the frozen candidate did
         # not have, using the same isolated-build/atomic-apply engine as `edit`.
         import base64
         import uuid

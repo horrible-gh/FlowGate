@@ -69,7 +69,7 @@ def test_0098_the_candidate_cache_is_shared_served_stale_and_revalidated(proj, c
     monkeypatch.setattr(mt, "_compute_snapshot", counted)
     first = _check_view(proj, gid, refresh=False)
     assert _check_view(proj, gid, refresh=False) == first and len(computed) == 1     # fresh: the cache
-    # flowgate.v02test.0020 rev2: a server change marks it stale; it is still served and recomputed behind it
+    # A server change marks it stale; it is still served and recomputed behind it
     mt.invalidate_check_targets(proj.pid, gid)
     assert _check_view(proj, gid, refresh=False) == first
     assert mt.settle_check_targets(60) and len(computed) == 2

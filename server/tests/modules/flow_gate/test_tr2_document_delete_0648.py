@@ -1,4 +1,4 @@
-"""flowgate.default.0648 T2#3 — guarded TR2 document lifecycle and races."""
+"""#3 — guarded TR2 document lifecycle and races."""
 from __future__ import annotations
 
 from contextlib import contextmanager

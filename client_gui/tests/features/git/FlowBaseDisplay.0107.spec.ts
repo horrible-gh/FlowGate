@@ -1,4 +1,4 @@
-/** T#3 D §6.2-4/7/8: real 0104 dialog, store, HTTP display boundary and Git panel.
+/** D: real 0104 dialog, store, HTTP display boundary and Git panel.
  * Only transport and non-work-base Git answers are fixtures. No real Git writes. */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'

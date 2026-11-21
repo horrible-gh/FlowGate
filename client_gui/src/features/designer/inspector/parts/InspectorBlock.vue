@@ -1,9 +1,9 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 settings block (0035 insp.css `.blk` / `.blk-h`): a framed group
+  <!-- the v7 settings block (insp.css `.blk` / `.blk-h`): a framed group
        with a title line (title · sub · controls on the right) and its rows. `locked` dims the rows
        (v7 `.set-locked`: a running card's settings cannot change) — the caller still disables its
        controls; this only draws it.
-       flowgate.v02.0053 T#7 — on a narrow Inspector (264px) the title line wraps instead of squeezing:
+       on a narrow Inspector (264px) the title line wraps instead of squeezing:
        the title keeps its words, the sub wraps, the controls go to the next line. -->
   <section class="inspector-block" :class="{ 'is-locked': locked }" data-test="inspector-block" :aria-disabled="locked ? 'true' : undefined">
     <div v-if="title || $slots.head" class="inspector-block-head">
@@ -33,7 +33,7 @@ withDefaults(
 .inspector-block {
   box-sizing: border-box;
   min-width: 0;
-  /* flowgate.v02.0052 T#2 — the rows inside follow the block's width, not the window's (264px Inspector). */
+  /* the rows inside follow the block's width, not the window's (264px Inspector). */
   container-type: inline-size;
   padding: 10px 12px;
   border: 1px solid var(--fg2-line);

@@ -1,4 +1,4 @@
-// flowgate.v02.0053 T#9 — an in-memory Graph run server (P0008 §7 S5) for Shell-level tests whose
+// an in-memory Graph run server for Shell-level tests whose
 // `@shared/api` mocks now also receive the top band's run requests: GET …/runs/current, POST …/runs,
 // POST /runs/{id}/stop, POST /runs/{id}/resume. One run per Flow; `refuse` makes the next start answer the
 // given server error code instead (e.g. `run_policy_undecided`). `calls` records every request in order.

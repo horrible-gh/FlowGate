@@ -1,8 +1,8 @@
-"""flowgate.v02.0146 T#2 — the merge-target judgement test, moved verbatim out of ``test_fg_card_settings.py``.
+"""the merge-target judgement test, moved verbatim out of ``test_fg_card_settings.py``.
 
 Why a file of its own: this test builds a temporary bare origin and drives real Git for every setting it reads or
 saves, so it alone took about 120-190 s of the 255 s the whole card settings file took on a one-processor host (measured in
-flowgate.v02.0146 TR#2). ``--dist loadfile`` hands a whole file to one worker, so with both Git tests inside
+TR#2). ``--dist loadfile`` hands a whole file to one worker, so with both Git tests inside
 ``test_fg_card_settings.py`` that file was the long pole of any parallel run and no worker count could shorten it.
 Nothing about the test changed — same body, same harness (``env`` / ``git_flow`` / helpers are the ones of
 ``test_fg_card_settings``) — it is only placed where ``loadfile`` can run it beside the other files.
@@ -27,7 +27,7 @@ def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows
     work_base_before = db_groups.get_by_id(FB).get("work_base_ref")
     g = _gate_key(env)
     body = get_settings(env, FB, g)
-    # not the groups' own slots, not a remote. flowgate.v02test.0020 rev2: a branch lacking the work base history
+    # not the groups' own slots, not a remote. the earlier change: a branch lacking the work base history
     # (``old``) is listed -- the list no longer reads the scope floor -- and its save is refused below
     assert body["merge_target_options"] == ["feature/v0.2.0", "main", "old", "release/local"], body["merge_target_state"]
     assert body["default_target_branch"] == "main"

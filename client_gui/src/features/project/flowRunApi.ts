@@ -1,27 +1,27 @@
 import { toRunGateState } from '@/features/document/api/run'
-// flowgate.v02.0053 T#9 — Graph run transport (P0008 §7 S5-1 ~ S5-5): start a Flow's run, read its
+// Graph run transport: start a Flow's run, read its
 // current run, stop and resume a run. snake_case stays inside this file; every request carries this tab's
 // `x-canvas-client-id` (flowCanvasApi.ts) like the Graph saver's. A refused request rejects with a
 // FlowGraphApiError (flowGraphApi.ts): `code` / `params` are the server's (`run_policy_undecided`,
 // `run_already_active`, `run_not_running`, `flow_owned_by_v01`, …), `message` is safe to show.
 //
-//   command  POST /api/v1/flows/{flow_id}/runs { revision_no: null, mode } -> 201 { run }  (flowgate.v02.0061 T#14:
-//            the T#2 step / full command — a new run of the latest revision, or the Flow's idle run going on)
+//   command POST /api/v1/flows/{flow_id}/runs { revision_no: null, mode } -> 201 { run } (the earlier change the earlier implementation:
+//            the the earlier implementation step / full command — a new run of the latest revision, or the Flow's idle run going on)
 //   current  GET  /api/v1/flows/{flow_id}/runs/current                 -> { run | null }
-//   pause    POST /api/v1/runs/{run_id}/pause  { reason? }              -> { run }  (T#2 Pause: running -> paused)
-//   stop     POST /api/v1/runs/{run_id}/stop   { reason? }              -> { run }  (T#7 Stop: stopping, then idle)
+//   pause POST /api/v1/runs/{run_id}/pause { reason? } -> { run } (Pause: running -> paused)
+//   stop POST /api/v1/runs/{run_id}/stop { reason? } -> { run } (Stop: stopping, then idle)
 //   resume   POST /api/v1/runs/{run_id}/resume { reason? }              -> { run }  (a paused run's own command)
 //   rewind   POST /api/v1/runs/{run_id}/nodes/{node_key}/time-machine (no body) -> { time_machine, run }
-//            (flowgate.v02.0061 T#15: the T#13 Graph Time Machine of a done node and everything below it; 409
+//            (the earlier change the earlier implementation: the the earlier implementation Graph Time Machine of a done node and everything below it; 409
 //            `graph_time_machine_blocked` carries the assessment — its `reasons` and `impact` — in the params)
 //
-// flowgate.v02.0056 F2-1: a run also carries `pending_propagation_count` / `pending_node_keys` (cards approved
+// a run also carries `pending_propagation_count` / `pending_node_keys` (cards approved
 // while it was stopped, their successors waiting) and each node `awaiting_approval` / `stage` (O1 / O2 §4-2).
 //
-// flowgate.v02.0061 T#14: a run also carries its command (`mode`), `idle_reason`, the running / requested execution
-// counts with the Flow's `execution_limit`, and each node its attempt's `integration_status` and `hold`. T#15: and
-// each node its current `attempt_id` (kept only when sent). flowgate.v02.0064 T#4: and each node `node_running` (the
-// card's running lock a title save is refused by; kept only when sent). flowgate.v02.0105 T#2: and each node
+// a run also carries its command (`mode`), `idle_reason`, the running / requested execution
+// counts with the Flow's `execution_limit`, and each node its attempt's `integration_status` and `hold`. the earlier implementation: and
+// each node its current `attempt_id` (kept only when sent). the earlier change the earlier implementation: and each node `node_running` (the
+// card's running lock a title save is refused by; kept only when sent). the earlier change the earlier implementation: and each node
 // `approval_wait_reason` (B-2) and the run `viewer.can_approve` (B-6), kept only when sent.
 //
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
@@ -45,7 +45,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     // v02gui.0015 T4: why a failed integration failed (`verification_failed`: the result's syntax check).
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
-    // flowgate.v02test.0042: the card whose merge this one waits for (its node key), kept only when sent.
+    // the card whose merge this one waits for (its node key), kept only when sent.
     ...('integration_blocked_by' in raw ? { integrationBlockedBy: str(raw.integration_blocked_by) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
@@ -96,7 +96,7 @@ export function toFlowRun(raw: unknown): FlowRun | null {
     ...(run.viewer && typeof run.viewer === 'object' && typeof (run.viewer as Raw).can_approve === 'boolean'
       ? { viewerCanApprove: (run.viewer as Raw).can_approve as boolean }
       : {}),
-    // flowgate.v02.0143 T#1 (W1): an automatic Q&A responder answers now — kept only when sent.
+    // (W1): an automatic Q&A responder answers now — kept only when sent.
     ...(typeof run.qa_responding === 'boolean' ? { qaResponding: run.qa_responding } : {}),
   }
 }
@@ -181,11 +181,11 @@ async function readCommand(flowId: string, cid: string, voiding: boolean): Promi
 export const lookupFlowRunCommand = (flowId: string, cid: string) => readCommand(flowId, cid, false)
 export const voidFlowRunCommand = (flowId: string, cid: string) => readCommand(flowId, cid, true)
 
-/** The server's step / full command (flowgate.v02.0061 T#2). */
+/** The server's step / full command. */
 export type FlowRunCommand = 'step' | 'full'
 
 /**
- * POST /api/v1/flows/{flowId}/runs — flowgate.v02.0061 T#14: one step / full command. The server starts a run of the
+ * POST /api/v1/flows/{flowId}/runs — the earlier change the earlier implementation: one step / full command. The server starts a run of the
  * latest revision, or lets the Flow's idle run go on with the command; nothing else is called after it.
  */
 export async function startFlowRun(flowId: string, mode: FlowRunCommand = 'full', commandRequestId?: string): Promise<FlowRunAnswer> {
@@ -199,7 +199,7 @@ export async function startFlowRun(flowId: string, mode: FlowRunCommand = 'full'
   }
 }
 
-/** POST /api/v1/runs/{runId}/pause — flowgate.v02.0061 T#14: Pause (running -> paused, open nodes keep their work). */
+/** POST /api/v1/runs/{runId}/pause — the earlier change the earlier implementation: Pause (running -> paused, open nodes keep their work). */
 export async function pauseFlowRun(runId: string, reason?: string): Promise<FlowRun> {
   try {
     const response = await postRequest<Raw>(`${runPath(runId)}/pause`, reason ? { reason } : {}, canvasHeaders())
@@ -210,7 +210,7 @@ export async function pauseFlowRun(runId: string, reason?: string): Promise<Flow
 }
 
 /**
- * POST /api/v1/runs/{runId}/stop — flowgate.v02.0061 T#7 Stop: the run is stopping at once and idle (stopped) once
+ * POST /api/v1/runs/{runId}/stop — the earlier change the earlier implementation Stop: the run is stopping at once and idle (stopped) once
  * its AI processes ended; its unfinished nodes go back to pending.
  */
 export async function stopFlowRun(runId: string, reason?: string): Promise<FlowRun> {
@@ -232,7 +232,7 @@ export async function resumeFlowRun(runId: string, reason?: string): Promise<Flo
   }
 }
 
-/** flowgate.v02.0061 T#15: the server's `time_machine` object -> FlowRunTimeMachine. */
+/** the server's `time_machine` object -> FlowRunTimeMachine. */
 export function toFlowRunTimeMachine(raw: unknown, nodeKey: string): FlowRunTimeMachine {
   const body = raw && typeof raw === 'object' ? (raw as Raw) : {}
   const impact = body.impact && typeof body.impact === 'object' ? (body.impact as Raw) : {}
@@ -251,7 +251,7 @@ export function toFlowRunTimeMachine(raw: unknown, nodeKey: string): FlowRunTime
 }
 
 /**
- * flowgate.v02.0061 T#15: the assessment a refused Graph Time Machine sends in its params (`reasons` with the
+ * the assessment a refused Graph Time Machine sends in its params (`reasons` with the
  * server's sentences, `impact.node_keys`), or null when the params carry no reason list.
  */
 export function toFlowRunTimeMachineRefusal(params: unknown): FlowRunTimeMachineRefusal | null {
@@ -267,8 +267,8 @@ export function toFlowRunTimeMachineRefusal(params: unknown): FlowRunTimeMachine
 }
 
 /**
- * flowgate.v02.0061 T#15 — POST /api/v1/runs/{runId}/nodes/{nodeKey}/time-machine: the Graph Time Machine of a done
- * node (T#13): the node and every node below it go back to pending, their merges are reverted on the group branch, and
+ * POST /api/v1/runs/{runId}/nodes/{nodeKey}/time-machine: the Graph Time Machine of a done
+ * node: the node and every node below it go back to pending, their merges are reverted on the group branch, and
  * the run stays idle (nothing starts until the next command). Answers what it did and the run after it. A refusal
  * rejects with a FlowGraphApiError carrying the server's code / params / message; a `graph_time_machine_blocked` one
  * also carries the assessment as `timeMachine` (toFlowRunTimeMachineRefusal).

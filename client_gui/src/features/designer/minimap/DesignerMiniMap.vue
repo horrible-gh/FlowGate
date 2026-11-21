@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0049 — MiniMap of the active Flow (bottom Dock, right of the Inspector). It
+  <!-- MiniMap of the active Flow (bottom Dock, right of the Inspector). It
        draws the Graph and the Canvas's shown area that the Center session holds — never a Graph
        or Viewport of its own — and turns a press / drag on it into "show this area": the Viewport
        goes back through the session, which the Canvas applies. Same zoom, no buttons or text.
@@ -107,7 +107,7 @@ const props = withDefaults(
     viewport: CanvasViewport | null
     canvasSize: CanvasSize | null
     selectedNodeId?: string | null
-    /** flowgate.v02.0068 T#2: the cards' measured sizes (the Canvas's), by node id; null = the card size. */
+    /** the cards' measured sizes (the Canvas's), by node id; null = the card size. */
     nodeSizes?: MiniMapNodeSizes | null
   }>(),
   { selectedNodeId: null, nodeSizes: null },

@@ -1,14 +1,14 @@
-"""Reuse boundary of the card documents (flowgate.v02.0053 T#1, D0006 §2.2 / §4.1).
+"""Reuse boundary of the card documents.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never
 changed: the v0.1 document rows, numbering (``reserve_document``), the document service
 (``create_document`` / ``delete_document``, with their ``doc_created`` / ``doc_deleted`` events),
 the document file path, the empty work plan body, the Graph's document liveness / supersede
 rules (so a card shows a document exactly as the Canvas does) and the empty body rule (``approvable_body``, the one
-judgement behind ``lines.has_body``, flowgate.v02.0056 T#2). flowgate.v02.0119 T#4 (T-3): that rule is the v0.2
+judgement behind ``lines.has_body``, the earlier change the earlier implementation). the earlier change the earlier implementation (T-3): that rule is the v0.2
 completion's body gate (``card_completion.gates``), no longer the v0.1 approval's own judgement asked here.
 
-flowgate.v02.0056 T#3: the review history counts of a line's document as the v0.1 document read carries the
+the review history counts of a line's document as the v0.1 document read carries the
 history (``document_reviews`` rows, ``rejection_history`` items), the Graph API envelope / RBAC / Flow load,
 disposal check and guard of the line write route, the project's registered types, and - for a node open in the
 Flow's active run - the Graph's own judgements of what its result is (``result_binder.result_type`` /
@@ -17,7 +17,7 @@ and the registration of a result made with that token: inside the line write's F
 (the compare-and-swap consume, ``token_consumed``) and the document submitted; after the commit the Graph is told
 (the inbox's contact, ``after_inbox_registered``).
 
-flowgate.v02.0083 T#3: a person's work plan is registered as it is (the card's own plan draft, filled in its editor):
+a person's work plan is registered as it is (the card's own plan draft, filled in its editor):
 the work sets its stored plan counts (``work_plan_service.totals``), and whether the card's AI or review still works
 on the node whatever its state (``card_settings_ports.ai_working`` with the node's bound result).
 """
@@ -68,7 +68,7 @@ def document(doc_id: str) -> Optional[dict]:
 
 
 def approvable_body(doc: dict) -> bool:
-    """The v0.2 completion would not refuse ``doc`` as empty (flowgate.v02.0119 T#4, T-3: ``card_completion.gates``, the
+    """The v0.2 completion would not refuse ``doc`` as empty (the earlier change the earlier implementation, T-3: ``card_completion.gates``, the
     completion's body gate): its file is readable and holds a non-blank body after the front matter."""
     from flowgate.card_completion import gates   # noqa: PLC0415 — card_completion imports this package
 
@@ -101,8 +101,8 @@ def supersede(old_id: str, new_id: str) -> None:
 
 
 def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
-    """flowgate.v02.0118 T#1: the documents the node's invalidated attempts registered and none of its live attempts
-    did (0061 T#7, a Time Machine rewind / Stop / lost lease) — the card settings' own judgement, called, never
+    """the documents the node's invalidated attempts registered and none of its live attempts
+    did (a Time Machine rewind / Stop / lost lease) — the card settings' own judgement, called, never
     changed, so the line binding and the next attempt read one rule."""
     from flowgate.card_settings import legacy_adapter as card_settings_legacy   # noqa: PLC0415 — no import cycle
 
@@ -119,9 +119,9 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
                     body: Optional[str] = None, *, locale: Optional[str] = None,
                     resolved_title: Optional[str] = None) -> str:
     """An empty draft of the line's type, numbered and filed like a v0.1 related document; ``body`` (a person's
-    line write, flowgate.v02.0056 T#3) is written after its front matter.
+    line write, the earlier change the earlier implementation) is written after its front matter.
 
-    flowgate.v02.0088 D0010 §3.1: the title is made in ``locale``, the creating request's (ko / ja / en; none or
+    the title is made in ``locale``, the creating request's (ko / ja / en; none or
     anything else is ko). ``resolved_title`` (internal only, never an API input) is a title the caller already
     decided with ``_title`` for the same document: a Markdown line takes it as is for its row and front matter. A
     work plan always derives its own title."""
@@ -166,7 +166,7 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
 
 
 def _title(label: str, slot: cs.CardSlot, locale: Optional[str] = None) -> str:
-    """A new line document's title (flowgate.v02.0088 D0010 §3.2): a blank label or a known default name is the
+    """A new line document's title: a blank label or a known default name is the
     line's default name in ``locale`` for the type the document is (``slot.doc_type``, never guessed from the
     label); a person's label keeps its text and takes that name after it."""
     line = cs.slot_title(slot.slot, locale, slot.doc_type)
@@ -190,7 +190,7 @@ def _default_names(slot: cs.CardSlot) -> set[str]:
 
 
 def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, code: str, title: str) -> str:
-    """One rule with the body recovery's empty card draft (0064 T-B1d, L0005 2.12 ``card_draft_bytes``)."""
+    """One rule with the body recovery's empty card draft (T-B1d, the earlier implementation 2.12 ``card_draft_bytes``)."""
     from modules.flow_gate.documents.body_recovery import card_front_matter   # noqa: PLC0415
 
     return card_front_matter(project_id, module, flow_id, doc_type, code, title)
@@ -198,7 +198,7 @@ def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, cod
 
 def _work_plan_body(project_id: str, locale: Optional[str] = None) -> tuple[str, str]:
     """A valid, undecided plan (the WP reader opens nothing else); WP titles are derived, in the creating
-    request's locale (flowgate.v02.0088 D0010 §3.3)."""
+    request's locale."""
     from modules.flow_gate.services import work_plan_service as wp   # noqa: PLC0415
 
     body = wp.empty_recovery_body(project_id or None)
@@ -235,7 +235,7 @@ def _write_file(project_id: str, flow_id: str, module: str, code: str, slot: str
         raise error from exc
 
 
-# ── review history counts (flowgate.v02.0056 T#3) ────────────────────────────
+# ── review history counts ────────────────────────────
 
 def review_counts(doc_ids: list[str]) -> dict[str, int]:
     """``doc_id -> number of AI reviews``: the ``document_reviews`` rows the v0.1 document read shows as its
@@ -261,7 +261,7 @@ def rejection_count(doc: Optional[dict]) -> int:
     return sum(1 for item in history if isinstance(item.get("reason"), str) and item["reason"].strip())
 
 
-# ── a person's line write (flowgate.v02.0056 T#3) ────────────────────────────
+# ── a person's line write ────────────────────────────
 
 def authenticate(request) -> str:
     return envelope.authenticate(request)
@@ -298,10 +298,10 @@ def running_node(flow_id: str, node_key: str) -> Optional[dict]:
     """The node while it is open in the Flow's active run, judged as the result binder judges it:
     ``{run_id, result_type, instruction_stage, ai_working, token_id}`` — the type its result must have, whether
     it is in its card's instruction stage, whether its AI (or its card's review) still works, and its dispatch
-    token not yet spent (the token a person's result is registered with, L0009 E-23; None when there is none).
+    token not yet spent (the token a person's result is registered with, the earlier implementation E-23; None when there is none).
     None when the node is not open in the active run.
 
-    flowgate.v02.0113 T#3 (L-2 §2.6 T-2): also ``instruction_type`` — the type of its card's instruction (TEST: TS), None
+    (L-2 T-2): also ``instruction_type`` — the type of its card's instruction (TEST: TS), None
     without an instruction stage — and ``stage_token_id``: its live instruction stage token (``stage`` instruction, of
     the active attempt, minted for no AI run, neither spent nor revoked: T-2 of a person's instruction stage), the
     token a person's instruction line write is registered with; None when there is none (T-2 failed or spent)."""
@@ -327,7 +327,7 @@ def running_node(flow_id: str, node_key: str) -> Optional[dict]:
 
 
 def card_working(flow_id: str, node_key: str) -> bool:
-    """flowgate.v02.0083 T#3: the node of the Flow's active run (open or in review) has its AI or its card's review
+    """the node of the Flow's active run (open or in review) has its AI or its card's review
     still working on it — the card's review loop is judged on the node's bound result."""
     run_row = run_store.active_run(flow_id)
     if run_row is None:
@@ -339,7 +339,7 @@ def card_working(flow_id: str, node_key: str) -> bool:
 
 
 def work_sets(doc: dict) -> int:
-    """flowgate.v02.0083 T#3: the work sets the stored work plan of ``doc`` counts (``work_plan_service.totals``, the
+    """the work sets the stored work plan of ``doc`` counts (``work_plan_service.totals``, the
     「작업 n세트」 of its derived title); 0 when the plan cannot be read."""
     from modules.flow_gate.services import work_plan_service as wp   # noqa: PLC0415
 
@@ -362,13 +362,13 @@ def node_result(flow_id: str, node_key: str) -> Optional[str]:
 
 def _dispatch_token(run_id: str, node_key: str) -> Optional[str]:
     """The node's dispatch token (mapped with no stage, minted for no AI run), while it is neither spent nor
-    revoked. flowgate.v02.0113 T#3 (T §4.3): of the node's active attempt only (an older attempt's token is no
+    revoked. the earlier change the earlier implementation (T): of the node's active attempt only (an older attempt's token is no
     evidence of this one, and a live one of this attempt is never issued again: T-3)."""
     return _live_token(run_id, node_key, None)
 
 
 def _stage_token(run_id: str, node_key: str) -> Optional[str]:
-    """flowgate.v02.0113 T#3 (L-2 §2.6 T-2): the active attempt's live instruction stage token (``running_node``)."""
+    """(L-2 T-2): the active attempt's live instruction stage token (``running_node``)."""
     return _live_token(run_id, node_key, "instruction")
 
 
@@ -386,13 +386,13 @@ def _live_token(run_id: str, node_key: str, stage: Optional[str]) -> Optional[st
 
 def register_result(doc_id: str, token_id: str, user_id: str) -> bool:
     """Inside the line write's Flow guard: register a person's result made with the node's dispatch token
-    (flowgate.v02.0113 T#3: also a person's instruction made with its instruction stage token, T-2).
+    (also a person's instruction made with its instruction stage token, T-2).
 
     The token is claimed first (``token_service.consume(require_claim=True)``: a compare-and-swap, so of two
     writers only one ever sees True, and only the winner records ``token_consumed`` with its document — the
     evidence the run reconciliation binds from); then the document opens and is submitted (pending_review), as the
     inbox registers one (``inbox_routes._handle_new``). False — nothing written — when the token was already spent;
-    the caller then refuses and its guard's transaction rolls the document back. flowgate.v02.0113 0038-T T#3 A-3: a
+    the caller then refuses and its guard's transaction rolls the document back. the earlier change the earlier implementation the earlier implementation A-3: a
     document already submitted or judged (a written report a result stage takes) is registered with the token and
     keeps its review state — it is not submitted again."""
     from modules.flow_gate.db.connection import now_iso   # noqa: PLC0415

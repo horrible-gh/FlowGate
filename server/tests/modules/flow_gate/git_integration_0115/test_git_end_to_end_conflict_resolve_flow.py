@@ -137,8 +137,8 @@ class TestGitEndToEnd(_Scenario):
             }], True)
         assert exc.value.status == 422
 
-        # 0481 T0008: a resolved general merge now stops at resolved_pending_review
-        # unless auto_authority was recorded (D0006 §3.2/§3.4). This test is about
+        # A resolved general merge now stops at resolved_pending_review
+        # unless auto_authority was recorded. This test is about
         # the merge/push mechanics, not the review gate itself (covered separately
         # in test_git_merge_review_gate_0481.py), so it opts into the pre-existing
         # immediate-merge behavior through the officially supported bypass.
@@ -149,7 +149,7 @@ class TestGitEndToEnd(_Scenario):
         }], True)
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
-        # flowgate.default.0232 B0001: the conflict-resolution merge commit must
+        # The conflict-resolution merge commit must
         # ALSO carry a conventional Merge subject, not the reused work subject.
         # This path likewise precedes the merge with an absorb commit, so reusing
         # the finalize subject stamped two commits of identical title+diff onto

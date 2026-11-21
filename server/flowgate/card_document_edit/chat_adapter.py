@@ -103,7 +103,7 @@ def _identity(run, token, record=None):
 
 
 def _keep_frontmatter(req):
-    """0002-CH turn 48: a chat's line edit sent without front matter keeps the line document's current front matter,
+    """: a chat's line edit sent without front matter keeps the line document's current front matter,
     as the chat's doc_id path does (``chat_documents.with_current_frontmatter``), instead of failing the identity check
     (422 ``document_identity_changed``). Only a document of the request's Flow is read; ``revise`` still checks that it
     is the line's document, its revision and the identity."""

@@ -1,9 +1,9 @@
-// flowgate.v02.0059 T#2 (0011-CH contract C) — one entry of a Flow's undo / redo history. Structure
+// (CH contract C) — one entry of a Flow's undo / redo history. Structure
 // edits and card moves share one history (the draft editor's stacks), so they are taken back and
 // forward in the order they were made:
 // - `edit`: draft commands (graphEditCommands.ts) — stepping one changes the draft and saves it.
-// - `move`: cards moved by one action — a drag of one card or of the selection, one 정렬 / 분배, one
-//   자동 배치 or 배치 밀도 change — with each card's position before and after. Stepping one puts the
+// - `move`: cards moved by one action — a drag of one card or of the selection, one alignment / distribution, one
+//   auto-layout or 배치 밀도 change — with each card's position before and after. Stepping one puts the
 //   cards back (`from`) or forward (`to`) through the Center's move path and layout save queue; the
 //   draft is not saved for it.
 // Keys follow the draft's: a save answering a `tmp_` key, or a node revived under a new key, renames

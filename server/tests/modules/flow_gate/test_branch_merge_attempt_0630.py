@@ -1,13 +1,13 @@
-"""flowgate.default.0630 T0005 — ordinary Branch Merge conflict as a persistent attempt.
+"""ordinary Branch Merge conflict as a persistent attempt.
 
 Real git end-to-end on a temporary SQLite with the real migrations (the same harness as
 test_git_merge_target_0594.py). Every test builds its OWN project (own origin, own base
-checkout), so nothing leaks between cases. The numbers are T0005 §15's required tests.
+checkout), so nothing leaks between cases. The numbers are the earlier implementation's required tests.
 
    1/2  clean merge push=false / push=true — attempt row created and completed
    3/4/5 conflict → persistent attempt, managed workspace kept, no `merge --abort`
    6    multi-file partial resolve
-   7/8  T#3: no AI auto-start on conflict; explicit /ai-resolve route starts resolver
+   7/8 the earlier implementation: no AI auto-start on conflict; explicit /ai-resolve route starts resolver
    9    AI resolution → resolved_pending_review (never auto-approved)
   10    target ref / remote untouched before approval
   11/12 approve push=false (local only) / push=true (remote)
@@ -373,7 +373,7 @@ def test_02b_clean_merge_into_base_push_false_applies_base_checkout(proj):
 
 
 
-# ── 7/8 T#3: no auto-start on conflict; explicit /ai-resolve starts resolver ──────────
+# ── 7/8 the earlier implementation: no auto-start on conflict; explicit /ai-resolve starts resolver ──────────
 
 def _client(monkeypatch):
     from fastapi import FastAPI
@@ -467,9 +467,9 @@ class _Crash(BaseException):
 
 
 
-# ── flowgate.default.0683 T0004 — review handoff / target blocker / plan-time recovery ──
+# ── the earlier change the earlier implementation — review handoff / target blocker / plan-time recovery ──
 #
-# The 0683 case (flowgate.v02.0033.0007-AC): branch merge #206 (main → v0.2) sat in
+# The 0683 case: branch merge #206 (main → v0.2) sat in
 # resolved_pending_review and every v0.2 approval was refused with a bare
 # "another finalize attempt owns this target branch's workspace".
 
@@ -565,4 +565,4 @@ def _end_attempt_job(session: dict) -> None:
 
 
 
-# 0530 T0004: exercise the human HTTP approval boundary on real isolated git repos.
+# exercise the human HTTP approval boundary on real isolated git repos.

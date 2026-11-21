@@ -1,4 +1,4 @@
-/** T#2: the mounted Designer Shell, Canvas and bottom Inspector share one Center selection. */
+/** the mounted Designer Shell, Canvas and bottom Inspector share one Center selection. */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,7 +69,7 @@ beforeEach(() => {
     if (url === '/api/v1/flows/p.ui.legacy/canvas') return { data: legacy }
     if (url.endsWith('/git/status')) return { data: { ok: true, status: { enabled: false, slots: [] } } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false } }
-    // flowgate.v02.0053 T#7: the gate card's own settings (T#2), as kept for a card nothing was chosen on.
+    // the gate card's own settings, as kept for a card nothing was chosen on.
     if (url === '/api/v1/flows/p.ui.graph/nodes/gn_gate/settings') {
       return { data: { ok: true, flow_id: 'p.ui.graph', node_key: 'gn_gate', card_kind: 'check', locked: false, fields: {} } }
     }
@@ -123,7 +123,7 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-canvas').attributes('data-selected-node-id')).toBe('gn_task')
     expect(get('designer-inspector-title').text()).toBe('구현 레포트')
     expect(get('designer-inspector-doc-status').text()).toBe('검수 대기')
-    // flowgate.v02.0052 묶음 A: a run status without a display name is kept as the raw value only
+    // batch A: a run status without a display name is kept as the raw value only
     // (data-value, tooltip) and never shown as text.
     expect(get('designer-inspector-run-status').attributes('data-value')).toBe('waiting_review')
     expect(get('designer-inspector-pill').text()).not.toContain('waiting_review')
@@ -136,7 +136,7 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-inspector-title').text()).toBe('확인')
     expect(wrapper!.find('[data-test="designer-inspector-doc-status"]').exists()).toBe(false)
     await tab('Q&A')
-    // flowgate.v02.0053 T#6: a Node without a document shows an empty Q&A area, no sentence.
+    // a Node without a document shows an empty Q&A area, no sentence.
     expect(get('designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     expect(get('designer-inspector-body').text()).toBe('')
     await wrapper!.get('.vue-flow__pane').trigger('click')
@@ -158,7 +158,7 @@ describe('Designer Shell x Inspector (T#2)', () => {
     await openFlow('Graph')
     await selectNode('gn_gate')
     expect(get('designer-inspector-body').attributes('data-tab')).toBe('settings')
-    // D0007 §6: the gate settings show archive and Git reflection without a usage row.
+    // the gate settings show archive and Git reflection without a usage row.
     expect(get('inspector-check-settings').text()).toContain('아카이브')
     expect(get('inspector-check-settings').text()).not.toContain('용도')
     expect(get('inspector-check-settings').text()).toContain('Git 반영')

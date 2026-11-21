@@ -1,4 +1,4 @@
-"""CORS origin defaults (flowgate.default.0371 NR0007 §2).
+"""CORS origin defaults.
 
 The deploy/setup defaults used to fall back to ALLOWED_ORIGIN=* whenever an
 operator left the value unset, which combined with allow_credentials=True in

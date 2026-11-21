@@ -129,6 +129,11 @@ def file_path(row):
     return path
 
 
+def conversation_image_url(api_base, conversation_id, image_id):
+    return (f"{api_base.rstrip('/')}/conversation/{quote(conversation_id, safe='')}/images/"
+            f"{quote(image_id, safe='')}/content")
+
+
 def metadata(row):
     from config import settings
     prefix = str(settings.CONTEXT or "").rstrip("/")

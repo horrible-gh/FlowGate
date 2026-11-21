@@ -1,4 +1,4 @@
-"""Card memo port handler: how the AI mentions of ``modules.flow_gate`` reach this package (D0006 §2.3 / §4.1).
+"""Card memo port handler: how the AI mentions of ``modules.flow_gate`` reach this package.
 
 ``modules.flow_gate.services.card_memo_hooks`` defines the port; the composition root (``startup.py``) calls
 :func:`register` once at startup.

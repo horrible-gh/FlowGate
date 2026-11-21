@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#1 — the document upload / download coordinator (0068 D §3.1, L §2.12, §2.14, §2.15, §4.3,
+ * the document upload / download coordinator (0068 D, L,,,,
  * §4.4, §4.6, §5.4 U1 ~ U4 · D1 · B1 ~ B3) with `@/features/document` mocked and stand-in windows registered in the
  * edit state registry: the upload's checks 1 ~ 3, the guard, the save of the file text as it is, the reflect after
  * every attempted save, the release on every end, the notices; the Designer epochs (the checkpoints C1 ~ C4 and
@@ -130,7 +130,7 @@ afterEach(() => {
 
 // --- Upload -----------------------------------------------------------------------------------------------
 
-// flowgate.v02.0157: an upload without card coordinates targets the document by its doc_id; the base read decides.
+// an upload without card coordinates targets the document by its doc_id; the base read decides.
 describe('upload — a standalone document (flowgate.v02.0157)', () => {
   it('without card coordinates a standalone document (edit_path=non_card) is saved to its own id, never through a card', async () => {
     cardBridge.calls.length = 0

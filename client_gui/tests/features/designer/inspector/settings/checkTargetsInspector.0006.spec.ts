@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0002 T-b (0006-T §2), review rej_01M6QXCBVZYSAGRV — the kept merge targets follow the Inspector's real
+ * T-b, review rej_01M6QXCBVZYSAGRV — the kept merge targets follow the Inspector's real
  * selection. The real DesignerInspector with the real registry draws a check (gate) card's 설정 tab with CheckSettings.
  * Selecting a card of another kind replaces that part (CheckSettings is unmounted, no watch of it sees the switch), and
  * coming back after a failed lookup must offer no list from before the move. A tab change on the same card keeps the
@@ -87,7 +87,7 @@ function expectNoGatePart(w: VueWrapper<any>) {
 }
 /**
  * Back on 설정 with a timed-out lookup and no kept list: no candidate is made up -- only the inherited name, marked
- * unverified (flowgate.v02test.0020: the lookup alone no longer locks the control).
+ * unverified (the lookup alone no longer locks the control).
  */
 async function expectNoListAfterTimeout(w: VueWrapper<any>) {
   lookupFails('timeout')

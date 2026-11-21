@@ -1,4 +1,4 @@
-"""Read-only snapshot of one Flow's v0.1 data (D0004 §4.1 '읽기' rows). Never writes v0.1 tables."""
+"""Read-only snapshot of one Flow's v0.1 data ('read' rows). Never writes v0.1 tables."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -24,7 +24,7 @@ class FlowSnapshot:
 
 
 def read_live_flow(flow_id: str) -> Optional[dict]:
-    """The groups row, or None when it does not exist or is soft deleted (P0008 §1.4)."""
+    """The groups row, or None when it does not exist or is soft deleted."""
     group = db_groups.get_by_id(flow_id)
     if not group or group.get("deleted_at"):
         return None
@@ -32,7 +32,7 @@ def read_live_flow(flow_id: str) -> Optional[dict]:
 
 
 def read_sequence(flow_id: str) -> tuple[Optional[dict], list[dict]]:
-    """v0.1 sequence of the Flow through the v0.1 root lookup (L0009 §2.2.1, not re-implemented)."""
+    """v0.1 sequence of the Flow through the v0.1 root lookup (not re-implemented)."""
     sequence = db_sequences.find_sequence_by_group_root(flow_id)
     if sequence is None:
         return None, []
@@ -66,5 +66,5 @@ def registered_doc_types(project_id: Optional[str]) -> set[str]:
 
 
 def alive_documents(snapshot: FlowSnapshot) -> list[dict]:
-    """The Flow's live documents (P0008 §2.4)."""
+    """The Flow's live documents."""
     return [d for d in snapshot.documents if is_alive(d, snapshot.flow_id)]

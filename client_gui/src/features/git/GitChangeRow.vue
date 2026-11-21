@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — one worktree file line (0066 D#2 §3-6(4)): selection check, state letter,
+// one worktree file line (the earlier implementation): selection check, state letter,
 // file name (full path as tooltip), protection tag, revert or remove, Stage or unstage. What it
 // may do is the server's `can*` flags only — nothing is guessed from the path. The name opens the
 // file's Center Diff; that is a read and stays open to read-only users too. The 0033 GitFileRow

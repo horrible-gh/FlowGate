@@ -1,4 +1,4 @@
-"""Project scoped AI connection test API (flowgate.v02.0017 T0002 §3.1).
+"""Project scoped AI connection test API.
 
 The baseline "does this AI connection answer?" probe, isolated from AI Evaluation and
 offered from AI connection management.

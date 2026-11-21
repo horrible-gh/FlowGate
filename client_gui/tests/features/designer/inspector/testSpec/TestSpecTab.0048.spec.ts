@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#11 — the test section with `@/features/document` mocked as a small server that also
+ * the test section with `@/features/document` mocked as a small server that also
  * refuses (D#1 §12.1): the test view of a specification TS / its TSR / a legacy TS (run state, progress,
  * Case tally, result counts, the TSR's test gate, recent runs), ▶ 실행 (start, busy, read again), ■ 취소
  * (cancelling, then cancelled by the server's event — also when one server answer lists the run being cancelled
@@ -277,7 +277,7 @@ const el = (w: W, name: string) => w.find(`[data-test="${name}"]`)
 const isDisabled = (w: W, name: string) => el(w, name).attributes('disabled') !== undefined
 const stateOf = (w: W) => el(w, 'test-spec-state').attributes('data-state')
 const textOf = (w: W, name: string) => el(w, name).text()
-/** flowgate.v02.0094: why ▶ / ■ cannot be used is the visible button's tooltip (no reason line under the report). */
+/** why ▶ / ■ cannot be used is the visible button's tooltip (no reason line under the report). */
 const reasonOf = (w: W) => {
   expect(el(w, 'test-spec-reason').exists()).toBe(false)
   return (el(w, 'test-spec-cancel').exists() ? el(w, 'test-spec-cancel') : el(w, 'test-spec-run')).attributes('title')
@@ -565,7 +565,7 @@ describe('test section — the guard and the TS state (flowgate.v02.0048 T#11)',
     expect(reasonOf(w)).toBe('폐기된 그룹이라 테스트를 실행할 수 없습니다.')
   })
 
-  // flowgate.v02.0094 #8: written (지시서 · 시나리오 작성 완료) but awaiting its review and never run — nothing on the v0.2
+  // #8: written (instruction · Scenario writing complete) but awaiting its review and never run — nothing on the v0.2
   // card approves a TS on its own, so ▶ is open and approves it; the approval queues the run.
   it.each(['draft', 'pending_review', 'revised', 'rejected'])('a written TS (%s, never run) starts without a document approval', async (review) => {
     ts().review = review
@@ -783,7 +783,7 @@ describe('test section in the Frame (real registry)', () => {
     const w = await mountFrame(testSelection(flow, TS_NODE))
     const section = el(w, 'inspector-test-spec')
     expect(section.exists()).toBe(true)
-    // flowgate.v02.0052: the common documents list is not repeated beneath the card.
+    // the common documents list is not repeated beneath the card.
     expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     expect(viewRead).toHaveBeenCalledWith(TS_DOC)
   })
@@ -821,7 +821,7 @@ describe('test section in the Frame (real registry)', () => {
   })
 })
 
-// flowgate.v02.0094 #1-#3 — the test card lines follow the other cards' slot lines: a state badge without extra words,
+// #1-#3 — the test card lines follow the other cards' slot lines: a state badge without extra words,
 // icon buttons whose names are their tooltips, and no reason line under the report.
 describe('test section — the existing card rules (flowgate.v02.0094)', () => {
   it('every line button is an icon button with a tooltip; no text button, summary or reason line', async () => {

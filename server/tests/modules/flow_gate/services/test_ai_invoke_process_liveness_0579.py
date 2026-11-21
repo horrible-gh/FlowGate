@@ -1,16 +1,16 @@
-"""flowgate.default.0579 T0004 -- subprocess liveness observation.
+"""subprocess liveness observation.
 
-NR0003 found that the no-progress watchdog (0446 T0014) only ever compares document
+The review found that the no-progress watchdog only ever compares document
 max-seq and `git status` paths, so a worker running a long `pytest`/build/lint subprocess
 with neither signal moving looks dead in the UI for the whole run even though child
 processes are actively being created and reaped underneath it. This adds a THIRD, weaker
 signal read from the SAME ownership primitives the process already uses to kill its tree
 (`WindowsProcessOwner`'s Job Object on Windows, the `start_new_session` process group on
-Linux) and keeps it out of the stall-timeout decision entirely (T0004 contract items 1-3
+Linux) and keeps it out of the stall-timeout decision entirely (the earlier implementation contract items 1-3
 and 7): it only ever writes `last_activity_*`, never `last_progress_*` /
 `stall_anchor_mono`.
 
-Covers, in the order T0004 §10.1/§2/§3/§10.4 ask for them:
+Covers, in the order the earlier implementation ask for them:
   * `process_tree_snapshot` dispatch -- owner present delegates to it; owner absent
     dispatches to the Linux `/proc` reader only on Linux; anything else is None (§4).
   * The Linux `/proc` + `os.getpgid()` reader in isolation: matching/non-matching pgid,
@@ -77,7 +77,7 @@ class TestProcessTreeSnapshotDispatch:
 
     def test_no_owner_and_not_linux_is_unavailable(self, monkeypatch):
         # Windows runs whose Job Object never attached, and every other POSIX (macOS/BSD),
-        # have no ownership primitive to read at all -- T0004 §4 forbids adding one
+        # have no ownership primitive to read at all -- the earlier implementation forbids adding one
         # (WMI/tasklist/psutil) rather than reporting the gap honestly.
         monkeypatch.setattr(process_runner.sys, "platform", "darwin")
         proc = SimpleNamespace(pid=999)
@@ -191,7 +191,7 @@ class TestWindowsProcessIdsUnit:
 
     @pytest.mark.skipif(os.name != "nt", reason="ctypes.wintypes only exists on Windows")
     def test_buffer_too_small_returns_false_with_more_data_and_is_retried(self):
-        # T0004 §2: the real Win32 shape for a too-small variable-length buffer is
+        # the real Win32 shape for a too-small variable-length buffer is
         # QueryInformationJobObject returning FALSE with GetLastError() == ERROR_MORE_DATA
         # (not a truthy return with a silently truncated list) -- NumberOfAssignedProcesses
         # is still filled in with the true count, and the call must be retried with a
@@ -367,7 +367,7 @@ class TestRealWindowsProcessIdsIntegration:
                 time.sleep(0.2)
             assert seen_grandchild
 
-            # T0004 10.3 "descendant exits -> removed from snapshot", proved on its own:
+            # 10.3 "descendant exits -> removed from snapshot", proved on its own:
             # kill ONLY the grandchild and leave the launcher running, so the removal is
             # caused by that process's own exit and not by the Job Object being torn down.
             os.kill(grandchild_pid, signal.SIGTERM)
@@ -491,7 +491,7 @@ class TestRealLinuxProcessGroupIntegration:
             assert {proc.pid, child_pid}.issubset(direct)
             assert unrelated.pid not in direct
 
-            # T0004 10.4 item 4 "child exits -> removed from snapshot", proved on its own:
+            # 10.4 item 4 "child exits -> removed from snapshot", proved on its own:
             # kill ONLY the child. The launcher keeps running and reaps it, so the snapshot
             # loses exactly that one PID while the launcher stays in it. The group teardown
             # below is a separate assertion and must not be what proves this one.

@@ -22,7 +22,7 @@
         </ErrorState>
 
         <template v-else-if="policy">
-          <!-- 2단계 인증 -->
+          <!-- Two-factor authentication -->
           <div class="fgs-card">
             <div class="fgs-card-h"><span class="fgs-tico sm"><SettingsIcon name="shieldok" /></span><b>{{ t('gui.settings.security.tfa') }}</b></div>
             <div class="fgs-line">
@@ -104,7 +104,7 @@
             </div>
           </div>
 
-          <!-- 로그인 -->
+          <!-- Sign-in -->
           <div class="fgs-card">
             <div class="fgs-card-h"><span class="fgs-tico sm"><SettingsIcon name="lock" /></span><b>{{ t('gui.settings.security.login') }}</b></div>
             <div class="fgs-line">
@@ -137,7 +137,7 @@
             </div>
           </div>
 
-          <!-- 세션 -->
+          <!-- Sessions -->
           <div class="fgs-card">
             <div class="fgs-card-h"><span class="fgs-tico sm"><SettingsIcon name="clock" /></span><b>{{ t('gui.settings.security.session') }}</b></div>
             <div class="fgs-line">
@@ -169,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-// 시안 14 시스템 › 보안: every choice saves at once (자동 저장). The 2FA row shows who the
+// mockup 14 시스템 › 보안: every choice saves at once (자동 저장). The 2FA row shows who the
 // current scope covers and who has not enrolled; the policy itself is enforced by the server at
 // sign-in (enrolment after the grace period), on failed sign-ins (lockout), on new passwords
 // (length) and on session activity (자동 로그아웃).

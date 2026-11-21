@@ -80,7 +80,7 @@ def test_a4_the_run_read_right_after_a_refused_result_stage_starts_it_once(env, 
     """NR A-4: each silent return of ``_reconcile_instruction`` asserted on the 0084 state (``_handoff_pending``,
     ``node_ai_run_active``, ``stage_ai_run``, ``attempt_of_ai_run``, ``open_questions_of_ai_run``,
     ``written_instruction``), then the read (or a Resume) takes the approved instruction's result stage once; a second
-    read takes nothing more. Before T#3 it returned at ``stage_ai_run`` None: the run's durable row has no
+    read takes nothing more. Before the earlier implementation it returned at ``stage_ai_run`` None: the run's durable row has no
     ``action_scope``."""
     from flowgate.card_settings import legacy_adapter as legacy
     from flowgate.card_settings import review_stage
@@ -91,7 +91,7 @@ def test_a4_the_run_read_right_after_a_refused_result_stage_starts_it_once(env, 
     assert review_stage._ai_card(FA, key) is not None
     assert review_stage._handoff_pending(FA, key) is False
     assert legacy.node_ai_run_active(FA, key) is False
-    # the A-4 cause: its durable row tells no ``action_scope``, so ``stage_ai_run`` found no run before T#3
+    # the A-4 cause: its durable row tells no ``action_scope``, so ``stage_ai_run`` found no run before the earlier implementation
     assert legacy.ai_run_record(INSTRUCTION_RUN).get("action_scope") is None
     work = legacy.stage_ai_run(FA, run_id, key)
     assert work is not None and work["run_id"] == INSTRUCTION_RUN and work["action_scope"] == "edit"

@@ -1,4 +1,4 @@
-// flowgate.v02test.0013 — the open chat hears the server's events. Until now the part had no push channel
+// the open chat hears the server's events. Until now the part had no push channel
 // (conversationSource.ts): a chat was brought up to date only by the poll of a run it tracks, so a run started
 // elsewhere, a run missed when the chat opened, or a message / command / run change written while no run was
 // polled stayed off screen until the panel was visited again. The container hands in the project event stream
@@ -70,10 +70,10 @@ export function chatEventRefresh(frame: ChatEventFrame, target: ChatEventTarget)
 }
 
 /**
- * flowgate.v02gui.0017 B3: who wants to hear that the connection is back — the stream reopened after a drop, or the
+ * B3: who wants to hear that the connection is back — the stream reopened after a drop, or the
  * browser went online again. Given, the subscription follows `projectId` (the panel's scope) instead of the open chat,
  * so it exists while no chat is open: the chat list fails exactly when none could be opened.
- * flowgate.v02gui.0031 T0005 ②: online also asks the open chat to read everything again, as a reconnect of the stream
+ * ②: online also asks the open chat to read everything again, as a reconnect of the stream
  * does — a browser back online without a stream reconnect used to recover the chat list only, and the open chat's
  * turns, run and history stayed as the failure left them.
  */
@@ -89,7 +89,7 @@ const targetKey = (target: ChatEventTarget | null) => (target ? `${target.projec
  * CHAT_EVENT_COALESCE_MS, or everything after a reconnect. One subscription per project, kept across chat and Flow
  * switches of that project; the target is read when a frame arrives, and a pending request belongs to the target
  * it was raised for. Must run in a component setup or an effect scope; stops with it. No subscriber: nothing.
- * `connection` (flowgate.v02gui.0017 B3) is told when the stream reconnects or the browser is online again.
+ * `connection` is told when the stream reconnects or the browser is online again.
  */
 export function useChatEvents(
   subscribe: SubscribeChatEvents | null | undefined,
@@ -143,7 +143,7 @@ export function useChatEvents(
   watch(() => targetKey(target()), cancel)
   onScopeDispose(cancel)
   if (connection && typeof window !== 'undefined') {
-    // T0005 ②: like a reconnect — the list (when it failed) and the open chat. The session holds the request while the
+    // ②: like a reconnect — the list (when it failed) and the open chat. The session holds the request while the
     // chat is opening or a message is being sent, and drops it for another chat (its generation).
     const online = () => {
       connection.restored()

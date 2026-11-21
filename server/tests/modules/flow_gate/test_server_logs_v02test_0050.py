@@ -1,4 +1,4 @@
-"""Server WARNING / ERROR records in the DB (flowgate.v02test.0050 T0005).
+"""Server WARNING / ERROR records in the DB.
 
 Completion criteria (a)-(i) of the instruction, plus the decisions they rest on:
 (a) any module's ``getLogger(__name__).warning`` lands in ``server_logs``;

@@ -20,7 +20,7 @@ vi.mock('@/features/document', async (original) => {
   return { ...actual, testSpecRead: mocks.read, settingsNodeRead: mocks.node, settingsChoicesRead: mocks.choices, settingsNodeWrite: mocks.setting,
     reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, testSpecRunStart: mocks.run, testSpecRunCancel: mocks.cancel,
     cardDocumentRevise: (...args: unknown[]) => mocks.save(...args), testSpecCaseRun: mocks.retry,
-    // flowgate.v02.0127 T#5: the structured base snapshot (one read of the card's test-spec projection) and the v2 revise.
+    // the structured base snapshot (one read of the card's test-spec projection) and the v2 revise.
     cardDocumentStructuredRead: async (...args: unknown[]) => (mocks.structured(...args) ?? ({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { cases: [] } })), testSpecResultEnter: mocks.enter,
     documentHistoryRead: async (id: string) => actual.toDocumentHistory({ doc_id: id }) }
 })
@@ -116,7 +116,7 @@ describe('v8 shared test card session (0071 T1)', () => {
     await w.get('[data-test="test-spec-cancel"]').trigger('click'); await flushPromises()
     expect(mocks.cancel).toHaveBeenCalledWith('run-live')
     expect(w.get('[data-test="test-spec-cancel"]').attributes('disabled')).toBeDefined()
-    // flowgate.v02.0094: the reason is the button's tooltip; no reason line under the report.
+    // the reason is the button's tooltip; no reason line under the report.
     expect(w.get('[data-test="test-spec-cancel"]').attributes('title')).toBe('취소를 처리하는 중입니다.')
     expect(w.find('[data-test="test-spec-reason"]').exists()).toBe(false)
   })

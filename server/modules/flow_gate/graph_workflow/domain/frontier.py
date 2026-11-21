@@ -1,18 +1,18 @@
-"""Frontier Resolver (D0004 §2.2 실행 판단기, L0009 §2.6.4) — a pure function of
+"""Frontier Resolver (execution resolver, the earlier implementation) — a pure function of
 (revision, run state, event, policies) -> decision. It knows no DB, HTTP or token.
 
-Node events go through the L0009 §3.2 transition table and the document-argument check
-(``transition_doc``); anything invalid is ``ignored`` (idempotent, L0009 E-20 / E-36). A result
+Node events go through the the earlier implementation transition table and the document-argument check
+(``transition_doc``); anything invalid is ``ignored`` (idempotent, the earlier implementation E-20 / E-36). A result
 event (approval / rejection) is propagated at once while the run is running, or recorded as a
 ``pending`` propagation while it is stopped. Control events (``start``, ``resume``) never touch
 the node table: they open start nodes and drain pending propagations in ``source_event_seq``
-order. Every rule that D0004 §8 has not answered comes from a policy slot; a slot the revision's
+order. Every rule that the design has not answered comes from a policy slot; a slot the revision's
 structure does not need (``run_policies.required_policies``) is not asked — a single plain
 out-edge is simply followed and a node with one in-edge simply opens.
 
-flowgate.v02.0061 T#2: a propagation waits (``pending``) whenever the run is not ``running`` (paused, idle), and in
+a propagation waits (``pending``) whenever the run is not ``running`` (paused, idle), and in
 a step command also when it would open a node outside the step's targets (``RunState.in_command``).
-0083 WP-3 (0061 T#2 개정, revised): an idle run is no longer one wait — a person's decision on an idle run that may be
+WP-3 (revision, revised): an idle run is no longer one wait — a person's decision on an idle run that may be
 taken back to running (``RunState.approval_wakes``: not stopped, no Time Machine operation unfinished, not inside an
 explicit command, the run holding its Flow; ``wake_graph_run``'s conditions) propagates at once and opens the next
 cards, as on a running run (``defers``); the caller takes the run back to running before the openings
@@ -22,7 +22,7 @@ wait, and a step still opens only its targets. A command
 and then opens the run candidates (``run_candidates``: run scope targets that are pending with every predecessor
 done), so a node that became runnable without a propagation (a node added after a done node) opens as well.
 
-flowgate.v02.0061 T#11 Hold: the caller passes the Flow's held node keys (``RunState.held``, the cards whose ``hold``
+Hold: the caller passes the Flow's held node keys (``RunState.held``, the cards whose ``hold``
 setting is on). ``openable_only`` — the one step every opening goes through (the start node, a propagation's opening,
 a rejection path, the run candidates) — never opens a held node: it stays ``pending``, so its successors and the joins
 they enter wait as the propagation structure already makes them wait, and branches without it go on. Hold only bounds
@@ -42,7 +42,7 @@ CONTROL_EVENTS = ("start", "resume", "command")
 MODE_STEP, MODE_FULL = "step", "full"
 RUN_MODES = (MODE_STEP, MODE_FULL)
 
-# L0009 §3.2 — node events only (``opened`` is applied by the decision, ``root_bound_start`` by
+# node events only (``opened`` is applied by the decision, ``root_bound_start`` by
 # the run start). Any other (status, cause) pair is invalid.
 _TRANSITIONS = {
     ("pending", "opened"): "open",
@@ -82,17 +82,17 @@ class RunState:
     node_runs: dict[str, NodeRun] = field(default_factory=dict)
     pending: list[PendingPropagation] = field(default_factory=list)
     open_decided: frozenset = frozenset()
-    has_active_attempts: bool = False  # compatibility name: requested/running AI executions (0061 T#4)
-    mode: str = MODE_FULL              # the command the run goes on with (0061 T#2)
+    has_active_attempts: bool = False  # compatibility name: requested/running AI executions
+    mode: str = MODE_FULL              # the command the run goes on with
     step_targets: Optional[frozenset] = None   # a step's targets; None: a full command or a step not begun yet
-    held: frozenset = frozenset()      # 0061 T#11: never opened — the held node keys (and a bound node waiting for its root)
-    approval_wakes: bool = False       # 0083 WP-3 (0061 T#2 개정): an idle run a person's decision takes back to running
+    held: frozenset = frozenset()      # never opened — the held node keys (and a bound node waiting for its root)
+    approval_wakes: bool = False       # WP-3: an idle run a person's decision takes back to running
 
     def node(self, key: str) -> Optional[NodeRun]:
         return self.node_runs.get(key)
 
     def in_command(self, key: str) -> bool:
-        """0061 T#2: may the current command open ``key``? A step opens only its targets."""
+        """may the current command open ``key``? A step opens only its targets."""
         return self.mode != MODE_STEP or self.step_targets is None or key in self.step_targets
 
     def open_nodes(self) -> list[str]:
@@ -113,7 +113,7 @@ class Transition:
     from_status: str
     to_status: str
     cause: str
-    expected_doc_id: Optional[str]   # the conditional-update baseline (L0009 §2.6.6)
+    expected_doc_id: Optional[str]   # the conditional-update baseline
     result_doc_id: Optional[str]
 
 
@@ -169,7 +169,7 @@ def virtual(s: RunState, d: Decision) -> RunState:
 
 
 def transition_doc(s: RunState, nr: NodeRun, event: RunEvent) -> Any:
-    """L0009 §2.6.4: the node's result_doc_id after the event, or ``"invalid"``."""
+    """the node's result_doc_id after the event, or ``"invalid"``."""
     taken = {x.result_doc_id for x in s.node_runs.values() if x.node_key != nr.node_key and x.result_doc_id}
     if event.kind == "result_submitted":
         if nr.result_doc_id is not None or event.doc_id is None or event.doc_id in taken:
@@ -197,10 +197,10 @@ def resolve(revision: Graph, state: RunState, event: RunEvent, policies: Mapping
 
 
 def defers(s: RunState) -> bool:
-    """0061 T#2: a result's propagation waits unless the run is running (paused, idle).
+    """a result's propagation waits unless the run is running (paused, idle).
 
-    0083 WP-3 (0061 T#2 개정, revised): nor on an idle run a person's decision takes back to running
-    (``RunState.approval_wakes``) — the flowgate.v02.0056 T#1 contract that a person's approval moves the node on, with
+    WP-3 (revision, revised): nor on an idle run a person's decision takes back to running
+    (``RunState.approval_wakes``) — the the earlier change the earlier implementation contract that a person's approval moves the node on, with
     no further resume. A paused run, a stopped run (idle reason ``stopped``) and a run under a Time Machine operation
     still wait for the next command; a step still opens only its targets (``RunState.in_command``)."""
     if s.status == "running":
@@ -254,7 +254,7 @@ def resolve_control(revision: Graph, s: RunState, event: RunEvent, policies: Map
 
 def drain_pending(revision: Graph, s: RunState, policies: Mapping[str, Any]) -> Decision:
     """Pending propagations in ``source_event_seq`` order; in a step, one that would open a node outside the step's
-    targets keeps waiting (0061 T#2)."""
+    targets keeps waiting."""
     d = Decision()
     for p in sorted(s.pending, key=lambda p: (p.source_event_seq, p.node_key)):
         follow = propagate(revision, virtual(s, d), p.node_key, p.outcome, policies)
@@ -266,9 +266,9 @@ def drain_pending(revision: Graph, s: RunState, policies: Mapping[str, Any]) -> 
 
 
 def run_candidates(revision: Graph, s: RunState) -> list[str]:
-    """0061 T#2: the run scope targets that are ``pending`` with every live predecessor ``done``, in revision order
-    (``openable_only``; T#11: not held). Pure; every command calls it after ``drain_pending`` (the revision move of
-    T#3 as well)."""
+    """the run scope targets that are ``pending`` with every live predecessor ``done``, in revision order
+    (``openable_only``; the earlier implementation: not held). Pure; every command calls it after ``drain_pending`` (the revision move of
+    as well)."""
     targets = run_scope(revision).targets
     preds: dict[str, list[str]] = {}
     for e in revision.live_edges():
@@ -329,7 +329,7 @@ def propagate(revision: Graph, s: RunState, node: str, outcome: str, policies: M
 
 
 def openable_only(s: RunState, nodes) -> list[str]:
-    """Only ``pending`` nodes not already chosen are opened (L0009 §2.6.4); order kept, no repeats. 0061 T#11: a held
+    """Only ``pending`` nodes not already chosen are opened; order kept, no repeats. the earlier implementation: a held
     node (``RunState.held``) is never opened."""
     out: list[str] = []
     for key in nodes:

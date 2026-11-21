@@ -1,4 +1,4 @@
-"""flowgate.default.0438: live CH content is the document read canonical."""
+"""live CH content is the document read canonical."""
 from __future__ import annotations
 
 import hashlib

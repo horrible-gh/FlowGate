@@ -1,20 +1,16 @@
-"""문서 조회 응답의 쿼리 예산 (flowgate.default.0291 T3).
+"""Query budget for document-read responses.
 
-`_parse_doc_workflow` 는 워크플로 루트를 좁은 쿼리로 따로 읽은 뒤(``type_code=R,
-limit=1``, 없으면 ``type_code=B, limit=1``), 곧바로 **같은 그룹의 문서 목록을 통째로**
-다시 읽었다(``limit=100``). 뒤엣것이 앞엣것을 완전히 포함한다 — 정렬(``updated_at
-DESC``)까지 같은 쿼리라, 목록에서 첫 R(없으면 첫 B)을 고르면 좁은 쿼리와 **같은 행**이다.
+_parse_doc_workflow first queried the root (type_code=R, limit=1, falling back to B),
+then fetched the same group's document list (limit=100). Both sort by updated_at DESC,
+so selecting the first R, otherwise B, from the list yields the same row.
+Reading the list first reduces root/list queries per response from at most three to one.
 
-그래서 목록을 먼저 읽고 루트를 거기서 뽑는다. 문서 응답당 최대 3 → 1.
+Equivalence requires an untruncated list. With more than 100 documents, the root may
+fall outside the page, requiring the original narrow query. Without that fallback,
+parent_root_doc_id silently disappears and leaves the workflow strip and action bar empty.
 
-전제가 하나 있고, 이 스위트의 절반이 그것을 지킨다: **목록이 잘리지 않았을 때만 같다.**
-그룹 문서가 100건을 넘으면 루트가 그 100건 밖에 있을 수 있으므로 예전의 좁은 쿼리로
-떨어져야 한다. 이 폴백이 빠지면 큰 그룹에서 ``parent_root_doc_id`` 가 조용히 사라지고,
-그러면 워크플로 스트립과 액션바가 통째로 비는데 예외도 로그도 남지 않는다.
-
-계측은 **실제 DB 왕복**을 센다. 요청 스코프 캐시(0291 P3-1)를 끄고 잰다 — 캐시가 켜져
-있으면 중복 조회가 흡수돼서 "호출부가 두 번 부른다" 와 "한 번 부른다" 가 같은 수치로
-보인다. 이 작업이 고친 것은 호출부이므로 캐시 없이 재야 한다.
+Count actual DB trips with request-scoped caching disabled. Otherwise cache hits hide
+the difference between one and two caller queries, which is the behavior changed here.
 """
 from __future__ import annotations
 
@@ -40,9 +36,9 @@ _NARROW_ROOT_SQL = "AND type_code = ? ORDER BY"
 
 
 class _Backend:
-    """진짜 SQLite + 읽기 왕복 로그."""
+    """Real SQLite with a read round-trip log."""
 
-    db_type = 1  # dialect.SQLITE — translate 는 no-op
+    db_type = 1  # dialect.SQLITE: translation is a no-op
 
     def __init__(self):
         self.conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -106,7 +102,7 @@ def app_client(monkeypatch):
     original = conn_mod.STORE
     conn_mod.STORE = _Patched()
 
-    # 요청 스코프 캐시를 끈다 — 이 스위트가 재는 것은 호출부의 조회 횟수다.
+    # Disable request-scoped caching to measure caller query counts.
     monkeypatch.setenv("FLOWGATE_REQUEST_CACHE", "0")
 
     be.conn.execute(
@@ -136,7 +132,7 @@ def app_client(monkeypatch):
 
 class TestGroupListIsReadOnce:
     def test_root_lookup_reuses_the_group_listing(self, app_client):
-        """루트 조회가 목록에 흡수된다 — documents 테이블 왕복은 2회(본문 + 목록)."""
+        """The list absorbs root lookup: two document-table trips remain, body and list."""
         client, be = app_client
         root = be.doc(1, "R", "Root", "wf_in_progress")
         target = be.doc(5, "TR", "Report", "pending_review")
@@ -158,7 +154,7 @@ class TestGroupListIsReadOnce:
         assert body["workflow_root_type"] == "R"
 
     def test_b_root_is_found_in_the_listing_too(self, app_client):
-        """R 이 없으면 B 로 떨어진다 — 예전 2단 폴백과 같은 결과."""
+        """Without R, fall back to B, preserving the original two-stage lookup."""
         client, be = app_client
         root = be.doc(1, "B", "Bug root", "wf_in_progress")
         target = be.doc(5, "TR", "Report", "pending_review")
@@ -171,7 +167,7 @@ class TestGroupListIsReadOnce:
         assert body["workflow_root_type"] == "B"
 
     def test_r_wins_over_b_when_both_exist(self, app_client):
-        """R 이 있으면 B 는 보지 않는다 — 예전 폴백 순서를 목록 필터에서도 지킨다."""
+        """Prefer R over B, preserving fallback order when filtering the list."""
         client, be = app_client
         r_root = be.doc(1, "R", "Root", "wf_in_progress")
         be.doc(2, "B", "Bug root", "wf_in_progress")
@@ -182,7 +178,7 @@ class TestGroupListIsReadOnce:
         assert body["workflow_root_type"] == "R"
 
     def test_group_without_a_root_asks_once_and_gives_up(self, app_client):
-        """루트가 없는 그룹: 목록이 잘리지 않았으므로 좁은 쿼리로 확인할 필요가 없다."""
+        """A rootless group with an untruncated list needs no narrow confirmation query."""
         client, be = app_client
         target = be.doc(5, "TR", "Report", "pending_review")
 
@@ -194,7 +190,7 @@ class TestGroupListIsReadOnce:
         assert body.get("parent_root_doc_id") is None
 
     def test_root_document_itself_does_not_look_for_a_parent(self, app_client):
-        """R 문서 자신을 조회할 때는 루트 탐색 자체가 없다."""
+        """Reading the R document itself requires no root search."""
         client, be = app_client
         root = be.doc(1, "R", "Root", "wf_in_progress")
 
@@ -206,15 +202,15 @@ class TestGroupListIsReadOnce:
 
 
 class TestTruncatedListingFallsBack:
-    """목록이 100건에서 잘리면 루트가 그 밖에 있을 수 있다.
+    """A list truncated at 100 rows may exclude the root.
 
-    폴백이 없으면 큰 그룹에서 ``parent_root_doc_id`` 가 조용히 사라진다 — 예외도 로그도
-    없이 워크플로 스트립과 액션바만 비는, 알아채기 어려운 회귀다.
+    Without fallback, parent_root_doc_id silently disappears in large groups,
+    leaving the workflow strip and action bar empty with no error or log.
     """
 
     def _seed_big_group(self, be) -> tuple[str, str]:
-        # 목록은 updated_at DESC 로 100건만 가져간다. 루트를 가장 오래된 것으로 만들어
-        # 그 100건 밖으로 밀어낸다.
+        # The list returns only 100 rows ordered by updated_at DESC. Make the root oldest
+        # so it falls outside that page.
         root = be.doc(1, "R", "Root", "wf_in_progress", updated_at="2020-01-01")
         for i in range(120):
             be.doc(100 + i, "M", f"Memo {i}", "approved", updated_at=f"2026-07-{(i % 28) + 1:02d}")
@@ -234,7 +230,7 @@ class TestTruncatedListingFallsBack:
         assert body["workflow_root_type"] == "R"
 
     def test_root_inside_the_first_page_still_costs_one_query(self, app_client):
-        """잘렸더라도 루트가 첫 페이지 안에 있으면 추가 조회는 없다."""
+        """Even a truncated list needs no extra query when its first page contains the root."""
         client, be = app_client
         root = be.doc(1, "R", "Root", "wf_in_progress", updated_at="2026-12-30")
         for i in range(120):
@@ -249,7 +245,7 @@ class TestTruncatedListingFallsBack:
 
 
 class TestHeadResolutionUnchanged:
-    """목록을 위로 옮기면서 head 판정이 달라지지 않았는지."""
+    """Moving the list query earlier must preserve head selection."""
 
     def test_earliest_unapproved_step_is_the_head(self, app_client):
         client, be = app_client
@@ -264,11 +260,11 @@ class TestHeadResolutionUnchanged:
         assert body["workflow_head_status"] == "in_progress"
 
     def test_head_resolution_survives_a_failing_listing(self, app_client, monkeypatch):
-        """목록 조회가 실패해도 응답은 나와야 한다.
+        """Return a response even if list lookup fails.
 
-        예전에는 ``NON_HEAD_TYPES`` / ``APPROVED_STATUSES`` 가 조회 try 블록 **안**에서
-        정의됐다. 조회가 예외로 끝나면 아래 head 판정이 NameError 로 터져서, 목록을
-        못 읽은 것이 500 이 됐다. 두 상수를 블록 밖으로 뺐다.
+        NON_HEAD_TYPES and APPROVED_STATUSES used to be defined inside the lookup try
+        block. An exception then caused NameError during head selection and a 500.
+        Move both constants outside that block.
         """
         client, be = app_client
         be.doc(1, "R", "Root", "wf_in_progress")

@@ -32,7 +32,7 @@ from tests.modules.flow_gate.test_final_approval_conflict_intent_0555 import (
 
 @needs_git
 class TestFinalApprovalConflictIntent0555:
-    """C1–C11 plus T0008 §15's extra guarantees, in sequence on one group."""
+    """C1–C11 plus the earlier implementation's extra guarantees, in sequence on one group."""
 
     GROUP = f"{PROJECT}.default.0140"
     PATH = "shared.py"
@@ -141,7 +141,7 @@ class TestFinalApprovalConflictIntent0555:
         assert done, [e[0] for e in events]
         assert done[-1][1]["approval"]["approved"] is True
         assert (done[-1][2], done[-1][3]) == ("approved", "wf_done")
-        # T0008 §12 / C9's other half: `_set_status`'s OWN git_pending_changed
+        # C9's other half: `_set_status`'s OWN git_pending_changed
         # broadcast is not exempt from the same rule. A subscriber that refreshes
         # off THIS event, not git_finalize_done, must not be able to observe
         # "merged" next to an AC still pending_review either.
@@ -382,7 +382,7 @@ class TestFinalApprovalConflictIntent0555:
         assert _intent(merge_id) is None
         assert held_locks(PROJECT) == []
 
-    # ── reconciling success branch (T0008 §5/§7/§9) ────────────────────────────
+    # ── reconciling success branch ────────────────────────────
 
 
     # ── §15: the uncoupled flow ───────────────────────────────────────────────

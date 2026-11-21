@@ -1,18 +1,18 @@
-"""0109 TR0005 — regenerate the .md file for a document whose stored file is missing.
+"""regenerate the .md file for a document whose stored file is missing.
 
 R0001: "파일을 찾을 수 없는 문서에 대해 파일을 재 생성하는 기능". NR0003 designed
 POST /api/v1/documents/{doc_id}/regenerate as a *recovery* op (not a content edit):
 
   - missing file + no backup  → frontmatter stub from DB metadata (body_lost=True)
   - missing file + backup     → restore the last-saved body (restored_from="revision")
-  - file already present       → 409 (never clobber good data, NR0003 §7-3)
+  - file already present → 409 (never clobber good data, the review)
   - unknown doc_id            → 404
-  - recovery ignores the edit/final-approval gate (NR0003 §5) — closed docs recover too
+  - recovery ignores the edit/final-approval gate — closed docs recover too
 
 These call the router function directly (mirrors test_predecessor_endpoint_0061), with a
 real temp storage root so path resolution / persistence is exercised end to end.
 
-0064 T-B1d (L0005 2.12): recovery now runs inside the document's guard and reads its evidence
+T-B1d: recovery now runs inside the document's guard and reads its evidence
 (revision backups, events, other rows using the target) from the DB, so the document lives in
 the real SQLite DB of ``test_fg_card_documents.db_path`` instead of mocked service calls. A file
 already at the target that no row uses is no longer a 409: it is kept beside as ``.orphan-*``
@@ -51,7 +51,7 @@ _DOC = {
     "seq": 1,
     "title": "재생성 대상",
     "target_id": "",
-    "status": "closed",  # NR0003 §5: recovery must work even for a closed doc
+    "status": "closed",  # recovery must work even for a closed doc
     "file_path": "",     # the missing-file symptom — empty column
 }
 
@@ -97,7 +97,7 @@ def test_regenerate_from_metadata_when_no_backup(storage, monkeypatch):
     assert "type: R" in body
     assert "doc_number: 0001-R" in body
     assert "title: 재생성 대상" in body
-    # Persisted path is storage-relative (B0001 guard), not absolute.
+    # Persisted path is storage-relative (guard), not absolute.
     expected = "documents/testprj/main/default/0109/0001-R_document.md"
     assert db_docs.get_by_id(_DOC["doc_id"])["file_path"] == expected
     assert out["data"]["status"] == "closed"
@@ -147,7 +147,7 @@ def test_regenerate_refuses_to_clobber_existing_file(storage, monkeypatch):
 
 
 def test_regenerate_keeps_an_unrecorded_file_aside(storage, monkeypatch):
-    """0064 T-B1d: a file no row uses is moved aside, never overwritten or deleted."""
+    """T-B1d: a file no row uses is moved aside, never overwritten or deleted."""
     tmp_path = storage
     monkeypatch.setattr(db_rev, "list_by_doc", lambda did: [])
 

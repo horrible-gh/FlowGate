@@ -1,6 +1,6 @@
-"""Self-check result block with environment and test definition evidence (flowgate.v02.0114 T#3).
+"""Self-check result block with environment and test definition evidence.
 
-D 0006 2.1 / 3.2 / 3.4 conditions 7-8 / 7.1. ``conftest.py`` registers :class:`EvidencePlugin`
+2.1 / 3.2 / 3.4 conditions 7-8 / 7.1. ``conftest.py`` registers:class:`EvidencePlugin`
 (``register``) next to its own terminal summary. The plugin
 
 * fingerprints, when collection is finished, every collected item's test definition and the
@@ -94,7 +94,7 @@ def register(config, capabilities: Optional[Callable[[], dict]] = None,
              parallel: Optional[Callable[[], Optional[dict]]] = None) -> "EvidencePlugin":
     """Register the plugin once per pytest config. ``capabilities`` returns the host
     capability judgement (``tests/conftest.py`` ``CAPABILITIES``) -- category (b).
-    ``parallel`` (0114 T#4) returns the Self-check worker slot pool's account -- requested,
+    ``parallel`` returns the Self-check worker slot pool's account -- requested,
     applied, slot source, pool size and the run tree's processor limit -- or None outside a
     pool; the limit becomes ``workers.cpu_limit`` and the account the block's ``parallel``."""
     plugin = config.pluginmanager.get_plugin(PLUGIN_NAME)
@@ -169,7 +169,7 @@ def _dependencies() -> dict:
 
 def _workers(config, cpu_limit: Optional[int] = None) -> dict:
     """What was applied, not what was asked: xdist resolves ``-n auto`` into ``option.tx`` (and
-    the slot pool may lower it). ``cpu_limit`` (0114 T#4): the run tree's processor limit when
+    the slot pool may lower it). ``cpu_limit``: the run tree's processor limit when
     the run has a Self-check slot pool, else None."""
     option = config.option
     numprocesses = getattr(option, "numprocesses", None)
@@ -381,7 +381,7 @@ class _DefinitionCollector:
         return any(root == path or root in path.parents for root in self.roots)
 
     def portable(self, value):
-        """flowgate.v02test.0053 1-B: a queued Self-check runs in a snapshot folder that differs per
+        """1-B: a queued Self-check runs in a snapshot folder that differs per
         run, so a test-tree path enters a definition relative to its tree root (``<tree0>/...``),
         never as an absolute path. Paths outside the tree are kept as they are."""
         if isinstance(value, str):

@@ -1,7 +1,7 @@
 // flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's own lines (0035 v7 req.*): one document slot,
 // 요구사항 or 버그 by the document type. Pure functions over the target; nothing reads the server.
-// flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI 위임 (only while AI 위임 is on): the lines are the card's
-// documents the server keeps (T#1 / T#2 card lines). The AI 위임 engine is not in this range — its line is
+// flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI delegation (only while AI delegation is on): the lines are the card's
+// documents the server keeps (card lines). The AI delegation engine is not in this range — its line is
 // the empty record document the setting made, opened like any other.
 import type { InspectorTarget } from '../../inspectorTarget'
 
@@ -14,7 +14,7 @@ export interface RequirementSlotState {
 }
 
 export interface RequirementSlot {
-  /** `document`: the root document line (요구사항 / 버그); `delegation`: the AI 위임 line. */
+  /** `document`: the root document line (요구사항 / 버그); `delegation`: the AI delegation line. */
   readonly key: 'document' | 'delegation'
   readonly kind: 'document' | 'result'
   /** Which name the line carries. */
@@ -37,7 +37,7 @@ const REVIEW_TONES: Readonly<Record<string, RequirementSlotTone>> = {
   revised: 'info',
 }
 
-/** flowgate.v02.0052: the workflow states a root R / B takes after approval. The slot pill shows
+/** the workflow states a root R / B takes after approval. The slot pill shows
  *  their plain wording, never the internal value (wf_in_progress / wf_done). */
 const WORKFLOW_STATES: Readonly<Record<string, Pick<RequirementSlotState, 'key' | 'tone'>>> = {
   wf_in_progress: { key: 'slot_state.in_progress', tone: 'running' },
@@ -53,7 +53,7 @@ export function requirementDocumentState(reviewStatus: string | null, docStatus:
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  // a document being written asks nothing of the operator — a neutral state draws no badge.
   return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 
@@ -73,9 +73,9 @@ function filled(key: RequirementSlot['key'], name: RequirementSlot['name'], id: 
 }
 
 /**
- * The card's lines: the root document (its card line, else the bound document), and the AI 위임 line
- * while the card has one — the server keeps it only while AI 위임 is on (T#2), so it is never drawn empty.
- * A requirement card whose Flow root is held by another card has no document on its line (T#1).
+ * The card's lines: the root document (its card line, else the bound document), and the AI delegation line
+ * while the card has one — the server keeps it only while AI delegation is on, so it is never drawn empty.
+ * A requirement card whose Flow root is held by another card has no document on its line.
  */
 export function requirementCardSlots(facts: RequirementCardFacts): readonly RequirementSlot[] {
   const own = facts.cardDocuments.find((line) => line.slot === 'requirement')

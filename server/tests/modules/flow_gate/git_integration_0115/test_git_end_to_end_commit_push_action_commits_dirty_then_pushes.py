@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_commit_push_action_commits_dirty_then_pushes(self, origin_repo):
-        # NR flowgate.default.0331.0005 §3: `commit_push` is the action that
+        # `commit_push` is the action that
         # replaces the old (mis-scoped) `push` behavior of absorbing dirty
         # worktree edits — it commits them, then publishes the branch.
         from modules.flow_gate.db import git_integration as db_git

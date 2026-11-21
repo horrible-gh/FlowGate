@@ -1,4 +1,4 @@
-"""flowgate.v02.0048 T#10 — R↔B root-type conversion and the Graph engine (D#2 §3.3 C / §4.2 ③).
+"""R↔B root-type conversion and the Graph engine (C / ③).
 
 ``PATCH /documents/{doc_id}/root-type`` now runs the converter through the engine router's v0.1
 contact (``graph_workflow.api.v01_contact.guarded_assignment``), the same contact decide and the
@@ -6,7 +6,7 @@ sequence save use:
 
 - ⓐ Graph Flow -> 409 ``flow_owned_by_graph`` (v0.1 flat body). The document id, its file, the
   ``graph_root_bindings`` row and the Canvas start Node's document all stay as they were — the
-  defect of D#2 §3.2 (a binding left on a deleted id, an R start Node bound to a B root) cannot occur.
+  defect of the earlier implementation (a binding left on a deleted id, an R start Node bound to a B root) cannot occur.
 - ⓑ conflict Flow -> 409 ``flow_ownership_conflict`` (was a detail-string 409 from the sequence gate).
 - ⓒ unassigned Flow without a draft -> 200, the same result as before (new id, file renamed,
   references repointed), now inside the Flow guard.
@@ -205,7 +205,7 @@ def converted_events(env):
 
 
 def start_node(flow):
-    """The Canvas read's Graph start Node (P0008 §3) as the screen gets it."""
+    """The Canvas read's Graph start Node as the screen gets it."""
     from modules.flow_gate.graph_workflow.services import canvas_service
 
     canvas = canvas_service.read_canvas({"group_id": flow, "project_id": "flowgate"}, USER, view=None, collapse=None,
@@ -255,7 +255,7 @@ def test_conflict_flow_is_refused_flat(env, monkeypatch):
                           "graph_revision_no": 1}
     assert doc_row(env, root(FC))["type_code"] == "R"
     assert binding_row(env, FC)["doc_id"] == root(FC)
-    # before 0048 the sequence gate answered it with a detail string; since 0064 T#3 the converter judges the Flow
+    # before 0048 the sequence gate answered it with a detail string; since the earlier implementation the converter judges the Flow
     # ownership again inside the guard, so with the contact bypassed it still refuses with the same flat body.
     _bypass(env, monkeypatch)
     old = convert(env, root(FC))
@@ -285,7 +285,7 @@ def test_unassigned_flow_converts_as_before_inside_the_flow_guard(env, monkeypat
     assert "body preserved" in (env["storage"] / rel_path(FU, "B")).read_text(encoding="utf-8")
     assert _sql(env["db"], "SELECT 1 FROM events WHERE doc_id = ?", (root(FU, "B"),))
     assert _sql(env["db"], "SELECT 1 FROM events WHERE doc_id = ?", (root(FU),)) == []
-    # 0064 T#3 (P0006 §3.4): the note names the mode, children and moved attachments.
+    # the note names the mode, children and moved attachments.
     assert [e["metadata"] for e in converted_events(env)] == [
         f"R->B ({root(FU)} -> {root(FU, 'B')}) mode=number_swap children=0 attachments=0/0 ghosts=0"]
     # the Flow stays unassigned and nobody is told it changed engine
@@ -316,7 +316,7 @@ def test_unassigned_flow_converts_as_before_inside_the_flow_guard(env, monkeypat
 
 # ── the requesting tab on the draft card event ───────────────────────────────
 # The tab that switched reads its Canvas again after the answer; the event its conversion causes names that tab's
-# x-canvas-client-id, so the tab reads once for both. No header, or one not of the P0008 §1.1 format: no origin
+# x-canvas-client-id, so the tab reads once for both. No header, or one not of the the plan format: no origin
 # (as before), and the conversion is never refused for it.
 
 

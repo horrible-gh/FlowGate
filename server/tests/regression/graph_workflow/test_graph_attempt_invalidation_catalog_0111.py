@@ -1,4 +1,4 @@
-"""0111 T#7: D-1a-1 invalidation entry points and D-1b catalog, using isolated Git only."""
+"""D-1a-1 invalidation entry points and D-1b catalog, using isolated Git only."""
 import json
 import time
 from contextlib import nullcontext
@@ -23,8 +23,8 @@ PATHS = ['lease_expired', 'worktree_failed', 'stop']
 
 @pytest.fixture(autouse=True)
 def branch_layout(monkeypatch):
-    """0111 T#8: these are the branch-layout (``graph_attempt_*``) catalog regressions -- an attempt prepared before
-    T#8 keeps its branch and stays ``internal_attempt``. The ref layout is test_graph_attempt_ref_namespace_0111."""
+    """these are the branch-layout (``graph_attempt_*``) catalog regressions -- an attempt prepared before
+    keeps its branch and stays ``internal_attempt``. The ref layout is test_graph_attempt_ref_namespace_0111."""
     monkeypatch.setattr(workspace, 'NEW_LAYOUT', workspace.BRANCH_LAYOUT)
 
 

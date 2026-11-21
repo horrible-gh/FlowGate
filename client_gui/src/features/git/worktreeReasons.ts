@@ -1,6 +1,6 @@
-// flowgate.v02.0066 — the one disabled reason of a Git tab worktree button (0066 D#2 §3-5). Pure:
+// the one disabled reason of a Git tab worktree button. Pure:
 // the session hands in what it read, this picks the first rule of the priority table that hits.
-// T#6 holds the file and commit columns; T#7 adds the merge / follow-up push / fetch columns.
+// holds the file and commit columns; the earlier implementation adds the merge / follow-up push / fetch columns.
 //
 // Reasons come only from server values (E1 blockers / counts / row flags, E8 `blocked[]`, E10
 // `group_blocker` / `push_blocked_reason`) and the screen's own state (read-only, 403, an action
@@ -40,7 +40,7 @@ export const WORKTREE_REASON_CODES: readonly string[] = [
   'staged_protected',
   'no_message',
   'no_provider',
-  // T#7 — merge (rank 13–14: the E8 blocked codes with their own text), follow-up push (rank 15).
+  // merge (rank 13–14: the E8 blocked codes with their own text), follow-up push (rank 15).
   'merge_unread',
   'no_target',
   'merge_unavailable',
@@ -75,7 +75,7 @@ export interface WorktreeReasonInput {
   stagedProtectedRows: number
   message: string
   providerId: string | null
-  // T#7 — the merge judgment of the chosen target and the follow-up push row (absent: in progress).
+  // the merge judgment of the chosen target and the follow-up push row (absent: in progress).
   merge?: WorktreeMergeInput
   push?: WorktreePushInput
 }
@@ -221,7 +221,7 @@ export function reasonMessage(reason: WorktreeReason): { key: string; params: Re
   return { key: 'gui.git.reason.unknown', params: { code: reason.code } }
 }
 
-// flowgate.v02.0067 T#1 — the Base apply one-word state (WorktreeApplySummary) as text, shared by the
+// the Base apply one-word state (WorktreeApplySummary) as text, shared by the
 // Base apply header and the `상태` tab of the Git modeless.
 const APPLY_SUMMARY_KEYS: Record<string, string> = {
   merging: 'gui.git.apply.summary.merging',

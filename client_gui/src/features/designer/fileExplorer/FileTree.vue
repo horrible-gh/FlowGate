@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — FileTree (0024-D §6): turns the (already filtered) node set
+// FileTree: turns the (already filtered) node set
 // into depth-ordered rows and assembles FolderRow / FileRow. Which nodes are visible is
 // decided by the container (전체 / 변경됨 / 찾기); expansion is passed in as data.
 import { computed } from 'vue'

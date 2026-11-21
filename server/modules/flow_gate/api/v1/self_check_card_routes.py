@@ -1,4 +1,4 @@
-"""0053 1-D: console-only card verification status and controls.
+"""console-only card verification status and controls.
 
 All three endpoints require the card Flow's write permission. Responses use the Graph
 envelope and carry ``verification``. GET has no side effects. POST feedback is transient;

@@ -73,7 +73,7 @@ def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None,
 
 
 def stop_for_checkpoint_failure(run_id: str, *, detail: str, at: Optional[str] = None) -> bool:
-    """Terminally stop a loop whose hop checkpoint could not be written (0486 T0029 item 3).
+    """Terminally stop a loop whose hop checkpoint could not be written.
 
     Same one-way compare-and-swap as stop_for_restart_orphan: only a still-active loop with
     no terminal reason can be closed here, so a human hold or a normal outcome is never
@@ -120,7 +120,7 @@ QUESTION_WAIT_HANDED_ON_DETAIL = "question_wait_handed_on"
 def stop_for_question_wait_handoff(run_id: str, *, successor_run_id: str, at: Optional[str] = None) -> bool:
     """Close the loop row of a run parked for its questions once its successor run took the loop over.
 
-    flowgate.v02test.0051 T0005 (A1): a parked loop keeps ``current_stage IN (review, rework)`` while it waits, so the
+    (A1): a parked loop keeps ``current_stage IN (review, rework)`` while it waits, so the
     card stays locked and its assignment reads as active. When the resumed execution's run is admitted it carries the
     loop on in a row of its own; this one is closed with the same one-way compare-and-swap and the existing
     ``retry_exhausted`` reason as the other safety stops (no new stop_reason, no CHECK migration). ``stop_detail``
@@ -143,7 +143,7 @@ QUESTION_WAIT_UNCONFIRMED_DETAIL = "question_wait_unconfirmed"
 def stop_for_question_wait_unconfirmed(run_id: str, *, detail: str, at: Optional[str] = None) -> bool:
     """Stop a loop held at its hop boundary because its run's questions could not be confirmed.
 
-    flowgate.v02test.0051 T0005 (A1): the question read failed, or open questions were found but their wait could not
+    (A1): the question read failed, or open questions were found but their wait could not
     be stored (``question_loop_wait.hold``) — the next hop is never started on that. Same one-way compare-and-swap and
     the existing ``retry_exhausted`` reason as the other safety stops (no new stop_reason, no CHECK migration);
     ``stop_detail`` starts with ``question_wait_unconfirmed`` and names the cause. Round, hop history fields and
@@ -160,7 +160,7 @@ def stop_for_question_wait_unconfirmed(run_id: str, *, detail: str, at: Optional
 
 
 def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
-    """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
+    """Mark this loop's MONITOR CARD as removed by its owner.
 
     Not a delete: the loop row and every round it recorded stay readable through the
     run detail and the run list. Only `ai_invoke_runs.list_review_loops_by_user` -- the

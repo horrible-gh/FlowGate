@@ -1,4 +1,4 @@
-"""Group 0099 B0001 — auto-approved instruction docs must honor the chosen locale.
+"""Group the regression — auto-approved instruction docs must honor the chosen locale.
 
 Two root causes were fixed:
   #1  _auto_approved_title / _auto_approved_body ignored their `locale` arg and hardcoded

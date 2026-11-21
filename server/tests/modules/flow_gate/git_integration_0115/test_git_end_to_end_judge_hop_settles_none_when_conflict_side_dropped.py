@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_judge_hop_settles_none_when_conflict_side_dropped(self, origin_repo):
-        # 0478 T0012 completion (iv): an action_scope=="resolve_conflict" run whose only
+        # Completion (iv): an action_scope=="resolve_conflict" run whose only
         # resolve attempt was rejected by conflict_side_dropped must settle
         # outcome != "complete". ai_invoke_service._judge_hop is called DIRECTLY on a real
         # run dict against a real, still-open conflict session — no mock of _judge_hop,

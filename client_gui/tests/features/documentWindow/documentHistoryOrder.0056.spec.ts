@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — the review history order, fixed whatever order the read sends (O3 0009-TR §4-4 / §6-2):
+ * the review history order, fixed whatever order the read sends:
  * GET /documents/{id} sends `ai_review_history` newest first and `rejection_history` oldest first (F1 took both as
  * "oldest first"). The mapper keeps the server's order (and says so); the window's one timeline is newest first by
  * the instant of each entry — a `Z` time and a `+09:00` time of the same moment are the same time — with entries of

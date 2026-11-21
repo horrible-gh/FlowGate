@@ -72,7 +72,7 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     instruction = save_instruction(env, key)
     ir = one(env, key, "instruction_review", 1)
     assert (ir["actor"], ir["actor_reason"]) == ("wait_setup", "setting_unreadable")
-    # flowgate.v02.0119 T#3 (T-2 rework): its ``review_result_unknown`` is a system error — the error family (never
+    # (T-2 rework): its ``review_result_unknown`` is a system error — the error family (never
     # "nothing to run", never a person's wait), the setting read again by the reads up to the limit
     assert _current(env)["idle_reason"] == "error"
     wire = _wire(_current(env), key)
@@ -105,7 +105,7 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "error")
     assert _review_status(instruction) != "approved" and starts == [] and env["jobs"] == []
 def test_a_card_waiting_for_its_ai_setup_is_no_no_targets(env, decided, starts):
-    """pending_init / wait_setup (T#1's first setup): the account has no role defaults and AIs are selectable — the card
+    """pending_init / wait_setup ('s first setup): the account has no role defaults and AIs are selectable — the card
     waits for its setup (the client's [다음 단계] asks for it first, ``beforeRunPrepare``); the run never says
     "nothing to run", and nothing is written to the account."""
     key = flow(env)

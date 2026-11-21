@@ -4,21 +4,21 @@ export interface CardRunFacts {
   readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
   readonly waitReason?: { code: string; detail?: string | null; role?: string | null } | null
   readonly dispatchErrorCode?: string | null
-  /** flowgate.v02.0121 T#4: the failed AI call's short cause (`provider_capacity`, ...); absent: none told. */
+  /** the failed AI call's short cause (`provider_capacity`, ...); absent: none told. */
   readonly dispatchErrorDetail?: string | null
   readonly resultDocId?: string | null
   readonly status: string | null
   readonly awaitingApproval?: boolean
   readonly stage?: string | null
-  /** flowgate.v02.0083 T#4: the node attempt's running / requested AI executions (absent: not known). */
+  /** the node attempt's running / requested AI executions (absent: not known). */
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
-  /** flowgate.v02.0083 T#4: the card's document holds a question still unanswered. */
+  /** the card's document holds a question still unanswered. */
   readonly question?: boolean
-  /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically, or null / absent. */
+  /** (B-2): why the result was not approved automatically, or null / absent. */
   readonly reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null; doc_id?: string | null; revision_no?: number | null } | null
   readonly approvalWaitReason?: string | null
-  /** flowgate.v02.0113 T#1: the card is actually running (the server's `node_running`); absent: not known. */
+  /** the card is actually running (the server's `node_running`); absent: not known. */
   readonly nodeRunning?: boolean
 }
 
@@ -28,7 +28,7 @@ export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
 export type CardStateTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
-/** The three states the user is told apart (작업 중 · 승인 대기 · 승인됨), and the rest (0083 T#4: 응답 · 작성 대기 is awaiting). */
+/** The three states the user is told apart (Working · 승인 대기 · 승인됨), and the rest (0083 T#4: Response · 작성 대기 is awaiting). */
 export type CardStatePhase = 'working' | 'awaiting' | 'approved' | 'other'
 
 export interface CardStateView {
@@ -39,7 +39,7 @@ export interface CardStateView {
   readonly labelKey: string
   /** The card may be approved now ([승인] is shown when the server allows the user): awaiting approval only. */
   readonly approvable: boolean
-  /** flowgate.v02.0105 T#2 (B-5): why an awaiting card was not approved automatically (tooltip only), else null. */
+  /** (B-5): why an awaiting card was not approved automatically (tooltip only), else null. */
   readonly reason: string | null
 }
 
@@ -53,8 +53,8 @@ const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone, rea
 })
 
 /**
- * flowgate.v02.0083 T#4: an AI execution of the node runs or is requested; null when the server sent no counts.
- * flowgate.v02.0113 T#1: the server's `node_running` (actual running, its AI review included) decides when it is sent.
+ * an AI execution of the node runs or is requested; null when the server sent no counts.
+ * the server's `node_running` (actual running, its AI review included) decides when it is sent.
  */
 function executing(run: CardRunFacts): boolean | null {
   if (typeof run.nodeRunning === 'boolean') return run.nodeRunning
@@ -62,23 +62,23 @@ function executing(run: CardRunFacts): boolean | null {
   return (run.runningExecutionCount ?? 0) + (run.requestedExecutionCount ?? 0) > 0
 }
 
-/** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (지시서 / 결과 작성 대기). */
+/** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (instruction / 결과 작성 대기). */
 const WRITE_WAIT_LABELS: Readonly<Record<string, CardStateKey>> = { instruction: 'instruction_write_wait', execution: 'result_write_wait' }
 
-/** flowgate.v02.0121 T#4: the short causes of a failed AI call (an `incomplete` card's reason, the node wire's
+/** the short causes of a failed AI call (an `incomplete` card's reason, the node wire's
  * `dispatch.error_detail`) that are worded as a sentence of their own (`gui.designer.center.card_failure_reasons.*`). */
 export const CARD_FAILURE_REASONS = ['provider_capacity', 'provider_failed', 'timeout', 'providers_exhausted'] as const
 
-/** flowgate.v02.0125 T#2: a `needs_intervention` card's reason worded as a sentence of its own, by message key
+/** a `needs_intervention` card's reason worded as a sentence of its own, by message key
  * (`gui.designer.center.card_intervention_reasons.*`). Q #544: an exhausted review is re-reviewed by `다음 단계` / `전체 실행`. */
 export const CARD_INTERVENTION_REASONS: Readonly<Record<string, string>> = {
   'review_not_passed:review_count_exhausted': 'review_count_exhausted',
-  // flowgate.v02gui.0015 T3: the answers require a new attempt nobody opened — the card is not called again until then.
+  // the answers require a new attempt nobody opened — the card is not called again until then.
   'action_required:new_attempt': 'action_required_new_attempt',
 }
 
 /**
- * flowgate.v02.0121 T#4 (rej_01M6FFMXBCPX855V): the shown text of a card state's reason, one rule for every screen that
+ * (rej_01M6FFMXBCPX855V): the shown text of a card state's reason, one rule for every screen that
  * shows a `CardStateView` (the Canvas card title, the Inspector state pill): an `incomplete` card's known cause as its
  * ko / en / ja sentence; any other reason (an intervention's, an approval wait's, a cause this screen does not know) as
  * sent; null when the state has no reason.
@@ -134,7 +134,7 @@ function runCardStateView(run: CardRunFacts | null | undefined): CardStateView |
     }
     case 'open':
       if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')
-      // flowgate.v02.0121 T#4: its short cause as the reason (`card_failure_reasons`); the details stay in the logs.
+      // its short cause as the reason (`card_failure_reasons`); the details stay in the logs.
       if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning', run.dispatchErrorDetail?.trim() || null)
       if (run && executing(run) === false) return view(run.question === true ? 'waiting_answer' : 'waiting_writer', 'awaiting', 'neutral')
       if (run?.stage === 'instruction') return view('writing_instruction', 'working', 'info')

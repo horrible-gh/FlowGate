@@ -6,7 +6,7 @@ import { createHttpGitSource } from '@/features/git/gitSource'
 import { G } from './fakeGitSource'
 import { flowWorkBase } from './fakeWorktreeSource'
 
-// flowgate.v02.0107 T#1 — the HTTP GitSource reads the Flow work base for display through the
+// the HTTP GitSource reads the Flow work base for display through the
 // project store's side-effect-free boundary (D §3.1), never through the 0104 settings loader.
 
 beforeEach(() => {

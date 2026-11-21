@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0053 T#7 — a refused change, next to its control: one red ! icon and no text on screen (0053
+  <!-- a refused change, next to its control: one red ! icon and no text on screen (0053
        CH: the state is an icon, the explanation a tooltip). `name` is its short accessible name, `reason`
        the tooltip (its accessible description); it takes the focus so the tooltip can be reached. -->
   <span class="inspector-failure-icon" role="img" tabindex="0" :aria-label="name" :title="reason" data-test="inspector-failure-icon" data-tone="danger">

@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0045 T0019 — Designer Canvas fixes from the mid-way check:
+ * Designer Canvas fixes from the mid-way check:
  * 1. no empty-Graph text, 2. a new Flow starts with one 요구사항 node (never added twice),
  * 3. wide connection areas on draft cards, 4. 설계 cards purple and named like the Palette,
  * 5. no ownership badge, 6. progressed / not yet progressed Edges drawn apart (actual node states),
  * 7. Edge selection apart from removal — a progressed Edge is never removed.
- * TR0020 rev4 (rejection): 2. only execution Edges are drawn — no dashed reference fan-out from a
+ * (rejection): 2. only execution Edges are drawn — no dashed reference fan-out from a
  * 요구사항 card; 3. a connection starts from any side of a card and an Edge attaches to the sides
  * that face each other (edgeGeometry.ts), never a fixed right side.
  * Pure rules over the model, the session over a fake source, and the screen with the real Vue Flow
@@ -155,7 +155,7 @@ describe('Edge progress from the actual node states (item 6)', () => {
     expect([...progressedEdgeIds(graph)]).toEqual(['seq:r>t'])
     expect(isEdgeProgressed(graph, 'ref:triggered_by:r>t')).toBe(false)
     expect(isEdgeProgressed(graph, 'ref:target:r>t')).toBe(false)
-    // TR0020 rev4 (rejection item 2): the five document relations are not drawn — only the lines
+    // (rejection item 2): the five document relations are not drawn — only the lines
     // in the direction the work goes; an unclassified edge is still drawn (never progressed).
     expect(toVueFlowEdges(graph).map((e) => [e.id, e.data])).toEqual([
       ['plain:r>t', { edgeClass: null, progressed: false, deletable: false }],
@@ -277,7 +277,7 @@ describe('FlowEdgePath look (items 6 and 7)', () => {
   })
 })
 
-// TR0020 rev4 (rejection item 3): an Edge leaves a card on the side that faces the other card.
+// (rejection item 3): an Edge leaves a card on the side that faces the other card.
 describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometry)', () => {
   const rect = (x: number, y: number) => ({ x, y, width: NODE_CARD_WIDTH, height: NODE_CARD_HEIGHT })
 
@@ -293,19 +293,19 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
 
   it('anchors at the middle of the facing side and enters the opposite side of the target', () => {
     expect(edgeAnchors(rect(0, 0), rect(300, 40))).toEqual({
-      sourceX: 176, sourceY: 46, sourcePosition: Position.Right, targetX: 300, targetY: 86, targetPosition: Position.Left,
+      sourceX: 176, sourceY: 54, sourcePosition: Position.Right, targetX: 300, targetY: 94, targetPosition: Position.Left,
     })
     expect(edgeAnchors(rect(0, 0), rect(40, 300))).toEqual({
-      sourceX: 88, sourceY: 92, sourcePosition: Position.Bottom, targetX: 128, targetY: 300, targetPosition: Position.Top,
+      sourceX: 88, sourceY: 108, sourcePosition: Position.Bottom, targetX: 128, targetY: 300, targetPosition: Position.Top,
     })
     expect(edgeAnchors(rect(40, 300), rect(0, 0))).toEqual({
-      sourceX: 128, sourceY: 300, sourcePosition: Position.Top, targetX: 88, targetY: 92, targetPosition: Position.Bottom,
+      sourceX: 128, sourceY: 300, sourcePosition: Position.Top, targetX: 88, targetY: 108, targetPosition: Position.Bottom,
     })
     expect(edgeAnchors(rect(300, 40), rect(0, 0))).toMatchObject({ sourcePosition: Position.Left, sourceX: 300, targetPosition: Position.Right, targetX: 176 })
   })
 
   it('takes a Vue Flow node as its absolute rectangle, the card size until it is measured', () => {
-    expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 0, height: 0 } })).toEqual({ x: 10, y: 20, width: 176, height: 92 })
+    expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 0, height: 0 } })).toEqual({ x: 10, y: 20, width: 176, height: 108 })
     expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 200, height: 100 } })).toEqual({ x: 10, y: 20, width: 200, height: 100 })
   })
 
@@ -318,14 +318,14 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
     )
     const edge = () => w.get('[data-test="designer-canvas-edge"]')
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['bottom', 'top'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,92 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,108 C/)
     // The arrow tip sits on the target's top middle and points down into it.
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M128,300 L123,291 L133,291 Z$/)
     ;(w.vm as unknown as { b: GraphNode }).b.computedPosition = { x: 400, y: 20, z: 0 }
     await flushPromises()
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['right', 'left'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,46 C/)
-    expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,66 L391,/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,54 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,74 L391,/)
   })
 })
 

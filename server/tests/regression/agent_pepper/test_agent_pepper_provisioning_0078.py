@@ -1,6 +1,6 @@
-"""flowgate.v02.0078 T0004 — Agent Registry pepper: provisioning, preservation, 503 contract.
+"""Agent Registry pepper: provisioning, preservation, 503 contract.
 
-0003-NR: agent_registry.digest() answers 503 temporarily_unavailable whenever
+agent_registry.digest answers 503 temporarily_unavailable whenever
 FLOWGATE_AGENT_PEPPER is absent, and no install path ever created it. These tests pin:
 
   * every install path (setup.sh / setup.ps1 / docker-entrypoint.sh) generates it once,
@@ -45,7 +45,7 @@ from modules.flow_gate.api.v1 import agent_routes as routes  # noqa: E402
 SERVER = Path(__file__).resolve().parents[3]
 REPO = SERVER.parent
 MIG = SERVER / "sql" / "migrations" / "sqlite" / "121_agent_registry.sql"
-# flowgate.v02test.0019: AgentService reads agents.deleted_at (a deleted Agent is not found).
+# AgentService reads agents.deleted_at (a deleted Agent is not found).
 MIG_SOFT_DELETE = SERVER / "sql" / "migrations" / "sqlite" / "184_agent_soft_delete.sql"
 PY = sys.executable
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -140,7 +140,7 @@ class TestCheckAgentPepper:
                     DB_USER="x", DB_PASSWORD="x", DB_DATABASE="x")
         assert r.returncode == 2, r.stdout + r.stderr
 
-    # 0078 TR0005 rework: only "both tables absent" is a new DB. Every other way the
+    # only "both tables absent" is a new DB. Every other way the
     # registrations cannot be read must refuse (exit 2), never fall back to "safe".
 
     def test_complete_but_empty_registry_is_safe(self, tmp_path):

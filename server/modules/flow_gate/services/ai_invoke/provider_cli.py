@@ -1,4 +1,4 @@
-"""Subprocess/CLI transport (0501 NR0003 §12/§15 `provider_cli.py`).
+"""Subprocess/CLI transport (`provider_cli.py`).
 
 Spawning a provider CLI in its own process group, the progress watchdog that kills a
 run that has gone quiet past its threshold, exit-code and dying-message recovery, and
@@ -22,7 +22,7 @@ from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import process_runner
 from modules.flow_gate.settings import ai_settings_service
 
-# Not a transport of `worker.py` itself (NR0003 §28: transport must not import the
+# Not a transport of `worker.py` itself (the review: transport must not import the
 # orchestration it is transport FOR). The watchdog primitives this module used to reach
 # there -- the absolute-ceiling clock and the progress probes -- are pure/constant-only,
 # so they now live on `runtime` (the parameter block) and `oracle` (the progress probes,
@@ -62,10 +62,10 @@ def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, 
     return prompt, agent_api_base or operator_api_base
 
 
-# ── No-progress watchdog (0446 T0014 §3) ─────────────────────────────────────
+# ── No-progress watchdog ─────────────────────────────────────
 #
 # `_cli_execute` waits for the worker with a single `communicate(timeout=...)`, so the
-# only question it could ever ask was "has the clock run out?". NR0003 measured both
+# only question it could ever ask was "has the clock run out?". the review measured both
 # ways that goes wrong on a fixed hour: a 74-minute TR hop that was still registering
 # documents got cut off, and a worker that died in its first minutes still held its
 # group for the remaining 59. This watchdog asks the other question — "is anything
@@ -119,7 +119,7 @@ def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
         # The same flag an expired `communicate()` raises, so this ends as end_reason
         # "timeout" / stop_code "timeout" and NEVER as a provider spawn_failed or
         # fast_fail (§4-3). `watchdog_kill` is the minimal in-memory mark that tells the
-        # two kinds apart; T#2 turns it into the durable sentence. No new stop code and
+        # two kinds apart; the earlier implementation turns it into the durable sentence. No new stop code and
         # no new column here (§3-4).
         run["timed_out"] = True
         claim = run["watchdog_kill"]
@@ -152,7 +152,7 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
     if not git_enabled:
         logger.info("ai-invoke %s: progress watchdog has no source tree — documents only",
                     run.get("run_id"))
-    # T0004 §5: subprocess liveness is a THIRD, weaker signal, read independently of the
+    # subprocess liveness is a THIRD, weaker signal, read independently of the
     # two above -- its own first successful read is a baseline only (a run that already
     # has children when the watchdog starts must not look like it just spawned them), and
     # its failures never touch `readable` (§5 point 5: an unsupported/unreadable process
@@ -200,7 +200,7 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
                 git_watermark = paths
                 moved.append("source")               # added AND removed paths both count
 
-        # T0004 §5/§6: process liveness never feeds `readable` or `moved` above -- a
+        # process liveness never feeds `readable` or `moved` above -- a
         # snapshot failure here must not touch the no-progress gate, and a snapshot
         # CHANGE must not touch it either (§9: a live/churning subprocess must never
         # reset `stall_anchor_mono` on its own). It only ever writes `last_activity_*`.
@@ -299,7 +299,7 @@ def _stop_progress_watchdog(stop_event: Optional[threading.Event], thread,
                        run_id, STALL_WATCHDOG_JOIN_SEC)
 
 
-# ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
+# ── CLI adapter ─────────────────────────────────────────────────
 
 _CLI_LAUNCH_AUDIT_SCHEMA = "flowgate.external-cli-launch.v1"
 
@@ -402,7 +402,7 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
 def _prepare_cli_command(kind: str, command: str, last_message_file: Path) -> str:
     """The stored CLI command as a launch actually runs it (run and probe share this).
 
-    0295 NR0003 §5-2: injects codex's --skip-git-repo-check when the stored command lacks
+    injects codex's --skip-git-repo-check when the stored command lacks
     it. The cwd resolved by _resolve_cli_launch is NOT guaranteed to be a git repo
     (scratch fallback, or a project mirror that is not a checkout), and codex exec exits 1
     immediately when it is not -- burning the provider as a fast_fail before it reads the
@@ -427,7 +427,7 @@ def _cli_scratch_env(scratch: Path) -> dict[str, str]:
 
 
 def _cli_popen_kwargs(decision: dict, env: dict[str, str]) -> dict:
-    # Allowlisted inheritance (v02.0089 T0004): a CLI child gets the OS/home/locale/proxy
+    # Allowlisted inheritance (v02.0089 the earlier implementation): a CLI child gets the OS/home/locale/proxy
     # and vendor-login variables it needs plus `env`, never the server's secrets.
     kwargs = process_runner.popen_kwargs(Path(decision["agent_cwd"]), env,
                                          policy=process_runner.CHILD_ENV_POLICY_CLI)
@@ -546,7 +546,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
     if provider_remote.is_remote_cli(provider):
-        # flowgate.v02.0129 T#2: a remote CLI connection runs only as a Job on its target
+        # a remote CLI connection runs only as a Job on its target
         # Agent -- never through the local process boundary below.
         return provider_remote.execute(provider, prompt, run)
     cmd = (provider.get("cli_command") or "").strip()
@@ -564,19 +564,19 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if image_args:
             cmd += " " + " ".join(image_args)
 
-    # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
+    # cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
     # installation directory, base checkout, or OS temp fallback is permitted.
-    # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
+    # Group 0235: the external agent runs on THIS host and
     # must post results to an address it can actually reach. The mention was built
     # with the operator-facing base; rewrite it (and export it) to an agent-reachable
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
     prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
     # CLI providers authenticate themselves; a configured api_key is deliberately
-    # NOT exported (leak prevention, L0006 §2.3).
+    # NOT exported (leak prevention, the earlier implementation).
     env = {
         "FLOWGATE_TOKEN": run["raw_token"],
-        # T0004 (0581 NR0003): the CLI worker's file-submission contract
+        # the CLI worker's file-submission contract
         # (FLOWGATE_SCRATCH/verdict.json -> POST /inbox doc_path) is validated against
         # the TOKEN's own scratch, not the run-internal one -- they must be the same
         # issue result as FLOWGATE_TOKEN above, or inbox's path jail rejects a file the
@@ -617,7 +617,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 and run.get("watchdog_kill") is None):
             return "spawn_failed", str(error)[:500]
 
-    # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
+    # a watchdog kill ends `communicate()` NORMALLY — the child is
     # already gone, so there is no TimeoutExpired to catch and the local flag above is
     # still False. Merge the verdict in before anything reads it: the exit code of a
     # killed worker is not a verdict (it stays None, as on any other timeout) and a
@@ -638,7 +638,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         exit_code=proc.returncode if not timed_out and not cancelled else None, timed_out=timed_out,
         process_exited_itself=not timed_out and not cancelled and not run.get("user_paused"))
     # Fast-fail: startup failure ⇒ fallback candidate. A user cancel or timeout is
-    # never a provider startup failure (L0006 §2.2 / §4.3).
+    # never a provider startup failure.
     if (
         not cancelled
         and not timed_out
@@ -668,7 +668,7 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
     no group watchdog. A handle abort kills the whole process tree.
 
     Without `scratch` the probe owns a fresh scratch and deletes it afterwards. With
-    `scratch`/`run_id` (flowgate.v02.0017: an AI Evaluation's judge and target share one
+    `scratch`/`run_id` (the earlier change: an AI Evaluation's judge and target share one
     evaluation Scratch) the caller owns that manifest-bound scratch: the CLI runs inside it
     and it is left in place for the caller to settle.
     """
@@ -745,8 +745,8 @@ def _copilot_last_message(stdout_text: str) -> Optional[str]:
 
     The stream is NDJSON — one event object per line, no blank lines anywhere — so the
     blank-line block splitter below returns the WHOLE dump as a single "message" and the
-    operator sees MCP server status logs where the answer should be (0292 CH0002, 0295
-    NR0003 §6). The answer lives in the last `assistant.message` event's `data.content`;
+    operator sees MCP server status logs where the answer should be (the discussion, 0295
+    ). The answer lives in the last `assistant.message` event's `data.content`;
     `assistant.message_delta` carries the same text in fragments and `result` carries no
     text at all, so neither is a usable substitute.
 

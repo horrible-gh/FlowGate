@@ -1,4 +1,4 @@
-"""0018 R0001: workflow-strip time-machine — sequence endpoint exposes the slot's
+"""workflow-strip time-machine — sequence endpoint exposes the slot's
 realised document identity (result_doc_id + result_seq) so the FE can map a clicked
 strip cell to its rollback target (documents.seq → reopen target_seq).
 

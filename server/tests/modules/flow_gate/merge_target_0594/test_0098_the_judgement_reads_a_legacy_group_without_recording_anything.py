@@ -65,7 +65,7 @@ def test_0098_the_judgement_reads_a_legacy_group_without_recording_anything(proj
     before = rows()
     assert before[0]["work_base_ref"] is None and before[1]["work_base_state"] is None
     view = _check_view(proj, gid, "develop", refresh=False)
-    # flowgate.v02test.0020 rev2: the list reads no floor; develop is listed and refused when saved (below)
+    # The list reads no floor; develop is listed and refused when saved (below)
     assert view["merge_target_options"] == ["develop", "main"]
     assert view["default_target_branch"] == "main"
     assert view["merge_target_state"]["current"]["error"] is None

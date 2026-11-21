@@ -39,7 +39,7 @@ def get_type_names_map(locale: str = "en") -> dict[str, str]:
     if key not in _cache:
         with _lock:
             if key not in _cache:
-                # 0279 P3-12: an empty result is deliberately NOT cached.
+                # an empty result is deliberately NOT cached.
                 # ``_load_type_names_map`` returns {} both for "no rows" and for "the
                 # query raised", and this line previously stored that {} under the key
                 # unconditionally — after which ``key not in _cache`` was false forever,

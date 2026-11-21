@@ -1,10 +1,10 @@
 """Node title state store (0064 DB0007 §2.1 / §4 Q1~Q4, migration 155_graph_node_title_states.sql).
 
-One row per card (Flow, node key); no row is the not-judged state ``U`` (0062 L0006 3.1), shown as version 0 and
+One row per card (Flow, node key); no row is the not-judged state ``U``, shown as version 0 and
 never written just to be read. Every write runs inside the caller's Flow guard and raises ``version`` in SQL
 (``version = version + 1``), so the version follows the commit order. ``human_edited`` only goes 0 -> 1 and no
 write here sets ``title_source`` back from ``human``. ``claim`` / ``close`` / ``apply_ai`` are the AI title
-opportunity writes of 0062 L0006 2.4 / 2.6 (their caller comes with the AI naming set); each is conditional on the
+opportunity writes of the earlier implementation 2.4 / 2.6 (their caller comes with the AI naming set); each is conditional on the
 version the caller read and answers the rows it changed (0: the caller lost a race).
 SQL is written in the SQLite/PostgreSQL form; ``db/dialect.py`` rewrites it for MySQL.
 """
@@ -21,7 +21,7 @@ STATE_VERSION_START = 1
 STATE_VERSION_NONE = 0
 SOURCE_NONE, SOURCE_AI, SOURCE_HUMAN = "none", "ai", "human"
 UNUSED, CLAIMED, CLOSED = "unused", "claimed", "closed"
-# 0062 L0006 1.2. An open key in the database (DB0007 §2.1.2): the values are checked here. 0064 T-B4d (L0005 2.17,
+# 1.2. An open key in the database : the values are checked here. 0064 T-B4d (the earlier implementation 2.17,
 # question #441 o1): a legacy mapping L6 cannot tell from a re-dispatch counts as evidence, closed as its own reason.
 CLOSE_REASONS = (
     "applied", "no_candidate", "invalid_candidate", "human_edited", "prior_evidence", "superseded_start",
@@ -78,7 +78,7 @@ def _update(flow_id: str, node_key: str, values: dict, where: str = "", params: 
 
 
 def save_human(flow_id: str, node_key: str, title: str, user_id: Optional[str]) -> None:
-    """0062 L0006 2.7 step 5: a person's title. The person mark goes on and stays; an opportunity still unused or
+    """2.7 step 5: a person's title. The person mark goes on and stays; an opportunity still unused or
     claimed closes as ``human_edited``; a closed one keeps its reason (``X -> X``). ``current`` is the row the
     caller's guard read: the next values are decided from it, so no assignment depends on the order a database
     evaluates ``SET`` in."""
@@ -99,7 +99,7 @@ def _check_reason(reason: str) -> None:
 
 def claim(flow_id: str, node_key: str, token_id: str, ai_run_id: Optional[str],
           expected_version: Optional[int]) -> int:
-    """0062 L0006 2.4 ``claim``: ``U`` -> ``C`` (no row: insert; else only an unused row of the version read)."""
+    """2.4 ``claim``: ``U`` -> ``C`` (no row: insert; else only an unused row of the version read)."""
     values = {"opportunity_state": CLAIMED, "claimed_token_id": token_id, "claimed_ai_run_id": ai_run_id,
               "claimed_at": utc_now_ms()}
     if expected_version is None:
@@ -110,7 +110,7 @@ def claim(flow_id: str, node_key: str, token_id: str, ai_run_id: Optional[str],
 
 
 def close(flow_id: str, node_key: str, reason: str, expected_version: Optional[int]) -> int:
-    """0062 L0006 2.4 ``close``: ``U`` / ``C`` -> ``X`` with its reason; a closed row is never written again."""
+    """2.4 ``close``: ``U`` / ``C`` -> ``X`` with its reason; a closed row is never written again."""
     _check_reason(reason)
     values = {"opportunity_state": CLOSED, "close_reason": reason, "closed_at": utc_now_ms()}
     if expected_version is None:
@@ -121,7 +121,7 @@ def close(flow_id: str, node_key: str, reason: str, expected_version: Optional[i
 
 
 def apply_ai(flow_id: str, node_key: str, title: str, token_id: str, expected_version: int) -> int:
-    """0062 L0006 2.6 step 8: the claiming token's title, only while the row is still claimed by it, no person
+    """2.6 step 8: the claiming token's title, only while the row is still claimed by it, no person
     saved one and nothing was written since the version read."""
     values = {"title": title, "title_source": SOURCE_AI, "opportunity_state": CLOSED, "close_reason": "applied",
               "closed_at": utc_now_ms()}

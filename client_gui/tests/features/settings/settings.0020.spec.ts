@@ -19,7 +19,7 @@ import type {
   WorkspaceListResponse,
 } from '@/features/settings/types'
 
-// flowgate.v02.0020 — 환경 설정 시안 11~14 wired to the real API adapter (mocked here).
+// flowgate.v02.0020 — 환경 설정 mockup 11~14 wired to the real API adapter (mocked here).
 vi.mock('@/features/settings/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/settings/api')>()
   const mocked: Record<string, unknown> = { SettingsRequestError: actual.SettingsRequestError }
@@ -152,7 +152,7 @@ afterEach(() => {
 })
 
 describe('환경 설정 hub (시안 11 #hub)', () => {
-  // flowgate.v02.0076 T#1: the cards come from the registered settings routes; Workspace and the
+  // the cards come from the registered settings routes; Workspace and the
   // inert "준비 중" cards are gone. 내 설정 / 프로젝트 appear once their views' routes exist.
   it('opens 시스템 for an administrator and shows no Workspace, inert or "준비 중" card', async () => {
     const { wrapper } = await mountAt('/settings')
@@ -333,7 +333,7 @@ describe('시스템 › 사용자 (시안 13)', () => {
     expect(wrapper.get('[data-testid="users-total"]').text()).toBe('3')
     await wrapper.get('[data-testid="tile-2fa"]').trigger('click')
     expect(wrapper.findAll('[data-user]').map((r) => r.attributes('data-user'))).toEqual(['u2', 'u3'])
-    // flowgate.v02.0076 T#3: the Workspace tile / filter is gone (D §2.7).
+    // the Workspace tile / filter is gone (D).
     expect(wrapper.find('[data-testid="tile-nows"]').exists()).toBe(false)
   })
 
@@ -366,7 +366,7 @@ describe('시스템 › 사용자 (시안 13)', () => {
     await wrapper.get('[data-testid="user-create"]').trigger('click')
     await wrapper.get('[data-testid="new-user-name"]').setValue('Han Seojun')
     await wrapper.get('[data-testid="new-user-email"]').setValue('han@example.com')
-    // flowgate.v02.0076 T#3: no Workspace picker; the create input carries no workspace_id.
+    // no Workspace picker; the create input carries no workspace_id.
     expect(wrapper.find('[data-testid="new-user-ws"]').exists()).toBe(false)
     await wrapper.get('[data-testid="user-create-confirm"]').trigger('click')
     await flushPromises()

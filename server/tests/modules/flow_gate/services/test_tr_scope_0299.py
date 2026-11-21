@@ -1,9 +1,9 @@
-"""TR 작업범위 검증 (flowgate.default.0299 — R0001 → D0004 → NR0006 → T0007).
+"""TR work-scope validation.
 
-NR0006 §5 의 검증 시나리오 중 순수 함수로 확정 가능한 것을 덮는다: 섹션 파싱,
-경로 정규화/거부, 제외 규칙, 판정 매트릭스, 실제 변경 수집(진짜 git 저장소를 만들어
-committed/staged/unstaged/untracked/delete/rename 을 모두 섞는다), 그리고 반려
-안내문의 필수 구성.
+Cover the review scenarios verifiable through pure functions: section parsing,
+path normalization/rejection, exclusions, verdict matrix, actual change collection
+using a real Git repository mixing committed/staged/unstaged/untracked/delete/rename,
+and the required rejection-notice structure.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import pytest
 from modules.flow_gate.services import tr_scope_service as trs
 
 
-# ── 신고목록 파서 (D0004 §3.2) ────────────────────────────────────────────────
+# ── Reported-file list parser ──
 
 def test_section_absent_is_not_found():
     parsed = trs.parse_reported_files("# TR\n\n본문만 있고 섹션이 없다.\n")
@@ -32,7 +32,7 @@ def test_section_stops_at_next_heading():
     assert parsed.format_errors == []
 
 
-# ── T0004: Markdown horizontal rule as a Changed Files section boundary ─────
+# ── the earlier implementation: Markdown horizontal rule as a Changed Files section boundary ─────
 
 def test_horizontal_rule_ends_section_before_verification_footer():
     """R1 -- the real-world symptom: a '---' separated verification footer must not be
@@ -123,14 +123,14 @@ def test_none_marker_is_an_empty_but_present_report():
 
 @pytest.mark.parametrize("item", ["/etc/passwd", "C:/repo/server/a.py", "../outside.py"])
 def test_absolute_and_escaping_paths_are_out_of_scope(item):
-    """표기 자체가 범위 밖임을 자백하는 형식만 TRV-002 (N0005 Q1 = o3)."""
+    """Only explicitly out-of-scope path forms trigger TRV-002 (N0005 Q1 = o3)."""
     parsed = trs.parse_reported_files(f"## 변경 파일\n\n- {item}\n")
     assert parsed.out_of_scope == [item]
     assert parsed.paths == []
 
 
 def test_tolerated_variants_are_normalized_not_rejected():
-    """정직하게 신고한 작업자가 표기 변형 때문에 반려되면 안 된다."""
+    """Do not reject an honest report merely for harmless notation variants."""
     parsed = trs.parse_reported_files(
         "## 변경 파일\n\n"
         "- `client/b.vue` — 표시 추가\n"
@@ -138,7 +138,7 @@ def test_tolerated_variants_are_normalized_not_rejected():
         "- ./x/y.py\n"
         r"- server\win\path.py" "\n"
         "- server//double.py\n"
-        "- server/a.py\n"  # 중복
+        "- server/a.py\n"  # Duplicate
     )
     assert parsed.paths == [
         "client/b.vue", "server/a.py", "x/y.py", "server/win/path.py", "server/double.py",
@@ -160,7 +160,7 @@ def test_item_count_cap():
     assert any(str(trs.MAX_ITEMS) in e for e in parsed.format_errors)
 
 
-# ── 제외 규칙 (D0004 §3.3 / N0005 Q2 확정) ───────────────────────────────────
+# ── Exclusion rules (N0005 Q2 decision) ──
 
 @pytest.mark.parametrize("path", [
     ".git/config", ".venv/lib/x.py", "server/app.db", "server/app.sqlite3",
@@ -175,14 +175,14 @@ def test_excluded_paths(path):
 @pytest.mark.parametrize("path", [
     "server/modules/flow_gate/api/inbox_routes.py",
     "client/src/main/components/MainPanel.vue",
-    # 최상위가 아닌 점 항목은 살린다 — 정말 고친 설정 파일이 조용히 사라지면 안 된다.
+    # Keep non-root dotfiles: genuinely changed configuration files must not disappear.
     "client/src/.eslintrc.json",
 ])
 def test_kept_paths(path):
     assert trs.is_excluded_path(path) is False
 
 
-# ── 판정 매트릭스 (D0004 §3.7) ───────────────────────────────────────────────
+# ── Verdict matrix ──
 
 @pytest.mark.parametrize("stage,expected", [
     (trs.STAGE_OBSERVE, trs.VERDICT_PASS),
@@ -198,13 +198,13 @@ def test_staged_codes_follow_the_stage(code, stage, expected):
 
 @pytest.mark.parametrize("stage", [trs.STAGE_OBSERVE, trs.STAGE_WARN, trs.STAGE_ENFORCE])
 def test_out_of_scope_always_rejects(stage):
-    """TRV-002 는 추리가 아니라 자백이므로 단계와 무관하게 거부한다."""
+    """TRV-002 is an explicit declaration, not an inference; reject at every stage."""
     assert trs._verdict_for([trs.TRV_OUT_OF_SCOPE], stage) == trs.VERDICT_REJECT
 
 
 @pytest.mark.parametrize("stage", [trs.STAGE_OBSERVE, trs.STAGE_WARN, trs.STAGE_ENFORCE])
 def test_no_scope_alone_never_rejects(stage):
-    """TRV-006 은 서버 사정이므로 작업자 책임으로 돌리지 않는다."""
+    """TRV-006 reflects server conditions, not worker responsibility."""
     assert trs._verdict_for([trs.TRV_NO_SCOPE], stage) != trs.VERDICT_REJECT
 
 
@@ -218,7 +218,7 @@ def test_clean_report_passes_in_every_stage():
         assert trs._verdict_for([], stage) == trs.VERDICT_PASS
 
 
-# ── 반려 안내문 (D0004 §3.8) ─────────────────────────────────────────────────
+# ── Rejection notice ──
 
 def test_notice_carries_all_five_blocks():
     notice = trs.build_notice({
@@ -232,12 +232,12 @@ def test_notice_carries_all_five_blocks():
         "format_errors": [],
     })
     assert "[1] 반려 사유" in notice
-    # 자기 위치를 몰라서 생기는 사고가 대부분이므로 배정 위치 두 줄이 핵심이다.
+    # Most incidents stem from an unknown location; the two assigned-location lines are essential.
     assert "flowgate_default_0299" in notice
     assert "[3]" in notice and "server/x.py" in notice
-    assert trs.SECTION_HEADING in notice          # 재제출 형식
-    assert "[5]" in notice                        # 되돌리는 법
-    # 어조는 단정이 아니라 추정 (D0004 §3.8).
+    assert trs.SECTION_HEADING in notice          # Resubmission format
+    assert "[5]" in notice                        # How to revert
+    # Phrase this as an inference, not a certainty.
     assert "대개" in notice
 
 
@@ -285,7 +285,7 @@ def test_revert_block_is_omitted_when_nothing_was_written_elsewhere():
     assert "[5]" not in notice
 
 
-# ── 언어 전달 (0355 T2/TR2, NR0003 §1-4) ─────────────────────────────────────
+# ── Locale propagation ──
 
 import re as _re
 
@@ -305,7 +305,7 @@ _SAMPLE_RESULT = {
 
 
 def test_notice_default_locale_is_unchanged_korean():
-    """locale 인자를 안 주면 기존 호출부(로그 등)와 완전히 같아야 한다."""
+    """Omitting locale must preserve existing callers, including logs, exactly."""
     notice = trs.build_notice(_SAMPLE_RESULT)
     assert notice == trs.build_notice(_SAMPLE_RESULT, "ko")
     assert _HANGUL.search(notice)
@@ -318,9 +318,9 @@ def test_notice_en_has_no_korean_but_keeps_structure_and_codes():
     for marker in ("[1]", "[2]", "[3]", "[4]"):
         assert marker in notice
     assert trs.TRV_UNCONFIRMED in notice and trs.TRV_UNREPORTED in notice
-    assert "flowgate_default_0355" in notice  # 자리표시자 값은 번역하지 않는다
+    assert "flowgate_default_0355" in notice  # Placeholder values are not translated
     assert "server/a.py" in notice and "server/y.py" in notice
-    assert trs.SECTION_HEADING_EN in notice  # 재제출 안내의 구역 제목도 영어
+    assert trs.SECTION_HEADING_EN in notice  # The resubmission section heading is English too
 
 
 def test_notice_ja_has_japanese_no_korean_and_english_grammar_heading():
@@ -328,7 +328,7 @@ def test_notice_ja_has_japanese_no_korean_and_english_grammar_heading():
     assert not _HANGUL.search(notice), "ja notice must not contain Korean"
     assert _KANA.search(notice), "ja notice must contain Japanese"
     assert "flowgate_default_0355" in notice
-    # 일본어 별칭은 만들지 않았으므로(0355 T0009) 구역 제목은 영어 정식 표기로 안내한다.
+    # No Japanese alias exists; use the canonical English heading.
     assert trs.SECTION_HEADING_EN in notice
     assert trs.SECTION_HEADING not in notice
 
@@ -343,7 +343,7 @@ def test_tr_section_guide_localized_no_leak_and_keeps_placeholder_shape():
     en = trs.tr_section_guide("en")
     ja = trs.tr_section_guide("ja")
 
-    assert ko == trs.TR_SECTION_GUIDE  # 하위호환: 모듈 상수는 ko 렌더링과 같다
+    assert ko == trs.TR_SECTION_GUIDE  # Compatibility: the module constant equals the ko rendering
     assert _HANGUL.search(ko)
 
     assert not _HANGUL.search(en) and not _KANA.search(en)
@@ -365,7 +365,7 @@ def test_tr_section_placeholder_localized():
 
 
 def test_evaluate_threads_locale_into_rejected_notice(monkeypatch):
-    """evaluate() 의 locale 인자가 반려 안내문까지 전달되는지 (T2/TR2)."""
+    """Propagate evaluate() locale to the rejection notice (T2/TR2)."""
     monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
     monkeypatch.setattr(
         trs.git_service, "collect_scope_changes",
@@ -380,7 +380,7 @@ def test_evaluate_threads_locale_into_rejected_notice(monkeypatch):
     assert "TRV-002" in result["notice"]
 
 
-# ── 실제 변경 수집 (D0004 §3.3) ──────────────────────────────────────────────
+# ── Collect actual changes ──
 
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
@@ -391,7 +391,7 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _pin_recorded_floor(monkeypatch, repo: Path, floor_ref: str = "main") -> None:
-    """0665 T0004: collect_scope_changes measures from the group's RECORDED floor."""
+    """collect_scope_changes measures from the group's RECORDED floor."""
     from modules.flow_gate.services import git_service
     from modules.flow_gate.services.git import scope_base
 
@@ -434,7 +434,7 @@ def work_repo(tmp_path: Path) -> Path:
 
 
 def test_collect_scope_changes_unions_every_source(work_repo, monkeypatch):
-    """committed + staged + unstaged + untracked + delete + rename 을 한 번에."""
+    """Combine committed, staged, unstaged, untracked, deleted, and renamed paths."""
     from modules.flow_gate.services import git_service
 
     monkeypatch.setattr(
@@ -447,14 +447,14 @@ def test_collect_scope_changes_unions_every_source(work_repo, monkeypatch):
     assert result["available"] is True
     paths = set(result["paths"])
     assert {"committed.py", "staged.py", "edited.py", "untracked.py", "deleted.py"} <= paths
-    # 이름 변경은 바뀐 뒤 경로만 (D0004 §3.2). --no-renames 를 쓰면 여기서 깨진다.
+    # Renames include only the new path; --no-renames breaks this.
     assert "renamed_to.py" in paths
     assert "renamed_from.py" not in paths
     assert "kept.py" not in paths
 
 
 def test_collect_scope_changes_never_falls_back_to_the_base_tree(monkeypatch):
-    """워크트리를 못 찾으면 판정 불가지, main 을 대신 재는 것이 아니다."""
+    """A missing worktree means unavailable validation, never measuring main instead."""
     from modules.flow_gate.services import git_service
 
     monkeypatch.setattr(
@@ -474,7 +474,7 @@ def test_parse_name_status_z_stays_in_sync_across_renames():
     assert git_service._parse_name_status_z(stdout) == ["a.py", "new.py", "b.py"]
 
 
-# ── evaluate() 통합 (D0004 §3.4) ─────────────────────────────────────────────
+# ── evaluate integration ──
 
 def _stub_scope(monkeypatch, stage, actual_paths, available=True):
     monkeypatch.setattr(trs, "resolve_stage", lambda project_id: stage)
@@ -488,7 +488,7 @@ def _stub_scope(monkeypatch, stage, actual_paths, available=True):
 
 
 def test_evaluate_reports_every_applicable_code_at_once(monkeypatch):
-    """한 번에 하나씩 알려주면 왕복만 늘어난다 (D0004 §3.4)."""
+    """Reporting only one problem at a time adds round trips."""
     _stub_scope(monkeypatch, trs.STAGE_ENFORCE, ["server/real.py"])
     result = trs.evaluate("p", "g", "## 변경 파일\n\n- server/ghost.py\n- /abs/x.py\n- 산문 한 줄\n")
     assert set(result["codes"]) >= {trs.TRV_FORMAT, trs.TRV_OUT_OF_SCOPE, trs.TRV_UNCONFIRMED, trs.TRV_UNREPORTED}
@@ -556,7 +556,7 @@ def test_evaluate_accepts_none_when_nothing_changed(monkeypatch):
 
 
 def test_evaluate_does_not_compare_when_the_worktree_is_unreadable(monkeypatch):
-    """워크트리를 못 보는 상태로 대조하면 신고 전부가 TRV-003 으로 찍혀 오도한다."""
+    """Comparing an unreadable worktree misleadingly marks every declaration TRV-003."""
     _stub_scope(monkeypatch, trs.STAGE_ENFORCE, [], available=False)
     result = trs.evaluate("p", "g", "## 변경 파일\n\n- server/a.py\n")
     assert result["codes"] == [trs.TRV_NO_SCOPE]
@@ -572,17 +572,17 @@ def test_evaluate_is_skipped_when_git_integration_is_off(monkeypatch):
 
 
 def test_missing_section_is_only_a_warning_below_enforce(monkeypatch):
-    """이미 발급되어 돌고 있는 작업들에는 섹션이 없다 (D0004 §3.6 단계 도입 근거)."""
+    """Already-issued work lacks this section (staged rollout rationale)."""
     _stub_scope(monkeypatch, trs.STAGE_OBSERVE, ["server/a.py"])
     result = trs.evaluate("p", "g", "# TR\n\n섹션 없는 옛 서식\n")
     assert trs.TRV_MISSING_SECTION in result["codes"]
     assert result["verdict"] == trs.VERDICT_PASS
 
 
-# ── 문서 meta 왕복 ───────────────────────────────────────────────────────────
+# ── Document metadata round trip ──
 
 def test_meta_slice_keeps_the_true_count_after_trimming():
-    """화면은 "n건"을 정직하게 써야 하므로 잘린 뒤에도 진짜 개수가 남아야 한다."""
+    """Retain the true count after trimming so the UI can report it accurately."""
     from modules.flow_gate.api.inbox_routes import _TR_SCOPE_META_MAX_PATHS, _tr_scope_meta
 
     detected = [f"server/f{i}.py" for i in range(_TR_SCOPE_META_MAX_PATHS + 30)]
@@ -594,7 +594,7 @@ def test_meta_slice_keeps_the_true_count_after_trimming():
     assert meta["detected"]["count"] == len(detected)
     assert len(meta["detected"]["items"]) == _TR_SCOPE_META_MAX_PATHS
     assert meta["reported"] == {"count": 0, "items": []}
-    # notice 는 거부일 때만 존재하고 거부에는 문서가 없다 — meta 에 실릴 일이 없다.
+    # Notices exist only for rejected submissions, which create no document or metadata.
     assert "notice" not in meta
 
 
@@ -660,7 +660,7 @@ def test_prior_tr_declared_unions_group_meta_and_excludes_current_document(monke
 
 
 def test_prior_tr_declared_includes_other_mutating_types_like_ts(monkeypatch):
-    """0390 TR0005 rev1: a TS document's declared changed-files must also feed the
+    """a TS document's declared changed-files must also feed the
     prior-declared pool -- before this fix the function hard-compared type_code ==
     "TR", so a sibling TS's report was invisible and could make a later TR/TS
     submission touching the same path come back flagged "unconfirmed" even though a
@@ -712,20 +712,20 @@ def test_verdict_from_meta_accepts_both_text_and_dict():
     assert trs.verdict_from_meta("not json") is None
 
 
-# ── 저장된 판정이 없는 문서의 사이드바 (0390 TR0005 rev2) ────────────────────
+# ── Sidebar for documents without stored verdicts ──
 #
-# meta['tr_scope'] 는 제출 그 순간에 한 번 계산돼 박히므로, 검증 대상이 되기 전에
-# 제출된 문서에는 키가 아예 없다. 그때 문서 상세가 tr_scope 를 통째로 빼면 화면의
-# [작업범위 검증] 영역이 사라져, 사용자는 "검증을 안 받은 문서"와 "검증 대상이
-# 아닌 문서"를 구분할 수 없다. 아래 테스트들이 그 구멍을 막는다.
+# meta['tr_scope'] is calculated once on submission. Earlier documents lack the key.
+# If document detail omits tr_scope entirely, the sidebar hides its
+# [작업범위 검증] section, making unevaluated documents indistinguishable
+# from documents outside the validation scope. These tests cover that gap.
 
 _TS_BODY_WITH_SECTION = (
     "## Summary\n\n회귀 스위트.\n\n## 변경 파일\n\n- server/tests/test_inbox.py\n"
 )
 
-# rev3 — 반려자가 8080 미리보기에서 실제로 열어 본 TS 문서(test.test.0002.0002-TS)의
-# 본문 모양이다. 검증 대상이 되기 전에 제출됐으므로 '## 변경 파일' 절이 아예 없다.
-# rev2 는 바로 이 입력에서 판정을 만들지 않아 카드가 사라졌다.
+# rev3: the TS body actually opened by the reviewer in the 8080 preview
+# (test.test.0002.0002-TS). It predates validation and has no '## 변경 파일' section.
+# rev2 produced no verdict for this input, causing the card to disappear.
 _TS_BODY_NO_SECTION = (
     "---\n"
     "next_type: TS\n"
@@ -752,40 +752,40 @@ def test_unevaluated_verdict_reads_the_reported_section_for_a_ts_document():
     assert verdict["verdict"] == trs.VERDICT_SKIPPED
     assert verdict["scope_reason"] == "not_evaluated"
     assert verdict["reported"] == {"count": 1, "items": ["server/tests/test_inbox.py"]}
-    # 대조를 한 적이 없으므로 감지 목록은 "0건"으로도 실어 보내지 않는다.
+    # No comparison occurred: do not even return an empty detected list.
     assert "detected" not in verdict
 
 
 def test_unevaluated_verdict_is_only_for_mutating_types():
-    # 비대상 타입은 예전처럼 영역을 감춘다 — 검증을 받을 일이 없는 종류다.
+    # Non-target types still hide the section because they are never validated.
     assert trs.unevaluated_verdict("NR", _TS_BODY_WITH_SECTION) is None
     assert trs.unevaluated_verdict("R", _TS_BODY_WITH_SECTION) is None
-    # 0427 T0004: T 는 write/patch/remove 를 회수당해 더 이상 대상 타입이 아니다.
+    # T lost write/patch/remove privileges and is no longer a target type.
     assert trs.unevaluated_verdict("T", "작업지시 가 승인되었습니다.") is None
-    # '없음' 한 줄은 신고 절이 있는 것이므로 0건짜리 판정이 나온다.
+    # A single '없음' line counts as a present section and produces a zero-item verdict.
     none_verdict = trs.unevaluated_verdict("TR", "## 변경 파일\n\n없음\n")
     assert none_verdict is not None and none_verdict["reported"]["count"] == 0
     assert none_verdict["scope_reason"] == "not_evaluated"
 
 
 def test_unevaluated_verdict_still_shows_a_card_when_the_body_has_no_section():
-    """rev3 — 절이 없어도 카드를 띄운다.
+    """rev3: show the card even without a section.
 
-    rev2 는 여기서 None 을 돌려 카드를 감췄고, 그래서 같은 사유로 또 반려됐다.
-    검증 대상이 되기 전에 제출된 TS 문서는 '## 변경 파일' 을 쓰라는 안내를 아예 받지
-    못했으므로 절이 **없는 것이 정상**이다 — 그 정상 상태에서 영역이 사라지면
-    R0001 이 요구한 "사이드바에 작업범위 검증도 함께 제공"이 지켜지지 않는다.
+    rev2 returned None and hid the card, prompting the same rejection again.
+    TS documents submitted before validation never received the instruction to add
+    '## 변경 파일', so its absence is normal. Hiding the area in that normal state
+    violates the requirement's requirement to provide scope validation in the sidebar.
     """
     for type_code, body in (
-        ("TS", _TS_BODY_NO_SECTION),          # 반려자가 실제로 열어 본 TS 문서의 본문 모양
-        ("TS", None),                          # 본문 파일을 읽을 수 없을 때
+        ("TS", _TS_BODY_NO_SECTION),          # Body shape of the TS document actually opened by the reviewer
+        ("TS", None),                          # The body file cannot be read
         ("TSR", ""),
     ):
         verdict = trs.unevaluated_verdict(type_code, body)
         assert verdict is not None, f"{type_code} 카드가 감춰졌다: {body!r}"
         assert verdict["evaluated"] is False
         assert verdict["verdict"] == trs.VERDICT_SKIPPED
-        # 안내 문구가 갈리는 지점이다 — "신고 목록을 보라"고 하면 거짓이 된다.
+        # The guidance must distinguish this case; referring to a reported list would mislead.
         assert verdict["scope_reason"] == "not_evaluated_no_section"
         assert verdict["reported"] == {"count": 0, "items": []}
 
@@ -800,22 +800,22 @@ def test_unevaluated_verdict_drops_excluded_paths_like_evaluate_does():
 
 
 def _call_get_document(documents_router, doc_id: str) -> dict:
-    """라우트 핸들러를 그대로 부른다.
+    """Call the actual route handler.
 
-    RBAC 데코레이터는 이 저장소에서 rbac.decorators 를 못 찾으면 함수를 그대로
-    돌려주는 no-op 이라(documents.py 상단 stub), 두 경우 모두에서 실제 핸들러를
-    집어내려면 __wrapped__ 를 있으면 쓰고 없으면 함수 자신을 쓴다.
+    The RBAC decorator is a no-op when rbac.decorators is unavailable (the stub
+    at the top of documents.py). Use __wrapped__ when present, otherwise the
+    function itself, to reach the real handler in either environment.
     """
     handler = getattr(documents_router.get_document, "__wrapped__", documents_router.get_document)
     return handler(doc_id, current_user={"user_id": "u"})
 
 
 def _stub_document_detail(monkeypatch, documents_router, row: dict, body: str, tmp_path):
-    """문서 상세가 실제로 지나가는 길만 남기고 주변을 막는다.
+    """Stub surrounding dependencies while retaining the actual document-detail path.
 
-    본문은 documents 행이 아니라 파일에 있다 — `doc['content']` 같은 컬럼은 없다.
-    그래서 파일 경로 해석까지 진짜 코드를 태우고 파일만 tmp_path 에 만들어 둔다.
-    (rev2 초안이 행에서 본문을 읽으려다 조용히 아무것도 안 하던 자리다.)
+    Bodies live in files, not a documents row or doc['content'] column.
+    Exercise real path resolution with a file in tmp_path. The rev2 draft
+    silently did nothing because it tried to read the body from the row.
     """
     doc_file = tmp_path / "doc.md"
     doc_file.write_text(body, encoding="utf-8")
@@ -827,13 +827,13 @@ def _stub_document_detail(monkeypatch, documents_router, row: dict, body: str, t
     monkeypatch.setattr(documents_router, "_load_test_runs", lambda doc_id: (None, []))
 
 def test_document_detail_serves_the_unevaluated_verdict_when_meta_has_none(monkeypatch, tmp_path):
-    """문서 상세 GET 이 실제로 사이드바에 실어 보내는지 — 라우트까지 확인한다."""
+    """Verify at the route that document-detail GET sends the sidebar verdict."""
     from modules.flow_gate.documents.routers import documents as documents_router
 
     row = {
         "doc_id": "flowgate.default.0390.0006-TS",
         "type_code": "TS",
-        "meta": {"content_sha256": "x"},   # tr_scope 없음 — 검증 대상이 되기 전 제출
+        "meta": {"content_sha256": "x"},   # No tr_scope: submitted before validation applied
         "workflow_steps": None,
     }
     _stub_document_detail(monkeypatch, documents_router, row, _TS_BODY_WITH_SECTION, tmp_path)
@@ -845,17 +845,17 @@ def test_document_detail_serves_the_unevaluated_verdict_when_meta_has_none(monke
 
 
 def test_document_detail_serves_a_card_for_a_ts_document_with_no_section(monkeypatch, tmp_path):
-    """rev3 회귀 — 반려자가 열어 본 그 문서 모양에서 라우트가 tr_scope 를 실어 보낸다.
+    """rev3 regression: the route supplies tr_scope for the body the reviewer opened.
 
-    rev2 에서는 이 입력에 대해 `out` 에 tr_scope 키가 아예 없었고, 화면의
-    `v-if="trScope"` 가 [작업범위 검증] 영역을 통째로 감췄다 — 반려 사유 그 자체다.
+    rev2 omitted tr_scope from this response, so v-if="trScope" hid the entire
+    [작업범위 검증] area: the exact reason for rejection.
     """
     from modules.flow_gate.documents.routers import documents as documents_router
 
     row = {
         "doc_id": "test.test.0002.0002-TS",
         "type_code": "TS",
-        "meta": {"content_sha256": "x"},   # tr_scope 없음
+        "meta": {"content_sha256": "x"},   # No tr_scope
         "workflow_steps": None,
     }
     _stub_document_detail(monkeypatch, documents_router, row, _TS_BODY_NO_SECTION, tmp_path)
@@ -869,7 +869,7 @@ def test_document_detail_serves_a_card_for_a_ts_document_with_no_section(monkeyp
 
 
 def test_document_detail_still_prefers_the_stored_verdict(monkeypatch, tmp_path):
-    """제출 시점에 계산된 판정이 있으면 그것이 이깁니다 — 본문 파싱으로 덮지 않는다."""
+    """Prefer the verdict calculated on submission; body parsing must not replace it."""
     from modules.flow_gate.documents.routers import documents as documents_router
 
     stored = {"verdict": "pass", "stage": "observe", "reported": {"count": 0, "items": []}}
@@ -887,10 +887,10 @@ def test_document_detail_still_prefers_the_stored_verdict(monkeypatch, tmp_path)
     assert "evaluated" not in out["tr_scope"]
 
 
-# ── 0493 T0005: per-file actual status manifest ──────────────────────────────
+# ── the earlier implementation: per-file actual status manifest ──────────────────────────────
 
 def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_repo, monkeypatch):
-    """Reviewers need per-file status, not just a bare path list (0493 T0005)."""
+    """Reviewers need per-file status, not just a bare path list."""
     from modules.flow_gate.services import git_service
 
     monkeypatch.setattr(
@@ -917,7 +917,7 @@ def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_rep
 def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exclusively(monkeypatch):
     """reporting_state is mutually exclusive; a current declaration always wins over a
     prior one, and prior-reported must never explain away this body's own unconfirmed
-    report (0493 T0005 acceptance criteria)."""
+    report (acceptance criteria)."""
     monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
     monkeypatch.setattr(
         trs.git_service, "collect_scope_changes",
@@ -957,7 +957,7 @@ def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exc
     assert trs.TRV_UNCONFIRMED in result["codes"]
 
 
-# ── 0110 T#2: Graph attempt basis (NR0003 §2 T-A) ────────────────────────────
+# ── the earlier implementation: Graph attempt basis ────────────────────────────
 
 def _forbid_group_measurement(monkeypatch):
     """An attempt basis must never read the group worktree or its recorded floor."""

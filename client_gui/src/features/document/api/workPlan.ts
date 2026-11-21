@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#3 — skeleton of the workPlan document API (D#1 §6.3). Owned by T#13 (workPlan), which
+// skeleton of the workPlan document API. Owned by the earlier implementation (workPlan), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `workPlan`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   read     GET  /api/v1/documents/{doc_id}/work-plan
 //   history  GET  /api/v1/documents/{doc_id}/work-plan/applications
 //
-// flowgate.v02.0048 T#13 — the Inspector WP summary's one call, an existing v0.1 endpoint (NR0003 §2.4,
+// the Inspector WP summary's one call, an existing v0.1 endpoint (the review,
 // `documents/routers/work_plan.py` get_work_plan / _read_view; no new server API):
 //   read     GET  /api/v1/documents/{doc_id}/work-plan -> { ok, doc_id, title, group_id, status,
 //            doc_review_status, editable, edit_locked_reason (final_approved | status | null), revision_no,
@@ -14,7 +14,7 @@
 //            step_execution_status[] { step_key, card_id, started }, assignment_summary[] { provider_id,
 //            display_name, step_count }, unassigned_step_count, totals { design_sheets, work_sets, steps }, … }
 // Only reading is wrapped. Editing (`PUT …/work-plan`), revision restore, suggestions, the apply history and
-// apply / preview / sequence candidates (WP 전개) stay in the v0.1 WorkPlanEditor (↗ 열기, D#1 §10.2 T#13
+// apply / preview / sequence candidates (WP deployment) stay in the v0.1 WorkPlanEditor (↗ 열기, D#1 §10.2 T#13
 // row, §8.4).
 //
 // Refusals keep the server's shape and are thrown as they are; workPlanErrorOf reads them. The route answers
@@ -35,7 +35,7 @@ const whole = (value: unknown): number | null => (typeof value === 'number' && N
 
 /** One Step of the plan body (the parts the summary reads). */
 export interface WorkPlanStep {
-  /** `<type>#<ordinal>`, e.g. `T#1`. */
+  /** `<type>#<ordinal>`, e.g. `the earlier implementation`. */
   readonly key: string
   /** The card the Step belongs to (an instruction / result pair shares one); falls back to the pair's key. */
   readonly cardId: string
@@ -180,7 +180,7 @@ export function workPlanErrorOf(error: unknown): WorkPlanError {
   return { kind, status, code: code || null, revisionNo: kind === 'unreadable' ? whole(data.revision_no) : null }
 }
 
-// flowgate.v02.0053 T#4 — the document window's work plan view (the v0.1 WorkPlanEditor's table, read only)
+// the document window's work plan view (the v0.1 WorkPlanEditor's table, read only)
 // needs more of the same answer than the Inspector summary: the quantity boxes and each Step's one-line note
 // and whether it carries a pre-instruction. Same endpoint, same read; WorkPlanView is left as it is.
 
@@ -241,7 +241,7 @@ export async function workPlanDocumentRead(docId: string): Promise<WorkPlanDocum
   return toWorkPlanDocument(response.data)
 }
 
-// flowgate.v02.0072 T#1 — the v0.2 work plan edit window (features/workPlanWindow) edits the plan through the same
+// the v0.2 work plan edit window (features/workPlanWindow) edits the plan through the same
 // v0.1 endpoints, no new server API (documents/routers/work_plan.py):
 //   read  GET /api/v1/documents/{doc_id}/work-plan -> the read view above; the editor keeps the answer whole, because
 //         the body goes back as it came (wp_version 2, every field and top-level extension the server keeps).
@@ -380,7 +380,7 @@ export function workPlanSaveFailureOf(error: unknown): WorkPlanSaveFailure {
   return { ...base, kind: 'other' }
 }
 
-// 0072 T#2: upload reserves a file only. Its reference enters the plan on the parent's PUT;
+// upload reserves a file only. Its reference enters the plan on the parent's PUT;
 // successful PUT cleans unreferenced reserved files. There is no per-file delete endpoint.
 export async function workPlanUploadInstruction(docId: string, stepKey: string, file: File): Promise<Record<string, unknown>> {
   const form = new FormData()
@@ -397,7 +397,7 @@ export async function workPlanUploadInstruction(docId: string, stepKey: string, 
   return { ...reference }
 }
 
-// flowgate.v02.0074 T#5 — the WP→v0.2 card deploy (T#4 server `flowgate/work_plan_deploy/routes.py`, D#1 §5; contract
+// the WP→v0.2 card deploy (the earlier implementation server `flowgate/work_plan_deploy/routes.py`, the earlier implementation; contract
 // 0014-TR §2), same transport and normalization as the reads above:
 //   status   GET  /api/v1/documents/{doc_id}/work-plan/deploy          -> flow_id, wp_node_key, ownership, wp_revision_no,
 //            deployable, reason, deployed / target / missing / orphan / mismatch _count, cards[], modes { first, add, cleanup }

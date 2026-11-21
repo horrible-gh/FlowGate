@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0013 (S3+S4) — Graph definition transport in features/project: draft save
+ * (S3+S4) — Graph definition transport in features/project: draft save
  * request / response (P0008 S3-1), validation (S3-5), confirmation (S4-1) and its refusal with
  * issues (S4-4), the GET graph read, the Canvas `view` / `graph` / `graph_node` blocks, and the
  * store loaders. Every request carries this tab's `x-canvas-client-id`.

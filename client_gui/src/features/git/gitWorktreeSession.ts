@@ -1,4 +1,4 @@
-// flowgate.v02.0066 — Group worktree session: the single owner of the Git tab's worktree area
+// Group worktree session: the single owner of the Git tab's worktree area
 // (0066 D#2 §2-2). Not a Pinia store: DesignerGitPanel creates one beside its 0033 Git session and
 // both live and die with the panel. Kept apart from gitSession on purpose — the Base checkout card
 // (commit / revertAll / commitMessage there) and the Group worktree never share a state (§2-1).
@@ -16,14 +16,14 @@
 // A confirm dialog is bound to the context it was opened in (a ticket): it is dropped when that
 // context goes and never sends to another one.
 //
-// T#7 adds the Base apply part (§3-2-2 ⑤–⑨, §3-3 merge–Fetch, §3-4): choosing a merge target
+// adds the Base apply part (⑤–⑨, merge–Fetch): choosing a merge target
 // voids the old judgment at once (⑤) and closes a target comparison Center Diff (⑧); the `Diff`
 // pane list is tied to the target it was read for (⑦); a merge / follow-up push confirm fixes the
 // judgment it showed and sends nothing once another one is on screen (⑥); E10 keeps its latest
 // answer only (⑨). A merge, follow-up push or Fetch reads git/status and E1 / E8 / E10 again and
 // never repeats itself; after a refused push the re-read judgment decides the hint (§3-4(4-1)).
 //
-// flowgate.v02.0107 T#1 (D §3.2, §3.3) makes it the one owner of the active Flow's work base (the
+// (D) makes it the one owner of the active Flow's work base (the
 // server's `effectiveWorkBaseRef`) the Git header and status tab show, with its read state. It is
 // read through GitWorktreeSource.loadWorkBase when the gate opens for a context and on
 // refreshWorkBase(); never on render, a window / tab change, an E1 / E8 re-read or polling. Its
@@ -68,7 +68,7 @@ import { worktreeReasons, type WorktreeButton, type WorktreeReason } from './wor
 export const WORKTREE_MESSAGE_MAX = 200
 
 /**
- * flowgate.v02test.0013 — server events after which the worktree area reads again (refresh():
+ * server events after which the worktree area reads again (refresh:
  * E1 / E8 / E10). An AI run of the Flow (a card worker or a chat run) changes working files with no
  * Git action of this panel, so without them the area kept the E1 answer read before the run — e.g.
  * "변경 파일 0" over 16 uncommitted files. `ai_invoke_finished` is any run of the group ending;
@@ -109,7 +109,7 @@ export const WORKTREE_NOTICE_CODES: readonly string[] = [
   'ownership_unavailable',
 ]
 
-// Merge / follow-up push / Fetch refusals with their own notice text (T#7, §3-4(4), §3-3).
+// Merge / follow-up push / Fetch refusals with their own notice text (the earlier implementation, ).
 export const APPLY_NOTICE_CODES: readonly string[] = [
   'graph_execution_active',
   'merge_conflict_open',
@@ -170,7 +170,7 @@ export interface WorktreeState {
   message: string
   suggestion: WorktreeSuggestion | null
   notices: Partial<Record<WorktreeNoticeArea, WorktreeNotice>>
-  // ── Base apply (T#7) ──
+  // ── Base apply ──
   applyOpen: boolean
   // `머지 후 Push`: unchecked at first, kept while the Flow stays (§3-4(3)).
   pushAfterMerge: boolean
@@ -179,7 +179,7 @@ export interface WorktreeState {
   mergeSeq: number
   resultsSeq: number
   // The `Diff` pane list with the target it was read for (⑦); null while none is on screen. Its
-  // search and pages are the `Diff` tab's own screen state (0067 T#4).
+  // search and pages are the `Diff` tab's own screen state.
   targetList: WorktreeTargetList | null
   targetListLoad: Load
   // The follow-up push row picked when there are two or more; null = the newest.
@@ -188,7 +188,7 @@ export interface WorktreeState {
   highlightMergeId: number | null
   // §3-4(4-1): after a refused merge + push the re-read judgment of the target decides the line.
   rejectHint: 'pending' | 'recovery' | 'rewound' | null
-  // ── Flow work base (flowgate.v02.0107, D §3.2) ──
+  // ── Flow work base ──
   // The server's effective work base of the current Flow; null while unread, reading, failed or
   // when the server has none (shown as `—`). Never the project base, never an earlier answer.
   workBase: string | null
@@ -283,7 +283,7 @@ export interface GitWorktreeSession {
   showMore(key: string): void
   setSelected(path: string, selected: boolean): void
   toggleSelectAll(): void
-  /** flowgate.v02.0067 T#2 — the folder checkbox: checks / unchecks these paths (selectable ones only). */
+  /** the folder checkbox: checks / unchecks these paths (selectable ones only). */
   selectPaths(paths: readonly string[], selected: boolean): void
   clearSelection(): void
 
@@ -302,7 +302,7 @@ export interface GitWorktreeSession {
   suggest(ticket?: WorktreeTicket | null): Promise<void>
   dismissNotice(area: WorktreeNoticeArea): void
 
-  // ── Base apply (T#7) ──
+  // ── Base apply ──
   toggleApply(): void
   /** ⑤: the old judgment goes at once, the new target is read; ⑦ ⑧ follow. */
   setMergeTarget(target: string): void
@@ -316,7 +316,7 @@ export interface GitWorktreeSession {
   pushResult(snapshot: WorktreePushSnapshot): Promise<void>
   fetchRemote(): Promise<void>
   /**
-   * flowgate.v02.0107 (D §3.3 row 3): the header / Git refresh, an external refresh or the Git tab
+   * (D row 3): the header / Git refresh, an external refresh or the Git tab
    * activated again read the Flow work base again. The value empties until the answer; a read
    * already running for the same context and generation is shared. Nothing while the gate is
    * closed. E1 order, the E8 target and open confirm tickets are left as they are.
@@ -328,12 +328,12 @@ export interface GitWorktreeSession {
 export interface GitWorktreeSessionOptions {
   git: GitSession
   source?: GitSource
-  /** `git-center-diff-refresh`: the panel hands it to its Center Diff — the `Diff` tab detail (§2-4, 0067 T#4). */
+  /** `git-center-diff-refresh`: the panel hands it to its Center Diff — the `Diff` tab detail. */
   onCenterDiffRefresh?: (request: GitCenterDiffRefresh) => void
 }
 
 /**
- * flowgate.v02.0107 — the Flow work base read running for one context: project, Flow and the
+ * the Flow work base read running for one context: project, Flow and the
  * work-base generation (bumped on every context / gate change, see `wbGen`).
  */
 interface WorkBaseRequest {
@@ -417,7 +417,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   // ③ Reads asked for while a write runs, sent once afterwards (and coalesced otherwise).
   const pendingReads = { e1: false, e8: false, e10: false, list: false }
   let flushQueued = false
-  // flowgate.v02.0107: the work-base generation — bumped synchronously on every project / Flow /
+  // the work-base generation — bumped synchronously on every project / Flow /
   // gate change and on dispose, apart from `gen` (whose context watcher runs batched and may see
   // A → B → A as no change) — the latest read, the one running (shared in its generation), the
   // generation a read was already sent for and a gate-opening read waiting for the turn to end.
@@ -805,7 +805,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
 
-  // ── Flow work base (flowgate.v02.0107, D §3.2 / §3.3) ─────────────────────────────
+  // ── Flow work base ─────────────────────────────
   // A read is tied to its project, Flow, work-base generation and number: only the latest read of
   // the current context applies, so an answer from before a switch (A → B → A too), a closed gate
   // or dispose changes no value, failure or loading state. The answer applies only while the
@@ -918,7 +918,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       },
       { immediate: true },
     )
-    // flowgate.v02.0107 (D §3.2 / §3.3): the work base follows every change of its context as it
+    // (D): the work base follows every change of its context as it
     // happens — a batched watcher would miss A → B → A or a closed gate before it runs. Each
     // change voids the value and the running read; an open gate reads its context once.
     watch(
@@ -1210,9 +1210,9 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     )
   }
 
-  // ── Base apply (T#7, §3-4) ─────────────────────────────────────────────────────────
+  // ── Base apply ─────────────────────────────────────────────────────────
 
-  // Folding closes the `상태` / `Diff` pane (§3-7 구역 열림).
+  // Folding closes the `상태` / `Diff` pane (§3-7 section open).
   function toggleApply(): void {
     state.applyOpen = !state.applyOpen
     if (!state.applyOpen) state.infoPane = null
@@ -1501,7 +1501,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 // ── Panel context ────────────────────────────────────────────────────────────────────
 // DesignerGitPanel provides this to the worktree area beside the 0033 GIT_PANEL_CONTEXT: the
 // session, and the worktree diff intent only the panel can raise.
-// flowgate.v02.0067 T#4 — the intent opens the panel's Center Diff, the Git modeless `Diff` tab
+// the intent opens the panel's Center Diff, the Git modeless `Diff` tab
 // detail (0067-R §6); nothing goes up to the Designer Center any more.
 
 export interface GitWorktreeContext {

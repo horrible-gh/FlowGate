@@ -1,4 +1,4 @@
-"""flowgate.v02test.0023 (0002-CH turn 43) — chat control tower, stage 1.
+"""(CH) — chat control tower, stage 1.
 
 A chat in edit mode places work cards on its own Flow (``flowgate.chat_control``), writes their instructions with the
 existing card document edit, and starts the Flow's run. Covered here:
@@ -317,7 +317,7 @@ def test_api_tool_passes_the_flow_and_body_to_the_service(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(authz, "from_run", lambda run, flow_id: seen.setdefault("flow", flow_id) and (_Scope(), {"group_id": flow_id}))
-    # flowgate.v02gui.0028: the placing chat (the run's doc_ref; none here) is handed on as ``owner``.
+    # the placing chat (the run's doc_ref; none here) is handed on as ``owner``.
     monkeypatch.setattr(service, "place", lambda group, user, body, locale, owner=None: {"placed": body, "group": group["group_id"]})
     monkeypatch.setattr(service, "start", lambda group, user, body: {"started": body})
     status, body = tools.place_call({"group_id": FA}, {"cards": [{"label": "x"}]})
@@ -339,7 +339,7 @@ def test_cli_routes_authenticate_before_the_body():
         assert res.status_code == 401 and res.json()["error"]["code"] == "unauthorized"
 
 
-# ── 0002-CH turn 48: test server E2E findings ────────────────────────────────
+# ── the discussion: test server E2E findings ────────────────────────────────
 
 def test_an_empty_definition_starts_from_the_flow_root():
     from flowgate.chat_control import placement
@@ -369,7 +369,7 @@ def test_a_new_group_with_only_its_root_document_gets_root_work_confirm_and_runs
     placed = service.place(_group(), "u_kim", {"cards": [{"label": "버그 수정"}]}, "ko")
     root = placed["root"]
     assert root["doc_type"] == "R" and root["doc_id"] == f"{FA}.0001-R" and root["created"] is True
-    # flowgate.v02gui.0019: the start card is saved first (root_start), then the chat's cards: two draft saves
+    # the start card is saved first (root_start), then the chat's cards: two draft saves
     assert placed["after"] == root["node_key"] and placed["draft_version"] == 2
     card, gate = placed["cards"][0]["node_key"], placed["gate"]["node_key"]
     draft = _draft()

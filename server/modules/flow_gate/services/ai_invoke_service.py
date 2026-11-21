@@ -1,7 +1,7 @@
-"""AI invoke engine — the stable import path (flowgate.default.0501 T6).
+"""AI invoke engine — the stable import path.
 
 The implementation lives in the `ai_invoke/` package next to this file, laid out along
-NR0003 §12's module boundaries. This module is the compatibility surface §20 asks for
+'s module boundaries. This module is the compatibility surface asks for
 and re-exports the package facade. 0550 adds one deliberately narrow boundary here:
 pre-worker admission failures must not strand a group lease, and unexpected failures
 must cross the HTTP boundary with a useful code/message instead of becoming an opaque
@@ -171,7 +171,7 @@ def start_run(*args, **kwargs):
     except (HTTPException, LookupError, ValueError):
         raise
     except ScratchPathConflict as exc:
-        # flowgate.v02.0140 T0004 T#1-T#2: the run's scratch path is held by another execution.
+        # the run's scratch path is held by another execution.
         # Nothing was registered as this run's scratch and no worker/provider exists; undo only
         # what this admission acquired (the lease/token here, the owned context in finally) and
         # answer a structured conflict the operator can act on by starting again (new run id).
@@ -202,13 +202,13 @@ def start_run(*args, **kwargs):
         )
         # The route already preserves HTTPException detail through its normal _err() path.
         # Keep the detail bounded and never include token/prompt/provider-secret material.
-        # 0140 T#1-4: an OS error's str() names the absolute server path; show errno/strerror only.
+        # an OS error's str names the absolute server path; show errno/strerror only.
         detail = (f"[Errno {exc.errno}] {exc.strerror}" if isinstance(exc, OSError) and exc.strerror
                   else str(exc)).strip()
         if len(detail) > 300:
             detail = detail[:300] + "..."
         message = type(exc).__name__ + (f": {detail}" if detail else "")
-        # 0139: a refused run-ID allocator (contract at an unknown version, e.g. a newer
+        # a refused run-ID allocator (contract at an unknown version, e.g. a newer
         # binary activated it) is not a random internal error. Name it on the card.
         cutover = isinstance(exc, RuntimeError) and detail in (
             "ai_run_allocator_cutover_required", "ai_run_allocator_incompatible_version")

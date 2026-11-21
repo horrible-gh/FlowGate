@@ -1,4 +1,4 @@
-"""T0009 work item 4 — locale-branch regression for the D coordinates (NR0008 §3.1, nine of them).
+"""work item 4 — locale-branch regression for the D coordinates (nine of them).
 
 Each function below moved from a locale-free hardcoded ko literal to a ko/en/ja
 dictionary. These tests assert, function by function: (1) the ko branch is
@@ -164,7 +164,7 @@ def test_pipeline_approval_messages_have_zero_korean(locale):
 
 
 def test_reflect_prep_step_label_is_english_not_korean():
-    """T0009 work item 4: this module's description literals are English-only by design
+    """work item 4: this module's description literals are English-only by design
     (module docstring, L §2-5) — the stray Korean prep-step literal was corrected to match
     the existing convention, not given a ko/en/ja dictionary (see the code comment
     at the fix site and TR for the full rationale)."""
@@ -303,7 +303,7 @@ def test_review_transition_route_passes_x_locale_into_the_rejection(
 ):
     """The human approve path: POST .../review_transitions/approve must render the
     approval-rejection message in the requester's x-locale, and must still answer in
-    Korean when the header is absent (unchanged pre-T0009 behavior)."""
+    Korean when the header is absent (unchanged pre-the earlier implementation behavior)."""
     import asyncio
 
     from fastapi import HTTPException

@@ -1,4 +1,4 @@
-"""0053 1-D: time boundaries, card ownership and console-only controls."""
+"""time boundaries, card ownership and console-only controls."""
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace

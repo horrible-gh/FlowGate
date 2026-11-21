@@ -7,7 +7,7 @@ import type { FlowWorkBase } from '@/features/project'
 import { G, P, createFakeGitSource, gitError, networkError, status } from './fakeGitSource'
 import { createFakeWorktreeSource, flowWorkBase, manualMergeView, worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// 0107 T#2 — D §6.1's five rows, using different project and Flow bases. Both displays
+// D 's five rows, using different project and Flow bases. Both displays
 // consume one session; window disposal and existing refresh entry points are tested here.
 registerAppMessages(i18n)
 const FLOW = { groupId: G, name: 'A' }

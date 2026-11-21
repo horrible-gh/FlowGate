@@ -1,8 +1,9 @@
 export default {
+  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
-  // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, flow attachment window, run result, settings).
+  // AI attachment upload requests (chat message, flow attachment window, run result, settings).
   attachment_request: {
     title: 'AI attachment requests',
     pending_n: '{n} waiting for approval',
@@ -338,7 +339,7 @@ export default {
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
   designer: {
-    // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
+    // Designer Center (Flow Tabs + read-only Canvas).
     center: {
       document: 'Document',
       open_card_document: 'Open {kind}: {title}',
@@ -349,14 +350,14 @@ export default {
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
-      // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
+      // the tab strip's list button (only while the tabs overflow) and its list header.
       open_tabs_list: 'Show all open flows',
       open_tabs_list_marked: 'Show all open flows — a hidden tab has something to check',
       open_tabs_count: 'Open flows ({count})',
-      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      // a tab's run mark (its accessible name).
       tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       tab_chat: 'Chat AI responding',
-      // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
+      // an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: 'Archived',
       tab_run_end: { completed: 'Run completed', ended: 'Run ended' },
       tab_chat_end: { done: 'Chat answer finished', failed: 'Chat answer did not finish' },
@@ -367,12 +368,12 @@ export default {
       retry: 'Retry',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
-      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      // a selected Canvas edge: remove button / why it cannot be removed.
       edge: {
         remove: 'Remove connection',
         locked: 'A connection already passed cannot be removed',
       },
-      // flowgate.v02.0061 T#14 — the run lock note, a card's result integration and Hold.
+      // the run lock note, a card's result integration and Hold.
       run_lock: 'Cards and lines cannot be edited while the run goes on (view, move and zoom still work)',
       run_lock_pending: 'Cards and lines cannot be edited until the run status is confirmed (view, move and zoom still work)',
       integration: {
@@ -381,7 +382,7 @@ export default {
         conflict: 'Merge conflict',
         failed: 'Merge failed',
         open_conflict: 'Handled in the card\'s \'Merge · Conflict\' tab',
-        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        // a waiting merge's hourglass tooltip.
         waiting_for: 'Waiting for the \'{title}\' card\'s conflict to be resolved',
         waiting_behind: 'Waiting for the \'{title}\' card\'s merge to end',
         waiting_turn: 'Waiting for its turn to merge',
@@ -396,7 +397,7 @@ export default {
         unknown: 'The changes of some attempts could not be counted.',
       },
       hold: 'Hold',
-      // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
+      // the Hold mark, a card's context menu and the Graph Time Machine dialog.
       hold_icon: 'Hold — a run does not open this card',
       card_menu: {
         hold_set: 'Set Hold',
@@ -453,14 +454,14 @@ export default {
         timeout: 'The call ended after its time limit.',
         providers_exhausted: 'The call ended because no AI provider could run.',
       },
-      // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
+      // a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: 'Review attempts are used up and the last revision has not been reviewed. Re-review it with `Next step` or `Run all`; approval alone does not complete it.',
-        // flowgate.v02gui.0015 T3
+        
         action_required_new_attempt: 'A Q&A answer requires a new attempt, but none was opened, so the card was not called again. `Next step` or `Run all` reopens it as a new attempt. For a card in review, stop the run first.',
       },
-      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
-      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
         needs_intervention: 'Intervention needed',
         system_error: 'System error',
@@ -470,7 +471,7 @@ export default {
         recovery_required: 'Recovery required',
         confirmed: 'Confirmed',
 
-        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        // a person's writing wait by its role, a review card that waits, ◌ = actually running.
         instruction_write_wait: 'Waiting for instruction writing',
         result_write_wait: 'Waiting for result writing',
         waiting: 'Waiting',
@@ -479,7 +480,7 @@ export default {
         ai_unavailable: 'AI unavailable',
         no_result: 'No result',
         incomplete: 'Incomplete',
-        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        // an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: 'Waiting for an answer',
         waiting_writer: 'Waiting for its writer',
         writing_instruction: '◌ Writing instruction',
@@ -520,7 +521,7 @@ export default {
         approved_documents_named: 'Approved before: {docs}',
       },
     },
-    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    // a card's inline title edit.
     nodeTitle: {
       edit: 'Edit title',
       input: 'Card title',
@@ -539,7 +540,7 @@ export default {
         flow_disposed: 'A disposed flow cannot be changed.',
       },
     },
-    // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
+    // Designer Palette part (categories, default items, add dialog).
     palette: {
       label: 'Palette',
       categories: {
@@ -616,7 +617,7 @@ export default {
         teal: 'Teal',
       },
     },
-    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    // Designer Project Explorer (Project > Group > Flow).
     archive: {
       action: 'Archive', restore: 'Restore', include: 'Include archived',
       run_not_completed: 'Only completed flows can be archived.',
@@ -644,8 +645,9 @@ export default {
       no_flows: 'No flows.',
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
+      reconnecting: 'Reconnecting…',
     },
-    // flowgate.v02.0024 T0005 — Designer File Explorer.
+    // Designer File Explorer.
     file_explorer: {
       reconnecting: 'Reconnecting…',
       title: 'Files',
@@ -685,7 +687,7 @@ export default {
       no_flow: 'No active Flow.',
       no_project: 'Select a project.',
     },
-    // flowgate.v02.0025 — Designer Shell (left Dock, placeholders of the final containers).
+    // Designer Shell (left Dock, placeholders of the final containers).
     shell: {
       explorer_title: 'Explorer',
       mode_tabs_label: 'Explorer mode',
@@ -695,14 +697,14 @@ export default {
       expand_left: 'Expand left panel',
       minimap_label: 'MINIMAP',
       minimap_parts: 'Minimap',
-      // flowgate.v02.0037 — right Tool Panel tabs.
+      // right Tool Panel tabs.
       tool_tabs_label: 'Tool panel',
       tool_palette: 'Palette',
       tool_conversation: 'Conversation',
       tool_git: 'Git',
     },
-    // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
-    // flowgate.v02.0048 T#1: no placeholder line — a tab exists only with a registered feature.
+    // bottom Inspector Frame (v7: header + tabs + Content area).
+    // no placeholder line — a tab exists only with a registered feature.
     inspector: {
       label: 'Inspector',
       tabs_label: 'Inspector tabs',
@@ -712,7 +714,7 @@ export default {
         ai: 'AI',
         qna: 'Q&A',
       },
-      // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
+      // the target's states in the header and the common section states (parts).
       doc_status_label: 'Document status',
       run_status_label: 'Run status',
       review_status: {
@@ -740,10 +742,10 @@ export default {
         error: 'Could not load.',
         retry: 'Retry',
         details: 'Details',
-        // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
+        // a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'Not supported yet.',
       },
-      // flowgate.v02.0051 — the rest of the v7 header line, on every card.
+      // the rest of the v7 header line, on every card.
       header: {
         read_only: 'Read only',
         read_only_conflict: 'Ownership conflict — read only',
@@ -756,27 +758,27 @@ export default {
         kind_bug: 'Bug',
         state_tip: 'Document status: {doc} / Run status: {run}',
       },
-      // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
+      // common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
       slot: {
         progress: 'Progress',
-        // flowgate.v02.0053 T#5 — the document icon (and the line name) that opens the window.
+        // the document icon (and the line name) that opens the window.
         open: 'Open',
-        // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
+        // ✎ opens the document window straight in its editor.
         edit: 'Edit',
-        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
+        // the wording of a line without a document (F1: drawn in the line).
         none: 'No document',
-        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // who writes a card line (O2 the earlier implementation `author`); only the instruction line's
         // instruction_ai_or_human is drawn.
         author: {
           instruction_ai_or_human: 'Instruction AI or person',
         },
-        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        // the history button of a document line: its review·rejection history window.
         history: 'Review history',
         history_count: 'Review history · {n}',
-        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from No document (a document that has no body).
+        // (B4): drawn in the line, told from No document (a document that has no body).
         blank: 'Body empty',
         actions: {
           write: 'Write',
@@ -827,7 +829,7 @@ export default {
         failed: 'Not saved',
       },
     },
-    // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
+    // Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
     // purpose (0007-T §7).
     top: {
       menubar_label: 'Menu',
@@ -845,8 +847,8 @@ export default {
           ai: 'AI',
           questions: 'Q&A',
         },
-        project_only: 'Only runs in the current project {name} are shown.',
-        empty_runs: 'No running or waiting runs.',
+        project_only: 'Tasks in project {name}. The run count includes only executing AI jobs.',
+        empty_runs: 'No executing, waiting or retrieving tasks.',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: 'The \'{title}\' card\'s merge conflict — a choice is needed',
@@ -876,6 +878,9 @@ export default {
         failure: 'Failed',
         unknown: 'Unknown status',
         phases: {
+          queued_capacity: 'Waiting (Agent at capacity)',
+          retrieving: 'Retrieving results',
+          settling: 'Confirming termination',
           running: 'Running',
           queued: 'Waiting',
           starting: 'Starting',
@@ -957,7 +962,7 @@ export default {
       },
       panels: { left: 'Left Panel', right: 'Right Tool Panel', inspector: 'Inspector', minimap: 'Minimap' },
       tabs: { project: 'Project Explorer', file: 'File Explorer', palette: 'Palette', conversation: 'Conversation', git: 'Git' },
-      // flowgate.v02.0059 T#2 — the Align / Arrange commands (Edit menu submenu and Toolbar ▾).
+      // the Align / Arrange commands (Edit menu submenu and Toolbar ▾).
       arrange: {
         'align-left': 'Align Left',
         'align-center': 'Align Center',
@@ -980,7 +985,7 @@ export default {
         run_all: 'Run All',
         validate: 'Validate',
         stop: 'Stop',
-        // flowgate.v02.0061 T#14 — Pause / Resume and the stopping placeholder of the run buttons.
+        // Pause / Resume and the stopping placeholder of the run buttons.
         pause: 'Pause',
         resume: 'Resume',
         stopping: 'Stopping',
@@ -992,9 +997,9 @@ export default {
         zoom_preset: 'Choose zoom level',
         density: 'Layout density — the step a dragged card moves in (Freeform: none)',
       },
-      // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
+      // the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: 'Running', stopped: 'Stopped', completed: 'Completed', paused: 'Paused', stopping: 'Stopping', idle: 'Idle' },
-      // flowgate.v02.0061 T#14 — the run band: the command, why an idle run is idle, executions, waiting cards.
+      // the run band: the command, why an idle run is idle, executions, waiting cards.
       run_command: { step: 'Next Step', full: 'Run All' },
       run_idle_reasons: {
         completed: 'Completed',
@@ -1006,21 +1011,21 @@ export default {
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
         step_done: 'Next step done',
-        needs_intervention: 'Intervention needed',   // flowgate.v02.0124 T#2
+        needs_intervention: 'Intervention needed',   
         waiting_confirm: 'Waiting for confirmation',
       },
       run_executions: 'Running {running}/{limit}',
       run_completed_ack: 'The run is already completed, so the command did nothing. Confirm a new definition to run it again.',
       run_requested: 'Requested {n}',
       run_waiting_cards: '{n} next card(s) waiting',
-      // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
+      // a told wait: the other blocking cards, and how the first one is released.
       run_wait_more: '+{n} more',
       run_wait_release: {
         new_submission: 'Release: edit the document and submit it again',
         issuer_permission: 'Release: give the issuer approval rights',
         memo_rereview: 'The card has a recorded intervention state.',
       },
-      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      // a stopped run with cards approved meanwhile.
       run_pending: 'Stopped · {n} next card(s) waiting',
       run_pending_keys: 'Cards to go on from: {keys}',
       run_command_recovery: {
@@ -1071,7 +1076,7 @@ export default {
         flow_disposed: 'A disposed flow cannot run.',
         flow_access_denied: 'You do not have permission to run it.',
         graph_validation_failed: 'The cards are not connected correctly, so it cannot run.',
-        // flowgate.v02.0061 T#14 — used only when the server sent no message of its own.
+        // used only when the server sent no message of its own.
         run_in_progress: 'It is already running.',
         graph_run_locked: 'A running, paused or stopping flow cannot be edited.',
         graph_git_required: 'This work needs Git integration.',
@@ -1080,7 +1085,7 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine cannot run safely.',
         graph_time_machine_in_progress: 'A Graph Time Machine operation is unfinished.',
         graph_engine_owned: 'This flow is owned by the Graph engine.',
-        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        // R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
         run_command_storage_unavailable: 'Browser storage is unavailable, so the run request could not be recorded. Allow storage or reload, then try again.',
         run_command_record_corrupt: "This flow's run request record cannot be read. Clear it from the run request notice, then try again.",
         run_command_mode_requires_void: 'An unconfirmed earlier run request used a different run mode. Check that request, then try again.',
@@ -1104,7 +1109,7 @@ export default {
         },
       },
     },
-    // flowgate.v02.0043 — File menu dialogs (Open Group… / Open Flow… / New Group / New Flow).
+    // File menu dialogs (Open Group… / Open Flow… / New Group / New Flow).
     file_menu: {
       group_open_title: 'Open Group',
       flow_open_title: 'Open Flow',
@@ -1145,7 +1150,7 @@ export default {
       create_failed: 'Failed to create.',
     },
   },
-  // flowgate.v02.0031 — Conversation part (Designer right tool area).
+  // Conversation part (Designer right tool area).
   conversation: {
     label: 'Conversation',
     retry: 'Retry',
@@ -1176,7 +1181,7 @@ export default {
       empty: 'No messages yet. Start the conversation below.',
       no_flow: 'Open a flow to see its conversations here.',
     },
-    // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting 'Use checkpoint').
+    // the message ⋯ menu and the divider (context setting 'Use checkpoint').
     checkpoint: {
       menu: 'Message menu',
       from_here: 'Send from this message (included)',
@@ -1194,11 +1199,11 @@ export default {
       change_failed: 'Could not save. Please reload and retry.',
       user: 'Me',
       ai: 'AI',
-      // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
+      // FlowGate's own turn (e.g. the chat commit result).
       system: 'FlowGate',
       sending: 'Sending',
       failed: 'Could not send.',
-      // flowgate.v02gui.0007 A: the failed bubble's short reason.
+      // A: the failed bubble's short reason.
       failure: {
         rejected: 'The server refused the message',
         forbidden: 'Not permitted',
@@ -1208,7 +1213,7 @@ export default {
         network: 'Could not reach the server',
       },
       stale: 'Written before message #{seq} was seen.',
-      // flowgate.v02test.0029: a message sent while the AI answered.
+      // a message sent while the AI answered.
       waiting: 'Queued',
       waiting_title: 'When the current answer ends, the AI reads this message and answers it.',
       copy: 'Copy original text',
@@ -1231,7 +1236,7 @@ export default {
         cancelled: 'Cancelled',
         rejected: 'Rejected',
       },
-      // Who rejected (D0006 §5.2) and the cancel / failure reason codes (§5.3).
+      // Who rejected and the cancel / failure reason codes.
       rejected_by: {
         policy: 'Rejected by the command policy in chat settings. Nothing was run.',
         user: 'Rejected by the user. Nothing was run.',
@@ -1247,7 +1252,7 @@ export default {
         chat_command_internal_error: 'A server error occurred while running it.',
       },
       exit_code: 'Exit code {code}',
-      // flowgate.v02.0150 — the in-card detail of a command request.
+      // the in-card detail of a command request.
       detail: {
         show: 'Details',
         hide: 'Hide details',
@@ -1282,7 +1287,7 @@ export default {
       too_large: 'File too large: contents are not compared.',
       empty: 'No content difference.',
       more_lines: '{n} more lines',
-      // flowgate.v02test.0031 B/C: change window view mode, full text basis and context projection wording.
+      // B/C: change window view mode, full text basis and context projection wording.
       mode_label: 'View',
       mode_changes: 'Changes',
       mode_full: 'Full',
@@ -1331,7 +1336,7 @@ export default {
       provider: 'Choose AI',
       provider_loading: 'Loading',
       provider_failed: 'AI list error',
-      // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
+      // the chat's AI is read before anything is sent on it.
       ai_pick_failed: 'Sending is paused: this chat\'s AI could not be checked',
       ai_pick_retry: 'Try again',
       provider_none: 'No AI',
@@ -1352,12 +1357,12 @@ export default {
         edit: 'The AI may change the source',
         edit_once: 'The AI may change the source on the next call only',
       },
-      // flowgate.v02.0061 T#14 — the Flow's Graph run only allows switching to read mode.
+      // the Flow's Graph run only allows switching to read mode.
       source_locked: 'Only switching to Read is allowed while this flow\'s Graph run is running, paused or stopping, or before its run status is confirmed',
       manual_copy_title: 'Could not copy to the clipboard. Copy the text below by hand.',
       manual_copy_again: 'Copy again',
     },
-    // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
+    // message images: pasted / dropped into the composer, shown on the message.
     image: {
       download: 'Download image',
       alt: 'Image {n}',
@@ -1423,7 +1428,7 @@ export default {
       no_provider: 'No AI is available to call',
       invoke_failed: 'Could not call the AI',
       cancel_failed: 'Could not stop the AI call',
-      // flowgate.v02gui.0011 B — a stop pressed before the AI call started.
+      // B — a stop pressed before the AI call started.
       start_stopped: 'AI call stopped. Your message was saved',
       cancel_unconfirmed: 'Could not confirm the stop. Press stop again',
       mention_failed: 'Could not create the mention',
@@ -1440,7 +1445,7 @@ export default {
       command_decision_forbidden: 'You may not decide this command request',
     },
   },
-  // flowgate.v02.0033 — Designer Git part (features/git).
+  // Designer Git part (features/git).
   git: {
     gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery", "retry_same": "Retry was accepted but failed again for the same reason", "retry_changed": "Retry was accepted but failed for a different reason", "retry_blocked": "Cannot retry now · waiting for the server", "retry_blocked_cancel": "Cannot retry now · cancel from the [!] details", "cancel_approval": "Cancel this approval", "closed_note": "This approval cannot be applied again. Its merge session is already closed.", "closed_next": "After [Cancel this approval], press [Approve] on the check card → applies the current commit", "retry_blocked_closed": "Why retry is off: it only re-reads the closed merge session, so the result is always the same.", "goto_gate": "Go to the check card", "retry_same_next": "The cause is unchanged, so pressing it again gives the same result. Check the cause in the [!] details, or [Cancel] and approve again on the check card.", "retry_changed_next": "It is blocked for another reason this time. Check the new cause in the [!] details.", "retry_closed_next": "The merge session is closed, so trying again gives the same result. After [Cancel this approval], press [Approve] on the check card to apply the current commit."},
     header: {
@@ -1496,7 +1501,7 @@ export default {
       companion_item: '{path} · originally {source}',
       abort_bound: 'The final approval attempt in progress ends with it.',
       unsupported: 'This kind of conflict is not handled on this screen.',
-      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      // a Graph card result's merge conflict is handled in the card, not here.
       card_handled: 'A card result\'s merge conflict — handled in the card',
       card_handled_desc: 'You choose for this conflict in that card\'s \'Merge · Conflict\' tab, not in the Git tab.',
       open_card: 'Go to the card',
@@ -1663,13 +1668,13 @@ export default {
       force_cleanup_branch_mismatch: 'Another branch is checked out in the apply workspace, so nothing was cleaned up.',
       force_cleanup_unsupported_target: 'This is a shared workspace, so it cannot be force-cleaned.',
     },
-    // flowgate.v02test.0052 0008 (#25): the dialog's two buttons never read the same — [Back] closes it and the
+    // (#25): the dialog's two buttons never read the same — [Back] closes it and the
     // other button names what it does ([Abort merge] …).
     confirm: {
       ok: 'OK',
       cancel: 'Back',
     },
-    // flowgate.v02test.0052 0008 — the administrator's forced cleanup of a merge whose abort git refuses.
+    // the administrator's forced cleanup of a merge whose abort git refuses.
     force: {
       title: 'Force cleanup of the workspace?',
       workspace: 'The apply workspace {workspace} is put back to the HEAD of {target} ({head}).',
@@ -1683,7 +1688,7 @@ export default {
       action: 'Force cleanup',
       preview_failed: 'Could not read what the cleanup would do.',
     },
-    // flowgate.v02test.0052 0008 — administrators only: the open merges marked "cleanup failed".
+    // administrators only: the open merges marked "cleanup failed".
     abort_failures: {
       title: '{n} cleanup failures',
       desc: 'Sessions whose merge abort git refused. Only administrators see this.',
@@ -1697,7 +1702,7 @@ export default {
       done_unchecked: 'Merge session {id} ({group}) is closed. This group\'s approval could not be checked here. If one remains, press [Cancel this approval] in the Git tab of its Flow.',
       done_failed: 'Merge session {id} ({group}) is closed, but its earlier approval could not be cancelled ({code}). Press [Cancel this approval] on the "Git operation failed" card in the Git tab of its Flow.',
     },
-    // flowgate.v02.0065 — Git not connected / status read failure / Connect Git modeless.
+    // Git not connected / status read failure / Connect Git modeless.
     unlinked: {
       heading: 'Git not connected',
       connect: 'Connect Git',
@@ -1725,7 +1730,7 @@ export default {
       submitting: 'Connecting…',
       required: 'Enter the repository URL and Base branch.',
       invalid_url: 'Check the repository URL format.',
-      // flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection, request outcomes.
+      // follow-up of a saved-but-not-prepared connection, request outcomes.
       retry_provision: 'Prepare repository again',
       provisioning: 'Preparing repository…',
       result: {
@@ -1743,7 +1748,7 @@ export default {
         config_failed: 'Could not load the existing Git settings. Enter the values yourself.',
       },
     },
-    // flowgate.v02.0066 T#6 — Group worktree area (changed files, commit), disabled reasons, Center Diff.
+    // Group worktree area (changed files, commit), disabled reasons, Center Diff.
     worktree: {
       loading: 'Reading the workspace…',
       read_failed: 'Could not read the workspace status.',
@@ -1751,7 +1756,7 @@ export default {
       read_forbidden: 'No permission to view the workspace.',
       retry: 'Retry',
       unavailable: 'No workspace (group cleaned up)',
-      // flowgate.v02.0067 T#1 — Git tab summary / entries and the Git modeless (tabs, status).
+      // Git tab summary / entries and the Git modeless (tabs, status).
       overview: {
         changed: 'Changed',
         staged: 'Staged',
@@ -1867,7 +1872,7 @@ export default {
         git_busy: 'Another Git operation is running. Try again shortly.',
         invalid_state: 'The workspace state changed. Read again.',
         ownership_unavailable: 'Managed files cannot be determined — not possible now.',
-        // flowgate.v02.0066 T#7 — merge, follow-up push, Fetch.
+        // merge, follow-up push, Fetch.
         merged: 'Merged into {target}.',
         merged_pushed: 'Merged into {target} and pushed.',
         recovered: 'Recorded the earlier merge ({target}).',
@@ -1912,7 +1917,7 @@ export default {
       staged_protected: 'Protected files that cannot be committed are staged — unstage all first',
       no_message: 'Enter a commit message',
       no_provider: 'No default AI set',
-      // flowgate.v02.0066 T#7 — merge, follow-up push.
+      // merge, follow-up push.
       merge_unread: 'Could not read the merge judgment',
       no_target: 'No merge target',
       merge_unavailable: 'No merge possible now',
@@ -1937,7 +1942,7 @@ export default {
     centerDiff: {
       reload: 'Read again',
       loading: 'Reading…',
-      // flowgate.v02.0067 T#4 — Git modeless `Diff` tab detail: back to list · file path · compared with.
+      // Git modeless `Diff` tab detail: back to list · file path · compared with.
       back: 'Back to list',
       path_label: 'File path',
       compare_label: 'Compared with',
@@ -1958,7 +1963,7 @@ export default {
         failed: 'Could not read the diff. ({code})',
       },
     },
-    // flowgate.v02.0066 T#7 — Base apply accordion (merge target, Fetch, push after merge, status / diff, follow-up push).
+    // Base apply accordion (merge target, Fetch, push after merge, status / diff, follow-up push).
     apply: {
       summary: {
         merging: 'Merging',
@@ -2004,15 +2009,15 @@ export default {
       diff_title: '{n} changes against {target}',
       diff_refreshing: 'Updating…',
       diff_empty: 'No changes',
-      // flowgate.v02.0067 T#4 — search and pages of the `Diff` tab list.
+      // search and pages of the `Diff` tab list.
       diff_search: 'Search files to compare',
       diff_range: '{from}–{to} / {n}',
       diff_prev: 'Previous',
       diff_next: 'Next',
     },
   },
-  // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
-  // flowgate.v02.0068 T#1 — the document upload / download of the Inspector's document lines and the document
+  // the document window (features/documentWindow): title line, editor, MD Viewer.
+  // the document upload / download of the Inspector's document lines and the document
   // window's header (one coordinator; its notices are toasts).
   document_io: {
     upload: 'Upload',
@@ -2069,7 +2074,7 @@ export default {
     editor: 'Document body',
     save: 'Save',
     cancel: 'Cancel',
-    // flowgate.v02.0056 F1 — [Close] of the editor bar: the window closes (unsaved text is asked about first).
+    // [Close] of the editor bar: the window closes (unsaved text is asked about first).
     close: 'Close',
     discard: {
       title: 'Discard the unsaved changes?',
@@ -2136,7 +2141,7 @@ export default {
       copy_code: 'Copy code',
       copy_failed: 'Could not copy',
     },
-    // flowgate.v02.0056 F1 — the review history window (the v0.1 review / rejection dialog on ModelessShell).
+    // the review history window (the v0.1 review / rejection dialog on ModelessShell).
     history: {
       title: 'Review history',
       filter_label: 'Entry kind',
@@ -2164,7 +2169,7 @@ export default {
       fold: 'Fold',
       unfold: 'Unfold',
     },
-    // flowgate.v02.0056 F2-2 — [Write] of a card line without a document (O3 0009-TR §4-2).
+    // [Write] of a card line without a document.
     write: {
       title: 'Write {name}',
       editor: 'Body to write',
@@ -2201,7 +2206,7 @@ export default {
         other: 'Could not save.',
       },
     },
-    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    // the single AI call on a document.
     ai: {
       title: 'Call AI',
       provider: 'AI',
@@ -2225,7 +2230,7 @@ export default {
         other: 'Could not run the AI.',
       },
     },
-    // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
+    // special document views: type names, the work plan table, the test views.
     types: {
       DS: 'Design instruction',
       D: 'Basic design',
@@ -2244,7 +2249,7 @@ export default {
     },
     work_plan: {
       label: 'Work plan',
-      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
+      // the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: 'Quantities',
       assignments: 'Assignments',
       sets: {
@@ -2319,7 +2324,7 @@ export default {
       conflicts: '{n} overlapping result(s)',
     },
   },
-  // flowgate.v02.0088 F01~F05 — Project open / create Dialog, list and row.
+  // ~F05 — Project open / create Dialog, list and row.
   project: {
     dialog: {
       title: 'Open project',
@@ -2391,7 +2396,7 @@ export default {
       none: 'None',
     },
     providers: {
-      // flowgate.v02.0088 F08: the generic provider kind (product names stay as they are).
+      // the generic provider kind (product names stay as they are).
       kind_custom: 'Custom',
       mode_disabled: 'AI off',
       add_title: 'Add AI connection',
@@ -2686,7 +2691,7 @@ export default {
       set_supervisor: 'Make Supervisor',
       unset_supervisor: 'Remove Supervisor',
     },
-    // flowgate.v02.0088 F11: each AI request's own localized fallback (network · empty body · unknown code).
+    // each AI request's own localized fallback (network · empty body · unknown code).
     request_failed: {
       sequence_load: 'Could not load the workflow sequence.',
       system_load: 'Could not load system AI.',
@@ -2749,7 +2754,7 @@ export default {
       ai_group_validation_failed: 'The input is not valid.',
     },
   },
-  // flowgate.v02.0020 환경 설정 (시안 11~14).
+  // flowgate.v02.0020 환경 설정 (mockup 11~14).
   settings: {
     title: 'Settings',
     breadcrumb_aria: 'Location',
@@ -3407,7 +3412,7 @@ export default {
       paths: 'Storage paths',
       git: 'Git',
     },
-    // flowgate.v02.0076 T#5: 프로젝트 조회 · 시스템 › 전체 프로젝트 (read only).
+    // flowgate.v02.0076 T#5: Project lookup · 시스템 › 전체 프로젝트 (read only).
     projects: {
       refresh: 'Reload',
       picker: 'Project',

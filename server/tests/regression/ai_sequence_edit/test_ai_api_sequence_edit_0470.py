@@ -1,4 +1,4 @@
-"""API-provider workflow sequence edit registration regression coverage (0470 T0007)."""
+"""API-provider workflow sequence edit registration regression coverage."""
 from __future__ import annotations
 
 import json
@@ -119,7 +119,7 @@ def test_api_sequence_edit_failure_is_recorded_and_returned_for_retry(monkeypatc
     assert run["last_tool_error"] is None
 
 
-# ── 0007-T 완료기준 (d): the real PATCH route, the real store, the real verdict ──
+# ── the earlier implementation acceptance criterion (d): the real PATCH route, the real store, the real verdict ──
 #
 # The three tests above pin the wiring INSIDE the worker (which tool is exposed, what body
 # the handler builds, how a failure is recorded) and stub the transport to do it. That is
@@ -381,7 +381,7 @@ def test_api_sequence_edit_that_replaces_the_tail_lands_in_the_store_and_is_comp
     assert oracle_world[1]["note"] == "실제 저장 확인"
     assert svc._probe_sequence_max_item(ORACLE_ROOT) == 4 > 2  # baseline was 2
 
-    # 0007-T 완료기준 (d): the same verdict the CLI path gets in 0268.
+    # acceptance criterion (d): the same verdict the CLI path gets in 0268.
     assert run["docs_target"] == 0, "a sequence edit registers no document"
     assert run["outcome"] == "complete"
     assert run["oracle_mismatch"] is False
@@ -394,7 +394,7 @@ def test_api_sequence_edit_that_inserts_nothing_is_still_judged_none(
 
     Without it, the test above could pass on a stubbed store — docs_target 0 makes
     `docs_reached >= docs_target` trivially true, which is the false positive
-    `_probe_sequence_max_item` exists to prevent (0259 B0001's rule).
+    `_probe_sequence_max_item` exists to prevent ('s rule).
     """
     run, calls = _drive_api_sequence_edit(monkeypatch, {"items": []})
 

@@ -1,4 +1,4 @@
-"""flowgate.v02.0129 T#2 -- remote CLI connections run only as a Job on their target Agent.
+"""remote CLI connections run only as a Job on their target Agent.
 
 Real SQLite schema (full migration chain), the real AgentJobService/AgentService and the
 real provider boundary (`provider_cli._cli_execute`, `worker._execute_provider_chain`).
@@ -7,7 +7,7 @@ Only the server-local process boundary (`_execute_local`), the Graph launch hook
 invocation journal are replaced, so nothing here starts a real CLI or touches a real run.
 
 Job creation is gated by ``provider_remote.AGENT_WORKDIR_CONTRACT_VERIFIED``. The product
-default is open since flowgate.v02.0131 CH0004 (operator instruction); the fixture opens
+default is open since the earlier change the discussion (operator instruction); the fixture opens
 it explicitly so the lifecycle (D0005 (가)~(라)) is exercised regardless, one test pins
 the open default and one test keeps the closed-gate behaviour covered.
 """
@@ -57,7 +57,7 @@ def isolate_unowned_sweep_state(monkeypatch):
     monkeypatch.setattr(remote_supervisor, "_unowned_request_candidates", {}, raising=False)
     monkeypatch.setattr(admission, "_review_loop_sweep_candidates", {}, raising=False)
 BASE = "https://flowgate.example.test/flowgate/api/v1"
-# flowgate.v02.0135 CH0006: the Agent's remote working directory setting.
+# the Agent's remote working directory setting.
 WORKDIR = "/tmp/flowgate/${AGENT_JOB_ID}"
 
 
@@ -373,7 +373,7 @@ def test_remote_runs_only_on_target_agent_and_result_is_reflected(env, caplog):
     assert other.received == [] and other.polls > 0                # the other Agent never got it
     assert len(target.received) == 1
     job = target.received[0]
-    # flowgate.v02.0135 CH0006: the Agent's setting with ${AGENT_JOB_ID} replaced, no fixed path.
+    # the Agent's setting with ${AGENT_JOB_ID} replaced, no fixed path.
     assert job["cwd"] == f"/tmp/flowgate/{job['job_id']}"
     assert run["remote_job"]["workdir"] == job["cwd"]
     assert TOKEN in job["stdin_text"] and TOKEN_SCRATCH not in job["stdin_text"]
@@ -522,7 +522,7 @@ def test_agent_rejection_is_a_final_failure(env):
         "path_invalid", "cwd_outside_workspace", f"/tmp/flowgate/{job_id}")
 
 
-# ── flowgate.v02.0135 CH0006: remote working directory and the Agent's own failure cause ──
+# ── the earlier change the discussion: remote working directory and the Agent's own failure cause ──
 
 def _rejecting(**fields):
     def reject(svc, cred, job):
@@ -856,7 +856,7 @@ def test_job_creation_is_closed_until_the_agent_workdir_contract_is_verified(env
 
 
 def test_the_product_default_opens_job_creation():
-    # flowgate.v02.0131 CH0004: the operator opened remote CLI Job creation.
+    # the operator opened remote CLI Job creation.
     import importlib
     source = Path(provider_remote.__file__).read_text(encoding="utf-8")
     assert "\nAGENT_WORKDIR_CONTRACT_VERIFIED = True\n" in source
@@ -1348,7 +1348,7 @@ def test_job_keeps_the_run_project_for_shared_and_personal_connections(env, monk
     assert personal["lease_owner_agent_id"] == "agt_p" and personal["ai_run_id"] == run["run_id"]
 
 
-# ── CH0012 (approved (B)): a personal connection runs only for its owner ──────────
+# ── the discussion (approved (B)): a personal connection runs only for its owner ──────────
 
 def test_a_personal_connection_refuses_a_run_requested_by_another_user(env, monkeypatch):
     env.store._execute("UPDATE users SET is_active=1 WHERE user_id='u-system'")

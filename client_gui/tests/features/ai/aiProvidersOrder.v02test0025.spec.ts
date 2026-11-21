@@ -9,7 +9,7 @@ import type { ProviderItem } from '@/features/ai/types'
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0025 (3): system AI and my AI, local and remote, in ONE order of mine. Any card can go above any
+// : system AI and my AI, local and remote, in ONE order of mine. Any card can go above any
 // other; an administrator's change of the system AI's relative order is also the fallback order (linked).
 const systemAi: ProviderItem[] = [
   { id: 'sys-local', name: 'System local', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude -p', exec_location: 'local' },

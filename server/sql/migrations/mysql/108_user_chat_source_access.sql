@@ -1,10 +1,10 @@
 -- 108_user_chat_source_access.sql
 -- flowgate.default.0515: per-user source-access mode + edit_once one-shot claim marker.
--- MySQL은 column definition에 붙인 inline REFERENCES를 parse만 하고 실제 FK를 만들지 않는다
--- (076_user_chat_settings.sql이 이미 그 형태이지만 강제되지 않는다 — rev1 반려 2번).
--- 이 테이블은 077_group_ai_leases.sql / 103_group_ai_lease_events.sql /
--- 091_ai_invoke_document_review_loops.sql과 같은 named CONSTRAINT ... FOREIGN KEY
--- table constraint로 쓴다.
+-- MySQL parses inline REFERENCES in column definitions but does not create an actual FK.
+-- (076_user_chat_settings.sql already uses that form, but it is not enforced: rev1 rejection 2.)
+-- This table follows 077_group_ai_leases.sql / 103_group_ai_lease_events.sql /
+-- 091_ai_invoke_document_review_loops.sql, using a named CONSTRAINT ... FOREIGN KEY
+-- table constraint.
 
 CREATE TABLE IF NOT EXISTS user_chat_source_access (
     user_id             VARCHAR(191) NOT NULL PRIMARY KEY,

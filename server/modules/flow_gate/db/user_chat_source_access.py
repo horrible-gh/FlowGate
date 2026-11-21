@@ -1,10 +1,10 @@
-"""CRUD for the user_chat_source_access table (group 0515, DB0008).
+"""CRUD for the user_chat_source_access table (the earlier change, ).
 
 One row per (user, project, group), holding the group source-editing mode
 (``read_only``/``execute``/``edit``/``edit_once``; ``execute`` = commands only, no
-source or document edit -- flowgate.v02test.0026) and the ``edit_once`` one-shot claim marker
+source or document edit -- the earlier change) and the ``edit_once`` one-shot claim marker
 (DB0008 §2.1). The absence of a row is itself the answer "this user has never
-chosen" -- it means ``read_only`` (D0006 §2.2, L0007 §2.1.1) -- so nothing here
+chosen" -- it means ``read_only`` -- so nothing here
 creates a row implicitly.
 
 The three CAS statements (:func:`claim`, :func:`commit`, :func:`rollback`) are the
@@ -35,7 +35,7 @@ def get(user_id: str, project_id: str, group_id: str) -> Optional[dict]:
 
 
 def resolve_source_access_mode(user_id: str, project_id: str, group_id: str) -> str:
-    """Resolve persisted mode fail-closed (DB0008 §4.1, L0007 §2.1.1).
+    """Resolve persisted mode fail-closed.
 
     A missing row and any value outside :data:`SOURCE_ACCESS_DOMAIN` both mean
     ``read_only``. This is intentionally at the storage boundary: settings responses
@@ -48,11 +48,11 @@ def resolve_source_access_mode(user_id: str, project_id: str, group_id: str) -> 
 
 
 def upsert(user_id: str, project_id: str, group_id: str, mode: str, updated_at: str) -> None:
-    """Save the user's explicit choice (DB0008 §4.5, L0007 §2.2.3).
+    """Save the user's explicit choice.
 
     The marker pair is unconditionally set to NULL on every call -- not merely left
     alone -- because an explicit save invalidates any one-shot claim in flight
-    (L0007 §2.2.3, T0009 §3.4): the request that carries this PATCH has no opinion
+    : the request that carries this PATCH has no opinion
     about a pending claim, so "no opinion" here means "clear it", not "keep it".
     ``created_at`` mirrors ``user_chat_settings.upsert()``'s convention: on first
     INSERT it is set to the same value as ``updated_at``; ON CONFLICT it is left
@@ -74,7 +74,7 @@ def upsert(user_id: str, project_id: str, group_id: str, mode: str, updated_at: 
 
 
 def claim(user_id: str, project_id: str, group_id: str, token_id: str, claimed_at: str, updated_at: str) -> dict:
-    """AVAILABLE -> CLAIMED (DB0008 §4.2, L0007 §2.4.1). One guarded UPDATE, CAS.
+    """AVAILABLE -> CLAIMED. One guarded UPDATE, CAS.
 
     Returns ``{"source_access": "read_write"|"read", "one_shot_claimed": bool}`` --
     the caller (token_service.issue) never needs a second SELECT to learn who won.
@@ -95,10 +95,10 @@ def claim(user_id: str, project_id: str, group_id: str, token_id: str, claimed_a
 
 
 def commit(user_id: str, project_id: str, group_id: str, token_id: str, updated_at: str) -> str:
-    """CLAIMED -> CONSUMED (DB0008 §4.3, L0007 §2.4.2). Marker-only; mode stays read_only.
+    """CLAIMED -> CONSUMED. Marker-only; mode stays read_only.
 
     Returns ``"COMMITTED"`` (this call cleared the marker) or ``"ALREADY_CLEARED"``
-    (a PATCH or a rollback got there first) -- never collapsed to a bool (T0009 §4.2).
+    (a PATCH or a rollback got there first) -- never collapsed to a bool.
     """
     affected = get_store()._execute_affected(
         "UPDATE user_chat_source_access "
@@ -112,7 +112,7 @@ def commit(user_id: str, project_id: str, group_id: str, token_id: str, updated_
 
 
 def rollback(token_id: str, updated_at: str) -> bool:
-    """CLAIMED -> AVAILABLE (DB0008 §4.4, L0007 §2.4.3). Restores ``edit_once``.
+    """CLAIMED -> AVAILABLE. Restores ``edit_once``.
 
     Keyed on ``one_shot_token_id`` alone -- it identifies the row on its own, so no
     ``user_id`` is needed (DB0008 §4.4). Idempotent: a second call (e.g. the stale

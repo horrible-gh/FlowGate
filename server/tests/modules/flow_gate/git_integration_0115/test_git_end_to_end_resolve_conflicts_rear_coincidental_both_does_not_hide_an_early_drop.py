@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_rear_coincidental_both_does_not_hide_an_early_drop(
         self, origin_repo,
     ):
-        # 0602 T0004 rev1 review finding, through the real resolve_conflicts() boundary:
+        # A review finding, through the real resolve_conflicts() boundary:
         # the file carries static tail lines that happen to spell out ours-then-theirs
         # back to back, unrelated to the conflict itself. The submitted resolution drops
         # theirs at the actual chunk (keeps only the mainline "ours" line) — the rear

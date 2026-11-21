@@ -78,7 +78,7 @@ class Judgement:
     children: int = 0
     chained: bool = False
     exact: bool = False                           # ``new_id`` is the number the execution takes
-    code: Optional[str] = None                    # a refusal: the P0006 §3.1 ``refusal.code``
+    code: Optional[str] = None                    # a refusal: the the plan ``refusal.code``
     extra: dict = field(default_factory=dict)     # a refusal: the items that follow ``code``
 
 
@@ -224,7 +224,7 @@ def judge_root_conversion(doc: Optional[dict], new_type: Any, context: Conversio
     return Judgement(SUCCESSION, new_type=t, new_id=new_id, mode=mode, exact=exact, **seen)
 
 
-# ── succession number (L0005 2.9.1) ───────────────────────────────────────────
+# ── succession number ───────────────────────────────────────────
 
 def _group_counter(doc: dict) -> tuple[Optional[str], Optional[int]]:
     """(project id, the group-shared document counter's ``last_seq`` or None): a SELECT only."""
@@ -271,7 +271,7 @@ def allocate_succession_id(doc: dict, new_type: str) -> str:
     return f"{doc['group_id']}.{code}"
 
 
-# ── file stage (L0005 2.6) ───────────────────────────────────────────────────
+# ── file stage ───────────────────────────────────────────────────
 
 def _converted_path_string(raw: str, old_code: str, new_code: str) -> str:
     base = raw.replace("\\", "/").rsplit("/", 1)[-1]
@@ -354,7 +354,7 @@ def finish_converted_file(staged: StagedFile, mode: str, doc_id: str, cleanup_ke
         raise ConversionRefused("transaction_required", doc_id=doc_id)
 
 
-# ── coordinator (L0005 2.6) ──────────────────────────────────────────────────
+# ── coordinator ──────────────────────────────────────────────────
 
 def execute_root_conversion(doc_id: str, new_type: Any, actor: Optional[str]) -> dict:
     from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
@@ -446,7 +446,7 @@ def _convert_by_succession(doc: dict, judged: Judgement, actor: Optional[str]) -
     }
 
 
-# ── console read (P0006 §3.1) ────────────────────────────────────────────────
+# ── console read ────────────────────────────────────────────────
 
 def document_conversion_items(doc: dict) -> dict:
     """``converted_from`` / ``converted_to`` unfolded from ``meta`` and the live root of an R/B document."""

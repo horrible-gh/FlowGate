@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 (TR rework) — regressions of the review findings on the assigned path.
+"""(TR rework) — regressions of the review findings on the assigned path.
 
 The harness of ``test_fg_ai_roles_l2_assignment`` (real SQLite DB and routes, the feature on, recorders for every AI
 start; nothing calls a real AI). One block per finding:
@@ -169,7 +169,7 @@ def test_t45_reopen_waits_out_the_old_attempt_s_side_effect_and_its_late_contact
     replacement the old attempt's late contact is refused and changes nothing of the new attempt."""
     from flowgate.card_settings import legacy_adapter, manual_stage
 
-    # 0126 T#5: an unavailable review wait is resolved as the next review seq of its attempt, not a replacement; the
+    # an unavailable review wait is resolved as the next review seq of its attempt, not a replacement; the
     # replacement this test fences is a failed stage's (here the person's instruction stage, its token not issued).
     key = flow(env)
     roles(key, "not_used", "not_used", "not_used")
@@ -231,7 +231,7 @@ def test_t45_the_fence_is_taken_only_for_a_due_replacement_and_an_unfenced_one_i
         assert fenced is False and not fencing.exclusive_held(FA)
     stored(key, "instruction_review_count", 1)
     stored(key, "instruction_review_ai", "aip_gone")
-    # 0126 T#5: a waiting review is no replacement (the command asks the next seq of the same attempt); a failed
+    # a waiting review is no replacement (the command asks the next seq of the same attempt); a failed
     # write stage is (the person's instruction stage, marked failed as a refused token does)
     [attempt] = [a["attempt_id"] for a in _attempts(env, key)]
     _sql(env["db"], "UPDATE graph_stage_assignments SET stage_state = 'failed', fail_cause = 'token_issue_failed' "

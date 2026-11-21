@@ -6,7 +6,7 @@ import ModalShell from '@/components/ui/ModalShell.vue'
 // Also clean up after an assertion fails, before removing Teleport nodes.
 enableAutoUnmount(afterEach)
 
-// T0010 §8/§13.3: contextmenu-event open, pointer-position placement, viewport clamp,
+// contextmenu-event open, pointer-position placement, viewport clamp,
 // outside click / ESC close, keyboard nav, first-item focus, focus return, Teleport,
 // shared z-index, and no conflict with ModalShell's focus trap when opened inside one.
 describe('components/ui/ContextMenu (T0010)', () => {
@@ -292,7 +292,7 @@ describe('components/ui/ContextMenu (T0010)', () => {
     expect(document.activeElement?.textContent?.trim()).toBe('Rename')
 
     // Reposition while still open (e.g. an imperative re-invocation from a different
-    // trigger, T0010 §8.3) -- focus is currently on the first menu item, which must
+    // trigger, the earlier implementation) -- focus is currently on the first menu item, which must
     // NOT overwrite the real focus-return target captured on the first open.
     ;(wrapper.vm as unknown as { openAt: (x: number, y: number) => void }).openAt(40, 40)
     await wrapper.vm.$nextTick()

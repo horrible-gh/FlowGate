@@ -1,4 +1,4 @@
-"""flowgate.v02.0124 T#2 (T §5.1 S6, rework of rej_01M6G7JDA4A8RN63) — a gate that waits for a person's confirmation is no
+"""(T S6, rework of rej_01M6G7JDA4A8RN63) — a gate that waits for a person's confirmation is no
 blocking card of the command result.
 
 The flow of ``test_fg_run_buttons_0053`` on its isolated test DB (the cards of 0053: pre-feature attempts, a person card

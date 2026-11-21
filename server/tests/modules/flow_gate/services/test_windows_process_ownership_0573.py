@@ -1,4 +1,4 @@
-"""Windows subprocess ownership regression coverage for group 0573."""
+"""Windows subprocess ownership regression coverage for the earlier change."""
 from __future__ import annotations
 
 import os

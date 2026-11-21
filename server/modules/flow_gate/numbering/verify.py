@@ -11,7 +11,7 @@ from ..db.connection import get_store
 from ..db import projects as db_projects
 from ..storage.paths import document_path, resolve_storage_path
 
-# flowgate.default.0060 L0012 §2-12 — attachment rooms sit at {module}/{group}/{doc_code}/,
+# attachment rooms sit at {module}/{group}/{doc_code}/,
 # which the old top-level-only exclusion list could never reach. Adding an attachment used to
 # turn the whole numbering check red.
 _ATTACHMENT_SCAN_EXCLUDED_TOP = ("_backup", "_tmp", ".git", "_migrated")
@@ -33,7 +33,7 @@ class ValidationReport:
     # Orphan file: exists in storage but not in the DB (file_path)
     orphan_files: list[str] = field(default_factory=list)
 
-    # flowgate.default.0060 L0012 §2-12 W3: a file that sits inside an attachment room but
+    # W3: a file that sits inside an attachment room but
     # has no registry row yet — mid-migration, or a rollback that left the file behind. It is
     # reported, because hiding it would be worse, but it does NOT flip `ok`: it has nothing to
     # do with numbering consistency and must not fail the whole check.
@@ -98,8 +98,8 @@ def is_excluded_from_orphan_scan(
     guess made from the directory shape.
 
     W3 exists as a safety net for the window before a row is written and for a migration in
-    progress. It matches a DIRECTORY component shaped like a document code (`0001-R`) — the
-    room name D0010 §3-1 chose — with the digit width the project actually configured.
+    progress. It matches a DIRECTORY component shaped like a document code (`the earlier implementation`) — the
+    room name the design chose — with the digit width the project actually configured.
     """
     parts = tuple(relative_parts)
     if parts and parts[0] in _ATTACHMENT_SCAN_EXCLUDED_TOP:      # W1
@@ -180,7 +180,7 @@ def verify_id_widths(project_id: str) -> ValidationReport:
 
         # File presence validation — resolve through the unified helper so a stored
         # relative (or legacy absolute) path no longer false-positives as missing
-        # (L0054.0002 §4). db_paths collects the resolved absolute form so the
+        #. db_paths collects the resolved absolute form so the
         # reverse orphan check below compares like for like.
         if file_path:
             resolved = resolve_storage_path(file_path, project_id)

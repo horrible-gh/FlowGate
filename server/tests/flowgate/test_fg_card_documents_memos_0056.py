@@ -1,4 +1,4 @@
-"""flowgate.v02.0056 T#3 — the card document and memo API (0002-CH turn 5 / 6 §4 §5 §8 / 10 O3 / 13).
+"""the card document and memo API (CH / 6 / 10 O3 / 13).
 
 On the same real SQLite DB, routes and fixtures as ``test_fg_card_settings`` (card documents, card settings and the
 card approval port registered as ``startup`` registers them; the card memo port and the two new routers added):
@@ -52,11 +52,11 @@ from test_fg_card_settings_review import (
     INSTRUCTION_RUN, REVIEW_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status,
     _run_ended, _start_ai, _work_run_ended, _write_written,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+# (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
 pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
@@ -67,7 +67,7 @@ MEMO_ON, MEMO_OFF = "Use the v2 error table", "Private note"
 @pytest.fixture(autouse=True)
 def o3(env, permissions):
     """The card's required outputs port (0119 T-3: it replaced the card approval port), the card memo port and the two
-    T#3 routers, as ``startup`` / ``main`` wire them."""
+    routers, as ``startup`` / ``main`` wire them."""
     from flowgate.card_completion import outputs
     from flowgate.card_documents import routes as document_routes
     from flowgate.card_memos import integration as memos
@@ -85,7 +85,7 @@ def o3(env, permissions):
 
 @pytest.fixture()
 def permissions(monkeypatch):
-    """The RBAC answer of the T#3 routes: every permission unless ``denied`` names it."""
+    """The RBAC answer of the the earlier implementation routes: every permission unless ``denied`` names it."""
     from flowgate.card_documents import legacy_adapter as documents
     from flowgate.card_memos import legacy_adapter as memos
 
@@ -240,8 +240,8 @@ def test_a_line_tells_whether_its_document_is_written(env):
 def test_the_body_judgement_is_the_one_of_the_instruction_stage():
     """No second judgement: the line read asks the same function the instruction stage and the completion's outputs ask."""
     lines_src = (_SERVER_DIR / "flowgate" / "card_documents" / "lines.py").read_text(encoding="utf-8")
-    # 0064 T#2 (L0005 2.1.1): the line reads its file once for both facts; ``written`` is the body gate's judgement
-    # (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies). flowgate.v02.0119 T#4 (T-3):
+    # the line reads its file once for both facts; ``written`` is the body gate's judgement
+    # (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies). the earlier change the earlier implementation (T-3):
     # that judgement is the v0.2 completion's body gate (``card_completion.gates``), asked by the card documents' adapter.
     assert "written, body_state = legacy.line_body_facts(shown)" in lines_src and '"has_body": written' in lines_src
     adapter_src = (_SERVER_DIR / "flowgate" / "card_documents" / "legacy_adapter.py").read_text(encoding="utf-8")
@@ -367,13 +367,13 @@ def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_an
         env["db"], "SELECT metadata FROM workflow_events WHERE event_type = 'token_consumed'")] == [result]
     assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"                              # a person approves the card
     assert _review_status(result) == "pending_review"
-    # flowgate.v02.0119 T#3 (T-2): no person approves the card any more — it needs intervention and stays in review;
-    # T#4 (T-3): the card approval route is gone
+    # (T-2): no person approves the card any more — it needs intervention and stays in review;
+    # (T-3): the card approval route is gone
     _approval_route_gone(env, key)
     assert _node(env, key) == ("review", result)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the pre-feature dispatch error ai_invoke_failed; an assigned attempt records ai_unavailable:start_failed (P-1 C-2)
+# (T) pre-feature contract: the pre-feature dispatch error ai_invoke_failed; an assigned attempt records ai_unavailable:start_failed (P-1 C-2)
 def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(pre_feature_attempts, env, decided, monkeypatch):
     from modules.flow_gate.graph_workflow.services import node_dispatch
 
@@ -381,7 +381,7 @@ def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(pre_fea
     key = _ai_card(env, (("instruction", "omit"),))
     _start(env)
     [job] = env["jobs"]
-    node_dispatch.record_ai_failure(job)                                   # the AI start failed (L0009 E-23)
+    node_dispatch.record_ai_failure(job)                                   # the AI start failed
     assert _node_run(env, key)["dispatch"]["error_code"] == "ai_invoke_failed"
     calls = _recorded_start_run(monkeypatch)
     made = _write(env, FA, key, "report", "## Report\n\nwritten by a person\n")
@@ -411,7 +411,7 @@ def test_the_result_path_is_refused_while_the_card_is_not_the_person_s_to_write(
     assert _node(env, key) == ("open", None)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first; T-2 race in test_fg_ai_roles_l2_fixes.py)
+# (T) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first; T-2 race in test_fg_ai_roles_l2_fixes.py)
 def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(pre_feature_attempts, env, decided, monkeypatch):
     """Two people write the result of one running card at the same moment. The node is judged, the document made,
     the dispatch token claimed and the line taken under one Flow guard: one write registers, the other is refused
@@ -466,7 +466,7 @@ def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(
     assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the report line is the result path at the opening of a person card; assigned: after the instruction stage (T-2 race: test_fg_ai_roles_l2_fixes.py::test_t2_a_lost_token_race_*)
+# (T) pre-feature contract: the report line is the result path at the opening of a person card; assigned: after the instruction stage (T-2 race: test_fg_ai_roles_l2_fixes.py::test_t2_a_lost_token_race_*)
 def test_a_lost_token_claim_rolls_the_result_back(pre_feature_attempts, env, decided, monkeypatch):
     """The token is spent by another writer after the node was judged (another process, the inbox with the raw
     token): the claim fails, the write is refused and its document, file, consume and line change are rolled back."""
@@ -501,7 +501,7 @@ def test_a_lost_token_claim_rolls_the_result_back(pre_feature_attempts, env, dec
     assert _line_doc(env, FA, key, "instruction") == placeholder and _node(env, key) == ("open", None)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
+# (T) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
 def test_a_person_s_result_takes_a_line_that_has_no_stored_row(pre_feature_attempts, env, decided):
     """The result line has no stored row at all (its type was not registered when the card was placed, or the row
     is gone): the result is bound and the line gets its row holding it, as a run result's line."""
@@ -522,7 +522,7 @@ def test_a_person_s_result_takes_a_line_that_has_no_stored_row(pre_feature_attem
     assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and _review_status(result) == "pending_review"
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
+# (T) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
 def test_a_person_s_result_takes_a_line_whose_document_is_gone(pre_feature_attempts, env, decided):
     """The result line's row holds a cancelled document: the row is replaced by one holding the result."""
     from modules.flow_gate.db import documents as db_documents
@@ -664,7 +664,7 @@ def _row_stage(env, key):
     return _sql(env["db"], "SELECT stage FROM graph_node_runs WHERE node_key = ?", (key,))[0]["stage"]
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person card had no instruction stage; an assigned person RUN card starts with it (L-2 §2.1) — test_fg_ai_roles_l2_fixes.py::test_t2_*
+# (T) pre-feature contract: a person card had no instruction stage; an assigned person RUN card starts with it (L-2) — test_fg_ai_roles_l2_fixes.py::test_t2_*
 def test_a_line_of_another_type_on_a_running_card_is_a_plain_draft(pre_feature_attempts, env, decided):
     """A running person's T card: its report line (TR) is no result of the node — the plain path."""
     from modules.flow_gate.db import documents as db_documents
@@ -1028,7 +1028,7 @@ def test_a_qa_answer_on_a_card_document_reads_the_card_s_memos(env, monkeypatch)
     free = _doc_row(ROOT)                                                  # no card line shows the root here
     free_mention = qa.issue_answer_token(doc=free, item={"id": 2}, issued_to="u_kim",
                                          api_base_url="http://h/api/v1")["mention"]
-    # 0064 T-B1e: the root has no body file, so the unreadable documents section leads -- but no memo section.
+    # T-B1e: the root has no body file, so the unreadable documents section leads -- but no memo section.
     assert free_mention.startswith("[읽을 수 없는 문서]\n") and free_mention.endswith("\n\nANSWER MENTION")
     assert "## User memos" not in free_mention
 
@@ -1156,7 +1156,7 @@ def test_main_mounts_the_t3_routes_and_the_packages_reach_modules_only_through_t
     for name in ("card_documents", "card_memos"):
         assert f"from flowgate.{name}.routes import router as _{name}_router" in main
         assert f'app.include_router(_{name}_router, prefix=f"{{CONTEXT}}"' in main
-    # 0126 T#1 adds the revision-bound human decision routes (GET list, POST decision) to the same router.
+    # adds the revision-bound human decision routes (GET list, POST decision) to the same router.
     assert [(r.path, sorted(r.methods)) for r in documents_router.routes] == [
         ("/api/v1/flows/{flow_id}/nodes/{node_key}/documents/decisions", ["GET"]),
         ("/api/v1/flows/{flow_id}/nodes/{node_key}/documents/{slot}/decision", ["POST"]),
@@ -1216,9 +1216,9 @@ def test_startup_registers_the_memo_port_and_the_port_is_stdlib_only():
 
 
 
-# ── flowgate.v02.0088 T#1: a person's result is titled in the language of its own POST ───────────────────────────
+# ── the earlier change the earlier implementation: a person's result is titled in the language of its own POST ───────────────────────────
 
-# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
+# (T) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
 @pytest.mark.parametrize("locale, name", [("ko", "지시서"), ("ja", "指示書"), ("en", "Instruction")])
 def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(pre_feature_attempts, env, decided, locale, name):
     """The result path (``_reserve_result``) is the same POST: its X-Locale titles the result; the card's empty draft
@@ -1241,5 +1241,5 @@ def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(pre_feat
     assert _doc_row(placeholder)["title"] == before == "T · 지시서"            # placed in ko, never retitled
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

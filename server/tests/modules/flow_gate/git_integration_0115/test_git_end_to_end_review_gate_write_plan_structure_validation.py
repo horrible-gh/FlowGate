@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_structure_validation(self, origin_repo):
-        # 0481 TR0009 rev2: structural validation (L0007 §2.5, the Q&A-bound
+        # Structural validation (the Q&A-bound
         # schema) rejects a malformed plan and gates test-path operations behind
         # allow_test_edits, independent of any live tree state.
         from modules.flow_gate.services import git_service as svc

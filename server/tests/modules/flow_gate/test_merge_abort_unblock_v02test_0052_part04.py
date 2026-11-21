@@ -118,7 +118,7 @@ def test_list_conflicts_does_not_touch_the_session(proj):
     assert _session(merge_id)["touched_at"] == before
     svc.abort_merge(gid, merge_id)
 def test_opening_the_merge_review_does_not_touch_the_session(proj):
-    """T0003 할 일 4(c): the review GET (``get_merge_review``) is a read — touched_at, the
+    """task 4(c): the review GET (``get_merge_review``) is a read — touched_at, the
     sweep TTL basis, stays where the last real operation put it; a review conversation
     turn (a real operation) does move it."""
     from modules.flow_gate.services import git_service as svc

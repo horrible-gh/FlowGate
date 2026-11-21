@@ -68,7 +68,7 @@ def test_the_continuation_is_the_new_entry_point_never_the_ended_run_judged_agai
 @pytest.mark.parametrize("stage", ["instruction", "result"])
 def test_exhausted_responder_leaves_card_and_run_in_question_wait_without_redispatch(
         env, decided, monkeypatch, questions, stage):
-    """0111 T-A3: responder exhaustion is an item failure, never a card/run error.
+    """T-A3: responder exhaustion is an item failure, never a card/run error.
 
     The Q-answer engine's exhaustion is covered by test_q_responder_startup_0111;
     here the real Graph run read/settle and repeated end/Resume see its failed item.

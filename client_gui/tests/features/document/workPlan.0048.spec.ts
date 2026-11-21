@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0048 T#13 — the WP summary's call in features/document/api/workPlan.ts (D#1 §6.3, §12.1;
- * NR0003 §2.4): the request sent to the existing v0.1 endpoint (GET /documents/{doc_id}/work-plan, nothing
+ * the WP summary's call in features/document/api/workPlan.ts (the earlier implementation;
+ * ): the request sent to the existing v0.1 endpoint (GET /documents/{doc_id}/work-plan, nothing
  * else), the server's snake_case read view (body steps, step_execution_status, assignment_summary, totals,
  * editability) -> camelCase, and how a refusal is read — the top-level 409 wp_unreadable, FastAPI `detail`
  * 403 / 404 / 422, a 500 and no answer.

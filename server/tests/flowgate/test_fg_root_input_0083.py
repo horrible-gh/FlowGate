@@ -1,4 +1,4 @@
-"""0083 T#1, 0056 T#1 개정: bound R/B is input, not work or a Step.
+"""revised: bound R/B is input, not work or a Step.
 
 Start/resume/settings use real HTTP routes and SQLite, with the existing AI job recorder.
 Completion below is an explicit resolver-boundary mock, not an AI/UI end-to-end claim.

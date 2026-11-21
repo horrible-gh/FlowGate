@@ -145,7 +145,7 @@ VALID_STATUS_TRANSITIONS = {
     "accepted": {"closed", "cancelled"},
 }
 VALID_GROUP_STATUSES = {"OPEN", "CLOSED", "DISCARDED"}
-# group 0022 §7.3: Q/A/V removed (doc types retired). Past Q/A/V docs remain viewable via
+# : Q/A/V removed (doc types retired). Past Q/A/V docs remain viewable via
 # direct document/group lookup; they are no longer routed through inbox/outbox classifiers.
 OUTBOX_TYPES = {"R", "B", "AC", "RJ"}
 INBOX_PROCESS_TYPES = {"AR", "DS", "D", "DB", "P", "L", "DC", "N", "NR", "T", "TR", "TV", "TVR", "VR", "M", "CH"}

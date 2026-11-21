@@ -27,7 +27,7 @@ def test_resolve_base_dirty_permission_and_catalog_converge():
     assert tool_registry.kind_for_token({"action_scope": "resolve_base_dirty"}) == ("read_write", None)
     # Convergence is per SCOPE, not per kind: the op 403s for anything but its own
     # action_scope (remote_tool_service._exec_resolve_base_dirty), so a plain read_write
-    # worker must not be advertised it (0492 D0004 D-2 "advertised == granted").
+    # worker must not be advertised it (D-2 "advertised == granted").
     assert "resolve_base_dirty" in tool_registry.tool_names("read_write", "resolve_base_dirty")
     assert "resolve_base_dirty" not in tool_registry.tool_names("read_write")
     assert "resolve_base_dirty" not in tool_registry.tool_names("read_write", "edit")
@@ -39,7 +39,7 @@ def _stub_resolve_lock(monkeypatch, git_service, acquire_calls=None, release_cal
     """Watch the real B acquisition (0669 domain lock; the lock rows are real).
 
     Fills ``acquire_calls`` with (project_id, lock_key) per acquisition, so tests can assert
-    the lock is acquired exactly once for the whole batch (0482 T0011 automated review:
+    the lock is acquired exactly once for the whole batch (the earlier implementation automated review:
     baseline capture, discard, and commit must share one held lock). ``release_calls`` is
     filled with the lock keys that were released."""
     from modules.flow_gate.services.git import lock_manager as lm
@@ -128,7 +128,7 @@ def test_resolve_base_dirty_complete_all_commit_returns_resolved(monkeypatch):
         {"project": "p1"},
     )
     assert result == {"status": "resolved", "remaining": [], "commit": "cafebabe"}
-    # Regression guard (0482 T0011 automated review): message and paths must
+    # Regression guard (automated review): message and paths must
     # land in the right positional slots, not swapped.
     assert calls == [("p1", "fix: base", ["a.py"])]
 
@@ -193,7 +193,7 @@ def test_resolve_base_dirty_outer_lock_busy_is_409(monkeypatch):
 
 
 def test_resolve_base_dirty_holds_one_lock_across_discard_and_commit(monkeypatch):
-    # 0482 T0011 automated review: baseline capture, discard, and commit
+    # automated review: baseline capture, discard, and commit
     # previously ran under three independently-acquired locks (or none, for
     # the baseline read), leaving a race window between them. Now they must
     # share exactly one held lock for the whole call.
@@ -328,7 +328,7 @@ def test_finalize_run_skips_release_for_other_scopes(monkeypatch, tmp_path):
 
 
 def test_admission_order_prefers_empty_over_run_in_progress(monkeypatch):
-    # L0008 §4: base_dirty_empty must win even when a project lease is already active —
+    # base_dirty_empty must win even when a project lease is already active —
     # nothing to delegate outweighs an in-progress run.
     from modules.flow_gate.api.v1 import ai_invoke_routes
 

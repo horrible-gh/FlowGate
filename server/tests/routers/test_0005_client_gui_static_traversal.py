@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import routers.main as main_module  # noqa: E402
 
-# flowgate.v02gui.0024: the catch-all route is registered whether or not a client build
+# the catch-all route is registered whether or not a client build
 # exists (the v0.1 /main and /settings redirects must work either way), so these tests no
 # longer need a pre-seeded dist to run; each integration test points the dist at a fixture.
 

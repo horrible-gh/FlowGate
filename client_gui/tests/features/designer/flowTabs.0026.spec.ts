@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0026 — Flow Tabs rules (0003-D §3.1.2 / §7.1), pure functions.
+ * Flow Tabs rules, pure functions.
  */
 import { describe, expect, it } from 'vitest'
 import {

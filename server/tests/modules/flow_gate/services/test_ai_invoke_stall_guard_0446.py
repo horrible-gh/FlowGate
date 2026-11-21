@@ -1,11 +1,11 @@
-"""flowgate.default.0446 T0014 — the AI-invoke no-progress watchdog.
+"""the AI-invoke no-progress watchdog.
 
 `_cli_execute` used to wait for its worker with one `communicate(timeout=...)`, so the only
-question it could ask was "has the clock run out?". NR0003 measured that failing in both
+question it could ask was "has the clock run out?". the review measured that failing in both
 directions on a fixed hour: a 74-minute hop that was still registering documents was cut
 off, and a worker that died in its first minutes still held its group for the remaining 59.
 
-T0014 splits the one number in two and adds a watchdog thread beside the wait:
+splits the one number in two and adds a watchdog thread beside the wait:
 
   * the budget `_resolve_timeout_sec` returns (unchanged formula, unchanged 1800..14400
     bounds, unchanged 30/45/60/90/120/180/240 list) is now the NO-PROGRESS threshold —
@@ -13,7 +13,7 @@ T0014 splits the one number in two and adds a watchdog thread beside the wait:
   * the run's hard ceiling is four hours from `started_mono`, reached with or without
     progress, and it is RUN_TIMEOUT_CAP_SEC itself rather than a second 14400 literal.
 
-Covers, in the order T0014 §5 asks for them:
+Covers, in the order the earlier implementation asks for them:
   1. no-progress positive — neither signal moves, the tree is killed once, well before 4h;
   2. document control — a max-seq that keeps rising outlives the first deadline, and dies
      once it stops rising ("progress once" is not a permanent exemption);
@@ -836,13 +836,13 @@ class TestRetryBudgetSeparation:
         assert "retry_block_reason" not in working
 
 
-# ── T0004 (group 0579): process liveness is a separate, weaker signal ────────
+# ── the earlier implementation (the earlier change): process liveness is a separate, weaker signal ────────
 #
-# NR0003's blind spot: a worker running a long subprocess (pytest/build/lint) with
+# 's blind spot: a worker running a long subprocess (pytest/build/lint) with
 # neither document nor `git status` moving looked dead for the whole run even though
 # child processes were being created and reaped underneath it. This adds a THIRD signal,
 # read from `process_runner.process_tree_snapshot`, that writes ONLY `last_activity_*` --
-# never `last_progress_*` or `stall_anchor_mono` (T0004 §6/§9: a live-but-static or
+# never `last_progress_*` or `stall_anchor_mono` (the earlier implementation: a live-but-static or
 # churning subprocess must never be able to talk the no-progress guard out of firing).
 
 def _snapshots(monkeypatch, fn) -> None:
@@ -920,7 +920,7 @@ class TestProcessLivenessIsASeparateWeakerSignal:
         verdict, _ = _loop(run, FakeProc(), clock, max_ticks=800)
 
         assert verdict == "no_progress"
-        assert run["progress_observations"] == 3               # unchanged from the T0014 case
+        assert run["progress_observations"] == 3               # unchanged from the the earlier implementation case
         assert calls["n"] > 100                                 # it kept trying every tick
         assert run["last_activity_signal"] == "document"        # process never contributed
         assert run["activity_observations"] == 3

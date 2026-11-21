@@ -1,13 +1,13 @@
 """Short-lived in-process cache for the per-request authentication lookups.
 
-0276 NR0003 finding 2: every authenticated request ran a fixed five queries before
+every authenticated request ran a fixed five queries before
 the handler even started — token_blacklist, auth_sessions, users, and (on
 permission-protected routes) user_project_roles + role_permissions. The last two
-are handled by rbac/permission_service.py instead of this module; see T0009. The UI
+are handled by rbac/permission_service.py instead of this module; see the earlier implementation. The UI
 refreshes the tree, dashboard and notifications constantly, so these repeat once
 per API call and dominate the "same query over and over" pattern in the log.
 
-Policy (0276 CH0004 delegated the choice; T0009 fixes it here):
+Policy (delegated the choice; the earlier implementation fixes it here):
 
   * TTL is 5 seconds — long enough to collapse a burst of UI calls, short enough
     that any staleness this cache can produce is bounded by five seconds.
@@ -22,7 +22,7 @@ Policy (0276 CH0004 delegated the choice; T0009 fixes it here):
 Set FLOWGATE_AUTH_CACHE_TTL=0 to disable caching entirely (every lookup goes to
 the DB, i.e. the pre-0276 behaviour).
 
-The TTL-map mechanics live in utils/ttl_cache.py since 0282 (NR0003 finding 2), so
+The TTL-map mechanics live in utils/ttl_cache.py since 0282, so
 db/meta_cache.py can reuse them without a db↔auth circular import; this module
 keeps the auth TTL policy and the invalidation hooks.
 """
@@ -44,7 +44,7 @@ def _configured_ttl() -> float:
 
 
 def _token_ttl() -> float:
-    """TTL for the worker-token lookup (0288 NR0003 recommendation 3).
+    """TTL for the worker-token lookup.
 
     Separate from _configured_ttl for two reasons:
 
@@ -70,7 +70,7 @@ def _token_ttl() -> float:
 
 # The two RBAC queries are NOT cached here: rbac/permission_service.py already
 # caches the resolved permission set with its own TTL and invalidation, and
-# rbac/decorators.py now delegates to it (0276 T0009).
+# rbac/decorators.py now delegates to it.
 _blacklist = _TTLCache(_configured_ttl)   # jti        -> bool (is the access token revoked?)
 _sessions = _TTLCache(_configured_ttl)    # session_id -> bool (is the session still active?)
 _users = _TTLCache(_configured_ttl)       # user_id    -> user row | None

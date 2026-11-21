@@ -1,4 +1,4 @@
-"""TR commit point service (flowgate.default.0332 D0005 §2.1 / P0006 §1 / L0007 §2.6).
+"""TR commit point service.
 
 A TR document being approved is the moment its work becomes history: this service is
 called right after the approval transition has committed, decides whether that TR gets
@@ -9,15 +9,15 @@ Three rules run through every function here.
 1. **The approval never fails because of git.** Nothing in this module raises: git
    disabled, no worktree, the lock held by a finalize, a broken commit — each one is a
    ``skipped_reason`` string in the returned payload and a ``no_commit`` ledger row, and
-   the caller's approval stands (D0005 K1 / P0006 §1-6). Uncommitted work is never lost
+   the caller's approval stands. Uncommitted work is never lost
    either — it stays in the worktree for the next TR commit or the finalize absorb.
 2. **The commit scope is the worktree, not the document's reported list.** ``## 변경 파일``
    is prose a worker wrote; trusting it would silently hand one TR's file to the next TR's
-   commit, and a later rewind would then revert somebody else's work (D0005 K2). The list
+   commit, and a later rewind would then revert somebody else's work. The list
    is still used — as a *comparison*, reported back as ``reported_diff`` so the screen can
    warn — but never as a filter.
 3. **A TR that changed nothing gets a row, not a commit.** An empty anchor commit would
-   break finalize's "a group that did nothing is discarded" branch (D0005 K3), while a
+   break finalize's "a group that did nothing is discarded" branch, while a
    missing row would make "nothing to cancel" indistinguishable from "the commit could
    never be attempted" at rewind time.
 """
@@ -39,21 +39,21 @@ _log = logging.getLogger(__name__)
 
 TR_TYPE_CODE = "TR"
 
-# L0007 §1 artifact_list_max — the same cap the finalize result already uses. P0006 §1
-# spells the number "20" while calling it "마무리 목록 상한과 동일"; the finalize cap is
+# artifact_list_max — the same cap the finalize result already uses. the plan
+# spells the number "20" while calling it "same as the finalize list cap"; the finalize cap is
 # 200 (git_service.FINALIZE_ARTIFACT_LIST_MAX), so the shared-cap intent both documents
 # state is what is implemented, and the count is always exact regardless of the cap.
 ARTIFACT_LIST_MAX = git_service.FINALIZE_ARTIFACT_LIST_MAX
 
-# L0007 §1 panel_commit_list_max — how many rows the Git status panel shows before it
+# panel_commit_list_max — how many rows the Git status panel shows before it
 # folds the rest into "N개 더". The response never truncates silently: the total travels
-# with the list (L0007 §5 "조용한 절단 금지").
+# with the list ("no silent truncation").
 PANEL_COMMIT_LIST_MAX = 20
 
 
 def doc_code(doc: Optional[dict]) -> str:
-    """``{seq:04d}-{TYPE}`` — P0006's short code, assembled from the document of the
-    moment. Never stored (seq moves when the workflow is edited, D0005 K9)."""
+    """``{seq:04d}-{TYPE}`` — the plan's short code, assembled from the document of the
+    moment. Never stored (seq moves when the workflow is edited, the design K9)."""
     if not doc:
         return ""
     seq = doc.get("seq")
@@ -64,10 +64,10 @@ def doc_code(doc: Optional[dict]) -> str:
 
 
 def commit_subject(doc: dict) -> str:
-    """flowgate.default.0462 T0005 §4-2 (supersedes L0007 §2.6's ``0009-TR: 제목`` rule)
+    """(supersedes the earlier implementation's ``the earlier implementation: title`` rule)
     — a conventional, ASCII-only commit subject for a TR approval.
 
-    Still NOT translated: no HTTP call, no 3s timeout, the L0007 §2.6 cost argument
+    Still NOT translated: no HTTP call, no 3s timeout, the the earlier implementation cost argument
     stands. English instead comes from the TR's own ``commit_message`` draft (the
     worker is asked for it in English, ``help_catalog.py``'s TR submit item) — the same
     kind of draft ``git_service.resolve_commit_message()`` already prefers for the
@@ -88,7 +88,7 @@ def commit_subject(doc: dict) -> str:
     draft = git_service.normalize_subject(doc.get("commit_message"))
     # stdlib str.isascii(), not git_service._is_ascii(): the two check the same
     # thing, but _is_ascii is private to git_service and this would be its only
-    # caller outside that module (T0005 §4-2) — not worth crossing the module
+    # caller outside that module — not worth crossing the module
     # boundary for one already-duplicated one-liner.
     if draft and draft.isascii() and len(draft) <= git_service.COMMIT_SUBJECT_MAX:
         if git_service.is_conventional_subject(draft):
@@ -121,8 +121,8 @@ def commit_subject(doc: dict) -> str:
 def _parse_reported(doc: dict) -> Optional[Any]:
     """The TR body's ``## 변경 파일`` section, parsed once. None when it cannot be read.
 
-    Shared by :func:`_reported_paths` (the commit-scope comparison, D0005 K2) and
-    :func:`_declared_no_source_changes` (T0004 §2's quiet/warning call) so both read
+    Shared by:func:`_reported_paths` (the commit-scope comparison, the design K2) and
+    :func:`_declared_no_source_changes` ('s quiet/warning call) so both read
     the same parse of the same body instead of two file reads disagreeing.
     """
     try:
@@ -153,22 +153,22 @@ def _reported_paths(doc: dict) -> Optional[list[str]]:
     return list(parsed.paths)
 
 
-# T0004 §2/§5 — skip reasons that mean "git could not even be asked" (project git off,
-# no worktree). They stay ``git_inactive``/``no_worktree`` on the wire (P0006 §5-2's
+# skip reasons that mean "git could not even be asked" (project git off,
+# no worktree). They stay ``git_inactive``/``no_worktree`` on the wire (the plan's
 # closed set is unchanged); only whether the toast is quiet depends on the TR's own
 # declaration, since git itself has nothing to say when it never ran.
 _CONDITIONALLY_QUIET_SKIP_REASONS = frozenset({"git_inactive", "no_worktree"})
 # ``git_service.create_tr_commit`` already proved these two from the real worktree
 # diff (no_changes: nothing staged at all; artifacts_only: only tool debris) — no
-# document to consult, always quiet (T0004 §3).
+# document to consult, always quiet.
 _ALWAYS_QUIET_SKIP_REASONS = frozenset({"no_changes", "artifacts_only"})
 
 
 def _declared_no_source_changes(doc: dict) -> bool:
     """True when the TR's own ``## 변경 파일`` section explicitly says nothing changed.
 
-    Doc-level, so it still answers when git cannot be asked at all (T0004 §2's "git
-    gate보다 먼저" case). Used only to demote a git_inactive/no_worktree skip from an
+    Doc-level, so it still answers when git cannot be asked at all (the earlier implementation's "git
+    before the gate" case). Used only to demote a git_inactive/no_worktree skip from an
     actionable warning to a quiet one — it never decides what git_service actually
     commits, so module rule 2 (the reported list is never a filter) still holds.
     """
@@ -181,7 +181,7 @@ def _worktree_shows_pending_changes(doc: dict) -> Optional[bool]:
     quiet call (rejection on revision 0 of this TR): the TR's own "없음" declaration
     can be wrong or incomplete, and git_inactive in particular can mean the project's
     git INTEGRATION is off while the group's worktree directory is still sitting on
-    disk with real, undeclared edits (T0004 §4/R6 — that case must stay a warning).
+    disk with real, undeclared edits (R6 — that case must stay a warning).
 
     Resolves the same worktree path :func:`git_service.create_tr_commit` would have
     used and asks it directly with :func:`git_service.probe_worktree_pending_changes`
@@ -192,8 +192,8 @@ def _worktree_shows_pending_changes(doc: dict) -> Optional[bool]:
     on the row, no directory on disk): a worktree is the only place a source edit can
     exist, so a group that never had one, or whose assigned branch has no directory on
     disk, could not possibly be carrying an undeclared change (rejection on revision 3
-    of this TR — "실제 commit 대상이 존재하지 않는 no-work/no-worktree 상태 자체를 quiet
-    no-op으로 수렴시켜라"). ``None`` is now reserved for the one case that is genuinely
+    of this TR — "make no-work/no-worktree states with no actual commit target
+    converge to a quiet no-op"). ``None`` is now reserved for the one case that is genuinely
     unknowable: a directory that *does* exist but git itself cannot answer for it (no
     git binary, not a real repo, a timeout) or an unexpected setup failure — there, and
     only there, the caller still has nothing but the TR's own declaration to fall back
@@ -235,10 +235,10 @@ def _worktree_shows_pending_changes(doc: dict) -> Optional[bool]:
 
 
 def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
-    """T0004 §5 — the single place ReviewActionBar's toast severity is decided.
+    """the single place ReviewActionBar's toast severity is decided.
 
     Kept server-side on purpose: a client that string-matched ``skipped_reason``
-    itself would be exactly the "클라이언트에서만 문자열 기준으로 억지 suppression" T0004 §8
+    itself would be exactly the "forced client-only suppression through string matching" the earlier implementation
     forbids.
     """
     if skipped_reason in _ALWAYS_QUIET_SKIP_REASONS:
@@ -246,8 +246,8 @@ def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
     if skipped_reason in _CONDITIONALLY_QUIET_SKIP_REASONS:
         # The worktree is the authoritative signal whenever it can answer, and "no
         # worktree was ever assigned to this group" is itself an answer (False, not
-        # unknown) — rejection on revision 3 of this TR: "Git으로 변경 유무를 확인할 수
-        # 없음"을 "변경이 있음"으로 취급하지 말라, no-work/no-worktree 상태 자체가 quiet.
+        # unknown) — rejection on revision 3 of this TR: "Git cannot determine whether changes
+        # exist" must not be treated as "changes exist"; no-work/no-worktree is itself quiet.
         # A clean or nonexistent tree is quiet even when the TR omitted or malformed
         # Changed Files; pending source changes keep the warning even when the TR
         # incorrectly says "none". Only the genuinely unknowable case — a directory
@@ -261,7 +261,7 @@ def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
 
 
 def _reported_diff(doc: dict, committed_paths: list[str]) -> dict[str, list[str]]:
-    """D0005 K2 — what the TR declared vs. what the commit actually carries.
+    """K2 — what the TR declared vs. what the commit actually carries.
 
     Advisory only. A mismatch is a warning badge, never a block: the commit already
     happened and the diff is how a human notices a forgotten line in the document.
@@ -287,9 +287,9 @@ def _payload(
     reported_diff: dict[str, list[str]],
     quiet: bool = False,
 ) -> dict[str, Any]:
-    """The P0006 §1 ``tr_commit`` object — one shape for all three entry points.
+    """The the plan ``tr_commit`` object — one shape for all three entry points.
 
-    ``quiet`` (T0004 §5) is the client's whole toast decision: ``committed`` still
+    ``quiet`` is the client's whole toast decision: ``committed`` still
     means success, and ``quiet`` true on a non-commit means "no toast at all", so
     ReviewActionBar never has to re-derive severity from ``skipped_reason`` itself.
     """
@@ -309,7 +309,7 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
     """The approval hook. Returns the ``tr_commit`` payload, or None for a non-TR.
 
     None means "this approval was not a TR" — the caller then omits the key entirely so
-    every existing non-TR approval response stays byte-identical (P0006 §1-8).
+    every existing non-TR approval response stays byte-identical.
 
     Called from all three approval entry points (the path route, the RPC route and the
     unmanned inbox auto-approve). It decides for itself whether the document is a TR and
@@ -320,7 +320,7 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
         if not doc or (doc.get("type_code") or "").upper() != TR_TYPE_CODE:
             return None
         if "commit_message" not in doc:
-            # flowgate.default.0462 T0005 §4-3 — the RPC approval route hands in the
+            # the RPC approval route hands in the
             # transition's result dict, which has no commit_message key at all (unlike
             # a key present with value None, meaning "no draft was submitted"). Re-read
             # the full row so commit_subject() sees the draft instead of every RPC
@@ -343,7 +343,7 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 quiet=_is_quiet_skip("git_inactive", doc),
             )
 
-        # 0061 T#8: approval defers Graph history to the attempt's result commit.
+        # approval defers Graph history to the attempt's result commit.
         # Do this before every Git/group/ledger gate, including historical attempts.
         from modules.flow_gate.graph_workflow.store import run_store
         if run_store.registered_document_attempt(group_id, doc_id):
@@ -355,8 +355,8 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
 
         # A Time Machine reopen preserves the original logical TR message as durable
         # ledger metadata, whether it uncommitted the prior round (a plain live rewind)
-        # or left it in place because it is merged/pushed history (flowgate.default.0532
-        # T0007 terminal reopen). Reapproval creates a new SHA from the current worktree
+        # or left it in place because it is merged/pushed history (the earlier change
+        # terminal reopen). Reapproval creates a new SHA from the current worktree
         # either way, but reuses that exact subject unless the document now carries an
         # explicit replacement draft.
         subject = commit_subject(doc)
@@ -412,10 +412,10 @@ def _record(*, group_id: str, doc_id: str, outcome: dict, subject: str) -> None:
         _log.warning("tr commit ledger write failed for %s", doc_id, exc_info=True)
 
 
-# ── read models for the two screens (D0005 §6.1 / §6.2) ───────────────────────
+# ── read models for the two screens ───────────────────────
 
 def _row_view(row: dict, doc: Optional[dict] = None) -> dict[str, Any]:
-    """One ledger row as a screen reads it. Short hashes are cut here (P0006 서두);
+    """One ledger row as a screen reads it. Short hashes are cut here (introduction);
     the ledger keeps the full 40 characters."""
     sha = row.get("commit_sha")
     cancel = row.get("cancel_commit")
@@ -428,10 +428,10 @@ def _row_view(row: dict, doc: Optional[dict] = None) -> dict[str, Any]:
         "subject": row.get("commit_subject"),
         "skipped_reason": row.get("skip_reason"),
         "cancel_commit": cancel[:7] if cancel else None,
-        # T0018 K11 — two live rows for one step are otherwise indistinguishable.
+        # K11 — two live rows for one step are otherwise indistinguishable.
         # A boolean, not the raw id: the screen says "restored", it does not join.
         "restored": row.get("restored_from_id") is not None,
-        # flowgate.default.0532 T0007 §5/§6 — `state` stays 'live' forever (the
+        # `state` stays 'live' forever (the
         # commit really happened and was never reverted), but a terminal-reopened
         # row is no longer today's live/cancelable commit for this document; the
         # panel must render it as historical, not as the active step.
@@ -447,7 +447,7 @@ def _code_from_row(row: dict) -> str:
 
 
 def slot_commit_states(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """``doc_id -> marker state`` for the workflow strip (D0005 §6.1).
+    """``doc_id -> marker state`` for the workflow strip.
 
     The newest ledger row per document wins — a TR rewound and re-approved shows its
     new commit, not the canceled one. ``no_commit`` rows return nothing at all: a step
@@ -470,7 +470,7 @@ def slot_commit_states(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
             "commit": sha[:7] if sha else None,
             "subject": row.get("commit_subject"),
             "cancel_commit": cancel[:7] if cancel else None,
-            # T0018 K11 — the marker comes back to "committed" through the exact same
+            # K11 — the marker comes back to "committed" through the exact same
             # newest-row-wins rule that made it go away; this only lets the hover line
             # say the commit is a restored one rather than a fresh approval.
             "restored": row.get("restored_from_id") is not None,
@@ -479,10 +479,10 @@ def slot_commit_states(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
 
 
 def _reapply_pending(rows: list[dict]) -> bool:
-    """Is there a canceled commit this group could still put back? (T0018 §3-5)
+    """Is there a canceled commit this group could still put back?
 
     Computed from the rows already in hand rather than by a second query — this panel
-    is where 0282 NR0003 finding 1 pulled an N+1 out, and one more per-slot round trip is
+    is where the review pulled an N+1 out, and one more per-slot round trip is
     how that comes back. It answers the same question
     :func:`~modules.flow_gate.db.tr_commit_ledger.reappliable_rows` answers: a canceled
     row with a cancel commit and no newer live row for the same document.
@@ -512,7 +512,7 @@ def _last_block(block: Optional[dict]) -> Optional[dict[str, Any]]:
 
     ``retryable`` is read off the ONE table (:data:`CANCEL_BLOCK_RETRYABLE`) rather than
     re-decided here, so the panel and the result screen can never disagree about whether
-    a second press is worth offering (P0006 §5-3).
+    a second press is worth offering.
     """
     reason = (block or {}).get("last_cancel_block_reason")
     if not reason:
@@ -528,10 +528,10 @@ def _last_block(block: Optional[dict]) -> Optional[dict[str, Any]]:
 def _summarize(rows: list[dict], block: Optional[dict] = None) -> dict[str, Any]:
     counts = {"live": 0, "canceled": 0, "no_commit": 0, "terminal_reopened": 0}
     for row in rows:
-        # flowgate.default.0532 T0007 §5/§6 — a terminal-reopened row keeps
+        # a terminal-reopened row keeps
         # `state = 'live'` (the commit is permanent history) but is no longer the
         # active/cancelable live commit for its document; counting it as `live`
-        # here is exactly the miscount T0007 §6 forbids ("latest live marker"
+        # here is exactly the miscount the earlier implementation forbids ("latest live marker"
         # must not point at a terminal-reopened C1). It gets its own bucket
         # instead of being dropped, so the panel still accounts for every row.
         if row.get("reopened_terminal_at"):
@@ -545,7 +545,7 @@ def _summarize(rows: list[dict], block: Optional[dict] = None) -> dict[str, Any]
         **counts,
         "commits": listed,
         "more": max(0, len(rows) - len(listed)),
-        # T0018 §3-5 — whether the panel may draw [restore the source again] is decided
+        # whether the panel may draw [restore the source again] is decided
         # here and sent, not guessed on the screen from the row list.
         "reapply_pending": _reapply_pending(rows),
         "last_block": _last_block(block),
@@ -555,7 +555,7 @@ def _summarize(rows: list[dict], block: Optional[dict] = None) -> dict[str, Any]
 EMPTY_SUMMARY = {
     "live": 0, "canceled": 0, "no_commit": 0, "terminal_reopened": 0, "commits": [], "more": 0,
     "reapply_pending": False, "last_block": None,
-    # TR0019 — the parked conflict this group is sitting on, if any. Sent rather than
+    # the parked conflict this group is sitting on, if any. Sent rather than
     # inferred: the panel must not have to guess from a `git_busy` block whether the group
     # is waiting on somebody else's git command or on a conflict of its own.
     "conflict_session": None,
@@ -563,7 +563,7 @@ EMPTY_SUMMARY = {
 
 
 def group_commit_summary(group_id: str) -> dict[str, Any]:
-    """The Git status panel's per-slot block (D0005 §6.2).
+    """The Git status panel's per-slot block.
 
     ``live``/``canceled``/``no_commit`` counts are always exact; ``commits`` carries at
     most PANEL_COMMIT_LIST_MAX rows and ``more`` says how many were folded away, so the
@@ -608,9 +608,9 @@ def group_commit_summaries(group_ids: Iterable[str]) -> dict[str, dict[str, Any]
     }
 
 
-# ── cancel side (D0005 §3.2 / P0006 §3·§4 / L0007 §2.2) ───────────────────────
+# ── cancel side ───────────────────────
 
-# P0006 §5-3. Two of the five are worth a person's second press and three are not:
+# Two of the five are worth a person's second press and three are not:
 # a dirty worktree and a busy lock go away when the person tidies up or waits, while
 # a merged group, a missing worktree and a git-inactive project will answer exactly
 # the same thing forever — offering [다시 시도] there is a button that lies.
@@ -625,15 +625,15 @@ CANCEL_BLOCK_RETRYABLE = {
 
 
 def empty_cancel_result() -> dict[str, Any]:
-    """The P0006 §3 ``tr_commit_cancel`` object in its "nothing happened" form."""
+    """The the plan ``tr_commit_cancel`` object in its "nothing happened" form."""
     return {
         "attempted": False, "blocked_reason": None,
         "canceled": [], "skipped": [], "stopped_reason": None, "retryable": False,
-        # flowgate.default.0532 T0007 — merged/pushed rows the gate correctly refused to
+        # merged/pushed rows the gate correctly refused to
         # reset/revert. Always present, like `conflict_session` below, so a terminal reopen
         # is never mistaken for the plain "nothing happened" shape.
         "terminal_reopened": [],
-        # TR0019 — the parked conflict, when a revert stopped on one. Always present so a
+        # the parked conflict, when a revert stopped on one. Always present so a
         # reader never has to tell "no conflict" apart from "an older build's payload".
         "conflict_session": None,
     }
@@ -651,7 +651,7 @@ def _park_conflict(
     subject: str,
     body: str,
 ) -> Optional[dict[str, Any]]:
-    """Keep a conflicted revert as a session instead of wiping it (TR0019).
+    """Keep a conflicted revert as a session instead of wiping it.
 
     Until this existed, both loops answered a conflict by destroying the evidence and
     labelling the step `retryable=False` — truthfully, since pressing again produces the
@@ -708,8 +708,8 @@ def _cancel_line(row: dict, code: str, cancel_sha: Optional[str]) -> dict[str, A
 
 
 def _doc_codes(rows: list[dict]) -> dict[str, str]:
-    """``doc_id -> 0009-TR`` for the rows in play, assembled from the documents of the
-    moment (never from a stored copy — seq moves, D0005 K9)."""
+    """``doc_id -> the earlier implementation`` for the rows in play, assembled from the documents of the
+    moment (never from a stored copy — seq moves, the design K9)."""
     codes: dict[str, str] = {}
     for doc_id in {row.get("doc_id") for row in rows if row.get("doc_id")}:
         try:
@@ -726,7 +726,7 @@ def cancel_tr_commits(
     exclude_row_ids: Optional[Iterable[int]] = None,
     opened_session: Optional[dict] = None,
 ) -> dict[str, Any]:
-    """Revert the rewound region's TR commits, newest first (L0007 §2.2).
+    """Revert the rewound region's TR commits, newest first.
 
     Shared by the rewind (P0006 §3) and the [다시 시도] retry (P0006 §4) — one gate
     ladder, one loop, one fallback set, so the two can never answer differently.
@@ -735,26 +735,26 @@ def cancel_tr_commits(
     "do not touch a step the person has already redone" is a statement about a row, not
     about a document: a step that was re-approved after a failed cancel has a fresh live
     row AND the stale one the cancel never got to, and dropping the whole document drops
-    both (T0018 §3-4). Only :func:`cancel_retry` passes it; the rewind's own cancel has no
+    both. Only:func:`cancel_retry` passes it; the rewind's own cancel has no
     such rows yet.
 
     Raises nothing that the caller has to translate; it does let a truly unexpected
-    error propagate so ``_rearm_git`` can drop the whole key (L0007 §5) rather than
+    error propagate so ``_rearm_git`` can drop the whole key rather than
     report a half-truth. The rewind itself has already committed and stands either way
-    (D0005 K8).
+.
     """
     result = empty_cancel_result()
 
     # G1 before the gates, on purpose: a group that never made a commit — documents
     # only, or git off — must end on the quiet "취소할 커밋이 없었습니다", not on a
-    # `git_inactive` result screen implying something went wrong (L0007 §4.1 note 1).
+    # `git_inactive` result screen implying something went wrong (note 1).
     excluded = {int(row_id) for row_id in (exclude_row_ids or []) if row_id is not None}
     targets = [
         row for row in db_ledger.live_rows(group_id, reopened_doc_ids)
         if int(row["id"]) not in excluded
     ]
     if not targets:
-        # 0658 T0004: an interrupted reapply leaves its commit in the tree with no live
+        # an interrupted reapply leaves its commit in the tree with no live
         # row yet, so while its journal is open "no targets" does not mean "nothing to
         # cancel". Refuse exactly as the gated path below does instead of reporting the
         # quiet no-op (the G1 case above has no journal, so it still ends quiet).
@@ -803,7 +803,7 @@ def cancel_tr_commits(
             if outcome["kind"] == "blocked":
                 sub = outcome.get("sub") or "revert_conflict"
                 if sub == "revert_conflict":
-                    # TR0019 — park it so it can still be resolved. Only a genuine conflict
+                    # park it so it can still be resolved. Only a genuine conflict
                     # is parked: a timeout or a refused commit leaves nothing anybody could
                     # edit their way out of, and an unfinishable session on a group would
                     # block the next rewind for no gain.
@@ -828,7 +828,7 @@ def cancel_tr_commits(
                 result["skipped"].append(_skip_line(row, code, "already_canceled"))
                 continue
 
-            # Written per row, immediately (L0007 §4.3): a crash one row later must
+            # Written per row, immediately: a crash one row later must
             # not leave a revert in git that the ledger still calls live, or the next
             # rewind would revert the revert.
             if db_ledger.mark_canceled(row_id, cancel_commit=outcome["commit"]):
@@ -841,12 +841,12 @@ def cancel_tr_commits(
                 result["skipped"].append(_skip_line(row, code, "already_canceled"))
 
         # Never true out of this loop: a conflict repeats on retry and the worktree
-        # needs a person, so the screen offers no button (L0007 §4.2).
+        # needs a person, so the screen offers no button.
         result["retryable"] = False
         return result
     finally:
         # Before the re-arm, always: `reopen_group_git` takes the same project lock and
-        # it is not re-entrant (L0007 §2.1 ③).
+        # it is not re-entrant (③).
         if opened_session is None:
             git_service.close_cancel_session(session)
 
@@ -886,12 +886,12 @@ def _recover_before_cancel(group_id: str) -> None:
 def _terminal_reopen(
     result: dict[str, Any], targets: list[dict], codes: dict[str, str],
 ) -> dict[str, Any]:
-    """flowgate.default.0532 T0007 §3/§5/§9 — the merged/pushed reopen path.
+    """the merged/pushed reopen path.
 
     ``open_cancel_session`` has already refused with ``already_merged`` before
     acquiring the project lock or touching the worktree — no reset, no revert, base
     content untouched. That refusal is not a failure of this reopen; it IS the
-    terminal reopen T0007 asks for: the commit stays exactly as merged, and each
+    terminal reopen the earlier implementation asks for: the commit stays exactly as merged, and each
     target row is marked so :func:`~modules.flow_gate.db.tr_commit_ledger.live_rows`
     stops offering it as a cancel target a plain rewind could never actually reach
     (it is buried under the merge). The workflow-level rewind that made the document
@@ -916,7 +916,7 @@ def cancel_for_reopen(
     """Uncommit an exact live TR suffix and retain its content in the worktree.
 
     A group whose targets are already ``merged``/``pushed`` takes the DIFFERENT path
-    T0007 defines: see :func:`_terminal_reopen`.
+    defines: see:func:`_terminal_reopen`.
     """
     result = empty_cancel_result()
     reopened_doc_ids = list(reopened_doc_ids)
@@ -925,7 +925,7 @@ def cancel_for_reopen(
                   for doc_id in reopened_doc_ids)
     result["history_mode"] = "durable_revert" if durable else "legacy_uncommit"
     if terminal_session is None:
-        # 0658 T0004: settle an interrupted reapply BEFORE reading the targets. Its Git
+        # settle an interrupted reapply BEFORE reading the targets. Its Git
         # commit may be in the tree with no ledger row yet; read first, and the rewind
         # cancels nothing and reopens the TR2 over source it can never apply to again.
         # The strict terminal path already holds the project lock recovery would take.
@@ -1014,7 +1014,7 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
     come from the stored return point. A step re-approved in the meantime made a NEW
     commit, and reverting that would undo work the person just redid.
 
-    T0018 §3-4 fixed what "do not touch it" was doing here. It used to drop the whole
+    fixed what "do not touch it" was doing here. It used to drop the whole
     DOCUMENT the moment its approval was back, and a document is not the unit: a step
     whose cancel was blocked (a dirty worktree, say) and which was then re-approved holds
     TWO live rows — the stale one the cancel never reached, and the fresh one the
@@ -1026,7 +1026,7 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
 
     Touches no document — this endpoint re-runs a cancel, it does not rewind anything.
 
-    0658 T0004: this is the one workflow path ``revert_pending`` leaves open, so it has to
+    this is the one workflow path ``revert_pending`` leaves open, so it has to
     reach every document that guard holds. The guard reads the ledger (a reopened TR2 with
     a live commit), the return point only says what the last rewind captured — a group
     whose return point is gone or never listed the TR2 (the ``chat.0006`` shape) answered
@@ -1072,9 +1072,9 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
     return cancel_tr_commits(group_id, doc_ids, exclude_row_ids=exclude)
 
 
-# ── reapply side (T0018 K11 — the forward restore peels the cancel commits off) ──
+# ── reapply side (K11 — the forward restore peels the cancel commits off) ──
 
-# P0006 §5-4's closed set for the other direction. Four of the five are the cancel loop's
+# 's closed set for the other direction. Four of the five are the cancel loop's
 # own vocabulary; `superseded` and `no_cancel_commit` are what only a reapply can hit.
 REAPPLY_SKIP_REASONS = (
     "superseded", "no_cancel_commit", "empty_revert", "conflict", "not_attempted",
@@ -1458,7 +1458,7 @@ def reapply_retry(group_id: str) -> dict[str, Any]:
     return reapply_tr_commits(group_id, doc_ids)
 
 
-# ── parked conflict resolution (TR0019) ──────────────────────────────────────
+# ── parked conflict resolution ──────────────────────────────────────
 
 def conflict_session(group_id: str) -> Optional[dict[str, Any]]:
     """This group's open TR conflict session, or None. Thin pass-through by design —
@@ -1473,7 +1473,7 @@ def commit_conflict_resolution(
 
     The two halves are split across the module boundary because that is where they belong
     — git_service owns git and the session table, this module owns the ledger — and the
-    order is the one L0007 §4.3 asks for everywhere else: the commit exists before anything
+    order is the one the earlier implementation asks for everywhere else: the commit exists before anything
     claims it does. If the ledger write is what fails, git holds a revert the ledger still
     calls live, and the next rewind reads that as "not cancelled yet" and tries again. The
     other order would leave the ledger claiming a cancel that never happened, and nothing
@@ -1493,8 +1493,8 @@ def commit_conflict_resolution(
     result = dict(outcome.get("result") or {})
     kind, commit = result.get("kind"), result.get("commit")
     if kind == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
-        # 0061 T#9: the merge commit carries the attempt's result into the group branch; its ledger row is the
-        # attempt's result (T#8) and stays as it is. The Graph integration goes on from the session's close notice
+        # the merge commit carries the attempt's result into the group branch; its ledger row is the
+        # attempt's result and stays as it is. The Graph integration goes on from the session's close notice
         # (``db_git.on_session_closed``): done, then the next integrations.
         return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
@@ -1565,7 +1565,7 @@ def abort_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
     outcome = git_service.abort_tr_conflict(group_id, merge_id)
     result = dict(outcome.get("result") or {})
     if result.get("kind") == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
-        # 0061 T#9: no cancel was attempted on the attempt's ledger row; its integration failed (conflict_aborted)
+        # no cancel was attempted on the attempt's ledger row; its integration failed (conflict_aborted)
         # from the session's close notice.
         return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
@@ -1581,7 +1581,7 @@ def abort_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
     return {"ok": True, "result": result}
 
 
-# ── rewind preview (P0006 §2 / D0005 §6.3) ────────────────────────────────────
+# ── rewind preview ────────────────────────────────────
 
 def commit_preview(group_id: str) -> dict[str, Any]:
     """What the rewind confirm dialog shows BEFORE the button is pressed.

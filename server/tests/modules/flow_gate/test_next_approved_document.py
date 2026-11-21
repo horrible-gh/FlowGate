@@ -1,6 +1,6 @@
 """Tests for POST /documents/next-approved — auto-approved instruction docs.
 
-R0001 #2 (group 0048) / P0005 / L0006-L0007. Mirrors test_next_empty_document.py:
+#2 (the earlier change) / the plan / the earlier implementation-the earlier implementation. Mirrors test_next_empty_document.py:
 the route function is called directly with monkeypatched dependencies.
 """
 from __future__ import annotations
@@ -103,14 +103,14 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
 
     assert result["data"]["doc_review_status"] == "approved"
     assert result["data"]["title"] == "조사 승인"
-    # slot fully registered + state machine submit→approve (P0005 §3 D-C)
+    # slot fully registered + state machine submit→approve
     reg.assert_called_once()
     assert trans.call_count == 2
     submit_call, approve_call = trans.call_args_list
     assert submit_call.kwargs["action"] == "submit"
     assert submit_call.kwargs["user_permissions"] == {"document.update"}
     assert approve_call.kwargs["action"] == "approve"
-    # approve uses the caller's REAL permission set (P0005 §4)
+    # approve uses the caller's REAL permission set
     assert "document.approve" in approve_call.kwargs["user_permissions"]
     # title + body generated server-side from the type label
     content = (tmp_path / "document.md").read_text(encoding="utf-8")
@@ -119,7 +119,7 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
 
 
 def test_next_approved_wp_head_without_instruction_or_note_uses_legacy_generic(monkeypatch, tmp_path):
-    """0614 T0004 §4 case A (human override of the 0611 rej_01M3AVQVHD6PSTBE 409 contract
+    """case A (human override of the 0611 rej_01M3AVQVHD6PSTBE 409 contract
     this test used to pin as `..._is_409`): a WorkPlan head with neither an instruction
     document nor a note no longer 409s -- it gets the same legacy generic approval body a
     non-WorkPlan auto-approved document would."""
@@ -163,7 +163,7 @@ def test_next_approved_wp_head_without_instruction_or_note_uses_legacy_generic(m
 
 
 def test_next_approved_wp_head_expands_the_step_instruction_text(monkeypatch, tmp_path):
-    """0611 T0011 scenario B at the route: the manual button expands the WP instruction."""
+    """scenario B at the route: the manual button expands the WP instruction."""
     from modules.flow_gate.documents.routers import documents as routes
 
     group_id = "proj-main-0611"

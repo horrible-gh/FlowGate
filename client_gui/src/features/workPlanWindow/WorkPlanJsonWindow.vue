@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#e7a244"
     :open="true"
     :initial-x="x"
     :initial-y="y"
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0073 T#4 — the work plan edit window's JSON window, a ModelessShell of its own (it moves, resizes,
+// the work plan edit window's JSON window, a ModelessShell of its own (it moves, resizes,
 // minimizes and closes like the plan window; Esc closes it): `raw` shows the draft as JSON, read only, as the save would
 // send it (unsaved edits included, following every edit) with [복사]; `import` takes a JSON file or a pasted text and
 // hands it to the editor (importJson: checked, then the draft — dirty; the save stays the plan window's [저장]). A JSON

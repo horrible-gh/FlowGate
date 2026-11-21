@@ -1,9 +1,9 @@
-"""Remote AI Job supervisor (flowgate.v02.0129 T#2, D0005 §3-4 / §3-6).
+"""Remote AI Job supervisor.
 
 The executor (``provider_remote.execute``) watches its own Job while it runs. This module
 covers everything that must keep happening without it:
 
-* **Settlement** ("종결"): a remote Job is settled when it is terminal and, if the server
+* **Settlement** ("settlement"): a remote Job is settled when it is terminal and, if the server
   expired it without an Agent report, the run token it carried is revoked (``fenced_at``).
   Until then the run that created it counts as alive: Graph launch, Graph recovery, Stop
   and terminal cleanup all ask :func:`run_has_unsettled_job`.
@@ -120,7 +120,7 @@ def remote_alive(ai_run_id: Optional[str]) -> bool:
 
 
 def prior_remote_unsettled(run: dict) -> bool:
-    """D0005 §3-3 ① defensive check for a run that replaces another one.
+    """① defensive check for a run that replaces another one.
 
     Same run (an earlier attempt), the same Graph execution (a replay re-uses it), or --
     outside Graph -- the same group (a group runs one AI run at a time, so any other
@@ -413,7 +413,7 @@ def _recover_graph() -> None:
                 _continue_graph([row])
             elif row.get("ai_run_id"):
                 if scheduling.starting(row["exec_id"], row["ai_run_id"]):
-                    continue    # flowgate.v02gui.0006 CH: admitted, its worktree still being prepared; not ended
+                    continue    # CH: admitted, its worktree still being prepared; not ended
                 live = _svc().get_run_record(row["ai_run_id"])
                 if not live or live.get("status") == "finished":
                     execution.recover_execution(row["exec_id"])

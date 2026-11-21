@@ -1,4 +1,4 @@
-"""Reuse boundary of the card settings (flowgate.v02.0053 T#2, D0006 §2.2 / §4.1).
+"""Reuse boundary of the card settings.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never
 changed: the Graph API envelope (user JWT, RBAC, error shape), the Flow load / disposal check and the
@@ -8,29 +8,29 @@ types. The review stage (``review_stage``) also takes from here: the Flow's engi
 node an AI run or a result document belongs to, the project default reviewer, the v0.1 document review
 loop (started as the AI invoke route starts it, its review hops told the card's review basis, and its
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
-approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
-T#1). The source tools' step type judgement takes the open run node a token was mapped to, and the type a node's run
-writes and binds when its card changes nothing (``graph_model.run_doc_type``, flowgate.v02.0083 T#2).
-flowgate.v02.0056 T#3: an AI run's node result is the one registered with that run's own tokens
+approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (the earlier change
+). The source tools' step type judgement takes the open run node a token was mapped to, and the type a node's run
+writes and binds when its card changes nothing (``graph_model.run_doc_type``, the earlier change the earlier implementation).
+an AI run's node result is the one registered with that run's own tokens
 (``node_of_ai_run``), so the review stage never takes a result someone else registered as the run's.
 
-flowgate.v02.0056 T#2 (the instruction stage of a card run): which open node in its instruction stage an AI
+(the instruction stage of a card run): which open node in its instruction stage an AI
 run worked for, the card instruction documents that node's tokens registered, and the Graph's own two steps
 that follow the stage — the result stage's start (``node_dispatch.start_result_stage``) and the stage's
 failure record (``node_dispatch.instruction_stage_failed``, the AI start failure path).
 
-flowgate.v02.0061 T#2: after the review stage followed a node's AI run, the Graph run is judged again
+after the review stage followed a node's AI run, the Graph run is judged again
 (``run_service.settle_if_needed``, as before a run read).
 
-flowgate.v02.0063 (the card's question wait, ``question_wait``): an ended AI run as its durable row tells it, the node
+(the card's question wait, ``question_wait``): an ended AI run as its durable row tells it, the node
 whose result writer ended with no result, the card's node row by its key, whether the Flow's AI is busy (the group
 lease or a Graph execution), the Graph's retry of a result writer and the wake of an idle run.
 
-flowgate.v02.0111 T#2 (T-A1): an instruction stage whose AI run asked and was answered is written again on the same attempt
+(T-A1): an instruction stage whose AI run asked and was answered is written again on the same attempt
 (``retry_instruction_stage``, ``node_dispatch``), and a result writer that ended asking (``write_failure``
 ``question_pending``) is one with no result to the question wait (``no_result_node_of_ai_run``).
 
-flowgate.v02.0083 WP-4 (a person's work plan reviewed by AI): the result of a node in review is also a person's work plan
+WP-4 (a person's work plan reviewed by AI): the result of a node in review is also a person's work plan
 card whose card reviews it (``node_of_result``: an AI node, or a person's plan node with a review count — so a passed
 review of it is approved as an AI card's is), and the person's result stage reads the Flow's active run and a node run of
 it, the node's active attempt and the node an attempt is of, the run's issuer, whether that run may take the stage
@@ -39,12 +39,12 @@ document's current submission (and whether it passed it), and the span of an exp
 (``graph_execution_hooks.explicit_request``, Q439). Its steps run under the Stop gate's shared hold (``person_hold``: the
 run-end stage's ``attempt_hold`` taking an idle run too, those conditions judged again under the hold).
 
-flowgate.v02.0098 T#1 (D0004 §3.1 / §3.2): the check card's merge target branch takes the Git merge target judgement
+the check card's merge target branch takes the Git merge target judgement
 (``merge_target.judge_check_target``: one exact name, read-only, never cached) for a save, and the cached candidate
 view (``merge_target.check_target_view``) and its invalidation for the settings response. Both are scoped by the
 authenticated group alone: its ``group_id`` and its own ``project_id``.
 
-flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-1 / B-3 / B-4, Q #511 o3 — 0083 T#4 개정): an AI card's automatic
+(NR the earlier change B-1 / B-3 / B-4, Q #511 o3 — the earlier implementation revision): an AI card's automatic
 approval is made under the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``: ``document.approve``
 alone), not the run issuer's permissions; the issuer stays the record's actor (a real user) and an empty issuer approves
 nothing. A person's work plan result keeps the issuer's authority (0083 WP-4). Why an automatic approval was not made
@@ -105,16 +105,16 @@ REVIEW_NODE_STATUS = "review"
 STOPPED_LOOP_STAGE = "stopped"
 LOCALE = "ko"
 APPROVE_PERMISSION = "document.approve"
-# flowgate.v02.0105 T#2 (B-4): an AI card's automatic approval authority — approval alone, no other permission.
+# (B-4): an AI card's automatic approval authority — approval alone, no other permission.
 AUTOMATION = "automation"
 AUTOMATION_APPROVE_PERMISSIONS = frozenset({APPROVE_PERMISSION})
 SYSTEM_AUTHORITY = "system"
-# flowgate.v02.0105 T#2 (B-1): why an automatic approval was not made (the run event's reason; ``review_not_passed:`` and
+# (B-1): why an automatic approval was not made (the run event's reason; ``review_not_passed:`` and
 # ``run_not_clean:`` take the loop's stop reason / the AI run's stop code or end reason after the colon).
 ISSUER_LACKS_APPROVE = "issuer_lacks_approve"           # a person's work plan result only (0083 WP-4)
 ISSUER_MISSING = "issuer_missing"
 APPROVAL_REFUSED = "approval_refused"
-REVISION_MOVED = "revision_moved"     # 0113 T#3 (K-6): ``approve``'s expected revision is not the document's any more
+REVISION_MOVED = "revision_moved"     # (K-6): ``approve``'s expected revision is not the document's any more
 REVIEW_NOT_STARTED = "review_not_started"
 REVIEW_NOT_PASSED = "review_not_passed:"
 RUN_NOT_CLEAN = "run_not_clean:"
@@ -172,7 +172,7 @@ def team_exists(ai_group_id: str) -> bool:
     return db_ai_groups.get(ai_group_id) is not None
 
 
-# ── the check card's merge target (flowgate.v02.0098 T#1) ────────────────────
+# ── the check card's merge target ────────────────────
 
 MERGE_TARGET_UNFIT = git_merge_target.CHECK_TARGET_UNFIT
 MERGE_TARGET_GIT_UNAVAILABLE = git_merge_target.CHECK_GIT_UNAVAILABLE
@@ -180,7 +180,7 @@ MERGE_TARGET_GIT_UNAVAILABLE = git_merge_target.CHECK_GIT_UNAVAILABLE
 
 def judge_merge_target(group: dict, branch: str) -> dict:
     """Judge ``branch`` as the group's check card merge target now (no cache); ``GitServiceError`` when it is not.
-    A group whose worktree is not provisioned yet is judged as the candidate list judges it (T0012)."""
+    A group whose worktree is not provisioned yet is judged as the candidate list judges it."""
     return git_merge_target.judge_check_target(group.get("project_id"), group["group_id"], branch,
                                                require_slot=False)
 
@@ -206,7 +206,7 @@ def node_running(flow_id: str, node_key: str) -> bool:
 
 def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
     """Read-only running judgement, in priority order: handoff, graph_exec:<id>,
-    group_lease:<id>, question_wait:<id> (v02test.0051 T0005: a loop parked for its questions),
+    group_lease:<id>, question_wait:<id> (v02test.0051 the earlier implementation: a loop parked for its questions),
     review_loop:<id>, or None. Unknown ids use 'unknown'.
 
     R4 counts the document's latest loop on the current attempt (unknown attempts
@@ -232,7 +232,7 @@ def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
             from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
 
             if loop.get("run_id") and question_loop_wait.owns(loop["run_id"]):
-                # v02test.0051 T0005: parked for its questions — still locked, told apart from a working loop
+                # v02test.0051 the earlier implementation: parked for its questions — still locked, told apart from a working loop
                 return "question_wait:" + loop["run_id"]
             return "review_loop:" + (loop.get("run_id") or "unknown")
     return None
@@ -351,7 +351,7 @@ def node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, str]]:
     """The AI node of the Flow's active run that this AI run wrote the result of (its tokens carry the
     run id and were mapped to the node), when that node is in review: (node row, result doc id).
 
-    flowgate.v02.0056 T#3: the result must be the run's own — registered with one of those tokens, as their
+    the result must be the run's own — registered with one of those tokens, as their
     ``token_consumed`` records show (the evidence the run reconciliation binds from). A result someone else
     registered while the run went on (a person's, with the node's dispatch token) is not this run's to review
     or approve: None, and it waits for the card approval."""
@@ -429,9 +429,9 @@ def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
 
 
 def person_plan_reviewed(flow_id: str, node: dict) -> bool:
-    """0083 WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0).
-    flowgate.v02.0113 T#3 (L-2 §2.14): for an assigned attempt, its current result review assignment's author is not an
-    AI (any card kind). flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt of any card a person
+    """WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0).
+    (L-2): for an assigned attempt, its current result review assignment's author is not an
+    AI (any card kind). the earlier change the earlier implementation rework (rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt of any card a person
     writes whose card has a result stage (run / test / plan: ``fields.after_result``) and reviews it — no longer the work
     plan alone, so a person's run / test result takes its card's review as the plan's does."""
     from flowgate.card_settings import fields, repository  # noqa: PLC0415 — the card's own settings
@@ -452,7 +452,7 @@ def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
     """(Flow, the run revision's node row) of the node a token was mapped to (``graph_run_token_map``:
     the node's dispatch token, and every token its AI start or a retry of it minted), while that run is
     its own Flow's active run and the node is still open; else None. The node row carries the node run's
-    card run stage as ``run_stage`` (flowgate.v02.0056 T#2)."""
+    card run stage as ``run_stage``."""
     token_id, flow_id = token_rec.get("token_id"), token_rec.get("group_id")
     mapped = run_store.node_run_by_token(token_id) if token_id and flow_id else None
     if mapped is None:
@@ -468,7 +468,7 @@ def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
     return (flow_id, {**node, "run_stage": row.get("stage")}) if node is not None else None
 
 
-# ── the instruction stage (flowgate.v02.0056 T#2) ────────────────────────────
+# ── the instruction stage ────────────────────────────
 
 def instruction_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, dict]]:
     """(the run revision's node row, its node run) of the AI node of the Flow's active run that this AI run
@@ -490,7 +490,7 @@ def instruction_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[d
             continue
         attempt_id = _assigned_attempt_of(flow_id, node)
         if attempt_id is not None:
-            # flowgate.v02.0113 T#3 (L-2 §2.14): an assigned attempt's instruction stage, whoever executes the result
+            # (L-2): an assigned attempt's instruction stage, whoever executes the result
             from flowgate.ai_roles import assignment_store  # noqa: PLC0415
 
             if assignment_store.read(attempt_id, "instruction", 0) is not None:
@@ -502,7 +502,7 @@ def instruction_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[d
 
 
 def _assigned_attempt_of(flow_id: str, node: dict) -> Optional[str]:
-    """flowgate.v02.0113 T#3: the node's active attempt in the Flow's active run when it is an assigned one, else None."""
+    """the node's active attempt in the Flow's active run when it is an assigned one, else None."""
     from flowgate.card_settings import stage_assignment  # noqa: PLC0415
 
     if not node.get("node_key") or not stage_assignment.enabled():
@@ -523,7 +523,7 @@ def registered_instructions(flow_id: str, run_id: str, node_key: str, doc_type: 
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
                        issued_to: str, attempt_id: Optional[str] = None, defer: Optional[list] = None,
                        idle_ok: bool = False) -> None:
-    """``idle_ok`` (flowgate.v02.0105 T#2 B-3): an idle run takes it too — only under ``person_hold``."""
+    """``idle_ok``: an idle run takes it too — only under ``person_hold``."""
     node_dispatch.start_result_stage(flow_id, run_id, node_key, instruction_doc_id, issued_to, project_of(flow_id),
                                      attempt_id=attempt_id, defer=defer, idle_ok=idle_ok)
 
@@ -533,18 +533,18 @@ def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, attempt_i
 
 
 def attempt_of_ai_run(run: dict) -> Optional[str]:
-    """0061 T#7: the attempt the AI run's Graph execution was made for (None: no Graph execution)."""
+    """the attempt the AI run's Graph execution was made for (None: no Graph execution)."""
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
     return graph_execution_hooks.call("execution_attempt", run.get("graph_exec_id"))
 
 
 def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> bool:
-    """0061 T#7: that attempt is still the node's active one and may write (a refusal is recorded)."""
+    """that attempt is still the node's active one and may write (a refusal is recorded)."""
     return node_dispatch.attempt_owns(run_id, node_key, attempt_id, operation)
 
 
 def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
-    """0061 T#7: ``attempt_owns`` judged under the Stop gate's shared hold, kept for the ``with`` body (an automatic
+    """``attempt_owns`` judged under the Stop gate's shared hold, kept for the ``with`` body (an automatic
     approval and its commits). Yields whether the body may go on."""
     return node_dispatch.attempt_hold(run_id, node_key, attempt_id, operation)
 
@@ -555,7 +555,7 @@ def active_run_id(flow_id: str) -> Optional[str]:
 
 
 def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
-    """0061 T#7 (0017-TR question 440: kept as history, never the new attempt's evidence): the documents registered
+    """(TR question 440: kept as history, never the new attempt's evidence): the documents registered
     (new or edit) with the tokens of the node's invalidated attempts in the Flow's active run — an attempt a Stop, a
     lost lease or a failed worktree ended — and with none of the node's live tokens. A node opened again never takes
     them as its instruction, its approval or its result."""
@@ -574,7 +574,7 @@ def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
     return without_carried(flow_id, node_key, stale)
 
 
-# ── the question wait (flowgate.v02.0063) ────────────────────────────────────
+# ── the question wait ────────────────────────────────────
 
 def ai_run_record(ai_run_id: str) -> Optional[dict]:
     """An ended AI run as its durable row tells it, with the Graph execution it ran for (``graph_exec_id``) and, for a
@@ -591,13 +591,13 @@ def ai_run_record(ai_run_id: str) -> Optional[dict]:
             "document_review_loop": review_loop_row(ai_run_id)}
 
 
-RETRYABLE_WRITE_FAILURES = ("no_result", "question_pending")     # 0111 T-A1: an asking writer's end is no failure
+RETRYABLE_WRITE_FAILURES = ("no_result", "question_pending")     # T-A1: an asking writer's end is no failure
 
 
 def no_result_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, dict]]:
     """(the run revision's node row, its node run) of the AI node of the Flow's active run whose active attempt's
     latest execution is ``ai_run_id``'s result write and ended with no result (``write_failure`` ``no_result``, or
-    0111 T-A1 ``question_pending``: it asked and ended before its result)."""
+    T-A1 ``question_pending``: it asked and ended before its result)."""
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
 
     run_row = run_store.active_run(flow_id)
@@ -672,7 +672,7 @@ def askers_answered_by(responder_run_id: str) -> set[str]:
 
 
 def askers_answered_as_author(run_id: str) -> set[str]:
-    """flowgate.v02gui.0010: the AI runs that asked the questions ``run_id`` answered itself (an answer row with
+    """the AI runs that asked the questions ``run_id`` answered itself (an answer row with
     ``author_ai_run_id`` = ``run_id``) — a chat AI's answers, followed at the chat run's end."""
     from modules.flow_gate.db import question_items as db_question_items  # noqa: PLC0415
 
@@ -680,7 +680,7 @@ def askers_answered_as_author(run_id: str) -> set[str]:
             if item.get("asker_ai_run_id") and (item.get("asker_kind") or "") == "ai"}
 
 
-# ── the common guard of an answered step (flowgate.v02gui.0015 T3, ``action_guard``) ──
+# ── the common guard of an answered step (T3, ``action_guard``) ──
 
 ACTION_REQUIRED_CAUSE = "action_required"
 
@@ -818,7 +818,7 @@ def flow_ai_busy(flow_id: str) -> bool:
 def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
                        attempt_id: Optional[str] = None, *, idle_ok: bool = False,
                        defer: Optional[list] = None) -> bool:
-    """``idle_ok`` (flowgate.v02.0111 T#3): an idle run takes it too — only under ``person_hold``."""
+    """``idle_ok``: an idle run takes it too — only under ``person_hold``."""
     return node_dispatch.retry_result_stage(flow_id, run_id, node_key, issued_to, project_of(flow_id),
                                             attempt_id=attempt_id, idle_ok=idle_ok, defer=defer)
 
@@ -826,7 +826,7 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
 def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, asker_ai_run_id: Optional[str],
                             target_doc_id: Optional[str], attempt_id: Optional[str] = None,
                             defer: Optional[list] = None) -> bool:
-    """0111 T-A1: the instruction stage written again on the same attempt after its questions were answered — only under
+    """T-A1: the instruction stage written again on the same attempt after its questions were answered — only under
     ``person_hold`` (its refusal is judged ``idle_ok``)."""
     return node_dispatch.retry_instruction_stage(flow_id, run_id, node_key, issued_to, asker_ai_run_id, target_doc_id,
                                                  project_of(flow_id), attempt_id=attempt_id, defer=defer)
@@ -834,7 +834,7 @@ def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to:
 
 def instruction_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Optional[str], *,
                                  answered: bool = True) -> bool:
-    """0111 T-A1: the node's instruction stage may go on from ``asker_ai_run_id``'s answers — that run's execution is
+    """T-A1: the node's instruction stage may go on from ``asker_ai_run_id``'s answers — that run's execution is
     still its active attempt's latest, none requested / running since, and (``answered``) its questions are all answered
     (the Graph's ``instruction_continuation_due``). False with no Graph handler: nothing goes on unjudged."""
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
@@ -846,7 +846,7 @@ def instruction_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Op
 
 
 def result_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Optional[str]) -> bool:
-    """flowgate.v02.0111 T#3 (review rejection P2): the result writer ``asker_ai_run_id``'s step (the card's review or
+    """(review rejection P2): the result writer ``asker_ai_run_id``'s step (the card's review or
     approval, ``review_stage._after_work``) may still go on from its answers — the node's active attempt has no requested
     / running execution and its latest execution is still a write (``asker_ai_run_id``'s, or one whose run the ledger
     never told). Once the review was requested (a loop execution of the attempt, whatever it ended in: passed,
@@ -914,9 +914,9 @@ def last_rejection(doc_id: str) -> Optional[str]:
     return reason.strip() if isinstance(reason, str) and reason.strip() else None
 
 
-# flowgate.v02test.0015: a v0.2 card moves on by its own stage results -- its work done, its review starts; its review
+# a v0.2 card moves on by its own stage results -- its work done, its review starts; its review
 # answered ``issues``, its rework starts. The v0.1 document review loop it borrows still reads the document's review
-# status alone (``review.compute_review_baseline``, 0417 L0009): no status at all is refused (``document_not_submitted``)
+# status alone (``review.compute_review_baseline``, the earlier implementation): no status at all is refused (``document_not_submitted``)
 # and a status of ``rejected`` starts with the rework. A card document handed to its review with no status -- an AI's
 # write, a card editor's save: nothing ran the v0.1 ``('', 'submit')`` step -- was refused on every try
 # (``review_not_started``), and a review that finished on it could never become a rejection (no ``('', 'reject')``).
@@ -932,7 +932,7 @@ class _RejectionRefused(RuntimeError):
 
 def submit_for_card_review(doc_id: Optional[str], requested_by: Optional[str], *,
                            answer_issues: bool = False) -> Optional[str]:
-    """flowgate.v02test.0015: a card document with no review status is put in review by the system, as its card's
+    """a card document with no review status is put in review by the system, as its card's
     review stage starts -- ``pending_review`` (and ``draft -> open``, as an inbox submission would), with a document
     event naming the system as the actor and the run's issuer as ``requested_by``. A document that has a review status
     already is left as it is (None).
@@ -1026,15 +1026,15 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     basis the card chose, said with the last rejection as it is when the hop is issued. The engine
     adds its own one-line criteria name only when it switches stages, never to the first hop.
 
-    flowgate.v02.0056 T#3: every hop, review and rework, also carries the memos of the card ``node_key`` turned
+    every hop, review and rework, also carries the memos of the card ``node_key`` turned
     on for AI reading (``card_memo_hooks``), read when the hop is issued.
 
-    flowgate.v02.0061 T#7: ``attempt_id`` — the attempt of the node's run whose end starts the loop — must still be
+    ``attempt_id`` — the attempt of the node's run whose end starts the loop — must still be
     the one the document's node is worked on by (``execution.request_loop`` refuses and records otherwise).
 
-    flowgate.v02.0113 T#3 (L-2 §2.10, E-13): ``failure`` (an assigned review's caller) is told why a start that returns
+    (L-2, E-13): ``failure`` (an assigned review's caller) is told why a start that returns
     None failed — ``{"cause": "start_refused:<the admission's code>"}`` for an admission refusal, else
-    ``{"cause": "start_failed"}``. flowgate.v02.0128 T#1: a run_in_progress refusal of an execution another launcher
+    ``{"cause": "start_failed"}``. the earlier change the earlier implementation: a run_in_progress refusal of an execution another launcher
     owns instead reports ``{"duplicate_start": True}``: its assignment awaits that owner's verdict. The return value
     stays None in each case (no other AI is asked)."""
     from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
@@ -1066,11 +1066,11 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
 
     from flowgate.graph_run import execution
     try:
-        submit_for_card_review(doc_id, issued_to)          # flowgate.v02test.0015: the card's review, never a refusal
+        submit_for_card_review(doc_id, issued_to)          # the card's review, never a refusal
         graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
                                                 basis_note(last_rejection(doc_id)), node_key, graph_exec_id,
                                                 attempt_id=attempt_id)
-        carried = execution.request_origin(graph_exec_id)     # 0113 T#3 (P-1 §7.2): the run memory's origin
+        carried = execution.request_origin(graph_exec_id)     # (P-1): the run memory's origin
         extra = {"invocation_origin": carried["invocation_origin"]} if carried.get("invocation_origin") else {}
         return ai_invoke_service.start_run(**extra,
             graph_exec_id=graph_exec_id,
@@ -1092,7 +1092,7 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
             return None
         if failure is not None:
             failure["cause"] = node_dispatch._start_failure(exc)
-            info = node_dispatch._start_failure_info(exc)      # flowgate.v02.0140 T#1-3: its safe detail too
+            info = node_dispatch._start_failure_info(exc)      # its safe detail too
             if info:
                 failure["detail"] = info
         execution.start_failed(graph_exec_id, exc)
@@ -1116,7 +1116,7 @@ AUTHOR_AI = "ai"                        # ``stage_assignment.AI``: the submissio
 
 
 def completion_cause(verdict: Optional[dict], author: Optional[str], automation: bool) -> str:
-    """The completion's cause (flowgate.v02.0119 T#2, T-1): ``ai_review_passed`` when the current revision's latest
+    """The completion's cause: ``ai_review_passed`` when the current revision's latest
     review passed it; otherwise from the submission's author kind (the review assignment's ``author``) —
     ``no_review_submitted`` for an AI's result, ``human_submitted`` for a person's. Only when the author kind is not known
     does the authority stand in for it (``AUTOMATION``: an AI card's result). The authority is never read as the author:
@@ -1133,7 +1133,7 @@ def completion_cause(verdict: Optional[dict], author: Optional[str], automation:
 def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[str] = None, *,
             node_key: Optional[str] = None, attempt_id: Optional[str] = None, mark: Optional[dict] = None,
             expected_revision: Optional[int] = None, cause: Optional[str] = None, author: Optional[str] = None):
-    """The automatic completion of the node whose result in review is ``doc_id`` (flowgate.v02.0119 T#2, T-1): the v0.2
+    """The automatic completion of the node whose result in review is ``doc_id``: the v0.2
     completion record (``flowgate.card_completion``) — the only source of the node's done — written with the document's
     status display (``approved``, by the system) in one transaction, then applied in the Flow guard (the node done, its
     attempt ended, the next cards opened). True when complete (the record applied, or recorded for the reconciliation /
@@ -1157,12 +1157,12 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
     authority's principal (a person card's token recipient may be its assignee). A repeated call (a review pass told
     twice, a retried job) finds the record its key already has and changes nothing.
 
-    - Authority: ``authority`` ``AUTOMATION`` (an AI card's result, flowgate.v02.0105 T#2 B-4, Q #511 o3 — 0083 T#4
-      개정): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
+    - Authority: ``authority`` ``AUTOMATION`` (an AI card's result, the earlier change the earlier implementation B-4, Q #511 o3 — the earlier implementation
+      revision): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
       permissions; an empty issuer approves nothing (``issuer_missing``) and the system's authority is recorded beside
       the completion. None (a person's work plan result, 0083 WP-4): the run issuer's own permissions, resolved as the
       approve button resolves them; without ``document.approve`` nothing is attempted (``issuer_lacks_approve``).
-    - Revision: the document's revision as read here (``expected_revision``). flowgate.v02.0113 T#3 (K-6):
+    - Revision: the document's revision as read here (``expected_revision``). the earlier change the earlier implementation (K-6):
       ``expected_revision`` — the revision a review passed (an assigned review's) — is the revision completed, or none:
       the completion write checks it in its own transaction before and after the write (``pinned``; a TS's in its
       effect's transaction, a TR2's in its apply). A document whose revision moved meanwhile is not completed and
@@ -1267,7 +1267,7 @@ COMPLETION_EVENT = "card_completion_recorded"
 
 def completion_gates(doc: dict) -> None:
     """The read-only gates the v0.1 approval asked before approving: a readable, non-blank body and a TSR's test gate;
-    raises when the document does not pass. flowgate.v02.0119 T#4 (T-3): the v0.2 completion's own judgement
+    raises when the document does not pass. the earlier change the earlier implementation (T-3): the v0.2 completion's own judgement
     (``card_completion.gates``)."""
     from flowgate.card_completion import gates  # noqa: PLC0415
 
@@ -1316,7 +1316,7 @@ class RevisionMoved(RuntimeError):
 
 
 def pinned(doc_id: str, revision: int, write):
-    """flowgate.v02.0113 T#3 (K-6, L-2 §2.8.4): ``write`` (an approval's transition) in one transaction with the
+    """(K-6, L-2): ``write`` (an approval's transition) in one transaction with the
     document's revision checked before and after it — an edit committed before the write's end rolls the write back
     (``RevisionMoved``); one committed after it is a later edit of an approved document. The TR2 approval checks its
     own ``expected_revision``."""
@@ -1335,7 +1335,7 @@ def pinned(doc_id: str, revision: int, write):
         return result
 
 
-# ── why an automatic approval was not made (flowgate.v02.0105 T#2 B-1 / B-4) ──
+# ── why an automatic approval was not made ──
 
 def _run_event(flow_id: str, cause: str, reason: str, extra: dict) -> None:
     """A run status event of the Flow's active run with the status unchanged, told by ``cause`` (as ``fencing.record``):
@@ -1378,7 +1378,7 @@ def _node_key_of(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -
 def record_approval_wait(flow_id: str, node_key: Optional[str], doc_id: Optional[str], reason: str, *,
                          attempt_id: Optional[str] = None, stage: str = "result", mark: Optional[dict] = None) -> None:
     """B-1: why the automatic approval of the node's ``doc_id`` (its result, or its instruction: ``stage``) was not made,
-    added to the Flow's active run. Nothing when the document is no node's of that run. flowgate.v02.0113 T#3: an
+    added to the Flow's active run. Nothing when the document is no node's of that run. the earlier change the earlier implementation: an
     assigned attempt's B-1 also carries its submission mark (``mark``, P-1 §7.1)."""
     key = _node_key_of(flow_id, node_key, doc_id)
     if not key or not doc_id:
@@ -1425,7 +1425,7 @@ def approval_waits(run_id: str, node_key: str, doc_id: Optional[str], attempt_id
 
 
 def stage_document(row: dict) -> Optional[str]:
-    """flowgate.v02.0119 T#3 (T-2 rework): the document the node run ``row`` waits on now — its instruction while it is
+    """(T-2 rework): the document the node run ``row`` waits on now — its instruction while it is
     open in its instruction stage, else its result (the B-1 of either is recorded with that document)."""
     if row.get("status") == OPEN_NODE_STATUS and row.get("stage") == "instruction":
         return row.get("instruction_doc_id")
@@ -1434,7 +1434,7 @@ def stage_document(row: dict) -> Optional[str]:
 
 def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
     """B-2: the latest B-1 reason of the node run ``row``'s current document (its current attempt), or None.
-    flowgate.v02.0119 T#3 (T-2 rework): the document of its current stage (``stage_document``) — its instruction while
+    (T-2 rework): the document of its current stage (``stage_document``) — its instruction while
     it is open in its instruction stage, else its result."""
     doc_id = stage_document(row)
     if not doc_id or not row.get("run_id"):
@@ -1443,7 +1443,7 @@ def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
     return reasons[-1] if reasons else None
 
 
-# ── a lost run-end stage (flowgate.v02.0105 T#2 B-3) ─────────────────────────
+# ── a lost run-end stage ─────────────────────────
 
 def node_runs(run_id: str) -> list[dict]:
     return run_store.node_runs(run_id)
@@ -1452,7 +1452,7 @@ def node_runs(run_id: str) -> list[dict]:
 def _node_ai_runs(flow_id: str, run_id: str, node_key: str) -> list[tuple[str, dict]]:
     """(token id, ended AI run record) of the node's live tokens that carry an AI run, mapping order.
 
-    flowgate.v02.0111 T#3 (NR flowgate.v02.0111.0003 §2 A-4): the durable row (``ai_invoke_runs``) has no
+    (NR the earlier change A-4): the durable row (``ai_invoke_runs``) has no
     ``action_scope``, so the record takes the one of the token the AI start minted for that run — the reconciliation's
     ``stage_ai_run`` / ``result_ai_run`` read it, and without it they found no run and every reconciliation returned."""
     out = []
@@ -1469,7 +1469,7 @@ def _work_run(record: dict) -> bool:
 
 
 def is_result_writer(run: dict) -> bool:
-    """0145: an edit of the pre-created report is a result writer only through its own
+    """an edit of the pre-created report is a result writer only through its own
     result execution. Ordinary edits, review-loop reworks and foreign ledgers never qualify.
     The callers still require the writer's consumed result, clean end and active-attempt fence.
     """
@@ -1513,7 +1513,7 @@ def review_loops(doc_id: str) -> list[dict]:
 
 
 def settle_graph_run(flow_id: str) -> None:
-    """The Flow's Graph run is judged again (flowgate.v02.0061 T#2): running while the review its card stage started
+    """The Flow's Graph run is judged again: running while the review its card stage started
     works, idle when nothing works any more. Never raises (a failure only skips it, as before a run read)."""
     from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415 — the run stack on use
 
@@ -1523,7 +1523,7 @@ def settle_graph_run(flow_id: str) -> None:
         _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)
 
 
-# ── a person's work plan result (flowgate.v02.0083 WP-4) ────────────────────
+# ── a person's work plan result ────────────────────
 
 def active_run(flow_id: str) -> Optional[dict]:
     return run_store.active_run(flow_id)
@@ -1540,7 +1540,7 @@ def active_attempt_id(run_id: str, node_key: str) -> Optional[str]:
 def run_issuer(run_row: dict) -> str:
     """The Graph run's issuer (its starter), as a node dispatch issues an AI card's run to it
     (``node_dispatch.dispatch_document``) — never the author of the result: the actor of the run's automatic approvals,
-    and the authority of a person's work plan result's (0083 WP-4). flowgate.v02.0105 T#2 (B-4, Q #511 o3): an AI card's
+    and the authority of a person's work plan result's. the earlier change the earlier implementation (B-4, Q #511 o3): an AI card's
     are made under the server's automatic approval authority instead (``approve`` ``AUTOMATION``)."""
     return run_row.get("started_by") or ""
 
@@ -1570,7 +1570,7 @@ def _person_stage_refusal(flow_id: str, run_row: Optional[dict]) -> Optional[str
 
 
 def person_hold(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
-    """0083 WP-4: a person's result stage — its review's start, its automatic approval — judged as ``attempt_hold``
+    """WP-4: a person's result stage — its review's start, its automatic approval — judged as ``attempt_hold``
     judges the run-end stage, under the Stop gate's shared hold kept for the ``with`` body (the approval's transition, its
     TR hook and its Graph contact; the review's request), with an idle run taken too (Q439: a person's own step) and the
     stage's conditions judged again under that hold: ``run_id`` still the Flow's active run, not stopped, no Time Machine
@@ -1618,7 +1618,7 @@ def submission_judged(doc_id: str) -> bool:
 
 
 def revision_reviewed(doc_id: str, revision_no: int) -> bool:
-    """flowgate.v02.0125 T#1: some review row (``document_reviews``) answers exactly this revision of the document —
+    """some review row (``document_reviews``) answers exactly this revision of the document —
     whatever its verdict, and whether or not its ``issues`` was turned into a rejection and the document put back in
     review since (unlike ``submission_judged``, which counts such a resubmission as a new submission)."""
     from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
@@ -1627,7 +1627,7 @@ def revision_reviewed(doc_id: str, revision_no: int) -> bool:
 
 
 def submission_passed(doc_id: str) -> bool:
-    """0083 WP-4: the latest review of the document's current revision passed it — a pass of an older revision (the
+    """WP-4: the latest review of the document's current revision passed it — a pass of an older revision (the
     document revised in place while its review worked) does not answer the current submission."""
     from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
     from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
@@ -1661,7 +1661,7 @@ def instruction_node_of_document(flow_id: str, doc_id: str) -> Optional[tuple[di
     return None
 
 
-# ── stage assignments (flowgate.v02.0113 T#3, L-2) ──────────────────────────────
+# ── stage assignments ──────────────────────────────
 # The Graph parts the stage assignment modules (``stage_assignment``, ``manual_stage``, ``assigned_review``,
 # ``stage_view``) reach: the node run rows and their stage, the dispatch token and its mapping, the AI start job and its
 # ledger request, a run status event in the caller's transaction, a savepoint, the written-by evidence of a document's
@@ -1704,7 +1704,7 @@ def set_dispatch_error(run_id: str, node_key: str, error_code: str) -> None:
 
 
 def clear_dispatch_error(run_id: str, node_key: str, error_codes) -> None:
-    """flowgate.v02.0119 T#3 (T-2 rework): the open node run keeps its dispatch and its error is cleared — only when it
+    """(T-2 rework): the open node run keeps its dispatch and its error is cleared — only when it
     is one of ``error_codes`` (the error a failed instruction review start recorded, its retry started the review)."""
     from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
 
@@ -1749,7 +1749,7 @@ def run_node_row(flow_id: str, run_row: dict, node_key: str) -> Optional[dict]:
 def issue_node_token(flow_id: str, project_id: Optional[str], root_doc_id: Optional[str], issued_to: str,
                      provider_id: Optional[str], *, run_id=None, node=None, stage=None) -> Optional[dict]:
     """A result-slot edit token (legacy nodes keep new), under a savepoint; None
-    when the issue failed (rolled back to the savepoint, L0009 E-22)."""
+    when the issue failed (rolled back to the savepoint, the earlier implementation E-22)."""
     from modules.flow_gate.services import token_service  # noqa: PLC0415
 
     try:
@@ -1876,9 +1876,9 @@ def tell_graph(flow_id: str, doc_id: str, doc_type: str, token_id: str) -> None:
 
 
 def earlier_result(attempt_id: Optional[str], node_key: str, doc_id: str) -> bool:
-    """0038-T T#3 A: ``doc_id`` was the node's result earlier in the attempt's run (bound by an attempt a Stop, a lost
+    """A: ``doc_id`` was the node's result earlier in the attempt's run (bound by an attempt a Stop, a lost
     lease or a reopening ended — the node reset since). Kept as the card's history, it is never a later attempt's
-    written report (0061 T#7): that attempt waits for its own submission. A read error raises."""
+    written report: that attempt waits for its own submission. A read error raises."""
     if not attempt_id or not doc_id:
         return False
     row = get_store()._fetch_one(
@@ -1888,7 +1888,7 @@ def earlier_result(attempt_id: Optional[str], node_key: str, doc_id: str) -> boo
 
 
 def reconcile_results(flow_id: str) -> None:
-    """0038-T T#3 A-4: the binder's reconciliation once the attempt's own review of a report approved before the attempt
+    """A-4: the binder's reconciliation once the attempt's own review of a report approved before the attempt
     took it has passed (or approved it automatically) — the node moves on (``review_approved``); before that the binder
     holds the old approval back (``taken_judged``). Never raises."""
     from modules.flow_gate.graph_workflow.services import result_binder  # noqa: PLC0415
@@ -1903,7 +1903,7 @@ TAKEN_JUDGED_CAUSE = "result_taken_judged"
 
 
 def record_taken_judged(run_id: str, node_key: str, attempt_id: str, doc: dict, mark: dict, ctx=None) -> None:
-    """0038-T T#3 A-4 (rework): the attempt took as its result a report approved before it (an earlier attempt's or an
+    """A-4 (rework): the attempt took as its result a report approved before it (an earlier attempt's or an
     earlier run's judgement). The record tells that old approval apart from this attempt's review: the binder does not
     complete the node on it until this attempt's result review passed or approved it automatically. In the caller's
     transaction (a run status event, status unchanged)."""
@@ -1945,7 +1945,7 @@ def write_failure(row: dict) -> Optional[str]:
 
 
 def provider_failure_retry_due(row: dict) -> bool:
-    """flowgate.v02.0121 T#2: the node's result writer ended on its provider's own failure (``provider_failed``) with no
+    """the node's result writer ended on its provider's own failure (``provider_failed``) with no
     result — ``execution.provider_failure_retry_due``."""
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
 

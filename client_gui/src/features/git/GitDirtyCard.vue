@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — uncommitted Base changes card (0033-D §3.5, Q 396). tracked rows get
+// uncommitted Base changes card. tracked rows get
 // their A/D/M letter only from the Base diff answer, asked for the rows actually drawn, once
 // per git/status generation; until then (or on any failure) they show "status unknown".
 // New files are `?`. Stage 1 with a cut new-file list shows "N + 200개 이상" and keeps commit /

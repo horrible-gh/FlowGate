@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0048 T#12 — the check card's calls in features/document/api/check.ts (D#1 §6.3, §12.1;
- * NR0003 §2.8): the requests sent to the existing v0.1 endpoints (GET /documents/{doc_id}, GET
+ * the check card's calls in features/document/api/check.ts (the earlier implementation;
+ * ): the requests sent to the existing v0.1 endpoints (GET /documents/{doc_id}, GET
  * /groups/{gid}/git/finalize?context=approval, POST /documents/review_transitions/approve with the
  * Git choice), the server's snake_case answers (finalize state, approval_publish.response_payload
  * shapes, the plain transition) -> camelCase, and how a refusal is read — FastAPI `detail`, the

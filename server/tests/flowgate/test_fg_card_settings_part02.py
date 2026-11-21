@@ -180,7 +180,7 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
         "stage_assignment", "stage_view",
         "result_recovery", "review_exhaustion",      # their own files already (the list lagged behind)
         "verify_limits",                             # flowgate.v02test.0053 0003-T: the one 검증 limits function
-        "action_guard"}                     # flowgate.v02gui.0015 T3: the answered step's common guard
+        "action_guard"}                     # the answered step's common guard
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     callers = sorted(p.relative_to(graph).as_posix() for p in graph.rglob("*.py")
                      if "card_settings_ports" in p.read_text(encoding="utf-8") and p.name != "card_settings_ports.py")

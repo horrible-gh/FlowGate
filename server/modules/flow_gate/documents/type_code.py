@@ -1,4 +1,4 @@
-"""Canonical document type and document-code grammar (flowgate.default.0565).
+"""Canonical document type and document-code grammar.
 
 The grammar itself lives in ``modules.flow_gate.utils.type_code`` (a leaf module with no
 package-level imports) so ``utils.id_validators`` does not depend on this package. This module

@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { getRequest, postRequest } from '@shared/api'
 import { resolveSafeReturnPath } from '@shared/auth'
 
-// flowgate.v02gui.0024 (R0001 §4.2): the sign-in state machine moved here from v0.1's
+// the sign-in state machine moved here from v0.1's
 // client/src/login/stores/auth.ts with the same steps, API calls and token storage. The only
 // change is where a successful sign-in lands: /app, or an allow-listed `next`.
 
@@ -46,7 +46,7 @@ interface TokenResponse {
 
 interface LoginResponse {
   totp_required?: boolean
-  /** flowgate.v02.0020: the 2FA policy covers this user and the grace period is over. */
+  /** the 2FA policy covers this user and the grace period is over. */
   totp_setup_required?: boolean
   temp_token?: string
   access_token?: string
@@ -313,7 +313,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // flowgate.v02.0020 (시스템 › 보안): enrolment the 2FA policy requires before sign-in.
+  // flowgate.v02.0020 ("시스템" › "보안"): enrolment the 2FA policy requires before sign-in.
   async function startTotpSetup() {
     state.value = 'TOTP_SETUP_SUBMITTING'
     error.value = null
@@ -367,7 +367,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // flowgate.v02.0020 (시스템 › 사용자 › 초대): /login?invite=<token>.
+  // flowgate.v02.0020 ("시스템" › "사용자" › "초대"): /login?invite=<token>.
   async function openInvite(token: string) {
     inviteToken.value = token
     invite.value = null

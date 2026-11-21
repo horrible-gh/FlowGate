@@ -1,6 +1,6 @@
 """The `ai_invoke_service` public surface, assembled from this package.
 
-0501 NR0003 §20: external production code and a large number of existing tests import
+external production code and a large number of existing tests import
 `modules.flow_gate.services.ai_invoke_service` and reach through it -- including for
 private names they monkeypatch. Moving the implementation into a package must not move
 that contract, so `ai_invoke_service.py` stays exactly where it was and re-exports this

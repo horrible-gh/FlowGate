@@ -1,12 +1,12 @@
-// flowgate.v02.0053 T#9 — the top band's run buttons on the server Graph run (P0008 §7 S5). Owned by the
+// the top band's run buttons on the server Graph run. Owned by the
 // Center session, one state per open Flow; the Shell only sends the run commands here and shows what it reads back.
 //
-// flowgate.v02.0061 T#14 — one run per Flow (`running` | `paused` | `stopping` | `idle`) and one server call per
+// one run per Flow (`running` | `paused` | `stopping` | `idle`) and one server call per
 // button (R, 0002-CH turn 8 §2.3):
 // - 다음 단계 (`next`) / 전체 실행 (`all`): the T#2 step / full command (`startRun` with `step` / `full`). The server
 //   starts a run of the latest revision or lets the Flow's idle run go on; a step opens the run candidates of the
 //   moment and the run settles by itself — nothing is stopped from here afterwards. Only an idle Flow (or one with no
-//   run) takes a command, and only then is the edited draft confirmed first (`prepare`, TR0020 rev2).
+//   run) takes a command, and only then is the edited draft confirmed first (`prepare`, the earlier implementation).
 // - 일시정지 (`pause`): `/pause` (running -> paused). 재개 (`resume`): `/resume`, the paused run's own command.
 // - 중지 (`stop`): T#7 Stop (`/stop`): the run is stopping at once and idle (stopped) once its AI processes ended.
 // One action per Flow at a time (`action`); the buttons are off meanwhile, so nothing is queued behind it. After every
@@ -22,7 +22,7 @@
 // message) and the run is read again. What the refusal names in its params (the refused document, why, the
 // documents approved before it) is kept with it (`refusal`), so the Shell's toast can say it too.
 //
-// flowgate.v02.0061 T#15 — a card's context menu goes through here too:
+// a card's context menu goes through here too:
 // - Hold 설정 / 해제 (`hold`): the card setting `hold` (T#11), one per Flow at a time (`holding`, the card's key). It
 //   never touches `action` and calls no run command: a released card is opened by the next step / full command only.
 //   The answer's Hold is put on the run's node run of the card at once and told to the caller (`answered`), and only
@@ -35,19 +35,19 @@
 //   answered to the caller (the confirmation dialog shows the result, or the server's reasons when it is blocked), not
 //   kept as `error`; the run it answers is kept and the Canvas is read again.
 //
-// flowgate.v02.0061 TR0031 rev1 — whether the run status is confirmed (`readState`): a run read going on (`reading`) or
+// whether the run status is confirmed (`readState`): a run read going on (`reading`) or
 // failed (`failed`), and a Flow not read yet (`unread`), are not "no run": the Center session then keeps the run lock
 // (its Canvas read's run status, or the run last known locked) and lets no command, edit or source mode change go until
 // it is confirmed (`read`: a run read or a command's answer told it; `run` null = no run).
 //
-// flowgate.v02.0083 T#4 rev1 — an AI execution read while still requested turns running with no run event of its own (the
+// an AI execution read while still requested turns running with no run event of its own (the
 // AI start's frame may come before it): while the run read shows a running run with a requested execution, it is read
 // again after REQUESTED_REREAD_MS, so the band's executions and a card's running lock (its WP window) follow it.
 //
 // flowgate.v02gui.0002 A — one 전체 실행 / 다음 단계 click confirms the drawn draft and starts the run. The confirmation
 // re-reads the Canvas, and that re-read asks the archive state again (unknown until it answers) while this action keeps
 // run reads out (`read` returns during an action). A gate asked meanwhile said no for "not answered yet", and the click
-// ended after the confirmation with no run and no word (stg flowgate.v02test.0026: confirmed 16:28:17, run only on a
+// ended after the confirmation with no run and no word (stg the earlier change: confirmed 16:28:17, run only on a
 // second click at 16:29:13). Now an unanswered gate is waited for (`mayGo`: the run is read here, `settle` waits for the
 // archive answer) and the same click goes on to `startRun`. Only a real no stops it: archived, a run started elsewhere,
 // the tab closed, the AI setup cancelled.
@@ -63,10 +63,10 @@ import { randomUuid } from '@shared/utils/uuid'
 
 export type FlowRunMode = 'next' | 'all'
 
-/** flowgate.v02.0083 T#4 rev1: how soon a run read showing a requested AI execution is read again. */
+/** how soon a run read showing a requested AI execution is read again. */
 export const REQUESTED_REREAD_MS = 2000
 /**
- * flowgate.v02gui.0002 A: how many times one run click waits for an unanswered gate (run status, archive state) before
+ * A: how many times one run click waits for an unanswered gate (run status, archive state) before
  * it takes the gate's no. Each wait is one answer the click would otherwise have dropped silently.
  */
 export const RUN_GATE_SETTLE_ATTEMPTS = 3
@@ -78,7 +78,7 @@ export const ORPHAN_RECHECK_MAX_MS = 300_000
 export type FlowRunAction = FlowRunMode | 'pause' | 'resume' | 'stop' | 'time_machine'
 
 /**
- * flowgate.v02.0061 T#15: how a Graph Time Machine ended — done (what it did), blocked (the server's reasons and the
+ * how a Graph Time Machine ended — done (what it did), blocked (the server's reasons and the
  * impact it found; nothing changed), failed (another refusal or no answer), or skipped (nothing was sent: another
  * action of the Flow is answered, or the source has no Time Machine).
  */
@@ -142,16 +142,16 @@ export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
   readonly seq: number
 }
 
-/** flowgate.v02.0061 TR0031 rev1: whether `run` is confirmed — `read` only; the others tell no run status. */
+/** whether `run` is confirmed — `read` only; the others tell no run status. */
 export type FlowRunReadState = 'unread' | 'reading' | 'read' | 'failed'
 
 export interface FlowRunState {
   /** Only a command block or registry found writes this signal. The Shell arms its result directly. */
   confirmedCommand?: RunCommandIdentity
   commandRecovery?: RunCommandRecovery
-  /** The Flow's run as last read (flowgate.v02.0061 T#14: running / paused / stopping / idle), or null. */
+  /** The Flow's run as last read (running / paused / stopping / idle), or null. */
   run: FlowRunInfo | null
-  /** flowgate.v02.0061 TR0031 rev1: whether `run` is the confirmed run (`read`) — null then means no run. */
+  /** whether `run` is the confirmed run (`read`) — null then means no run. */
   readState: FlowRunReadState
   /** What this tab is doing to the run now, or null. */
   action: FlowRunAction | null
@@ -170,7 +170,7 @@ export interface FlowRunControlDeps {
   readonly beforePrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly canProceed?: (flowId: string) => boolean
   /**
-   * flowgate.v02gui.0002 A: waits for what `canProceed` reads but has no answer for yet (the archive state a Canvas
+   * A: waits for what `canProceed` reads but has no answer for yet (the archive state a Canvas
    * re-read asks again). Resolves true when it waited for something (ask `canProceed` again), false when nothing is
    * pending (its no is a real no).
    */
@@ -191,9 +191,9 @@ export interface FlowRunControlDeps {
 export interface FlowRunControl {
   /** The source can run Flows (a sample source cannot). */
   readonly available: boolean
-  /** flowgate.v02.0056 F2-1: the source can also approve a card of a run. */
+  /** the source can also approve a card of a run. */
   readonly canApprove: boolean
-  /** flowgate.v02.0061 T#14: the source can pause a run. */
+  /** the source can pause a run. */
   readonly canPause: boolean
   /**
    * Reads the Flow's current run (after a Canvas read, on a run event). A failed read keeps the run last read but marks
@@ -208,18 +208,18 @@ export interface FlowRunControl {
   resume(flowId: string): Promise<boolean>
   /** 중지 (T#7 Stop) of a running or paused run. Resolves whether the server took it (stopping, or idle at once). */
   stop(flowId: string): Promise<boolean>
-  /** flowgate.v02.0061 T#15: the source can hold / release cards. */
+  /** the source can hold / release cards. */
   readonly canHold: boolean
-  /** flowgate.v02.0061 T#15: the source has the Graph Time Machine. */
+  /** the source has the Graph Time Machine. */
   readonly canTimeMachine: boolean
   /**
-   * flowgate.v02.0061 T#15: sets (true) / releases (false) the Hold of card `nodeKey`. Resolves whether it is held now,
+   * sets (true) / releases (false) the Hold of card `nodeKey`. Resolves whether it is held now,
    * or null when nothing changed (refused — kept as `error`, kind `hold` — or another Hold of the Flow is answered) or
    * the answer belongs to no open tab any more (the tab closed — also when opened again since — or the project changed).
    * `answered` is told the Hold answered, before the run and the Canvas are read again. Never a run command.
    */
   hold(flowId: string, nodeKey: string, on: boolean, answered?: (held: boolean) => void): Promise<boolean | null>
-  /** flowgate.v02.0061 T#15: the Graph Time Machine of the run's done card `nodeKey` (and everything below it). */
+  /** the Graph Time Machine of the run's done card `nodeKey` (and everything below it). */
   timeMachine(flowId: string, nodeKey: string): Promise<FlowTimeMachineOutcome>
   forget(flowId: string): void
   clear(): void
@@ -234,13 +234,13 @@ export const createFlowRunState = (): FlowRunState => ({
   error: null,
 })
 
-/** flowgate.v02.0061 T#15: the run with the card's node run (when it has one) held or released as answered. */
+/** the run with the card's node run (when it has one) held or released as answered. */
 function withNodeHold(run: FlowRunInfo, nodeKey: string, hold: boolean): FlowRunInfo {
   if (!run.nodeRuns?.some((nodeRun) => nodeRun.nodeKey === nodeKey)) return run
   return { ...run, nodeRuns: run.nodeRuns.map((nodeRun) => (nodeRun.nodeKey === nodeKey ? { ...nodeRun, hold } : nodeRun)) }
 }
 
-/** flowgate.v02.0061 T#15: a Graph Time Machine that did not run, as the dialog shows it. */
+/** a Graph Time Machine that did not run, as the dialog shows it. */
 function timeMachineFailure(error: unknown): FlowTimeMachineOutcome {
   const refused = error as FlowRunError | null
   const code = typeof refused?.code === 'string' ? refused.code : null
@@ -331,7 +331,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     state.error = { ...failure, observation: { state: failed ? 'failed' : 'read', runId: failed ? null : run?.runId ?? null, status: failed ? null : run?.status ?? null, lastEventSeq: failed ? null : run?.lastEventSeq ?? null } }
     diagnose(state.error)
   }
-  // flowgate.v02.0083 T#4 rev1: the next read of a Flow whose run read showed a requested execution.
+  // the next read of a Flow whose run read showed a requested execution.
   const rereads = new Map<string, ReturnType<typeof setTimeout>>()
 
   function dropReread(flowId: string) {
@@ -772,7 +772,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         // gui.0002 A: the confirmation re-reads the Canvas (and so the archive state); its answer is waited for here, in
         // this click, instead of ending it with the draft confirmed and no run.
         if (!(await mayGo())) return false
-        // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
+        // One server call: the step / full command. Nothing is stopped from here after it (settles the step).
         if (!request.alive()) return false
         if (commandStore && owner) {
           // 0156 T1 R4: the execution boundary — a holder that lost the cross-tab lease (taken over after it ran out) never

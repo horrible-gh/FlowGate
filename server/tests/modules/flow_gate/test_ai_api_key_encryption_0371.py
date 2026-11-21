@@ -1,11 +1,11 @@
-"""flowgate.default.0371 T0010: AI provider API keys encrypted at rest (NR0007 §3).
+"""AI provider API keys encrypted at rest.
 
 `ai_providers.api_key` held the operator's provider secret verbatim, so any DB dump,
 replica or backup carried a directly usable Anthropic/OpenAI key. These tests pin the
 whole boundary:
 
   - what actually lands in the column (ciphertext with an explicit enc:v1: version tag)
-  - that the L0004 §2.3 keep/replace/delete contract and the last-4 hint still work on
+  - that the the earlier implementation keep/replace/delete contract and the last-4 hint still work on
     the plaintext, i.e. the screen behaves exactly as before
   - the legacy plaintext backfill (idempotent, resumable)
   - key rotation via _PREV, and the fail-closed behaviour when no key can read a row —
@@ -76,7 +76,7 @@ class TestApiKeyCrypto:
         assert crypto.decrypt_api_key("") == ""
 
     def test_a_base64_shaped_plaintext_is_not_mistaken_for_ciphertext(self, crypto):
-        """NR0007 §3 권고 2: real API keys are often base64-shaped, so "looks like
+        """real API keys are often base64-shaped, so "looks like
         base64" can never be the encrypted/plaintext discriminator."""
         looks_like_b64 = base64.b64encode(b"a real key that happens to be base64").decode()
         assert crypto.is_encrypted(looks_like_b64) is False
@@ -110,7 +110,7 @@ class TestApiKeyCrypto:
     def test_no_configured_key_provisions_one_under_the_storage_root(self, crypto, monkeypatch, tmp_path):
         """An install that predates this change has no FLOWGATE_AI_ENCRYPT_KEY. It must
         keep working (git_service's key-file precedent) — storing plaintext instead is
-        never the fallback (NR0007 §3 권고 5)."""
+        never the fallback."""
         from config import settings as cfg
 
         monkeypatch.delenv("FLOWGATE_AI_ENCRYPT_KEY", raising=False)
@@ -133,7 +133,7 @@ class TestApiKeyCrypto:
 
 @pytest.fixture(scope="module")
 def test_db_path(migrated_sqlite_db):
-    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): built by the shared
+    """built by the shared
     conftest.py factory instead of a private migration loop, so this suite's schema
     can never drift from the others the way test_auth.py's hand-picked subset did."""
     return migrated_sqlite_db(
@@ -250,7 +250,7 @@ class TestAtRestStorage:
         assert PLAIN_KEY not in stored
 
     def test_the_view_contract_is_unchanged(self, svc):
-        """L0004 §2.3: the response still carries only api_key_set + the last-4 hint,
+        """the response still carries only api_key_set + the last-4 hint,
         and the hint is computed from the decrypted value — not from ciphertext."""
         result = svc.save_system_settings([_api_provider()], None, None)
         view = result["providers"][0]

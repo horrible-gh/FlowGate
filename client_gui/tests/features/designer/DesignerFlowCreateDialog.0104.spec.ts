@@ -1,4 +1,4 @@
-/** D0104 §7.2 (creation only) and §3.5.3: real dialog/store/adapter, mocked transport. */
+/** (creation only) and: real dialog/store/adapter, mocked transport. */
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

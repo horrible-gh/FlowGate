@@ -1,9 +1,9 @@
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0032 T#2 integration — the Conversation panel with its DEFAULT HTTP source (no
+// integration — the Conversation panel with its DEFAULT HTTP source (no
 // injected source) against an in-memory server behind the shared transport. It walks the
-// production path of D0006 §3.9.2 / §5.5 / §6: a pending command shows up within one polling
+// production path of the design / /: a pending command shows up within one polling
 // tick, the decision goes out and the same run carries on, the run change and its stored file
 // diff arrive after the run, a reopen restores the server state, and [새 채팅] makes a
 // standalone CH through POST /conversations during the run — never through next-empty.
@@ -55,7 +55,7 @@ function httpError(status: number, code: string) {
 
 /** The slice of the FlowGate server the Conversation panel talks to. */
 function createServer() {
-  // flowgate.v02.0047: chats created owing their AI title, with the provisional title.
+  // chats created owing their AI title, with the provisional title.
   const owedTitles = new Map<string, string>()
   const server = {
     chats: [{ doc_id: CHAT, title: '빌드 확인', type_code: 'CH', updated_at: '2026-10-06T08:00:00Z' }] as Array<Record<string, unknown>>,
@@ -142,7 +142,7 @@ function createServer() {
       list.push(turn)
       return { turn, head_seq: turn.seq }
     }
-    // flowgate.v02.0047: the one AI title of a chat created owing it, while its provisional title stands.
+    // the one AI title of a chat created owing it, while its provisional title stands.
     const autoTitle = path.match(/^\/api\/v1\/conversations\/([^/]+)\/auto-title$/)
     if (method === 'POST' && autoTitle) {
       const chat = server.chats.find((c) => c.doc_id === decodeURIComponent(autoTitle[1]))!
@@ -308,7 +308,7 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
 
     await find('conv-new-btn').trigger('click')
     await flushPromises()
-    // flowgate.v02.0047: [+] alone stores nothing.
+    // [+] alone stores nothing.
     expect(calls('POST', /^\/api\/v1\/conversations$/)).toHaveLength(0)
     expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
 

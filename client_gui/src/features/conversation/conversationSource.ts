@@ -1,14 +1,14 @@
-// flowgate.v02.0031 — the one data boundary of the Conversation part. The session talks only
+// the one data boundary of the Conversation part. The session talks only
 // to a ConversationSource; the default one is the HTTP source below, built from the
 // conversation / AI-run / chat-settings contracts in api.ts. Tests (and a later container that
 // wants a different backend) hand in their own.
 //
-// flowgate.v02.0032 connects the HTTP source to the Conversation production contract (D0006
+// connects the HTTP source to the Conversation production contract (the design
 // §5.5): createChat makes a standalone CH, activities are the chat's command requests and run
 // changes with their server anchors, and command decisions go to the server. There is no push
 // channel yet — the HTTP source leaves `subscribeActivities` undefined and the session
-// re-reads activities on its AI-run polling ticks instead (D0006 §3.9.2).
-// flowgate.v02test.0013: server events still do not carry state through this source; the panel
+// re-reads activities on its AI-run polling ticks instead.
+// server events still do not carry state through this source; the panel
 // hears them from the container's project stream (conversationEvents.ts) as signals and the
 // session reads through this source again (session.recover).
 import * as api from './api'
@@ -36,7 +36,7 @@ export interface ConversationSource {
   listChats(scope: ConversationScope): Promise<ChatSummary[]>
   renameChat(chatId: string, title: string): Promise<ChatSummary>
   createChat(scope: ConversationScope, title: string, options?: api.CreateChatOptions): Promise<ChatSummary>
-  /** The one AI title of a chat created with `autoTitle` (flowgate.v02.0047); optional. */
+  /** The one AI title of a chat created with `autoTitle`; optional. */
   autoTitleChat?(chatId: string, providerId: string): Promise<ChatSummary>
 
   mutateTurn?(chatId: string, seq: number, version: number, body: string | null): Promise<ConversationTurn>
@@ -55,14 +55,14 @@ export interface ConversationSource {
   subscribeActivities?(chatId: string, listener: (activity: ConversationActivity) => void): () => void
 
   listProviders(projectId: string): Promise<ProviderList>
-  /** flowgate.v02.0152: `clientRequestId` names the press; a resend with the same id gets the run already admitted. */
-  /** flowgate.v02test.0030: `providerOrigin` — how the AI was chosen; kept on the run (client_provider_origin). */
+  /** `clientRequestId` names the press; a resend with the same id gets the run already admitted. */
+  /** `providerOrigin` — how the AI was chosen; kept on the run (client_provider_origin). */
   startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, providerOrigin?: ProviderOrigin): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
   listRuns(scope: ConversationScope, limit: number, cursor?: string, chatId?: string): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>
   /**
-   * flowgate.v02gui.0011 B: stops a press by its `clientRequestId` before /start named its run. Optional: without it a
+   * B: stops a press by its `clientRequestId` before /start named its run. Optional: without it a
    * starting call cannot be stopped (the behaviour before).
    */
   cancelChatStart?(chatId: string, clientRequestId: string): Promise<api.ChatStartCancel>
@@ -72,12 +72,12 @@ export interface ConversationSource {
   saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings>
   issueChatMention(chatId: string): Promise<string>
   /**
-   * flowgate.v02test.0025: the user's AI pick and context checkpoint of one chat. Optional: a source without them keeps
+   * the user's AI pick and context checkpoint of one chat. Optional: a source without them keeps
    * one selection for every chat and no checkpoint (the behaviour before).
    */
   fetchChatDocSettings?(chatId: string): Promise<ChatDocSettings>
   saveChatDocSettings?(chatId: string, patch: ChatDocSettingsPatch): Promise<ChatDocSettings>
-  /** flowgate.v02test.0024 B: stores a refused request of the chat in its history; optional (a source without it keeps errors locally). */
+  /** B: stores a refused request of the chat in its history; optional (a source without it keeps errors locally). */
   recordChatError?(chatId: string, record: ChatErrorRecord): Promise<void>
 }
 

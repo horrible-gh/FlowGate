@@ -98,8 +98,8 @@ class TestFinalizeGuards(_Scenario):
 
 
     def test_preview_ac_read_only_with_wf_in_progress_root(self, seed):
-        """Test7 (NR0003 §20): preview_ac shows preliminary awaiting_choice while
-        root is wf_in_progress, without DB changes (0197 T0004 §B, pure read).
+        """Test7: preview_ac shows preliminary awaiting_choice while
+        root is wf_in_progress, without DB changes (pure read).
 
         Setup: Root = wf_in_progress (not wf_done), Git status = none.
         Call: GET /finalize?context=approval (preview_ac=True).

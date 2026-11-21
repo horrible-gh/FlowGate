@@ -157,7 +157,7 @@ def test_a_failed_instruction_stage_records_the_ai_failure_and_never_starts_the_
     assert _events(env, key) == ["opened", "dispatch_failed"]             # the AI start failure path
     assert _review_status(job["target_doc_id"]) is None                  # nothing approved
     assert _node_run(env, key)["dispatch"]["error_code"] == "ai_invoke_failed"
-    # L0009 E-23: the node's token is a person's again; their result binds
+    # E-23: the node's token is a person's again; their result binds
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ? ORDER BY rowid",
                  (key,))[0]["token_id"]
     result = _result(82, "TR")
@@ -194,7 +194,7 @@ def test_a_report_the_instruction_stage_registered_never_becomes_the_result(env,
 def test_a_report_a_failed_instruction_stage_registered_never_becomes_the_result(env, decided, monkeypatch, contact):
     """The instruction stage failed after its AI registered a report: the failure keeps that report behind the
     stage — a run read or a resume does not put the node in review — and the report a person registers with the
-    node's token (L0009 E-23) is the result, on its contact or by the reconciliation after a lost one."""
+    node's token is the result, on its contact or by the reconciliation after a lost one."""
     key, job, _token, stray = _new_instruction_start(env, monkeypatch)
     _run_ended(INSTRUCTION_RUN, end_reason="timeout", stop_code="timeout")
     assert env["jobs"] == []

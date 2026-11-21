@@ -1,4 +1,4 @@
-"""0010-L 5.6: literal SP expectations, T1/T2/T3, seven paths plus two AI identities.
+"""5.6: literal SP expectations, T1/T2/T3, seven paths plus two AI identities.
 
 Graph persistence and provider/approval endpoints are controlled fixtures. The
 binder, manual-stage guards, duplicate judgement, review driver, approval CAS,

@@ -1,4 +1,4 @@
-// flowgate.v02.0033 — Git action adapter of the Designer Git part. Every endpoint here is an
+// Git action adapter of the Designer Git part. Every endpoint here is an
 // existing server contract the v0.1 GitStatusPanel / GitMergeReviewDialog already use
 // (0033-D §2.3, §4.4); this file only adds the request shapes and the snake_case-to-model
 // boundary. The status / AI activity / file diff reads live in features/project.
@@ -15,7 +15,7 @@
 //   AI          POST  /api/v1/ai-invoke/start (resolve_conflict) · POST /api/v1/ai-invoke/{run}/cancel
 //   providers   GET   /api/v1/ai-invoke/providers?project=
 //
-// flowgate.v02.0065 — the project Git settings contracts the v0.1 GitSettingsView uses, for the
+// the project Git settings contracts the v0.1 GitSettingsView uses, for the
 // Git tab's own `Git 연결` window (no new endpoint, no new field):
 //
 //   config      GET   /api/v1/projects/{pid}/git/config
@@ -23,7 +23,7 @@
 //   test        POST  /api/v1/projects/{pid}/git/test-connection   { repo_url, username, secret, base_branch, provider }
 //   provision   GET | POST /api/v1/projects/{pid}/git/provision
 //
-// flowgate.v02.0066 — the Group worktree contracts (0066 D#1 E1–E12) of the Git tab's worktree
+// the Group worktree contracts of the Git tab's worktree
 // area, in their own section at the end ("Group worktree"); none of the functions above changes.
 //
 // Errors are thrown as GitRequestError carrying `normalizeGitError`'s code / status — the
@@ -145,7 +145,7 @@ interface RawConflicts extends Envelope {
   tr_conflict?: Record<string, unknown> | null
   files?: Array<{ path?: string; conflict_count?: number; content?: string | null }> | null
   resolved_paths?: string[] | null
-  // flowgate.v02test.0052: the last failed abort / cleanup and the files resolved along with the session's own.
+  // the last failed abort / cleanup and the files resolved along with the session's own.
   abort_failure?: Record<string, unknown> | null
   companion_files?: Array<{ path?: unknown; source_path?: unknown }> | null
 }
@@ -177,9 +177,9 @@ export async function fetchConflicts(groupId: string, mergeId: number): Promise<
     baseBranch: str(data.base_branch),
     targetBranch: str(data.target_branch),
     trConflict: (!!data.tr_conflict && typeof data.tr_conflict === 'object') || TR_SESSION_KINDS.includes(str(data.kind) ?? ''),
-    // flowgate.v02test.0042: a Graph card result's merge (kind graph_attempt_merge) is handled in the card, not here.
+    // a Graph card result's merge (kind graph_attempt_merge) is handled in the card, not here.
     graphMerge: str(data.kind) === 'graph_attempt_merge',
-    // flowgate.v02gui.0004: the file content is kept — the direct resolver shows its chunks.
+    // the file content is kept — the direct resolver shows its chunks.
     files: (data.files ?? [])
       .filter((f) => f && typeof f.path === 'string' && f.path)
       .map((f) => ({
@@ -199,7 +199,7 @@ export async function abortMerge(groupId: string, mergeId: number): Promise<void
   await call(() => postRequest<Envelope>(`${mergePath(groupId, mergeId)}/abort`, {}))
 }
 
-// ── Administrator force cleanup (flowgate.v02test.0052 T0003 API, used by 0008) ──────────────────
+// ── Administrator force cleanup (API, used by 0008) ──────────────────
 
 interface RawForceCleanup extends Envelope {
   result?: Record<string, unknown> | null
@@ -267,7 +267,7 @@ export function splitGroupId(groupId: string): { project: string; module: string
 }
 
 /**
- * POST …/merge/{id}/resolve for one file, chunk by chunk (flowgate.v02gui.0004 direct resolve).
+ * POST …/merge/{id}/resolve for one file, chunk by chunk (direct resolve).
  * `complete` is always sent: the server only closes the conflict (resolved_pending_review) once no
  * file has markers left, so a file saved while others remain answers `conflict`. No `auto`: the
  * commit stays the person's own approve press.
@@ -289,7 +289,7 @@ export async function resolveConflictFile(
 
 /**
  * POST /ai-invoke/start for a group conflict (not the branch-merge `ai-resolve`). No `auto`
- * authority. flowgate.v02gui.0004: the AI the person picked goes out pinned; none = the server's
+ * authority. the earlier change: the AI the person picked goes out pinned; none = the server's
  * default chain (the endpoint already takes provider_id / provider_pinned for resolve_conflict).
  */
 export async function startConflictAi(groupId: string, mergeId: number, providerId: string | null = null): Promise<string | null> {
@@ -487,7 +487,7 @@ export async function baseRemove(projectId: string, files: string[]): Promise<Gi
   return { results: fileResults(data), remainingUntracked: strList(data.result?.remaining_untracked) }
 }
 
-// ── Project Git settings (flowgate.v02.0065) ───────────────────────────────────────────
+// ── Project Git settings ───────────────────────────────────────────
 
 interface RawConfig {
   repo_url?: string | null

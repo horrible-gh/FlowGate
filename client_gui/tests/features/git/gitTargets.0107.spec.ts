@@ -1,4 +1,4 @@
-/** T#3 D §6.2-8/9/10: deliberately different project, display, merge and planned targets.
+/** D: deliberately different project, display, merge and planned targets.
  * Source fixtures answer reads; actual API adapters send writes to a mocked transport. */
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'

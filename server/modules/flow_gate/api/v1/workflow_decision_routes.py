@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from modules.flow_gate.services import route_logging
 from modules.flow_gate.services.auth_outbound import verify_bearer
 
-# 0449 T0004 item 6: through route_logging, so these records actually reach logs/default.log
+# through route_logging, so these records actually reach logs/default.log
 # instead of propagating to a handler-less root (see that module's docstring).
 _log = route_logging.get_logger(__name__)
 from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
@@ -50,7 +50,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     validate_continuation_auto_approve_item_seqs,
 )
 from modules.flow_gate.db import documents as _db_documents
-from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D0004 §4.3
+from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # 
 from modules.flow_gate import process_service as _process_service
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.workflow.pipeline_service import transition_document as _transition_document
@@ -142,7 +142,7 @@ class SequenceItem(BaseModel):
 class DecideRequest(BaseModel):
     doc_class: str
     sequence: list[SequenceItem]
-    # 0391 T0005 §5-6: same escape hatch name as the inbox/chat paths — a corrupted
+    # same escape hatch name as the inbox/chat paths — a corrupted
     # step label is rejected unless a real reason (>=10 non-whitespace chars) is given.
     force_encoding_reason: Optional[str] = None
 
@@ -160,10 +160,10 @@ class AdvanceRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
-    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # the ai_direct chain's per-item_seq N/T auto-approve selection.
     # Ignored (never even normalized) unless continuous + ai_direct — see post_workflow_advance.
     continuation_auto_approve_item_seqs: Optional[List[int]] = None
-    # 0405 P0004 [copy mention]: {quantity_type_codes, step_keys, provider_ids} — the work-plan
+    # [copy mention]: {quantity_type_codes, step_keys, provider_ids} — the work-plan
     # proposal scope a person chose on screen. Optional: omitted (or a non-WP head) produces
     # the exact same mention as before. Declared here because Pydantic's default extra='ignore'
     # dropped it silently, so the field could never have reached the mention builder.
@@ -174,7 +174,7 @@ class DecideBodyRequest(BaseModel):
     doc_id: str
     doc_class: str
     sequence: list[SequenceItem]
-    force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
+    force_encoding_reason: Optional[str] = None  # 
 
 
 class AdvanceBodyRequest(BaseModel):
@@ -185,7 +185,7 @@ class AdvanceBodyRequest(BaseModel):
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
     continuation_auto_approve_item_seqs: Optional[List[int]] = None
-    work_plan_scope: Optional[dict] = None  # 0405 P0004 — see AdvanceRequest
+    work_plan_scope: Optional[dict] = None  # see AdvanceRequest
 
 
 class ReviewRequestBody(BaseModel):
@@ -211,7 +211,7 @@ class WorkflowDecisionRequestBody(BaseModel):
 class EditSequenceItem(BaseModel):
     type: str
     label: str
-    # 0399 P0013 ② / DB0012 §2: the step note and where the row came from. All three default
+    # ② / : the step note and where the row came from. All three default
     # to "no plan poured this row", which is what every caller that predates 0399 means.
     note: Optional[str] = None
     source_doc_id: Optional[str] = None
@@ -223,7 +223,7 @@ class EditSequenceItem(BaseModel):
     reviewer_provider_display_name: Optional[str] = None
     pre_instruction_text: Optional[str] = None
     pre_instruction_attachment: Optional[dict] = None
-    # 0649 T#1 (NR0003 O0/O1): the work-plan card the row belongs to, and — for a row that
+    # the work-plan card the row belongs to, and — for a row that
     # already exists — its DB id. A caller sending an existing row back names it with
     # item_id; that is the only way the server recognises the echo of a protected row.
     # A new row sends no item_id.
@@ -234,17 +234,17 @@ class EditSequenceItem(BaseModel):
 class EditSequenceBodyRequest(BaseModel):
     doc_id: str
     items: list[EditSequenceItem]
-    force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
-    # 0399 P0013 ②: the fingerprint handed out by /work-plan/sequence-candidates. Absent on
+    force_encoding_reason: Optional[str] = None  # 
+    # ②: the fingerprint handed out by /work-plan/sequence-candidates. Absent on
     # an ordinary sequence-edit save, and absent means "do not compare" — the check exists for
     # the pour path, whose rows were computed against a sequence read some time ago.
     expected_workflow_tag: Optional[str] = None
-    # 0403 NR0004 F2/F3/F4: { wp_doc_id, wp_revision_no, mode? } — which work plan this save is
+    # { wp_doc_id, wp_revision_no, mode? } — which work plan this save is
     # pouring, and at which revision. Like the fingerprint, it rides only on a pouring save.
     # When present it (1) checks whether the plan changed meanwhile, (2) records an entry in the
     # plan's application history, and (3) allows creating the first sequence when no workflow exists yet.
     expected_plan: Optional[dict] = None
-    # 0649 T#1 (NR0003 O0): confirmations for a plan-reflecting save — today only
+    # confirmations for a plan-reflecting save — today only
     # "legacy_card_unresolved" (started legacy rows whose card cannot be proven).
     acknowledged_codes: Optional[List[str]] = None
 
@@ -354,7 +354,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                 status_code=409,
                 content={"error": "already_decided", "doc_id": doc_id_val},
             )
-        # 0391 T0005 §5-5/§5-6: a corrupted step label is now REJECTED (was: silently
+        # a corrupted step label is now REJECTED (was: silently
         # swapped for the type name). The service raises the full explanation — why it
         # was refused and how to get it through — so pass it straight to the sender.
         if msg.startswith("corrupted_label:"):
@@ -372,7 +372,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             content={"error": "internal_error", "detail": str(exc)},
         )
 
-    if isinstance(result, JSONResponse):  # Graph / conflict Flow (P0008 §9)
+    if isinstance(result, JSONResponse):  # Graph / conflict Flow
         return result
 
     # draft → open transition: auto-transition head document (R) status on workflow decision
@@ -416,7 +416,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                 "prev_status": _prev_review_status,
                 "next_status": _next_status,
                 "rejection_reason": None,
-                # Actor tagging (R0001/NR0003): identify the human decider so the
+                # Actor tagging: identify the human decider so the
                 # SSE self-echo can suppress the redundant "info" toast on the
                 # decider's own connections. Manual decision → user JWT subject;
                 # AI/worker decision → None (worker token), so the requester still
@@ -453,7 +453,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             doc_id=doc_id,
         )
 
-        # Continuous work (group 0086 R0001): if this workflow_decide token started an
+        # Continuous work: if this workflow_decide token started an
         # unmanned chain BEFORE the workflow was decided ("starting from the workflow decision"), the token
         # carries continuation metadata. Now that the sequence exists, kick off the first
         # real step and enclose its token/mention in the decide response so the worker
@@ -471,7 +471,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                     continuation_review_mode=bool(auth.get("continuation_review_mode")),
                     continuation_instruction_mode=auth.get("continuation_instruction_mode"),
                     ai_run_id=auth.get("ai_run_id"),
-                    # 0352 T0004 §3.3: always empty in practice today (request_workflow_decision
+                    # always empty in practice today (request_workflow_decision
                     # never accepts a selection — see that function's docstring), threaded for
                     # contract symmetry with advance_workflow.
                     continuation_auto_approve_item_seqs=auth.get(
@@ -512,13 +512,13 @@ def post_workflow_advance(
     if isinstance(auth, JSONResponse):
         return auth
 
-    # 0449 T0004 item 6 (NR0003 §3): advance leaves a trail from here on. The investigation
+    # advance leaves a trail from here on. The investigation
     # could not establish whether the incident's 08:19 request even reached this handler,
     # because a 400/409 refusal is ordinary control flow and logged nothing anywhere. Now the
     # arrival and the outcome are both recorded under a shared correlation id, so this path
     # and /token/issue can be told apart in the operational record.
     #
-    # 0449 TR0005 rev1 — `received` is written HERE, before any other work, and every later
+    # `received` is written HERE, before any other work, and every later
     # statement runs inside the failed-guard below. rev0 opened the guard only around
     # advance_workflow(), which left four ways to end as a 500 with no `received`/`failed`
     # pair in the record: the instruction-mode normalisation, the _db_documents.get_by_id()
@@ -534,7 +534,7 @@ def post_workflow_advance(
         # it keeps its own status and must not be relabelled `failed`/500 here.
         raise
     except Exception as exc:
-        # 0449 TR0005 rev2 — no `_log.exception` here. It writes a SECOND record whose
+        # no `_log.exception` here. It writes a SECOND record whose
         # `exc_info` the formatter expands into the full traceback plus `str(exc)`, and that
         # text is not ours: an exception raised inside the mint or render helpers carries
         # whatever they interpolated, a raw token included. That record went straight into
@@ -615,7 +615,7 @@ def _advance_after_auth(
     issued_to: str = auth["issued_to"]
     api_base_url = _build_api_base(request)
     ref_doc_ids = body.ref_doc_ids if body else None
-    # Continuous work (group 0086 R0001): forward the unmanned-chain stop point + review
+    # Continuous work: forward the unmanned-chain stop point + review
     # flag so advance_workflow mints a continuation token + continuous mention.
     continuous = bool(body.continuous) if body else False
     continuation_target_seq = body.continuation_target_seq if body else None
@@ -623,7 +623,7 @@ def _advance_after_auth(
     continuation_instruction_mode = normalize_continuation_instruction_mode(
         body.continuation_instruction_mode if body else None
     )
-    # 0405 P0004: forwarded as-is. advance_workflow only reads it when the head type is WP.
+    # forwarded as-is. advance_workflow only reads it when the head type is WP.
     work_plan_scope = body.work_plan_scope if body else None
 
     _pre_doc = _db_documents.get_by_id(doc_id)
@@ -637,11 +637,11 @@ def _advance_after_auth(
     if _active_run is not None:
         log("refused", status=_active_run.status_code, code="group_mutation_blocked")
         return _active_run
-    _graph_refusal = _graph_contact.progress_refusal(_pre_doc)  # Graph / conflict Flow (P0008 §9)
+    _graph_refusal = _graph_contact.progress_refusal(_pre_doc)  # Graph / conflict Flow
     if _graph_refusal is not None:
         return _refused(409, *_graph_refusal)
 
-    # 0352 T0004 §2/§3.4: this is a FRESH client request naming the selection, so the full
+    # this is a FRESH client request naming the selection, so the full
     # 422 validation (including "already done") runs here — not inside advance_workflow,
     # which reuses the same set on every later hop of an ongoing chain where an earlier
     # selection legitimately reads back 'done' once the server has completed it.
@@ -713,7 +713,7 @@ def _advance_after_auth(
                 "group_not_found",
                 {"error": "group_not_found", "doc_id": doc_id_val},
             )
-        # 0441 T0004 item 3: the head is a type the SERVER assembles (TSR). Advancing would
+        # the head is a type the SERVER assembles (TSR). Advancing would
         # mint a 'new' token telling somebody to write it by hand, so advance_workflow
         # refuses. 409 for the same reason as head_in_progress — the request is well formed,
         # the workflow state is simply not one this action applies to. The detail names the
@@ -965,7 +965,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     if isinstance(auth, JSONResponse):
         return auth
 
-    # R0001 group 0208 (NR0003 §3-2): this PATCH previously accepted any valid bearer with no
+    # this PATCH previously accepted any valid bearer with no
     # action_scope check, unlike /workflow/decide. Now that a worker can be handed a dedicated
     # sequence-edit token, a worker token MUST carry action_scope=workflow_sequence_edit and be
     # bound to this exact doc_ref. A user JWT (the human edit modal) has action_scope None and
@@ -983,7 +983,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 },
             )
 
-    # TR0079.0003 rework (3rd pass): editing the workflow sequence of a
+    # (3rd pass): editing the workflow sequence of a
     # document in a disposed (DC) group is a forward write and must be rejected at the
     # server, mirroring decide/advance/review-request above.
     _pre_doc = _db_documents.get_by_id(body.doc_id)
@@ -1010,7 +1010,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             acknowledged_codes=body.acknowledged_codes,
         )), auth.get("issued_to"))
     except ProtectedRowModified as exc:
-        # 0649 T#1 (NR0003 O1): an echo tried to change a protected row's identity.
+        # an echo tried to change a protected row's identity.
         return JSONResponse(
             status_code=409,
             content={
@@ -1021,7 +1021,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except ProtectedRowEchoAmbiguous as exc:
-        # 0649 T#1 (NR0003 O1): a lone report item that may be an old caller's echo.
+        # a lone report item that may be an old caller's echo.
         # Nothing was written; the caller reloads and sends the row back with its item_id.
         return JSONResponse(
             status_code=409,
@@ -1044,7 +1044,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except LegacyCardUnresolved as exc:
-        # 0649 T#1 (NR0003 O0): confirm first — acknowledged_codes: ["legacy_card_unresolved"].
+        # confirm first — acknowledged_codes: ["legacy_card_unresolved"].
         return JSONResponse(
             status_code=409,
             content={
@@ -1055,14 +1055,14 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except PlanOrderBlocked as exc:
-        # 0649 T#2 (NR0003 O2/O5): order_conflicts_started / started_card_removed /
+        # order_conflicts_started / started_card_removed /
         # card_identity_mismatch / plan_rows_pending. Refused before anything was written.
         return JSONResponse(
             status_code=409,
             content={**exc.detail, "error": exc.code, "wp_doc_id": exc.wp_doc_id},
         )
     except PlanOrderViolation as exc:
-        # 0649 T#2 (NR0003 O5): the rows this save would write do not follow the plan's
+        # the rows this save would write do not follow the plan's
         # card order. The write was rolled back.
         return JSONResponse(
             status_code=409,
@@ -1073,7 +1073,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except PlanRevisionChanged as exc:
-        # 0403 NR0004 F2: the workflow is unchanged but the plan moved. Rather than inserting the
+        # the workflow is unchanged but the plan moved. Rather than inserting the
         # open dialog's stale rows, answer by asking the user to reopen and pour the latest plan.
         return JSONResponse(
             status_code=409,
@@ -1085,7 +1085,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except SequenceChanged as exc:
-        # 0399 P0013 ②: do not overwrite. The rows in hand were built against a sequence
+        # ②: do not overwrite. The rows in hand were built against a sequence
         # that no longer exists, so the person is sent back to re-open rather than told
         # "saved" over somebody else's change.
         return JSONResponse(
@@ -1098,7 +1098,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except NoteTooLong as exc:
-        # 0406 T0022 item 6 / M0019: the old save silently cut everything past the cap and
+        # the old save silently cut everything past the cap and
         # answered success. It now rejects. The shape matches the note_too_long the work-plan
         # save already uses — code, cap, actual length, and which row.
         return JSONResponse(
@@ -1113,7 +1113,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         )
     except ValueError as exc:
         msg = str(exc)
-        # 0399 P0013 ② / DB0012 §5: a revision number with no document to belong to.
+        # ② / : a revision number with no document to belong to.
         if msg.startswith("invalid_sequence_item:"):
             _, index, detail = msg.split(":", 2)
             return JSONResponse(
@@ -1130,7 +1130,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 status_code=400,
                 content={"error": "sequence_not_decided", "doc_id": doc_id_val},
             )
-        # 0403 NR0004 F2: the plan expected_plan names does not exist, or is malformed.
+        # the plan expected_plan names does not exist, or is malformed.
         if msg.startswith("plan_not_found:"):
             return JSONResponse(
                 status_code=404,
@@ -1146,7 +1146,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 status_code=422,
                 content={"error": "invalid_expected_plan", "detail": msg.split(":", 1)[1]},
             )
-        # 0391 T0005 §5-5/§5-6: a corrupted step label is now REJECTED (was: silently
+        # a corrupted step label is now REJECTED (was: silently
         # swapped for the type name). The service raises the full explanation — why it
         # was refused and how to get it through — so pass it straight to the sender.
         if msg.startswith("corrupted_label:"):
@@ -1154,7 +1154,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 status_code=422,
                 content={"error": "corrupted_label", "detail": msg.split(":", 1)[1]},
             )
-        # 0119 B0001 (NR0003 §6-A): emptying a decided-but-unstarted workflow would
+        # emptying a decided-but-unstarted workflow would
         # create the unrecoverable zombie sequence — reject like the decide path does.
         if msg.startswith("invalid_sequence_empty:"):
             doc_id_val = msg.split(":", 1)[1]
@@ -1165,7 +1165,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         return JSONResponse(status_code=400, content={"error": msg})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": "internal_error", "detail": str(exc)})
-    if isinstance(result, JSONResponse):  # Graph / conflict Flow (P0008 §9)
+    if isinstance(result, JSONResponse):  # Graph / conflict Flow
         return result
 
     # SSE broadcast: AI sequence edits happen through a worker PATCH, so the user's

@@ -40,7 +40,7 @@ def patch_context(monkeypatch, root: Path, marker: str | None, *, registered=Tru
         "project_id": "flowgate", "branch": "flowgate_default_0534",
         "worktree_registered": 1 if registered else 0,
         "initial_source_sync_sha": marker, "initial_source_sync_at": "2026-01-01T00:00:00Z" if marker else None,
-        # 0665 T0004: the package base is the group's recorded floor (its fork from main).
+        # the package base is the group's recorded floor (its fork from main).
         "work_base_sha": git(root, "rev-parse", "main"), "work_base_state": "verified",
     }
     monkeypatch.setattr(rps.db_git, "get_state", lambda group_id: state)

@@ -69,8 +69,8 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_skips_baseless_add_add_chunk(self, origin_repo):
-        # 0478 T0012 completion (iii): a chunk with NO "|||||||" section at all (T0012's
-        # "zdiff3 이전에 만들어진 구세션") must not be checked — base=None means there is no
+        # Completion (iii): a chunk with NO "|||||||" section at all (an old session
+        # created before zdiff3) must not be checked — base=None means there is no
         # ancestor to diff against, so a one-sided resolution of such a chunk still passes.
         #
         # git_service always forces `-c merge.conflictStyle=zdiff3`, so even an add/add
@@ -121,8 +121,8 @@ class TestGitEndToEnd(_Scenario):
         assert "|||||||" not in no_base_entry["content"]
 
         # keeps only ONE side — no base means nothing to compare against, so this
-        # must pass exactly like it did before T0012 (markers gone → done).
-        # 0481 T0008: opt into the pre-existing immediate-merge behavior (see the
+        # must pass exactly like it did before base checks (markers gone → done).
+        # Opt into the pre-existing immediate-merge behavior (see the
         # note in test_conflict_resolve_flow above) — this test is about the
         # baseless-chunk skip, not the review gate.
         svc.record_auto_authority(group, merge_id, True)

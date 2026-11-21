@@ -1,4 +1,4 @@
-"""Card title ports of the AI naming (flowgate.v02.0064 T-B4d, 0062 L0006 2.4 / 2.6, P0006 §4.2.5 / §4.2.6).
+"""Card title ports of the AI naming.
 
 The Designer card title is owned by the Graph package; the inbox (a v0.1 route) and the AI node start meet it here.
 
@@ -11,7 +11,7 @@ The Designer card title is owned by the Graph package; the inbox (a v0.1 route) 
 * The hook never raises and never changes what the inbox answers, stores or consumes: a handler exception is logged.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 
-The title request a claiming AI start puts at the very end of its prompt (P0006 §4.2.6) is worded here too: the
+The title request a claiming AI start puts at the very end of its prompt is worded here too: the
 inbox body (``node_title`` of the POST /inbox request) for a CLI AI, the ``register_document`` input for an API AI.
 The claiming start only records that its token asks (``request_title``); the wording is chosen at the provider
 boundary (worker ``_provider_prompt`` -> ``provider_prompt``) by the ``exec_type`` of the provider actually launched,
@@ -35,7 +35,7 @@ HOOK_NAMES = (AFTER_REGISTRATION,)
 # The separator between the mention and the title request (one empty line), as between the other mention sections.
 SECTION_SEPARATOR = "\n\n"
 TITLE_REQUEST_LOCALES = ("ko", "en", "ja")
-# P0006 §4.2.6, the CLI wording: the AI sends the inbox request itself.
+# the CLI wording: the AI sends the inbox request itself.
 TITLE_REQUEST_CLI = {
     "ko": "이 카드는 아직 기본 제목입니다. 작업 내용을 한눈에 알 수 있는 제목을 20~30자로 짓되, 카드 종류 명칭(예: 조사, "
           "요구사항)을 그대로 반복하지 마세요. 그 제목을 문서를 제출하는 inbox 요청 본문의 `node_title` 항목에 넣어 "
@@ -48,7 +48,7 @@ TITLE_REQUEST_CLI = {
           "名称（例：調査、要件）をそのまま繰り返さないでください。そのタイトルを、文書を提出する inbox リクエスト本文の "
           "`node_title` 項目に入れてください。タイトルは任意で、文書の提出には影響しません。",
 }
-# P0006 §4.2.6, the API wording: the AI registers through the register_document tool.
+# the API wording: the AI registers through the register_document tool.
 TITLE_REQUEST_API = {
     "ko": "이 카드는 아직 기본 제목입니다. 작업 내용을 한눈에 알 수 있는 제목을 20~30자로 짓되, 카드 종류 명칭(예: 조사, "
           "요구사항)을 그대로 반복하지 마세요. 그 제목을 문서를 등록하는 `register_document` 도구 입력의 `node_title` "
@@ -108,7 +108,7 @@ def after_registration(flow_id: Optional[str], doc_id: Optional[str], token_id: 
 
 
 def title_request(exec_type: Optional[str], locale: Optional[str] = None) -> str:
-    """The title request of P0006 §4.2.6 for a provider of ``exec_type`` (``api``: the tool input, else the inbox
+    """The title request of the plan for a provider of ``exec_type`` (``api``: the tool input, else the inbox
     body) and the locale."""
     loc = str(locale or "").strip().lower()[:2]
     loc = loc if loc in TITLE_REQUEST_LOCALES else "ko"
@@ -117,7 +117,7 @@ def title_request(exec_type: Optional[str], locale: Optional[str] = None) -> str
 
 def append_title_request(prompt: str, exec_type: Optional[str], locale: Optional[str] = None) -> str:
     """Append the title request; provider finalization places the task block after it. A failing wording leaves
-    the prompt as it is: the AI starts all the same (0062 L0006 5)."""
+    the prompt as it is: the AI starts all the same."""
     try:
         request = title_request(exec_type, locale)
     except Exception:  # noqa: BLE001

@@ -1,4 +1,4 @@
-"""0126 T#5 A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
+"""Real settings routes, SQLite assignments/ledger, AI admission recorder.
 No external model, deployed server, or existing user data is used.
 """
 import json

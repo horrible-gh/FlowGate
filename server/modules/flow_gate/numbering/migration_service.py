@@ -200,7 +200,7 @@ def _apply_non_card_reformat(project_id, target, from_width, to_width):
             old_path = row.get("file_path")
             new_path: Optional[str] = None
             if old_path:
-                # file_path is persisted relative (L0054.0002): resolve to an
+                # file_path is persisted relative: resolve to an
                 # absolute Path for the rename, then re-store the new value relative.
                 from ..storage.paths import resolve_storage_path, to_storage_relative
                 resolved_old = resolve_storage_path(old_path, project_id)

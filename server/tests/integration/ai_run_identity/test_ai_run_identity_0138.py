@@ -1,4 +1,4 @@
-"""0138 real SQLite transactions, independent processes and Windows scratch ownership.
+"""real SQLite transactions, independent processes and Windows scratch ownership.
 
 All databases replay the complete migration chain. Files stay in pytest basetemp;
 no live service, DB, token or scratch root is used.
@@ -359,7 +359,7 @@ def _scratch_process(db_path, root, row, output, barrier):
 
 
 
-# ── flowgate.v02.0139: v0.2 issues its own namespace next to a live v0.1 ──────────
+# ── the earlier change: v0.2 issues its own namespace next to a live v0.1 ──────────
 
 def _version(store):
     return store._fetch_one("SELECT version FROM ai_run_id_contract WHERE singleton = 1")["version"]

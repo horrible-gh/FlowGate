@@ -1,4 +1,4 @@
-/** flowgate.v02.0113 T#1 (0021-T): P-1 card_roles_unavailable → the roles_unavailable kind on the check / requirement cards. */
+/** P-1 card_roles_unavailable → the roles_unavailable kind on the check / requirement cards. */
 import { describe, expect, it } from 'vitest'
 import { checkSettingsErrorKey, checkSettingsView, type CheckSettingsFailureKind } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
 import { requirementSettingsErrorKey, requirementSettingsView, type RequirementSettingsFailureKind } from '../../../../../preview/inspector/legacy/requirementSettings/requirementSettingsModel'

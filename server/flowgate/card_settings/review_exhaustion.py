@@ -80,7 +80,7 @@ def wire(row, attempt_id):
             ("stage", "doc_id", "revision_no", "review_count", "stop_reason")} if rows else None)}
 
 
-# v02gui.0029 (0002-CH turn 35-36): the next card's AI is told which earlier cards came through with their review count
+# v02gui.0029 (CH): the next card's AI is told which earlier cards came through with their review count
 # spent (approved without passing a review). Its own section of the prompt only: no document is changed, no state added.
 _NOTICE = {
     "ko": ("앞 카드 검수 알림",

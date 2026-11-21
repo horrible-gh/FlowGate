@@ -40,7 +40,7 @@ class TestRealSelfCheckOverlap:
     def test_same_group_approval_does_not_wait_for_a_running_selfcheck(
         self, origin_repo, selfcheck_stubs,
     ):
-        """0053 1-B: the run executes in its snapshot and holds no G, so the same Group's real
+        """the run executes in its snapshot and holds no G, so the same Group's real
         HTTP approve proceeds at once (it used to wait the run out on G), removes the Group's
         worktree, and the self-check still ends with its own result."""
         from modules.flow_gate.db import git_concurrency as gc

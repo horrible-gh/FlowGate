@@ -1,4 +1,4 @@
-// flowgate.v02.0156 T1 — run preparation (A0~A8) on an insecure context: the default identity path (no uuid injected),
+// run preparation (A0~A8) on an insecure context: the default identity path (no uuid injected),
 // failures that name their stage and code (R2/R3), the persisted diagnostics (E2), and the R4 two-tab race model.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive, watch } from 'vue'

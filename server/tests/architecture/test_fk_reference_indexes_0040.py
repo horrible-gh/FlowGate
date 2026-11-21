@@ -1,4 +1,4 @@
-"""FOREIGN KEY reference indexes, migration 194 (flowgate.v02test.0040 0003-T).
+"""FOREIGN KEY reference indexes, migration 194.
 
 A module identifier change rewrites document and group ids in one transaction and, at COMMIT,
 runs the FK check of every changed id against every referencing table. A referencing column that

@@ -70,7 +70,7 @@ def _run_row(env):
 
 
 def _submitted(doc_id):
-    """The instruction submitted as the AI's inbox submission leaves it (0084: 0004-T ``pending_review``)."""
+    """The instruction submitted as the AI's inbox submission leaves it (``pending_review``)."""
     from modules.flow_gate.db import documents as db_documents
 
     db_documents.update(doc_id, {"doc_review_status": "pending_review"})
@@ -166,7 +166,7 @@ def test_a_pre_feature_instruction_nobody_judges_is_a_person_s_wait_and_the_read
                       _sql(env["db"], "SELECT doc_id, doc_review_status, revision_no FROM documents ORDER BY doc_id"))
     wire = _wire(detail.json()["run"], key)
     assert (wire["stage"], wire["instruction_doc_id"], wire["stage_assignments"]) == ("instruction", instruction, [])
-    # flowgate.v02.0119 T#3 (T-2 rework): its review that did not start is a system error of the instruction stage —
+    # (T-2 rework): its review that did not start is a system error of the instruction stage —
     # the node run tells it and the run is in its error family, never a person's wait
     assert wire["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
 

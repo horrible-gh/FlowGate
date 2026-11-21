@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0043 — the Designer File menu connected to the product (0001-R).
+ * the Designer File menu connected to the product.
  *
- * Every item of 파일 — Project / Group / Flow 새로 만들기 · 열기 · 최근 · 닫기 and Designer 닫기 — acts
+ * Every item of 파일 — Project / Group / Flow Create new · 열기 · Recent · 닫기 and Designer 닫기 — acts
  * on what already exists: the Project Dialog and its "열기" (0040), the Project Explorer's
  * selection / expansion (0023), the Center session's Flow tabs (0026) and the v0.1 module /
  * group creates. Opening a Flow is the Explorer's double click (select + open); a selection
@@ -93,7 +93,7 @@ function project(id: string, name: string): Project {
 
 beforeEach(() => {
   localStorage.clear()
-  // flowgate.v02.0105 T#1: a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
+  // a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
   sessionStorage.clear()
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'test', email: null, isAdmin: true })
@@ -109,7 +109,7 @@ beforeEach(() => {
     if (url.endsWith('/git/work-base-options')) return { data: { git_enabled: true, base_branch: 'v0.2', branches: [{ name: 'v0.2', is_project_base: true }] } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
     if (url === '/api/v1/projects') return { data: { projects: [] } }
-    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    // the Designer reads Flow Graphs from the server Canvas API.
     const canvas = answerFlowCanvas(url)
     if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
@@ -253,7 +253,7 @@ describe('File menu availability (0043 0001-R §3)', () => {
     expect(commandStates(await openMenu(w, 'file')).disabled).toEqual(['flow.close'])
     expectUnselected(w)
 
-    // flowgate.v02test.0002 R0001 #5: that single click has already opened the Group.
+    // #5: that single click has already opened the Group.
     expect(explorerRow(w, 'UI 개선').attributes('aria-expanded')).toBe('true')
     await doubleClick(w, 'Canvas')
     expect(commandStates(await openMenu(w, 'file')).disabled).toEqual(['group.close'])
@@ -359,7 +359,7 @@ describe('Group commands', () => {
 
   it('Group 닫기 folds the chosen Group and clears the selection', async () => {
     const w = await mountShell()
-    // flowgate.v02test.0002 R0001 #5: one click chooses the Group and opens it (a second click would close it).
+    // #5: one click chooses the Group and opens it (a second click would close it).
     await click(w, 'UI 개선')
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선', 'Designer v0.2', 'Canvas', 'core'])
 
@@ -428,7 +428,7 @@ describe('Group commands', () => {
     await typeIn('[data-test="designer-group-create-title"]', 'Infra')
     await typeIn('[data-test="designer-group-create-name"]', 'infra')
     await clickIn('[data-test="designer-group-create-submit"]')
-    // flowgate.v02.0088 F10: no server words -> the dialog's localized create_failed, never the adapter's English default.
+    // no server words -> the dialog's localized create_failed, never the adapter's English default.
     expect(dialog('[data-test="designer-group-create-error"]').textContent?.trim()).toBe('생성하지 못했습니다.')
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선', 'core'])
   })

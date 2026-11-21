@@ -1,4 +1,4 @@
-"""Graph API errors raised by services and turned into the P0008 §1.3 envelope by the routes."""
+"""Graph API errors raised by services and turned into the the plan envelope by the routes."""
 from __future__ import annotations
 
 from typing import Optional

@@ -1,4 +1,4 @@
-"""0029: real assigned review/approval with durable exhaustion evidence."""
+"""real assigned review/approval with durable exhaustion evidence."""
 import json
 import pytest
 from test_fg_ai_roles_l2_assignment import (  # noqa: F401 - fixtures used by name
@@ -119,7 +119,7 @@ def test_only_continue_opens_the_next_card(env, fork_join, monkeypatch, starts, 
 
 
 def test_next_card_ai_is_told_which_earlier_card_skipped_its_review(env, fork_join, monkeypatch, starts):
-    """0002-CH turn 35-36 item 3: the AI of a card after an exhaustion approval gets a section naming that card (its
+    """item 3: the AI of a card after an exhaustion approval gets a section naming that card (its
     document, revision and review count); a card on another branch and the approved card itself get none."""
     from flowgate.card_settings import review_exhaustion
     from test_fg_card_intervention_assigned_0119 import _branches, _reviewed_ai_result, command, stored

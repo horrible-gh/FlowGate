@@ -1,4 +1,4 @@
-"""Regression guard for legacy QA answer AI run ownership (0396 T0004)."""
+"""Regression guard for legacy QA answer AI run ownership."""
 from __future__ import annotations
 
 import inspect
@@ -112,7 +112,7 @@ def test_ai_builder_mints_followup_token_under_its_run_id(ai_dispatch):
     assert "ai_run_id" in inspect.signature(captured["issue_builder"]).parameters
     assert issued.get("ai_run_id") == RUN_ID
     assert captured["issue"]["token_id"] == TOKEN_ID
-    # T0004 (0581 rev1 rejection): the Q&A followup issue is what admission.start_run's
+    # the Q&A followup issue is what admission.start_run's
     # `run["token_scratch_dir"] = issue["scratch_dir"]` (a required key, no fallback)
     # consumes -- pin here that the issue this dispatch actually hands start_run carries
     # the SAME scratch_dir as its raw_token/token_id, not a stale or missing one.

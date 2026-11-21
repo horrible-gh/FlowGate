@@ -10,7 +10,7 @@
 
 <script setup lang="ts">
 // One right-hand summary panel. The mockup fills these with sample rows and counts; no
-// v0.2 data source exists for them yet (T0011 §7/§9: don't fake features), so the panel
+// v0.2 data source exists for them yet (don't fake features), so the panel
 // keeps its place and heading and states plainly that it is not connected.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

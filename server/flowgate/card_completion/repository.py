@@ -1,4 +1,4 @@
-"""Card completion store (flowgate.v02.0119 T#2, T-1).
+"""Card completion store.
 
 Migration 169_graph_card_completions.sql. One row per completion of a node attempt's result: the only source of "this
 node is done" in a Graph run. The row is never deleted; its ``status`` tells what became of it:

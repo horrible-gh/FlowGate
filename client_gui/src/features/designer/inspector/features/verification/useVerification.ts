@@ -175,7 +175,7 @@ export function useVerificationRow(target: () => InspectorTarget | null): Verifi
     try {
       const next = await cardVerificationAct(current.flowId, current.nodeId, runId, action)
       const reader = readers.get(key)
-      // 종료됨 / 취소됨 stay briefly; the next read hides them.
+      // Ended / 취소됨 stay briefly; the next read hides them.
       const settled = next.state === 'stopped' || next.state === 'cancelled'
       if (reader) reader.take(next, settled ? VERIFICATION_FEEDBACK_MS : undefined)
       else answers.set(key, next)

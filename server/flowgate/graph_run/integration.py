@@ -1,4 +1,4 @@
-"""Run state port handlers: how the Graph workflow reaches this package (D0006 §2.3).
+"""Run state port handlers: how the Graph workflow reaches this package.
 
 ``modules.flow_gate.graph_workflow.services.run_state_ports`` defines the ports; the composition root
 (``startup.py``) calls :func:`register` once at startup.
@@ -8,7 +8,7 @@
     command_of           the command a paused / idle run goes on with (``command.command_of``)
     record_command       the new command, before its run status event (``command.record_command``)
     record_step_targets  a step's targets (``command.record_step_targets``)
-    stop                 T#7 Stop (``stop.stop_run``)
+    stop the earlier implementation Stop (``stop.stop_run``)
 """
 from __future__ import annotations
 

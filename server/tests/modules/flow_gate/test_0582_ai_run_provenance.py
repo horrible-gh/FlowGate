@@ -1,6 +1,6 @@
-"""Regression tests for flowgate.default.0582 T0005 — common AI-run provider provenance.
+"""Regression tests for the earlier change the earlier implementation — common AI-run provider provenance.
 
-Covers the T's own completion checklist (T0005 §8):
+Covers the T's own completion checklist:
   8.1 requested-provider != effective-provider -> only the effective one is ever shown
       (BAD_REQUESTED_PROVIDER / GOOD_EFFECTIVE_PROVIDER sentinels).
   8.2 a snapshot already written is immune to a later provider rename (proven at the
@@ -147,7 +147,7 @@ def test_to_api_payload_is_none_for_empty_or_missing_snapshot():
     assert prov.to_api_payload(None) is None
 
 
-# ── Part A2: document_review_loop stage-transition provenance (0582 TR0006 rev1) ─
+# ── Part A2: document_review_loop stage-transition provenance ─
 # A document_review_loop hop rewrites run["hop_kind"] in place as it alternates
 # stages, while run["action_scope"] stays pinned to whatever scope the RUN was first
 # admitted under, for its whole lifetime (worker.py's loop transition never touches
@@ -524,7 +524,7 @@ def test_provider_rename_does_not_alter_an_already_stored_snapshot(store):
 
 
 
-# ── Part C: T0007 failure-origin persistence and API shaping ─────────
+# ── Part C: the earlier implementation failure-origin persistence and API shaping ─────────
 
 def test_failure_origin_snapshot_is_atomic_and_shape_run_exposes_it(store):
     from modules.flow_gate.db import test_runs
@@ -569,7 +569,7 @@ def _route_client(*routers):
 
 
 def test_inbox_failure_origin_route_persists_and_document_api_exposes_provider(store, tmp_path):
-    """T0007 §7.3: real failure_origin_review inbox POST, DB write, and detail API."""
+    """real failure_origin_review inbox POST, DB write, and detail API."""
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.api.v1 import document_routes
     from modules.flow_gate.db import test_runs

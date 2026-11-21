@@ -1,4 +1,4 @@
-// Words of the Flow attachment window (flowgate.v02gui.0030 final mockup). The window shows no text buttons
+// Words of the Flow attachment window (final mockup). The window shows no text buttons
 // for delete / undo: those words are only tooltips and accessible names.
 type Origin = 'ai' | 'upload' | 'bug' | 'requirement' | 'chat' | 'card'
 type ErrorKind = 'delete' | 'upload' | 'download' | 'read'

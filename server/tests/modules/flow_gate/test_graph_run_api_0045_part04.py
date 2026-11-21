@@ -53,7 +53,7 @@ def test_canvas_shows_the_run(env, decided):
     submit(FG, d, "D", token_of(env))
     body = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h()).json()
     assert {k: body["run"][k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")} ==         {"run_id": run_id, "status": "running", "revision_no": 1, "open_node_keys": [], "last_event_seq": 4}
-    # flowgate.v02.0083 T#4 rev1: with the band's facts of the same run read
+    # with the band's facts of the same run read
     assert body["run"]["idle_reason"] is None and body["run"]["pending_node_keys"] == []
     nodes = {n["node_key"]: n for n in body["nodes"]}
     assert nodes["gn_r"]["state"] == "done" and nodes["gn_r"]["node_run"]["status"] == "done"
@@ -69,7 +69,7 @@ def test_canvas_draws_the_revision_the_run_pinned(env, decided):
     _confirm_next(FG, [_node("gn_r", "R"), _node("gn_d", "D", "human", user="u_lee"),
                        _node("gn_q", "T", "human", user="u_kim")],
                   [_edge("ge_rd", "gn_r", "gn_d"), _edge("ge_dq", "gn_d", "gn_q")])
-    run_id = start(env, body={"revision_no": 1}).json()["run"]["run_id"]          # P0008 S5-2: an older revision
+    run_id = start(env, body={"revision_no": 1}).json()["run"]["run_id"]          # S5-2: an older revision
 
     def canvas(query=""):
         res = env["client"].get(f"/api/v1/flows/{FG}/canvas{query}", headers=_h())

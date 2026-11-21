@@ -1,7 +1,7 @@
-"""flowgate.default.0501 T4: ai_invoke worker / provider transport module boundary.
+"""ai_invoke worker / provider transport module boundary.
 
-T4 split ai_invoke_part2_worker.py (flowgate.default.0497 T0009's part 2 of 3) into
-three modules; T6 then moved the whole engine into the ai_invoke/ package (NR0003
+T4 split ai_invoke_part2_worker.py ('s part 2 of 3) into
+three modules; T6 then moved the whole engine into the ai_invoke/ package (the review
 §12), where those three are
 three files along the actual module boundary:
 
@@ -18,7 +18,7 @@ This file covers the two conditions T4 itself named as the hard requirement:
     fake)` pattern must still be observed by the REAL worker path even though the
     call site (`_api_execute`, now in ai_invoke/worker.py) and the callee
     (`_call_openai`/`_call_anthropic`, now in ai_invoke/provider_api.py) live in
-    different files. flowgate.default.0501 T5 replaced the exec()-assembled shared
+    different files. the earlier change T5 replaced the exec-assembled shared
     globals() dict with normal imports: `ai_invoke/worker.py` reaches
     `svc._call_openai`/`svc._call_anthropic` through `svc` (`ai_invoke_service`,
     imported once at its own top), so `monkeypatch.setattr(svc, ...)` still patches
@@ -51,7 +51,7 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_SERVER_DIR))
 _SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
-# flowgate.default.0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12);
+# moved the engine into the ai_invoke/ package;
 # the three files T4 created kept their contents and lost the redundant prefix.
 _PKG_DIR = _SERVICES_DIR / "ai_invoke"
 _PROVIDER_API_PATH = _PKG_DIR / "provider_api.py"
@@ -167,12 +167,12 @@ class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
 
 
 class TestProviderFallbackPreservesTokenIdentity:
-    """0496 T0004 §7/§11-B: a provider chain fallback within ONE hop must not touch the
+    """B: a provider chain fallback within ONE hop must not touch the
     run's token identity. `_execute_provider_chain` (ai_invoke/worker.py:229-285) never
     reissues between chain entries -- reissue only happens one full hop later, in the
     OUTER no-output retry loop via `_prepare_retry_token` (ai_invoke/worker.py:568-640).
     Each provider entry's `_api_execute` re-reads `current_token = run["raw_token"]`
-    fresh at its own top (worker.py:850), so this test answers T0004 §7's six questions
+    fresh at its own top (worker.py:850), so this test answers the earlier implementation's six questions
     for real instead of asserting them: (1) same run_id -- same `run` dict object,
     never rebuilt; (2)/(3) same token_id/raw_token -- read straight off `run` again,
     never mutated by the failed first attempt; (4) no reissue happens before the
@@ -236,7 +236,7 @@ class TestImportDependencyGuard:
     )
     # Inside the package these are relative imports, so the guard matches the MODULE
     # NAME: `from . import chain` carries no dotted path and a suffix check would
-    # silently stop guarding (NR0003 §28).
+    # silently stop guarding.
     _FORBIDDEN_PACKAGE_MODULES = {"chain", "review", "admission", "diagnostics", "facade"}
     # `runtime` is no longer forbidden outright -- T6 made it the home of the engine's
     # PARAMETERS as well as the registry, and a transport legitimately reads
@@ -285,7 +285,7 @@ class TestImportDependencyGuard:
         self._assert_no_forbidden_imports(_PROVIDER_CLI_PATH)
 
     def test_worker_module_does_not_define_lease_acquisition_or_run_id_allocation(self):
-        """T3 (flowgate.default.0501 T0008) put run-id allocation and lease
+        """T3 put run-id allocation and lease
         acquisition/admission outside the worker; T6 gave both an explicit home --
         `ai_invoke/runtime.py` for the run-id counter, `ai_invoke/admission.py` for
         start_run and the lease. Neither may drift back into the worker."""
@@ -338,7 +338,7 @@ class TestFileSplitIsComplete:
 
 
 class TestReissueBoundaryPreservesTokenIdentity:
-    """0496 T0006 §3.1: TR0005 (rev1, approved) traced the reissue boundary in
+    """(approved) traced the reissue boundary in
     `_prepare_retry_token` (worker.py:560-640) by READING the code -- "token_id and
     raw_token are updated together, in the same function, with nothing else able to
     interleave" -- but never pinned that claim with a test that actually EXECUTES it.
@@ -413,13 +413,13 @@ class TestReissueBoundaryPreservesTokenIdentity:
         assert run["raw_token"] == "tok_new_raw"
         assert run["token_id"] != "tok_original_id"
         assert run["raw_token"] != "tok_original_raw"
-        # T0004 rev1 rejection: the scratch is a THIRD identifier that must move with
+        # rejection: the scratch is a THIRD identifier that must move with
         # the other two -- never left pointing at the pre-reissue hop's token scratch.
         assert run["token_scratch_dir"] == "/scratch/tok_new_id"
         assert run["token_scratch_dir"] != "/scratch/tok_original_id"
 
     def test_a_raising_lease_update_cannot_leave_a_half_updated_token_pair(self, monkeypatch):
-        """0496 T0008 (self-review of the test above): the sibling assertion only holds
+        """(self-review of the test above): the sibling assertion only holds
         on the happy path, and every test in this class steers around the group-lease
         write by leaving `group_id` None. That write sits between the two halves of the
         run's token identity, and neither caller of `_prepare_retry_token`
@@ -427,7 +427,7 @@ class TestReissueBoundaryPreservesTokenIdentity:
         instant it raises is what the finalize path persists and what the next hop would
         have sent. Pinned here by making the lease update raise for real, with
         `group_id` set so the branch is actually entered: a NEW token_id next to an OLD
-        raw_token is a 401 "Token is invalid" of exactly the kind 0496 B0001 reported."""
+        raw_token is a 401 "Token is invalid" of exactly the kind the regression reported."""
         monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
             "token_id": tid, "consumed_at": "2026-07-31T00:00:00+00:00",
             "revoked_at": None, "expires_at": "2999-01-01T00:00:00+00:00",

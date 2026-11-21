@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0059 T#2 (0011-CH contracts C / D) — on the real Shell (project store, Center session, server
+ * (CH contracts C / D) — on the real Shell (project store, Center session, server
  * Graph source, real Vue Flow Canvas; only `@shared/api` is mocked, as DesignerShellSelection.0059):
- * - 정렬 / 배치 ▾ (Toolbar) and 편집 › 정렬 / 배치 move the selected cards on the Canvas; items wait for enough
- *   selected cards; 자동 배치 lays the cards out by the server rules and spacing, whatever the density.
+ * - alignment / layout ▾ (Toolbar) and 편집 › alignment / layout move the selected cards on the Canvas; items wait for enough
+ *   selected cards; auto-layout lays the cards out by the server rules and spacing, whatever the density.
  * - 배치 밀도 (flowgate.v02.0059 0017-T: the card drag step, moveDensity.0059): choosing one moves no card and
- *   starts no 자동 배치; the Toolbar radios and the View menu show one value.
+ *   starts no auto-layout; the Toolbar radios and the View menu show one value.
  * - every such action, a card drop of several cards included, is one 실행 취소 (Toolbar, Edit menu, Ctrl+Z —
  *   also on a Flow with no editable draft), and the cards' saved positions follow.
  * jsdom replays no d3 drag: a drop is the Vue Flow `nodeDragStop` event, as FlowCanvasLayout.0045 does.
@@ -233,7 +233,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
     let menu = await openArrange(w)
     const items = () => menu.findAll('[data-test="designer-arrange-item"]')
-    // No card selected: only 자동 배치 (flowgate.v02.0068 T#2: 가로 / 세로 자동정렬) can be chosen.
+    // No card selected: only auto-layout (flowgate.v02.0068 T#2: horizontal / 세로 자동정렬) can be chosen.
     expect(items().filter((el) => !disabled(el)).map((el) => el.attributes('data-arrange'))).toEqual(['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
     await w.get('[data-tool="arrange"]').trigger('click')
     expect(w.find('[data-test="designer-arrange-menu"]').exists()).toBe(false)
@@ -282,7 +282,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
   })
 
-  // flowgate.v02.0059 0017-T: the density is the step a card drag moves in (moveDensity.0059); choosing it lays
+  // the density is the step a card drag moves in (moveDensity.0059); choosing it lays
   // nothing out.
   it('배치 밀도 moves no card: no 자동 배치, no save, no 실행 취소, no zoom change; Toolbar and View menu show one value', async () => {
     const w = await mountShell()
@@ -306,7 +306,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(storedPositions()).toEqual({})
   })
 
-  // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬. The three documents carry no document number, so their order is
+  // flowgate.v02.0068 T#2: horizontal / 세로 자동정렬. The three documents carry no document number, so their order is
   // their title (D, N, R card); one row of free documents (horizontal) or one column (vertical).
   it('자동 배치 (Toolbar ▾ and Edit menu) lays the cards out at the server spacing whatever the density', async () => {
     const w = await mountShell()
@@ -335,7 +335,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     const ids = ['doc:p.ui.0003.0001-R', 'doc:p.ui.0003.0002-N', 'doc:p.ui.0003.0003-D']
     expect(get(w).attributes('data-editable')).toBe('false')
     const flow = useVueFlow('designer-canvas:p.ui.0003')
-    // Dropped by (100, 60): whole steps of the default density 보통 (20, 0018-TR rev2), so the drop lands as dragged.
+    // Dropped by (100, 60): whole steps of the default density normal (20, 0018-TR rev2), so the drop lands as dragged.
     const dropped = ids.slice(0, 2).map((id) => {
       const node = flow.findNode(id)!
       return { ...node, position: { x: node.position.x + 100, y: node.position.y + 60 } } as GraphNode

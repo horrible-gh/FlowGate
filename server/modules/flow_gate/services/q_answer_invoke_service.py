@@ -1,9 +1,9 @@
-"""Query-answer hand-off — give ONE query item to an AI worker (0248 B0001).
+"""Query-answer hand-off — give ONE query item to an AI worker.
 
-D0005 §3.2 / L0007 §3.4 specify that a document-bound query is handed to an AI worker and
+specify that a document-bound query is handed to an AI worker and
 the answer lands back on the SAME item as author_kind='ai'. The route only ever minted an
 edit token and returned it to the browser: nothing launched a worker and no UI surfaced the
-token, so the click was a silent no-op (NR0003). This module is the missing half.
+token, so the click was a silent no-op. This module is the missing half.
 
 It serves the two hand-off routes the legacy Q-document flow has always offered (see
 AnswerEditor.vue / qa_routes.py `dispatch_mode`), which the document-bound Q&A panel was
@@ -50,7 +50,7 @@ from modules.flow_gate.services import (
 
 logger = logging.getLogger(__name__)
 
-# flowgate.default.0661 T0004: admission code for "this item already has a live responder".
+# admission code for "this item already has a live responder".
 RESPONDER_IN_PROGRESS_CODE = "question_responder_in_progress"
 # Review rej_01M4HRWSVP3M0BSH finding 3: the run could not claim the item durably (it was
 # answered in the meantime, another run owns it, or the claim write failed) — no token.
@@ -118,7 +118,7 @@ def _make_oracle(item_id: int, baseline: int, run_holder: Optional[dict] = None)
     answers the item while the worker is running does not mark the run complete, and an
     item that already carried an AI answer (re-request) still needs a fresh one.
 
-    0661 T0004 F5: the responder's explicit hand-off to a user is the OTHER way this run
+    the responder's explicit hand-off to a user is the OTHER way this run
     can finish its job. `run_holder["run_id"]` is filled by the issue builder once the
     engine names the run; an item escalated by THIS run (responder_state='user_decision'
     with that run id) satisfies the oracle, so the run ends as complete rather than being
@@ -169,7 +169,7 @@ def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str
 
 
 def _document_lookup_block(api_base_url: str, raw_token: str, doc: dict) -> list[str]:
-    """Bounded document-query pointers for a Q-answer worker (0370 T0012)."""
+    """Bounded document-query pointers for a Q-answer worker."""
     from modules.flow_gate.services import mention_service
 
     return [
@@ -268,7 +268,7 @@ def build_answer_mention(
         for opt in options:
             lines.append(f"    [{opt.get('id')}] {opt.get('label')}")
             if opt.get("requires") == "new_attempt":
-                # flowgate.v02gui.0015 T3: what selecting it does to the asking card
+                # what selecting it does to the asking card
                 lines.append("        (이 보기를 고르면 새 attempt가 실제로 열릴 때까지 질의한 카드는 다시 실행되지 않고 개입 필요로 멈춥니다.)")
     lines.append("")
     lines.append("[답변 등록 방법]")
@@ -290,13 +290,13 @@ def build_answer_mention(
         "author_kind 는 서버가 'ai' 로 고정하므로 보내지 않아도 됩니다. "
         "이 토큰은 이 문서에만 쓸 수 있습니다."
     )
-    # flowgate.v02test.0051: an answer typed on a Windows command line was stored as "?? ????".
+    # an answer typed on a Windows command line was stored as "?? ????".
     from modules.flow_gate.services import ai_text_guard
     lines.append(ai_text_guard.transport_rule("ko"))
-    # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
+    # the hand-off to a human is a SEPARATE signal, never an answer body.
     # The normal path is to answer; this is the exception path, and the conditions are
     # spelled out so uncertainty, a failed tool call or a thin context never become a
-    # hand-off (T0004 "자동답변 우선 계약"). flowgate.v02.0063: only infrastructure, a
+    # hand-off ("automatic-answer-first contract"). the earlier change: only infrastructure, a
     # permission or an instruction whose intent cannot be told goes to a person; a logic
     # question never does (the user operates through AI and cannot answer it).
     escalate_url = f"{api_base_url}/q/{doc_id}/items/{item_id}/escalate"
@@ -324,7 +324,7 @@ def build_answer_mention(
             "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
         )
     # Refer to the shared policy by meaning; numbering changes must not alter this guidance.
-    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_ANSWER_REFERENCE
+    from modules.flow_gate.services.prompt_blocks.blocks.documents import BODY_UNREADABLE_ANSWER_REFERENCE
 
     lines.append(BODY_UNREADABLE_ANSWER_REFERENCE)
     lines.append(f"POST {escalate_url}")
@@ -343,7 +343,8 @@ def build_answer_mention(
         "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
         "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
     )
-    return terminal_prompt.prepare("\n".join(lines), kind='q_answer', locale='ko')
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    return compose(["\n".join(lines)], kind='q_answer', locale='ko')
 
 
 def issue_answer_token(
@@ -362,11 +363,11 @@ def issue_answer_token(
     ai_invoke_service.start_run's contract asks for, and the reason a copied mention and an
     in-app run cannot drift apart.
 
-    `ai_run_id` is the run this token works for, and it is not bookkeeping: group 0378 made
+    `ai_run_id` is the run this token works for, and it is not bookkeeping: the earlier change made
     every group mutation pass mutation_policy.assert_group_mutation_allowed, which admits a
     worker only when its token matches the active lease on ALL of group / token_id / run_id /
     action_scope. start_run leases under the run id, so a token minted without one can never
-    match — and the answer POST is this run's only product (0389 R0001). None on the
+    match — and the answer POST is this run's only product. None on the
     [copy mention] path, which starts no run and so faces no lease of its own.
     """
     issued = token_service.issue(
@@ -385,9 +386,9 @@ def issue_answer_token(
         "token_id": issued["token_id"],
         "scratch_dir": issued["scratch_dir"],
         "expires_at": issued.get("expires_at"),
-        # flowgate.v02.0056 T#3: a question on a Designer card's document is answered with that card's memos
+        # a question on a Designer card's document is answered with that card's memos
         # turned on for AI reading in front (card_memo_hooks; none, or no handler: the mention as before).
-        # 0064 T-B1e: behind the memos, the documents of the answer that cannot be read (ai_start_precheck; all
+        # T-B1e: behind the memos, the documents of the answer that cannot be read (ai_start_precheck; all
         # readable: the mention as before) -- the same section on the run and the [copy mention] path.
         "mention": card_memo_hooks.prepend_memo_section(
             ai_start_precheck.qna_mention(
@@ -408,7 +409,7 @@ def issue_answer_token(
 
 
 def _live_responder_run_id(item_id: int) -> Optional[str]:
-    """The run id of a responder still working on this item, else None (0661 T0004 F2).
+    """The run id of a responder still working on this item, else None.
 
     A durable 'dispatched' row whose run this process no longer tracks (a crash, a
     restart) does NOT block: that row is stale and the startup sweep / next dispatch
@@ -430,7 +431,7 @@ def _live_responder_run_id(item_id: int) -> Optional[str]:
 
 
 def _record_dispatch_failure(item_id: int, exc: HTTPException, actor_user_id: Optional[str]) -> None:
-    """Admission refused the responder — leave WHY on the item (0661 T0004 F3), best-effort."""
+    """Admission refused the responder — leave WHY on the item, best-effort."""
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     code = str(detail.get("code") or "dispatch_error")
     message = detail.get("message") or (
@@ -499,7 +500,7 @@ def dispatch_answer_run(
     # admission's existing single-provider selection and unavailable-provider error.
     startup_policy = None
     if responder_candidates is not None:
-        # 0111 T-A3: retain the 0110 pick as the head, then walk only independent
+        # T-A3: retain the 0110 pick as the head, then walk only independent
         # enabled defaults. One claimed run/lease owns this finite startup chain: no new
         # dispatch at finalization, no event replay can restart a failed question.
         from modules.flow_gate.services.ai_invoke import review

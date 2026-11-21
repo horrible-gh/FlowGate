@@ -1,9 +1,9 @@
 <template>
-  <!-- flowgate.v02.0031 — bottom of the Conversation (R0001 §8). Every control drives an existing
-       contract through the session; nothing here opens a dialog (0235 R0001) — settings, the
-       menus and the manual-copy fallback are inline. flowgate.v02.0047 (v9): input and send on
+  <!-- bottom of the Conversation. Every control drives an existing
+       contract through the session; nothing here opens a dialog — settings, the
+       menus and the manual-copy fallback are inline. the earlier change (v9): input and send on
        the first line; AI picker, source mode icons, settings (⚙) and the ⋯ menu (mention copy,
-       AI call) on the second. flowgate.v02.0061 T#14: `sourceLocked` turns the source mode icons off with the
+       AI call) on the second. the earlier change the earlier implementation: `sourceLocked` turns the source mode icons off with the
        reason (the Flow's Graph run); nothing else changes. -->
   <form
     class="conv-compose"
@@ -25,7 +25,7 @@
       <textarea class="conv-manual-text" readonly spellcheck="false" :value="manualCopyText" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
     </div>
 
-    <!-- flowgate.v02test.0029: pasted / dropped images wait here (thumbnail, upload state, ✕) until the message is sent. -->
+    <!-- pasted / dropped images wait here (thumbnail, upload state, ✕) until the message is sent. -->
     <ComposerImageStrip
       :images="attach.images.value"
       :notice="attach.notice.value"
@@ -49,7 +49,7 @@
         @paste="onPaste"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
-      <!-- flowgate.v02test.0029: while the AI answers and something is typed, the message can be sent (its AI call
+      <!-- while the AI answers and something is typed, the message can be sent (its AI call
            follows the answer); the stop stays next to it. -->
       <button
         v-if="sendWhileRunning && stopMode !== null"
@@ -64,7 +64,7 @@
       >
         <span aria-hidden="true">{{ stopMode === 'requested' ? '…' : '■' }}</span>
       </button>
-      <!-- 0264 R0001: while a chat AI run is in flight the send button is a STOP button. flowgate.v02gui.0011 B: with
+      <!-- while a chat AI run is in flight the send button is a STOP button. the earlier change B: with
            `stopState` it is one from the press of send on (chat created, message stored, AI call starting). -->
       <button
         :type="isStop ? 'button' : 'submit'"
@@ -76,7 +76,7 @@
         :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === '' || attach.blocked.value"
         @click="isStop && emit('stop')"
       >
-        <!-- flowgate.v02gui.0011 T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
+        <!-- T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
              pressed stop button no longer looks like the one that can still be pressed. -->
         <span v-if="stopMode === 'requested'" class="conv-send-stopping" data-test="conv-send-stopping" aria-hidden="true">
           <span class="conv-send-ring"></span>
@@ -86,10 +86,10 @@
       </button>
     </div>
 
-    <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with 다시 시도) and in the timeline's error
+    <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with "다시 시도") and in the timeline's error
          line; the composer no longer repeats it. -->
-    <!-- flowgate.v02test.0030: while the chat's AI is still being read, send waits without any line under the input
-         (flowgate.v02test.0041: the passing "checking" line was removed); if it could not be read, say why and offer a
+    <!-- while the chat's AI is still being read, send waits without any line under the input
+         (the passing "checking" line was removed); if it could not be read, say why and offer a
          retry: nothing is sent on an AI the user did not see chosen. -->
     <div v-if="aiPickStatus === 'error'" class="conv-ai-pick is-error" role="alert" data-test="conv-ai-pick-error">
       <span>{{ aiPickError ? `${t('gui.conversation.composer.ai_pick_failed')} (${aiPickError})` : t('gui.conversation.composer.ai_pick_failed') }}</span>
@@ -163,16 +163,16 @@ const props = defineProps<{
   settings: DeepReadonly<ChatSettings>
   savingSettings: boolean
   pendingSourceMode: SourceAccessMode | null
-  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the source access mode. */
+  /** the Flow's Graph run locks the source access mode. */
   sourceLocked?: boolean
   providers: readonly ChatProvider[]
   selectedProviderId: string
   providersStatus: string
   /**
-   * flowgate.v02test.0030: whether the open chat's AI is settled ('loading' / 'error': send waits). Absent = 'ready'.
+   * whether the open chat's AI is settled ('loading' / 'error': send waits). Absent = 'ready'.
    */
   aiPickStatus?: 'ready' | 'loading' | 'error'
-  /** flowgate.v02test.0030: why the chat's AI could not be read (with 'error'). */
+  /** why the chat's AI could not be read (with 'error'). */
   aiPickError?: string | null
   hasProviders: boolean
   sending: boolean
@@ -181,7 +181,7 @@ const props = defineProps<{
   runStarting: boolean
   cancelling: boolean
   /**
-   * flowgate.v02gui.0011 B: the stop button's state from the press of send on ('available' = can be pressed,
+   * B: the stop button's state from the press of send on ('available' = can be pressed,
    * 'requested' = a stop is under way). Absent: the stop button follows `running` / `runStarting` / `cancelling`.
    */
   stopState?: 'none' | 'available' | 'requested'
@@ -213,7 +213,7 @@ function currentOwner(): DraftOwner | null {
 }
 
 let visibleOwner = currentOwner()
-// flowgate.v02test.0029: the attached images follow the same owner as the text (chat or new-chat draft).
+// the attached images follow the same owner as the text (chat or new-chat draft).
 const ownerRef = shallowRef<DraftOwner | null>(visibleOwner)
 const attach = createComposerImages(() => ownerRef.value)
 attach.restore(visibleOwner)
@@ -252,7 +252,7 @@ const stopMode = computed<'available' | 'requested' | null>(() => {
   return props.cancelling || props.runStarting ? 'requested' : 'available'
 })
 const aiPending = computed(() => props.aiPickStatus !== undefined && props.aiPickStatus !== 'ready')
-// flowgate.v02test.0029: an AI answering does not hold a typed message: the button sends it, the stop moves beside it.
+// an AI answering does not hold a typed message: the button sends it, the stop moves beside it.
 const sendWhileRunning = computed(() => props.running && !props.sending && draft.value.trim() !== '')
 const isStop = computed(() => stopMode.value !== null && !sendWhileRunning.value)
 
@@ -282,7 +282,7 @@ function onInput(): void {
   autoGrow()
 }
 
-// ── flowgate.v02test.0029: message images — paste, drop, state of the attached ones ──────────────────────
+// ── the earlier change: message images — paste, drop, state of the attached ones ──────────────────────
 const canAttach = computed(() => !props.disabled && !props.readOnly && !props.sending)
 const dragging = ref(false)
 
@@ -383,7 +383,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-compose {
   position: relative;
   flex: 0 0 auto;
-  /* flowgate.v02gui.0003: the AI picker's popover caps its width to this box (100cqw). */
+  /* the AI picker's popover caps its width to this box (100cqw). */
   container-type: inline-size;
   padding: 7px 8px;
   border-top: 1px solid var(--fg2-line);
@@ -482,7 +482,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   color: var(--fg2-muted-2);
 }
 
-/* flowgate.v02test.0029: send while the AI answers — the stop sits left of the send button. */
+/* send while the AI answers — the stop sits left of the send button. */
 .conv-pill.has-side-stop {
   grid-template-columns: minmax(0, 1fr) 37px 39px;
 }
@@ -513,7 +513,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   opacity: var(--fg2-control-disabled-opacity);
 }
 
-/* flowgate.v02gui.0011 T: a stop under way — muted, full opacity (a faded ring would be harder to see), spinning ring. */
+/* T: a stop under way — muted, full opacity (a faded ring would be harder to see), spinning ring. */
 .conv-send.is-stopping {
   border-color: var(--fg2-line-strong);
   background: var(--fg2-control-surface);

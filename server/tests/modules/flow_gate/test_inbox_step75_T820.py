@@ -395,7 +395,7 @@ def test_inbox_new_m_fast_path_approved(t820_seed, t820_db, t820_client, tmp_pat
 
 
 def test_inbox_memo_final_slot_does_not_finalize_parent(t820_seed, t820_db, t820_client, tmp_path):
-    """NR0003 regression: a memo (M) filling the LAST workflow slot must NOT silently
+    """regression: a memo (M) filling the LAST workflow slot must NOT silently
     finalize the parent R (wf_done). Auto-approval of the memo still happens, but the
     AC (final-approval) gate must remain — even though the predecessor step is still
     pending_review. Before the fix the inbox path set the parent R to 'wf_done' here,

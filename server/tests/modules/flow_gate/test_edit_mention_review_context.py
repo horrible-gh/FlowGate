@@ -7,7 +7,7 @@ import pytest
 
 # token_routes imports `config.settings`, which is a pydantic Settings with four required
 # fields. Every module in this suite that reaches the same import declares them first; this
-# one relied on an earlier-collected module having done it, so running the T0007 §4-4
+# one relied on an earlier-collected module having done it, so running the the earlier implementation
 # command (this file plus two others) on its own died at collection instead of at a test.
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -119,7 +119,7 @@ def test_edit_mention_accepts_rejected_edit_reason():
 
 def test_rejected_edit_mention_includes_rejection_response_field():
     """The copy mention's POST template must carry a rejection_response slot so the
-    AI fills in how it addressed the rejection (TR0007 rev2 fix)."""
+    AI fills in how it addressed the rejection (fix)."""
     mention = build_mention(
         project="test",
         module="none",
@@ -202,7 +202,7 @@ def test_outbound_review_shape_exposes_structured_findings():
     assert shaped["findings"] == [{"locus": "Scope", "note": "Add pass criteria"}]
 
 
-# ── 0458 T0007 §3.2-1: the rejected edit mention names the review row it answers ──────
+# ── the earlier implementation: the rejected edit mention names the review row it answers ──────
 #
 # `rejection_response` alone told the server WHAT the worker did, never WHICH rejection it
 # was answering, so the recorder could only guess "the last one". A human rejection landing
@@ -353,7 +353,7 @@ def test_the_mention_resolves_the_row_id_itself_on_the_real_path(monkeypatch):
 def test_a_second_row_landing_between_the_caller_read_and_the_mention_is_shown_consistently(
     monkeypatch,
 ):
-    """0458 T0008 rev4 rework: rev1-rev3 tried to run the display fetch (`_load_current_revision_
+    """- tried to run the display fetch (`_load_current_revision_
     review`, called by the token boundary) and a resolver fallback SELECT as two INDEPENDENT
     queries, then compare their fields to decide whether the second one could be trusted — but
     two distinct rows for the same revision can be byte-identical in every field a mention
@@ -367,7 +367,7 @@ def test_a_second_row_landing_between_the_caller_read_and_the_mention_is_shown_c
     own id.
 
     This reproduces the real shape of the former race (`token_routes.py` is out of this TR's
-    assigned scope, T0007 §1, so the caller's own read cannot carry the id forward): row A (id
+    assigned scope, the earlier implementation, so the caller's own read cannot carry the id forward): row A (id
     244) is what the caller displayed a moment ago; by the time the mention builder queries,
     row B (id 999, same `reviewed_at`, a different `comment`) has landed for the same revision.
     The mention must show row B's own content (not row A's stale content) paired with id 999 —
@@ -592,7 +592,7 @@ def test_automatic_rejection_carries_both_ids_from_same_history_item():
     assert payload["review_id"] == 244
 
 
-# ── T0009 §2-1/§2-2/§2-3: human rejection vs. automated review, required-response notice ──
+# ── the earlier implementation: human rejection vs. automated review, required-response notice ──
 
 
 def _build_edit_mention_from_token(history, current_review=None, edit_reason="rejected"):

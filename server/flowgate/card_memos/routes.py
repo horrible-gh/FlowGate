@@ -1,5 +1,5 @@
-"""HTTP adapter of the card memos (flowgate.v02.0056 T#3). Mounted under the ``/flowgate`` context like the Graph
-routes; same envelope (P0008 §1.2 / §1.3), user JWT only, the document permissions (read / create / update /
+"""HTTP adapter of the card memos. Mounted under the ``/flowgate`` context like the Graph
+routes; same envelope, user JWT only, the document permissions (read / create / update /
 delete).
 
     GET    /api/v1/flows/{flow_id}/nodes/{node_key}/memos              the card's memos, oldest first

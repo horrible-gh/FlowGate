@@ -269,7 +269,7 @@ function pickMode(location: ExecLocation, execType: ProviderExecType) {
   if (!KINDS[execType].includes(form.value.kind)) form.value.kind = KINDS[execType][0]
 }
 
-// flowgate.v02.0088 F08: product names stay as they are; only the generic "Custom" kind is a UI
+// product names stay as they are; only the generic "Custom" kind is a UI
 // word, shown in the current language. The sent kind value stays 'custom'.
 const kindOptions = computed(() => KINDS[form.value.exec_type].map((value) => ({
   value,

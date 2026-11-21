@@ -1,7 +1,7 @@
 """flowgate.default.0529 B0001 — "제거 눌러도 안 사라지잖아": the immortal finished card.
 
-The reported card was `aiv_20260830_000075` (group `flowgate.default.0481`, doc
-`flowgate.default.0481.0004-NR`, `stop_code=group_lease_denied`), still on screen on
+The reported card was `aiv_20260830_000075` (group `the earlier change`, doc
+`the earlier change`, `stop_code=group_lease_denied`), still on screen on
 2026-09-06 for a run that ended on 2026-08-31. It was NOT a paused card: at the time of
 the report `ai_invoke_paused_chains` held zero rows, so `isNonResumableSystemStop()` and
 the whole `DELETE /paused/{group_id}` path could never reach it. It was a FINISHED card,
@@ -19,7 +19,7 @@ suite pins down:
     machine — they mark the card, never delete the loop's history.
   * **Nothing aged it out.** The restore answered with every loop row the user ever
     owned, forever. `_review_loop_card_expired` bounds it by the finished-card retention
-    that user already chose (0452 L0003 §1-1) — the same number the browser sweeps its
+    that user already chose — the same number the browser sweeps its
     own copy of this very card with.
 
 No database except where a real SQLite is the point (the migration and the CAS update):
@@ -699,7 +699,7 @@ class TestGhostCardRoundTripOverRealRoutes:
         assert removed.status_code == 200
         assert removed.json()["dismissed"] is True
 
-        # 언제까지 나오게 할건데 -- this is the answer: it does not come back.
+        # The dismissed card must not keep reappearing.
         again = http.get("/api/v1/ai-invoke/active-all", headers=headers)
         assert again.json()["runs"] == []
 

@@ -2,7 +2,7 @@ import en from './en'
 import ja from './ja'
 import ko from './ko'
 
-// T0011 §13: v0.2 reuses the shared i18n instance (@shared/i18n: locale detection,
+// v0.2 reuses the shared i18n instance (@shared/i18n: locale detection,
 // `preferred_locale`, fallback) instead of creating a second one, and keeps its own screen
 // strings here under a `gui` namespace.
 // Only the strings the /app shell, Dashboard and placeholders need live in this bundle.

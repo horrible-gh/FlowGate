@@ -1,4 +1,4 @@
-"""Work-plan apply/preview service (D0008/P0009/L0010).
+"""Work-plan apply/preview service.
 
 Mappings are rebuilt per request; the WP canonical body is never changed by apply.
 """
@@ -23,7 +23,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     expand_steps_with_reports,
 )
 
-# L0010 §1 — apply-only thresholds, defined once.
+# apply-only thresholds, defined once.
 WORKFLOW_TAG_DIGEST_MOD = 100_000
 APPLICATIONS_DEFAULT_LIMIT = 20
 APPLICATIONS_MAX_LIMIT = 100
@@ -35,16 +35,16 @@ WARNING_CODES = (
     "provider_unset", "provider_not_registered", "provider_renamed",
     "note_empty", "nothing_to_fill", "locked_step_has_value",
     "instructions_folded", "wp_not_approved", "unmatched_plan_steps",
-    # 0649 T#1 (NR0003 O0): started legacy rows whose card cannot be proven (apply is
+    # started legacy rows whose card cannot be proven (apply is
     # refused until acknowledged), and started rows of a deleted card (shown only).
     "legacy_card_unresolved", "retired_plan_rows",
-    # 0649 T#2 (NR0003 O2-O4): rows of this plan that serve no card any more, started cards
+    # rows of this plan that serve no card any more, started cards
     # the plan no longer leads with (or removed / retyped), and foreign pending rows inside
     # this plan's block.
     "orphan_plan_rows", "order_conflicts_started", "started_card_removed",
     "card_identity_mismatch", "foreign_rows_interleaved",
 )
-# 0649 T#2: these refuse the apply in the mode(s) the preview names in apply_blockers.
+# these refuse the apply in the mode(s) the preview names in apply_blockers.
 BLOCKER_CODES = frozenset({
     "order_conflicts_started", "started_card_removed", "card_identity_mismatch",
     "foreign_rows_interleaved",
@@ -54,10 +54,10 @@ WARNING_SEVERITY = {
         "type_not_placeable", "provider_unset", "provider_not_registered",
         "nothing_to_fill", "locked_step_has_value", "unmatched_plan_steps",
         "legacy_card_unresolved",
-        # 0444 NR0003 §4-1: not info. The person picked a cell and the values land on a
+        # not info. The person picked a cell and the values land on a
         # different one, so this has to be as visible as the other placement warnings.
         "done_rows_skipped",
-        # 0649 T#2 (NR0003 O3/O4): keeping the workflow would fix an order other than the
+        # keeping the workflow would fix an order other than the
         # plan's, so these are no longer information.
         "order_differs", "orphan_plan_rows",
     } else "info")
@@ -163,7 +163,7 @@ def _ordered(items: Iterable[dict]) -> list[dict]:
 
 
 def _progress(item: dict) -> str:
-    # 0649 T#1 (NR0003 §3.6 / O1): "started" has one predicate — a result document is
+    # "started" has one predicate — a result document is
     # attached. ``status`` is derived from that column by get_sequence_items and only tells
     # done from in_progress here.
     if not is_started_row(item):
@@ -171,7 +171,6 @@ def _progress(item: dict) -> str:
     return "done" if item.get("status") == "done" else "in_progress"
 
 
-# L0010 §2.4
 def build_workflow_tag(sequence: Optional[dict], items: Iterable[dict]) -> str:
     if not sequence:
         return "none"
@@ -198,7 +197,7 @@ def build_workflow_tag(sequence: Optional[dict], items: Iterable[dict]) -> str:
 def _poured_block(items: Iterable[dict], plan_doc_id: Optional[str]) -> Optional[list[dict]]:
     """The rows this very plan put in the sequence, reports included.
 
-    0408 M0019 re-rejection 3: L0010 §2.5 counts "the Nth row of type X" over the WHOLE sequence,
+    re-rejection 3: the earlier implementation counts "the Nth row of type X" over the WHOLE sequence,
     which predates the provenance columns 0399 added. A sequence that already finished an
     N/NR pair before the plan poured its own therefore matched the plan's N#1 onto the old
     finished row, and the plan's mention for that step reached nothing. A row poured by this
@@ -224,7 +223,7 @@ def _poured_block(items: Iterable[dict], plan_doc_id: Optional[str]) -> Optional
 
 def _slot_pool(items: Iterable[dict],
                plan_doc_id: Optional[str]) -> tuple[list[dict], list[int]]:
-    """The rows this plan may fill, and the rows left out of the count (0444 NR0003 §4-1).
+    """The rows this plan may fill, and the rows left out of the count.
 
     The contract, in one sentence:
 
@@ -251,7 +250,6 @@ def _slot_pool(items: Iterable[dict],
     return candidates, skipped
 
 
-# L0010 §2.5
 def build_step_map(plan_steps: Iterable[dict], items: Iterable[dict],
                    plan_doc_id: Optional[str] = None) -> list[dict]:
     slots: dict[tuple[str, int], dict] = {}
@@ -312,7 +310,6 @@ def _first_pair_after(items: Iterable[dict], source_seq: int, pair_type: str) ->
     ), None)
 
 
-# L0010 §2.6 / §4.2
 def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterable[dict],
             instruction_mode: str, provider_registry: Any, *,
             work_plan_backed: bool = False) -> dict:
@@ -344,7 +341,7 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
         target_seq, is_folded = source_seq, False
         allow_pre_instruction = True
         code = str(step.get("type") or "").upper()
-        # 0611 T0009: WorkPlan N/T always has an authoring worker. auto_approved is the
+        # WorkPlan N/T always has an authoring worker. auto_approved is the
         # approval policy after that worker creates the canonical Markdown, not permission
         # to fold the authoring hop into NR/TR.
         if mode == "auto_approved" and code in INSTRUCTION_AUTO_TYPES and not work_plan_backed:
@@ -450,7 +447,6 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
     }
 
 
-# L0010 §2.7
 def suggest_target_seq(plan_steps: Iterable[dict], step_map: Iterable[dict],
                        folded: Iterable[dict], provider_registry: Any) -> Optional[int]:
     rows = list(step_map or [])
@@ -490,7 +486,6 @@ def _warning(code: str, locale: str, keys=(), item_seqs=(), detail=None) -> dict
     return result
 
 
-# L0010 §2.8 / §4.3
 def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_registry: Any,
                    projection: dict, sequence_decided: bool, added: list[dict],
                    extra_item_seqs: list[int], unplaceable_keys: list[str],
@@ -559,7 +554,7 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
         result.append(_warning("wp_not_approved", locale))
     if unmatched_keys:
         result.append(_warning("unmatched_plan_steps", locale, unmatched_keys))
-    # 0649 T#1 (NR0003 O0): the same two facts the pour candidates show.
+    # the same two facts the pour candidates show.
     unresolved = (card_classification or {}).get("unresolved_started") or []
     if unresolved:
         result.append(_warning(
@@ -578,7 +573,6 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
             item_seqs=[row.get("item_seq") for row in retired],
             detail={"rows": retired},
         ))
-    # 0649 T#2 (NR0003 O2-O4).
     if orphan_rows:
         result.append(_warning(
             "orphan_plan_rows", locale,
@@ -612,10 +606,9 @@ def _label(code: str, locale: str) -> str:
     return get_type_name(code, locale) or code
 
 
-# L0010 §4.4
 def _missing_items(plan_steps: list[dict], items: list[dict], locale: str,
                    plan_doc_id: Optional[str] = None) -> tuple[list[dict], list[str]]:
-    # 0444 NR0003 §4-1: the same rule as _slot_pool, or the two disagree and the fix breaks
+    # the same rule as _slot_pool, or the two disagree and the fix breaks
     # pouring outright. Only rows this plan may fill count towards "the plan already has an
     # Nth row of type X" — otherwise a sequence holding nothing but another plan's finished
     # rows counts them, proposes no new row, and every plan step stays unmatched forever.
@@ -630,7 +623,7 @@ def _missing_items(plan_steps: list[dict], items: list[dict], locale: str,
     # Positions stay whole-sequence: a new row is always appended after everything present.
     next_seq = max((_int(x.get("item_seq")) for x in items), default=0)
     next_order = max((_int(x.get("sort_order"), -1) for x in items), default=-1) + 1
-    # 0649 T#1 (NR0003 O0): a row created for a plan step records that step's card. A set's
+    # a row created for a plan step records that step's card. A set's
     # result step carries the same card id as its instruction, so the report row gets it too.
     card_of_key = {
         str(step.get("key")): step.get("card_id")
@@ -689,7 +682,7 @@ def _sequence(owner_doc_id: str) -> tuple[Optional[dict], list[dict]]:
 def _classify_cards(doc: dict, plan: dict, items: list[dict]) -> Optional[dict]:
     """O0 card classification of this plan's rows (read-only); None when it never poured.
 
-    0649 T#1 (NR0003 O0/§5.4): apply is a reflecting path like the pour, so an unresolved
+    apply is a reflecting path like the pour, so an unresolved
     started legacy row blocks it until acknowledged, and the backfill is written in the
     apply's own transaction.
     """
@@ -707,7 +700,7 @@ def _classify_cards(doc: dict, plan: dict, items: list[dict]) -> Optional[dict]:
 def started_card_ids(doc: dict, plan: dict) -> list[str]:
     """The cards of this plan that already started (S, O0 identity), read-only.
 
-    0649 T#3 (NR0003 O7): the editor locks these cards (no move, no removal) and keeps every
+    the editor locks these cards (no move, no removal) and keeps every
     other card behind them. Empty when the plan never poured. The reflecting paths (O2,
     post-write check) stay the final guard, so a failed read here only loses the hint.
     """
@@ -720,7 +713,7 @@ def started_card_ids(doc: dict, plan: dict) -> list[str]:
 
 
 def graph_started_card_ids(doc: dict) -> set[str]:
-    """The plan's cards whose deployed v0.2 Graph card already ran, or whose run facts cannot be read (T0017).
+    """The plan's cards whose deployed v0.2 Graph card already ran, or whose run facts cannot be read.
 
     The deploy's own judgement (``work_plan_card_starts`` port, ``flowgate.work_plan_deploy``): the card's node by
     its ``wp_source`` and that node's run history, also after the run lock is released. Read errors propagate.
@@ -731,7 +724,7 @@ def graph_started_card_ids(doc: dict) -> set[str]:
 
 
 def instruction_mode_lock_errors(doc: dict, previous: Optional[dict], plan: dict) -> list[dict]:
-    """The field errors of a save that changes a started card's instruction choice (T0017), or [].
+    """The field errors of a save that changes a started card's instruction choice, or.
 
     Started is the v0.1 sequence's (``started_card_ids``) or the v0.2 Graph's (``graph_started_card_ids``). A save
     that changes no instruction choice reads neither; when the facts cannot be read every changed card counts as
@@ -786,7 +779,7 @@ def _preview_apply_blocker(*, sequence_decided: bool, target_seq: Optional[int],
     return None
 
 
-# ── 0649 T#2 (NR0003 O2-O4) — card mode ─────────────────────────────────────
+# ── the earlier implementation — card mode ─────────────────────────────────────
 # Once this plan has rows in the sequence, a plan step is matched to the row that serves
 # its card (``source_wp_card_id``, classified by work_plan_card_identity for legacy rows),
 # never to "the N-th row of type X". Keep projects onto those rows and refuses an order
@@ -1066,7 +1059,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     card_classification = _classify_cards(doc, plan, current)
     unresolved = (card_classification or {}).get("unresolved_started") or []
     legacy_acknowledged = _legacy_acknowledged(acknowledged_codes)
-    # 0649 T#1 (NR0003 O0): both apply modes wait for the person's confirmation.
+    # both apply modes wait for the person's confirmation.
     legacy_blocker = "legacy_card_unresolved" if unresolved and not legacy_acknowledged else None
     if sequence is not None and _card_mode(doc, current):
         return _card_preview(
@@ -1140,7 +1133,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
             "keep_workflow": keep_blocker,
             "change_workflow": change_blocker,
         },
-        # 0649 T#1 (NR0003 O0): codes the apply request must carry in acknowledged_codes.
+        # codes the apply request must carry in acknowledged_codes.
         "acknowledgement_required": ["legacy_card_unresolved"] if unresolved else [],
     }
 
@@ -1148,7 +1141,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
 def _card_preview(*, doc: dict, plan: dict, providers: Any, mode: str, locale: str,
                   sequence: dict, current: list[dict], card_classification: Optional[dict],
                   legacy_blocker: Optional[str], legacy_acknowledged: bool) -> dict:
-    """preview() once this plan has rows in the sequence (0649 T#2, NR0003 O2-O4)."""
+    """preview once this plan has rows in the sequence."""
     steps = list(plan.get("steps") or [])
     revision = _int(doc.get("revision_no"))
     state = _card_plan_state(doc, plan, current, card_classification, locale, revision)
@@ -1242,7 +1235,7 @@ def _card_apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, prov
                 acknowledged_codes: Optional[Iterable[str]], sequence: dict, current: list[dict],
                 before_tag: str, current_revision: int, card_classification: Optional[dict],
                 legacy_acknowledged: bool) -> dict:
-    """apply() once this plan has rows in the sequence (0649 T#2, NR0003 O2-O4).
+    """apply once this plan has rows in the sequence.
 
     keep: refused while the plan's rows are out of card order or a row serves no card (O4);
     otherwise the projection lands on the rows that serve each card, which also record it.
@@ -1518,7 +1511,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
             "code": "wp_changed", "sent_wp_revision_no": _int(wp_revision_no),
             "current_wp_revision_no": current_revision,
         })
-    # 0649 T#1 (NR0003 O0/§5.4): keep and change both reflect the plan onto the sequence, so
+    # keep and change both reflect the plan onto the sequence, so
     # a started legacy row whose card cannot be proven refuses the apply before anything is
     # written, until the person acknowledges it (``acknowledged_codes``).
     card_classification = _classify_cards(doc, plan, current) if sequence is not None else None
@@ -1547,7 +1540,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
     mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
     projection = project(steps, mapping, projected_items, mode, providers, work_plan_backed=True)
     provider_registry = _registry(providers)
-    # 0649 T#2 (NR0003 O0): the card each mapped row now serves — recorded with the snapshot
+    # the card each mapped row now serves — recorded with the snapshot
     # (a set's result step carries its instruction's card id).
     card_of_seq = {
         _int(row.get("item_seq")): step.get("card_id")
@@ -1614,7 +1607,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
             | {int(value) for value in projection["note_overrides"]}
         ) - added_seqs
         if sequence is not None and snapshot_seqs:
-            # 0649 T#1 (NR0003 O1): a protected pending row — the report right after a started
+            # a protected pending row — the report right after a started
             # instruction — keeps its identity (source_doc_id/source_revision_no/card id) and
             # position. It only takes the execution settings, in place, through the same
             # query a protected echo uses.
@@ -1698,7 +1691,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
         "warning_codes": [x["code"] for x in warnings],
     }
     if backfilled:
-        # 0649 T#1 (NR0003 O0): which legacy rows got their card id (or retired marker) here.
+        # which legacy rows got their card id (or retired marker) here.
         history["card_backfill"] = [[item_id, value] for item_id, value in backfilled]
     append_application(plan_path, str(doc.get("doc_id")), history)
     return {

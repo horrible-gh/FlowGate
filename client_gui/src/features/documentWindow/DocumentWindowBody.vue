@@ -1,6 +1,6 @@
 <template>
-  <!-- flowgate.v02.0053 T#3 — the body spot of the document window: picks the view a document gets
-       (documentBodyView). T#4 — the v0.1 DocumentBodyRouter's special branches moved here: a work plan
+  <!-- the body spot of the document window: picks the view a document gets
+       (documentBodyView). the earlier implementation — the v0.1 DocumentBodyRouter's special branches moved here: a work plan
        gets its plan table (WorkPlanBody, from the v0.1 WorkPlanEditor), a test scenario / test report its
        test view (TestDocumentBody, from the v0.1 one); every other document is the MD Viewer. A special
        view hands a document it cannot show its own way (a legacy test document, a failed read) to the MD
@@ -45,7 +45,7 @@ function refresh(change: DocumentContentChange): void {
   viewer.value?.requestContentRefresh({ doc_id: change.docId, revision_no: change.revisionNo })
 }
 
-/** The MD Viewer's body state for the window footer (flowgate.v02.0070 T#3); null while a special view shows its own. */
+/** The MD Viewer's body state for the window footer; null while a special view shows its own. */
 const status = computed<DocumentBodyStatus | null>(() => viewer.value?.status ?? null)
 
 /** [복구] of the window footer: the MD Viewer recovers with its diagnosed method (only on the person's click). */

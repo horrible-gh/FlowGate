@@ -1,4 +1,4 @@
-"""T0015: editor persistence must not erase surrounding document content."""
+"""editor persistence must not erase surrounding document content."""
 import pytest
 from modules.flow_gate.services import test_spec_service as spec
 
@@ -74,7 +74,7 @@ def test_brief_api_save_reopen_conflict_and_length(brief_client):
     assert too_long.status_code == 422 and state["writes"] == 1
 
 
-# TR0016 rev1: the three v9 verification modes and the case editor's save contract.
+# the three v9 verification modes and the case editor's save contract.
 
 @pytest.mark.parametrize("mode", ["automated", "ai", "manual"])
 def test_each_v9_verification_mode_saves_and_rereads(mode):
@@ -157,7 +157,7 @@ def test_0094_automated_authoring_binds_real_code_and_its_command(locale):
     from modules.flow_gate.services import mention_service, tool_registry
     from modules.flow_gate.services.test_basis_service import locator
     guide = mention_service._TS_SPEC_AUTHORING_TEXT[locale]
-    # No framework is the premise: one command, in any language, test file or not (B0005).
+    # No framework is the premise: one command, in any language, test file or not.
     assert '- run_command: <' in guide and '- automation_ref: <' not in guide and '- run_cwd: <' not in guide
     assert 'assertion' in guide and '{junit}' in guide and '{target}' not in guide and '{node}' not in guide
     for example in ('node --test tests/login.test.mjs', 'npm test', 'go test ./...'):

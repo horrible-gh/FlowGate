@@ -1,4 +1,4 @@
-"""Ordinary Branch Manager merge as a persistent attempt (flowgate.default.0630 T0005, D0004).
+"""Ordinary Branch Manager merge as a persistent attempt.
 
 Until 0630 an ordinary branch merge (Branch Manager: local source → local target) that hit a
 conflict collected the paths, ran ``git merge --abort``, deleted its managed workspace and
@@ -55,7 +55,7 @@ AI_START_FAILED = "start_failed"
 AI_FINISHED = "finished"
 AI_CANCELLED = "cancelled"
 
-# The server-authoritative attempt state the Git UIs render (D0004 §23). Derived — never
+# The server-authoritative attempt state the Git UIs render. Derived — never
 # stored — from the session row, its attempt_state/review_state and the AI run.
 UI_STARTING = "starting"
 UI_CONFLICT = "conflict"
@@ -70,7 +70,7 @@ UI_FAILED = "failed"
 UI_ABORTED = "aborted"
 UI_INTERRUPTED = "interrupted"
 
-# Event names (T0005 §14). SSE through the existing git `_emit`, and the same entries are
+# Event names. SSE through the existing git `_emit`, and the same entries are
 # appended to the attempt's own context so the record survives the broadcast.
 EV_STARTED = "git_branch_merge_started"
 EV_CONFLICT = "git_branch_merge_conflict"
@@ -208,7 +208,7 @@ def open_attempt(
     provider_id: Optional[str] = None, source_kind: str = "branch",
     source_group_id: Optional[str] = None,
 ) -> merge_target.MergeTargetContext:
-    """Write the attempt row BEFORE ``git merge`` runs (D0004 §4) and return the pinned ctx.
+    """Write the attempt row BEFORE ``git merge`` runs and return the pinned ctx.
 
     The target record is the one ``merge_target`` already understands (branch, workspace,
     owner, lock holder, remote expectation, push) plus the source branch. ``push`` is frozen
@@ -263,7 +263,7 @@ def open_attempt(
             "requested_by": requested_by,
             "provider_id": provider_id,
         },
-        # D0004 §11: two separate switches. Starting the resolver automatically never
+        # two separate switches. Starting the resolver automatically never
         # carries the authority to approve its result.
         "auto_authority": False,
         AI_KEY: {"auto_start": False, "auto_authority": False, "status": AI_NOT_STARTED},
@@ -281,7 +281,7 @@ def mark_conflict(
     source_head: Optional[str], target_head: Optional[str], merge_head: Optional[str],
     expected_remote_head: Optional[str], local_target_head: Optional[str] = None,
 ) -> dict:
-    """Turn the in-progress attempt into a durable conflict (D0004 §4/§15 baseline)."""
+    """Turn the in-progress attempt into a durable conflict (baseline)."""
     gs = _gs()
     assert ctx.merge_id is not None
     merge_target.mark_conflict(ctx, files, {
@@ -348,7 +348,7 @@ def _ai_run_status(run_id: Optional[str]) -> Optional[str]:
 
 
 def resolver_type(context: dict) -> Optional[str]:
-    """``ai`` | ``human`` | ``mixed`` from who submitted resolutions (D0004 §27)."""
+    """``ai`` | ``human`` | ``mixed`` from who submitted resolutions."""
     kinds = set(context.get("resolver_kinds") or [])
     if not kinds:
         return None
@@ -400,7 +400,7 @@ def ui_state(session: dict, *, live_ai: Optional[str] = None) -> str:
 
 
 def attempt_view(session: dict) -> dict:
-    """What the 0.1 Branch Manager and the v0.2 Git Workspace render (D0004 §23/§25).
+    """What the 0.1 Branch Manager and the v0.2 Git Workspace render.
 
     Server state only — never the AI message stream (§26). The AI run id is exposed so a
     screen can open the run's own log as a detail pane."""
@@ -498,7 +498,7 @@ def conflict_response(ctx: merge_target.MergeTargetContext, files: list[str]) ->
     }
 
 
-# ── AI resolver — explicit invoke only (D0004 §10–§12; T#3: auto-start removed) ────────
+# ── AI resolver — explicit invoke only (the earlier implementation: auto-start removed) ────────
 
 def resolve_provider(project_id: str, requested: Optional[str], session: Optional[dict] = None) -> Optional[str]:
     """Provider priority: 1) the Branch Merge request's explicit provider, 2) a
@@ -707,7 +707,7 @@ def note_resolution_submitted(session: dict, resolver_run_id: Optional[str]) -> 
 def note_review_pending(session: dict) -> None:
     """Every conflict is resolved and the candidate is frozen: the resolver's part is over.
 
-    0683 T0004 §6: a ``running``/``starting`` AI status is settled to ``finished`` in the
+    a ``running``/``starting`` AI status is settled to ``finished`` in the
     stored context right here, instead of staying ``running`` and being corrected at read
     time by ``attempt_view`` — the persisted record now says what really happened."""
     gs = _gs()
@@ -741,7 +741,7 @@ def note_review_rejected(session: dict, run_id: Optional[str]) -> None:
 # ── Approval (called from git_service.approve_merge_review) ──────────────────
 
 def approval_precheck(session: dict, context: dict, target: merge_target.MergeTargetContext) -> None:
-    """Stale target/source guard before the frozen candidate is committed (D0004 §18).
+    """Stale target/source guard before the frozen candidate is committed.
 
     Runs under the project lock the approval holds. The workspace HEAD itself is checked
     by ``_live_candidate_matches_snapshot``; this adds the two refs that live OUTSIDE the
@@ -812,7 +812,7 @@ def publish_reviewed(
     push = bool(bm.get("push"))
     commit = context.get("merge_commit")
     if push:
-        # 0153 T#2 §3.1: pin the approved resolution commit before any remote contact
+        # pin the approved resolution commit before any remote contact
         # (origin sync, secret load, push). push=False never contacts the remote and
         # creates no preservation ref.
         preserve_failed = gs._preserve_gate(merge_id, context, root, project_id=project_id)
@@ -837,7 +837,7 @@ def publish_reviewed(
                 )
             if ("stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l
                     or "non-fast-forward" in stderr_l):
-                # 0153 T#2 §4.2: reset only while the preservation ref is verified.
+                # reset only while the preservation ref is verified.
                 preserve_failed = gs._preserve_reset_gate(merge_id, context, root)
                 if preserve_failed is not None:
                     return preserve_failed
@@ -955,7 +955,7 @@ def finish_landed_merge(session: dict, ctx: merge_target.MergeTargetContext,
     record_event(ctx.merge_id, EV_COMPLETED, merge_commit=merge_commit, pushed=pushed, recovered=True)
 
 
-# ── Abort (D0004 §19) ────────────────────────────────────────────────────────
+# ── Abort ────────────────────────────────────────────────────────
 
 def abort(project_id: str, merge_id: int) -> dict:
     """User abort: undo the merge in its own workspace, close the attempt as aborted,
@@ -974,7 +974,7 @@ def abort(project_id: str, merge_id: int) -> dict:
         )
     target = merge_target.resolve_session_target(session)
     merge_target.raise_if_not_workspace_owner(target)
-    # 0669 unit 8a: the attempt's target domain (G / W / B), not the project mutex.
+    # unit 8a: the attempt's target domain (G / W / B), not the project mutex.
     from . import branch_merge_publish
     from . import lock_manager as locks
     lock_ctx, lock_key = branch_merge_publish.attempt_lock(target)
@@ -1039,7 +1039,7 @@ def _stop_resolver(merge_id: int, context: dict) -> None:
         pass
 
 
-# ── Recovery / sweep (D0004 §20) ─────────────────────────────────────────────
+# ── Recovery / sweep ─────────────────────────────────────────────
 
 RECOVERABLE_UI_STATES = (UI_CONFLICT, UI_CONFLICT_REMAINING, UI_AI_RESOLVING,
                          UI_RESOLVED_PENDING_REVIEW, UI_RE_REVIEW)
@@ -1102,7 +1102,7 @@ def verify_open_attempt(session: dict, *, at_boot: bool = False) -> str:
                           observed={"merge_head": observed_merge_head})
         return "interrupted"
     if review_state is None:
-        # flowgate.v02.0153 T#3: a reconcile hand-off (``merge_ref``) stored its rows as the
+        # a reconcile hand-off (``merge_ref``) stored its rows as the
         # real paths, so they are compared with the same NUL-separated query; a CLEAN
         # hand-off rejected back to the resolver has nothing unmerged by construction.
         handed_off = bool(baseline.get("merge_ref"))

@@ -1,16 +1,16 @@
-"""flowgate.default.0682 T#2 — Test Asset Policy: real repository layout and untracked assets.
+"""Test Asset Policy: real repository layout and untracked assets.
 
-D#1 §3.8 / §7 T#2 regression set over real git repositories and the production source
+the earlier implementation regression set over real git repositories and the production source
 capture (see basis_support). One policy (``asset_kind``) decides for the
 approval manifest, the asset API and the locator: ``tests/**``, ``test/**``,
 ``server/tests/**``, ``client/tests/**`` and ``__tests__`` under ``src``/``client/src``;
-0094 B0001 adds ``<module>/tests|test/**`` and ``[<module>/]src/test/**`` and test code of
+adds ``<module>/tests|test/**`` and ``[<module>/]src/test/**`` and test code of
 any language. Every test file runs through the Case's run_command; a ``.py`` target saved
 without one keeps the pytest invocation, any other is ``command_missing``. Git tracking
 is not asked any more: an untracked test file a TR created is captured, run and edited
 like a tracked one. Path safety and manifest-only edits stay.
 
-0684 T#2: the run's copy (not a Bundle capture) applies the manifest rule, and the asset
+the run's copy (not a Bundle capture) applies the manifest rule, and the asset
 API's authority is the approved specification (no stored Basis, no successor on edit).
 """
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _asset_edit_env(env, monkeypatch):
 
 
 def _measure(env, doc, run_id="run-1"):
-    """The run's Basis (0684 T#2): copy + fingerprint in the preparing phase."""
+    """The run's Basis: copy + fingerprint in the preparing phase."""
     return env.run_basis(env.doc(doc["doc_id"]), run_id)[0]
 
 
@@ -127,7 +127,7 @@ def _hash(root, relative):
     (COLOCATED, basis.KIND_UNSUPPORTED),
     ("client/src/main/__tests__/x.spec.ts", basis.KIND_UNSUPPORTED),
     ("src/__tests__/helper.py", basis.KIND_RUNNABLE),
-    # 0094 B0001: module test directories and the src/test layout, in any language.
+    # module test directories and the src/test layout, in any language.
     ("client_gui/tests/login.0094.spec.ts", basis.KIND_UNSUPPORTED),
     ("Server/tests/test_a.py", basis.KIND_RUNNABLE),
     ("src/test/java/com/acme/LoginTest.java", basis.KIND_UNSUPPORTED),
@@ -165,8 +165,8 @@ def test_policy_refuses_product_unsafe_and_excluded_paths(path):
 
 
 def test_policy_version_moved_with_the_policy():
-    # T#1 put the policy version into the identity; the T#2 policy is a new version, so
-    # a Basis approved under the T#1 policy is stale with its own reason (below).
+    # put the policy version into the identity; the the earlier implementation policy is a new version, so
+    # a Basis approved under the the earlier implementation policy is stale with its own reason (below).
     assert basis.ASSET_POLICY_VERSION == "test-asset-v2"
 
 
@@ -185,7 +185,7 @@ def test_locator_binds_py_under_every_root_and_asks_other_test_code_for_a_comman
     for ref in ("server/app.py", "tests/fixture.json", "tests/../server/app.py",
                 "tests/test_a.py::not a node", "/tests/test_a.py", "tests\\test_a.py"):
         assert loc(ref) == {"capability": "unbound"}
-    # No target and no command (B0005): the command is what is missing.
+    # No target and no command: the command is what is missing.
     assert loc("") == {"capability": "command_missing"}
     assert loc(CLIENT_SPEC, "external") == {"capability": "external"}
     assert loc(SERVER_TEST, "manual") == {"capability": "manual"}
@@ -498,10 +498,10 @@ def test_safe_asset_file_names_each_refusal(env):
             basis.safe_asset_file(root, path)
 
 
-# ── integration with T#1: policy version is part of the identity ─────────────
+# ── integration with the earlier implementation: policy version is part of the identity ─────────────
 
 def test_basis_from_the_t1_policy_is_stale_with_the_asset_policy_reason(env):
-    # A Basis T#1 stored: policy "test-asset-v1" and manifest entries without "kind".
+    # A Basis the earlier implementation stored: policy "test-asset-v1" and manifest entries without "kind".
     doc = env.ts()
     captured = _measure(env, doc)
     manifest = [{k: v for k, v in entry.items() if k != "kind"} for entry in captured["manifest"]]
@@ -597,7 +597,7 @@ def test_layout_approval_and_run_with_executable_extensions_in_the_worktree(exe_
 
 def test_this_repository_worktree_executables_are_captured():
     # The real FlowGate worktree these tests run in tracks server/run-dev.bat (v0.1's
-    # client/run.bat went away with client/ in flowgate.v02gui.0024). Every executable-extension file goes through the capture's own
+    # client/run.bat went away with client/ in the earlier change). Every executable-extension file goes through the capture's own
     # scan and safe hash (DirEntry.stat vs lstat/fstat). The whole-tree capture is not
     # repeated here: other suites in the same run write server/logs while it is measured.
     import time

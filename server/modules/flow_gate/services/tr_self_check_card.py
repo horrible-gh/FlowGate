@@ -1,4 +1,4 @@
-"""0053 1-D: the exceptional verification row on a Graph card.
+"""the exceptional verification row on a Graph card.
 
 Reads never reconcile a Graph run, claim a queue slot or change a card state. Terminal
 feedback is returned by the action only; the next read hides it. No command/output/path

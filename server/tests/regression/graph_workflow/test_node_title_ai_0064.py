@@ -1,4 +1,4 @@
-"""0064 T-B4d — the AI's first naming of a card (0062 D0005 set 3, L0006 2.3~2.6, P0006 §4.2.5 / §4.2.6, DB0007 §2.2).
+"""T-B4d — the AI's first naming of a card (set 3, the earlier implementation 2.3~2.6, the plan /, ).
 
 On the real SQLite DB, routes and fixtures of ``test_fg_card_settings`` (a confirmed R -> AI card Flow whose AI start is
 recorded as a job; ``ai_invoke_service.start_run`` replaced so the start's issue builder runs as the engine runs it):
@@ -9,8 +9,8 @@ nothing and its prompt is its mention byte for byte. The registration of the cla
 title hook) applies a valid candidate once, rechecked in the guard; any other candidate or registration closes the
 opportunity without touching the registration. Every token map row carries its kind (``map_kind``).
 
-Verification ids: DB0007 M-1 ~ M-8, L0005 V-B4d-1 ~ 3, 0062 L0006 V-01 ~ V-12, V-14, V-15, V-18 (person x AI),
-V-19 ~ V-23, V-27, V-28, P0006 V-P-22 ~ V-P-24, V-P-26.
+Verification ids:  M-1 ~ M-8, the earlier implementation V-B4d-1 ~ 3, the earlier implementation V-01 ~ V-12, V-14, V-15, V-18 (person x AI),
+V-19 ~ V-23, V-27, V-28, the plan V-P-22 ~ V-P-24, V-P-26.
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ SEP = "\n\n"
 NODE_MENTION = "NODE MENTION"
 ABSENT = object()
 API_AI = {"kind": "ai", "user_id": None, "provider_id": "aip_api"}
-# P0006 §4.2.6, pinned here as the protocol fixes them.
+# pinned here as the protocol fixes them.
 CLI_REQUEST = {
     "ko": "이 카드는 아직 기본 제목입니다. 작업 내용을 한눈에 알 수 있는 제목을 20~30자로 짓되, 카드 종류 명칭(예: 조사, 요구사항)을 그대로 반복하지 마세요. 그 제목을 문서를 제출하는 inbox 요청 본문의 `node_title` 항목에 넣어 주세요. 제목은 선택 사항이며 문서 제출에는 영향을 주지 않습니다.",  # noqa: E501
     "en": "This card still has its default title. Write a title of 20 to 30 characters that tells at a glance what this work is, without simply repeating the card kind name (for example \"Research\" or \"Requirement\"), and put it in the `node_title` field of the body of your inbox submission. The title is optional and does not affect the document submission.",  # noqa: E501
@@ -224,7 +224,7 @@ def test_every_later_start_asks_nothing_and_keeps_its_mention(env, decided, monk
 
 
 def test_a_failed_claim_starts_the_ai_without_a_request_and_the_mapping_is_the_evidence(env, decided, monkeypatch):
-    """V-04 / L0006 5: the claim savepoint fails, the token is mapped (ai_start) and the AI starts with its mention;
+    """V-04 / the earlier implementation 5: the claim savepoint fails, the token is mapped (ai_start) and the AI starts with its mention;
     every later start finds that mapping (E1) and closes the opportunity as prior_evidence."""
     from modules.flow_gate.graph_workflow.store import title_store
 
@@ -309,7 +309,7 @@ def _walk(monkeypatch, issued, chain):
 ])
 def test_the_request_is_worded_for_the_provider_the_prompt_is_handed_to(env, decided, monkeypatch, assignee, chain,
                                                                         asked):
-    """P0006 §4.2.6 / V-P-24: a default card's job names no provider (the project default chain picks the AI at
+    """V-P-24: a default card's job names no provider (the project default chain picks the AI at
     admission), another names an API one; either way the provider each attempt launches decides the wording, and a
     reissued token's prompt stays its mention for every provider."""
     _sql(env["db"], "INSERT OR IGNORE INTO ai_providers (provider_id, name, exec_type, kind, created_at, updated_at) "
@@ -372,7 +372,7 @@ def test_a_person_s_title_before_the_first_start_wins(env, decided, monkeypatch)
 
 
 def test_naming_targets_and_default_displays():
-    """L0006 2.4 step 6 with L0005 2.17-1 (V-B4d-1/2): palette / R / B document cards; never Custom or a gate."""
+    """2.4 step 6 with the earlier implementation 2.17-1 (V-B4d-1/2): palette / R / B document cards; never Custom or a gate."""
     from modules.flow_gate.graph_workflow.services.node_title_ai import naming_target
 
     def row(**kw):
@@ -392,7 +392,7 @@ def _views(monkeypatch, views, by_id):
 
 
 def test_the_shown_title_is_read_as_the_card_draws_it(monkeypatch):
-    """L0006 2.5 (V-08 / V-10, V-B4d-1/3): every view must show a default name from the label; a document title never
+    """2.5 (V-08 / V-10, V-B4d-1/3): every view must show a default name from the label; a document title never
     is one (``로그인 개선 · 요구사항``, or even ``요구사항``) unless it is the claiming AI's own document."""
     from modules.flow_gate.graph_workflow.projection.graph_projector import GraphView
     from modules.flow_gate.graph_workflow.services.node_title_ai import display_is_default
@@ -423,7 +423,7 @@ def test_the_shown_title_is_read_as_the_card_draws_it(monkeypatch):
 
 
 def test_the_decision_order_of_a_claim(monkeypatch):
-    """L0006 2.4 / 4.1: closed -> nothing; claimed -> superseded (same token: nothing); evidence; person; title; kind;
+    """2.4 / 4.1: closed -> nothing; claimed -> superseded (same token: nothing); evidence; person; title; kind;
     display; else claim."""
     from modules.flow_gate.graph_workflow.services import node_title_ai as ai
 
@@ -444,7 +444,7 @@ def test_the_decision_order_of_a_claim(monkeypatch):
     assert ai._decide(job, "t1", None) == (False, "prior_evidence")
 
 
-# ── persistent evidence (L0006 2.3, V-06, V-07, V-21 ~ V-23, question #441 o1) ──
+# ── persistent evidence (2.3, V-06, V-07, V-21 ~ V-23, question #441 o1) ──
 
 class _Tokens:
     """The tokens / ai_invoke_runs rows ``_classify`` reads."""
@@ -513,7 +513,7 @@ def test_each_candidate_closes_the_opportunity_and_the_registration_stands(env, 
 
 
 def test_another_token_s_registration_closes_and_the_late_candidate_is_ignored(env, decided, monkeypatch):
-    """V-09 / L0006 4.4: a person registers the result with the dispatch token while the AI holds the claim."""
+    """V-09 / the earlier implementation 4.4: a person registers the result with the dispatch token while the AI holds the claim."""
     key, job = _ai_card(env)
     [issued] = _issue(monkeypatch, job)
     person = _doc(FA, 80, "T")
@@ -538,7 +538,7 @@ def test_a_registration_of_no_graph_token_or_in_a_transaction_does_nothing(env, 
 @pytest.mark.parametrize("change,reason", [("dispose", "flow_disposed"), ("gone", "node_gone"),
                                            ("shown", "source_changed"), ("person", "human_edited")])
 def test_the_apply_rechecks_the_card_in_the_guard(env, decided, monkeypatch, change, reason):
-    """L0006 2.6 steps 4~7 (V-09, V-28): what changed between the claim and the candidate closes it, title unchanged."""
+    """2.6 steps 4~7 (V-09, V-28): what changed between the claim and the candidate closes it, title unchanged."""
     from modules.flow_gate.graph_workflow.services import node_title_ai
 
     key, job = _ai_card(env)
@@ -747,7 +747,7 @@ def _handler_calls(name):
 
 @pytest.mark.parametrize("name,action", [("_handle_new", "new"), ("_handle_edit", "edit")])
 def test_the_inbox_hands_the_candidate_over_after_the_consume_outside_any_transaction(name, action):
-    """L0006 2.6 (V-19): after Step 8, outside any transaction or try block, its value never used; ``node_title`` is
+    """2.6 (V-19): after Step 8, outside any transaction or try block, its value never used; ``node_title`` is
     read apart from the document (``body.get``), so it cannot fail the registration."""
     consume, hooks, nested = _handler_calls(name)
     [hook] = hooks
@@ -776,7 +776,7 @@ def test_the_hook_port_never_raises_and_startup_wires_it(env):
     integration.register()
 
 
-# ── the title request wording (P0006 §4.2.6, V-P-24) ────────────────────────
+# ── the title request wording ────────────────────────
 
 def test_the_six_title_requests_and_their_choice(env):
     from modules.flow_gate.services import node_title_hooks as hooks

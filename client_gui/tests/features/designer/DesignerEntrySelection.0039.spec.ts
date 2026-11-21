@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0039 T#2 — Designer entry leaves the Project Explorer unselected (0001-R rev1).
+ * Designer entry leaves the Project Explorer unselected.
  *
  * Opening the Designer in a Project context is not a selection: right after entry no
  * Project / Group / Flow row is selected or marked active, no `[현재]` mark is drawn, and the
@@ -190,7 +190,7 @@ describe('Designer entry — no default Explorer selection (0039 T#2)', () => {
     expect(tree(w).find('.ui-badge').exists()).toBe(false)
     expect(tree(w).text()).not.toContain('현재')
     expect(useProjectStore().currentProjectId).toBe('p')
-    // flowgate.v02test.0002 R0001 #5: the same single click also closes the (open) Project root; another opens it.
+    // #5: the same single click also closes the (open) Project root; another opens it.
     expect(explorerRow(w, 'Alpha').attributes('aria-expanded')).toBe('false')
     await click(w, 'Alpha')
     expect(explorerRow(w, 'Alpha').attributes('aria-expanded')).toBe('true')
@@ -217,7 +217,7 @@ describe('Designer entry — no default Explorer selection (0039 T#2)', () => {
 // flowgate.v02.0040 — the Project Dialog's "열기" is an explicit choice. It reaches the Designer
 // as the store's one-shot explicit-open signal: with it the entered Project is selected and the
 // Designer shows it selected; without it (Sidebar / card entry) the 0039 unselected start stays.
-// flowgate.v02.0042: a selection is not a work target — only an open Flow is — so the Designer
+// a selection is not a work target — only an open Flow is — so the Designer
 // stays in its initial (unselected) state either way.
 describe('Designer entry after Project Dialog 열기 (flowgate.v02.0040)', () => {
   it('selects the opened Project in the Explorer; the Designer still waits for an open Flow (0042)', async () => {
@@ -328,7 +328,7 @@ describe('Designer entry with no Project opened in this session (flowgate.v02.00
     let w = await remountShell()
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
     expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
-    // flowgate.v02.0042: selected, but no Flow is open, so the Designer stays unselected.
+    // selected, but no Flow is open, so the Designer stays unselected.
     expect(leftDock(w).attributes('data-unselected')).toBe('true')
 
     w = await remountShell()

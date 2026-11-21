@@ -1,9 +1,9 @@
-"""flowgate.default.0448 T0005 — the provider a continuous hop actually runs.
+"""the provider a continuous hop actually runs.
 
 B0001 ("연계는 쳐 되어있지도 않고") and NR0003 §4: an ordinary provider pick in the browser
 used to arrive as `provider_pinned=true`, and `start_run()` applies a pin BEFORE the sequence's
 stored provider — so a work plan's per-step provider was cancelled by a plain default choice.
-0448 fixes the client so an ordinary pick sends `provider_id` alone; the server's tier order was
+fixes the client so an ordinary pick sends `provider_id` alone; the server's tier order was
 already right (T0005 §5-3/§5-4 "이미 맞는 경계는 불필요하게 재설계하지 말고 실제 endpoint 회귀의
 앵커로 사용하라"), and this file is that anchor.
 
@@ -12,7 +12,7 @@ Tiers asserted here, in order:
     item_seq override > explicit force-all > active stored sequence provider
         > unpinned request selection > mode-aware doc-type assignment > project default chain
 
-Covers T0005 §7 rows 1, 3, 5, 6, 7, 8 and 9 on the server side. Row 2 (the ten selection
+Covers the earlier implementation rows 1, 3, 5, 6, 7, 8 and 9 on the server side. Row 2 (the ten selection
 surfaces) and rows 4 (refresh/re-entry) are client-side and live in
 client/tests/main/providerSelectionSurfaces.0448.spec.ts and aiProviderStore.spec.ts.
 """
@@ -63,7 +63,7 @@ ALL_PROVIDER_IDS = ["aip_header", "aip_n", "aip_nr", "aip_t", "aip_tr", "aip_ste
 
 
 def test_ai_invoke_service_is_startup_parseable_and_has_no_merge_control_lines():
-    """0494 rejection: a leftover zdiff3 base block made the server fail during import."""
+    """rejection: a leftover zdiff3 base block made the server fail during import."""
     service_path = _SERVER_DIR / "modules/flow_gate/services/ai_invoke_service.py"
     source = service_path.read_text(encoding="utf-8")
     compile(source, str(service_path), "exec")
@@ -254,7 +254,7 @@ def test_an_override_for_another_hop_is_ignored(env):
 # ── §7-7: an unregistered / inactive stored provider ──────────────────────────
 
 def test_inactive_stored_provider_refuses_without_fallback(env, caplog, monkeypatch):
-    # 0142 T#2: an unavailable persisted assignment must not degrade to the request.
+    # an unavailable persisted assignment must not degrade to the request.
     from fastapi import HTTPException
 
     # This admission refusal test has no database or open branch-merge claim.
@@ -372,7 +372,7 @@ def test_explicit_stored_selection_start_failure_never_invokes_trailing_provider
 @pytest.mark.parametrize("classification", ["fast_fail", "spawn_failed"])
 def test_rework_current_selection_outranks_stored_opus_and_never_falls_back(
         env, monkeypatch, classification):
-    """0494: review-gate rework uses the current header choice even when the sequence row
+    """review-gate rework uses the current header choice even when the sequence row
     still stores Opus, and a startup failure cannot expose an Opus execution tail."""
     env["wfseq"].items[1]["provider_id"] = "aip_opus"
     bundle = {
@@ -437,7 +437,7 @@ def test_rework_selection_survives_handoff_bundle_and_resume_resolution(env):
 
 
 def test_case_c_the_actual_work_executor_survives_a_handoff_bundle_replay(env):
-    """0596 T0004 (NR0003 rev3): the just-finished WORK hop resolved to aip_opus (a
+    """the just-finished WORK hop resolved to aip_opus (a
     step-level pick) while the run's header/default stayed aip_header -- the handoff
     bundle that carries the review/rework hand-off forward must preserve aip_opus
     separately, or resolve_step_executor falls back to the header default."""
@@ -474,9 +474,9 @@ def test_case_c_the_actual_work_executor_survives_a_handoff_bundle_replay(env):
 
 def test_case_f_a_startup_fallback_actual_executor_outranks_the_selected_head(
         env, monkeypatch):
-    """Human rejection 2026-09-21 (0596 TR0005 rev2): chain head = aip_1, aip_1 fails to
+    """Human rejection 2026-09-21: chain head = aip_1, aip_1 fails to
     start, aip_2 is the provider that ACTUALLY runs and completes the work, reviewer =
-    aip_3, verdict = issues. `continuation_selected_provider_id` (0435 T0004's finalized
+    aip_3, verdict = issues. `continuation_selected_provider_id` (the earlier implementation's finalized
     chain HEAD, set once at admission and never updated) still names aip_1 after the
     startup fallback -- only `run["provider_id"]` (set by `_execute_provider_chain`/
     worker.py as it walks past the failed head) reflects the provider that actually wrote
@@ -504,7 +504,7 @@ def test_case_f_a_startup_fallback_actual_executor_outranks_the_selected_head(
     svc._classify_end_reason(run, started)
 
     assert started is True
-    # The chain head is untouched -- 0435 T0004 never rewrites it after admission.
+    # The chain head is untouched -- the earlier implementation never rewrites it after admission.
     assert run["continuation_selected_provider_id"] == "aip_1"
     # ...but the provider that actually started (and produced the work) is aip_2.
     assert run["provider_id"] == "aip_2"
@@ -524,7 +524,7 @@ def test_case_f_a_startup_fallback_actual_executor_outranks_the_selected_head(
 
 
 def test_case_g_a_captured_none_survives_the_reviewers_own_completed_run(env):
-    """Human rejection 2026-09-21 (0596 TR0005 rev4, rej_01M31D24MZB58B80): work_executor_
+    """Human rejection 2026-09-21 (rej_01M31D24MZB58B80): work_executor_
     provider_id=None (an existing pre-migration paused row, or a captured provider since
     deleted via the FK's ON DELETE SET NULL) IS a captured value -- "already captured" is
     decided by KEY PRESENCE, not `is not None`. Reviewer = aip_gpt, review hop completes,
@@ -638,7 +638,7 @@ def test_a_resume_replays_the_bundle_onto_the_same_provider(env):
 
 
 def test_a_no_output_retry_reuses_the_finalized_head_not_the_tiers(env):
-    """0435 T0004's contract, re-checked against the new priority: the retry chain is exactly
+    """'s contract, re-checked against the new priority: the retry chain is exactly
     the provider this hop settled on — the stored one — and never re-walks the tiers."""
     result = start(env, continuation_provider_overrides=None)
     run = svc.get_run_record(result["run_id"])
@@ -724,7 +724,7 @@ def test_route_forwards_the_three_request_states_separately(client, monkeypatch,
 def test_route_request_reaches_the_right_final_worker_provider(client, body, expected_provider):
     """§7-8: the same three states again, but through the REAL start_run this time — a request
     unit test and a service unit test can both stay green while the wire between them is
-    broken, which is exactly what NR0003 §7-3 warned about."""
+    broken, which is exactly what the review warned about."""
     response = post_start(client, **body)
     assert response.status_code == 200, response.text
     payload = response.json()

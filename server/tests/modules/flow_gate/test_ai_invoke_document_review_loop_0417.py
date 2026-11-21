@@ -40,7 +40,7 @@ BASE = {
 
 
 def _assert_stage_provider_prompt(monkeypatch, run, chain, prompt, stage):
-    """0108: exercise the real provider boundary during actual worker transitions."""
+    """exercise the real provider boundary during actual worker transitions."""
     import threading
     from modules.flow_gate.services.ai_invoke import worker
 
@@ -128,7 +128,7 @@ def test_review_reject_reworks_then_exhausts_finite_review_count():
 
 
 def test_review_hold_stops_immediately_and_does_not_schedule_rework():
-    # 0486 NR0010 Finding 2 / T0011 section 3: hold is a durable human stop, never an
+    # hold is a durable human stop, never an
     # automatic rejection+rework, even though it is a member of REVIEW_VERDICTS like
     # issues. This used to fall into the same branch as issues and return "rework".
     timeline = []
@@ -141,7 +141,7 @@ def test_review_hold_stops_immediately_and_does_not_schedule_rework():
 
 
 def test_rejected_start_first_rework_success_reaches_review_round_one_with_no_new_reviews():
-    # 0486 NR0010 Finding 1: the historical review that caused the rejection sits AT the
+    # the historical review that caused the rejection sits AT the
     # loop's own review_baseline_id, so current (post-baseline reviews) is empty and
     # rounds_used == 0. Before this fix, that made the rework-succeeded check run AFTER
     # the rounds_used==0 short-circuit, so a completed first rework was misread as
@@ -161,7 +161,7 @@ def test_rejected_start_first_rework_success_reaches_review_round_one_with_no_ne
 def test_compute_review_baseline_then_gate_reaches_review_round_one_after_rejected_start_rework(
     monkeypatch,
 ):
-    # The exact regression NR0010 asked for: baseline computed from a live rejected
+    # The exact regression the review asked for: baseline computed from a live rejected
     # document, then a real rework success, resolved through the gate the worker calls.
     monkeypatch.setattr(service.db_docs, "get_by_id", lambda _doc_id: {
         "doc_review_status": "rejected", "revision_no": 7,
@@ -228,7 +228,7 @@ def test_hold_verdict_never_reaches_auto_reject_in_the_checkpoint_transaction(mo
 def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_reviews(
     monkeypatch, tmp_path,
 ):
-    """flowgate.default.0561 T0004 AC-1/AC-2, human rejection rej_01M2AF5NW2D9KNSM.
+    """AC-1/AC-2, human rejection rej_01M2AF5NW2D9KNSM.
 
     The prior version of this test replaced `_auto_reject` with a mock that always
     returned `{"ok": True}` and injected `rejection_history` through a fake
@@ -351,7 +351,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
         "started_at": loop["started_at"], "docs_target": 0,
         "chain_id": "loop", "chain_docs_target": 0, "chain_docs_reached": 0,
         "attempts_used": 0, "fallback_history": [],
-        # 0582 TR0006 rev1: this run's own admission scope, pinned for its whole
+        # this run's own admission scope, pinned for its whole
         # lifetime exactly like a real review-starting loop's (review.py
         # _spawn_review_hop's action_scope="review") -- the rework hop below must
         # still resolve as "edit" for provenance despite this never changing.
@@ -402,7 +402,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
 
     broadcasts = []
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # `_apply_post_process_result` runs each step against a COPY of the run
     # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
     # member -- survives only when the JUDGE sets it, which is also where production
     # decides it. Set on the classify stub instead, it was silently dropped and every
@@ -437,7 +437,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     assert hops == ["review", "rework", "review"]
     assert db_loops.get("aiv_e2e_bcast")["stop_reason"] == "review_passed"
 
-    # 0582 TR0006 rev1: action_scope stays pinned to the run's admission value
+    # action_scope stays pinned to the run's admission value
     # ("review") for the whole run, on EVERY hop -- exactly the fact that made the
     # old action_scope-only filter blind to this run's rework stage. hop_kind is the
     # live per-hop signal, and effective_action_scope must resolve it to "edit" for
@@ -470,7 +470,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     assert payload["rejection_history"][0]["reason"] == payload["rejection_reason"]
     # Not yet answered at the moment this fired -- the rework hop runs afterwards.
     assert payload["rejection_history"][0]["ai_response"] is None
-    # 0582 TR0006 rev1: this broadcast (review.py's _broadcast_reject) used to carry the
+    # this broadcast (review.py's _broadcast_reject) used to carry the
     # raw parsed item -- no rejection_provider/response_provider keys -- while GET
     # /document already ran the SAME item through enrich_rejection_history_provenance.
     # DocHeader's listener replaces its whole rejection_history array with this payload's,
@@ -498,7 +498,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
 def test_real_worker_standalone_loop_starting_with_rework_keeps_stage_provenance_correct(
     monkeypatch, tmp_path,
 ):
-    """0582 TR0006 rev1, the mirror direction of the test above.
+    """the mirror direction of the test above.
 
     A loop that starts admitted with action_scope="edit" (`starts_with_rework=True`,
     review.py `_spawn_rework_hop`) and is still on the SAME run_id when it reaches its
@@ -671,7 +671,7 @@ def test_real_worker_standalone_loop_starting_with_rework_keeps_stage_provenance
 
 @pytest.mark.parametrize("rework_timeout_sec", [1800, 3600, 7200])
 def test_loop_stage_timeout_sec_applies_the_picked_rework_budget(rework_timeout_sec):
-    # 0486 NR0010 Finding 3 / T0011 section 4: each of the three UI picks must reach the
+    # each of the three UI picks must reach the
     # actual rework hop budget unchanged when the loop's own deadline leaves enough room.
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     loop = {
@@ -761,7 +761,7 @@ def _loop_scope_error(response) -> dict | None:
 
 @pytest.mark.parametrize("scope", ["review", "rework"])
 def test_loop_admission_no_longer_rejects_review_or_rework_scope(monkeypatch, scope):
-    """flowgate.default.0553 T0004 §3: the rejected-state rework entry (action_scope='rework')
+    """the rejected-state rework entry (action_scope='rework')
     may request document_review_loop exactly like 'review' already could. mode='continuous'
     is used here only to force a guaranteed, DB-free 422 (document_review_loop requires
     mode=single) so the scope-specific error can be inspected in isolation."""
@@ -796,7 +796,7 @@ def test_loop_admission_still_rejects_unrelated_scopes(monkeypatch):
 
 @pytest.mark.parametrize("field,value", [
     ("review_count", 0), ("review_criteria", "anything"), ("rework_timeout_sec", 1),
-    # flowgate.default.0490 T0005 §5: the ceiling is now a setting (default max=3), not the
+    # the ceiling is now a setting (default max=3), not the
     # literal 3 — the rejected value is "max + 1", not a fixed number anymore.
     ("failure_restart_max_attempts", 4), ("total_timeout_sec", 1),
 ])
@@ -897,7 +897,7 @@ def test_completed_hop_checkpoints_durable_loop_and_updates_live_payload(monkeyp
         "round_no": 1, "current_stage": "stopped",
         "stop_reason": "review_passed", "stop_detail": None,
     }
-    # 0417 T0013 item 8: the round table rides along, rebuilt from the canonical review row
+    # the round table rides along, rebuilt from the canonical review row
     # (id 11 > baseline 10), so a card that connects only now still gets round 1.
     assert payload["history"] == [{
         "round_no": 1, "stage": "review", "result": "passed", "verdict": "pass",
@@ -907,7 +907,7 @@ def test_completed_hop_checkpoints_durable_loop_and_updates_live_payload(monkeyp
 
 
 def test_payload_exposes_stage_local_attempts_used_on_a_same_stage_retry(monkeypatch):
-    """0569 T0006 / NR0005: a review hop that produced no durable progress must surface a
+    """a review hop that produced no durable progress must surface a
     loop-scope retry count distinct from the run-wide attempts diagnostics counter, so the
     UI can tell this REVIEW apart from a brand-new one."""
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
@@ -953,7 +953,7 @@ def test_payload_exposes_stage_local_attempts_used_on_a_same_stage_retry(monkeyp
 
 
 def test_payload_resets_attempts_used_to_zero_on_the_transition_that_follows_a_retry(monkeypatch):
-    """0569 T0006 SS4.2: the retry succeeding and the stage advancing happen on the SAME
+    """SS4.2: the retry succeeding and the stage advancing happen on the SAME
     checkpoint, so the payload must show attempts_used go back to 0 immediately -- not stay
     pinned at the prior retry's value."""
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
@@ -1102,7 +1102,7 @@ def test_running_status_contains_same_document_review_loop_shape(monkeypatch):
     monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [])
     monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {})
     payload = service.get_status("aiv_live")
-    # 0569 T0006: the loop-scope retry counters ride along with every existing field --
+    # the loop-scope retry counters ride along with every existing field --
     # BASE carries attempts_used=0 / failure_restart_max_attempts=0 unchanged here.
     assert payload["document_review_loop"] == {
         "round_no": 2, "current_stage": "review", "stop_reason": None, "stop_detail": None,
@@ -1341,7 +1341,7 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
         return True
 
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # `_apply_post_process_result` runs each step against a COPY of the run
     # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
     # member -- survives only when the JUDGE sets it, which is also where production
     # decides it. Set on the classify stub instead, it was silently dropped and every
@@ -1381,7 +1381,7 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
         "round_no": 2, "current_stage": "stopped",
         "stop_reason": "review_passed", "stop_detail": None,
     }
-    # 0417 T0013 items 7-8 / TR0018 rejection: the fresh process observed no transition at
+    # items 7-8 / the earlier implementation rejection: the fresh process observed no transition at
     # all, yet deck screen 6's whole table comes back — the two completed reviews with the
     # server's own finding counts and the rework round in between — because it is rebuilt
     # from document_reviews and the answered rejection_history entry, not from a browser.
@@ -1410,7 +1410,7 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
 
 
 def test_real_worker_standalone_loop_stops_on_hold_without_rejecting_document(monkeypatch, tmp_path):
-    # T0011 section 10 E2E: pending_review -> review hold -> human stop.
+    # E2E: pending_review -> review hold -> human stop.
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
     from modules.flow_gate.db import document_reviews as db_reviews
 
@@ -1526,7 +1526,7 @@ def test_real_worker_standalone_loop_stops_on_hold_without_rejecting_document(mo
         return True
 
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # `_apply_post_process_result` runs each step against a COPY of the run
     # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
     # member -- survives only when the JUDGE sets it, which is also where production
     # decides it. Set on the classify stub instead, it was silently dropped and every
@@ -1557,7 +1557,7 @@ def test_real_worker_standalone_loop_stops_on_hold_without_rejecting_document(mo
 
 
 def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypatch):
-    # 0486 NR0010 Finding 3 / T0011 section 4: the in-process review -> rework stage
+    # the in-process review -> rework stage
     # switch inside _worker must recompute run["timeout_sec"] from the loop's own
     # rework_timeout_sec instead of leaving it pinned to whatever the review stage
     # (or the run's very first hop) happened to start with.
@@ -1612,7 +1612,7 @@ def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypat
         "timeout_sec": 14400,
     }
     monkeypatch.setattr(service, "_execute_provider_chain", lambda *a, **k: True)
-    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # `_apply_post_process_result` runs each step against a COPY of the run
     # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
     # member -- survives only when the JUDGE sets it, which is also where production
     # decides it. Set on the classify stub instead, it was silently dropped and every
@@ -1801,7 +1801,7 @@ def test_checkpoint_ignores_late_previous_and_foreign_verdicts(monkeypatch):
     assert rejected == [11]
     # Both owned rows reviewed revision 3, so they are ONE round that was retried, not two
     # rounds -- the next round is 2. The earlier attempt's pass still cannot override the
-    # later attempt's issues (0486 NR0028 F1: attempt_no orders retries inside a round, it
+    # later attempt's issues (the review F1: attempt_no orders retries inside a round, it
     # never counts rounds; before the fix this read 3 because every retry inflated the tally).
     assert (latest["round_no"], latest["current_stage"]) == (2, "rework")
     assert latest["stop_reason"] is None

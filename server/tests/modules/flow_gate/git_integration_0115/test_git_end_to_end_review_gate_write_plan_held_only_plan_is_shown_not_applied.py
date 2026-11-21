@@ -130,7 +130,7 @@ class TestGitEndToEnd(_Scenario):
         assert len(held) == 1
         assert held[0]["path"] == "server/tests/held_case.py"
         assert held[0]["purpose"] == "add a regression case for the fix"
-        # 0578 T0006 §2.2: the held PATHS are checked above, on `held_test_operations` —
+        # The held PATHS are checked above, on `held_test_operations` —
         # the structured field this same test already reads. The turn keeps the count, not
         # a rebuilt sentence listing the paths a second time.
         held_turn = next(

@@ -1,5 +1,5 @@
-"""Failure and cancel going through the real FlowGate job pipeline (flowgate.default.0671
-T0002 / 0669 TR's last rejection, review 1737 item b).
+"""Failure and cancel going through the real FlowGate job pipeline (the earlier change
+TR's last rejection, review 1737 item b).
 
 The rejected test (``test_locks_are_released_after_failure_and_after_cancel`` in
 test_git_parallel_0669.py) only exercised ``lock_manager.acquire``/``release`` directly —

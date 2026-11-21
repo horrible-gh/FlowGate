@@ -1,4 +1,4 @@
-"""R0001 #1 — advance no longer locks out for 24h on a stale unconsumed token.
+"""#1 — advance no longer locks out for 24h on a stale unconsumed token.
 
 The Q149 double-advance guard used to raise head_in_progress (-> HTTP 409) whenever an
 unconsumed token already existed for the doc_ref. Because the token TTL is 24h, an
@@ -89,7 +89,7 @@ def test_advance_without_stale_token_does_not_revoke(monkeypatch):
 
 
 def test_advance_seeds_two_predecessors_into_ref_doc_ids(monkeypatch):
-    """R0001 #1: advance appends the two most recent predecessor result docs to the
+    """#1: advance appends the two most recent predecessor result docs to the
     client-supplied ref_doc_ids, deduped, so the worker receives R + previous +
     previous-previous = 3 reference documents."""
     _wire_happy_path(monkeypatch)
@@ -130,7 +130,7 @@ def test_advance_seeds_two_predecessors_into_ref_doc_ids(monkeypatch):
 
 
 def test_advance_falls_back_to_two_docs_at_first_report_step(monkeypatch):
-    """R0001 #1: at the first report step only one predecessor exists, so the worker gets
+    """#1: at the first report step only one predecessor exists, so the worker gets
     R + that single predecessor = 2 docs (no fabricated third)."""
     _wire_happy_path(monkeypatch)
     monkeypatch.setattr(db_tokens, "get_unconsumed_by_doc_ref", lambda _id: None)

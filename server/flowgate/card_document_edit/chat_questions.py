@@ -1,4 +1,4 @@
-"""Chat-only card question (Q) list and answer (flowgate.v02gui.0010, NR0003 §8, Q#600 / Q#601).
+"""Chat-only card question (Q) list and answer.
 
 A chat AI answers the questions a card's AI left on a card document of the chat's own Flow, on the user's behalf.
 The general Q routes (``/api/v1/q/...``) keep their binding rule (a token answers only on its own ``doc_ref``); this
@@ -34,6 +34,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from modules.flow_gate.db import documents
+from modules.flow_gate.services import ai_response_slim
 from . import call_ledger, chat_authz, chat_errors, chat_gate, target
 from .chat_adapter import _object, serialized_length, success_body, tool_result_limit
 from .errors import GraphApiError, invalid, internal_error
@@ -223,7 +224,7 @@ def _options(item):
         parsed = json.loads(raw) if isinstance(raw, str) else (raw or [])
     except ValueError:
         return []
-    # flowgate.v02gui.0015 T3: ``requires`` only when the option has one (selecting it holds the card until then)
+    # ``requires`` only when the option has one (selecting it holds the card until then)
     return [{"id": o.get("id"), "label": o.get("label", ""), **({"requires": o["requires"]} if o.get("requires") else {})}
             for o in parsed if isinstance(o, dict)]
 
@@ -245,7 +246,7 @@ def _item_view(item, include_answer):
     view = {"item_id": item["id"], "seq": item.get("seq"), "title": item.get("title"), "body": body,
             "options": _options(item), "asker_kind": item.get("asker_kind"), "answered": answered,
             "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state"),
-            # flowgate.v02gui.0028: why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
+            # why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
             # the chat can tell the user the cause (None when it did not fail). Only the code: the stored message is
             # internal text.
             "responder_error_code": item.get("responder_error_code")}
@@ -259,7 +260,8 @@ def _item_view(item, include_answer):
                                      "created_at": latest.get("created_at")}
             if answer_cut:
                 view["latest_answer"]["body_truncated"] = True
-    return view
+    # The chat reads the question without its empty fields (same names, same meaning).
+    return ai_response_slim.slim_question_view(view, keep=())
 
 
 def _document_view(doc, include_answered):
@@ -267,9 +269,11 @@ def _document_view(doc, include_answered):
     items = db_question_items.list_by_doc(doc["doc_id"]) or []
     shown = [_item_view(i, include_answered) for i in items
              if include_answered or int(i.get("answer_count") or 0) == 0]
-    return {"doc_id": doc["doc_id"], "type_code": doc.get("type_code"), "title": doc.get("title"),
-            "status": doc.get("status"), "cards": _cards(doc),
-            "open_count": sum(1 for i in items if int(i.get("answer_count") or 0) == 0), "questions": shown}
+    return ai_response_slim.slim_question_view(
+        {"doc_id": doc["doc_id"], "type_code": doc.get("type_code"), "title": doc.get("title"),
+         "status": doc.get("status"), "cards": _cards(doc),
+         "open_count": sum(1 for i in items if int(i.get("answer_count") or 0) == 0), "questions": shown},
+        keep=("questions",))
 
 
 def _fit(payload):
@@ -448,7 +452,7 @@ def _chat_base(api_base: str) -> str:
     return base + "/api/v2/chat"
 
 
-def cli_mention_section(api_base: str, raw_token: str) -> str:
+def contract_mention_section(api_base: str, raw_token: str) -> str:
     base = _chat_base(api_base)
     return (
         "[Card questions (Q): list and answer]\n"
@@ -467,6 +471,10 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
         "guessing; never write the answer only in your turn and leave the question unanswered. Report refusals and "
         "errors as they are."
     )
+
+
+def cli_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_mention_section(api_base, raw_token)
 
 
 def descriptors() -> list:

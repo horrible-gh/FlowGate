@@ -1,8 +1,8 @@
-"""0153 T#2: preservation refs for human-approved resolution merge commits.
+"""preservation refs for human-approved resolution merge commits.
 
 Every scenario runs real Git on local-path repositories (a bare ``origin`` plus a work
 checkout; no file:// capability gate) and re-reads the real sqlite session row from the
-0115 migrations. The shared runner is wrapped only to record the command order and, in
+migrations. The shared runner is wrapped only to record the command order and, in
 the named fault scenarios, to replace one specific command's result.
 """
 from __future__ import annotations
@@ -143,7 +143,7 @@ def env(monkeypatch, project, repo):
                         lambda mid, context, *, pushed: complete(None, mid, PROJECT, context, pushed=pushed))
 
     def remote(observed):
-        # 0153 T#3: reconcile reads the remote through the detailed variant; only the
+        # reconcile reads the remote through the detailed variant; only the
         # patch target changed (None still means "the query failed", here as network).
         def query(*a):
             probes.append(a)
@@ -391,7 +391,7 @@ def _read_error(args):
 # ── reconcile gate ───────────────────────────────────────────────────────────
 
 def unknown_session(env):
-    """preserve → push timeout: the T#1 reconciling/push_remote_unknown state."""
+    """preserve → push timeout: the the earlier implementation reconciling/push_remote_unknown state."""
     r = env.repo
     m = merge_commit(r)
     mid = open_session(env, approved(r, m))
@@ -421,7 +421,7 @@ def unknown_session(env):
 
 
 def _remote_breaks_json(env):
-    """0153 T#3: another group's commit on origin that makes the integration fail its
+    """another group's commit on origin that makes the integration fail its
     syntax verification, so reconcile hands the merge back through the verified reset."""
     r = env.repo
     other = r.tmp / 'other_json'

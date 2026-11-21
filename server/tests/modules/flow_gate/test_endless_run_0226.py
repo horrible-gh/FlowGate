@@ -10,7 +10,7 @@
 §5-3 chain stop defense — an inbox submission that fills no workflow head slot
       (completed_seq=None) pauses the continuation instead of advancing forever.
 §5-4 target_id validation symmetry — the frontmatter identity guard accepts the
-      short form the mention itself instructs ("target_id: B0001").
+      short form the mention itself instructs ("target_id: the regression").
 §5-5 first hop parity — a continuous (non-review) invoke start routes through
       advance_workflow so instruction heads are auto-completed exactly like every
       later self-chain hop; review mode stays on the direct-issue path.
@@ -65,7 +65,7 @@ class TestContinuationDocsTarget:
         assert svc._continuation_docs_target("doc", 6, continuation_instruction_mode="auto_approved") == 3
 
     def test_sparse_item_seq_after_edit_workflow_pending(self, monkeypatch):
-        # 0226 B0001 ②: renumbered pending tail (18–21) — the old group-seq
+        # ②: renumbered pending tail (18–21) — the old group-seq
         # subtraction produced 9 for a 12-doc group; item counting gives 3.
         _Wfseq([
             _item(18, "T"), _item(19, "TR"), _item(20, "TS"), _item(21, "TSR"),
@@ -306,7 +306,7 @@ class TestTargetIdAlternates:
         )
 
     def test_short_form_from_the_mention_is_accepted(self):
-        # The mention's §2 header instructs exactly this spelling (B0001).
+        # The mention's header instructs exactly this spelling.
         assert self._mismatch("B0001") is None
 
     def test_code_form_is_accepted(self):
@@ -334,8 +334,8 @@ def _invoke_client(monkeypatch, captured):
     })
     monkeypatch.setattr(air, "has_permission", lambda *a: True)
     monkeypatch.setattr(air.db_projects, "get_by_id", lambda pid: {"project_id": pid})
-    # 0242: /ai-invoke/start now checks continuation_target_seq against the real sequence
-    # (NR0003 권고 3). These tests are about first-hop routing, so give it a decided sequence
+    # ai-invoke/start now checks continuation_target_seq against the real sequence
+    #. These tests are about first-hop routing, so give it a decided sequence
     # whose target (item_seq 6) is a remaining step — otherwise the check is what they'd be
     # exercising. Coverage of the check itself lives in test_ai_invoke_continuation_target_0242.
     monkeypatch.setattr(db_wfseq, "get_sequence_for_member_doc", lambda doc_id: {"id": 1})

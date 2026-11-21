@@ -10,7 +10,7 @@ import { REVISIT_CATCHUP_MIN_MS, RUN_POLL_MS, type ConversationSession } from '@
 import DesignerRightDock from '@/features/designer/shell/DesignerRightDock.vue'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// flowgate.v02test.0013 — the chat panel hears the server: every event about the open chat (a stored message, its
+// the chat panel hears the server: every event about the open chat (a stored message, its
 // AI run starting / ending, a command request, a run's changes) and a stream reconnect recover the chat through
 // the session; showing the Dock's chat tab again is a return like the browser tab's. The project stream is handed
 // in by the container (`subscribeEvents`); here a fake hub stands in for it.

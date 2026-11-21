@@ -1,12 +1,12 @@
-"""TR commit ledger storage (flowgate.default.0332 DB0008, migration 086).
+"""TR commit ledger storage (, migration 086).
 
 One row per TR **approval round** — not per document. A TR that was rewound and
 approved again gets a second row, and which row is live is read off ``state``
-(D0005 K9). Rows are never deleted; a cancel writes ``state='canceled'`` onto the
+. Rows are never deleted; a cancel writes ``state='canceled'`` onto the
 row it cancels. FlowGate is a time machine, not an eraser.
 
-``id`` is L0007's ``ledger_row_no``: insert order is commit topology order, because
-every TR commit is made on the same branch under the project git lock (L0007 §2.4).
+``id`` is the earlier implementation's ``ledger_row_no``: insert order is commit topology order, because
+every TR commit is made on the same branch under the project git lock.
 Nothing here stores ``seq`` or ``doc_code`` — both move when the workflow is edited,
 so every read joins ``documents`` for the value of the moment (DB0008 §2-1/§4-6).
 
@@ -21,13 +21,13 @@ from typing import Any, Iterable, Optional
 from .connection import get_store, now_iso
 
 STATE_VALUES = ("no_commit", "live", "canceled")
-# P0006 §5-2 closed this set; DB0008 §2-1 mirrors it in a CHECK. Nothing may add a
+# closed this set;  mirrors it in a CHECK. Nothing may add a
 # seventh code without going back through P.
 SKIP_REASONS = (
     "no_changes", "artifacts_only", "git_inactive",
     "no_worktree", "git_busy", "commit_failed",
 )
-# L0007 §4.1 blocked_reason + its sub-reason, parked on group_git_state because they
+# blocked_reason + its sub-reason, parked on group_git_state because they
 # belong to the group, not to one TR row (DB0008 §2-2).
 BLOCK_REASONS = ("git_inactive", "already_merged", "no_worktree", "git_busy")
 
@@ -39,7 +39,7 @@ def get_by_id(row_id: int) -> Optional[dict]:
 
 
 def by_attempt(attempt_id: str) -> Optional[dict]:
-    """0061 T#8: the durable result, including the no-change case."""
+    """the durable result, including the no-change case."""
     return get_store()._fetch_one(
         "SELECT * FROM tr_commit_ledger WHERE attempt_id = ?", [attempt_id]
     )
@@ -91,11 +91,11 @@ def record_reapply(
     *, group_id: str, doc_id: str, commit_sha: str, commit_subject: str,
     restored_from_id: int,
 ) -> Optional[dict]:
-    """The forward restore put this TR's source back — a NEW ``live`` row (T0018 K11).
+    """The forward restore put this TR's source back — a NEW ``live`` row.
 
     Deliberately not a state change on the canceled row. That row's entire content is
     "this commit existed and was reverted"; flipping it back to ``live`` would make the
-    rewind disappear from the record, which is the history edit D0005 K5 refuses. So the
+    rewind disappear from the record, which is the history edit the design K5 refuses. So the
     ledger grows the same way git does: 085 wrote the commit, the cancel wrote the revert,
     and this writes the revert of the revert, each one still readable afterwards.
 
@@ -137,12 +137,12 @@ def record_no_commit(
 # ── reads ─────────────────────────────────────────────────────────────────────
 
 def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
-    """L0007 §2.2 G1 — the cancel targets, newest commit first.
+    """G1 — the cancel targets, newest commit first.
 
     Ordered by ``id DESC`` and NOT by seq: a TR that was rewound and re-approved
     has a small seq but a late commit, and reverts must peel the newest one first.
 
-    Excludes rows :func:`mark_terminal_reopened` has already marked (T0007 §5/§9). A
+    Excludes rows:func:`mark_terminal_reopened` has already marked. A
     terminal row's commit is buried under a merge — no reset can ever reach it as a
     contiguous HEAD suffix — so offering it here would only ever end in
     ``unsafe_suffix``. It is not live-for-cancel-purposes even though ``state`` still
@@ -163,7 +163,7 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
 
 
 def revert_pending_doc_ids(group_id: str) -> list[str]:
-    """0660 T0004 §3 (RC3) — TR2 documents of this group that are reopened (not approved)
+    """(RC3) — TR2 documents of this group that are reopened (not approved)
     while their own approval commit is still live and cancelable, in doc_id order.
 
     One query for the whole group: the workflow boundaries (reopen, approve, next-empty)
@@ -191,11 +191,11 @@ def latest_reopened_subject(group_id: str, doc_id: str) -> Optional[str]:
     subject since":
 
     * ``state = 'canceled' AND cancel_commit IS NULL AND cancel_reason IS NULL`` — a
-      plain live rewind's ``uncommit_tr_suffix`` row (0332 D0005 K5). Excludes revert-based
-      cancels (T0018's forward-restore counterpart writes a real ``cancel_commit``), which
+      plain live rewind's ``uncommit_tr_suffix`` row. Excludes revert-based
+      cancels ('s forward-restore counterpart writes a real ``cancel_commit``), which
       are a different feature's rows and never meant subject reuse.
     * ``state = 'live' AND reopened_terminal_at IS NOT NULL`` — a merged/pushed terminal
-      reopen's row (flowgate.default.0532 T0007 §7). Nothing was uncommitted — the row is
+      reopen's row. Nothing was uncommitted — the row is
       still ``live`` because the commit is permanent history — but the reopen happened just
       the same and the same default applies: reuse the subject unless the document now
       carries an explicit replacement draft.
@@ -213,10 +213,10 @@ def latest_reopened_subject(group_id: str, doc_id: str) -> Optional[str]:
 
 
 def mark_terminal_reopened(row_id: int) -> bool:
-    """T0007 §5/§9 — this row's commit is baked into base by a merge/push, so a Time
+    """this row's commit is baked into base by a merge/push, so a Time
     Machine reopen may not uncommit it. Record that its cycle closed here instead of
     writing ``state='canceled'``, which would claim, falsely, that the commit was
-    reverted (D0005 K5 — the ledger never misstates git history).
+    reverted (K5 — the ledger never misstates git history).
 
     The row otherwise stays ``live`` and keeps its ``commit_sha`` forever — the content
     is permanent, merged history. ``reopened_terminal_at`` is the only thing that
@@ -241,11 +241,11 @@ def mark_terminal_reopened(row_id: int) -> bool:
 
 
 def reappliable_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
-    """T0018 K11 — the canceled rows a forward restore looks at, in peel order.
+    """K11 — the canceled rows a forward restore looks at, in peel order.
 
     Returns EVERY canceled row of the region, not only the ones that can be put back,
     with the two disqualifiers carried on the row so the caller can report them instead
-    of dropping them. Silent truncation is what L0007 §5 forbids: a step whose source
+    of dropping them. Silent truncation is what the earlier implementation forbids: a step whose source
     stayed reverted must say why, and a row filtered out inside this query has no way to.
 
     * ``newer_live`` > 0 — a later ``live`` row exists for the same document, i.e. the
@@ -326,7 +326,7 @@ def blocks_by_group(group_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
 def latest_by_doc(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     """``doc_id -> the newest row that actually made a commit``, for the strip marker.
 
-    One query for the whole strip (the N+1 lesson of 0282 NR0003 발견 1). Ascending
+    One query for the whole strip (the N+1 lesson of the review). Ascending
     order makes the last write per doc_id win, i.e. the highest id.
 
     ``no_commit`` rows are filtered out **in the query**, not after it. Taking the
@@ -380,7 +380,7 @@ def list_by_groups(group_ids: Iterable[str], limit: int = 400) -> list[dict[str,
     """Same rows as :func:`list_by_group`, for several groups in ONE query.
 
     The Git status panel asks for every active slot at once; a per-slot call here is
-    the N+1 that 0282 NR0003 발견 1 pulled out of this very screen.
+    the N+1 that the review pulled out of this very screen.
     """
     ids = [g for g in group_ids if g]
     if not ids:
@@ -405,7 +405,7 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
 
     ``no_commit`` rows are filtered in the query: the preview draws a step line per
     *commit*, and a round that changed no source is drawn from the absence of a row
-    ("소스 변경 없음"), not from a row saying so (P0006 §2 서두).
+    ("소스 변경 없음"), not from a row saying so (P0006 §2 introduction).
 
     Ordered by the document's ``seq`` because the dialog lists steps in workflow order,
     not in commit order — the cancel loop is the one that needs ``id DESC``
@@ -427,10 +427,10 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
 def group_commit_evidence(group_id: str) -> list[dict[str, Any]]:
     """Every commit this group's ledger ever recorded, for work-base floor checks.
 
-    flowgate.default.0665 T0004 (NR0003 §6 rule 6): unlike :func:`commit_rows_by_group`
+    (rule 6): unlike:func:`commit_rows_by_group`
     this keeps terminal-reopened rows and needs no document join — a recorded group
     commit is evidence of group work whatever happened to its document afterwards.
-    Ordered by ``id`` (ledger order = commit order, L0007).
+    Ordered by ``id`` (ledger order = commit order, the earlier implementation).
     """
     return get_store()._fetch_all(
         "SELECT id, commit_sha, cancel_commit, created_at FROM tr_commit_ledger "
@@ -440,12 +440,12 @@ def group_commit_evidence(group_id: str) -> list[dict[str, Any]]:
     )
 
 
-# ── cancel-side writes (DB0008 §4.3~§4.5, L0007 §4.3 "행마다 즉시") ─────────────
+# ── cancel-side writes ( ~, the earlier implementation "immediately per row") ─────────────
 
 def is_canceled(row_id: int) -> bool:
     """Has this row already been canceled? Checked per row inside the revert loop.
 
-    D0005 K6 forbids a revert of a revert, and the ledger is the only place that
+    K6 forbids a revert of a revert, and the ledger is the only place that
     knows a commit was already peeled off — git itself would happily revert it twice.
     """
     row = get_store()._fetch_one(
@@ -467,7 +467,7 @@ def mark_canceled(
     instead of claiming a cancel it did not make.
 
     The row is never deleted and ``commit_sha`` is left intact — "this commit existed
-    and was reverted" is the fact being recorded (D0005 K5).
+    and was reverted" is the fact being recorded.
     """
     now = now_iso()
     get_store()._execute(
@@ -488,7 +488,7 @@ def mark_canceled(
 def record_cancel_attempt(row_id: int, *, failed_reason: str) -> None:
     """Append one failed cancel attempt to the row's log; the row stays ``live``.
 
-    The response collapses every revert failure into one ``conflict`` code (P0006
+    The response collapses every revert failure into one ``conflict`` code (the plan
     §5-4 closed that set), so the distinction between a conflict, a failed commit and
     a timeout has to live somewhere — it lives here, per attempt, with a timestamp.
 

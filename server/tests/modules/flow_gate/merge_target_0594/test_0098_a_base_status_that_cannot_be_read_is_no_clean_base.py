@@ -76,7 +76,7 @@ def test_0098_a_base_status_that_cannot_be_read_is_no_clean_base(proj, check_bud
             failed = _refused(proj, gid, "main")
             assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", "probe_failed")
             assert _judge(proj, gid, "develop")["is_project_base"] is False      # a non-base target never reads it
-            # flowgate.v02test.0020 rev2: the list does not read the base checkout's status
+            # The list does not read the base checkout's status
             view = _check_view(proj, gid)
             assert view["merge_target_options"] == ["develop", "main"]
             assert view["merge_target_state"]["status"] == "ok"

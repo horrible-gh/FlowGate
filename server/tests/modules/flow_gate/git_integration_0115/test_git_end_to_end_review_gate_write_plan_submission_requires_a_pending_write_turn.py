@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_submission_requires_a_pending_write_turn(self, origin_repo):
-        # 0481 TR0009 rev2: the worker-token submission endpoint's server-side
+        # The worker-token submission endpoint's server-side
         # entry point (svc.submit_review_write_plan) must refuse a plan when no
         # write turn is waiting for one — a propose-only conversation run (or no
         # run at all) has no write intent recorded on the session.

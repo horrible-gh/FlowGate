@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0047 — the composer's ⋯ menu (R0001 §2.3-6): mention copy and AI call, the
+  <!-- the composer's ⋯ menu: mention copy and AI call, the
        same actions the composer had as standing buttons. -->
   <div ref="rootEl" class="ctm">
     <button

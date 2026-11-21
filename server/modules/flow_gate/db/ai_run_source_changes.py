@@ -1,9 +1,9 @@
-"""Per-run source change summaries for chat AI runs (flowgate.default.0670 T0004).
+"""Per-run source change summaries for chat AI runs.
 
-A row exists only for a run that actually changed at least one file (NR0003 §11.4):
+A row exists only for a run that actually changed at least one file:
 "no change" is represented by the absence of a row, never by an empty card.
 
-flowgate.default.0675 T0004: the row carries its conversation anchor
+the row carries its conversation anchor
 (``chat_activity_anchor``) -- after the run's last AI reply, or after the turn the run
 started from when there is none.
 """

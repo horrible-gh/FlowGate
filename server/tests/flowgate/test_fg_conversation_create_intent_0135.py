@@ -1,4 +1,4 @@
-"""One chat per create intent -- POST /api/v1/conversations ``client_request_id`` (flowgate.v02.0135 T#3).
+"""One chat per create intent -- POST /api/v1/conversations ``client_request_id``.
 
 On stg the create answered only after ~2 minutes; the GUI gave up at 30 s, showed ``create_failed``
 and a retry made a second CH while the first one was still being written (NR 3.2: two CH with no

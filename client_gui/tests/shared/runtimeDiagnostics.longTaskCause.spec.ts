@@ -7,7 +7,7 @@ import {
   snapshotRecoverySource,
 } from '@shared/diagnostics/runtimeDiagnostics'
 
-// 0616 T0004 rev5 finding 1: recordMarkdownParse()'s >=50ms promotion to a `long_task` entry
+// recordMarkdownParse's >=50ms promotion to a `long_task` entry
 // must reuse the exact request-local cause already attributed to its own `markdown_parse`
 // entry, not re-read the diagnostics module's ambient `lastRecoverySource` — which a second,
 // unrelated SSE event arriving before the slow parse finishes can have already moved on to.

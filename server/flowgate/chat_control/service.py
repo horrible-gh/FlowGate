@@ -7,27 +7,27 @@
   button does).
 
 A start refuses work cards whose instruction line has no body (409 ``chat_run_instruction_missing``) unless the
-caller allows their instruction AI: the chat is meant to write the instruction itself (0002-CH turn 30).
+caller allows their instruction AI: the chat is meant to write the instruction itself (CH).
 
-0002-CH turn 48 (test server E2E):
+(test server E2E):
 - a new group's Flow has no card yet (its bug / requirement is a free document on the Canvas): placement starts the
   chain with a start card of the Flow's one live root (``placement`` ``new_root``); two live roots are ambiguous (409
   ``chat_cards_root_ambiguous``), none leaves it unplaceable (409 ``chat_cards_flow_empty``);
 - a start answers why a card already waits instead of running (``waiting``: each node run's ``wait_reason`` /
   ``intervention``, e.g. ``manual_write_wait`` for a card with no AI), so the chat can tell the user the cause.
 
-flowgate.v02gui.0028: after the draft save a placement records the placing chat of each new work card (``owner``:
+after the draft save a placement records the placing chat of each new work card (``owner``:
 its CH conversation document, token, AI run, user; ``card_role_store``), the only chat the card role API
 (``card_roles``) lets read or change that card's AI roles.
 
-flowgate.v02gui.0032 (decision 8): the chat chooses each card's AI roles itself. A placed card may carry ``roles``
+(decision 8): the chat chooses each card's AI roles itself. A placed card may carry ``roles``
 (``{instruction|execution|review: {kind, provider_id?}}``, the card role PATCH grammar); they are checked before the
 save (``placement_roles.precheck``: 422 ``ai_not_selectable``) and written in the draft save's own Flow guard after
 the defaults were copied (``placement_roles.write``), so a refusal places nothing. The answer gives each card's roles
 and where they came from (``chat`` / ``default`` / ``person`` / ``unset``); roles left on a default are listed in
 ``defaults_used`` for the chat to choose.
 
-flowgate.v02gui.0032 (0002-CH seq 15-17): a placed card may also carry ``settings`` — its review count, restarts and
+(CH seq 15-17): a placed card may also carry ``settings`` — its review count, restarts and
 time limit (``run_settings``: a test card has only the review count), the values the person's AI tab offers. They are
 checked before the save (422 with the field's ``choices``) and written in the same guard as the roles (one
 ``chat_card_setting_audit`` row per setting when the placing chat is known); the answer gives each card's values now.
@@ -158,7 +158,7 @@ def _instruction_line(flow_id: str, node_key: str) -> dict:
 
 
 def _record_owner(flow_id: str, node_keys: list[str], owner: Optional[dict]) -> bool:
-    """flowgate.v02gui.0028: the placing chat of each new work card (``card_role_store.chat_placed_cards``), recorded
+    """the placing chat of each new work card (``card_role_store.chat_placed_cards``), recorded
     after the draft save committed. Only the work cards: the start card and the confirm card have no AI roles, so the
     chat card role API never needs them. A failed record is logged and the placement stands: the cards then have no
     owner and the chat role API refuses them (fail closed), the user's card settings screen still sets their AI."""
@@ -181,7 +181,7 @@ def _kind(doc_type: str) -> Optional[str]:
 
 
 def _precheck_settings(cards: list[dict]) -> None:
-    """flowgate.v02gui.0032: every chosen run setting fits its card's kind and choices, before anything is saved."""
+    """every chosen run setting fits its card's kind and choices, before anything is saved."""
     if not any(card.get("settings") for card in cards):
         return
     run_settings.require_available()
@@ -223,13 +223,13 @@ def _settings_summary(flow_id: str, node_key: str, doc_type: str) -> dict:
 
 def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, owner: Optional[dict] = None) -> dict:
     """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run.
-    ``owner`` (``authz.owner``): the placing chat, recorded for each new work card (flowgate.v02gui.0028)."""
+    ``owner`` (``authz.owner``): the placing chat, recorded for each new work card."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
     links = topology.parse(body, len(cards))
     placement_roles.precheck(cards, user_id)
     _precheck_settings(cards)
-    # flowgate.v02gui.0019: the Flow's start card first, whatever the draft already holds (the one rule of
+    # the Flow's start card first, whatever the draft already holds (the one rule of
     # ``root_start``, also run when the root is registered); no edge is made to or from it here.
     # Explicit topology must not create a root before a rejected request.
     started = (with_flow_guard(flow_id, lambda: root_start.ensure_start_card(group, user_id, _locale(locale)))
@@ -262,7 +262,7 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
         raise GraphApiError(422, "chat_cards_draft_invalid", {"flow_id": flow_id,
                                                               "errors": dr.sort_errors(request.errors)})
     def write_roles(saved: dict) -> None:
-        # flowgate.v02gui.0032: the chat's chosen roles, in the draft save's guard after the defaults were copied
+        # the chat's chosen roles, in the draft save's guard after the defaults were copied
         keys = saved.get("key_map") or {}
         chosen = [(keys[f"{placement.CLIENT_NODE}{i}"], card["roles"]) for i, card in enumerate(cards)
                   if card.get("roles")]

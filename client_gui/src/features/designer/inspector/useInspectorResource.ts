@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#3 — the Inspector's common read (D#1 §7.2). A feature composable passes the
+// the Inspector's common read. A feature composable passes the
 // target, a read function from `@/features/document` and the server events that change what it
 // reads; it gets back the data, a state (idle / loading / ready / error), the error, whether the
 // shown data is stale and a manual read again. There is no central event table (D#1 §7.3): each
@@ -12,10 +12,10 @@
 // - A new target document drops the previous one's data, and a read answered after the target
 //   changed (or after a newer read started) is thrown away: results are applied by request order.
 // - Leaving (component unmount / scope dispose) unsubscribes and drops a pending read again.
-// flowgate.v02.0053 T#7 — a resource whose server answers a change with the whole resource (the card
+// a resource whose server answers a change with the whole resource (the card
 // settings, one value per request, no save button) takes that answer as its data (`replace`), and
 // useInspectorFieldWrite sends the changes: one at a time, the value sent shown until it is answered.
-// flowgate.v02test.0048 — a resource whose key carries a context next to what it reads (the card settings: card +
+// a resource whose key carries a context next to what it reads (the card settings: card +
 // run / revision / draft version) names that part with `identity`: a key change that keeps the identity (another tab
 // placed a card, so the draft version moved) reads again quietly, the shown data kept, like a read again on an event.
 import { getCurrentInstance, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
@@ -252,7 +252,7 @@ export interface InspectorFieldWrite {
 }
 
 /**
- * The common write of one value (flowgate.v02.0053 T#7). Each change is sent at once; while it waits its
+ * The common write of one value. Each change is sent at once; while it waits its
  * value is pending (shown), the next change waits for it, and the answer replaces the resource. A refusal
  * keeps the field's failure and reads the resource again. A new target drops the pending values and the
  * failure; an answer for an earlier target is not applied.

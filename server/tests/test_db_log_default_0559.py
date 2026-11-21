@@ -1,6 +1,6 @@
-"""DB_LOG default direction + dead service.log key (flowgate.default.0559 T0007).
+"""DB_LOG default direction + dead service.log key.
 
-0559 NR0003 §8~10 권고2/권고3: server/config.py:43 declared `DB_LOG: bool = True`
+~10 recommendations 2/3: server/config.py:43 declared `DB_LOG: bool = True`
 while server/.env.sample:29 already documents `DB_LOG=false` as the intended
 default — the code default pointed the wrong way, so any deployment whose
 .env lacks a DB_LOG line (pydantic_settings falls back to the field default)

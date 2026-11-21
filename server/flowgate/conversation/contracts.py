@@ -1,4 +1,4 @@
-"""Wire names, status/error codes and limits of the Conversation contract (D0006 §3.1, §3.5, §5).
+"""Wire names, status/error codes and limits of the Conversation contract.
 
 Everything a client or a model can observe is named here once: command states,
 decisions, cancel/failure reason codes, HTTP error codes and the time / result-length
@@ -10,7 +10,7 @@ from typing import Optional
 
 from flowgate.conversation import legacy_adapter
 
-# ── command request states (D0006 §3.1) ──────────────────────────────────────
+# ── command request states ──────────────────────────────────────
 PENDING_APPROVAL = "pending_approval"
 APPROVED = "approved"
 RUNNING = "running"
@@ -24,7 +24,7 @@ STATUSES = (PENDING_APPROVAL, APPROVED, RUNNING, SUCCEEDED, FAILED, TIMED_OUT, C
 TERMINAL_STATUSES = (SUCCEEDED, FAILED, TIMED_OUT, CANCELLED, REJECTED)
 OPEN_STATUSES = (PENDING_APPROVAL, APPROVED, RUNNING)
 
-# ── decisions (D0006 §3.2) ───────────────────────────────────────────────────
+# ── decisions ───────────────────────────────────────────────────
 DECISION_APPROVE = "approve"
 DECISION_REJECT = "reject"
 DECISION_CANCEL = "cancel"
@@ -40,7 +40,7 @@ POLICY_USER_APPROVAL = "user_approval"
 POLICY_REJECT = "reject"
 COMMAND_POLICIES = (POLICY_ALWAYS_APPROVE, POLICY_USER_APPROVAL, POLICY_REJECT)
 
-# ── cancelled / failed reason codes (D0006 §5.3) ─────────────────────────────
+# ── cancelled / failed reason codes ─────────────────────────────
 REASON_CANCELLED_BY_USER = "chat_command_cancelled_by_user"
 REASON_APPROVAL_WAIT_EXPIRED = "chat_command_approval_wait_expired"
 REASON_RUN_BUDGET_EXHAUSTED = "chat_command_run_budget_exhausted"
@@ -56,10 +56,10 @@ CANCEL_REASONS = (
 )
 FAILURE_REASONS = (REASON_PROCESS_OWNER_UNAVAILABLE, REASON_INTERNAL_ERROR)
 
-# ── HTTP error codes (D0006 §5.3, §5.4) ──────────────────────────────────────
+# ── HTTP error codes ──────────────────────────────────────
 ERR_FORBIDDEN = "chat_command_forbidden"
 ERR_CAPABILITY_REQUIRED = "chat_command_capability_required"
-# flowgate.v02test.0026: an execute-mode chat asked for a command that changes files.
+# an execute-mode chat asked for a command that changes files.
 ERR_EXECUTE_MODE_DENIED = "chat_command_execute_mode_denied"
 ERR_RUN_FINISHED = REASON_RUN_FINISHED
 ERR_RUN_CANCELLED = REASON_RUN_CANCELLED
@@ -82,14 +82,14 @@ ERR_CONVERSATION_PROJECT_NOT_FOUND = "conversation_project_not_found"
 ERR_CONVERSATION_GROUP_NOT_FOUND = "conversation_group_not_found"
 ERR_CONVERSATION_GROUP_DISPOSED = "conversation_group_disposed"
 ERR_CONVERSATION_NUMBER_RESERVATION_FAILED = "conversation_number_reservation_failed"
-# flowgate.v02.0047: the one AI title of a new chat (auto_title.py).
+# the one AI title of a new chat (auto_title.py).
 ERR_CONVERSATION_TITLE_CHANGED = "conversation_title_changed"
 ERR_CONVERSATION_AUTO_TITLE_NOT_OWED = "conversation_auto_title_not_owed"
 ERR_CONVERSATION_AUTO_TITLE_NO_MESSAGE = "conversation_auto_title_no_message"
 ERR_CONVERSATION_AUTO_TITLE_UNAVAILABLE = "conversation_auto_title_unavailable"
 ERR_CONVERSATION_AUTO_TITLE_FAILED = "conversation_auto_title_failed"
 
-# ── time and result-length limits (D0006 §3.5) ───────────────────────────────
+# ── time and result-length limits ───────────────────────────────
 APPROVAL_WAIT_MAX_SEC = 900
 RUN_SAFETY_SEC = 5
 CLI_WAIT_DEFAULT_SEC = 30
@@ -99,12 +99,12 @@ AI_RESULT_MAX_CHARS = legacy_adapter.API_TOOL_RESULT_MAX_CHARS
 RESULT_STREAMS_TOTAL_CHARS = 12000
 RESULT_META_FIELD_CHARS = 1000
 # A running command may outlive its own timeout by this much before the API worker
-# stops waiting for it (D0006 §3.5.2 rule 4).
+# stops waiting for it (rule 4).
 RUNNING_GRACE_SEC = 15
-# Upper bound of one wait step; progress is noted at least this often (D0006 §3.6).
+# Upper bound of one wait step; progress is noted at least this often.
 WAIT_POLL_SEC = 1.0
 
-# ── activity anchor (D0006 §3.9.1) ───────────────────────────────────────────
+# ── activity anchor ───────────────────────────────────────────
 ANCHOR_BEFORE = "before"
 ANCHOR_AFTER = "after"
 ANCHOR_POSITIONS = (ANCHOR_BEFORE, ANCHOR_AFTER)
@@ -114,11 +114,11 @@ ANCHOR_AMBIGUOUS = "ambiguous"
 ANCHOR_UNRESOLVED = "unresolved"
 ANCHOR_STATES = (ANCHOR_REPLY, ANCHOR_RUN_START, ANCHOR_AMBIGUOUS, ANCHOR_UNRESOLVED)
 
-# ── run change capture (D0006 §3.8.1) ────────────────────────────────────────
+# ── run change capture ────────────────────────────────────────
 CAPTURE_READY = "ready"
 CAPTURE_UNAVAILABLE = "unavailable"
 
-# ── SSE invalidation events (D0006 §3.9.2; not authoritative payloads) ───────
+# ── SSE invalidation events (not authoritative payloads) ───────
 EVENT_COMMAND_UPDATED = "chat_command_updated"
 EVENT_RUN_CHANGES = "chat_run_changes"
 
@@ -136,5 +136,5 @@ class ConversationError(Exception):
 
 
 def error_body(code: str, message: Optional[str] = None) -> dict:
-    """The error envelope every Conversation route answers with (D0006 §5.1)."""
+    """The error envelope every Conversation route answers with."""
     return {"ok": False, "error": {"code": code, "message": message or code}}

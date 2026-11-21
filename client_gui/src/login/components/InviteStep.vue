@@ -55,7 +55,7 @@ import { useI18n } from 'vue-i18n'
 import type { InviteInfo } from '../stores/auth'
 import StepIcon from './StepIcon.vue'
 
-// flowgate.v02.0020 (시스템 › 사용자 › 초대): the invited person sets their own password.
+// flowgate.v02.0020 ("시스템" › "사용자" › "초대"): the invited person sets their own password.
 const props = defineProps<{
   loading: boolean
   invite: InviteInfo | null

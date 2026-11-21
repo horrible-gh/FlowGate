@@ -1,4 +1,4 @@
-"""flowgate.v02test.0042 regression (real git, real session rows): a card result's merge conflict resolved on the card.
+"""regression (real git, real session rows): a card result's merge conflict resolved on the card.
 
 The earlier suite (``test_card_merge_v02test_0042``) stubbed the session layer. This one runs the whole chain the
 card's '병합 · 충돌' tab drives, on a real git worktree and a migrated SQLite (the 0332 fixtures):

@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0059 0017-T — 배치 밀도 is the step a card drag moves in (넓게 / 보통 / 좁게 coarse to fine,
- * 자율형 none), not a layout:
+ * flowgate.v02.0059 0017-T — 배치 밀도 is the step a card drag moves in (wide / normal / narrow coarse to fine,
+ * freeform none), not a layout:
  * - pure: DENSITY_MOVE_STEP (one place, on the server auto placement's 20 lattice), stepGroupMove (the dragged
  *   card on its nearest step point, one offset for every dragged card, so a group keeps its layout; none without a
  *   step), clampGroupToCanvas in whole steps and canvasDotGrid (0018-TR rework: the dots are the step lattice).
@@ -11,7 +11,7 @@
  *   density changes no card, Edge, MiniMap, saved position or zoom; a drop is one 실행 취소 / 다시 실행; the saved
  *   positions come back after the Designer is opened again.
  * - 0018-TR rework (rejection: the dots did not match the cards and did not change with the density): the Canvas
- *   dot grid is the density's step (40 / 20 / 10, none for 자율형) and follows pan / zoom, and a dropped card sits
+ *   dot grid is the density's step (40 / 20 / 10, none for freeform) and follows pan / zoom, and a dropped card sits
  *   on a dot — checked through the drawn CSS background against Vue Flow's own transform, zoomed and panned.
  * jsdom replays no d3 drag: a drag is Vue Flow's own `nodeDragStart` / `nodeDrag` / `nodeDragStop` with the cards
  * where Vue Flow puts them (start + pointer offset), as DesignerShellArrange.0059 does for a drop.
@@ -475,7 +475,7 @@ describe('Designer Shell — 배치 밀도 is the card drag step (flowgate.v02.0
     expect(canvas(w).attributes('data-selected-node-ids')!.split(' ').sort()).toEqual([...ALL].sort())
     await chooseDensity(w, 'normal', 'toolbar')
 
-    // N under the pointer, dragged by (67, 31): 보통 (20) moves every card by (60, 40).
+    // N under the pointer, dragged by (67, 31): normal (20) moves every card by (60, 40).
     const shown = await drag(w, [N, R, D], [67, 31])
     expect(shown.halfway).toEqual(moved([40, 20], [N, R, D]))
     expect(cardsAt(w)).toEqual(moved([60, 40]))
@@ -537,7 +537,7 @@ describe('Designer Shell — 배치 밀도 is the card drag step (flowgate.v02.0
     await openCanvasFlow(w)
     expect(cardsAt(w)).toEqual(cards)
     expect(miniMap(w)).toEqual(map)
-    // The density is screen state only: a new Designer starts at 보통 (20).
+    // The density is screen state only: a new Designer starts at normal (20).
     expect(w.get('[data-test="designer-tool-density"] [aria-checked="true"]').attributes('data-density')).toBe('normal')
     expect(canvas(w).attributes('data-move-step')).toBe('20')
   })
@@ -554,7 +554,7 @@ describe('Designer Shell — the Canvas dot grid is the density step lattice (00
     const w = await mountShell()
     await openCanvasFlow(w)
     expect(viewOf().zoom).toBe(1)
-    // A new Designer starts at 보통 (20).
+    // A new Designer starts at normal (20).
     expect(gridOf(w)).toMatchObject({ gap: 20, size: 20, backgroundSize: '20px 20px' })
     const seen: Record<string, number | null> = {}
     for (const [level, from] of [['wide', 'toolbar'], ['normal', 'menu'], ['narrow', 'toolbar'], ['free', 'menu'], ['wide', 'menu']] as const) {
@@ -620,7 +620,7 @@ describe('Designer Shell — the Canvas dot grid is the density step lattice (00
         expect(end[D][0] % step).toBe(0)
         expect(end[D][1] % step).toBe(0)
         expect(cardsAt(w)[D]).toEqual(end[D])
-        // On a dot of the drawn grid (far out the 좁게 grid shows every second 10 point: 60 / 420 are on it).
+        // On a dot of the drawn grid (far out the narrow grid shows every second 10 point: 60 / 420 are on it).
         expect(onDot(w, end[D])).toBe(true)
         await tool(w, 'edit.undo').trigger('click')
         await settle()

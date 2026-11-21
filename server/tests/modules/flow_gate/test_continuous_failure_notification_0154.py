@@ -1,14 +1,14 @@
-"""R0001 group 0154 / NR0004 Gap A — surface a failed unmanned-chain test_run as a distinct notification.
+"""Gap A — surface a failed unmanned-chain test_run as a distinct notification.
 
 NR0004 found the "테스트레포트에서 멈춤" R0001 reported was really two stops. The SUCCESS path already
 self-continues (all-green auto-assembles + auto-approves the TSR) and the terminal completion surfaces as
-`continuous_work_completed` (group 0135). The FAILURE path, by contrast, assembled no TSR and stopped with
+`continuous_work_completed` (the earlier change). The FAILURE path, by contrast, assembled no TSR and stopped with
 NO persistent signal at all — only a transient SSE `test_run_finished` broadcast — so the unmanned chain
-went silent and nobody knew until the run record was opened by hand (NR0004 §2.4).
+went silent and nobody knew until the run record was opened by hand.
 
 This promotes ONE new terminal event, `continuous_work_failed`, to the 🔔 feed as the failure counterpart
 of `continuous_work_ended`, reusing the same once-per-terminal-event discipline so it does not revive the
-0118 per-transition noise.
+per-transition noise.
 
 These tests lock in:
   1. `continuous_work_failed` surfaces on the feed as a distinct `continuous_work_failed` activity,
@@ -145,7 +145,7 @@ def test_normal_inflow_still_present(failed_chain_store):
 
 
 def test_noise_invariant_preserved(failed_chain_store):
-    # 0118 / group 0125 NR0003 권고 4: per-transition state_changed and present-tense work_started must
+    # per-transition state_changed and present-tense work_started must
     # NEVER reach the feed even though the terminal failure now does.
     result = dashboard_service.get_notification_feed("flowgate", None, 50)
     types = {i["activity_type"] for i in result["recent_activities"]["items"]}

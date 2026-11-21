@@ -8,7 +8,7 @@
       </span>
     </RouterLink>
 
-    <!-- Search is a visual shell only (T0011 §7): there is no search feature yet, so the
+    <!-- Search is a visual shell only: there is no search feature yet, so the
          field is disabled and says so instead of pretending to search. -->
     <div class="gui-search-wrap">
       <div class="gui-search" role="search" :title="t('gui.topbar.search_unavailable')">
@@ -177,7 +177,7 @@ const roleLabel = computed(() =>
   opacity: 1;
 }
 
-/* Input's own `.ui-input:disabled` rule dims opacity (T0004 §5.3 base); this field was
+/* Input's own `.ui-input:disabled` rule dims opacity; this field was
    always disabled and never dimmed before the Primitive swap, so pin it back to HEAD's
    baseline. The combined selector guarantees it wins regardless of scoped-style
    injection order, unlike a same-specificity single-class override. */

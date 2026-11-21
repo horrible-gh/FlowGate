@@ -1,6 +1,6 @@
-"""Final approval deferred across a merge conflict — flowgate.default.0555 T0008 (T#2).
+"""Final approval deferred across a merge conflict — the earlier change the earlier implementation.
 
-D0005 §3.5/§3.6/§3.8/§3.9/§3.11/§3.12's conflict contract, driven against a REAL
+'s conflict contract, driven against a REAL
 git origin: the approval a conflict interrupts must stay unapproved through
 resolution, rejection and re-review, and must be committed exactly once, inside the
 merge review's own project Git lock, at the moment the merge really terminates.
@@ -220,7 +220,7 @@ def _resolve(group_id: str, merge_id: int, path: str, content: str) -> dict:
 
 @needs_git
 class TestFinalApprovalConflictIntent0555:
-    """C1–C11 plus T0008 §15's extra guarantees, in sequence on one group."""
+    """C1–C11 plus the earlier implementation's extra guarantees, in sequence on one group."""
 
     GROUP = f"{PROJECT}.default.0140"
     PATH = "shared.py"
@@ -369,7 +369,7 @@ class TestFinalApprovalConflictIntent0555:
 
     # ── C10 ───────────────────────────────────────────────────────────────────
 
-    # ── reconciling success branch (T0008 §5/§7/§9) ────────────────────────────
+    # ── reconciling success branch ────────────────────────────
 
 
     # ── §15: the uncoupled flow ───────────────────────────────────────────────

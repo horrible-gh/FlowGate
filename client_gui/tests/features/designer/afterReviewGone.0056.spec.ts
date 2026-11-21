@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — closing check of the removed card setting (0056 T: the run-after-review setting is gone from
+ * closing check of the removed card setting (0056 T: the run-after-review setting is gone from
  * the UI, the settings model, i18n ko · en · ja, the preview and the specs — not hidden, not disabled): no file of
  * client_gui's src, preview or tests names it. The names are put together here so this file does not name them either.
  */

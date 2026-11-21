@@ -1,4 +1,4 @@
-"""Legacy service boundary for the account/role application rules (0113 T#2)."""
+"""Legacy service boundary for the account/role application rules."""
 from modules.flow_gate.db import ai_providers, ai_groups, ai_group_role_profiles
 from modules.flow_gate.db.connection import get_store, in_transaction
 from modules.flow_gate.db.ai_group_role_profiles import effective_review_count, stored_review_count  # noqa: F401 - re-exported boundary

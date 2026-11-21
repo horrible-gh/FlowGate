@@ -1,27 +1,27 @@
 <template>
-  <!-- flowgate.v02.0026 — Designer Center (0003-D §2.2): Flow Tabs over the Canvas area. The
+  <!-- Designer Center: Flow Tabs over the Canvas area. The
        Canvas area shows exactly one of: Graph loading / Graph error / Canvas, and stays empty
-       (no guidance text — flowgate.v02.0042) while no Flow is open.
+       (no guidance text — the earlier change) while no Flow is open.
        User actions become Center session actions; this part knows nothing about Vue Flow.
-       flowgate.v02.0045 S3+S4: the Canvas's structure edits go to the session's draft actions.
+       S3+S4: the Canvas's structure edits go to the session's draft actions.
        flowgate.v02.0045 TR0020 rev2: 되돌리기 / 검증 / 실행 are Toolbar tools. TR0020 rev3: no
        편집 / 편집 마치기 — a Flow that already ran is edited right on the Canvas (the session picks
-       what it shows). TR0020 rev4: nothing is laid over the Canvas — no saving / refused-save /
+       what it shows). the earlier implementation: nothing is laid over the Canvas — no saving / refused-save /
        검증 note (the edit note is gone); a refused save reads the Flow again by itself, and the
        problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas.
        flowgate.v02.0059 T#1: the session's [선택] mode and the Flow's whole Selection go to the
-       Canvas, and the Selection it reports in that mode comes back to the session. flowgate.v02.0059 T#2: a
+       Canvas, and the Selection it reports in that mode comes back to the session. the earlier change the earlier implementation: a
        drop of one card or of the selection goes to the session as one move (one undo entry).
-       flowgate.v02.0059 0017-T: the density's move step (`move-step`, the Shell's) goes to the Canvas.
+       the density's move step (`move-step`, the Shell's) goes to the Canvas.
        flowgate.v02.0056 F2-1: a card's [승인] goes to the session (approveNode); its refusal is the run band's toast.
-       flowgate.v02.0061 T#14: the Canvas is editable only while the Flow's run does not lock it (the session's run marks:
+       the Canvas is editable only while the Flow's run does not lock it (the session's run marks:
        running / paused / stopping); the marks also draw the lock note, the protected lines and the running lines. A
        card's 병합 충돌 asks the Shell for the Git tool panel (`show-tool`), where the conflict session is resolved.
        flowgate.v02.0061 T#15: a card's context menu is the session's (cardMenu / chooseCardMenu: Hold 설정 / 해제,
        되돌리기), and the Graph Time Machine's confirmation and outcome are the session's dialog (timeMachine).
-       flowgate.v02.0070 T#1 (B1): a card title is no longer edited on the Canvas — the Inspector header saves it through the
+       (B1): a card title is no longer edited on the Canvas — the Inspector header saves it through the
        session (saveNodeTitle, wired by the Center column).
-       flowgate.v02test.0035: the tabs also show their Flow's archive state (the last answered one, so a re-read does not
+       the tabs also show their Flow's archive state (the last answered one, so a re-read does not
        flicker) and the run / chat ends seen while another tab was active (useFlowTabMarks: per Project in the browser,
        cleared when the tab is activated or closed). -->
   <div class="designer-center" data-test="designer-center">
@@ -129,14 +129,14 @@ import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
 const props = withDefaults(defineProps<{
   center: DesignerCenterSession
   placing?: boolean
-  /** flowgate.v02.0059 0017-T: the step a card drag moves in; null = 자율형. */
+  /** the step a card drag moves in; null = freeform. */
   moveStep?: number | null
 }>(), { placing: false, moveStep: null })
 
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
-  /** flowgate.v02.0061 T#14: a card's merge conflict — the Git tool panel resolves it. */
+  /** a card's merge conflict — the Git tool panel resolves it. */
   'show-tool': [tool: 'git']
   'open-document': [flowId: string, document: import('./canvas/cardDocumentButtons').CardDocumentOpen]
 }>()
@@ -148,13 +148,13 @@ const load = props.center.activeGraphLoad
 const view = props.center.activeView
 const edit = props.center.activeEdit
 const marks = props.center.activeRunMarks
-/** flowgate.v02.0061 T#15: the active Flow's card context menu (the session's rules) and the item chosen in it. */
+/** the active Flow's card context menu (the session's rules) and the item chosen in it. */
 function cardMenuOf(nodeId: string) {
   return activeTab.value ? props.center.cardMenu(activeTab.value.flowId, nodeId) : []
 }
 
 /**
- * flowgate.v02test.0042 (시안 v7): a card's 병합 충돌 opens that card's '병합 · 충돌' Inspector tab — the one window event every
+ * flowgate.v02test.0042 (mockup v7): a card's 병합 충돌 opens that card's '병합 · 충돌' Inspector tab — the one window event every
  * "open this card's merge" goes through (the Center column selects the card and asks the Inspector for the tab).
  */
 function openCardMerge(flowId: string, nodeKey: string) {
@@ -165,14 +165,14 @@ function chooseCardMenu(nodeId: string, key: FlowCardMenuKey) {
   if (activeTab.value) props.center.chooseCardMenu(activeTab.value.flowId, nodeId, key)
 }
 
-/** flowgate.v02.0061 T#15: the active Flow's card Holds as the session judges them (the Graph read's for every card). */
+/** the active Flow's card Holds as the session judges them (the Graph read's for every card). */
 const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab.value.flowId) : new Map<string, boolean>()))
 /**
- * flowgate.v02gui.0001: every open tab's run mark — its Flow's run status when it is one the run lock names (running /
+ * every open tab's run mark — its Flow's run status when it is one the run lock names (running /
  * paused / stopping) and confirmed by a read; a status not confirmed yet shows no mark. Every opened tab reads its run
  * with its Graph, so inactive tabs are known too.
  */
-/** flowgate.v02test.0035: how each Flow's last chat answer ended, as the finish event said (taken once by the marks). */
+/** how each Flow's last chat answer ended, as the finish event said (taken once by the marks). */
 const chatFinishes: Record<string, FlowTabChatEnd> = {}
 const tabChatStates = useFlowChatActivity(() => props.center.state.projectId, () => props.center.state.tabs.map(tab => tab.flowId),
   (flowId, failed) => { chatFinishes[flowId] = failed ? 'failed' : 'done' })
@@ -185,7 +185,7 @@ const tabRunStates = computed(() => {
   return states
 })
 /**
- * flowgate.v02test.0035: each open tab's archive state — the last one answered or set, kept while it is read again (an
+ * each open tab's archive state — the last one answered or set, kept while it is read again (an
  * archive event locks every tab to null for a moment), so a tab never flickers. A Group archive does not touch it.
  */
 const archiveShown = reactive<Record<string, boolean>>({})
@@ -229,7 +229,7 @@ const tabChatEnds = computed(() => {
   return ends
 })
 const timeMachine = props.center.timeMachine
-/** flowgate.v02.0061 T#15: the dialog's Flow's card titles by node key (its shown Graph). */
+/** the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {
   const flowId = timeMachine.value?.flowId
   const load = flowId ? props.center.state.graphs[flowId] : undefined

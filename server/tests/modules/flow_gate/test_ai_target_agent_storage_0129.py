@@ -1,4 +1,4 @@
-"""0129 T#1: target Agent storage contract; no execution or GUI changes."""
+"""target Agent storage contract; no execution or GUI changes."""
 import os
 import re
 import sqlite3

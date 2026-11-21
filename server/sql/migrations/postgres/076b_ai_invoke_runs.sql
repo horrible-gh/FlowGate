@@ -1,10 +1,10 @@
 -- 076b_ai_invoke_runs.sql
 -- flowgate.default.0359 (B0001 → NR0003 → P0006 → L0007 → DB0008).
--- SQLite 원본(sql/migrations/sqlite/076b_ai_invoke_runs.sql)과 DDL이 동일하다. 다른 곳은 셋뿐이다:
--- BEGIN/COMMIT 을 쓰지 않는다(파일 단위로 트랜잭션이 걸린다 — 기존 postgres 파일들과 같다),
--- INTEGER PRIMARY KEY AUTOINCREMENT 가 없어 SERIAL 치환도 없다(이 표의 PK는 문자열이다),
--- 나머지(TEXT/CHECK/REFERENCES .. ON DELETE ../일반 인덱스/ALTER TABLE ADD COLUMN)는
--- PostgreSQL 문법 그대로다. 근거는 원본 주석과 DB0008 §3.3 참고.
+-- DDL matches the SQLite original (sql/migrations/sqlite/076b_ai_invoke_runs.sql). Only three distinctions:
+-- No BEGIN/COMMIT (transactions apply per file, as in existing postgres files);
+-- no INTEGER PRIMARY KEY AUTOINCREMENT, so no SERIAL substitution (this table has a string PK);
+-- the rest (TEXT/CHECK/REFERENCES .. ON DELETE ../ordinary indexes/ALTER TABLE ADD COLUMN)
+-- is valid PostgreSQL syntax as written. See the original comments and DB0008 §3.3 for rationale.
 
 CREATE TABLE IF NOT EXISTS ai_invoke_runs (
     run_id               TEXT    PRIMARY KEY,

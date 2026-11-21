@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getRequest, postRequest } from '@shared/api'
 import { authRedirect, useAuthStore } from '@/login/stores/auth'
 
-// flowgate.v02gui.0024 (R0001 §4.2): the sign-in state machine moved from v0.1
+// the sign-in state machine moved from v0.1
 // (client/src/login/stores/auth.ts) with the same steps and API calls. These cases carry over
 // the v0.1 store specs (auth.spec.ts, authEnrolInvite.0020.spec.ts) and pin the new landing.
 vi.mock('@shared/api', () => ({

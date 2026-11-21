@@ -1,4 +1,4 @@
-"""v02gui.0025 (0003-NR §5, §7, §7-A): the base window's start cards share one base whatever the order and timing of
+"""v02gui.0025 (NR): the base window's start cards share one base whatever the order and timing of
 their preparations (F1), and the window rules the fix must not move.
 
 F1: the first ``run_base`` attempt of a window pins its base in its owner marker under the Git locks; its workspace

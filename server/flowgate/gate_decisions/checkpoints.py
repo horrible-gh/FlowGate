@@ -1,4 +1,4 @@
-"""Gate archive checkpoints in the existing archive list and restore (flowgate.v02.0085 T#3 rework, D0007 §7.1).
+"""Gate archive checkpoints in the existing archive list and restore.
 
 The existing group archive (v0.1, ``inbox_routes``: one record per group in the settings, ``refs/flowgate/archive/...``,
 a consuming restore that drops its refs, merged / pushed groups refused) is kept as it is. A gate's checkpoint is one

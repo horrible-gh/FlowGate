@@ -1,4 +1,4 @@
-"""NR0006 / T0007 — report steps (NR/TR/TSR) are attached on the decision path.
+"""report steps (NR/TR/TSR) are attached on the decision path.
 
 Previously the N→NR / T→TR / TS→TSR expansion lived only in the client
 WorkflowDecisionModal, so a workflow decided by an AI worker (which POSTs a bare

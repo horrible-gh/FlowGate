@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#4ba3ff"
     ref="shell"
     :open="true"
     :initial-x="win.x"
@@ -65,7 +65,7 @@
 // (cardLineWrite — the body after the server's front matter; a blank text makes an empty draft, a work plan line
 // is made as an empty plan with no text). After the 201 the window closes, the answer's line stands for the
 // card's line until the Canvas read shows it, and the opener reads the Canvas again (a result bound to a running
-// card turns the card to 승인 대기 there — the F2-1 card state).
+// card turns the card to "승인 대기" there — the F2-1 card state).
 // A refusal that means the line has a document now (409 slot_has_document · node_token_unavailable) reads the
 // Canvas again and opens that document; the window keeps the text (to copy) and can only be closed. Waiting
 // refusals (node_in_instruction_stage · node_ai_working) and the rest are told in the window, the content
@@ -91,7 +91,7 @@ const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 
 const { request, contentless, text, saving, failure, existing, problemKey, save } = useSlotWrite(() => props.win)
 
-// flowgate.v02.0088 F14: the line's kind in the current language (its key), or the name it came with.
+// the line's kind in the current language (its key), or the name it came with.
 const kindName = computed(() => lineKindName(request.value, t, te))
 
 /** The code's words, then the server's message when it says more. */

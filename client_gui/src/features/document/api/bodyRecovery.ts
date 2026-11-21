@@ -1,4 +1,4 @@
-// flowgate.v02.0064 T-B1d — document body diagnosis and recovery (P0006 §2.6~§2.8, §6.2 / §6.3).
+// T-B1d — document body diagnosis and recovery.
 //
 //   diagnose   GET  /api/v1/documents/body-diagnosis?group_id=… | ?project_id=…   (perm_document_read)
 //   recover    POST /api/v1/documents/{doc_id}/regenerate  { expected_method }      (perm_document_update)

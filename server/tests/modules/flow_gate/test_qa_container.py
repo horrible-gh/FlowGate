@@ -1,6 +1,6 @@
-"""Document-bound query/answer container — integration tests (group 0022 Q/A/V revamp).
+"""Document-bound query/answer container — integration tests (Q/A/V revamp).
 
-Covers DB0006 §3/§4 + L0007 §3 against a real (in-memory file) sqlite with all migrations:
+Covers  / + the earlier implementation against a real (in-memory file) sqlite with all migrations:
   - ensure_container lazy create + idempotency (keyed by doc_id, q_id := doc_id)
   - add_questions human / ai (asker_kind, title), done→pending re-open
   - register_answer atomicity + author_kind/author_id (AI → author_id NULL)
@@ -280,4 +280,4 @@ def test_open_q_doc_ids_batch_preserves_groups_documents_and_answer_state(store)
 
 
 
-# ── Q 선택지 (group 0243 R0001 / D0006 / DB0007 / L0008) ────────────────────────
+# ── Q options ──

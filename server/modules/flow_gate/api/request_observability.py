@@ -1,6 +1,6 @@
-"""Request id for every HTTP request + token redaction in the access log (flowgate.v02gui.0017).
+"""Request id for every HTTP request + token redaction in the access log.
 
-NR 0003 B-R8 found that a failed ``/auth/refresh`` left no application log line and no request
+B-R8 found that a failed ``/auth/refresh`` left no application log line and no request
 identifier, and that the default uvicorn access log prints the query string verbatim -- which for
 the SSE stream (``/api/v1/events/stream?token=<access JWT>``) means the access token itself.
 
@@ -34,7 +34,7 @@ def current_request_id() -> str | None:
 
 # The id of the request an exception escaped from. The contextvar is reset when the request ends, but the server
 # (uvicorn's "Exception in ASGI application") logs the escaped exception only after that; the tag lets the
-# server_logs row of that very record point at its request (flowgate.v02test.0050 T0005 criterion (c)).
+# server_logs row of that very record point at its request (the earlier change the earlier implementation criterion (c)).
 _EXC_REQUEST_ID_ATTR = "__flowgate_request_id__"
 
 
@@ -83,11 +83,19 @@ async def unhandled_error_response(request, exc):
 
     Starlette still re-raises the exception after sending this response, so uvicorn
     records the original traceback exactly once. Do not swallow or log it here.
+
+    A lost database connection is answered 503 + Retry-After instead of 500:
+    the client retries GETs and starts its connection recovery only on 502/503/504, so a 500 from a
+    route that hit the dead pool after the cached auth check would leave that panel failed for good.
     """
     from starlette.responses import PlainTextResponse
+    from modules.flow_gate.db.resilience import unavailable  # lazy: resilience imports this module
 
     rid = request_id_of_exception(exc) or request.scope.get("flowgate.request_id")
     headers = {REQUEST_ID_HEADER: rid} if rid else {}
+    if unavailable(exc):
+        return PlainTextResponse("Service Temporarily Unavailable", status_code=503,
+                                 headers={**headers, "Retry-After": "1"})
     return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)
 
 

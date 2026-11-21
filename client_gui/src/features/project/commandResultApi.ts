@@ -1,4 +1,4 @@
-// flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, D 개정 §3.14): what the [다음 단계] / [전체 실행]
+// flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, D revision §3.14): what the [다음 단계] / [전체 실행]
 // command did, read from the run's own records by the server. snake_case stays inside this file; the request carries this
 // tab's `x-canvas-client-id` like the other run requests (flowRunApi.ts).
 //
@@ -39,7 +39,7 @@ export interface FlowCommandFailure {
   readonly role: string | null
 }
 
-/** flowgate.v02.0124 T#2: a card of the latest waiting command that waits on a person's intervention. `reason` is the
+/** a card of the latest waiting command that waits on a person's intervention. `reason` is the
  *  server's own text (never translated); `release` is the server's code for how it is released (null: no line). */
 export interface FlowCommandBlocking {
   readonly nodeKey: string
@@ -111,7 +111,7 @@ export interface FlowCommandResult {
   readonly counts: { readonly done: number; readonly failed: number; readonly waiting: number }
   readonly nodes: readonly FlowCommandNode[]
   readonly failure: FlowCommandFailure | null
-  /** flowgate.v02.0124 T#2: the cards waiting on a person's intervention (the latest waiting command only, else `[]`). */
+  /** the cards waiting on a person's intervention (the latest waiting command only, else `[]`). */
   readonly blocking: readonly FlowCommandBlocking[]
   readonly roles: {
     readonly instruction: readonly FlowCommandRoleUse[]
@@ -120,7 +120,7 @@ export interface FlowCommandResult {
   }
   readonly messages: readonly FlowCommandMessage[]
   /**
-   * flowgate.chat.0017 CH0002: AI attachment upload requests still waiting for a person — those this run's card workers
+   * AI attachment upload requests still waiting for a person — those this run's card workers
    * made (`pending`) and the Flow's total (`flowPending`). Read live by the server; null when it could not be read.
    */
   readonly attachmentRequests?: { readonly pending: number; readonly flowPending: number } | null

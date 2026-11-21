@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_approval_racing_the_materialize_window_is_serialized(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev5 (AI review finding): the stale_run decision must be
+        # AI review finding: the stale_run decision must be
         # ATOMIC with what it authorizes. rev4 read review_state/fingerprint/
         # generation with NO lock held and only afterwards applied the plan and
         # appended the turn, so an approval landing in that check-to-materialize

@@ -117,7 +117,7 @@ class TestProvision0161(_Scenario):
 
     def test_worktree_after_adopt_and_finalize_carries_snapshot(self, adopt_origin):
         """B0001 end-to-end: the hook path succeeds on an occupied slot, and the
-        adopt snapshot rides along with the finalize push (D0003 §3)."""
+        adopt snapshot rides along with the finalize push."""
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
         from modules.flow_gate.storage.paths import src_root
@@ -125,11 +125,11 @@ class TestProvision0161(_Scenario):
         group = "adoptprj.default.0001"
         assert svc.ensure_worktree("adoptprj", "default", group) == "ok"
         wt = src_root("AdoptProj", "adoptprj_default_0001")
-        # 0296 T0004: the worktree now forks from LOCAL main, which already
+        # The worktree now forks from LOCAL main, which already
         # contains origin/main plus the adopt snapshot. This assertion used to
         # read "remote version" — the group saw stale remote content while the
         # operator's base held the adopted local content, the same invisible-file
-        # class as B0001 (NR flowgate.default.0296.0003 §C1/§C2). It pinned the
+        # class as B0001. It pinned the
         # then-current behaviour, not an intent: the snapshot is expected to
         # survive all the way to origin (asserted below), so a worktree that
         # ignores it was only ever a way to lose work.

@@ -1,4 +1,4 @@
-"""0045: explicit recovery on the real migrated SQLite Graph service.
+"""explicit recovery on the real migrated SQLite Graph service.
 
 Only Git facts and worker launches are controlled; mutations, guards, attempts,
 report allocation, stop and run creation use the actual services.

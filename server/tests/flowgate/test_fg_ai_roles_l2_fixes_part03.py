@@ -146,7 +146,7 @@ def test_t46_an_open_node_whose_assignment_cannot_be_read_is_an_error_and_the_re
     legacy_adapter.settle_graph_run(FA)
     assert _run_row(env)["idle_reason"] == "needs_intervention"
 def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_ai(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): the refused start is a system error. Each run read tries the review again with
+    """(T-2 rework): the refused start is a system error. Each run read tries the review again with
     the same AI (a new review assignment, the next seq) until ``SYSTEM_ERROR_RETRY_LIMIT`` tries, then no more; its
     B-1 is recorded once (the tries are the assignments), no other AI is asked and nothing is approved."""
     from flowgate.card_intervention import reasons
@@ -175,7 +175,7 @@ def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_a
     assert _read(env)["idle_reason"] == "error"                      # the error family, never a person's wait
 def test_e13_a_result_review_whose_start_failed_for_a_moment_starts_on_the_next_read_and_completes(
         env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): once the admission takes it again, the next run read starts the review (the
+    """(T-2 rework): once the admission takes it again, the next run read starts the review (the
     next assignment, the same AI and submission), and its pass completes the card automatically."""
     from flowgate.card_settings import legacy_adapter
 
@@ -210,7 +210,7 @@ def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env,
     assert node_run(env, key)["dispatch_error_code"] == "review_not_started:start_refused:provider_inactive"
     assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "review_not_started")]
     assert _wire(env, key)["wait_reason"]["detail"] == "start_refused:provider_inactive"
-    # flowgate.v02.0119 T#3 (T-2 rework): a system error of the instruction stage — shown so (the node run's
+    # (T-2 rework): a system error of the instruction stage — shown so (the node run's
     # intervention, the run's error family) and tried again by the reads, with the same AI, up to the limit
     for _ in range(LIMIT + 1):
         wire = _wire(env, key)
@@ -223,7 +223,7 @@ def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env,
     assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "review_not_started")]
     assert _review_status(instruction) != "approved" and one(env, key, "result") is None
 def test_e13_an_instruction_review_whose_start_failed_for_a_moment_starts_on_the_next_read(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): the retry that starts the instruction review clears the node's start error
+    """(T-2 rework): the retry that starts the instruction review clears the node's start error
     (no error family any more) and its pass approves the instruction and starts the result stage."""
     from flowgate.card_settings import legacy_adapter
 

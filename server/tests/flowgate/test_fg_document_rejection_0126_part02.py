@@ -1,4 +1,4 @@
-"""0126 T#3 B8/B9/B10/B12: migrated SQLite, HTTP Graph and isolated Git.
+"""B8/B9/B10/B12: migrated SQLite, HTTP Graph and isolated Git.
 
 AI/SSE transport and the Git session's repository/G lock are fixture boundaries.
 """

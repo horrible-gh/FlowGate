@@ -134,7 +134,7 @@ def test_reconcile_gate_recreates_a_deleted_ref_then_keeps_the_existing_branch(e
     git(['update-ref', '-d', ref, m], r.work)
     env.remote(r.B)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    # 0153 T#3: an unchanged remote now gets the same preserved commit re-pushed.
+    # an unchanged remote now gets the same preserved commit re-pushed.
     assert out['result']['status'] == 'merged'
     assert ref_value(r.work, ref) == m
     seq = names(env)
@@ -155,7 +155,7 @@ def test_reconcile_gate_failure_never_queries_or_resets(env, damage):
         git(['update-ref', ref, r.B, m], r.work)
         observed, reason = r.B, 'ref_conflict'
     elif damage == 'commit_missing':
-        # A session from before T#2 (no preserve_* yet) whose commit object is gone.
+        # A session from before the earlier implementation (no preserve_* yet) whose commit object is gone.
         for key in ('preserve_ref', 'preserve_sha', 'preserve_parents', 'preserved_at',
                     'preserve_retain_until'):
             ctx.pop(key, None)
@@ -178,7 +178,7 @@ def test_reconcile_gate_failure_never_queries_or_resets(env, damage):
     assert (e['code'], e['stage'], e['reason']) == ('preserve_failed', 'reconcile_gate', reason)
     assert e['expected_sha'] == expected and e['observed_sha'] == observed
     assert e['at'] == LATER and e['instance_id'] == 'inst_B'
-    # T#1 evidence survives verbatim.
+    # evidence survives verbatim.
     assert e['prior_push_error'] == before['last_error']
     assert e['prior_push_error']['instance_id'] == 'inst_A' and e['prior_push_error']['local_sha'] == m
     assert after['reconciliation_kind'] == 'preserve_failed' and after['reconcile_next_at'] is None

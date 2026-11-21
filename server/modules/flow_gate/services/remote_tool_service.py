@@ -1,7 +1,7 @@
-"""Project-control remote tool — processing pipeline (L0006).
+"""Project-control remote tool — processing pipeline.
 
-Orchestrates the 7-step pipeline (L0006 §2) for the remote tool API defined by
-P0005 (message format) and DB0007 (storage):
+Orchestrates the 7-step pipeline for the remote tool API defined by
+(message format) and  (storage):
 
   ① Authentication → 401 unauthorized        (not logged: subject unidentified)
   ② Permission     → 403 forbidden            (logged as denied)
@@ -11,15 +11,15 @@ P0005 (message format) and DB0007 (storage):
   ⑥ History logging (both success and failure, after authentication passes)
   ⑦ Completion ment (on mutating-op success) → 200 response
 
-0347 (P0004 / L0005) adds `patch` (exact old_string/new_string edit), `stat`
+adds `patch` (exact old_string/new_string edit), `stat`
 (metadata only) and a byte window (`offset`/`length`) on `read`.
 
-The router is thin and delegates everything here. This module owns the P0005
-common envelope, the fail-fast error ordering (L0006 §7), op-logging timing
-(L0006 §5.1), and the completion-ment condition (L0006 §6).
+The router is thin and delegates everything here. This module owns the the plan
+common envelope, the fail-fast error ordering, op-logging timing
+, and the completion-ment condition.
 
-Branch resolution note (NR0009 §8.3): the operation target is the project
-*source root* `src_root(project_name, branch)`. P0005 carries no branch in the
+Branch resolution note: the operation target is the project
+*source root* `src_root(project_name, branch)`. the plan carries no branch in the
 request and DB0007's grant has no branch column, so branch is taken from
 `project_settings.branch` (default 'main') — the only spec-available source,
 matching file_transfer_routes._get_src_root.
@@ -44,13 +44,13 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import remote_tool_grants as db_grants
 from modules.flow_gate.db import remote_tool_op_log as db_oplog
 from modules.flow_gate.db import projects as db_projects
-# 0382 proposal 5-c: uses the same rule as the screens and the check so that only debris cleanup may delete recursively.
+# proposal 5-c: uses the same rule as the screens and the check so that only debris cleanup may delete recursively.
 from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import token_service, graph_source_hooks
-# flowgate.v02.0053 T#2: the Designer card port of the step type judgement (stdlib only).
+# the Designer card port of the step type judgement (stdlib only).
 from modules.flow_gate.services import worker_step_type_hooks
 # v02gui 0015 T5: base_sha256 / masked-substitution / U+FFFD guards and post_write_check.
 from modules.flow_gate.services import remote_write_guard
@@ -69,20 +69,20 @@ _logger = logging.getLogger(__name__)
 OPS = ("read", "diff", "log", "show", "merge_preview", "write", "grep", "glob", "remove", "patch", "stat", "move", "resolve_base_dirty")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
-# point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
+# point. This module reaches them through tool_registry.kind_for_token.
 # Types whose own document type decides their source scope, ignoring any workflow
 # sequence they happen to sit in (see _worker_token_step_type).
 _SELF_SCOPED_WORK_TYPES = {"CH"}
 
-# 0279 T0005 (NR0003 cause 2): directory names never worth walking for a source
+# directory names never worth walking for a source
 # scan. `server/.venv` alone dominated the measured 40s grep — it is dependency
 # code, not project source, and every byte of it was being read and regex-matched.
 # Skipped for grep and glob only; read/write/remove address files directly and are
 # unaffected, so an explicit path into one of these directories still works.
 _SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pycache__"})
 
-# operation → required scope (P0005 §3.2 / L0006 §3.2 / DB0007 §5). glob shares the grep scope.
-# 0347 P0004 §0.4: patch/stat deliberately reuse the existing write/read scopes — no new
+# operation → required scope. glob shares the grep scope.
+# patch/stat deliberately reuse the existing write/read scopes — no new
 # scope value, so remote_tool_grant_scope needs no migration and an investigation token that
 # only holds read/grep is barred from patch automatically.
 OP_SCOPE = {
@@ -101,7 +101,7 @@ OP_SCOPE = {
     "resolve_base_dirty": "write",
 }
 
-# 0347 L0005 §1: the mutating-op set used to be the literal ("write", "remove") repeated at
+# the mutating-op set used to be the literal ("write", "remove") repeated at
 # three decision points (mutation source-root gate / explorer SSE / continuation ment). patch
 # has to appear at all three, and a single constant is what stops a future op from reaching
 # two of them and silently landing in the base checkout (0205). `stat` is NOT here — it reads.
@@ -111,7 +111,7 @@ _MUTATING_OPS = frozenset({"write", "remove", "patch", "move", "resolve_base_dir
 # pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
 _PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "diff", "log", "write", "remove", "patch", "stat"})
 
-# HTTP status → P0005 §6 error code.
+# HTTP status → the plan error code.
 ERROR_CODE_BY_STATUS = {
     401: "unauthorized",
     403: "forbidden",
@@ -133,12 +133,12 @@ RESULT_BY_STATUS = {
 }
 
 _MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write/patch result guard (413)
-_MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard (413, 0347 P0004 §7.3)
-_GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning (NR0011 §2)
-_STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
+_MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard
+_GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning
+_STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample
 _MAX_DIFF_BYTES = 1024 * 1024          # 1 MiB response cap for merge-base target patches
 _MAX_LOG_COUNT = 1000                  # hard cap even when max_count is omitted
-_MAX_CONFLICT_FILES = 200              # merge_preview conflict-file cap (0524 T0006)
+_MAX_CONFLICT_FILES = 200              # merge_preview conflict-file cap
 
 _JST = timezone(timedelta(hours=9))
 
@@ -164,7 +164,7 @@ class _OpError(Exception):
 def _authenticate(raw_token: Optional[str]) -> Optional[dict]:
     """Return the active grant for the token, or None (→ 401).
 
-    Reuses token_service hashing/pepper/constant-time compare (NR0009 §4.2 — no
+    Reuses token_service hashing/pepper/constant-time compare (the review — no
     duplicate crypto). A grant is valid when its token_hash matches and
     status='active' and (expires_at IS NULL OR in the future) (DB0007 §4).
     """
@@ -298,9 +298,9 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
                 "token_hash": token_hash,
                 "project": project,
                 "module": module,
-                # 0115 G1: carry the FULL group id so source resolution can route
-                # this worker to its group worktree (L0006 §2.2). Legacy grants
-                # keep NULL and fall back to the project branch (L0006 §4.1).
+                # G1: carry the FULL group id so source resolution can route
+                # this worker to its group worktree. Legacy grants
+                # keep NULL and fall back to the project branch.
                 "group_id": group_id or None,
                 "report_doc_id": None,
                 "session_id": token_rec.get("issued_to"),
@@ -317,7 +317,7 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
             return None
         return existing if _reconcile_worker_grant_scopes(existing) else None
 
-    # 0115 H2: mutating (T/TR/TSR) workers get their group worktree (re)guaranteed at
+    # H2: mutating (T/TR/TSR) workers get their group worktree (re)guaranteed at
     # the kind judgement point — the backstop for a failed or
     # restarted H1 (decide-time) provisioning. Idempotent and never raises; on
     # failure source access simply keeps resolving to the fallback branch folder.
@@ -341,7 +341,7 @@ _SCOPES_BY_KIND = {
 def _scopes_for_worker_token(token_rec: dict) -> list[str]:
     """Map a document worker token to remote source scopes.
 
-    0349 D0004 D-2: the judgement itself lives in the tool registry — the same call the
+    D-2: the judgement itself lives in the tool registry — the same call the
     mention builders and /help/tools make — and this function only renames its answer into
     scope vocabulary. When the two judged independently (they did until now), the mention
     could advertise a tool this function then refused.
@@ -374,7 +374,7 @@ def _worker_token_step_type_result(token_rec: dict) -> tuple[Optional[str], bool
         own_type = str(doc["type_code"]) if doc and doc.get("type_code") else None
         if own_type in _SELF_SCOPED_WORK_TYPES:
             return own_type, False
-        # flowgate.v02.0053 T#2: a Designer card node's token names its Flow's root and that Flow
+        # a Designer card node's token names its Flow's root and that Flow
         # has no v0.1 sequence. When the server recorded what the token's holder writes (the run
         # node the token was mapped to, whose card omits its instruction: the card's report), that
         # type is the step. None keeps the judgement below; a raising lookup is the `except` below.
@@ -401,7 +401,7 @@ def _worker_token_step_type(token_rec: dict) -> Optional[str]:
 # ── ③ Path safety / ④ request validity ───────────────────────────────────────
 
 def _present_path_fields(op: str, body: dict) -> list[str]:
-    """Path-bearing input values that are *present* (L0006 §4.1) — for ③.
+    """Path-bearing input values that are *present* — for ③.
 
     Missing required fields are ④'s concern, so only values that exist (the key
     is present and not None) are returned here.
@@ -442,14 +442,14 @@ def _require_str(body: dict, key: str, *, allow_empty: bool = False) -> str:
 
 
 def _validate_required(op: str, body: dict) -> None:
-    """④ — required fields present & well-typed (P0005 per-operation field table)."""
+    """④ — required fields present & well-typed (per-operation field table)."""
     if op in {"read", "grep", "glob", "stat"}:
         _validate_ref(body)
     if op == "read":
         _require_str(body, "path")
         _validate_line_selector(body)
         _validate_max_int(body, "max_bytes")
-        # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
+        # same rule as max_bytes: int, not bool, not negative.
         _validate_max_int(body, "offset")
         _validate_max_int(body, "length")
         _validate_encoding(body)
@@ -553,7 +553,7 @@ def _validate_guard_fields(body: dict) -> None:
         raise _OpError(422, details=details)
 
 
-# 0507 T0004 (NR0003): an unknown field used to be silently dropped, so a worker
+# an unknown field used to be silently dropped, so a worker
 # that sent start_line/end_line got the WHOLE file back (≈163KB into the tool
 # result, prompt tokens 15K→72K). The per-op contract below is now explicit:
 # any field outside it is a caller bug and answers 422, never a full-file read.
@@ -573,8 +573,8 @@ _ALLOWED_FIELDS: dict = {
     | remote_write_guard.GUARD_FIELDS,
     "remove": frozenset({"path", "recursive"}),
     "move": frozenset({"source_path", "target_path"}),
-    # 0482 T0011: the base-dirty decision batch. Listed here so main's
-    # unknown-field gate (0507 T0004) covers this op too instead of
+    # the base-dirty decision batch. Listed here so main's
+    # unknown-field gate covers this op too instead of
     # falling through the `allowed is None` escape hatch.
     "resolve_base_dirty": frozenset({"decisions", "complete", "commit_message"}),
 }
@@ -591,7 +591,7 @@ def _validate_allowed_fields(op: str, body: dict) -> None:
 
 
 def _validate_line_selector(body: dict) -> None:
-    """0507 T0004: the read line selector — 1-based start_line/end_line.
+    """the read line selector — 1-based start_line/end_line.
 
     Both must be positive ints with start <= end, and mixing them with the
     byte window (offset/length/max_bytes) is 422: two selectors in one request
@@ -639,7 +639,7 @@ def _safe_target_ref(value: str) -> bool:
 
 
 def _valid_commit_sha(value: object) -> bool:
-    """Pure hex commit-id shape (0524 T0004) — stricter than `_safe_target_ref`,
+    """Pure hex commit-id shape — stricter than `_safe_target_ref`,
     since a `show` sha is spliced straight into a `{sha}^{commit}` / `{sha}` argv
     element and must never be mistakable for a git option or revspec."""
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-fA-F]{4,64}", value))
@@ -658,7 +658,7 @@ def _fallback_project_root(grant: dict) -> Optional[Path]:
     """The ordinary project-branch source folder (no worktree), or None (→ 503).
 
     Branch comes from project_settings.branch (default 'main') — the only
-    spec-available source (NR0009 §8.3)."""
+    spec-available source."""
     project_id = grant.get("project")
     row = db_projects.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
@@ -671,7 +671,7 @@ def _fallback_project_root(grant: dict) -> Optional[Path]:
 
 def _read_worktree_expected_reasons(git_service) -> frozenset:
     """SRC_ROOT_* fallback reasons that mean an integrated group's worktree was
-    *expected* but could not be resolved (0301 T0004 / NR0003 §6-3).
+    *expected* but could not be resolved.
 
     The benign reasons are deliberately excluded: SRC_ROOT_NO_GROUP (legacy
     grant with no group context) and SRC_ROOT_INTEGRATION_OFF (project is not
@@ -693,7 +693,7 @@ def _attempt_source_root(grant: dict, op: str):
     token = _worker_token_for_grant(grant)
     try:
         if op in {"write", "patch", "remove", "move"}:
-            # flowgate.v02.0061 T#7: a write / remove of a stopping run's or an inactive attempt's token is refused
+            # a write / remove of a stopping run's or an inactive attempt's token is refused
             # (409 graph_attempt_inactive, recorded) before its source root is resolved; reads keep their path.
             graph_source_hooks.require_writable(token, "source_" + op)
         if op == "resolve_base_dirty":
@@ -712,18 +712,18 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     the backing worker token so legacy and ordinary grants retain the existing
     group-worktree/fallback behaviour.
 
-    0115: a grant that carries a group_id is routed to that group's git worktree
-    when the project is git-integrated and the worktree is registered (L0006
+    a grant that carries a group_id is routed to that group's git worktree
+    when the project is git-integrated and the worktree is registered (the earlier implementation
     §2.2). Everything else — no group on the grant (legacy rows), no config,
     disabled integration, missing worktree — falls back to the ordinary
     project-branch folder exactly as before (fallback-first principle). Used by
     read/grep/glob; write/remove use _resolve_root_for_mutation (0205 L §2.3).
 
-    0301 T0004 (NR0003 §6-3): the read path used to return the base tree with no
+    the read path used to return the base tree with no
     self-heal and no trace, so a worker that read source in the window before its
-    group worktree was provisioned (the first-group timing gap, NR0003 §4.4)
+    group worktree was provisioned (the first-group timing gap, the review)
     silently read `main` and began editing on top of that state — the very
-    "it keeps working on the main branch" symptom of B0001. Reads must NEVER be blocked (that
+    "it keeps working on the main branch" symptom of the regression. Reads must NEVER be blocked (that
     would break legacy and non-integrated access), but when an integrated group
     falls back for a reason that means the worktree was *expected*, we now mirror
     the write gate: one synchronous ensure_worktree self-heal retry, and if it is
@@ -740,7 +740,7 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     if token_rec and token_rec.get("action_scope") == "resolve_conflict" and merge_id:
         try:
             from modules.flow_gate.services import git_service
-            # 0630 T0005: a branch merge's token has no group — its root is the attempt's
+            # a branch merge's token has no group — its root is the attempt's
             # managed workspace, addressed by project.
             owner_group, owner_project = git_service.merge_session_owner_args(
                 merge_id, str(token_rec.get("group_id") or group_id),
@@ -932,7 +932,7 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
     the previous three independently locked calls (project_git_status has none,
     base_revert/base_commit each took and released their own) that left a race window
     where a concurrent git operation could change the dirty set between baseline and
-    application, or between discard and commit. 0669 unit 9a (D §7 "base dirty 정리"):
+    application, or between discard and commit. 0669 unit 9a (D §7 "base dirty-state cleanup"):
     B replaced the project mutex; a refusal is the old 409 git_busy, nothing is queued."""
     from modules.flow_gate.services import git_service
     from modules.flow_gate.services.git import lock_manager as locks
@@ -983,7 +983,7 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
 
 
 def _default_target_ref(grant: dict, root: Path) -> str:
-    """flowgate.default.0665 T0004 (NR0003 §5.5/§7.6): an omitted ``target_ref``
+    """an omitted ``target_ref``
     compares against the token group's work base -- the same start point
     update-from-base and new worktrees use -- not a hard-coded ``origin/main``.
     A project-level token keeps the project base meaning.  ``origin/main`` remains
@@ -1019,7 +1019,7 @@ def _merge_base(root: Path, target_ref: str) -> str:
 
 
 def _rev_parse(root: Path, ref: str) -> str:
-    """Resolve a single ref to its full commit sha (0524 T0006 §2.1(b))."""
+    """Resolve a single ref to its full commit sha (the earlier implementation(b))."""
     from modules.flow_gate.services import git_service
 
     proc = git_service._run_git(["rev-parse", ref], cwd=root)
@@ -1050,10 +1050,10 @@ def _exec_diff(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0524 T0004 §2.1(a): `side` selects which end of the merge-base range is
+    """(a): `side` selects which end of the merge-base range is
     walked. `target` (default, unchanged) is `merge_base..target_ref`; `head` is
     the symmetric `merge_base..HEAD` — the authorized group worktree's own
-    branch-only history that `target` can never see (NR0003 §4/§5).
+    branch-only history that `target` can never see.
     """
     from modules.flow_gate.services import git_service
 
@@ -1084,7 +1084,7 @@ def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _exec_show(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0524 T0004 §2.1(b): individual commit inspection — metadata, per-file
+    """(b): individual commit inspection — metadata, per-file
     stat and a bounded patch — for a `sha` already confirmed to be a real commit
     object in this repository. `cat-file -e`/`show`/`diff-tree` are read-only;
     none of them touch HEAD, the index or the working tree.
@@ -1146,13 +1146,13 @@ def _exec_show(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0524 T0006 §2.1(b): read-only 3-way merge preview of the authorized group
+    """(b): read-only 3-way merge preview of the authorized group
     worktree's HEAD onto target_ref, via `git merge-tree --write-tree` (git 2.38+).
 
     This never touches HEAD, the index or the working tree. It may write loose
     objects (the candidate merge tree, and any newly merged blobs) to the object
     database, but none of them are reachable through any ref/HEAD/index/working
-    tree, so this is not a violation of the read-only contract (T0006 §2.1(b)
+    tree, so this is not a violation of the read-only contract (the earlier implementation(b)
     final paragraph) -- the tests here prove HEAD/index/working-tree invariance,
     not "no object was created".
 
@@ -1182,7 +1182,7 @@ def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     # is the tree oid followed by the conflicted file paths (--name-only puts
     # them on their own lines, still inside the first section, no blank line
     # before the file list); the second is human-readable Auto-merging/CONFLICT
-    # messages. Verified directly against this machine's git 2.52.0 (T0006 §3):
+    # messages. Verified directly against this machine's git 2.52.0:
     # a single- and a two-file conflict both come back as
     # "<oid>\n<path1>[\n<path2>...]\n\nAuto-merging ...\nCONFLICT ...".
     first_section = (proc.stdout or "").split("\n\n", 1)[0]
@@ -1210,12 +1210,12 @@ def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     )
 
 
-# ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
+# ── Byte/EOL helpers shared by read · patch · stat ───────────
 
 def _detect_dominant_eol(sample: bytes) -> str:
     """'lf' / 'crlf' / 'mixed' / 'none' for a byte sample.
 
-    patch (the CRLF retry decision, P0004 §1.5) and stat (its `eol` field) must
+    patch (the CRLF retry decision, the plan) and stat (its `eol` field) must
     share ONE definition — two private variants produce the contradiction "patch
     retried because the file is crlf, but stat reports mixed".
     """
@@ -1237,7 +1237,7 @@ def _contains_only_lf_newline(text: str) -> bool:
 def _is_utf8_encoding(encoding: str) -> bool:
     """True for the UTF-8 family, where the continuation-byte rule below holds.
 
-    Other multi-byte encodings (UTF-16 …) are left unadjusted — L0005 DEFERRED.
+    Other multi-byte encodings (UTF-16 …) are left unadjusted — the earlier implementation DEFERRED.
     """
     try:
         return codecs.lookup(encoding).name in ("utf-8", "utf-8-sig")
@@ -1278,7 +1278,7 @@ def _trim_incomplete_trailing_sequence(raw: bytes) -> bytes:
 
 
 def _slice_by_lines(text: str, start_line: int, end_line: int) -> tuple[str, int, int, int, bool]:
-    """0507 T0004 §2/§3 — 1-based inclusive line window over already-decoded text.
+    """1-based inclusive line window over already-decoded text.
 
     Slicing AFTER decoding (rather than the byte-window's slice-then-decode) means
     a line selector never has to fix up a UTF-8 sequence the window cut in half —
@@ -1299,15 +1299,15 @@ def _slice_by_lines(text: str, start_line: int, end_line: int) -> tuple[str, int
 
 
 def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0347 P0004 §7: byte window (`offset`/`length`) on top of the original read.
+    """byte window (`offset`/`length`) on top of the original read.
 
     `offset`/`length` absent → byte-identical to the previous behaviour, plus the
     three new report-only fields (`offset`/`returned_bytes`/`eof`).
 
-    0507 T0004 §2: `start_line`/`end_line` is a second, mutually-exclusive selector
+    `start_line`/`end_line` is a second, mutually-exclusive selector
     (enforced by `_validate_line_selector`) — a request carrying it never falls
     through to the byte-window/legacy branches below, which is what used to hand
-    the AI worker a whole 196KB file for a 50-line request (NR0003).
+    the AI worker a whole 196KB file for a 50-line request.
     """
     target = resolve_in_root(root, body["path"])
     if target is None:
@@ -1339,7 +1339,7 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
                 "returned_bytes": returned_bytes,
                 "eof": eof,
                 "truncated": not eof,
-                # v02gui 0015 T5 (0006-NR §6-2 a/e): what the disk holds, and whether
+                # v02gui 0015 T5 (NR a/e): what the disk holds, and whether
                 # decoding replaced bytes with U+FFFD anywhere in the file.
                 "source_sha256": (
                     remote_write_guard.sha256_hex(raw_all)
@@ -1362,7 +1362,7 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     else:
         bounds = [v for v in (length, max_bytes) if v is not None]
         window_size = min(bounds) if bounds else size - window_start
-        # P0004 §7.3: the guard now measures the effective WINDOW, so a 200MB file
+        # the guard now measures the effective WINDOW, so a 200MB file
         # can be walked in slices. Intended behaviour change — a max_bytes above
         # 100MB used to skip the guard entirely and now raises 413.
         if window_size > _MAX_READ_BYTES:
@@ -1374,7 +1374,7 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
             fh.seek(window_start)
         raw = fh.read(to_read)
 
-    # Report the offset as requested (P0004 §8 echoes an out-of-range offset back);
+    # Report the offset as requested (echoes an out-of-range offset back);
     # only the character-boundary correction moves it.
     adj_start = offset
     if _is_utf8_encoding(encoding):
@@ -1412,7 +1412,7 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 def _atomic_write_bytes(target: Path, data: bytes, mode: Optional[int] = None) -> None:
     """Write via a sibling temp file + os.replace, so a crash mid-write can never
-    leave the original half-written (0347 L0005 §2.5).
+    leave the original half-written.
 
     The replacement is a brand-new file, so the original's permission bits are
     carried over explicitly — otherwise patching an executable script would
@@ -1440,7 +1440,7 @@ def _atomic_write_bytes(target: Path, data: bytes, mode: Optional[int] = None) -
 
 
 def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0347 P0004 §1 — exact-match partial edit.
+    """exact-match partial edit.
 
     Line-numbered patching silently edits the wrong place once an earlier change
     shifts the file, and still answers 200. So: exact match only, 0 hits → 404,
@@ -1468,7 +1468,7 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         raw_bytes = fh.read()
     try:
         # strict, never errors="replace": a lenient decode would write U+FFFD back
-        # over the untouched part of the file and corrupt the original (P0004 §12.1-5).
+        # over the untouched part of the file and corrupt the original.
         text = raw_bytes.decode(encoding)
     except (UnicodeDecodeError, ValueError):
         raise _OpError(422, details={"reason": "not_text", "path": body["path"]})
@@ -1481,7 +1481,7 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     match_count = text.count(old_string)
     eol_normalized = False
 
-    # 2nd pass (P0004 §1.5): a CRLF file with an old_string copied as LF. Skipped
+    # 2nd pass: a CRLF file with an old_string copied as LF. Skipped
     # for 'mixed' files, where guessing which newline was meant is not safe.
     if match_count == 0 and eol == "crlf" and _contains_only_lf_newline(old_string):
         alt_old = old_string.replace("\n", "\r\n")
@@ -1528,7 +1528,7 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     override = _judge_content(body, "patch", text, new_text)
 
     # All-or-nothing: match, replace and encode all succeeded, so this is the one
-    # and only touch of the disk (P0004 §1.4).
+    # and only touch of the disk.
     _atomic_write_bytes(target, new_bytes, original_mode)
 
     extra = {
@@ -1546,7 +1546,7 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _exec_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
-    """0347 P0004 §9 — existence/kind/size/mtime/EOL without the content.
+    """existence/kind/size/mtime/EOL without the content.
 
     Absence answers 200 with exists=false, the one deliberate exception to the
     pipeline's "target missing → 404": the whole point of stat is to report "not
@@ -1615,7 +1615,7 @@ def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         data = body["content"].encode(encoding, errors="strict")
     except UnicodeError:
         # content cannot be represented in the requested narrow encoding (e.g. ascii) → request validity error (④).
-        # Surface as 422 to preserve the P0005 envelope + ⑥ history contract (prevents a bare 500 leak).
+        # Surface as 422 to preserve the the plan envelope + ⑥ history contract (prevents a bare 500 leak).
         raise _OpError(422)
     if len(data) > _MAX_WRITE_BYTES:
         raise _OpError(413)
@@ -1697,7 +1697,7 @@ def _add_write_report(extra: dict, path: str, stored: bytes, encoding: str,
 def _clear_readonly_and_retry(func, path, _exc_info) -> None:
     """Retry hook for ``shutil.rmtree`` and single deletes — clear the read-only bit and try again.
 
-    0382 §3-2: object files git has just created are read-only, so ``os.remove`` raises
+    : object files git has just created are read-only, so ``os.remove`` raises
     PermissionError. Python's standard idiom is to grant permission and call again, and that
     alone removed the 21 files that "would never delete" in this incident.
     """
@@ -1796,7 +1796,7 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
                     raise _OpError(409, details={"reason": "path_locked"}) from exc
             return ({"path": body["path"], "removed": True, "recursive": recursive,
                      "removed_file_count": 0}, None)
-        # 0382 NR0003 proposal 5-c (debris cleanup). With no way to delete a folder wholesale,
+        # proposal 5-c (debris cleanup). With no way to delete a folder wholesale,
         # removing 261 files meant calling remove 261 times. Recursive delete is opened, but
         # **only for paths judged to be tool debris** — the same rule the screens and the
         # submission check use, so the mis-deletion risk narrows to one question: what counts as debris.
@@ -1816,7 +1816,7 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
             None,
         )
     if not target.is_file():
-        raise _OpError(404)  # missing, or not a regular file (single-file removal, P0005 §4.4)
+        raise _OpError(404)  # missing, or not a regular file (single-file removal, the plan)
     _delete_file(target)
     return ({"path": body["path"], "removed": True}, None)
 
@@ -1824,7 +1824,7 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 def _is_excluded(real: str, base_real: str) -> bool:
     """True when `real` sits inside an excluded directory *below* `base_real`.
 
-    0279 T0005: the check is relative to the requested base, not to the source
+    the check is relative to the requested base, not to the source
     root, so pointing a scan AT `.venv` (path=".venv") still scans it — only
     incidental descent into one of these directories is skipped.
     """
@@ -1845,7 +1845,7 @@ def _iter_files(root: Path, base: Path, glob_filter: Optional[str]):
         if not _under_root(real, root_real):
             continue  # symlink escape — skip
         if _is_excluded(real, base_real):
-            continue  # dependency/VCS directory — not project source (0279 T0005)
+            continue  # dependency/VCS directory — not project source
         if not os.path.isfile(real):
             continue
         rel = os.path.relpath(real, root_real).replace("\\", "/")
@@ -1857,7 +1857,7 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if base is None:
         raise _OpError(422)
     if not base.is_dir():
-        # NR0003 §2: pathlib's glob()/rglob() silently yield nothing for a file
+        # pathlib's glob/rglob silently yield nothing for a file
         # or a nonexistent path, so a wrong `path` used to look identical to a
         # genuine zero-match search (both `ok:true, total:0`). Mirror _exec_read's
         # precedent (a bad target collapses to 404, whether missing or wrong type).
@@ -1870,7 +1870,7 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     matches: list[dict] = []
     total = 0
     truncated = False
-    # 0279 T0005 (NR0003 cause 2): scanning used to continue after max_results was
+    # scanning used to continue after max_results was
     # reached so that `total` was an exact full count. That made a max_results=1
     # call walk the entire source root — the measured 40s freeze was exactly such
     # a call, and the cost grew linearly as the repo grew. Stop at the first file
@@ -1910,7 +1910,7 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if base is None:
         raise _OpError(422)
     if not base.is_dir():
-        # NR0003 §2/§3 — same silent-zero defect as _exec_grep, same fix.
+        # same silent-zero defect as _exec_grep, same fix.
         raise _OpError(404)
     root_real = os.path.realpath(str(root))
     base_real = os.path.realpath(str(base))
@@ -1920,7 +1920,7 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         if not _under_root(real, root_real):
             continue
         if _is_excluded(real, base_real):
-            continue  # dependency/VCS directory — not project source (0279 T0005)
+            continue  # dependency/VCS directory — not project source
         rel = os.path.relpath(real, root_real).replace("\\", "/")
         paths.append(rel)
     return ({"paths": paths, "total": len(paths)}, None)
@@ -1939,8 +1939,8 @@ def _exec_ref_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     raw = (proc.stdout or "").encode(encoding, errors="replace")
     start_line = body.get("start_line")
     if start_line is not None:
-        # 0507 T0004 §2: same line selector as the working-tree read, so a ref
-        # read cannot reopen the start_line/end_line → whole-blob hole NR0003 found.
+        # same line selector as the working-tree read, so a ref
+        # read cannot reopen the start_line/end_line → whole-blob hole the review found.
         end_line = body["end_line"]
         if len(raw) > _MAX_READ_BYTES:
             raise _OpError(413)
@@ -2018,7 +2018,7 @@ def _envelope(
     error: Optional[dict] = None,
     continuation: Optional[dict] = None,
 ) -> dict:
-    """P0005 §3.3 common response envelope."""
+    """common response envelope."""
     env: dict = {"ok": ok, "op": op, "server_ts": now_iso()}
     if error is not None:
         env["error"] = error
@@ -2029,8 +2029,8 @@ def _envelope(
     return env
 
 
-# Generic per-status envelope text (P0005 §6), one set per worker display locale
-# (0355 T0015: this dict used to carry only Korean text regardless of the worker's
+# Generic per-status envelope text, one set per worker display locale
+# (the earlier implementation: this dict used to carry only Korean text regardless of the worker's
 # requested locale — the 7 status codes below were always rendered in Korean even
 # when the calling worker's continuation_locale was ja/en).
 _ERROR_MESSAGES = {
@@ -2065,7 +2065,7 @@ _ERROR_MESSAGES = {
 
 
 _CUSTOM_ERROR_MESSAGES = {
-    # 0382 §3-3: permission/lock failures went out as a 503 "the server cannot handle the
+    # : permission/lock failures went out as a 503 "the server cannot handle the
     # request temporarily". The AI believed "temporarily", knocked three more times, and it was
     # never going to work. What a retry can fix and what it cannot must give different answers.
     "path_locked": {
@@ -2137,7 +2137,7 @@ def _locale_for_grant(grant: Optional[dict]) -> str:
 
     Mirrors mention_service's continuation_locale convention: a worker grant is
     backed by an inbox token carrying `continuation_locale` (set from the
-    unmanned chain's chosen locale, group 0099 B0001), so the error envelope
+    unmanned chain's chosen locale, the regression), so the error envelope
     should match the same language the worker's mentions are already in. A
     grant with no backing token (legacy / non-worker grant, or auth failure
     where `grant` is None) has no locale signal, so it falls back to ko —
@@ -2218,12 +2218,12 @@ def _log(
             bytes_processed=bytes_processed,
         )
     except Exception:
-        # A history-write failure must not block the user response (best-effort, L0006 §5).
+        # A history-write failure must not block the user response (best-effort, the earlier implementation).
         pass
 
 
 def _continuation(grant: dict, locale: str = "ko") -> dict:
-    """⑦ — locale-safe completion ment for mutation success (P0005 §5 / L0006 §6.2)."""
+    """⑦ — locale-safe completion ment for mutation success."""
     report_doc_id = grant.get("report_doc_id")
     copy = _CONTINUATION_MESSAGES.get(locale) or _CONTINUATION_MESSAGES["ko"]
     key = "with_report" if report_doc_id else "without_report"
@@ -2236,7 +2236,7 @@ def _continuation(grant: dict, locale: str = "ko") -> dict:
 def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tuple[int, dict]:
     """Run the full pipeline. Returns (http_status, response_envelope).
 
-    Fail-fast order (L0006 §7): 401 ▶ 403 ▶ 422 ▶ 404 ▶ 409 ▶ 413 ▶ 503.
+    Fail-fast order: 401 ▶ 403 ▶ 422 ▶ 404 ▶ 409 ▶ 413 ▶ 503.
     """
     op = operation
     body = body if isinstance(body, dict) else {}
@@ -2381,7 +2381,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
 
 def _emit_explorer_refresh(grant: dict, op: str) -> None:
     """Best-effort file_explorer_refresh broadcast after a worker source mutation
-    (0192 T0005 2-d). Scoped to the worker's project (and group when known) so
+    (2-d). Scoped to the worker's project (and group when known) so
     the operator's explorer re-fetches the tree / change list / dirty markers."""
     try:
         from modules.flow_gate.api.v1.events.publisher import (

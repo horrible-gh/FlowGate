@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0148 T#2 (0005-NR §5.5 checks (i)-(vii) and §5.4): the check card's settings client.
+ * (the earlier implementation checks (i)-(vii) and): the check card's settings client.
  *   (a) a PATCH answer marked `merge_targets_kept` takes the earlier merge target views over - or is discarded and read in full;
  *   (b) push / target show the requested value at once;
  *   (c) per-field state, one serial queue, a read that does not lock, a narrower `off`;
  *   (d) the opt-in query is sent only when the earlier views could be carried over.
- * The server below honours `keep_merge_targets=true` the way T#1's server does (T#1: `merge_targets_kept: true`).
+ * The server below honours `keep_merge_targets=true` the way the earlier implementation's server does (`merge_targets_kept: true`).
  */
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -28,7 +28,7 @@ let current: any
 let target: ReturnType<typeof targetOf>
 let context: ReturnType<typeof useGateContext>
 let id = 0
-/** Does the server know the opt-in (T#1)? false = an older server: the query is ignored and the answer is full. */
+/** Does the server know the opt-in ? false = an older server: the query is ignored and the answer is full. */
 let honours = true
 let slowViews: Promise<void> | null = null
 

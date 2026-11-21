@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#7 — the Q&A tab's rules (D#1 §8, §10.2 T#7 row, §10.4). Pure functions over
+// the Q&A tab's rules (the earlier implementation row). Pure functions over
 // the questions of the target document (`GET /q/{doc_id}`, normalized by `@/features/document`):
 // which questions wait for the user, the tab number, the display order, who asked and who answered,
 // and whether answering is possible now.
@@ -13,20 +13,20 @@
 // server refuses a person's write with 423 while an AI run owns the group), then an answer in flight.
 // Not offered (D#1 §8.4): team handling, resuming after an answer, the AI answer request.
 //
-// flowgate.v02.0053 T#6 (0053 CH §2) — a person asks too: the question line at the top of the tab
+// (CH) — a person asks too: the question line at the top of the tab
 // registers a question (asker 'human'). Asking is a change with the same reasons as answering, then a
 // question already on its way. AI-asked questions are answered by the user as before.
-// flowgate.v02.0056 F1 (0056 CH §3) — registering and asking an AI are two steps: an open question's
+// (CH) — registering and asking an AI are two steps: an open question's
 // [AI 답변 요청] asks the chosen AI to answer it (`ai_request`), a change with the same reasons, then a
 // request already on its way.
-// flowgate.v02.0063 — a question is answered on its document, not on the Graph: a confirmed revision view
+// a question is answered on its document, not on the Graph: a confirmed revision view
 // answers, asks and requests as the draft view does. A Flow whose answers stay closed (ownership conflict,
 // disposed group) does not show the question line, the answer form or the AI line at all.
-// flowgate.v02.0064 T-B5 (L0005 2.18, P0006 §5.2·§6.4) — who answered is one of four classes plus unknown:
+// T-B5 — who answered is one of four classes plus unknown:
 // a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
-// (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
+// (No linked execution record) and an AI with no run evidence (external/unconfirmed). The list shows the side; the ↗ window adds
 // the answer time and the run id when there is one. The item's `responder` is never read for this.
-// flowgate.v02.0070 T#5 (B5) — a question is answered after its context is checked: the Inspector list shows and opens
+// (B5) — a question is answered after its context is checked: the Inspector list shows and opens
 // the questions only; the ↗ window shows the document id, the full question, who asked and when, then the answer form.
 // Answering, picking and asking an AI need a body that can be checked (`qnaBodyContext`): the document's card line says
 // its body is there and reads, and the document is not history (an earlier document opened exactly, a superseded one).
@@ -119,12 +119,12 @@ export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind
 }
 
 /**
- * Who asked or answered (flowgate.v02.0064 T-B5, P0006 §5.2): the class, its message key (under
+ * Who asked or answered: the class, its message key (under
  * `gui.inspector.qna.`) and the key's parameters.
  *   human           a person — `side.human_named` with the server's `author_name`, else `side.human`
  *   ai_named        an AI whose provider name (or id) the server recorded
- *   ai_run_only     an AI whose run id is recorded but not its provider (실행 기록 연결 안 됨)
- *   ai_no_evidence  an AI with no run evidence at all (실행 정보 없음 — 외부/미확인)
+ *   ai_run_only     an AI whose run id is recorded but not its provider (No linked execution record)
+ *   ai_no_evidence  an AI with no run evidence at all (No execution information — external/unconfirmed)
  *   unknown         any other author kind
  */
 export type QnaSideClass = 'human' | 'ai_named' | 'ai_run_only' | 'ai_no_evidence' | 'unknown'
@@ -191,9 +191,9 @@ export interface QnaItemView {
   readonly answers: readonly QnaAnswerView[]
   /** An answer form is offered (the question has no answer yet). */
   readonly answerable: boolean
-  /** flowgate.v02.0070 T#5: when the question was registered, or null. */
+  /** when the question was registered, or null. */
   readonly createdAt: string | null
-  /** flowgate.v02.0070 T#5: the document the question belongs to (the read's doc_id, the full id), or null. */
+  /** the document the question belongs to (the read's doc_id, the full id), or null. */
   readonly docId: string | null
 }
 
@@ -227,12 +227,12 @@ export function qnaView(items: readonly QnaItemFacts[], docId: string | null = n
 }
 
 /**
- * flowgate.v02.0070 T#5 (B5): whether the body of the questions' document can be checked before answering.
+ * (B5): whether the body of the questions' document can be checked before answering.
  *   readable     the document's card line says it has a body, and the body reads
  *   unreadable   the body read failed (the line's `body_state`, the slot rows' rule — judged by the caller)
  *   unconfirmed  not known to have a body: no document, no card line of the document, no body (blank) or not sent;
  *                or not known whether a later document supersedes it (the document read not back, or failed)
- *   history      an earlier document read as history (T#4 exact window), or one a later document superseded
+ *   history an earlier document read as history (exact window), or one a later document superseded
  */
 export type QnaBodyContext = 'readable' | 'unreadable' | 'unconfirmed' | 'history'
 
@@ -255,7 +255,7 @@ export interface QnaBodyFacts {
   readonly docId: string | null
   /** The target card's lines; the one holding `docId` decides. */
   readonly lines: readonly QnaBodyLine[]
-  /** The questions are read as history (T#4). */
+  /** The questions are read as history. */
   readonly history?: boolean
   /**
    * The document read says a later document supersedes it (`superseded_by`); null: not known — the read is not back or
@@ -297,7 +297,7 @@ export interface QnaInput {
   readonly asking?: boolean
   /** An AI answer request is waiting for the server. */
   readonly requesting?: boolean
-  /** flowgate.v02.0070 T#5: the body context (qnaBodyContext); absent = no body condition (useQna always gives it). */
+  /** the body context (qnaBodyContext); absent = no body condition (useQna always gives it). */
   readonly body?: QnaBodyContext
 }
 
@@ -347,7 +347,7 @@ export function qnaAiDisabledReason(input: QnaInput): string | null {
  * Reading is always possible; answering, asking and asking an AI are offered in every ownership (a
  * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds. 0063: they are not
  * shown at all while the Flow's answers stay closed (ownership conflict, disposed group).
- * flowgate.v02.0070 T#5: nor are answering and asking an AI while the body cannot be checked — not shown, with the body
+ * nor are answering and asking an AI while the body cannot be checked — not shown, with the body
  * reason (qnaBodyLine); asking a question stays as it is.
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
@@ -364,7 +364,7 @@ export function qnaAvailability(input: QnaInput): QnaAvailability {
   }
 }
 
-/** flowgate.v02.0070 T#5: the one line the ↗ window shows instead of the form (the body cannot be checked), or null. */
+/** the one line the ↗ window shows instead of the form (the body cannot be checked), or null. */
 export function qnaBodyLine(availability: QnaAvailability): string | null {
   const reason = availability.answer.reason
   return reason === 'reason.body_unreadable' || reason === 'reason.body_unconfirmed' ? reason : null

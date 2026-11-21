@@ -1,4 +1,4 @@
-"""Node Identity Keeper (D0004 §3.6, L0009 §2.3.3 / §2.3.7, P0008 S2-4).
+"""Node Identity Keeper.
 
 Called on every Canvas read. When the recorded ``sequence_tag`` still equals the v0.1
 ``build_workflow_tag`` and no supersede handoff is pending, the recorded mapping is used and
@@ -94,7 +94,7 @@ def ensure_identity(flow_id: str, project_id: Optional[str], actor: Optional[str
 
 
 def _record(flow_id: str, project_id: Optional[str], actor: Optional[str], client_id: Optional[str]) -> IdentityResult:
-    snap = read_snapshot(flow_id)                      # re-read inside the guard (L0009 §2.1.1)
+    snap = read_snapshot(flow_id)                      # re-read inside the guard
     tag = sequence_tag_of(snap)
     record = layout_store.identity_record(flow_id)
     recorded_tag = record["sequence_tag"] if record else None

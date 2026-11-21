@@ -1,4 +1,4 @@
-"""0132 NR §5.3-4,5: rejected pushes park without target changes or remote sync."""
+"""NR,5: rejected pushes park without target changes or remote sync."""
 from __future__ import annotations
 
 import json

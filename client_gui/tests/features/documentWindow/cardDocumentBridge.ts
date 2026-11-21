@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0127 T#5 — a test bridge from the document window's body mocks to the card document v2 calls.
+ * a test bridge from the document window's body mocks to the card document v2 calls.
  * The window specs keep their `contentRead` (stored body per document) and `contentSave` (what a save writes)
  * mocks; the v2 read / revise functions are answered from them, with one revision counter per document, so a
  * spec states the stored file once and the card transport stays the real request / answer shape.
@@ -17,9 +17,9 @@ export function cardDocumentBridge(contentRead: Fn, contentSave: Fn) {
   const revisions = new Map<string, number>()
   /** Every request the window sent, in order (key / base / text), to assert what is resent as it is. */
   const calls: { expectedDocId: string; expectedRevision: number; idempotencyKey: string; content?: string }[] = []
-  /** flowgate.v02.0157: the requests sent to the standalone doc_id route (never mixed with the card `calls`). */
+  /** the requests sent to the standalone doc_id route (never mixed with the card `calls`). */
   const standaloneCalls: { docId: string; expectedDocId: string; expectedRevision: number; idempotencyKey: string; content?: string }[] = []
-  /** flowgate.v02.0157: the server's classification per document on a doc_id read (default `non_card`). */
+  /** the server's classification per document on a doc_id read (default `non_card`). */
   const editPaths = new Map<string, string>()
   const revisionOf = (docId: string) => revisions.get(docId) ?? 0
   async function snapshotOf(docId: string) {
@@ -39,11 +39,11 @@ export function cardDocumentBridge(contentRead: Fn, contentSave: Fn) {
     async read(ctx: CardDocumentContext) {
       return snapshotOf(ctx.openedDocId)
     },
-    /** flowgate.v02.0157 `cardDocumentStandaloneRead`: the same stored body by doc_id, no line, with its edit_path. */
+    /** `cardDocumentStandaloneRead`: the same stored body by doc_id, no line, with its edit_path. */
     async standaloneRead(target: { docId: string }) {
       return { ...(await snapshotOf(target.docId)), line: null, editPath: editPaths.get(target.docId) ?? 'non_card' }
     },
-    /** flowgate.v02.0157 `cardDocumentStandaloneRevise`: records the save, answers the doc_id success body (no line). */
+    /** `cardDocumentStandaloneRevise`: records the save, answers the doc_id success body (no line). */
     async standaloneRevise(target: { docId: string }, request: { expectedDocId: string; expectedRevision: number; idempotencyKey: string; content?: string }) {
       standaloneCalls.push({ docId: target.docId, ...request })
       await contentSave(target.docId, request.content)

@@ -1,11 +1,11 @@
 /**
- * flowgate.v02.0072 T#3 — the settings tab of a Graph work plan (WP) card. `@/features/document` is mocked as a small
+ * the settings tab of a Graph work plan (WP) card. `@/features/document` is mocked as a small
  * card settings server with the plan fields the server keeps (`fields.PLAN`: pre_instruction_auto, run_ai, restart,
  * review_ai, review_count, time_limit, review_basis); every other call of `@shared/api` is offline and recorded:
  *
- * - the top line is [switch] AI 사전 지시서 작성 (the switch left of its name, its tooltip saying it is a card value, no
- *   writer runs from it yet and off keeps the Steps' pre-instructions), then the common 실행 설정 block — 작업 AI ·
- *   재시작 | 검수 AI · 검수 횟수, 고급 ▾ 실행 제한 시간 · 검수 기준 — and no 지시서 / 지시 AI row;
+ * - the top line is [switch] AI pre-instruction writing (the switch left of its name, its tooltip saying it is a card value, no
+ *   writer runs from it yet and off keeps the Steps' pre-instructions), then the common 실행 설정 block — task AI ·
+ *   재시작 | 검수 AI · 검수 횟수, 고급 ▾ 실행 제한 시간 · 검수 기준 — and no instruction / 지시 AI row;
  * - the switch is one card setting PATCH (true / false), shown as answered and read again on the same card; turning it
  *   off sends `false` only — nothing reaches the plan document (no work-plan GET / PUT, no other request);
  * - the run block items are card settings, each its own PATCH, with the same review-off, lock (🔒 / the Flow's run
@@ -210,7 +210,7 @@ describe('the WP card’s settings form (flowgate.v02.0072 T#3)', () => {
       '카드에만 저장 · 자동 작성은 아직 연결되지 않음 · 꺼도 단계의 사전 지시서는 지워지지 않음',
     )
     expect(isOn(w)).toBe(false)
-    // No 지시서 / 지시 AI rows on a plan card.
+    // No instruction / 지시 AI rows on a plan card.
     expect(w.find('[data-test="settings-instruction"]').exists()).toBe(false)
     expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(false)
     expect(rowLabels(w)).toEqual(['작업 AI', '재시작', '검수 AI', '검수 횟수'])
@@ -283,7 +283,7 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     expect(isOn(w)).toBe(false)
   })
 
-  // flowgate.v02.0113 T#1 (0002-D 개정 §3.13): the Flow's run lock alone no longer locks a card's settings — its node run's
+  // the Flow's run lock alone no longer locks a card's settings — its node run's
   // node_running (actual running) does; a waiting card under a running run stays editable.
   it('a running card (server lock / node_running), an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
     locked = true
@@ -294,7 +294,7 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     w.unmount()
     locked = false
     const running = { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }
-    // flowgate.v02.0130: an unconfirmed run status no longer holds a card whose settings the server answered (below).
+    // an unconfirmed run status no longer holds a card whose settings the server answered (below).
     for (const fields of [running, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()

@@ -4,7 +4,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { createFakeSource } from './fakeConversationSource'
 
-// flowgate.v02.0088 F12 (rework of TR0007): the Conversation adapter keeps a diagnostic the response
+// (rework of the earlier implementation): the Conversation adapter keeps a diagnostic the response
 // body carries even when the thrown Error repeats it, and a check the app makes itself (an answer
 // without its required field, an id that is not a document id) carries no English words — the
 // notice shows its localized line only.
@@ -108,7 +108,7 @@ describe('a check the app makes itself carries no words', () => {
     expect(await session.createChat('새 채팅')).toBe(false)
     expect(session.state.notice).toMatchObject({ code: 'create_failed', detail: '' })
     await session.decideCommand('k1', 'approve')
-    // flowgate.v02test.0024 B: the decision failure is a line of the chat's history — also without words.
+    // B: the decision failure is a line of the chat's history — also without words.
     expect(session.state.activities.find((a) => a.kind === 'status')).toMatchObject({ code: 'command_decision_failed', text: null })
     session.dispose()
     localStorage.clear()

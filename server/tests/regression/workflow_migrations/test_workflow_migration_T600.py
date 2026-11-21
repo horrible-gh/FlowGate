@@ -24,7 +24,7 @@ _MIGRATIONS_DIR = (
 
 # A migration ordinal is three digits, optionally followed by one letter: the
 # letter is how a file that arrived second on the same number keeps its position
-# in sort order (0394 T0004, e.g. 031a). Read the digits and ignore the letter —
+# in sort order (e.g. 031a). Read the digits and ignore the letter —
 # 031 and 031a are both "up to 031", which is what this suite has always applied.
 _ORDINAL = re.compile(r"^(\d+)")
 

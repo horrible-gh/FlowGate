@@ -1,4 +1,4 @@
-"""Pre-change basis of a Self-check work unit (flowgate.v02.0114 T#3, D 0006 3.3, 8-3).
+"""Pre-change basis of a Self-check work unit.
 
 "What did the tree look like before this change" is not the HEAD at the time of the final
 run: once the change is committed that HEAD already holds it. So the basis is written once,

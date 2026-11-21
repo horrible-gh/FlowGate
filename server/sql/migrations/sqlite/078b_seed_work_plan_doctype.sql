@@ -3,11 +3,11 @@
 -- (WP) document type as a GLOBAL system type.
 --
 -- Type code decision (NR0005 §1, D0007 §0): 'WP' (Work Plan). The Korean name is
--- 작업계획. It is a general-series advisory document, not an instruction and not a
+-- Work plan. It is a general-series advisory document, not an instruction and not a
 -- work result — the same series as M (memo) and CH (conversation), which is why it
 -- carries no pair type and never appears in the instruction/work series.
 --
--- WP is NOT auto-complete (D0007 §3.1 결정 4): it is created pending_review and goes
+-- WP is NOT auto-complete (D0007 §3.1 decision 4): it is created pending_review and goes
 -- through the ordinary review pipeline, so it must not be added to AUTO_COMPLETE_TYPES.
 --
 -- This is a DATA insert (a global system type row), not a schema change

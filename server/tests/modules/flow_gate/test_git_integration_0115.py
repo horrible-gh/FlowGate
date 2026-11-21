@@ -1,18 +1,18 @@
-"""Git integration (flowgate.default.0115) — db + service test suite.
+"""Git integration — db + service test suite.
 
 Covers:
-  - branch name generation / sanitization                      → L0006 §2.1
-  - secret masking + AES-GCM encrypt/decrypt roundtrip          → L0006 §2.3
+  - branch name generation / sanitization → the earlier implementation
+  - secret masking + AES-GCM encrypt/decrypt roundtrip → the earlier implementation
   - config CRUD: masking, keep/clear secret protocol, URL/enum
-    validation, delete                                          → P0005 §1·§2
-  - effective source-root resolution: fallback-first            → L0006 §2.2·§4.1
-  - project git lock: acquire / busy / release / transfer       → L0006 §2.8
-  - finalize guards (non-integrated group → 409)                → L0006 §4.2
+    validation, delete → the plan·
+  - effective source-root resolution: fallback-first → the earlier implementation·
+  - project git lock: acquire / busy / release / transfer → the earlier implementation
+  - finalize guards (non-integrated group → 409) → the earlier implementation
   - finalize action contract: additive commit_push/commit_only,
-    untouched UI choice lists, dirty `push` refusal            → 0331 NR0005 §2·§3
+    untouched UI choice lists, dirty `push` refusal → the review·
   - REAL git end-to-end (skipped when git is absent): clone +
     worktree provisioning (idempotent), finalize merge/push/wait,
-    conflict session → resolve/abort                            → L0006 §2.4~§2.7
+    conflict session → resolve/abort → the earlier implementation~
 
 Environment: TESTING=1, temporary SQLite with the real sqlite migrations
 (mirrors test_project_test_commands.py), temporary FLOWGATE_STORAGE_DIR, and a
@@ -121,7 +121,7 @@ class _MockTxn:
 
     def execute(self, sql, params=None):
         # No commit here: a transaction that commits every statement cannot roll
-        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # anything back, and then an atomic unit of work (the design INV-6: AC
         # approval + root completion + intent consume, all or nothing) silently
         # tests as "each write landed on its own". begin_transaction below owns
         # the commit/rollback.
@@ -135,7 +135,7 @@ class _MockTxn:
         transaction's cursor (that is the one portable place all three real
         adapters expose it). A mock that hides its cursor makes every CAS write
         raise "database driver did not expose affected row count" — a harness
-        gap, not a product one (0555 T0008).
+        gap, not a product one.
         """
         return self._cur
 
@@ -256,7 +256,7 @@ class TestMigration:
 
 
 
-# ── branch naming (L0006 §2.1) ───────────────────────────────────────────────
+# ── branch naming ───────────────────────────────────────────────
 
 class TestBranchName:
     pass
@@ -293,7 +293,7 @@ class TestAutoCommitMessage:
 
 
 
-# ── secret handling (L0006 §2.3) ─────────────────────────────────────────────
+# ── secret handling ─────────────────────────────────────────────
 
 class TestSecrets:
     pass
@@ -301,14 +301,14 @@ class TestSecrets:
 
 
 
-# ── config CRUD (P0005 §1·§2) ────────────────────────────────────────────────
+# ── config CRUD ────────────────────────────────────────────────
 
 class TestConfig:
     pass
 
 
 
-    # ── configurable commit author (0237 — R0001/NR0003) ─────────────────────
+    # ── configurable commit author ─────────────────────
 
 
 
@@ -319,21 +319,21 @@ class TestConfig:
 
 
 
-# ── effective source-root resolution (L0006 §2.2·§4.1 — fallback first) ─────
+# ── effective source-root resolution (· — fallback first) ─────
 
 class TestEffectiveSrcRoot:
     pass
 
 
 
-# ── domain locks (L0006 §2.8, replaced by resource_lock in flowgate.default.0669) ──────
+# ── domain locks (replaced by resource_lock in the earlier change) ──────
 
 class TestLock:
     pass
 
 
 
-# ── finalize guards (L0006 §4.2) ─────────────────────────────────────────────
+# ── finalize guards ─────────────────────────────────────────────
 
 class TestFinalizeGuards:
     pass
@@ -341,14 +341,14 @@ class TestFinalizeGuards:
 
 
 
-# ── finalize action contract (flowgate.default.0331 NR0005 §2·§3) ────────────
+# ── finalize action contract ────────────
 
 class TestFinalizeActionContract0331:
     pass
     """The action vocabulary widened additively: `push` no longer fabricates a
     commit, `commit_push`/`commit_only` carry that behaviour explicitly, and the
     constants the three finalize surfaces read are left alone on purpose so no UI
-    starts offering an action it cannot yet render (TR0007 §2)."""
+    starts offering an action it cannot yet render."""
 
     GROUP = "gitprj.default.0109"
 
@@ -378,7 +378,7 @@ class TestFinalizeActionContract0331:
 
 
 
-# ── REAL git end-to-end (L0006 §2.4~§2.7) ────────────────────────────────────
+# ── REAL git end-to-end ────────────────────────────────────
 
 def _git(args, cwd=None, env_extra=None):
     env = os.environ.copy()
@@ -417,9 +417,9 @@ def origin_repo(seed, git_repositories):
 
 class TestConflictSideDroppedChunkLocal0602:
     pass
-    """0602 T0004 — _conflict_side_dropped() must judge each conflict chunk on its own
+    """_conflict_side_dropped must judge each conflict chunk on its own
     resolved text (ours/theirs/both/manual), not on whole-file line membership. Pure-
-    function coverage of C1~C4 and C6 (T0004/NR0003); the real resolve_conflicts()
+    function coverage of C1~C4 and C6; the real resolve_conflicts
     boundary — E12 all-or-nothing, review gate, the actual WorkPlanEditor.vue regression
     — is covered against real git in TestGitEndToEnd below, not mocked here.
     """
@@ -449,7 +449,7 @@ class TestConflictSideDroppedChunkLocal0602:
 
 class TestConflictSideDroppedAdjacentGroups0604:
     pass
-    """0604 T0006 — only genuinely synthesized nearby conflict groups are exempt."""
+    """only genuinely synthesized nearby conflict groups are exempt."""
 
     @staticmethod
     def _marker(ours: str, base: Optional[str], theirs: str) -> str:
@@ -523,7 +523,7 @@ class TestConflictSideDroppedAdjacentGroups0604:
 
 class TestConflictSupersede0604:
     pass
-    """0604 T0008 (D0005 §3.4) — the `supersede` declaration is checked chunk by chunk
+    """the `supersede` declaration is checked chunk by chunk
     against real evidence; it can only excuse a chunk the checker already rejects."""
 
     _marker = staticmethod(TestConflictSideDroppedAdjacentGroups0604._marker)
@@ -590,7 +590,7 @@ class TestConflictSupersede0604:
 
 class TestSupersedeTransport0604:
     pass
-    """0604 T0008 §11.8 / §11.10 — `supersede` reaches resolve_conflicts from both
+    """— `supersede` reaches resolve_conflicts from both
     routes and the API worker, and the resolver is told how (and when) to use it."""
 
     DECL = {"side": "theirs", "reason": "theirs contains ours"}
@@ -743,7 +743,7 @@ class TestGitEndToEnd:
 
 
 
-    # ── review gate (flowgate.default.0481 D0006/L0007, T0008) ──────────────
+    # ── review gate ─────────────────────────────────────────────────────────
 
 
 
@@ -775,7 +775,7 @@ class TestGitEndToEnd:
 
 
 
-# ── base-slot provisioning: lossless adopt + ledger (flowgate.default.0161) ──
+# ── base-slot provisioning: lossless adopt + ledger ──────────────────────
 
 @pytest.fixture(scope="class")
 def adopt_origin(seed):
@@ -827,7 +827,7 @@ class TestProvision0161:
 
 
 
-# ── flowgate.default.0162: group git actions (status / fetch / push / approve) ─
+# ── the earlier change: group git actions (status / fetch / push / approve) ─
 
 class TestStatus0162NoGit:
     pass
@@ -876,7 +876,7 @@ class TestGitActions0162:
 
 
 
-# ── flowgate.default.0177: base-checkout commit / revert + E3 409 (L0002) ────
+# ── the earlier change: base-checkout commit / revert + E3 409 ────
 
 class TestDefaultBaseCommitMessage0177:
     pass
@@ -933,9 +933,9 @@ class TestBaseCommitRevert0177:
 
 
 
-# ── flowgate.default.0482 T0011: resolve_base_dirty against a real repo ──────
+# ── the earlier change the earlier implementation: resolve_base_dirty against a real repo ──────
 #
-# The automated review on TR0012 rev6 found that `remote_tool_service._exec_
+# The automated review on the earlier implementation found that `remote_tool_service._exec_
 # resolve_base_dirty` called `git_service.base_commit(project_id, commit_paths,
 # message)` while `base_commit` is declared `(project_id, message, paths=None)`
 # — a real commit decision passed the path list as the commit message and the
@@ -994,7 +994,7 @@ class TestResolveBaseDirtyRealRepo0482:
 
 @pytest.fixture(scope="class")
 def project_scoped_admission_origin(seed):
-    """A dedicated bare origin + enabled project for the 0481 T0010 admission tests.
+    """A dedicated bare origin + enabled project for the the earlier implementation admission tests.
 
     Its own project id on purpose: `resolve_base_dirty_origin` above is class-scoped, so
     sharing it would re-run `projects.create("rbdprj")` for this class and error at setup.
@@ -1048,7 +1048,7 @@ class TestBaseDirtyDelegationAdmission0481:
 
 
 
-# ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
+# ── the earlier change the regression: no-work group auto-discard (no merge/push) ───
 
 @pytest.fixture(scope="class")
 def author_origin(seed):
@@ -1091,7 +1091,7 @@ def _ident_of(base, ref="HEAD"):
 @needs_git
 class TestConfigurableAuthor0237:
     pass
-    """R0001: server commits must be attributable to a configured person, not
+    """server commits must be attributable to a configured person, not
     unconditionally to FlowGate. Author moves; committer stays FlowGate."""
 
     FLOWGATE = "FlowGate <flowgate@localhost>"
@@ -1166,7 +1166,7 @@ def _seed_wf_done_root(group_id: str, project_id: str = "gitnoop") -> None:
 @needs_git
 class TestNoWorkAutoDiscard0199:
     pass
-    """flowgate.default.0199 B0001 — a wf_done group that produced NO work (branch
+    """a wf_done group that produced NO work (branch
     at base tip, clean worktree) must be auto-discarded: its slot is torn down with
     NO merge and NO push (no empty `--no-ff` commit on base, no leaked branch on
     origin), instead of being parked in the finalize gate."""
@@ -1221,14 +1221,14 @@ def nowork_surface_origin(seed):
 @needs_git
 class TestNoWorkFinalizeSurfaces0548:
     pass
-    """flowgate.default.0548 T0004 — 0199 stopped the no-work group from being MERGED;
+    """stopped the no-work group from being MERGED;
     this stops it from being SHOWN anything about merging.
 
-    The reviewer's rejection of TR0005 rev4 walked the real product path on a group
+    The reviewer's rejection of the earlier implementation walked the real product path on a group
     where they did no work at all (R → T → TR → AC in half a minute):
 
         머지할게 없는데... 경고 토스트가 그대로 뜬다 / 깃 다이얼로그도 그대로 뜬다
-        머지 다이얼로그가 그대로 뜬다 / 문서에 머지 섹션이 그대로 뜬다
+        머지 다이얼로그가 그대로 뜬다 / document merge section이 그대로 뜬다
 
     All four fall out of one chain, reproduced here on a real origin + real worktree
     + the real DB: the AC approval dialog faked a finalize gate for a slot with
@@ -1248,7 +1248,7 @@ class TestNoWorkFinalizeSurfaces0548:
 @pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 class TestFirstPushBootstrap0297:
     pass
-    """0297 B0001 / NR0003 — a freshly created (empty) remote has no
+    """a freshly created (empty) remote has no
     refs/remotes/origin/{base}, so ahead/behind and the unpushed walk are
     unmeasurable. The payload used to flatten that to commit_count 0, which the
     client could not tell apart from "in sync" — and the only push button in the
@@ -1277,9 +1277,9 @@ class TestFirstPushBootstrap0297:
 
 
 # ── Untracked base files: listing, explicit commit, merge diagnostics ─────────
-# flowgate.default.0296 T0004, implementing NR0003 R1/R3/R5.
+# implementing the review R1/R3/R5.
 #
-# The bug behind these tests (B0001): a file created through the FlowGate UI
+# The bug behind these tests: a file created through the FlowGate UI
 # lands in the BASE checkout, but every group worktree is `git worktree add`-ed
 # from a COMMIT — so the file exists in the tree the operator sees and in none of
 # the trees the AI workers read. "Commit it and it appears" was true, yet
@@ -1330,9 +1330,9 @@ class TestBaseUntrackedCommit0296:
 
 
 
-# ── flowgate.default.0350 T0004: base_untracked_conflict integrated recovery ──
+# ── the earlier change the earlier implementation: base_untracked_conflict integrated recovery ──
 #
-# NR0003's conclusion: the 409 is correct Git behaviour (data-loss prevention),
+# 's conclusion: the 409 is correct Git behaviour (data-loss prevention),
 # but the product only ever implemented half of its own "commit or remove them"
 # guidance (commit only) and never exercised the full "revert → untracked
 # survives → merge alone → 409 → in-app recovery → retry succeeds" flow
@@ -1381,7 +1381,7 @@ def _make_untracked_collision(
     """Provision a group worktree, stage `path` for its absorb commit (finalize
     commits worker edits before it ever touches the base checkout), and leave the
     caller to drop the SAME path, uncommitted, into the shared base checkout —
-    the exact B0001 collision. Returns the worktree Path."""
+    the exact the regression collision. Returns the worktree Path."""
     module = group.split(".", 2)[1]
     assert svc.ensure_worktree(project_id, module, group) == "ok"
     wt = src_root(project_name, group.replace(".", "_"))
@@ -1394,8 +1394,8 @@ def _make_untracked_collision(
 @needs_git
 class TestBaseUntrackedConflictEndToEnd0350:
     pass
-    """NR0003 §7 items 1-4: the full collision, both actions, side-effect-free
-    failure, the exact B0001 ordering, and the non-conflicting control case."""
+    """items 1-4: the full collision, both actions, side-effect-free
+    failure, the exact the regression ordering, and the non-conflicting control case."""
 
 
 
@@ -1441,7 +1441,7 @@ def untracked_remove_origin(seed):
 @needs_git
 class TestBaseRemoveAndRetry0350:
     pass
-    """NR0003 §7 items 5-6 / §8 R4: the missing `base_remove` API, and both
+    """items 5-6 / R4: the missing `base_remove` API, and both
     recovery paths (delete, and the existing selective commit) unblocking a
     retried finalize with the action contract intact."""
 
@@ -1485,8 +1485,8 @@ def grpexp_origin(seed):
 @needs_git
 class TestGroupExplorerUntracked:
     pass
-    """0315 TR (NR0003 권고 1·2·3): the checkout-free group-branch explorer surfaces
-    untracked (never-committed) worktree files. B0001's symptom was that a worker's new
+    """TR: the checkout-free group-branch explorer surfaces
+    untracked (never-committed) worktree files. the regression's symptom was that a worker's new
     file stayed invisible in tree / changes / blob reads until finalize, because all three
     read committed git objects only. These pin the untracked channel end-to-end."""
 
@@ -1506,7 +1506,7 @@ class TestGroupExplorerUntracked:
 
 @pytest.fixture(scope="class")
 def terminal_reopen_origin(seed):
-    """A dedicated bare origin + enabled project for the 0532 T0007 terminal-reopen
+    """A dedicated bare origin + enabled project for the the earlier implementation terminal-reopen
     re-provisioning test: a plain bare origin/local-clone pair, kept separate from the
     other classes' shared fixtures so this test can freely advance ``main`` past the
     merge point without disturbing anyone else's timeline."""
@@ -1540,11 +1540,11 @@ def terminal_reopen_origin(seed):
 @needs_git
 class TestTerminalReopenReprovision0532:
     pass
-    """flowgate.default.0532 T0007 §4 condition 1 — the review's finding: when a
+    """condition 1 — the review's finding: when a
     terminal slot has no retained group branch, reopen used to always re-create the
     worktree at bare C1. If the configured base has since moved on to a later commit
     that already contains C1 (a real merge landed and the base kept moving), the
-    recreated branch silently dropped that later base content instead of the T0007 §4
+    recreated branch silently dropped that later base content instead of the the earlier implementation
     contract ("re-provision from the current configured/effective base while
     preserving C1"). ``_ensure_worktree_locked`` must fork from the current base tip
     whenever it still contains C1, not from the bare commit."""
@@ -1552,9 +1552,9 @@ class TestTerminalReopenReprovision0532:
 
 
 
-# ── 0608 T0007: the API provider's tool-driven conflict loop, connected ─────────────
+# ── the earlier implementation: the API provider's tool-driven conflict loop, connected ─────────────
 #
-# T0005 stopped putting chunk text into a large conflict's mention; these runs prove an
+# stopped putting chunk text into a large conflict's mention; these runs prove an
 # API provider can still resolve one. Everything between the model and git is real: the
 # finalize that opens the session (with its EOL separation), the mention, `_api_execute`'s
 # tool loop, `api_server_tools` -> `remote_tool_service.handle` for every read (only the
@@ -1934,7 +1934,7 @@ def api_conflict_origin_0608(seed):
 @needs_git
 class TestApiConflictToolLoop0608:
     pass
-    """0608 T0007 -- Cases A~F of the work order, against a real finalize session."""
+    """Cases A~F of the work order, against a real finalize session."""
 
     def _open_session(self, api_conflict_origin_0608, group: str, files: dict, attrs: str = "") -> tuple[int, Path]:
         """``files``: path -> (base, ours=main, theirs=group) bytes; finalize conflicts."""

@@ -25,7 +25,7 @@ class MockResizeObserver {
 }
 ;(globalThis as unknown as { ResizeObserver: typeof MockResizeObserver }).ResizeObserver = MockResizeObserver
 
-// T0010 §5/§13.1: two-area split with a draggable/keyboard-adjustable boundary, min/max
+// two-area split with a draggable/keyboard-adjustable boundary, min/max
 // clamp, separator semantics, and listener cleanup.
 describe('components/ui/SplitPane (T0010)', () => {
   function mountSplit(props: Record<string, unknown> = {}) {

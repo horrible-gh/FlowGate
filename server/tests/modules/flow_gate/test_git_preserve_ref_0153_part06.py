@@ -118,7 +118,7 @@ def test_push_exception_contract_is_unchanged_after_preservation(env):
     ('third', 'retry_scheduled'), (None, 'retry_scheduled'),
 ])
 def test_reconcile_four_branches_are_unchanged_behind_the_gate(env, observed, status):
-    # 0153 T#3: expected → the same commit is re-pushed and completed; a fake third SHA
+    # expected → the same commit is re-pushed and completed; a fake third SHA
     # that the real fetch does not confirm is "the remote is moving" (transient).
     r = env.repo
     mid, m, before = unknown_session(env)

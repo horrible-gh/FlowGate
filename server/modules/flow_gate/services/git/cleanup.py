@@ -1,6 +1,6 @@
 """Stale-session cleanup and startup recovery.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/부록 A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from .worktree import _abort_disposed_merge_session, _slot_lock, _slot_unlock
 
 _log = logging.getLogger(__name__)
 
-MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
-# 0668 T0004 — a session waiting for its human review that holds the base checkout is
+MERGE_SESSION_TTL_HOURS = 24   # quiet-for-this-long conflict → auto-abort
+# a session waiting for its human review that holds the base checkout is
 # kept while it is being looked at (opening the review touches it) but never longer than
 # this from its creation: every other group's base work is blocked by it meanwhile.
 REVIEW_PENDING_MAX_HOURS = 72
 
-SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
+SWEEP_INTERVAL_MIN = 30        # auto-recovery sweep period
 
 
 def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
@@ -73,7 +73,7 @@ def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
                         project_id, group_id, _gs.src_root(project_name, base_branch))
                 finally:
                     session_unlock(s_ctx, s_held)
-        # 0669 unit 7b: a worktree_cleanup job (reason disposed), tried once here. A
+        # unit 7b: a worktree_cleanup job (reason disposed), tried once here. A
         # queued job is finished by the Runner; only "no job" falls back to the mutex.
         from .worktree_cleanup import clean_disposed
         job = clean_disposed(project_id, group_id)
@@ -85,7 +85,7 @@ def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
                 return {"ok": False, "cleaned": False,
                         "reason": job.get("last_error_code") or status, "job_id": job["job_id"]}
             return {"ok": True, "cleaned": False, "reason": "queued", "job_id": job["job_id"]}
-        # 0669 unit 9b: no job — the Group's G (+R: a merged slot's origin leftover is
+        # unit 9b: no job — the Group's G (+R: a merged slot's origin leftover is
         # retro-deleted) instead of the project mutex.
         lock_ctx, held, refused = _slot_lock(project_id, group_id, publish=True)
         if held is None:
@@ -108,7 +108,7 @@ def cleanup_terminal_slots(project_id: str) -> dict:
     """POST …/projects/{id}/git/cleanup — backlog sweep of every registered
     slot already finalized (merged/pushed) OR belonging to a disposed group.
     Covers groups finalized/discarded before the per-finalize / per-dispose
-    cleanup existed, and any slot whose immediate cleanup failed. (0192 T0005 §3
+    cleanup existed, and any slot whose immediate cleanup failed. (the earlier implementation
     adds the disposed backlog: one sweep clears every ghost slot left by a group
     that was discarded before dispose learned to touch git.)"""
     from modules.flow_gate.services import git_service as _gs
@@ -118,7 +118,7 @@ def cleanup_terminal_slots(project_id: str) -> dict:
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
-    # 0669 unit 9b: each slot under its own Group's G (+R), no wait, instead of one
+    # unit 9b: each slot under its own Group's G (+R), no wait, instead of one
     # project mutex for the whole sweep. A busy Group stays pending (``git_busy``).
     cleaned: list[str] = []
     failed: list[str] = []
@@ -175,16 +175,16 @@ def _ttl_expired(last: Optional[str], hours: float = MERGE_SESSION_TTL_HOURS) ->
 
 
 def _review_pending_ttl_expired(session: dict) -> bool:
-    """0668 T0004 — the TTL of a session that is resolved and waiting for its review.
+    """the TTL of a session that is resolved and waiting for its review.
 
     Resolve → leave → come back and review is the normal flow now, so a review wait is
     not abandonment by itself. One that holds the base checkout keeps the ordinary
     activity TTL — real operations only (a resolution submit, a review conversation
-    turn); opening the review screen is not activity (flowgate.v02test.0052 T0003
-    할 일 4(c)) — under a hard cap from creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
+    turn); opening the review screen is not activity (the earlier change the earlier implementation
+    task 4(c)) — under a hard cap from creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
     (hold) stays the explicit way to park longer.
 
-    0683 T0004 §5: a session on a managed non-base target workspace is not harmless to
+    a session on a managed non-base target workspace is not harmless to
     others — it owns that target's workspace, and every other finalize or branch merge
     into the same target is refused ``merge_target_busy`` until it is approved or
     aborted. It still gets no time-based expiry here: a person's pending review is
@@ -204,7 +204,7 @@ def _review_pending_ttl_expired(session: dict) -> bool:
 def _session_ttl_expired(session: dict, review_state: Optional[str]) -> bool:
     """The sweep's TTL of a group merge/review session with MERGE_HEAD on disk: a resolved
     session waiting for its review has its own TTL (activity, capped from creation for a
-    base-holding one); every other conflict session has the activity TTL. 0153 T#4 (review
+    base-holding one); every other conflict session has the activity TTL. the earlier implementation (review
     rej_01M6ZWFPF1E6JE2M): judged once on the sweep's fresh row and once more on the row
     re-read under the TTL lock (``_auto_abort_session``)."""
     from modules.flow_gate.services import git_service as _gs
@@ -214,7 +214,7 @@ def _session_ttl_expired(session: dict, review_state: Optional[str]) -> bool:
 
 
 def _discard_abandoned_attempt(merge_id: int, reason: str) -> None:
-    """0668 T0004 — what an [abort] already does, done for a sweep close too: the parked
+    """what an [abort] already does, done for a sweep close too: the parked
     final-approval intent and any rerere checkpoint die with the attempt, so a later
     re-approval starts over cleanly instead of failing ``final_approval_retry_mismatch``.
     Best-effort: the session is already closed and a cleanup failure must not reopen it."""
@@ -245,7 +245,7 @@ def _close_orphan(session: dict, project_id: str) -> None:
     from modules.flow_gate.services import git_service as _gs
     merge_id = int(session["merge_id"])
     group_id = session["group_id"]
-    # 0594 T0012: an attempt records the outcome and releases only its own
+    # an attempt records the outcome and releases only its own
     # workspace (owner match, §9.3); a legacy row is closed exactly as before.
     # A workspace owned by someone else leaves the row open as well (§9.1).
     if not merge_target.close_session_attempt(
@@ -269,10 +269,10 @@ def _auto_abort_session(
     the session is LEFT intact — a forced reset is never issued, protecting a base
     checkout that has other groups' work mixed in (the exact 0203 accident).
 
-    0153 T#4 §3.4: the row is re-read under the lock and judged on that fresh copy — a
+    the row is re-read under the lock and judged on that fresh copy — a
     closed row or a ``reconciling``/``applying``/``completed`` one is left alone, an
     existing recovery hold is kept. A session that carries recovery evidence (a
-    human-approved resolution: the T#3 hand-back resolver stage, a clean ``re_review``
+    human-approved resolution: the the earlier implementation hand-back resolver stage, a clean ``re_review``
     hand-back or its rejection) is parked in ``recovery_hold`` (trigger ``sweep_ttl``)
     without ``merge --abort``, intent discard or a ``waiting`` transition. Only a session
     without evidence keeps the old abort, after the claim fence.
@@ -303,7 +303,7 @@ def _auto_abort_session(
             session_claim.note(merge_id, "ttl_not_expired")
             _log.info("sweep: merge %s is active again under the TTL lock — left as it is", merge_id)
             return
-        # 0594 T0012: base_root is the attempt's pinned target root (the managed
+        # base_root is the attempt's pinned target root (the managed
         # workspace for a non-base target) — see merge_session_sweep. Ownership is
         # re-read under the sweep lock BEFORE merge --abort (§9.1/§9.3).
         if merge_target.session_workspace_ownership(fresh) != merge_target.OWN_OWNED:
@@ -327,7 +327,7 @@ def _auto_abort_session(
             return
         session = fresh
         if _gs._merge_in_progress(base_root):
-            # flowgate.v02test.0052 T0003: the common abort (index stat refresh first).
+            # the common abort (index stat refresh first).
             proc = _gs._abort_merge(base_root, merge_id=merge_id, reason="sweep_abort")
             if proc.returncode != 0:
                 _log.warning(
@@ -350,7 +350,7 @@ def _auto_abort_session(
         session_unlock(lock_ctx, held)
 
 
-# ── 0153 T#4: orphan judgement with the recovery-evidence guard ──────────────
+# ── the earlier implementation: orphan judgement with the recovery-evidence guard ──────────────
 
 def _observe_merge_head(root: Path) -> Optional[bool]:
     """MERGE_HEAD present (True), absent (False) or not observable (None), read-only.
@@ -467,7 +467,7 @@ def _judge_orphan(session: dict, project_id: str, *, at_boot: bool, trigger: str
     claim; without it nothing happens. Under ``session_lock`` (sweep, no wait — busy is
     retried next cycle) the row is re-read and the disk facts are read again; the verdict
     of ``orphan_guard.orphan_verdict`` is then performed after the claim fence. A resume
-    is written under the lock and the T#3 reconcile is run right after the unlock, still
+    is written under the lock and the the earlier implementation reconcile is run right after the unlock, still
     under the same (re-entered) claim. Returns the verdict, or None when nothing was
     judged (no claim, busy lock, closed row, failed fence)."""
     from modules.flow_gate.services import git_service as _gs
@@ -526,7 +526,7 @@ def _judge_orphan(session: dict, project_id: str, *, at_boot: bool, trigger: str
     finally:
         session_unlock(lock_ctx, held)
     if resume:
-        # T#3 owns every later decision and Git step; nothing is pushed or reset here.
+        # owns every later decision and Git step; nothing is pushed or reset here.
         _gs.reconcile_push_session(merge_id, trigger="orphan_resume")
     return action
 
@@ -549,7 +549,7 @@ def _sweep_tr_session(session: dict, project_id: str) -> None:
     wt_path = _gs.src_root(project_name, branch) if (project_name and branch) else None
     if wt_path is None or not wt_path.is_dir():
         return   # slot gone — never guess, same rule as the base-checkout branch
-    # 0061 T#9: a Graph attempt's conflicted merge has a MERGE_HEAD, never a REVERT_HEAD. Its orphan and TTL closes
+    # a Graph attempt's conflicted merge has a MERGE_HEAD, never a REVERT_HEAD. Its orphan and TTL closes
     # both go through its abort under the group's G (no wait: a busy G is retried next cycle), which re-checks the
     # session and the merge under the lock and closes it only once the merge state is gone.
     if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
@@ -576,7 +576,7 @@ def _sweep_tr_session(session: dict, project_id: str) -> None:
         _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
         return
     if context.get("review_state") == _gs.TR_CONFLICT_REVIEW_RESOLVED:
-        # 0668 T0004: resolved and waiting for the common review screen.
+        # resolved and waiting for the common review screen.
         if not _review_pending_ttl_expired(session):
             return
     elif not _ttl_expired(session.get("touched_at") or session.get("created_at")):
@@ -609,7 +609,7 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
         return
     if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
         return
-    # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session like every
+    # task 3(b): audited on the session like every
     # other session abort (``ref_operations[].stderr_tail`` on failure).
     proc = _gs._abort_merge(root, merge_id=merge_id, reason="group_update_sweep_abort")
     if proc.returncode == 0:
@@ -629,11 +629,11 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
     the TTL; otherwise leave it. Best-effort and fully isolated per session so
     one bad row cannot sink the pass.
 
-    0153 T#4: a group merge/review session is handled under its DB session claim
+    a group merge/review session is handled under its DB session claim
     (``session_claim``), re-read after the claim, and its orphan/TTL closes pass the
     recovery-evidence guard (``_judge_orphan`` / ``_auto_abort_session``). There is no
     sweep leader: every instance runs this pass, the per-session claim keeps two of them
-    off the same session (T0011 §4.4).
+    off the same session.
     """
     from modules.flow_gate.services import git_service as _gs
     if sessions is None:
@@ -645,7 +645,7 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
     for session in sessions:
         try:
             if _gs.db_git.is_branch_merge_session(session):
-                # 0630 T0005 (D0004 §20): an ordinary branch merge has no group and no
+                # an ordinary branch merge has no group and no
                 # TTL abort — a conflict waiting for an AI or a person is not abandoned
                 # because it is quiet. Only a record/workspace mismatch is flagged.
                 from . import branch_merge
@@ -663,7 +663,7 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
                 # while the conflicted revert sat on disk with nothing pointing at it.
                 _sweep_tr_session(session, project_id)
                 continue
-            # 0153 T#4 §4.5: a group merge/review session is processed under its session
+            # a group merge/review session is processed under its session
             # claim; another instance processing it right now makes this pass skip it.
             # Every step below (reconcile, orphan, TTL, interrupted, completed) re-enters
             # the same claim.
@@ -683,10 +683,10 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
 
 
 def _sweep_group_merge_session(session: dict, project_id: str) -> None:
-    """One group merge/review session of the sweep, under its claim (0153 T#4).
+    """One group merge/review session of the sweep, under its claim.
 
     The row is re-read first (``claim → fresh → decision``): a caller's list may be an
-    old snapshot. The branches are the pre-T#4 ones; only the two orphan closes go
+    old snapshot. The branches are the pre-the earlier implementation ones; only the two orphan closes go
     through :func:`_judge_orphan` now, and a session parked in ``recovery_hold`` gets no
     orphan/TTL judgement at all."""
     from modules.flow_gate.services import git_service as _gs
@@ -703,11 +703,11 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
         return
     review_state = context.get("review_state")
     if review_state == _gs.REVIEW_STATE_COMPLETED:
-        # 0594 T0012 §6.3: the review finished but the row was never closed.
+        # the review finished but the row was never closed.
         _finish_completed_review(session, project_id)
         return
     if review_state in (_gs.REVIEW_STATE_APPLYING, _gs.REVIEW_STATE_RECONCILING):
-        # 0481 T0008: `approve_merge_review` already committed by this point, so
+        # `approve_merge_review` already committed by this point, so
         # MERGE_HEAD is gone from disk exactly like a normal successful merge —
         # every branch below would misread that as an orphan and abort a session
         # that is mid-push or already pushed. This state belongs to
@@ -721,7 +721,7 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
                     merge_id, exc_info=True,
                 )
         return
-    # 0594 T0012 §7: an attempt record exists from BEFORE its merge runs.
+    # an attempt record exists from BEFORE its merge runs.
     # A live runner (its lock holder still owns the project lock) is left
     # alone; one whose runner is gone without ever reaching a conflict is
     # closed as interrupted. Neither is a conflict session.
@@ -732,7 +732,7 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
         _recover_interrupted(session, project_id, "interrupted")
         return
     if isinstance(context.get(orphan_guard.HOLD_KEY), dict):
-        # 0153 T#4 §3.3: parked for a person (T#5) — no orphan / TTL judgement.
+        # parked for a person — no orphan / TTL judgement.
         session_claim.note(merge_id, "hold_kept")
         return
     # §9.1/§9.3: a workspace whose marker names another attempt is never
@@ -752,13 +752,13 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
     elif base_root is None or not base_root.exists():
         # The managed workspace is gone: no merge state is left on disk to
         # protect, so the session is an orphan like a vanished MERGE_HEAD —
-        # unless it carries recovery evidence (0153 T#4 guard).
+        # unless it carries recovery evidence (guard).
         _judge_orphan(session, project_id, at_boot=False, trigger=orphan_guard.TRIGGER_SWEEP_ORPHAN)
         return
     if not _gs._merge_in_progress(base_root):
         _judge_orphan(session, project_id, at_boot=False, trigger=orphan_guard.TRIGGER_SWEEP_ORPHAN)
         return
-    # 0668 T0004: a resolved session waiting for its review has its own TTL. The TTL is
+    # a resolved session waiting for its review has its own TTL. The TTL is
     # judged again on the row re-read under the TTL lock (``_auto_abort_session``).
     if not _session_ttl_expired(session, review_state):
         return
@@ -766,7 +766,7 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
 
 
 def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
-    """Close an interrupted finalize attempt (T0012 §6.3) under the attempt's workspace
+    """Close an interrupted finalize attempt under the attempt's workspace
     domain and R (the verdict may ask the remote), no wait (0669 unit 9b)."""
     from modules.flow_gate.services import git_service as _gs
     try:
@@ -780,7 +780,7 @@ def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
             return
         if merge_target.attempt_phase(fresh) != merge_target.PHASE_INTERRUPTED:
             return
-        # 0153 T#4: under the sweep's claim, fenced before the change (no claim: no-op).
+        # under the sweep's claim, fenced before the change (no claim: no-op).
         session_claim.require(int(fresh["merge_id"]), "sweep_interrupted")
         outcome = merge_target.recover_interrupted_attempt(fresh, reason)
         if outcome == merge_target.ATTEMPT_INTERRUPTED:
@@ -790,7 +790,7 @@ def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
 
 
 def recover_interrupted_claim(session: dict, project_id: str) -> bool:
-    """0683 T0004 §4 — the sweep's interrupted-attempt recovery, run on demand when a new
+    """the sweep's interrupted-attempt recovery, run on demand when a new
     attempt is planned onto a target this open attempt still claims.
 
     Same lock (the attempt's workspace domain + R, no wait) and the same re-read under it
@@ -845,7 +845,7 @@ def _finish_completed_review(session: dict, project_id: str) -> None:
         context = _gs.db_git.session_context(fresh)
         if context.get("review_state") != _gs.REVIEW_STATE_COMPLETED or recovery.automatic_blocked(context):
             return
-        # 0153 T#4: under the sweep's claim, fenced before the change (no claim: no-op).
+        # under the sweep's claim, fenced before the change (no claim: no-op).
         session_claim.require(int(fresh["merge_id"]), "sweep_finish_completed")
         merge_target.finish_completed_review(fresh)
     finally:
@@ -855,7 +855,7 @@ def _finish_completed_review(session: dict, project_id: str) -> None:
 def _start_sweep_daemon() -> None:
     """Launch the periodic sweep loop once (0205 L §2.6). Idempotent.
 
-    0669 unit 5b (0666 L 2.17.2, 2.26 steps 10~11): the loop is the unified sweep tick
+    unit 5b (L 2.17.2, 2.26 steps 10~11): the loop is the unified sweep tick
     (``job_sweeper.run_forever``) — job workers, instance liveness, stale locks, expired
     job leases, job claims, recovery retry every SWEEP_TICK_SEC — and it still runs
     merge_session_sweep every SWEEP_INTERVAL_MIN (as ceil(1800 / tick) ticks).
@@ -895,14 +895,14 @@ def _open_sessions_after(sessions: list[dict], touched: set[int]) -> list[dict]:
 
 
 def _startup_group_session(session: dict, project_id: str) -> bool:
-    """One group merge/review session at boot, under its startup claim (0153 T#4). The
-    branches are the pre-T#4 ones; the orphan close goes through :func:`_judge_orphan`
+    """One group merge/review session at boot, under its startup claim. The
+    branches are the pre-the earlier implementation ones; the orphan close goes through:func:`_judge_orphan`
     (``at_boot``). True when this path may have changed the row (``touched``).
 
     Review rej_01M6ZWFPF1E6JE2M: the listed ``session`` is only a candidate. The judgement
     runs on the row re-read under the session's workspace domain + R (``sweep``, no wait:
     the same lock the sweep's completed/interrupted recoveries hold; busy is left to the
-    sweep) — claim → session_lock → fresh re-read (still open?) → the pre-T#4 decisions →
+    sweep) — claim → session_lock → fresh re-read (still open?) → the pre-the earlier implementation decisions →
     unlock. A row completed, aborted or parked for a person by someone else after the list
     was read is judged as it is now, and every change is preceded by the claim fence. The
     orphan case is handed to :func:`_judge_orphan` after the unlock; it takes the lock
@@ -931,14 +931,14 @@ def _startup_group_session(session: dict, project_id: str) -> bool:
             return False
         review_state = context.get("review_state")
         if review_state == _gs.REVIEW_STATE_COMPLETED:
-            # 0594 T0012 §6.3: the review finished (ledger may already say
+            # the review finished (ledger may already say
             # merged) but the process died before the row was closed.
             if not session_claim.check(merge_id, "startup_finish_completed"):
                 return False
             merge_target.finish_completed_review(session)
             return True
         if review_state in (_gs.REVIEW_STATE_APPLYING, _gs.REVIEW_STATE_RECONCILING):
-            # 0481 T0008 / L0007 §2.8.1 item 1: the commit already landed by this
+            # the commit already landed by this
             # point, so MERGE_HEAD is gone exactly like an ordinary successful
             # merge — re-affirm 'conflict' (still not merged from the group's
             # point of view) and let the immediate reconcile scan below settle
@@ -948,13 +948,13 @@ def _startup_group_session(session: dict, project_id: str) -> bool:
                 return False
             _gs._set_status(group_id, "conflict", merge_id=merge_id)
             return True
-        # 0594 T0012 §6.3/§7: every lock is stale at boot, so an attempt that
+        # every lock is stale at boot, so an attempt that
         # never reached a conflict was interrupted by the restart itself.
         # (The pre-restart lock row is still present until the force-release
         # below, so the live-runner test is skipped here: at boot nothing runs.)
         boot_phase = merge_target.attempt_phase(session, at_boot=True)
         if boot_phase == merge_target.PHASE_IN_PROGRESS:
-            # 0669 unit 6b: only a final approval job's attempt reads as in
+            # unit 6b: only a final approval job's attempt reads as in
             # progress at boot; that job settles it itself when it resumes.
             return False
         if boot_phase != merge_target.PHASE_CONFLICT:
@@ -990,7 +990,7 @@ def _startup_group_session(session: dict, project_id: str) -> bool:
             return False
     finally:
         session_unlock(lock_ctx, held)
-    # 0153 T#4 §3.5: no MERGE_HEAD is no longer enough to close the session — the
+    # no MERGE_HEAD is no longer enough to close the session — the
     # guard re-reads the row and the disk under the lock and closes only a session
     # without recovery evidence; one with evidence is resumed or held.
     _judge_orphan(session, project_id, at_boot=True, trigger=orphan_guard.TRIGGER_STARTUP_ORPHAN)
@@ -1002,7 +1002,7 @@ def startup_recovery() -> None:
 
     A live MERGE_HEAD session is left in 'conflict' (state re-affirmed) but no lock
     is re-acquired — the base is protected by the state gate, not a mutex (0205
-    §2.1). Sessions with no MERGE_HEAD go through the orphan guard (0153 T#4: closed
+    ). Sessions with no MERGE_HEAD go through the orphan guard (the earlier implementation: closed
     only without recovery evidence, otherwise resumed or held), each group session under
     its startup claim. Finally a sweep reclaims TTL-expired sessions and the daemon
     repeats it periodically."""
@@ -1015,7 +1015,7 @@ def startup_recovery() -> None:
             group_id = session.get("group_id")
             try:
                 if _gs.db_git.is_branch_merge_session(session):
-                    # 0630 T0005 (D0004 §20): workspace / owner marker / MERGE_HEAD /
+                    # workspace / owner marker / MERGE_HEAD /
                     # attempt state / conflict files / review state are compared with the
                     # record; a mismatch is flagged interrupted (never read as success).
                     from . import branch_merge
@@ -1032,7 +1032,7 @@ def startup_recovery() -> None:
                     # sweep at the end of this function, which knows where to look.
                     _gs._set_status(group_id, "conflict", merge_id=merge_id)
                     continue
-                # 0153 T#4 §4.5: each group merge/review session is recovered under its
+                # each group merge/review session is recovered under its
                 # session claim. A session another live instance is processing right now
                 # (claim held, lease valid, owner ALIVE) is left to it entirely.
                 with session_claim.held(int(merge_id), session_claim.PURPOSE_STARTUP) as claim:
@@ -1046,7 +1046,7 @@ def startup_recovery() -> None:
                         touched.add(int(merge_id))
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
-        # 0669 unit 9c: no project lock rows are written any more, so there is nothing
+        # unit 9c: no project lock rows are written any more, so there is nothing
         # to force-release here. Domain locks left by a dead instance are reclaimed by
         # the lock manager's stale judgement (L 2.9) and the job sweeper.
         # The original snapshot is only a candidate-id list here; reconcile_push_session

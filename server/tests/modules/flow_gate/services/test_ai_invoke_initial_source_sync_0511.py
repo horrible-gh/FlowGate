@@ -1,10 +1,10 @@
-"""Initial AI source-access worktree sync — invocation trigger (flowgate.default.0511 T0004).
+"""Initial AI source-access worktree sync — invocation trigger.
 
 The trigger judgement lives in ai_invoke_service: the group worktree must be
 forced to the current base HEAD exactly once, right before the group's FIRST
 raw source-capable (tool_registry.kind_for_token() in {read, read_write}) AI
 invocation — never gated on resolve_registry()'s source_mode-adjusted
-advertising value, which never gates permission (NR0003 v5 §3-9).
+advertising value, which never gates permission (v5).
 
 git_service.ensure_initial_group_source_sync() itself (the actual reset/clean/
 verify/marker-persist sequence) is covered by test_git_initial_source_sync_0511.py
@@ -85,8 +85,8 @@ def test_read_and_read_write_kinds_call_the_sync(monkeypatch, action_scope):
 
 
 def test_a_project_scoped_scope_never_calls_the_sync(monkeypatch):
-    """flowgate.default.0481 T0010 #1 — `resolve_base_dirty` is read_write, so it used to
-    fall into this gate, but T0004's rule is about a GROUP worktree and that scope has no
+    """#1 — `resolve_base_dirty` is read_write, so it used to
+    fall into this gate, but the earlier implementation's rule is about a GROUP worktree and that scope has no
     group: the route synthesizes `<project>.none.0000` purely as a row key. Syncing that
     phantom group could only fail, and it did — 409 `initial_source_sync_failed`
     (reason=worktree_missing) on every [AI에게 맡기기] press."""
@@ -162,7 +162,7 @@ def test_ko_default_preserves_existing_meaning(monkeypatch):
 
 def test_start_run_calls_sync_after_the_worktree_gate_before_admission(monkeypatch):
     """Pins both the ORDER (after _require_group_worktree, before lease/token
-    admission — T0004 §9/§34: nothing must be created yet when this can still
+    admission — the earlier implementation: nothing must be created yet when this can still
     fail) and that action_scope/doc_ref/locale are forwarded correctly."""
     captured = {}
 

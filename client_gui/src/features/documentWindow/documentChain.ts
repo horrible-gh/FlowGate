@@ -1,4 +1,4 @@
-// flowgate.v02.0053 T#3 (rework 2) — which document an open window shows. A run result does not write
+// (rework 2) — which document an open window shows. A run result does not write
 // into the card's empty report: the server binds the card line to the result document and marks the
 // report `superseded_by` it (flowgate/card_documents/lines.py adopt_result), and the card shows the end
 // of that chain (lines_by_node → graph_workflow supersede.live_end). The window reads the same chain with

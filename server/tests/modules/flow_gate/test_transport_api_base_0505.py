@@ -1,12 +1,12 @@
-"""0505 T0008 -- dev/prod-type self-HTTP transport base separation.
+"""dev/prod-type self-HTTP transport base separation.
 
-NR0003 SS6-SS11 found that the CLI path already separates the browser-facing operator
+SS6-SS11 found that the CLI path already separates the browser-facing operator
 base from the address this server dials itself at (`_resolve_agent_api_base`, fixed
-for 0472 B0001). The API provider's six mediated self-HTTP call sites
+for the regression). The API provider's six mediated self-HTTP call sites
 (conversation_context, conversation_turn_register, api_bound_request, inbox_register,
 resolve_conflict, workflow_decide) did not: all six sent `run["api_base_url"]` -- the
 operator/browser origin -- straight back to themselves, which is exactly the topology
-0472 B0001 broke on for the CLI path before it was fixed there. This suite pins the
+broke on for the CLI path before it was fixed there. This suite pins the
 fix for the API path:
 
 * `_resolve_transport_api_base` computes and caches, per hop, the address this hop's
@@ -16,11 +16,11 @@ fix for the API path:
   operator, so every one of the six sites keeps behaving exactly as before;
 * prod-type (operator base is a public/proxy origin, FLOWGATE_AGENT_API_BASE names a
   loopback the server can actually reach): all six sites dial the configured base, not
-  the public one -- the direct regression check for the 401-class topology NR0003
+  the public one -- the direct regression check for the 401-class topology the review
   SS7-SS8 named;
 * `api_server_tools.read_help` keeps showing the OPERATOR base in its URLs regardless
   -- it is human-read help text, not a self-HTTP call, and must not follow this hop to
-  loopback (WP0004 T#2 note).
+  loopback (note).
 """
 from __future__ import annotations
 
@@ -147,10 +147,10 @@ class TestResolveTransportApiBase:
         assert svc._resolve_transport_api_base(run) == bad_operator
 
     def test_malformed_agent_base_falls_back_to_loopback_not_the_public_operator(self, monkeypatch):
-        """0496 T0004: a misconfigured `FLOWGATE_AGENT_API_BASE` (prod-type intent
+        """a misconfigured `FLOWGATE_AGENT_API_BASE` (prod-type intent
         signalled but unusable) must not silently reinstate the public/proxy operator
         origin as the self-HTTP target -- that IS the pre-0505 cross-instance topology
-        (NR0003), just reached through a broken override instead of a missing one. The
+        , just reached through a broken override instead of a missing one. The
         safe degrade is the same loopback+FLOWGATE_PORT address dev-type already uses,
         never the public origin the override existed to avoid dialing in the first place."""
         monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
@@ -170,10 +170,10 @@ class TestResolveTransportApiBase:
 
 
 class TestTransportFallbackKind:
-    """0496 T0006 SS3.2: `_resolve_transport_api_base` has always known WHICH of its
+    """SS3.2: `_resolve_transport_api_base` has always known WHICH of its
     three branches produced the value it returned -- the try succeeded outright, a
     broken override was retried away (safe loopback), or nothing parsed at all so the
-    operator base rode through unchanged (the one branch NR0003/0496 T0004 traced the
+    operator base rode through unchanged (the one branch the review/the earlier implementation traced the
     original cross-instance 401 to) -- but that distinction lived only in a
     logger.warning line until now. This pins the cached signal
     (`run["_transport_fallback_kind_resolved"]`) the same way
@@ -213,7 +213,7 @@ class TestTransportFallbackKind:
         assert run["_transport_fallback_kind_resolved"] != "override_ignored"
 
     def test_an_unusable_flowgate_port_lands_the_same_operator_base_unsafe(self, monkeypatch):
-        """0496 T0008 (self-review): "no safe address could be computed" has TWO causes
+        """(self-review): "no safe address could be computed" has TWO causes
         and only the sibling above was pinned. The other is a `FLOWGATE_PORT` that is
         not a usable port number, reachable only when the operator origin carries no
         explicit port of its own -- so the loopback computation has to consult it, and
@@ -252,7 +252,7 @@ class TestTransportFallbackKind:
 
 
 class TestTransportFallbackKindPersistsAlongsideTransportApiBase:
-    """0496 T0006 SS3.2 completion condition 3: the diagnostic signal must be reachable
+    """SS3.2 completion condition 3: the diagnostic signal must be reachable
     through an actual mediated self-HTTP call, not just the private cache above -- the
     same hop-first-wins call sites in worker.py that persist `transport_api_base` now
     persist `transport_fallback_kind` alongside it (same guarded block, same `run`
@@ -296,7 +296,7 @@ class TestTransportFallbackKindPersistsAlongsideTransportApiBase:
         assert run["transport_fallback_kind"] == "override_ignored"
 
 
-# 0505 T0018: conversation_context moved to a direct in-process call and dropped out
+# conversation_context moved to a direct in-process call and dropped out
 # of this list -- it no longer dials self-HTTP at all, dev-type or prod-type, so it has
 # its own no-urlopen regression below instead (TestDirectCallSitesIgnoreTheTransportBase).
 FOUR_SITES = [
@@ -320,9 +320,9 @@ class TestFourSelfHttpSitesUseTheResolvedTransportBase:
     once dev-type (operator already loopback, must be unchanged) and once prod-type
     (public operator, configured agent loopback, must NOT dial the public origin).
 
-    0505 T0018 dependency check: these four are exactly the self-HTTP sites T0018 left
+    dependency check: these four are exactly the self-HTTP sites the earlier implementation left
     untouched (item 2's "group"-classified four, plus api_bound_request which still
-    serves create_question), so this is the direct proof that T#2's transport_api_base
+    serves create_question), so this is the direct proof that the earlier implementation's transport_api_base
     separation still holds for them after the two GET-only sites were converted."""
 
     @pytest.mark.parametrize("name,call,path", FOUR_SITES, ids=[c[0] for c in FOUR_SITES])
@@ -344,7 +344,7 @@ class TestFourSelfHttpSitesUseTheResolvedTransportBase:
         assert "flowgate.example" not in captured["request"].full_url
 
 
-# 0505 T0018: conversation_context and api_read_document no longer dial self-HTTP at
+# conversation_context and api_read_document no longer dial self-HTTP at
 # all -- unlike FOUR_SITES above, dev-type vs prod-type transport-base settings must
 # make no difference to them, because they never read `_resolve_transport_api_base`'s
 # result to decide where to call.
@@ -414,7 +414,7 @@ class TestInboxRegisterUsesTheResolvedTransportBase:
 
 
 class TestReadHelpStaysOnTheOperatorBase:
-    """WP0004 T#2 note / T0008 SS4: read_help is a direct in-process call, not a self-
+    """note / the earlier implementation SS4: read_help is a direct in-process call, not a self-
     HTTP request, and the URLs it hands back are read by a person -- they must keep
     showing the operator/browser origin even when the agent base differs from it."""
 
@@ -561,7 +561,7 @@ class TestProdTypeGenuineTopologyProof:
     not just that the resolved URL string looks right.
 
     Real for every site: routing (the real FastAPI app's own ASGI dispatch table), and
-    the real auth function the route calls. Mocked, per site, only what T0008 section 5
+    the real auth function the route calls. Mocked, per site, only what the earlier implementation
     does not ask this suite to re-prove: permission tables (has_permission), document/
     group storage lookups, git operations, and (for inbox specifically -- see that
     test's own docstring) the deep numbering/storage/DB/git document-creation chain.
@@ -572,9 +572,9 @@ class TestProdTypeGenuineTopologyProof:
         monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: True)
         return TestClient(_build_prod_app(), raise_server_exceptions=False)
 
-    # ── conversation_context (0505 T0018: direct in-process call, not self-HTTP) ─
+    # ── conversation_context (direct in-process call, not self-HTTP) ─
     #
-    # Six mediated self-HTTP sites became four (T0018 item 2): GET routes never reach
+    # Six mediated self-HTTP sites became four: GET routes never reach
     # GroupMutationPolicyMiddleware, since mutation_policy.classify_mutation_route's
     # first check is `methods & MUTATION_METHODS` (POST/PUT/PATCH/DELETE only) --
     # conversation_context and api_read_document dropped the loopback round trip
@@ -623,7 +623,7 @@ class TestProdTypeGenuineTopologyProof:
     def test_conversation_context_rejects_a_token_bound_to_a_different_doc(self, monkeypatch, token_store):
         """The binding this call has always enforced -- action_scope/doc_ref/project/
         group match (conversation_routes._authenticate) -- must still reject a token
-        issued for a different document now that the call is direct (T0018 completion
+        issued for a different document now that the call is direct (the earlier implementation completion
         criteria)."""
         monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
         raw = _seed_real_token(
@@ -698,7 +698,7 @@ class TestProdTypeGenuineTopologyProof:
         status, _payload = svc._api_bound_request(run, "garbage-not-a-real-token", f"/document/{DOC}")
         assert status == 401
 
-    # ── api_read_document (0505 T0018: direct in-process call, not self-HTTP) ────
+    # ── api_read_document (direct in-process call, not self-HTTP) ────
     #
     # Unlike api_bound_request above (still self-HTTP, still used by create_question),
     # _api_read_document now calls document_routes.get_document/get_document_section
@@ -811,7 +811,7 @@ class TestProdTypeGenuineTopologyProof:
                 "doc_review_status": "wf_pending",
             },
         )
-        # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+        # S4: the route asks the Graph engine router first; this test has no DB
         # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
         monkeypatch.setattr(workflow_routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
         monkeypatch.setattr(
@@ -853,7 +853,7 @@ class TestProdTypeGenuineTopologyProof:
         external CLI worker posting to /inbox directly can ask for. So the real,
         unmodified `_inbox_register` can never itself send `dry_run`, and a
         real-routing proof of this site would otherwise have to walk the full
-        numbering/storage/DB/git/SSE chain -- exactly the depth T0008 section 5 does
+        numbering/storage/DB/git/SSE chain -- exactly the depth the earlier implementation does
         not ask this suite to re-prove (it only asks for auth + routing + the expected
         success status). This wraps the envelope builder for THIS TEST ONLY to stamp
         dry_run=True onto whatever the real, unchanged builder already produced.
@@ -910,12 +910,12 @@ class TestProdTypeGenuineTopologyProof:
         assert "flowgate.example" not in captured["request"].full_url
 
 
-# ── First failing endpoint, bound to concrete identifiers (0496 T0004 §4) ────────
+# ── First failing endpoint, bound to concrete identifiers ────────
 #
 # For a `new`-scope API hop, `_inbox_register` -> POST /inbox is the FIRST (and, since
-# T0018 converted read_document/read_help/source ops to in-process calls, now the ONLY)
+# converted read_document/read_help/source ops to in-process calls, now the ONLY)
 # self-HTTP call site the hop can reach -- worker.py:1189. This section reproduces
-# NR0003's Case A topology ("a different FlowGate DB never saw this token") for real,
+# 's Case A topology ("a different FlowGate DB never saw this token") for real,
 # with two separate `db_tokens.get_by_hash` backing stores standing in for two separate
 # FlowGate instances, dispatched purely by which hostname a request actually dials --
 # so which store answers is a direct function of `_resolve_transport_api_base`'s output,
@@ -931,7 +931,7 @@ CROSS_INSTANCE_TOKEN_ID = "tok_cross_instance_repro"
 def _dual_store_urlopen(monkeypatch, client: TestClient, active: dict):
     """Routes to `client` regardless of destination -- both "instances" are the same
     process/app in this proof, exactly like the pair of real FlowGate deployments
-    NR0003 SS8 describes share the same server code and differ only in which DB/pepper
+    SS8 describes share the same server code and differ only in which DB/pepper
     each is wired to. `active["which"]` records which hostname was actually dialled so
     the monkeypatched `db_tokens.get_by_hash` (installed by the caller) can answer from
     the matching store -- the destination the real code chose decides the outcome, not

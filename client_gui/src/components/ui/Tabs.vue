@@ -21,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free tab strip (T0004 §5.6): visual selection + interaction only. The screen owns
+// Domain-free tab strip: visual selection + interaction only. The screen owns
 // the tab list, the active value and what changing tabs does — this component never
 // hardcodes a feature's tab set or reads router/feature state itself.
 import { nextTick } from 'vue'

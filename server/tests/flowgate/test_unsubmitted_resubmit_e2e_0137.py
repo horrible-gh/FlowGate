@@ -1,4 +1,4 @@
-"""flowgate.v02.0137 T0004 §5-A4 / TR0005 rev1 — A end to end through the REAL inbox.
+"""A4 / the earlier implementation — A end to end through the REAL inbox.
 
 Real SQLite with every migration, real token issue / verify / dry-run counter / consume, the
 real registered edit service (document revision, revision history, workflow events), the
@@ -7,7 +7,7 @@ hook in POST /inbox and the real finalize / carry-over code. The doubles are onl
 the 0127 card-edit fixtures already use (auth display card, notifications, write policy).
 No AI provider is launched: the "worker" is this test, posting the way a CLI worker does.
 
-Paths walked (T0004 §5-A1/A3/A4, review rej_01M6Q5JFT9ZRCVFB findings 1-5):
+Paths walked (A1/A3/A4, review rej_01M6Q5JFT9ZRCVFB findings 1-5):
   A. run R1, token T1: failed submit (422) -> dry-run -> same-token retry lands (rev 1) ->
      the worker revises -> resubmits with the spent token (401) -> finalize keeps the
      scratch (success first, failure last) and its newest draft.
@@ -36,7 +36,7 @@ from modules.flow_gate.services import graph_source_hooks, token_service
 from modules.flow_gate.services.ai_invoke import carryover, finalize, submission_ledger, worker
 from flowgate.card_document_edit import integration, legacy_edit
 
-try:  # flowgate.v02.0138 (merged after this group's base): runs own their id in the DB
+try:  # (merged after this group's base): runs own their id in the DB
     from modules.flow_gate.db import ai_run_identity as identity
 except ImportError:  # pragma: no cover - depends on the merge state
     identity = None
@@ -204,7 +204,7 @@ def test_unsubmitted_drafts_survive_and_resubmit_with_the_current_token(e2e):
     assert resubmitted.json()["revision_no"] == 2
     assert _token_row(t3["token_id"])["consumed_at"]
     _end(r3)
-    # 0157: a settled run keeps its scratch until the system TTL; it only stops being a
+    # a settled run keeps its scratch until the system TTL; it only stops being a
     # carry-over source (scratch_retained stays empty).
     assert r3["scratch_cleanup"] == {**r3["scratch_cleanup"], "action": "retained",
                                      "reason": "settled_retention_active",

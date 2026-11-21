@@ -69,15 +69,15 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_accepts_real_workplaneditor_disabled_merge(self, origin_repo):
-        # 0602 T0004 C5 — the exact real-world regression from NR0003 §4: both sides
+        # The exact real-world regression: both sides
         # rewrote the SAME Vue `:disabled` attribute line, and a normal synthesized
         # resolution that folds both conditions into one attribute must not be
         # rejected — and must not require writing the attribute twice just to satisfy
-        # the validator (T0004 §5, explicitly forbidden). This stops at
+        # the validator (explicitly forbidden). This stops at
         # resolved_pending_review + the chunk's "manual" classification: whether the
         # merge candidate ALSO clears the unrelated .vue real-syntax-check gate in
         # approve_merge_review depends on client/node_modules being installed in this
-        # worktree, which is outside conflict_side_dropped's scope (T0004 §8 — this
+        # worktree, which is outside conflict_side_dropped's scope (this
         # task rewrites the validator, not 0599's WorkPlanEditor.vue merge itself).
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc

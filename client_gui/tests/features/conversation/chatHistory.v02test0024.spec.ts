@@ -11,7 +11,7 @@ import { buildTimeline, replaceServerActivities, type TimelineItem } from '@/fea
 import type { AiRunState, CommandRequestActivity, StatusActivity, TimelineActivityEntry } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02test.0024 — chat scroll / error history / error copy / run line (0024.0001-B A·B·C·D, decisions 1-4).
+// chat scroll / error history / error copy / run line (0024.0001-B A·B·C·D, decisions 1-4).
 registerAppMessages(i18n)
 
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn(async (_text: string, _host?: HTMLElement | null) => true) }))
@@ -124,7 +124,7 @@ describe('D: the run in progress line', () => {
     const line = (run: StatusActivity['run']): StatusActivity => ({ kind: 'status', id: 'x', createdAt: null, tone: 'info', code: 'run_running', text: null, run })
     const mounted = mount(TimelineActivity, { props: { activity: line({ providerName: 'Claude Opus 5.5 (AG)', access: 'read_write' }) }, global: { plugins: [i18n] } })
     expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI가 답하는 중… · Claude Opus 5.5 (AG) · 편집')
-    // flowgate.v02gui.0026: the question policy conversation's blinking dots, and the execute mode by its own name.
+    // the question policy conversation's blinking dots, and the execute mode by its own name.
     expect(mounted.findAll('[data-test="tl-running-dots"] i')).toHaveLength(3)
     expect(mounted.get('[data-test="tl-status"]').classes()).toContain('tl-status--running')
     await mounted.setProps({ activity: line({ providerName: 'Claude Opus 5.5 (AG)', access: 'execute' }) })

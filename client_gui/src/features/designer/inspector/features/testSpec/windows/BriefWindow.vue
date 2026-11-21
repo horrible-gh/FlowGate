@@ -1,9 +1,9 @@
 <template>
-  <!-- flowgate.v02.0094 — the 지시서 editor on the requirement document editor's layout (DocumentWindow in its editor): the
+  <!-- the instruction editor on the requirement document editor's layout (DocumentWindow in its editor): the
        title, the text filling the window, and the editor bar at the bottom — a failed save on its left, [저장] ·
        [닫기] at its right end. Why it cannot be saved is the muted line above the text; a failed read replaces the text
        with its retry. It only saves: the scenario's AI writing is the 시나리오 line's [AI 호출]. -->
-  <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
+  <ModelessShell kind-color="#f0a23a" v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 180)" :initial-y="geometry('y', 150)" :initial-width="geometry('width', 680)" :initial-height="geometry('height', 560)"
     :min-width="360" :min-height="240"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">

@@ -1,9 +1,9 @@
 /**
- * flowgate.v02.0060 T#1 (WP 0012 [B]) — 정렬 · 배치 (blank Canvas) and 정렬 (multi-selected card) of the Designer context
- * menu in the real Designer Shell: the same commands, words, enabled state and path as 편집 › 정렬 / 배치 (the Shell's
+ * alignment · layout (blank Canvas) and alignment (multi-selected card) of the Designer context
+ * menu in the real Designer Shell: the same commands, words, enabled state and path as 편집 › alignment / layout (the Shell's
  * DESIGNER_ARRANGE_GROUPS, isMenuCommandEnabled and onTopCommand → center.arrangeNodes): the cards move as the Edit
  * menu moves them, one 실행 취소 brings them back, the selection and select mode stay, a selection change after
- * opening runs nothing, and the 미구현 items of the multi-selection menu change nothing. Scaffold as
+ * opening runs nothing, and the unimplemented items of the multi-selection menu change nothing. Scaffold as
  * DesignerShellArrange.0059: real Shell, project store, Center session and server Graph source; `@shared/api` mocked.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -170,12 +170,12 @@ async function editCommand(w: VueWrapper<any>, command: string) {
   await w.get(`[data-test="designer-menu-item"][data-command="${command}"]`).trigger('click')
   await settle()
 }
-/** The Edit menu's own 정렬 / 배치 submenu: [command, words, disabled] of each item. */
+/** The Edit menu's own alignment / layout submenu: [command, words, disabled] of each item. */
 async function editArrange(w: VueWrapper<any>) {
   await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
   await w.get('[data-test="designer-menu-sub"][data-sub="arrange"]').trigger('click')
   const pop = w.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
-  // 0068 T0011 adds an automatic layout group to Edit only; compare the unchanged manual groups.
+  // adds an automatic layout group to Edit only; compare the unchanged manual groups.
   const items = pop.findAll('[data-command]')
   const automatic = items.filter((el) => el.attributes('data-command')!.startsWith('edit.auto-layout-'))
   expect(automatic.map((el) => el.attributes('data-command'))).toEqual(['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
@@ -279,7 +279,7 @@ describe('Designer context menu in the Shell — 정렬 · 배치 / 정렬 = 편
     expect(contextArrange('multi.arrange')).toEqual(edit)
     item('multi.arrange:edit.distribute-horizontal', 1).click()
     await settle()
-    // Along x: R 0, D 90, N 300 -> D goes halfway (as 편집 › 정렬 / 배치 › 가로 균등 분배 in DesignerShellArrange.0059).
+    // Along x: R 0, D 90, N 300 -> D goes halfway (as 편집 › alignment / layout › equal horizontal distribution in DesignerShellArrange.0059).
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [150, 400]])
     expect(selectedCards(w)).toBe(3)
     await tool(w, 'edit.undo').trigger('click')

@@ -1,11 +1,11 @@
-"""0114 / B0001 — corrupted instruction-label guard.
+"""corrupted instruction-label guard.
 
-NR0003 root cause: N/T/TS instruction-step labels are submitted verbatim and can arrive
+root cause: N/T/TS instruction-step labels are submitted verbatim and can arrive
 already mangled by a lossy environment (Hangul → single ASCII '?' per glyph, the
 encode('ascii', errors='replace') signature). The server/DB stored them faithfully, so the
 ContinuousWorkDialog displayed "?????". This guard (a) detects that signature and (b) falls
 back to the document type display name on the read path (sequence GET — heal the 12 rows
-already stored). 0391 T0005 §5-5: the write path (decide/edit) no longer falls back — it
+already stored). the earlier implementation: the write path (decide/edit) no longer falls back — it
 rejects a corrupted label outright before the sequence is persisted, so the sender is told
 instead of having their intended text silently discarded.
 """
@@ -25,7 +25,7 @@ from modules.flow_gate.services import workflow_decision_service as svc
 # ── detector ───────────────────────────────────────────────────────────────────
 
 def test_detects_ascii_replace_mojibake():
-    # Real corrupted rows observed in production (NR0003 §2/§3-1).
+    # Real corrupted rows observed in production.
     assert svc._label_is_corrupted("??? ?? ? 0082(??3) ?? ? ?? ??")
     assert svc._label_is_corrupted("xR ?? ?? ?? ? ?? ?? ?? ??")
     assert svc._label_is_corrupted("????/?? ? ?? ???? ?? locus? ????? ??")
@@ -48,7 +48,7 @@ def test_empty_and_single_mark_are_not_corrupted():
     assert not svc._label_is_corrupted("a?")  # below the 2-mark floor
 
 
-# 0474 T0007 §1.2/§1.4 (NR0006 §5.1/§5.2): a run of 4+ consecutive '?' is corruption on
+# a run of 4+ consecutive '?' is corruption on
 # its own, independent of isascii()/ratio -- catches live Hangul/Japanese/emoji sharing a
 # line with a corrupted run, and pure-ASCII bodies where the run is diluted below the 0.5
 # ratio floor.
@@ -83,7 +83,7 @@ def test_safe_label_passes_clean_label_through():
     assert svc._safe_label("0082 직접수정", "T") == "0082 직접수정"
 
 
-# ── write path: decide_workflow rejects before INSERT (0391 T0005 §5-5) ─────────
+# ── write path: decide_workflow rejects before INSERT ─────────
 # Supersedes the old "sanitize on write" contract this test locked in: the swap gave
 # the sender no signal and discarded their intended text. decide_workflow now raises
 # instead, and nothing is inserted — verified below via the empty `inserted` list.

@@ -1,4 +1,4 @@
-"""0544: top-level document review admission contract regressions.
+"""top-level document review admission contract regressions.
 
 Rejection rev1: the five tests below this docstring only inspect
 ``admission.start_run``'s SOURCE (string/order checks via ``inspect.getsource``) — none

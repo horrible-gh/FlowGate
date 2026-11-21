@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — the v0.2 card memo rules (O3 flowgate.v02.0056.0009-TR §4-5): what a memo may be
+// the v0.2 card memo rules: what a memo may be
 // written with, what a change sends, and how a refusal is shown. Pure: no server call, no Vue. The memo is the
 // card's (its Flow's node), never a v0.1 M document.
 import type { InspectorTarget } from '../../inspectorTarget'
@@ -20,7 +20,7 @@ export function cardMemoLength(text: string): number {
 }
 
 /**
- * flowgate.v02.0144 — the memo line shows at most this many characters of a title (code points, as the server
+ * the memo line shows at most this many characters of a title (code points, as the server
  * counts) and an ellipsis for the rest, whatever the width of the panel. Display only: the stored title, the
  * line's tooltip, the open and edit windows and every PATCH keep the whole title.
  */
@@ -143,7 +143,7 @@ export const CARD_MEMO_FAILURE_KEYS: readonly string[] = [
 /**
  * Why the memos cannot be changed here (message key under `gui.inspector.cardMemo.`), or null.
  *
- * flowgate.v02.0118 T#3 (0003-NR §3.2): only a conflict view locks them. A confirmed (revision) view — a running Flow,
+ * (NR): only a conflict view locks them. A confirmed (revision) view — a running Flow,
  * and a card a Time Machine rewind put back — keeps them writable: a memo is no document and changes no definition
  * (the server takes it whatever the run or view, refusing only a disposed Flow), and it is how a person tells the AI
  * that works the card again what to change. 0056 F2-2's revision lock is lifted by this decision.

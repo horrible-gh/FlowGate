@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0074 T#2 — the document upload / download of a work plan (WP) in the coordinator (documentIo), for every
+ * the document upload / download of a work plan (WP) in the coordinator (documentIo), for every
  * place that draws the group (D#1 §6.3 / §7.5, R §1.4, §5-3), with `@/features/document` mocked:
  * - which document is a work plan: its read type when READY, else its id `…-WP`;
  * - the download: the read view's `body` only (no read view fields), JSON.stringify(body, null, 2) + '\n', `<docId>.json`,

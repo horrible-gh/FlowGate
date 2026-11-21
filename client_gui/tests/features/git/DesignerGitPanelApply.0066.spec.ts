@@ -16,16 +16,16 @@ import {
   type FakeWorktreeState,
 } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#7 — the Base apply accordion in the real DesignerGitPanel with in-memory
+// the Base apply accordion in the real DesignerGitPanel with in-memory
 // sources (0066 D#2 §3-4, §3-5, §6-4, §6-5): folded first look and header word, target choice and
 // the "확인 중" state (C15), `머지` / `머지 + Push` and their dialogs (C16), approval never a reason
 // (C17), merge results incl. push_rejected (C18), the follow-up Push part (C19), Fetch (C20), the
 // no-workspace area (C22), the `Diff` pane intent (C14 b intent, C23 b·c), read-only / 403 (C25)
 // and the merge button after a revert (C28).
-// flowgate.v02.0067 T#3 — the tab body is no longer folded (no toggle, no header word): its count is
+// the tab body is no longer folded (no toggle, no header word): its count is
 // `미반영 커밋`, only E8-admitted targets are listed and the follow-up Push shows only for a merge that
 // really waits (DesignerGitPanelApply.0067 has the new rules).
-// flowgate.v02.0067 T#4 — a `Diff` row opens its diff in the same tab (no `open-diff` /
+// a `Diff` row opens its diff in the same tab (no `open-diff` /
 // `git-center-diff-refresh`); the list pages by 16 with `이전` / `다음` (DesignerGitPanelDiff.0067).
 registerAppMessages(i18n)
 
@@ -102,7 +102,7 @@ async function confirmDialog() {
   await flushPromises()
 }
 
-// flowgate.v02.0067 T#1 — the worktree parts live in the Git modeless the Git tab entries open;
+// the worktree parts live in the Git modeless the Git tab entries open;
 // every tab stays mounted while it is open, the active one shown.
 const entry = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-worktree-entry"][data-tab="${tab}"]`)
 const windowTab = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-window-tab"][data-tab="${tab}"]`)
@@ -127,7 +127,7 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     const apply = q('git-apply')!
     expect(panel('merge')!.contains(apply)).toBe(true)
     expect(panel('files')!.contains(q('git-commit-bar'))).toBe(true)
-    // 0067 T#3: no fold toggle and no header word any more.
+    // no fold toggle and no header word any more.
     expect(q('git-apply-toggle')).toBeNull()
     expect(q('git-apply-status')).toBeNull()
     expect(text('git-apply-ahead')).toBe('3')
@@ -147,7 +147,7 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     await mountPanel(t)
     await openApply()
     const options = qa('[data-test="git-apply-target"] option').map((o) => [(o as HTMLOptionElement).value, o.textContent?.trim(), (o as HTMLOptionElement).disabled])
-    // 0067 T#3: a target E8 does not admit (here remote-only) is not listed (R §5-4).
+    // a target E8 does not admit (here remote-only) is not listed (R).
     expect(options).toEqual([
       ['v0.2', 'v0.2 (기본)', false],
       ['release', 'release', false],
@@ -219,7 +219,7 @@ describe('Base apply — target choice (C15)', () => {
     expect(qa('[data-test="git-apply-warning"]').map((e) => e.textContent?.trim())).toEqual([
       '⚠ 작업 기준과 다른 대상입니다.',
     ])
-    // flowgate.v02.0098 TR0013: the unmerge-unsupported warning is not shown on any screen.
+    // the unmerge-unsupported warning is not shown on any screen.
     expect(qa('[data-test="git-apply"]')[0].textContent).not.toContain('되돌리기를 지원하지 않습니다')
   })
 
@@ -304,7 +304,7 @@ describe('Base apply — 머지 / 머지 + Push (C16, C17)', () => {
     expect(text('git-apply-reason')).toBe(
       '미커밋 변경 4개 — 먼저 커밋하거나 되돌리세요 · Git 탭에서 처리할 수 없는 보호 파일 2개 — 작업자 또는 관리자에게 정리를 요청하세요',
     )
-    // 0067 T#3: no "uncommitted … stay" guidance line (R §5-1).
+    // no "uncommitted … stay" guidance line (R).
     expect(q('git-apply-artifacts')).toBeNull()
     expect(q('git-apply')!.textContent).not.toContain('도구 잔재')
   })
@@ -530,7 +530,7 @@ describe('Base apply — Fetch (C20), no workspace (C22), read-only / 403 (C25)'
     await click(entry('merge'))
     expect(q('git-changes')).toBeNull()
     expect(q('git-commit-bar')).toBeNull()
-    // 0067 T#3: one short line instead of the explanation, and no count without a workspace.
+    // one short line instead of the explanation, and no count without a workspace.
     expect(text('git-apply-unavailable')).toBe('작업 공간 없음')
     expect(q('git-apply-stats')).toBeNull()
     expect(q('git-apply-target')).toBeNull()
@@ -700,7 +700,7 @@ describe('Base apply — a Flow switch (C23 a for the apply part)', () => {
     await w.setProps({ flow: { groupId: 'p.m.0002', name: 'B' } })
     await flushPromises()
     expect(dialogOpen()).toBe(false)
-    // 0067 T#1: another Flow is another worktree — the Git modeless closes too.
+    // another Flow is another worktree — the Git modeless closes too.
     expect(q('git-window')).toBeNull()
     await click(entry('merge'))
     expect((q('git-apply-push-after') as HTMLInputElement).checked).toBe(false)

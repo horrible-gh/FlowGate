@@ -7,7 +7,7 @@ correct title, stale/reused body). But the guard can only *match* a twin whose
 ``meta`` already carries ``content_sha256`` — and every document created before
 the guard shipped has ``meta = NULL``. Those un-fingerprinted originals are
 exactly the ones that get cloned, so the guard stays blind to them and the
-contamination recurs ("문서 오염 4회차", B0001). This is the cold-start gap.
+contamination recurs ("fourth document-corruption incident", B0001). This is the cold-start gap.
 
 This tool closes it: it walks every document, reads its stored body, and writes
 both fingerprints (``content_sha256`` exact + ``content_sha256_norm``

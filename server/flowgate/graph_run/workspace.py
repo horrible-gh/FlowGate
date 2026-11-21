@@ -1,15 +1,15 @@
-"""Attempt-owned linked worktrees (0061 T#5).
+"""Attempt-owned linked worktrees.
 
 Git changes precede journal changes. Git locks are never acquired inside a Flow
 guard/transaction and are released before admission or any provider is started.
 
-0061 T#10: the attempt starts from its predecessors' results (``_inputs``): a start node from the group branch HEAD
+the attempt starts from its predecessors' results (``_inputs``): a start node from the group branch HEAD
 (``run_base``), one predecessor from its ended attempt's ``result_commit``, a Join from those results merged in the
 attempt worktree in node_key order (``predecessors``); a predecessor with no attempt commit (a gate) hands its own
 input on. Inputs that reach the start without a commit (an approved root, a gate) start from the run's base
 (``_run_base``): the commit a valid (not invalidated) ``run_base`` attempt of the current base window recorded, not
 the group branch HEAD that has moved since, so a branch integrated meanwhile stays out of the window; a window with no
-such attempt starts from the group branch HEAD. v02gui.0015 (0001-B, NR0003): the window is what follows the run's
+such attempt starts from the group branch HEAD. v02gui.0015: the window is what follows the run's
 last command start -- a ``user_start`` / ``user_command`` / ``user_resume`` run status event to ``running`` not from
 ``paused`` / legacy ``stopped`` (not ``command_result._is_command_start``: a paused re-command and an idle
 acknowledge keep the base) -- so a person's new command on an idle run starts its first card from the group HEAD of
@@ -26,12 +26,12 @@ which holds them all (``integration_head``, recorded by a run event). An ended a
 (``integrated``) loses its tree and branch (``cleanup_ended``; its result stays a parent on the group branch), as an
 invalidated one does; the server start removes both (``cleanup_finished``). An active attempt's tree is never removed.
 
-0111 T#1 (D-1a-0): every removal (``cleanup``, which ``cleanup_ended`` and ``cleanup_finished`` go through) first
+(D-1a-0): every removal (``cleanup``, which ``cleanup_ended`` and ``cleanup_finished`` go through) first
 proves, under the Git locks, that the attempt's source is kept elsewhere; an attempt it cannot prove that for keeps its
 tree and branch and is a run event ``cleanup_preserved`` (``dirty`` / ``unpreserved_commits`` / ``unverifiable`` /
 ``executing``).
 
-0111 T#8 (D-1c): an attempt prepared from now on has no branch. Its commits live on the dedicated ref
+(D-1c): an attempt prepared from now on has no branch. Its commits live on the dedicated ref
 ``refs/flowgate/attempts/<key>`` and its worktree is added with a detached HEAD (``worktree add --detach``), so no
 ``refs/heads`` entry -- the branch catalog, an external Git UI's branch list -- ever shows it. The owner marker names
 that ``ref``; the tree is valid while its HEAD is detached at the ref or ahead of it on the attempt's own commits; the
@@ -40,7 +40,7 @@ counts neither ``graph_attempt_*`` branches nor ``refs/flowgate/attempts/*`` ref
 prepared before keeps its ``graph_attempt_<key>`` branch (its marker names ``branch``) and is checked, committed and
 removed as it was: nothing is migrated or renamed.
 
-v02gui.0015 T2 (NR0006 §6-6): a new attempt never takes what an earlier attempt of its node left uncommitted (its
+v02gui.0015 T2: a new attempt never takes what an earlier attempt of its node left uncommitted (its
 input is its predecessors' results or the run base). Its owner marker pins those earlier attempts and their changed
 files (``uncarried``, read under the Git locks from the kept tree or the user_stop snapshot), its preparation records
 them (``prior_changes_not_carried``) and the card's run read counts them (``uncarried_wire``); nothing is carried over.
@@ -68,10 +68,10 @@ from flowgate.graph_run import execution_store as ledger
 
 log = logging.getLogger(__name__)
 EVENT = "graph_attempt_workspace"
-# 0061 T#7: ``graph_run_events.event_type`` admits only the run / node status events (migration 144), so the
+# ``graph_run_events.event_type`` admits only the run / node status events (migration 144), so the
 # attempt's workspace record is a run status event with the status unchanged, told by its cause.
 CAUSE = "attempt_workspace"
-# 0111 T#8: the two attempt layouts, told by the owner marker (``ref`` or ``branch``). A new preparation takes
+# the two attempt layouts, told by the owner marker (``ref`` or ``branch``). A new preparation takes
 # ``NEW_LAYOUT``; the branch layout stays for the attempts prepared before (and the tests that rebuild them).
 ATTEMPT_REF_PREFIX = "refs/flowgate/attempts/"
 REF_LAYOUT, BRANCH_LAYOUT = "ref", "branch"
@@ -126,7 +126,7 @@ def _marker(row, project_id):
 
 
 def attempt_head(row, project_id):
-    """0111 T#8: the dedicated ref of a ref-layout attempt (its commit moves it), None for a branch-layout one."""
+    """the dedicated ref of a ref-layout attempt (its commit moves it), None for a branch-layout one."""
     marker = merge_target.read_owner_marker(location(row, project_id)[0])
     return marker["ref"] if _layout(marker) == REF_LAYOUT and isinstance(marker.get("ref"), str) else None
 
@@ -188,7 +188,7 @@ def _common_dir(root):
 
 
 def _validate_detached(root, ref, *, moving=False):
-    """0111 T#8: a ref-layout tree's HEAD is detached (``symbolic-ref -q`` answers 1, not a branch) at the attempt's
+    """a ref-layout tree's HEAD is detached (``symbolic-ref -q`` answers 1, not a branch) at the attempt's
     ref or ahead of it on commits of its own (made in the tree before the attempt commit records them, as a branch
     would have followed). ``moving``: the Join is about to reset the tree under the Git locks, so where HEAD stands
     is not judged, only that the ref exists."""
@@ -243,7 +243,7 @@ def mutation(attempt_id, *, project_id, group_id):
     row = attempt(attempt_id)
     if not row:
         raise port.GraphSourceError("graph_worktree_unavailable")
-    # T#7: a stopping run's or an inactive attempt's source write / remove is refused (409 graph_attempt_inactive)
+    # a stopping run's or an inactive attempt's source write / remove is refused (409 graph_attempt_inactive)
     # and recorded before the Git lock (its record takes the Flow guard). The write itself runs under the Stop
     # gate's shared hold (taken before the Git lock), judged again once both are held: ``stopping`` cannot commit
     # between that judgement and the write. A refusal there is recorded after both are released.
@@ -274,7 +274,7 @@ def _prior(run_id, node_key):
 
 
 def _inputs(row):
-    """T#10: ``[(node_key, attempt_id, result_commit)]`` the attempt starts from, in node_key order, one per
+    """``[(node_key, attempt_id, result_commit)]`` the attempt starts from, in node_key order, one per
     predecessor attempt (two may share a commit; each is recorded): each predecessor's ended attempt with a result
     commit; a predecessor with none (a gate, a document-only or never prepared attempt) hands on its own
     predecessors' results. [] -> the run base (``_run_base``)."""
@@ -300,7 +300,7 @@ def _inputs(row):
     return sorted(found, key=lambda i: i[0])
 
 
-# v02gui.0015 (NR0003 §2, §3.3): the run status events that open a new base window -- a person's command that moves
+# v02gui.0015: the run status events that open a new base window -- a person's command that moves
 # the run to ``running`` from a new run (no ``from_status``) or from idle. Deliberately not
 # ``command_result._is_command_start``: a re-command of a paused run and an idle -> idle acknowledge cut the command
 # window but keep the base (the cards still open of a paused command, and none opened by an acknowledge).
@@ -345,7 +345,7 @@ def _base_window(run_id):
 
 
 def _in_window(data, attempt_row, since, since_at):
-    """v02gui.0015 (NR0003 §3.5): whether a ``run_base`` workspace event's attempt belongs to the current window. A
+    """v02gui.0015: whether a ``run_base`` workspace event's attempt belongs to the current window. A
     tagged event by its ``base_since`` (the window its marker pinned the base in, kept by a recovery); an untagged one
     (a marker made before the tag) never by its event_seq, only in a run with no window or when its attempt was
     created at or after the window start. Anything unreadable is not in it: the card then starts from the group HEAD."""
@@ -362,7 +362,7 @@ def _in_window(data, attempt_row, since, since_at):
 
 
 def _pinned_base(row, project_id, since, since_at):
-    """v02gui.0025 (0003-NR §4.2, §7-A, F1), under the Git locks: the base a valid (not invalidated) ``run_base``
+    """v02gui.0025 (NR,, F1), under the Git locks: the base a valid (not invalidated) ``run_base``
     attempt of the run pinned in its owner marker in the current window but has not recorded yet (``input_commit``
     still NULL: its workspace event is written by ``record_ready`` only once the Git locks are released). Without it a
     start card prepared in that gap read the group HEAD of its own moment, so one window had two bases. The marker
@@ -386,8 +386,8 @@ def _pinned_base(row, project_id, since, since_at):
 
 
 def _run_base(row, group_root, project_id=None):
-    """T#10, under the Git locks: ``(sha, since)`` -- the run's base for an attempt with no input commit, and the base
-    window it belongs to (``since``, pinned in the marker as ``base_since``). v02gui.0015 (0001-B, NR0003 §7): the
+    """under the Git locks: ``(sha, since)`` -- the run's base for an attempt with no input commit, and the base
+    window it belongs to (``since``, pinned in the marker as ``base_since``). v02gui.0015: the
     commit a valid (not invalidated) ``run_base`` attempt recorded first in the window that follows the run's last
     command start (``_base_window``); an attempt done meanwhile in the window and integrated (under the same root) is
     so not in the input of the window's later start cards. v02gui.0025 (F1): with none recorded yet, the commit such an
@@ -453,7 +453,7 @@ def _write_marker(directory, marker):
 
 
 def _join(row, directory, root, branch, marker, group_root):
-    """T#10, under the Git locks: the Join's other heads merged one by one in the attempt worktree (an interrupted
+    """under the Git locks: the Join's other heads merged one by one in the attempt worktree (an interrupted
     join starts again from ``input_commit``). A conflict aborts the merge and the attempt starts from the group
     branch HEAD (every predecessor is done, so it holds them all): ``integration_head``. The marker then records the
     final input and loses ``join_inputs``."""
@@ -489,7 +489,7 @@ def _join(row, directory, root, branch, marker, group_root):
         if not final["input_commit"]:
             raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
     if _layout(marker) == REF_LAYOUT:
-        # T#8: the ref follows the reset / merges as the branch did (before the marker, so a retry starts over).
+        # the ref follows the reset / merges as the branch did (before the marker, so a retry starts over).
         run(["update-ref", "-m", "flowgate: attempt join input", marker["ref"], final["input_commit"]],
             "join_ref_update_failed")
     marker = {**{k: v for k, v in marker.items() if k != "join_inputs"}, **final}
@@ -500,7 +500,7 @@ def _join(row, directory, root, branch, marker, group_root):
 # v02test.0021: what a failed preparation keeps for its diagnosis (the run event and the log), beyond its reason.
 _FAILURE_DETAILS = ("provision_error", "git_stderr")
 
-# v02gui.0015 T2 (NR0006 §2.3, §6-5, §6-6): an attempt starts from its predecessors' results or the run base
+# v02gui.0015 T2: an attempt starts from its predecessors' results or the run base
 # (``_start``), never from an earlier attempt of its own node, and an attempt's changes are committed only when its
 # result is integrated -- so what an earlier (invalidated) attempt of the node left uncommitted is not carried into the
 # new one. It is kept (``cleanup``'s D-1a-0 keeps a dirty tree; a user_stop snapshot keeps it under
@@ -611,7 +611,7 @@ def _materialize(row, project_id):
     # Reuse the group provisioning/recovery contract only to obtain the required input.
     group_root = git.effective_src_root(project_id, row["group_id"])
     if group_root is None:
-        # 0085 T#3 (D0007 §7.1): a slot a gate end cleanup let go comes back at its recorded real end HEAD.
+        # a slot a gate end cleanup let go comes back at its recorded real end HEAD.
         from flowgate.gate_decisions import cleanup as gate_cleanup
         start_point, refused = gate_cleanup.restore_point(project_id, row["group_id"])
         if refused:
@@ -633,7 +633,7 @@ def _materialize(row, project_id):
             raise ledger.LeaseLost("attempt ended before workspace preparation")
         group_root = git.effective_src_root(project_id, row["group_id"])
         if group_root is None:
-            # 0085 T#3 rework: a gate end cleanup let the slot go while this waited for G (its G covers the final
+            # a gate end cleanup let the slot go while this waited for G (its G covers the final
             # check to the last delete): the next preparation restores it at the recorded end HEAD (``git_busy``
             # keeps the attempt and its request).
             from flowgate.gate_decisions import cleanup as gate_cleanup
@@ -679,7 +679,7 @@ def _materialize(row, project_id):
             if exists and not marker.get("join_inputs") and git._rev_parse(group_root, head + "^{commit}") != sha:
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_occupied")
             if _layout(marker) == REF_LAYOUT:
-                # T#8: the ref first (only if absent), then the tree detached at it; no branch is created.
+                # the ref first (only if absent), then the tree detached at it; no branch is created.
                 if not exists:
                     proc = git._run_git(["update-ref", "-m", "flowgate: attempt input", head, sha, ""], cwd=group_root)
                     if proc.returncode:
@@ -700,7 +700,7 @@ def _materialize(row, project_id):
 
 
 def _input_record(row, project_id):
-    """The input the marker recorded (a marker before T#10 started from the group branch HEAD); v02gui.0015: its base
+    """The input the marker recorded (a marker before the earlier implementation started from the group branch HEAD); v02gui.0015: its base
     window as pinned (``base_since``, None for a marker made before or a non-``run_base`` input); T2: the earlier
     attempts of the node whose uncommitted changes it does not take (``uncarried``, [] for none or a marker before)."""
     marker = merge_target.read_owner_marker(location(row, project_id)[0]) or {}
@@ -712,7 +712,7 @@ def _input_record(row, project_id):
 
 
 def _failed(exec_id, cause, **detail):
-    """The runtime's invalidation of an attempt whose worktree failed. 0061 T#7: committed under the exclusive hold of
+    """The runtime's invalidation of an attempt whose worktree failed. the earlier implementation: committed under the exclusive hold of
     the Flow's Stop gate (``fencing.exclusive``, as the Stop's ``stopping``): a side effect of the attempt's token in
     flight (an inbox registration, a source write) completes before it, and none starts after it — it is judged
     again then and refused. Taken outside every Flow guard; this thread's own shared hold (an approval whose next
@@ -773,7 +773,7 @@ def prepare(exec_id, project_id, group_id):
         cfg = git.db_git.get_config(project_id)
         mode = "worktree" if cfg and cfg.get("enabled") else "document_only"
         sha = _materialize(row, project_id) if mode == "worktree" else None
-        # T#10: a document-only attempt has no start point (no input rule).
+        # a document-only attempt has no start point (no input rule).
         record = _input_record(row, project_id) if mode == "worktree" else {
             "input_source": "document_only", "input_attempt_ids": [], "join_conflict": None}
         def record_ready():
@@ -792,12 +792,12 @@ def prepare(exec_id, project_id, group_id):
                        input_attempt_ids=record["input_attempt_ids"], **window)
                 if record["join_conflict"]:
                     # After the mode record (``_mode`` reads the attempt's first event): the Join's results conflict,
-                    # so its input is the group branch HEAD and may hold branches unrelated to it (T#12 reads this).
+                    # so its input is the group branch HEAD and may hold branches unrelated to it (reads this).
                     _event(current, "join_input_conflict", input_commit=sha, input_source=record["input_source"],
                            input_attempt_ids=record["input_attempt_ids"], **record["join_conflict"])
                 uncarried = record.get("uncarried") or []
                 if uncarried:
-                    # v02gui.0015 T2 (NR0006 §6-6): after the mode record too; the earlier attempts' uncommitted
+                    # v02gui.0015 T2: after the mode record too; the earlier attempts' uncommitted
                     # changes stay where they are kept and are not in this attempt's input -- told, not silent.
                     _event(current, UNCARRIED, input_commit=sha, input_source=record["input_source"],
                            prior_attempts=uncarried,
@@ -882,7 +882,7 @@ def _tip(repo, head):
 
 def _unkept_commit(repo, tips):
     """Under the Git locks: whether the attempt's tips hold a commit no lasting ref reaches. Every ref counts
-    (group / user branches, tags, remotes, FlowGate's own refs) except the ``graph_attempt_*`` branches and, T#8, the
+    (group / user branches, tags, remotes, FlowGate's own refs) except the ``graph_attempt_*`` branches and, the earlier implementation, the
     ``refs/flowgate/attempts/*`` refs, which go with their attempts; HEADs are not counted (a branch-layout tree's HEAD
     is its own branch; a ref-layout tree's detached HEAD is passed in ``tips``)."""
     tips = [tip for tip in dict.fromkeys(tips) if tip]
@@ -942,10 +942,10 @@ def _snapshot_stopped(row, root, repo, tips):
 
 
 def _kept_elsewhere(row, project_id, *, snapshot_stop=False):
-    """0111 T#1 (D-1a-0), under the Git locks, before anything is removed: the owner marker, repository, registration
+    """(D-1a-0), under the Git locks, before anything is removed: the owner marker, repository, registration
     and branch still match (else ``unverifiable``); the tree has no uncommitted or untracked change (``status
     --porcelain --untracked-files=all`` prints nothing; ignored files are not judged and go with the tree) and the
-    branch no commit only it holds. T#8: a ref-layout attempt the same way -- its registered tree detached (no branch),
+    branch no commit only it holds. the earlier implementation: a ref-layout attempt the same way -- its registered tree detached (no branch),
     its ref and its tree's HEAD the tips judged. Returns what the removal needs; raises ``_Preserved`` otherwise."""
     try:
         directory, root, branch, marker = _marker(row, project_id)
@@ -1040,7 +1040,7 @@ def _cleanup(attempt_id):
             elif root.exists() and not _force_rmtree(root):
                 return None
             if head.startswith(ATTEMPT_REF_PREFIX):
-                # T#8: the dedicated ref, only at the tip just judged (W and M are held; nothing else moves it).
+                # the dedicated ref, only at the tip just judged (W and M are held; nothing else moves it).
                 if tip and git._run_git(["update-ref", "-d", head, tip], cwd=repo).returncode:
                     return None
             elif git._ref_exists(repo, head):
@@ -1062,8 +1062,8 @@ def _cleanup(attempt_id):
 
 
 def cleanup(attempt_id):
-    """Only owned attempts that are invalidated or, T#10, ended with their integration done; an active attempt's
-    tree is never removed. 0111 T#1 (D-1a-0): and only once their source is kept elsewhere -- no uncommitted or
+    """Only owned attempts that are invalidated or, the earlier implementation, ended with their integration done; an active attempt's
+    tree is never removed. the earlier implementation (D-1a-0): and only once their source is kept elsewhere -- no uncommitted or
     untracked change, no commit only the attempt branch holds, no requested / running execution, the owner marker,
     repository, registered worktree and branch matching, all judged under the Git locks. Anything else keeps the tree
     and branch (False) and records ``cleanup_preserved``. v02gui.0013: user_stop-invalidated attempts alone
@@ -1096,9 +1096,9 @@ def cleanup_invalidated():
 
 
 def cleanup_ended(attempt_id):
-    """T#10, outside every Flow guard, DB transaction and Git lock: an ended attempt whose integration ended (merged,
+    """outside every Flow guard, DB transaction and Git lock: an ended attempt whose integration ended (merged,
     or no source change) loses its worktree and branch — its result commit stays a parent on the group branch. A
-    failure is a run event (``cleanup_failed``); the node keeps its state and the server start tries again. 0111 T#1:
+    failure is a run event (``cleanup_failed``); the node keeps its state and the server start tries again. the earlier implementation:
     the same check as ``cleanup``; a kept attempt is ``cleanup_preserved``, not a failure."""
     row = attempt(attempt_id)
     if not _integrated(row):
@@ -1125,8 +1125,8 @@ def cleanup_ended(attempt_id):
 
 
 def cleanup_finished():
-    """T#10, server start, outside every guard: each attempt tree whose owner marker names an attempt that is
-    invalidated or ended with its integration done goes through ``cleanup`` (0111 T#1: removed only when its source is
+    """server start, outside every guard: each attempt tree whose owner marker names an attempt that is
+    invalidated or ended with its integration done goes through ``cleanup`` (the earlier implementation: removed only when its source is
     kept elsewhere, else kept and recorded ``cleanup_preserved`` again). An active attempt's tree is left as it is."""
     base = git.get_storage_root() / "graph_attempts"
     if not base.is_dir():

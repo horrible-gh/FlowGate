@@ -47,7 +47,7 @@ class TestWorkspaces:
         assert _role(store, "u_free", "beta") is None
 class TestLegacyRbacRoleRoutes:
     """POST /rbac/users/{id}/roles and DELETE /rbac/users/{id}/roles/{project_id} go through the
-    workspace: no project access without workspace membership (R0001 §3.1)."""
+    workspace: no project access without workspace membership."""
 
     def _workspace(self, store, default_member="none"):
         from modules.flow_gate.settings import workspace_service as ws

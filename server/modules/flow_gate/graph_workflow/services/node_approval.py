@@ -1,10 +1,10 @@
-"""Node approval state (flowgate.v02.0056 T#1, 0002-CH turn 5~10) — revised by flowgate.v02.0119 T#3 (T-2).
+"""Node approval state — revised by the earlier change the earlier implementation (T-2).
 
 A card shows one of these states: working (its node is open, or in review while AI still works on the result),
 done (its node is done), and — for a general card in review that nothing completes — ``needs_intervention`` or
 ``system_error`` (``intervention``).
 
-flowgate.v02.0119 T#3 (T-2, 0004-CH seq 9 §1 / T-2): a general card is never approved by a person. Its ``review -> done``
+(T-2, the discussion seq 9 / T-2): a general card is never approved by a person. Its ``review -> done``
 comes from its completion record only (``card_completion_ports``, T-1). A card in review with a result that no AI works
 on any more (neither the node's own AI run nor the card's AI review, ``card_settings_ports.ai_working``) and whose
 integration does not wait is in intervention:
@@ -13,21 +13,21 @@ integration does not wait is in intervention:
   failure, the AI's abnormal end) — or nothing told why. Only its descendants wait (a node not done propagates nothing:
   the ``stop_path`` way); independent branches go on. It moves again by a memo and a rework / re-review request, by
   the person's step / full command when its review count was spent on a revision no review answered (its re-review,
-  flowgate.v02.0125 T#1), or by the Time Machine — never by an approval.
+  ), or by the Time Machine — never by an approval.
 - ``system_error``: the automatic completion path failed (the ``auto_approval_skipped`` family: ``issuer_missing``,
   ``approval_refused``, ``review_not_started``, ``review_result_unknown``). It is the run's error family and the run
   read's reconciliation retries it; no person approves it either.
 
 Which of the two is the card's (``card_settings_ports.intervention``, answered by ``flowgate.card_intervention``).
 
-flowgate.v02.0119 T#3 (T-2 rework, review P2): the automatic path of the instruction stage fails the same way (its
+(T-2 rework, review P2): the automatic path of the instruction stage fails the same way (its
 instruction's automatic approval: ``issuer_missing`` / ``approval_refused``; its review: ``review_not_started`` /
 ``review_result_unknown``). A card open in its instruction stage whose instruction no AI works on (neither its writer
 nor its review) and whose latest reason recorded for that instruction is one of those is a ``system_error`` too — the
 node run tells it and the run is in its error family. Anything else of an open card stays as it was (working, a
 person's write or setup wait: no intervention here); a gate is never one.
 
-flowgate.v02gui.0015 T3 (NR flowgate.v02gui.0015.0006 §6-3): a general open card whose AI's answers require a new attempt
+(NR the earlier change): a general open card whose AI's answers require a new attempt
 nobody opened yet (``card_settings_ports.action_required``: ``action_required:new_attempt``) is ``needs_intervention`` too —
 the answers' step is held (``action_guard``) and the person's explicit command opens it as a new attempt.
 
@@ -50,9 +50,9 @@ NO_RESULT = "no_result"                      # open: its work has no result yet
 AI_RUNNING = "ai_running"                    # in review, but its AI run or its card review still works
 ALREADY_APPROVED = "already_approved"        # done
 NODE_NOT_IN_REVIEW = "node_not_in_review"    # rejected / closed
-INTEGRATION_WAITING = "integration_waiting"  # 0061 T#9: completed, in review until its result is merged
-NEEDS_INTERVENTION = "needs_intervention"    # 0119 T-2: nothing completes it; a memo rework / re-review or the Time Machine
-SYSTEM_ERROR = "system_error"                # 0119 T-2: its automatic completion path failed; retried, never a person's
+INTEGRATION_WAITING = "integration_waiting"  # completed, in review until its result is merged
+NEEDS_INTERVENTION = "needs_intervention"    # T-2: nothing completes it; a memo rework / re-review or the Time Machine
+SYSTEM_ERROR = "system_error"                # T-2: its automatic completion path failed; retried, never a person's
 REASONS = (NODE_IS_GATE, NODE_NOT_STARTED, NO_RESULT, AI_RUNNING, ALREADY_APPROVED, NODE_NOT_IN_REVIEW,
            INTEGRATION_WAITING, NEEDS_INTERVENTION, SYSTEM_ERROR)
 INTERVENTION_KINDS = (NEEDS_INTERVENTION, SYSTEM_ERROR)
@@ -91,7 +91,7 @@ INSTRUCTION_STAGE = "instruction"
 
 
 def _instruction_error(flow_id: str, row: dict, node_type: Optional[str]) -> Optional[dict]:
-    """0119 T-2 rework: ``{"kind": system_error, "reason": …}`` of a general card open in its instruction stage whose
+    """T-2 rework: ``{"kind": system_error, "reason": …}`` of a general card open in its instruction stage whose
     automatic path failed on its instruction (the latest reason recorded for it), else None — a gate, another stage,
     no instruction yet, an AI still working on it (its writer, its review loop, the run-end hand-off), no reason or a
     reason that is no system error (a person's wait is judged as before)."""
@@ -105,7 +105,7 @@ def _instruction_error(flow_id: str, row: dict, node_type: Optional[str]) -> Opt
 
 
 def _action_required(flow_id: str, row: dict, node_type: Optional[str]) -> Optional[dict]:
-    """flowgate.v02gui.0015 T3: ``{"kind": needs_intervention, "reason": action_required:…}`` of a general open card whose
+    """``{"kind": needs_intervention, "reason": action_required:…}`` of a general open card whose
     AI's answers require an action nobody took yet (a new attempt), else None (a gate, none required)."""
     if node_type == GATE_NODE_TYPE:
         return None
@@ -114,7 +114,7 @@ def _action_required(flow_id: str, row: dict, node_type: Optional[str]) -> Optio
 
 
 def intervention(flow_id: str, row: dict, node_type: Optional[str] = None) -> Optional[dict]:
-    """0119 T-2: ``{"kind": needs_intervention | system_error, "reason": …}`` of a general card in review that nothing
+    """T-2: ``{"kind": needs_intervention | system_error, "reason": …}`` of a general card in review that nothing
     completes, else None (not in review with a result, a gate, AI still working, its integration waiting). 0119 T-2
     rework: a card open in its instruction stage whose instruction's automatic path failed is a ``system_error``
     (``_instruction_error``)."""

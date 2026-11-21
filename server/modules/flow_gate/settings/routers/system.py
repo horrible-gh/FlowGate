@@ -69,9 +69,9 @@ def update_settings(body: SettingsPatch, user=Depends(require_permission("system
     try:
         results = set_values(body.updates, updated_by=user.get("user_id"))
     except ValueError as exc:
-        # flowgate.default.0578 T0010 task 1: only this one setting_key gets a stable
+        # task 1: only this one setting_key gets a stable
         # code the client can key i18n off of. Other ValueError messages stay raw
-        # (out of scope — see T0010 §3 task 1 point 3).
+        # (out of scope — see the earlier implementation task 1 point 3).
         if "ai_repeat_count_max" in body.updates and str(exc) == (
             "ai_repeat_count_max must be an integer between 1 and 30"
         ):

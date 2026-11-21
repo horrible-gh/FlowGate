@@ -131,7 +131,7 @@ class TestConflictSideDroppedChunkLocal0602(_Scenario):
 
 
     def test_rear_coincidental_both_does_not_hide_an_early_one_side_drop(self):
-        # 0602 T0004 rev1 review finding — a later, unrelated ours+theirs pair must not
+        # Review finding: a later, unrelated ours+theirs pair must not
         # hide the exact ours-only resolution.  The following common context anchors the
         # one-line resolution window; the coincidental pair belongs to common text.
         from modules.flow_gate.services.git.conflict import _conflict_side_dropped
@@ -166,7 +166,7 @@ class TestConflictSideDroppedChunkLocal0602(_Scenario):
 
 
     def test_leading_common_context_same_as_ours_does_not_hide_manual_merge(self):
-        # 0602 T0004 rev2 review finding — _select_conflict_chunk() used to search the
+        # Review finding: _select_conflict_chunk() used to search the
         # WHOLE submitted text for the earliest ours/theirs/both match, including
         # everything BEFORE the conflict chunk. If the ordinary, unedited common area
         # preceding the chunk happens to contain the same text as `ours`, that

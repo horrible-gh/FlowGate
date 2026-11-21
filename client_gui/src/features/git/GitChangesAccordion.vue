@@ -32,7 +32,7 @@
           <option v-for="f in WORKTREE_FILTERS" :key="f" :value="f">{{ t(`gui.git.worktree.filter.${filterKey(f)}`) }}</option>
         </select>
       </div>
-      <!-- v27 `gw-dialog-bulk`: 전체 선택 / 선택 해제 → Stage → Stage 해제 → 전체 Stage / 전체 해제, side by
+      <!-- v27 `gw-dialog-bulk`: "전체 선택" / "선택 해제" → Stage → Stage "해제" → "전체" Stage / "전체 해제", side by
            side on the left; only what applies is there, each in its own colour; the count is aside. -->
       <div class="gw-files-bulk" data-test="git-changes-bulk">
         <button type="button" class="gw-act gw-bulk-reset" data-test="git-select-all" :disabled="!selectTargets.length" @click="wt.toggleSelectAll()">
@@ -127,7 +127,7 @@ const hidden = computed(() => status.value?.counts.hidden ?? 0)
 const reasons = computed(() => wt.reasons.value)
 const notice = computed(() => wt.state.notices.files ?? null)
 
-// 전체 Stage while a listed row can still be staged; otherwise 전체 해제 while anything is staged —
+// "전체" Stage while a listed row can still be staged; otherwise "전체 해제" while anything is staged —
 // hidden entries included, so a hidden-only Stage keeps its way out (0066 §3-6(1)).
 const quick = computed(() => {
   const s = status.value

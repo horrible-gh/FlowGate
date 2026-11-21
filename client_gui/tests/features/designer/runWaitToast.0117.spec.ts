@@ -1,10 +1,10 @@
-// flowgate.v02.0117 T#4 — what the Designer's existing toast says after a run command (0012-T T#4 items 1–2).
+// what the Designer's existing toast says after a run command (T the earlier implementation items 1–2).
 //
-// 1. A command that ended waiting for a person — the run idle `waiting_approval`; T#1 TR §5 observed it with the manual
+// 1. A command that ended waiting for a person — the run idle `waiting_approval`; the earlier implementation TR observed it with the manual
 //    write wait of a role set to 사용하지 않음 (S4 / S6) — is told once per run and reason (`tell`), in the existing words
-//    (run_idle_reasons + card_states). A step boundary (step_done), the window's completed / failed and the reasons T#1
+//    (run_idle_reasons + card_states). A step boundary (step_done), the window's completed / failed and the reasons the earlier implementation
 //    did not observe (hold, no_targets) are never told.
-// 2. A run command whose draft confirmation the server refused for its issues ended with no word before (T#2 TR §2.2:
+// 2. A run command whose draft confirmation the server refused for its issues ended with no word before (the earlier implementation TR:
 //    422 graph_validation_failed, no POST /runs, only the cards' issue border). It is now the command's refusal, so the
 //    Shell's existing run toast (run_errors.graph_validation_failed) says it. [검증] and any other no-go stay as they were.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,7 +36,7 @@ function result(over: Record<string, unknown> = {}) {
 describe('a run left waiting for a person is told once (item 1)', () => {
   beforeEach(() => { i18n.global.locale.value = 'ko' })
 
-  // flowgate.v02.0124 T#2 (D9): told once per command and end — the same result read again is not told again.
+  // (D9): told once per command and end — the same result read again is not told again.
   it('tells the waiting command once per command and end, again for a new end, a new command or another run', async () => {
     const answers = [
       result(), result(),                                                          // 1. cmd 5 end 7, read again

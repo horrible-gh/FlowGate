@@ -1,4 +1,4 @@
-"""The automatic approval of a card's instruction (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 교체 3).
+"""The automatic approval of a card's instruction (T-3; the discussion seq 9 T-3 · seq 11 replacement 3).
 
 An instruction is a required output of its card's completion (``outputs.pending_outputs``), never a node's result: its
 approval records no completion row and binds no node event. It replaces the removed card approval's document approval
@@ -15,7 +15,7 @@ hook and the Graph contact): the v0.2 writes the instruction's approved display 
 - the event names the system as the actor and the Graph run's issuer as ``requested_by`` only; no person is recorded as
   an approver, no ``transition_document_review``, no ``tr_commit_service.on_document_approved``, no ``after_review_decided``.
 
-flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a TS instruction (a test card's) has an effect of its own the v0.1
+(rej_01M6DQW6YF0SCQ5D P1): a TS instruction (a test card's) has an effect of its own the v0.1
 approval carried — the admission of its test run: its automated Cases' asset check, its run queued and its TSR opened
 (``spec_execution_service.admit_on_approval``). The v0.2 runs it here explicitly (``own_effects.run`` — the same TS effect a
 TS result's completion runs): in one transaction under the test admission lock, the approved display (the ``write``) and

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { composeWorkdir, jobFolderPreview, workdirParent } from '@/features/settings/agentWorkdir'
 
-// flowgate.v02test.0043 CH0004: the job folder location input takes the parent folder only.
+// the job folder location input takes the parent folder only.
 describe('agentWorkdir', () => {
   it.each([
     ['/data/flowgate', '/data/flowgate/${AGENT_JOB_ID}'],

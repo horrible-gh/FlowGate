@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Textarea from '@/components/ui/Textarea.vue'
 
-// T0004 §5.3/§9: value binding, change/update, disabled, readonly, keyboard interaction.
+// value binding, change/update, disabled, readonly, keyboard interaction.
 describe('components/ui/Textarea (T0004)', () => {
   it('renders the bound value and placeholder', () => {
     const wrapper = mount(Textarea, { props: { modelValue: 'notes', placeholder: 'Write…' } })

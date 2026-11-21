@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0157 — a standalone document (no card line holds it) is edited by its doc_id. The transport reads
+ * a standalone document (no card line holds it) is edited by its doc_id. The transport reads
  * GET /api/v2/documents/{doc_id} (snapshot + edit_path) and saves POST …/revisions { expected_revision, content,
  * idempotency_key }; the session adopts a base only for edit_path=non_card and confirms a save without a card line.
  * A card target keeps its own route and its line check unchanged.

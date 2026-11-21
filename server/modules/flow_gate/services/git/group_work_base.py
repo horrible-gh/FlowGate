@@ -103,7 +103,7 @@ def validate_group_work_base_ref(project_id: str, value: str) -> str:
 
 
 def default_work_base_ref_for_new_group(project_id: str) -> Optional[str]:
-    """The work base a NEW group pins when none was requested (0665 T0004, NR0003 §7.3).
+    """The work base a NEW group pins when none was requested.
 
     A Git-active project stores its base branch name AT CREATION TIME, so a later
     project base change can no longer move an existing group's work base.  Non-Git
@@ -123,7 +123,7 @@ def default_work_base_ref_for_new_group(project_id: str) -> Optional[str]:
 def local_branch_refs(base_root) -> dict:
     """``{name: (tip object id, tip object type)}`` of every local branch (``refs/heads``), unfiltered.
 
-    flowgate.v02.0098 T#1 (D0004 §3.2): the name listing of
+    the name listing of
     :func:`list_group_work_base_options`, shared with the check card's merge
     target candidates (``merge_target.check_target_view``), which judge every
     name themselves (the tip and its type spare one Git call per name). Raises
@@ -156,7 +156,7 @@ def local_branch_refs(base_root) -> dict:
 def list_group_work_base_options(project_id: str) -> dict:
     """Return only what a requirement author needs to pick a group work base.
 
-    flowgate.default.0613 T0013: the project branch catalog
+    the project branch catalog
     (``GET /projects/{id}/git/branches``) is a Branch Manager surface gated by
     ``project.settings.read`` and carries delete/merge metadata.  Requirement
     creation needs neither, so this read-only view lists exactly the names
@@ -223,12 +223,12 @@ def groups_pinning_work_base(project_id: str, branch: str) -> list[str]:
 def _locked_by_state(state: Optional[dict]) -> bool:
     """True once ``state`` shows real Git work already started from a work base.
 
-    flowgate.default.0613 TR0014 rev2: ``worktree_registered`` covers the
+    ``worktree_registered`` covers the
     ordinary case (the worktree exists right now, created via
     ``worktree.py``'s ``... _worktree_start_point(base_root, work_base_ref)``
     fork). But ``worktree.unregister_worktree`` clears that flag on slot
     cleanup while leaving ``status``/``initial_source_sync_at`` as permanent
-    group history (0182 NR0003 §5) -- and a later terminal reopen resolves its
+    group history -- and a later terminal reopen resolves its
     C1 ancestry against ``resolve_group_work_base_ref`` again
     (``worktree._ensure_worktree_locked``'s ``terminal_base_diverged`` check).
     So a stale ``worktree_registered = 0`` must not reopen the field: once the
@@ -265,7 +265,7 @@ def locked_group_ids(project_id: str) -> set[str]:
     }
 
 
-# ── existing-group change boundary (flowgate.v02.0104 D0004 §3.2–§3.4) ────────
+# ── existing-group change boundary ────────
 #
 # The extended lock judgment, the group row lock and the one change path that the
 # PATCH /groups/{id}/work-base route and the v0.1 existing-group root document both
@@ -615,7 +615,7 @@ def _change_once(group_id: str, value: str, expected, project_id: Optional[str])
 def apply_group_work_base_ref(project_id: str, group_id: str, value: str) -> str:
     """Change an existing group's stored work base without the expected comparison.
 
-    flowgate.v02.0104 D0004 §3.4: a thin wrapper of :func:`change_group_work_base_ref`
+    a thin wrapper of:func:`change_group_work_base_ref`
     -- lock, busy and the conditional save apply as for the PATCH route. There is no
     unconditional write path any more.
     """
@@ -638,7 +638,7 @@ def resolve_group_work_base_ref(
     The project-base fallback now only serves legacy NULL rows: new Git groups
     store their base at creation (:func:`default_work_base_ref_for_new_group`),
     the work-base backfill pins existing rows, and a project base change is
-    refused while a locked NULL row remains (0665 T0004).
+    refused while a locked NULL row remains.
     """
     from modules.flow_gate.services import git_service as _gs
 

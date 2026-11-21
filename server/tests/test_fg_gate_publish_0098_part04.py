@@ -31,7 +31,7 @@ from tests.test_fg_gate_publish_0098 import (
 )
 
 def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_sha(git_env):
-    """0132 T#2 (NR §5.3-11): a non-fast-forward because only the remote went ahead is no longer parked. The push
+    """(NR): a non-fast-forward because only the remote went ahead is no longer parked. The push
     phase merges the fetched remote tip into the local target once (``remote_sync``) and pushes that; the approved
     merge is kept as it was (one attempt, the applied SHA unchanged)."""
     r = git_env

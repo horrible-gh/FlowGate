@@ -7,7 +7,7 @@ call context). The ``handler`` of both tools is a fail-closed shell: reached thr
 ``(run, input)`` signature it authenticates first and then always answers 422
 ``call_identity_unavailable`` without writing anything.
 
-T#7 connects the call handlers in ``chat_adapter`` through ``PROVIDE_CHAT_TOOLS``.
+connects the call handlers in ``chat_adapter`` through ``PROVIDE_CHAT_TOOLS``.
 Without a call handler the descriptors retain the fail-closed shell.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from . import chat_authz, chat_errors
 
 READ_TOOL = "read_card_document"
 REVISE_TOOL = "revise_card_document"
-# 0127 CH0028: doc_id tools. The server resolves card bindings; no card coordinates are asked.
+# doc_id tools. The server resolves card bindings; no card coordinates are asked.
 READ_DOC_TOOL = "read_document_by_id"
 REVISE_DOC_TOOL = "revise_document_by_id"
 CREATE_DOC_TOOL = "create_new_document"
@@ -172,8 +172,8 @@ def _chat_base(api_base: str) -> str:
     return base + "/api/v2/chat"
 
 
-def cli_document_mention_section(api_base: str, raw_token: str) -> str:
-    """0127 CH0028: doc_id read / existing-body edit / new-document create for CLI chat."""
+def contract_document_mention_section(api_base: str, raw_token: str) -> str:
+    """doc_id read / existing-body edit / new-document create for CLI chat."""
     base = _chat_base(api_base)
     return (
         "[Document read, edit and create by doc_id]\n"
@@ -193,7 +193,11 @@ def cli_document_mention_section(api_base: str, raw_token: str) -> str:
     )
 
 
-def cli_mention_section(api_base: str, raw_token: str) -> str:
+def cli_document_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_document_mention_section(api_base, raw_token)
+
+
+def contract_mention_section(api_base: str, raw_token: str) -> str:
     """L#3 §2.12: one section for both routes, independent of command permission."""
     base = api_base.rstrip("/")
     if base.endswith("/api/v1"):
@@ -216,3 +220,7 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
         "a read or edit succeeded; tell the user and suggest CLI chat, Designer or Agent. "
         "CLI chat has no API chat result-size limit."
     )
+
+
+def cli_mention_section(api_base: str, raw_token: str) -> str:
+    return contract_mention_section(api_base, raw_token)

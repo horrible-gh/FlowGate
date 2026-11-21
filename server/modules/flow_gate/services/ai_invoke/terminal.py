@@ -1,4 +1,4 @@
-"""Independent, retryable terminal cleanup for an exited provider (0573 T0008).
+"""Independent, retryable terminal cleanup for an exited provider.
 
 No provider execution or workflow advancement belongs here. Callers must cross the
 provider-return boundary first. Each step claims only a short in-memory lock; a
@@ -64,7 +64,7 @@ def provider_stopped(run: dict) -> bool:
     # API runs have no child. The worker flag, not the absence of a PID, fences them.
     if run.get("_provider_active"):
         return False
-    # flowgate.v02.0129 T#2: a remote Job not yet settled (or whose unconfirmed end could
+    # a remote Job not yet settled (or whose unconfirmed end could
     # not be fenced by token revocation) keeps the run "alive" so leases are not released.
     if run.get("remote_job_active"):
         return False
@@ -201,7 +201,7 @@ def claim_abandon(run: dict) -> bool:
     """Race recovery against successor gate OPEN with no external I/O in the lock."""
     lock = run.setdefault("_terminal_lock", threading.RLock())
     with lock:
-        # 0504 F4: a gate that completed the chain already cleared its intent and released
+        # a gate that completed the chain already cleared its intent and released
         # its lease (review._settle_gate_pass); there is nothing left to abandon or park.
         if run.get("_handoff_succeeded") or run.get("_chain_completed"):
             return False

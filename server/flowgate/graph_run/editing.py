@@ -1,6 +1,6 @@
-"""0061 T#3: guarded editing and immutable executed graph regions.
+"""guarded editing and immutable executed graph regions.
 
-T#14 (WP answer 2): while the Flow's Graph run is running, paused or stopping, a chat of the Flow (the group
+(WP answer 2): while the Flow's Graph run is running, paused or stopping, a chat of the Flow (the group
 conversation path, not an attempt's token) may not take an edit / edit-once source access either
 (``chat_source_refusal``, 409 ``graph_run_locked``). Reading and sending messages stay open; the Canvas / Inspector
 edit lock above is a separate rule."""
@@ -12,7 +12,7 @@ PROTECTED = frozenset({"done", "open", "review"})
 
 
 def require_editable(flow_id: str, node_key=None) -> None:
-    """Inside the Flow guard; node_key adds the always-protected card check. T#13: an unfinished Graph Time Machine
+    """Inside the Flow guard; node_key adds the always-protected card check. the earlier implementation: an unfinished Graph Time Machine
     operation refuses every edit (409 ``graph_time_machine_in_progress``)."""
     from flowgate.graph_time_machine.operation import require_no_operation
     require_no_operation(flow_id)
@@ -32,7 +32,7 @@ def require_editable(flow_id: str, node_key=None) -> None:
 
 
 def _unresolved_gates(flow_id: str, old: dict, rows: list) -> set:
-    """flowgate.v02.0085 T#2 (D0007 §3.2): a rejected confirm gate, and one waiting for its round split after an
+    """a rejected confirm gate, and one waiting for its round split after an
     abandoned recovery, keep their definition and input edges until the Time Machine resolved them (no delete
     around the rework procedure)."""
     from flowgate.gate_decisions import repository as gate_decisions
@@ -46,7 +46,7 @@ def _unresolved_gates(flow_id: str, old: dict, rows: list) -> set:
 
 
 def chat_source_refusal(group_id, locale=None) -> None:
-    """T#14: a chat token of the group asks for edit / edit-once source access (``token_service.issue``, before the
+    """a chat token of the group asks for edit / edit-once source access (``token_service.issue``, before the
     token is written or an edit-once claim is taken). Refused with 409 ``graph_run_locked`` (the ai-invoke / token
     route ``detail`` shape: ``code``, ``message``, ``flow_id``, ``run_id``, ``status``) while the Flow's run is locked."""
     run = run_store.active_run(group_id) if group_id else None
@@ -60,7 +60,7 @@ def chat_source_refusal(group_id, locale=None) -> None:
 
 
 def require_settings_editable(flow_id: str) -> None:
-    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13): a card's settings — its AI roles and [고급] included — follow
+    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D revision §3.13): a card's settings — its AI roles and [고급] included — follow
     the card's own running lock (``card_settings.legacy_adapter.node_running``: an AI works on it now), not the run's
     status (``LOCKED``) nor the node's protected state (``PROTECTED``): a card that waits (ready, a person's writing, AI
     setup needed / unavailable, a question, an approval), is done or in error takes its settings. Only an unfinished

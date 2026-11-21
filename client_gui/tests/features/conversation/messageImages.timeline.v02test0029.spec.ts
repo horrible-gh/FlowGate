@@ -15,7 +15,7 @@ vi.mock('@/features/conversation/api', async (original) => ({
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0029 T0005 — a message shows its images as a thumbnail row; one opens the original large (modal,
+// a message shows its images as a thumbnail row; one opens the original large (modal,
 // Esc closes). The bytes come through the signed-in session and are shown from blob addresses.
 const image = (n: number): TurnImage => ({
   imageId: `img_${String(n).padStart(32, '0')}`, mediaType: 'image/png', size: 100, width: 40, height: 30,

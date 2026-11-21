@@ -1,8 +1,8 @@
-"""flowgate.v02.0045 T0015 (S5) — Graph runs on a real SQLite DB (all migrations, TestClient).
+"""(S5) — Graph runs on a real SQLite DB (all migrations, TestClient).
 
-P0008 §7 S5-1~S5-5 and §8.3 run events, L0009 §2.6.5~§2.6.9 (start with root binding, apply,
+S5-1~S5-5 and run events, the earlier implementation~ (start with root binding, apply,
 stop / resume, result binding, reconciliation, dispatch failure), DB0010 §3.5 (migration 144)
-and §5.3 (Flow delete cleanup). Until D0004 §8 is answered a start is refused with
+and (Flow delete cleanup). Until the design is answered a start is refused with
 ``run_policy_undecided``; the rest uses decided *test* policies registered under their own value
 (the product default stays ``undecided``). Auth, RBAC and SSE delivery are stubbed; the token
 service runs for real with its scratch directory moved under pytest's tmp_path.
@@ -191,7 +191,7 @@ def _confirm(flow, nodes, edges):
 
 
 def _confirm_next(flow, nodes, edges):
-    """Confirm the next revision on top of the latest one (P0008 S4)."""
+    """Confirm the next revision on top of the latest one."""
     from modules.flow_gate.db.connection import get_store
     from modules.flow_gate.graph_workflow.services import confirm_service
     from modules.flow_gate.graph_workflow.store import definition_store
@@ -362,7 +362,7 @@ def test_start_binds_the_root_and_opens_the_next_node(env, decided):
 
 
 def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
-    """0056 T#1 개정: root input bypasses review without changing the rejected document."""
+    """revised: root input bypasses review without changing the rejected document."""
     run = start(env, FH).json()["run"]
     root = nodes_of(run)["gn_r"]
     assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("done", False, ["gn_d"])
@@ -376,7 +376,7 @@ def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
                 (f"{FH}.0001-R",))[0]["doc_review_status"] == "rejected"
 
 
-# ── result binding (L0009 §2.6.8) ────────────────────────────────────────────
+# ── result binding ────────────────────────────────────────────
 
 
 
@@ -384,17 +384,17 @@ def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
 
 
 
-# ── S5-5: stop / resume (L0009 §2.6.7) ───────────────────────────────────────
+# ── S5-5: stop / resume ───────────────────────────────────────
 
 
 
 
 
-# ── reconciliation (L0009 §2.6.8, E-27) ──────────────────────────────────────
+# ── reconciliation ──────────────────────────────────────
 
 
 
-# ── dispatch (L0009 §2.6.6, E-22 / E-23) ─────────────────────────────────────
+# ── dispatch ─────────────────────────────────────
 
 
 
@@ -426,7 +426,7 @@ def _fake_ai_invoke(monkeypatch, refuse=None):
 
 
 
-# ── Canvas (P0008 S1-3) and reads ────────────────────────────────────────────
+# ── Canvas and reads ────────────────────────────────────────────
 
 
 

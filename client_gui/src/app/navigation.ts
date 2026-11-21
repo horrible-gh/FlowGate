@@ -1,6 +1,6 @@
 import type { NavGlyphName } from './components/navGlyphs'
 
-// The v0.2 screen map (T0011 §8/§12): one entry per top-level /app screen, in the order the
+// The v0.2 screen map: one entry per top-level /app screen, in the order the
 // approved 01-dashboard.html sidebar draws them. The router builds its routes from this list
 // and the Sidebar renders it, so a label/destination can never drift between the two.
 // Labels live in i18n under gui.nav.<key>.{title,sub}.
@@ -25,7 +25,7 @@ export const APP_NAV_ITEMS: readonly AppNavItem[] = [
 ]
 
 /** Screens that exist only as a "준비 중" placeholder in this step (T0011 §8/§9).
- *  시스템 AI / 내 AI live in /ai (AI 관리) since flowgate.v02.0017 T0004 §1;
- *  /designer is the Designer Shell since flowgate.v02.0025, and /settings is the
- *  Environment Settings feature since flowgate.v02.0020. */
+ *  "시스템 AI" / "내 AI" live in /ai ("AI 관리") since flowgate.v02.0017 T0004 §1;
+ *  /designer is the Designer Shell since the earlier change, and /settings is the
+ *  Environment Settings feature since the earlier change. */
 export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'git']

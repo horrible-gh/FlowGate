@@ -1,12 +1,12 @@
-"""0457 T0007 — restore the slot B0001 broke, and make one document / one slot a rule.
+"""restore the slot the regression broke, and make one document / one slot a rule.
 
-Regression **I** of NR0003 §8, plus the ordering and uniqueness work that hangs off it.
+Regression **I** of the review, plus the ordering and uniqueness work that hangs off it.
 
-The incident, from NR0003 §2/§3: a rejected resubmit of `flowgate.default.0454.0005-TR`
+The incident, from the review: a rejected resubmit of `the earlier change`
 was registered into the *sixth* slot of sequence 737 (item id 5674) because inbox Step 7.5
 asked which slot was the "in-progress head" rather than which slot the document came from.
-`flowgate.default.0454.0007-TR` was evicted and belonged to no slot at all; `0005-TR` was
-left holding slots 4 **and** 6. T0005 closed the code path. This suite covers the other
+`the earlier change` was evicted and belonged to no slot at all; `the earlier implementation` was
+left holding slots 4 **and** 6. the earlier implementation closed the code path. This suite covers the other
 half — putting slot 6 back and making the two-slots-one-document state unreachable.
 
 What is fixed here:
@@ -16,16 +16,16 @@ What is fixed here:
   the root document, the slot id, `item_seq`, the slot type, the value the slot holds, or
   the sibling slot's value, and it becomes a no-op. Re-running it after it has applied is a
   no-op too, and it is a no-op on a database that never saw the incident.
-* **Nothing else moves.** Slot 4 keeps `0005-TR`; the other six slots, the
-  `workflow_item_results` ledger (rows 4996 → 4999 → 5004 — the audit trail NR0003 §3 read
+* **Nothing else moves.** Slot 4 keeps `the earlier implementation`; the other six slots, the
+  `workflow_item_results` ledger (rows 4996 → 4999 → 5004 — the audit trail the review read
   to date the eviction) and every document row are byte-for-byte identical afterwards.
 * **The reverse lookup is deterministic.** `get_sequence_item_by_result_doc_id` used to be
-  an unordered `LIMIT 1`, so in the duplicated state the engine decided whether `0005-TR`
+  an unordered `LIMIT 1`, so in the duplicated state the engine decided whether `the earlier implementation`
   belonged to slot 4 or slot 6. It now sorts, and answers the earlier slot.
 * **The constraint.** `uq_wfseq_items_result_doc` refuses a second slot for a non-NULL
   document while leaving empty slots unconstrained, and `register_workflow_result` turns
   that refusal into `WorkflowDocumentAlreadyLinkedError` rather than a driver error —
-  without disturbing T0005's occupancy conflict, which still guards the other direction.
+  without disturbing the earlier implementation's occupancy conflict, which still guards the other direction.
 
 The fixture is the real thing on both ends: a SQLite database built by applying the actual
 migration files, seeded with the row values read out of the live PostgreSQL database
@@ -90,7 +90,7 @@ INCIDENT_DOCS = [
 ]
 
 # workflow_item_results, verbatim: (id, item_id, registered_doc_id, registered_at).
-# 4996 → 4999 → 5004 on slot 6 is the eviction NR0003 §3 dated. It is evidence, not damage.
+# 4996 → 4999 → 5004 on slot 6 is the eviction the review dated. It is evidence, not damage.
 INCIDENT_LEDGER = [
     (4994, SLOT_FOUR, TR_FOUR, "2026-08-23T23:02:28+09:00"),
     (4996, SLOT_SIX, TR_SIX, "2026-08-23T23:38:55+09:00"),
@@ -274,7 +274,7 @@ def _indexes(conn) -> set[str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_the_fixture_reproduces_the_live_0454_shape(incident_db):
-    """Both TR slots hold 0005-TR, the ledger carries the eviction, 0007-TR is loose.
+    """Both TR slots hold the earlier implementation, the ledger carries the eviction, the earlier implementation is loose.
 
     Every later assertion is read against this state, so it is pinned first — including
     the fact that the duplicate is possible at all before 090.
@@ -286,7 +286,7 @@ def test_the_fixture_reproduces_the_live_0454_shape(incident_db):
     assert [r["registered_doc_id"] for r in six_ledger] == [TR_SIX, TR_FOUR, TR_FOUR]
     assert [r["id"] for r in six_ledger] == [4996, 4999, 5004]
 
-    # 0007-TR is in no slot at all — the orphan B0001 reported.
+    # is in no slot at all — the orphan the regression reported.
     assert incident_db.execute(
         "SELECT COUNT(*) FROM workflow_sequence_items WHERE result_doc_id = ?",
         [TR_SIX]).fetchone()[0] == 0
@@ -505,7 +505,7 @@ def _seed_disagreeing_row_order(conn) -> None:
 
     0454's own rows cannot tell the ordering apart: there, ascending id and ascending
     sort_order happen to agree, so an unordered lookup lands on the right slot by luck.
-    NR0003 §4.4 called that out as the second-order risk rather than a second bug — "the
+    called that out as the second-order risk rather than a second bug — "the
     database decides". A sequence whose rows were inserted out of order is all it takes for
     luck to run the other way, and that is what this seeds: sort_order 1 at id 8800,
     sort_order 5 at id 8100, both holding the same document.
@@ -540,7 +540,7 @@ def _seed_disagreeing_row_order(conn) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# The constraint seen from the API side — and T0005's conflict left intact
+# The constraint seen from the API side — and the earlier implementation's conflict left intact
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _register(item_id: int, doc_id: str):

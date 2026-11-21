@@ -5,7 +5,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { ConversationPanel } from '@/features/conversation'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// flowgate.v02.0031 — the Conversation part mounted with an in-memory source (R0001 §12).
+// the Conversation part mounted with an in-memory source.
 registerAppMessages(i18n)
 
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn(async () => true) }))
@@ -130,7 +130,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(source.renameChat).toHaveBeenCalledWith(A, '새 제목')
   })
 
-  // flowgate.v02.0047: [+] opens an unsaved draft; its first send creates the chat.
+  // [+] opens an unsaved draft; its first send creates the chat.
   it('starts a new chat from the header as a draft and creates it on the first send', async () => {
     const { source } = await mountPanel()
     await find('conv-new-btn').trigger('click')
@@ -206,7 +206,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await flushPromises()
     expect((input.element as HTMLTextAreaElement).value).toBe('hello')
     expect(find('tl-retry').exists()).toBe(true)
-    // flowgate.v02test.0024 B: the failure is a line of the timeline, not the notice above the composer.
+    // B: the failure is a line of the timeline, not the notice above the composer.
     expect(find('conv-notice').exists()).toBe(false)
     expect(find('tl-status').text()).toContain('메시지를 보내지 못했습니다')
   })
@@ -352,7 +352,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ context_mode: 'all' }), { projectId: 'p', groupId: 'p.m.0001' })
   })
 
-  // NR0003 Rev.4 §4 (T0011): the saved last-N-turns value is the one the server confirmed, and
+  // Rev.4: the saved last-N-turns value is the one the server confirmed, and
   // it is what every later screen shows. The fake source plays the server: a save answers with
   // the stored settings and every later fetch returns them.
   describe('last-N-turns: server-confirmed value across reopen, remount and navigation', () => {

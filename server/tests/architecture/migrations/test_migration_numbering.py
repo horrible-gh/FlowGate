@@ -1,31 +1,26 @@
-"""Global guards for the migration file set (flowgate.default.0394 T0004, 권고 2).
+"""Global migration-file guards (flowgate.default.0394 T0004, recommendation 2).
 
-NR0003 §5.3 의 지적이 이 파일의 존재 이유다. 마이그레이션 번호 중복은 10묶음이었는데
-빨간불은 1건뿐이었다 — 076 을 검사하는 가드가 `test_chat_settings_0362` 안에
-**076 만 보도록** 쓰여 있었기 때문이다. 앞선 7묶음은 검사하는 테스트가 아예 없어서
-결함이 있는 채로 계속 초록이었다.
+NR0003 section 5.3 found ten groups of duplicate migration numbers but only one
+failing guard: test_chat_settings_0362 checked only 076. The preceding seven
+groups had no tests and remained green despite their defects.
 
-규칙은 전역인데 검사가 국소였다. 그래서 여기서는 **파일 하나가 아니라 세 방언의 전체
-파일 집합**을 본다. 새 마이그레이션이 어느 방언에 어떤 이름으로 들어오든 이 스위트를
-지나가야 한다.
+The rule is global, so inspect the complete file sets of all three dialects,
+regardless of the dialect or filename of a new migration. Enforce five rules:
 
-고정하는 것은 다섯 가지다.
+1. Filenames follow NNN[a-z]_name.sql. The loader sorts filenames to determine
+   execution order (sqloader/migrator.py get_migration_files).
+2. Ordinals are unique, catching parallel groups claiming the same number.
+3. All three dialects contain the same files; a missing dialect silently omits
+   a migration on that database engine.
+4. No index redefinition. Extend test_document_index_coverage_0291's check of
+   the five indexes from 070 to all indexes, parsing CREATE INDEX statements
+   after removing comments instead of using substring membership.
+5. Renamed files and migration_renames.RENAMES agree with the actual disk state.
 
-1. 파일 이름의 모양 — `NNN[a-z]_이름.sql`. 로더가 이름을 정렬해 적용 순서를 정하므로
-   (sqloader/migrator.py `get_migration_files`), 이름이 곧 순서다.
-2. 순번 유일성 — 두 파일이 같은 순번을 가질 수 없다. 병렬 그룹이 같은 번호를 집어
-   가면 여기서 걸린다.
-3. 방언 3벌의 파일 집합 일치 — 한 방언에만 들어온 마이그레이션은 다른 엔진에서
-   조용히 빠진다.
-4. 인덱스 재정의 금지 — `test_document_index_coverage_0291` 이 070 이 만든 5개에
-   대해서만 하던 검사를, 전 인덱스로 넓힌다. 문자열 포함이 아니라 CREATE INDEX 문을
-   읽고, 주석은 지운 뒤 본다.
-5. 번호 정리로 이름이 바뀐 파일과 그 장부(`migration_renames.RENAMES`)가 실제 디스크
-   상태와 일치하는가.
-
-`TestFilenameCarryOver` 는 그 장부가 실제로 동작하는지를 임시 DB 로 확인한다.
-sqloader 는 **파일 이름**으로 적용 여부를 판단하므로, 이름을 바꾸면 이미 적용한 DB 가
-그 파일들을 새 마이그레이션으로 착각한다. 장부 이관이 그것을 막는 유일한 장치다.
+TestFilenameCarryOver verifies the ledger behavior against temporary databases.
+sqloader tracks applied migrations by filename, so a rename would otherwise
+make an already-migrated database execute a file again. Ledger carry-over is
+the mechanism that prevents this.
 """
 
 from __future__ import annotations
@@ -81,15 +76,15 @@ def _files(dialect: str) -> list[Path]:
 def _without_comments(sql: str) -> str:
     """Drop -- and /* */ comments.
 
-    번호 중복만큼이나 자주 틀리는 자리다. 0291 의 가드는 파일 텍스트에 인덱스 이름이
-    들어 있기만 하면 재정의로 보았고, 그래서 "070 의 그 인덱스처럼"이라고 적은 **주석**
-    한 줄이 빨간불이 됐다. 검사는 실행되는 SQL 만 봐야 한다.
+    This is as error-prone as duplicate numbering. The 0291 guard treated any
+    occurrence of an index name as a redefinition, so a comment referencing an
+    index from 070 caused a failure. Inspect executable SQL only.
     """
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
     return "\n".join(re.sub(r"--.*$", "", line) for line in sql.splitlines())
 
 
-# ── 1~2. 이름 모양과 순번 유일성 ──────────────────────────────────────────────
+# 1-2. Filename format and unique ordinals.
 
 @pytest.mark.parametrize("dialect", DIALECTS)
 def test_every_file_name_carries_a_parsable_ordinal(dialect):
@@ -117,7 +112,7 @@ def test_no_two_migrations_share_an_ordinal(dialect):
     )
 
 
-# ── 3. 방언 3벌이 같은 집합인가 ───────────────────────────────────────────────
+# 3. All three dialects contain the same file set.
 
 def test_the_three_dialects_hold_the_same_file_set():
     sets = shared_migration_files(MIGRATIONS_DIR)
@@ -129,16 +124,16 @@ def test_the_three_dialects_hold_the_same_file_set():
         assert extra == [], f"{dialect} 에만 있는 마이그레이션: {extra}"
 
 
-# ── 4. 인덱스 재정의 금지 (0291 의 070 전용 검사를 전 인덱스로) ──────────────
+# 4. No index redefinition: extend the 0291 check beyond migration 070.
 
 @pytest.mark.parametrize("dialect", DIALECTS)
 def test_no_migration_recreates_an_index_that_still_exists(dialect):
-    """살아 있는 인덱스를 뒤 파일이 다시 만들면 실효 정의가 뒤엣것이 된다.
+    """A later recreation of a live index would replace its effective definition.
 
-    표를 재생성하는 파일은 예외다 — SQLite 에서 CHECK 를 바꾸려면 표를 다시 만들어야
-    하고(042a/062a/064 tokens), 그때 인덱스도 함께 사라지므로 같은 파일 안에서 다시
-    만드는 것이 정상이다. 027 이 documents 를 재생성하면서 015 의 인덱스를 날렸고
-    070 이 그것을 복구한 것도 같은 경우다. 그래서 "표가 사라졌으면 잊는다"로 센다.
+    Table rebuilds are exempt: SQLite CHECK changes require rebuilding the
+    table (042a/062a/064 tokens), dropping its indexes as well. Recreating them
+    in that file is legitimate. Likewise, 027 rebuilt documents and dropped
+    the indexes from 015, which 070 restored. Forget indexes of removed tables.
     """
     live: dict[str, tuple[str, str]] = {}   # index name -> (file, table)
     clashes = []
@@ -164,7 +159,7 @@ def test_no_migration_recreates_an_index_that_still_exists(dialect):
     )
 
 
-# ── 5. 이름이 바뀐 파일과 장부가 디스크와 맞는가 ──────────────────────────────
+# 5. Renamed files and ledger entries agree with the disk.
 
 def test_the_rename_ledger_matches_what_is_on_disk():
     for old, new in RENAMES:
@@ -185,17 +180,16 @@ def test_the_latest_collision_renames_are_in_the_ledger():
 
 
 def test_the_rename_ledger_maps_old_names_unambiguously():
-    """`old` 하나는 정확히 하나의 `new` 로만 간다 — 그 반대는 아니다.
+    """Each old name maps to exactly one new name, but not conversely.
 
-    flowgate.default.0408 TR0018: 078/079 는 두 그룹이 서로 다른 시점에 같은 순번
-    충돌을 독립적으로 풀어, 같은 최종 이름으로 수렴하는 옛 이름이 둘 생겼다
-    (예: `078_seed_work_plan_doctype.sql` 과 `078a_seed_work_plan_doctype.sql`
-    모두 `078b_seed_work_plan_doctype.sql` 로 수렴). 어느 DB 도 두 이력을 동시에
-    갖지는 않으므로(둘 중 하나만 실제로 적용됐다) `new` 쪽 중복은 안전하다 —
-    `apply_migration_renames` 의 "둘 다 있으면 옛 것을 지운다" 분기가 정확히 이
-    경우를 처리한다. 위험한 것은 `old` 쪽 중복(어느 new 로 가는지 모호해짐)과
-    `old`/`new` 가 겹치는 경우(한 패스 안에서 순서에 따라 결과가 갈릴 수 있음)
-    뿐이라 그 둘만 고정한다.
+    flowgate.default.0408 TR0018: two groups independently resolved the 078/079
+    collisions at different times, yielding two historical names for one final
+    name. Both 078_seed_work_plan_doctype.sql and 078a_seed_work_plan_doctype.sql
+    converge on 078b_seed_work_plan_doctype.sql. A database applied only one
+    history, so repeated new names are safe: apply_migration_renames removes
+    the old row when both exist. Duplicate old names are ambiguous, and overlap
+    between old/new names makes a single pass order-dependent. Guard those two
+    unsafe cases only.
     """
     olds = [old for old, _ in RENAMES]
     news = [new for _, new in RENAMES]
@@ -203,28 +197,28 @@ def test_the_rename_ledger_maps_old_names_unambiguously():
     assert set(olds).isdisjoint(news), "옛 이름과 새 이름이 겹친다"
 
 
-# ── 6. 순서대로 다 적용되는가 (sqlite 실측) ───────────────────────────────────
+# 6. Apply all files in order against SQLite.
 
 
 
-# ── 7. 장부 이관이 실제로 동작하는가 ──────────────────────────────────────────
+# 7. Verify actual ledger carry-over.
 
 
 
-# ── 8. 0332 ledger 의 두 적용 이력이 086a 로 수렴하는가 (T0021) ───────────────
+# 8. Both applied histories of the 0332 ledger converge on 086a (T0021).
 #
-# 이 그룹의 ledger 마이그레이션은 085 로 태어나 086 으로 한 번 옮겨졌고, 병렬 작업이
-# 086 을 먼저 가져가면서 086a 로 한 번 더 옮겨졌다. 그래서 **같은 파일에 이미 적용된
-# 이력이 둘**이다 — 첫 이동 전에 이 브랜치를 돌린 DB 는 085 를, 첫 이동 뒤에 돌린 DB 는
-# 086 을 장부에 들고 있고, 어느 DB 도 둘을 동시에 갖지 않는다. 위의 일괄 검사(7절)는
-# RENAMES 전체를 한꺼번에 넣고 돌리므로 수렴 항목 중 **첫 줄 하나만** 실제로 이관되는
-# 모양을 만든다. 두 이력을 각각 독립적으로 고정하는 것은 여기뿐이다.
+# This group created the ledger migration as 085, moved it to 086, then to
+# 086a when parallel work claimed 086 first. Thus the same file has two
+# applied histories: databases before the first move record 085; later ones
+# record 086. None records both. The bulk check in section 7 loads all
+# RENAMES together and actually carries over only the first convergent row.
+# This section tests each history independently.
 #
-# 그리고 장부 행만 보는 것으로는 부족하다. 이관이 새면 sqloader 가 086a 를 새 파일로
-# 알고 다시 적용하는데, ledger SQL 은 세 방언 모두 `group_git_state` 에 ADD COLUMN 을
-# 하고 그 어느 것도 멱등이 아니다(MySQL 은 8.0.29 미만이라 IF NOT EXISTS 자체가 없고,
-# SQLite 는 문법이 아예 없다). 그래서 아래 두 케이스는 진짜 `DatabaseMigrator` 를 다시
-# 세워 부팅 경로까지 통과시키고, 마지막 대조군이 "이관을 빼면 정말로 선다"를 보인다.
+# Ledger rows alone are insufficient. A missed carry-over makes sqloader
+# rerun 086a; ledger SQL adds columns to group_git_state in every dialect,
+# and none is idempotent (MySQL is below 8.0.29 without IF NOT EXISTS;
+# SQLite has no such syntax). Both tests construct a real DatabaseMigrator
+# through the boot path, and the control proves failure without carry-over.
 
 LEDGER_FINAL_NAME = "086d_tr_commit_ledger.sql"
 LEDGER_APPLIED_HISTORIES = ("085_tr_commit_ledger.sql", "086_tr_commit_ledger.sql")
@@ -239,7 +233,7 @@ LEDGER_APPLIED_HISTORIES = ("085_tr_commit_ledger.sql", "086_tr_commit_ledger.sq
 
 
 def _fresh_real_db(tmp_path, name: str) -> str:
-    """실제 sql/migrations/sqlite 를 처음부터 끝까지 적용한 DB 를 만든다."""
+    """Build a database using every real sql/migrations/sqlite file in order."""
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     db_path = str(tmp_path / name)
@@ -248,7 +242,7 @@ def _fresh_real_db(tmp_path, name: str) -> str:
 
 
 def _rewind_ledger_row(db_path: str, history: str) -> None:
-    """086a 행 하나를 옛 이름으로 되돌려, 그 이력을 가진 실제 DB 모양을 만든다."""
+    """Rewind the 086a row to its old name to reproduce that database history."""
     conn = sqlite3.connect(db_path)
     try:
         cursor = conn.execute(
@@ -268,22 +262,22 @@ def _rewind_ledger_row(db_path: str, history: str) -> None:
 
 
 
-# ── 9. 081 순번의 두 이력이 081a 로 수렴하는가 (0452, "duplicate column name: provider_id") ──
+# 9. Provider histories converge on 081a (0452, duplicate column name: provider_id).
 #
-# 080_workflow_sequence_provider.sql 은 T0007 이 081 로 옮겼는데, 그 081 을
-# flowgate.default.0410 이 병렬 브랜치에서 081_document_origin_snapshot.sql 로 독자적으로
-# 먼저 차지해 두 번째 충돌이 생겼다(위 086a 사례와 같은 모양, 한 순번 앞). 이번에는
-# `test_no_two_migrations_share_an_ordinal` 이 병합 시점에 잡지 못한 채로 있다가, 실제
-# `DatabaseMigrator` 재부팅에서 `duplicate column name: provider_id` 로 드러났다 — 이관 없이
-# 081a 로만 옮기면 080 이나 081 로 이미 적용해 둔 DB 가 재부팅 때 이 파일을 새 마이그레이션
-# 으로 착각해 두 번째로 적용하다 죽는다.
+# T0007 moved 080_workflow_sequence_provider.sql to 081, but parallel group
+# flowgate.default.0410 had already claimed 081_document_origin_snapshot.sql.
+# This caused a second collision, like 086a above but one ordinal earlier.
+# test_no_two_migrations_share_an_ordinal missed it during merge; the real
+# DatabaseMigrator reboot exposed duplicate column name: provider_id.
+# Merely renaming to 081a without carry-over makes databases that applied
+# 080 or 081 treat the file as new and fail when applying it a second time.
 
 WORKFLOW_PROVIDER_FINAL_NAME = "081a_workflow_sequence_provider.sql"
-# 이력이 셋이다. 080 은 T0007 이전, 081 은 T0007 이후(stg PostgreSQL 장부가 이 이름을
-# 들고 있다), 080b 는 그 둘 어느 쪽도 아닌 **세 번째 철자**로, 실제 dev 배포
-# (FlowGate-dev/server/storage/flowgate.db)의 `migrations` 표에서 직접 읽었다 — 같은 080
-# 충돌을 T0007 과 다른 방식(글자 접미)으로 푼 또 다른 브랜치가 남긴 것이다. 이 세 번째
-# 이름이 이 문서의 두 번째 반려("081a_… : duplicate column name: provider_id")의 원인이다.
+# Three histories exist: 080 before T0007, 081 afterward (recorded in the STG
+# PostgreSQL ledger), and a third spelling, 080b, read directly from the
+# migrations table in the dev deployment (FlowGate-dev/server/storage/flowgate.db).
+# Another branch resolved the same 080 collision with a letter suffix instead.
+# This third name caused the second rejection: 081a duplicate provider_id.
 WORKFLOW_PROVIDER_APPLIED_HISTORIES = (
     "080_workflow_sequence_provider.sql",
     "080b_workflow_sequence_provider.sql",
@@ -300,7 +294,7 @@ WORKFLOW_PROVIDER_APPLIED_HISTORIES = (
 
 
 def _rewind_workflow_provider_row(db_path: str, history: str) -> None:
-    """081a 행 하나를 옛 이름으로 되돌려, 그 이력을 가진 실제 DB 모양을 만든다."""
+    """Rewind the 081a row to its old name to reproduce that database history."""
     conn = sqlite3.connect(db_path)
     try:
         cursor = conn.execute(
@@ -320,14 +314,14 @@ def _rewind_workflow_provider_row(db_path: str, history: str) -> None:
 
 
 
-# ── 10. 095 순번의 슬러그 개명이 이관되는가 (T0020, "duplicate column name: operator_api_base") ──
+# 10. Carry over the 095 slug rename (T0020, duplicate column name: operator_api_base).
 #
-# 095_ai_invoke_run_transport_diagnostics.sql 은 095_ai_invoke_api_diagnostics.sql 이라는
-# 이름으로 태어나 순번은 그대로 두고 슬러그만 바뀌었다. `reconcile_renamed_migrations` 의 두
-# 패스 모두 이 모양을 못 본다 — 1패스는 순번+슬러그가 같고 글자 접미만 다른 경우, 2패스는
-# 슬러그가 같고 순번만 다른 경우만 잡는다. 순번은 같고 슬러그만 다른 순수 개명은 정적
-# RENAMES 장부로만 이관할 수 있다. 실제 dev 프리뷰 DB(FlowGate/storage/flowgate.db)의
-# `migrations` 표에서 옛 이름을 직접 읽어 확인했다.
+# 095_ai_invoke_run_transport_diagnostics.sql began as
+# 095_ai_invoke_api_diagnostics.sql; only its slug changed, not its ordinal.
+# Neither reconcile_renamed_migrations pass handles this: pass 1 requires
+# matching ordinal/slug with a different letter suffix; pass 2 requires a
+# matching slug with a different ordinal. Only static RENAMES handles this
+# case, confirmed from migrations in the dev preview DB, FlowGate/storage/flowgate.db.
 
 MIGRATION_095_OLD_NAME = "095_ai_invoke_api_diagnostics.sql"
 MIGRATION_095_FINAL_NAME = "095_ai_invoke_run_transport_diagnostics.sql"
@@ -339,18 +333,18 @@ MIGRATION_095_FINAL_NAME = "095_ai_invoke_run_transport_diagnostics.sql"
 
 
 
-# ── 11. v0.2 의 136/137 사본이 남지 않고, 세 DB 이력이 모두 부팅되는가 (flowgate.v02.0081) ──
+# 11. Remove v0.2 copies of 136/137 and boot all three histories (flowgate.v02.0081).
 #
-# v0.2 는 main 의 136_chat_command_execution / 137_chat_activity_anchor 를 137/138 로 다시
-# 구현해 들고 있었다. 10-08 에 main 의 136/137 이 머지되자 같은 표·인덱스·컬럼을 두 번 만드는
-# 파일이 세 방언 모두에 생겼고, STG 부팅이 "idx_chat_cmd_run already exists" 로 섰다. 사본은
-# 지웠고, 사본에만 있던 stdout/stderr_truncated 두 컬럼은 157 이 채운다.
-# 아래는 그 자리를 지나는 DB 이력 셋을 `config.py` `run_migrations()` 와 같은 순서(migrator
-# 생성 -> reconcile_renamed_migrations -> apply_migrations)로 실제 재부팅한다.
-#   빈 DB      처음부터 157 까지
-#   main 먼저  main 의 136/137 까지 적용된 DB(STG 와 같은 이력)에 v0.2 가 올라온다
-#   v0.2 먼저  10-06~10-08 에 v0.2 사본 137/138 로 적용된 DB. 장부의 137/138 행은
-#              migration_rename_repair 2패스가 136/137 로 옮겨 적는다
+# v0.2 reimplemented main 136_chat_command_execution / 137_chat_activity_anchor
+# as 137/138. Merging main on 10-08 duplicated tables/indexes/columns in all
+# three dialects, stopping STG boot with idx_chat_cmd_run already exists.
+# The copies were removed; 157 adds their stdout/stderr_truncated columns.
+# Reboot all three histories in config.py run_migrations() order: construct
+# migrator, reconcile_renamed_migrations, then apply_migrations.
+#   Empty DB: apply everything through 157.
+#   Main first: install v0.2 over main 136/137, matching STG history.
+#   v0.2 first: 10-06 to 10-08 databases applied copies 137/138; the second
+#   migration_rename_repair pass carries those ledger rows over to 136/137.
 
 MAIN_CHAT_FILES = ("136_chat_command_execution.sql", "137_chat_activity_anchor.sql")
 V02_CHAT_COPIES = {
@@ -383,7 +377,7 @@ def _boot_like_config(db_path: str) -> list[tuple[str, str]]:
 
 
 def _db_from_history(tmp_path, name: str, files: dict[str, str]) -> str:
-    """주어진 파일 집합만 든 임시 디렉터리로 실제 migrator 를 돌려 그 이력의 DB 를 만든다."""
+    """Use the real migrator on a temporary file set to build that database history."""
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     history_dir = tmp_path / f"{name}_migrations"
@@ -396,7 +390,7 @@ def _db_from_history(tmp_path, name: str, files: dict[str, str]) -> str:
 
 
 def _main_first_history() -> dict[str, str]:
-    """main 의 136/137 까지 — STG 에서 v0.2 부팅이 멈춘 바로 그 자리."""
+    """Main through 136/137: the exact point where v0.2 failed to boot on STG."""
     return {
         p.name: p.read_text(encoding="utf-8")
         for p in _files("sqlite") if p.name <= MAIN_CHAT_FILES[-1]
@@ -404,7 +398,7 @@ def _main_first_history() -> dict[str, str]:
 
 
 def _v02_first_history() -> dict[str, str]:
-    """main 의 136/137 대신 v0.2 사본 137/138 로 적용된 이력. 사본은 truncated 두 컬럼을 더 가졌다."""
+    """History with v0.2 copies 137/138 instead of main 136/137, plus two truncated columns."""
     files = _main_first_history()
     command = files.pop(MAIN_CHAT_FILES[0])
     marker = "    stderr_tail      TEXT NULL,\n"

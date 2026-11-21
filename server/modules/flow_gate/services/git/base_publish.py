@@ -1,5 +1,5 @@
-"""Base publish job: manual push and unmerge (flowgate.default.0669 unit 7c; 0666 0008-D
-§3.6.1, §7, 0009-L §2.28, §4.4).
+"""Base publish job: manual push and unmerge (the earlier change unit 7c; the design
+,, the earlier implementation).
 
 Neither path takes the old project mutex any more. The request registers a
 ``base_publish`` job and runs it once right away with its own claim (as worktree_provision
@@ -36,7 +36,7 @@ Deviations recorded as design changes (0669 chat):
 Unit 9a: a manual (non-approval) finalize is a job of this kind too, with action
 ``finalize``; its executor and resume live in ``finalize_publish``.
 
-0066 D#1: actions ``manual_merge`` and ``merge_result_push`` are jobs of this kind as
+actions ``manual_merge`` and ``merge_result_push`` are jobs of this kind as
 well; their executors, phases and resume live in ``manual_merge``.
 """
 from __future__ import annotations
@@ -62,7 +62,7 @@ KIND = "base_publish"
 PUSH = "push"
 UNMERGE = "unmerge"
 FINALIZE = "finalize"     # unit 9a: finalize_publish
-# 0066 D#1 §2-2: a manual merge and the follow-up push of a manual merge result
+# a manual merge and the follow-up push of a manual merge result
 # (executors in manual_merge; both take G -> B/W -> R for their whole run).
 MANUAL_MERGE = "manual_merge"
 MERGE_RESULT_PUSH = "merge_result_push"
@@ -292,7 +292,7 @@ def _plan_push(ctx: store.JobContext, op: _Op) -> None:
     b = _acquire(ctx, "B", op) if pushes_base else None
     try:
         if pushes_base:
-            _guard_base(op)                      # 0205 §2.2, 2nd gate under B
+            _guard_base(op)                      # , 2nd gate under B
         sha = _rev(op.repo, f"refs/heads/{op.branch}")
         if sha is _READ_ERROR:
             raise _transient("ref_check_failed")

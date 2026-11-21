@@ -1,4 +1,4 @@
-"""flowgate.default.0661 T0004: Q auto-answer — reviewer baseline, sequential Q, failure
+"""Q auto-answer — reviewer baseline, sequential Q, failure
 visibility, user-decision hand-off, provenance and the self-answer guard.
 
 Every test drives the production functions (review.resolve_question_responder_with_source,
@@ -11,7 +11,7 @@ reimplementation of them. Two harnesses:
   * a real sqlite file with EVERY migration applied (incl. 142) for q_service / routes,
     because the CAS writes (`_execute_affected`) and the migration columns are the point.
 
-T0004 "이관 오동작 방지 필수 테스트" and "필수 비발동 회귀 테스트" map onto the classes below:
+"required handoff safety tests" and "required non-trigger regression tests" map onto the classes below:
   TestResolveQuestionResponderBaseline    F1 — reviewer tiers, review_count=0 vs unset
   TestDispatchBoundaries                  non-trigger: old / human / other-run Qs never dispatch
   TestSequentialQuestions                 F2 — Q1→Q2 one at a time, from the responder's own
@@ -258,7 +258,7 @@ class TestResolveQuestionResponderBaseline:
                             lambda doc_ref, item_seq: (count, reviewer))
 
     def test_sequence_only_reviewer_answers_its_step(self, monkeypatch):
-        # 0003-NR §2.2: the reviewer lives only on the stored workflow sequence (no runtime
+        # the reviewer lives only on the stored workflow sequence (no runtime
         # override) — before 0661 the header pick silently won here.
         self._stored(monkeypatch, 1, "aip_reviewer")
         assert review.resolve_question_responder_with_source(
@@ -277,7 +277,7 @@ class TestResolveQuestionResponderBaseline:
 
     def test_reviewer_unset_with_count_falls_to_header_not_project_default(self, monkeypatch):
         # review_count>0 / reviewer NULL = "general gate uses the project default"; a
-        # question keeps the header pick ahead of that (0551 T#1 tier order).
+        # question keeps the header pick ahead of that (tier order).
         self._stored(monkeypatch, 1, None)
         assert review.resolve_question_responder_with_source(
             None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
@@ -1141,7 +1141,7 @@ class TestQServiceGuards:
 
     def test_escalation_does_not_resume_the_parked_chain(self, store, monkeypatch):
         # The open-Q gate of auto_resume_answered_chain is what keeps the chain parked; an
-        # escalated item is still open, so resume_chain is never reached. 0688 T#2: the gate
+        # escalated item is still open, so resume_chain is never reached. the earlier implementation: the gate
         # holds on the parked hop's OWN items, so the item is the requester's -- as it always
         # is in production, a responder is only ever dispatched for those.
         from modules.flow_gate.services import ai_invoke_service

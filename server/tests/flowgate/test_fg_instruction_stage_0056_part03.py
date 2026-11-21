@@ -80,7 +80,7 @@ def test_a_report_the_instruction_ai_registered_as_its_stage_ended_never_becomes
     (``contact_then_end``), the whole request after the end (``end_then_contact``), or a registration whose contact
     saw nothing and whose consume lands after the end (``committed_after_end``: a PostgreSQL commit after the
     boundary). Its token is the instruction stage's, so no contact, run read or resume binds it; the node's real
-    result — the result AI's report, or after a failure a person's with the dispatch token (L0009 E-23) — binds on
+    result — the result AI's report, or after a failure a person's with the dispatch token — binds on
     its contact or by the reconciliation after a lost one."""
     key, job, token, _none = _new_instruction_start(env, monkeypatch, stray=False)
     if end == "result":
@@ -191,7 +191,7 @@ def test_a_stopped_run_finishes_both_stages_of_a_card_it_opened(env, decided, mo
     assert _resume(env)["status"] == "completed"
 def test_an_issuer_without_document_approve_still_has_the_instruction_and_result_approved_automatically(
         env, decided, monkeypatch):
-    """flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3: 0083 T#4 개정). Before,
+    """expectation revised (NR the earlier change, Q #511 o3: the earlier implementation revised). Before,
     an issuer without ``document.approve`` left the instruction unapproved and the card waiting for a person's approval.
     An AI card's automatic approvals now take the server's automatic approval authority: the instruction and the result
     are approved, the card never awaits approval, the issuer stays the approval's actor and the system's authority is

@@ -1,4 +1,4 @@
-"""Regression guard for R0001 / group 0025 TR: the SSE idle heartbeat must be a
+"""Regression guard for the requirement / the earlier change TR: the SSE idle heartbeat must be a
 client-observable named `ping` event, not a bare `:` comment.
 
 The browser EventSource swallows comment lines (they fire no JS event), so a

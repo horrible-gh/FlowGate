@@ -61,7 +61,7 @@ def _failure(exc: tr2.Tr2ValidationError) -> JSONResponse:
 
 
 def _unexpected(doc_id: str, exc: Exception) -> JSONResponse:
-    # Exception text and host paths stay in the operator log (T0030 §5).
+    # Exception text and host paths stay in the operator log.
     log.exception("TR2 request failed for %s", doc_id)
     return JSONResponse(status_code=500, content=error_payload("tr2_internal_error"))
 

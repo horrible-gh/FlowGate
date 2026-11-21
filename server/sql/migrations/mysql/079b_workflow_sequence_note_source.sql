@@ -24,7 +24,7 @@ ALTER TABLE workflow_sequence_items
 ALTER TABLE workflow_sequence_items
     ADD COLUMN source_revision_no INTEGER DEFAULT NULL;
 
--- DB0012 §5 불변식 2: a revision number without the document it belongs to is meaningless.
+-- DB0012 §5 invariant 2: a revision number without the document it belongs to is meaningless.
 ALTER TABLE workflow_sequence_items
     ADD CONSTRAINT ck_wfseq_items_source_revision
         CHECK (source_revision_no IS NULL OR source_doc_id IS NOT NULL);

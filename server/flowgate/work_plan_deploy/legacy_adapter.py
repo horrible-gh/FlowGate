@@ -1,4 +1,4 @@
-"""Reuse boundary of the work plan deploy (flowgate.v02.0074 T#4, D0006 §2 / §4).
+"""Reuse boundary of the work plan deploy.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only: the WP document row, its
 plan body and pre-instruction attachments, the WP save lock, the Flow guard and the document row lock, the Graph's

@@ -1,6 +1,6 @@
-"""flowgate.default.0505 TR0023: GLM 기동 실패(getaddrinfo) 진단 경로 고정 테스트.
+"""tests pinning GLM spawn-failure (getaddrinfo) diagnostics.
 
-TR0023 concluded that two differently-labelled failures sharing one UI shape are two
+concluded that two differently-labelled failures sharing one UI shape are two
 different code paths, both behaving as designed:
   * "기동 실패 — <urlopen error [Errno 11001] getaddrinfo failed>" (spawn_failed):
     _api_execute's first-turn transport-exception branch returns
@@ -11,7 +11,7 @@ different code paths, both behaving as designed:
     the turn loop ran to max_turns (docs_target=1 x API_MAX_TURNS_PER_DOC=4) without
     register_document, and _no_output_detail names that diagnosis verbatim.
 
-No source change was made in TR0023 — this file only pins those behaviors so a future
+No source change was made in the earlier implementation — this file only pins those behaviors so a future
 edit that silently moves either diagnosis fails here first.
 """
 from __future__ import annotations

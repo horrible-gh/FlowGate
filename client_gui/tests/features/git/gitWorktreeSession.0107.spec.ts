@@ -8,7 +8,7 @@ import type { GitWorktreeSource } from '@/features/git/gitSource'
 import { G, P, createFakeGitSource, gitError, manualSleep, networkError, status } from './fakeGitSource'
 import { createFakeWorktreeSource, flowWorkBase } from './fakeWorktreeSource'
 
-// flowgate.v02.0107 T#1 — the Group worktree session as the one owner of the active Flow's work
+// the Group worktree session as the one owner of the active Flow's work
 // base (D §3.2, §3.3, §6.2-5 / 6 / 8): when it is read and when not, what an answer must name to
 // apply, what a stale / failed / mismatched answer leaves, the shared running read, and that a
 // re-read leaves E1 / E8 and confirm tickets alone. Fixtures keep two different bases apart: the

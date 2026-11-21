@@ -1,4 +1,4 @@
-"""The required outputs of a card's completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3 · seq 11 교체 3).
+"""The required outputs of a card's completion (T-3; the discussion seq 9 T-3 · seq 11 replacement 3).
 
 A node's ``review -> done`` looks at the card's required outputs only: its result — the node's completion record
 (``completion``) — and, when the card uses an instruction, that instruction, approved. Any other document of the card's
@@ -9,8 +9,8 @@ card's history. This replaces the removed card approval's ``pending_documents`` 
                       the required outputs of the card of ``node`` other than its result ``result_doc_id`` that are not
                       complete yet — the instruction the card uses when it exists (submitted, or written and never
                       submitted) and is not approved. A line's untouched empty draft is no output, nor a document an ended
-                      attempt of the node left behind (``stale``, 0061 T#7).
-                      flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P2): when the card uses an instruction and no
+                      attempt of the node left behind (``stale``, the earlier implementation).
+                      (rej_01M6DQW6YF0SCQ5D P2): when the card uses an instruction and no
                       live document of it exists — no instruction line, only its empty draft, only an ended attempt's
                       document — the instruction is missing and the card is not complete: ``MISSING + <type>`` is
                       answered (a required output with no document yet). Only a card that uses no separate instruction is
@@ -21,7 +21,7 @@ card's history. This replaces the removed card approval's ``pending_documents`` 
                       attempt's plan, else the card's stored instruction use), or None
 
 ``card_lines_of`` / ``is_target`` / the ``stale`` lines are the removed card approval's line reads, moved here unchanged
-(approval-free reads; T-3: "승인 무관 함수는 삭제하지 않고 이전").
+(approval-free reads; T-3: "move approval-independent functions without deleting them").
 """
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ from flowgate.card_documents import slots
 APPROVED = ("approved", "wf_done")
 # A submitted document of a line (an empty draft the card made has no review status yet).
 SUBMITTED = ("pending_review", "revised", "rejected") + APPROVED
-# flowgate.v02.0119 T#4 rework (P2): a required instruction with no live document — "missing:<type>"
+# (P2): a required instruction with no live document — "missing:<type>"
 MISSING = "missing:"
 
 
 def card_lines_of(flow_id: str, node: dict) -> list[dict]:
     """The card's lines of the kind the run's revision gives the node, each with its live document; a line whose
     document was never submitted also tells whether a person wrote it (``written``: a body after the front matter,
-    ``card_documents.lines.has_body``), and a document an ended attempt left behind is ``stale`` (0061 T#7)."""
+    ``card_documents.lines.has_body``), and a document an ended attempt left behind is ``stale``."""
     docs = {d["doc_id"]: d for d in card_docs.flow_documents(flow_id) if d.get("doc_id")}
     stored = card_lines.lines_by_node(flow_id, docs, [node["node_key"]]).get(node["node_key"], [])
     lines = slots.lines_of(node.get("node_type"), node.get("doc_type"), stored)
@@ -89,7 +89,7 @@ def _one_stage(flow_id: str, node: dict, result_doc_id: Optional[str], wanted: s
 def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> list[str]:
     """``card_completion_ports.pending_outputs`` handler: the required outputs other than the result not complete yet —
     the live instruction documents the card uses that are not approved, or ``MISSING + <type>`` when the card uses an
-    instruction and none of it lives (flowgate.v02.0119 T#4 rework P2: a missing, empty or stale required instruction
+    instruction and none of it lives (the earlier change the earlier implementation rework P2: a missing, empty or stale required instruction
     never lets the result complete the card)."""
     if node.get("node_type") == "gate" or not node.get("node_key"):
         return []

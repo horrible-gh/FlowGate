@@ -1,6 +1,6 @@
-"""flowgate.v02.0090 T#1 — managed delete + delete journal for token scratch (NR0003 §6.2).
+"""managed delete + delete journal for token scratch.
 
-1. Representative success: a real Git ReadOnly loose object (the B0001 WinError 5)
+1. Representative success: a real Git ReadOnly loose object (the the regression WinError 5)
    is removed by one retry; the journal is written before the delete and dropped
    after it; an external sentinel behind a junction and out-of-scope candidates stay.
 2. Representative failure → resume: a partial delete that already lost the
@@ -120,7 +120,7 @@ def test_readonly_git_objects_are_deleted_once_and_journaled_first(owned, monkey
     _git(repo, "commit", "-q", "-m", "probe")
     readonly = _readonly_objects(repo)
     assert readonly, "git did not leave a ReadOnly loose object"
-    # The B0001 condition: the plain unlink that rmtree issues is refused (WinError 5).
+    # The the regression condition: the plain unlink that rmtree issues is refused (WinError 5).
     with pytest.raises(PermissionError) as refused:
         os.unlink(readonly[0])
     assert getattr(refused.value, "winerror", None) == 5 and readonly[0].exists()

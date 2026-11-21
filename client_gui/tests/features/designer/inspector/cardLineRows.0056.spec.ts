@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — the three states of a card line and its row actions (O3 0009-TR §4-1 · §4-2 · §4-3), on
+ * the three states of a card line and its row actions, on
  * the real Frame and registry with the document windows mounted and `@shared/api` mocked:
  * - slotStateView / slotFill / slotLineCard decide once: no document → "문서 없음" + [작성]; a document without a body
  *   → "비어 있음" (no words since 0017-CH: a dashed line with a hollow document icon, "비어 있음" its hover text;
@@ -134,7 +134,7 @@ async function typeInto(selector: string, value: string) {
   await flushPromises()
 }
 
-/** A task card: the 지시서 written but empty (no body), the 레포트 without a document. */
+/** A task card: the instruction written but empty (no body), the report without a document. */
 const TASK = card('gn_t', 'T', [
   line('instruction', 'T', doc('0011', 'T'), { hasBody: false, reviewCount: 0, rejectionCount: 0, historyCount: 0 }),
   line('report', 'TR', null, { hasBody: false, reviewCount: 0, rejectionCount: 0, historyCount: 0 }),
@@ -162,7 +162,7 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
       historyDetail: null,
       actions: [{ key: 'write', state: 'enabled' }],
     })
-    // The 시나리오 line shares the 지시서 document: no [작성] of its own.
+    // The 시나리오 line shares the instruction document: no [작성] of its own.
     expect(slotLineCard({ id: null, empty: true }, { slot: 'scenario', docType: 'TS', docId: null }, changeable).actions).toEqual([])
     expect(slotLineCard({ id: null, empty: true }, { slot: 'report', docType: 'TR', docId: null }, { ...changeable, changeable: false }).actions).toEqual([])
     expect(
@@ -176,7 +176,7 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
     expect(slotLineCard({ id: 'd', empty: false }, undefined, changeable)).toEqual({ cardSlot: null, blank: false, historyCount: null, historyDetail: null, actions: [] })
   })
 
-  // flowgate.v02.0070 T#4: the blank wording is drawn now (before: text '').
+  // the blank wording is drawn now (before: text '').
   it('slotStateView: a blank line draws no badge, its words instead (also its hover text); an empty line still wins', () => {
     expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '본문 비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '본문 비어 있음', title: '본문 비어 있음', quiet: false })
     expect(slotStateView(null, true, '문서 없음', '비어 있음')).toMatchObject({ kind: 'empty', text: '문서 없음' })
@@ -227,7 +227,7 @@ describe('the three states on the documents tab (flowgate.v02.0056 F2-2)', () =>
     frame = null
     const plan = { ...card('gn_wp', 'WP', [line('plan', 'WP', doc('0003', 'WP'), { hasBody: false }), line('deploy', 'M', doc('0004', 'M'), { hasBody: false })]), kind: 'plan' }
     await mountFrame(plan)
-    // flowgate.v02.0072 T#3: the WP card shows its 작업계획 line only (no 전개 document line).
+    // flowgate.v02.0072 T#3: the WP card shows its 작업계획 line only (no deployment document line).
     expect(rows().map((item) => item.attributes('data-blank') ?? 'false')).toEqual(['false'])
   })
 

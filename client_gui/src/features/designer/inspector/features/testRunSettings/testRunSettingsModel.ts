@@ -1,10 +1,10 @@
 // flowgate.v02.0051 stage 2 — the 테스트 card's own settings (0035 v7 testSettings): the 실행 block — v7 took
 // the card-wide automated / manual choice out: the execution mode is per Case, the settings tab shows the
 // counts only, and the manual · external result flow is not drawn. Pure functions.
-// flowgate.v02.0053 T#7 — the block stands after the settings feature's 지시서 · 시나리오 작성
+// flowgate.v02.0053 T#7 — the block stands after the settings feature's instruction · 시나리오 작성
 // (v7 order; those are the card's T#2 settings). The card stores nothing for the 실행 block (each Case keeps
 // its mode in the TS, 0549 contract 2), so the block shows the TS's Case counts by mode, read from the card's
-// TS (its 지시서 line, else the bound TS); "—" while nothing is known.
+// TS (its instruction line, else the bound TS); "—" while nothing is known.
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export interface TestRunModes {
@@ -25,7 +25,7 @@ export interface TestRunSpecFacts {
 
 export type TestRunSettingsFacts = Pick<InspectorTarget, 'docId' | 'docType' | 'cardDocuments'>
 
-/** The TS whose Cases the block counts: the card's 지시서 line, else the bound TS; null without one. */
+/** The TS whose Cases the block counts: the card's instruction line, else the bound TS; null without one. */
 export function testRunSettingsSpecDocId(facts: TestRunSettingsFacts): string | null {
   const own = facts.cardDocuments.find((line) => line.slot === 'instruction')?.docId ?? null
   if (own) return own

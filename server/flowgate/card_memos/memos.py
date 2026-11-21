@@ -1,4 +1,4 @@
-"""Card memo rules (flowgate.v02.0056 T#3): the memo fields, what a create / change request may carry, and the
+"""Card memo rules: the memo fields, what a create / change request may carry, and the
 "User memos" section the card's AI is given.
 
 - A memo has a title (required, one line, at most ``TITLE_MAX_LEN``), a body (text, may be empty, at most
@@ -6,7 +6,7 @@
   times are the server's.
 - A create carries ``title`` and optionally ``body`` / ``ai_ref``; a change carries any of the three (at least
   one). Any other key is refused (422 ``unknown_field``), as the card settings PATCH refuses one.
-- AI reading (0002-CH turn 6 §8): only the memos turned on go to the AI, every time the card's AI starts — there
+- AI reading (CH): only the memos turned on go to the AI, every time the card's AI starts — there
   is no "read once then locked" rule. They are not documents, so they are not reference links (``ref_doc_ids``):
   the section carries each memo's title and body, in the order the memos were written, before the mention (as
   ``prepend_messages_section`` places the user messages). The whole section — its header, every title, body and

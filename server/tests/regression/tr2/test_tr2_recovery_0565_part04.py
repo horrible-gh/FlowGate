@@ -38,7 +38,7 @@ from tests.regression.tr2.test_tr2_recovery_0565 import (
 
 def test_time_machine_reopen_reaches_open_tr2_screens(env, monkeypatch):
     """A rewind changes a 반영안's approval and source history outside the TR2 routes; open
-    screens must hear about it (T0030 §11-6) and must not call it ready afterwards."""
+    screens must hear about it and must not call it ready afterwards."""
     import modules.flow_gate.api.v1.events.publisher as publisher
     from modules.flow_gate.api.v1.events.event_types import EventType
     from modules.flow_gate.db import tr_commit_ledger as db_ledger

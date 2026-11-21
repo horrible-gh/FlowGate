@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0010 rev3 — "머지는 되지도 않음" (2026-09-08 10:33).
+""""the merge does not even happen" (2026-09-08 10:33).
 
 Approval validated the WHOLE merge candidate with the WRITE PLAN's rule, so any
 merge carrying a file type with no registered syntax validator (`.md`, `.txt`,
@@ -6,7 +6,7 @@ merge carrying a file type with no registered syntax validator (`.md`, `.txt`,
 answer `pre_commit_validation_failed`. Pressing [승인] never merged, and no retry
 could change that.
 
-L0007 §2.7 scopes that rule to "변경되거나 생성된 모든 **plan** 대상 파일"
+scopes that rule to "all changed or newly created **plan** target files"
 (`syntax_validation_scope`), which is the write-plan path — and the apply gate there
 already refuses such a plan, so a plan-written file with an unregistered extension
 can never reach a candidate. Approval therefore skips the verdict it has no
@@ -167,7 +167,7 @@ def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch, gr
     fingerprint check before it reaches the validator; this drives it to exactly
     that point and stops there, so the assertion is about the argument and nothing
     else. The end-to-end proof that the merge now commits and pushes is the real
-    approval run recorded in 0011-TR §단계별 확인.
+    approval run recorded in the earlier implementation §step-by-step verification.
     """
     seen: dict[str, str] = {}
 
@@ -209,7 +209,7 @@ def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch, gr
 
 
 
-# 0096 T0004 — frozen-parent inheritance and BOM regressions.
+# frozen-parent inheritance and BOM regressions.
 _BALANCED = 'fixture = """\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> group/branch\n"""\n'
 _ASYMMETRIC = 'fixture = """<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> group/branch\n"""\n'
 _PREFIX = ''.join(f'# before {i}\n' for i in range(25))

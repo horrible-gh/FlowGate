@@ -1,4 +1,4 @@
-"""AI invoke endpoints (flowgate.default.0187 P0005).
+"""AI invoke endpoints.
 
 POST /api/v1/ai-invoke/start          — admit + launch a run (session auth)
 GET  /api/v1/ai-invoke/{run_id}       — status (running / finished payload)
@@ -7,7 +7,7 @@ POST /api/v1/ai-invoke/{run_id}/cancel — tree-kill cancel
 
 The work token is minted server-side and injected only into the run's
 environment — unlike the copy-mention flow, the raw token is never returned to
-the browser (P0005, notation rules).
+the browser (notation rules).
 """
 from __future__ import annotations
 
@@ -99,21 +99,21 @@ class AiInvokeStartRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
-    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # the ai_direct chain's per-item_seq N/T auto-approve selection.
     # Validated (422) below when the request is a fresh continuous 'new' start.
     continuation_auto_approve_item_seqs: Optional[list[int]] = None
-    # 0317 T0010 rev4: item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
+    # item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
     # per-step override table. Session-scoped — consulted once, at start_run, never persisted.
     continuation_provider_overrides: Optional[dict[str, str]] = None
-    # 0346 T0005: handoff-note tab values — a common note for every hop and item_seq (string
+    # handoff-note tab values — a common note for every hop and item_seq (string
     # keys) -> note overrides for individual hops. Session-scoped, same as the provider map.
     continuation_default_note: Optional[str] = None
     continuation_note_overrides: Optional[dict[str, str]] = None
-    # flowgate.default.0400 M0005 + 0446 T0010 §3-1: this run's wall-clock budget in seconds.
+    # + the earlier implementation: this run's wall-clock budget in seconds.
     # The name says `continuation_` but the field is mode-independent and always was: the
     # range check below never looked at `mode`, and the start_run call at the bottom of this
     # module forwards it unconditionally. ContinuousWorkDialog sends it for a continuous hop;
-    # AiInvokeDialog sends it for a single rejection rework (T0010 §3-6). Session-scoped like
+    # AiInvokeDialog sends it for a single rejection rework. Session-scoped like
     # the fields above — omitted, or out of range, falls back to the engine's own default for
     # that mode (ai_invoke_service._resolve_timeout_sec).
     continuation_step_timeout_sec: Optional[int] = None
@@ -122,7 +122,7 @@ class AiInvokeStartRequest(BaseModel):
     # like the field above; omitted or unrecognized falls back to the engine's own
     # default (ai_invoke_service.RESTART_MAX_ATTEMPTS_DEFAULT).
     continuation_restart_max_attempts: Optional[int] = None
-    # 0414 P0007 [검수] 탭: item_seq (string or int keys) -> review count, and -> reviewer
+    # 0414 P0007 [검수] tab: item_seq (string or int keys) -> review count, and -> reviewer
     # provider_id. Session-scoped like the maps above. Deliberately NOT narrowed to
     # dict[str, int] / dict[str, str]: a narrowed type would make pydantic emit FastAPI's own
     # error envelope for a bad value while every other failure here emits validation_failed,
@@ -139,7 +139,7 @@ class AiInvokeStartRequest(BaseModel):
     # One-request acknowledgement; never persisted or accepted for continuous runs.
     capability_warning_ack: Optional[bool] = None
     merge_id: Optional[int] = None
-    # Parallel-invoke extras (group 0223): context the matching copy-mention flow
+    # Parallel-invoke extras (the earlier change): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
     selected_docs: Optional[list[str]] = None      # next_step_message reference docs
     messages: Optional[list[str]] = None           # next_step_message / resolve_conflict / edit user messages
@@ -154,19 +154,19 @@ class AiInvokeStartRequest(BaseModel):
     # this value onto the session BEFORE the run starts — the run's own eventual
     # /resolve or /resolve-token submission never carries or can change it.
     auto: Optional[bool] = None
-    # flowgate.v02.0152: names one AI-call press of a chat (8..200 of [A-Za-z0-9._:-]). The
+    # names one AI-call press of a chat (8..200 of [A-Za-z0-9._:-]). The
     # browser resends the same press with the same id after a /start that got no answer,
     # and gets the run the first request admitted -- running or finished -- instead of a
     # second run. Chat only; see services/chat_start_requests.py.
     client_request_id: Optional[str] = None
-    # flowgate.v02test.0030: how the browser came to pick provider_id for this chat call --
+    # how the browser came to pick provider_id for this chat call --
     # user_pick / stored / last_answered / default_fallback. Recorded on the run
     # (ai_invoke_runs.client_provider_origin) so a run on an unexpected AI can be traced to the
     # screen path that chose it. Chat only; it never changes which provider runs.
     client_provider_origin: Optional[str] = None
 
 
-# flowgate.v02test.0030: the values client_provider_origin may take.
+# the values client_provider_origin may take.
 CLIENT_PROVIDER_ORIGINS = frozenset({"user_pick", "stored", "last_answered", "default_fallback"})
 
 
@@ -183,7 +183,7 @@ _TOKEN_SCOPE = {
     "next_step_message": "new",
     "design_handoff": "new",
     "work_plan_fill": "edit",
-    # 0405 P0004 [AI invoke]: a proposal WRITES a work plan that does not exist yet, so it
+    # [AI invoke]: a proposal WRITES a work plan that does not exist yet, so it
     # takes a 'new' token and goes through advance_workflow — the same path [copy mention] uses,
     # which is what keeps the pasted text and the invoked text one function's output.
     # Not to be confused with work_plan_fill, which EDITS an existing plan.
@@ -193,10 +193,10 @@ _TOKEN_SCOPE = {
 # identity fallthrough of `_TOKEN_SCOPE.get`), because each is minted by a dedicated service
 # that also builds its mention — see the issue_builder branches in `start_ai_invoke`.
 #
-# 0268 B0001: workflow_sequence_edit and test_run were the last two token scopes with a
+# workflow_sequence_edit and test_run were the last two token scopes with a
 # [copy mention] entrance but no in-app AI invoke — their surfaces (WorkflowDecisionModal,
 # TestRunStrip) sit outside MainPanel's invoke wiring, so the parallel-invoke pass
-# (group 0223) never reached them and this allowlist kept the gap structural.
+# (the earlier change) never reached them and this allowlist kept the gap structural.
 _ALLOWED_SCOPES = (
     *_TOKEN_SCOPE.keys(),
     "review",
@@ -207,7 +207,7 @@ _ALLOWED_SCOPES = (
     "resolve_base_dirty",
 )
 
-# T0011 item 6: the resolve_base_dirty worker mention's decision contract, one locale per
+# the resolve_base_dirty worker mention's decision contract, one locale per
 # key so the census scanner (test_korean_source_census_0430.py) sees a single Hangul-bearing
 # source line for ko instead of one per sentence.
 _RESOLVE_BASE_DIRTY_CONTRACT = {
@@ -303,16 +303,7 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     prompt every non-timeout rework has always got, byte for byte.
     """
     doc = db_docs.get_by_id(doc_ref) or {} if doc_ref else {}
-    history = doc.get("rejection_history") or []
-    if isinstance(history, str):
-        try:
-            import json as _json
-            history = _json.loads(history) or []
-        except Exception:
-            history = []
-    last = reject_reason or doc.get("rejection_reason")
-    section = invoke_mention_service.build_rejection_section(history, last)
-    # 0446 T0016 §4-1: read the group's newest finished run BEFORE this one starts. The run
+    # read the group's newest finished run BEFORE this one starts. The run
     # being launched writes its own row only at finalize, so the row found here really is
     # the previous hop's. `previous_timeout_handoff` answers None for everything except a
     # timeout on this same document, and an empty block for None is what keeps the
@@ -320,10 +311,8 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     handoff = invoke_mention_service.build_previous_run_section(
         ai_invoke_service.previous_timeout_handoff(group_id, doc_ref), locale,
     )
-    # Both leading chunks already end in a blank line, so joining on "\n" leaves exactly one
-    # blank line between every pair — the spacing the rejection section alone produced.
-    leading = [chunk for chunk in (section, handoff) if chunk]
-    return "\n".join(leading) + "\n" + base if leading else base
+    # The rejection section and the join are the shared assembly.
+    return invoke_mention_service.compose_rework_mention(base, doc, reject_reason, handoff=handoff)
 
 
 def _explicit_request(route):
@@ -358,7 +347,7 @@ def _settling_start_claim(claim, user_id: str, body: "AiInvokeStartRequest"):
             run_id = str((result or {}).get("run_id") or "")
             if run_id:
                 if chat_start_requests.complete(user_id, doc_ref, request_id, claim.token, run_id):
-                    # flowgate.v02gui.0011 B: the user stopped this press while it was being
+                    # B: the user stopped this press while it was being
                     # admitted. Its run is cancelled before this answer leaves, so the browser
                     # follows a run that is already stopping.
                     try:
@@ -402,7 +391,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     errors: list[dict] = []
     loop = body.document_review_loop
     if loop is not None:
-        # flowgate.default.0553 T0004 §3: 'rework' is the rejected-state entry's scope (both
+        # 'rework' is the rejected-state entry's scope (both
         # entry points open with action_scope='rework' — see AiInvokeDialog.vue's
         # reviewLoopAvailable comment). compute_review_baseline() (admission.py) still decides
         # the first hop from the document's own status, unchanged — this only widens WHICH
@@ -418,9 +407,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if body.provider_id is not None or body.provider_pinned not in (None, False):
             errors.append({"loc": "provider_id", "msg": "top-level provider selection is not allowed with document_review_loop"})
         allowed = {
-            # flowgate.default.0490 T0005 §4-6-1: the ceiling is dynamic; SSOT is
+            # the ceiling is dynamic; SSOT is
             # ai_execution_policy_service.repeat_count_choices, not a literal set here.
-            # "failure_restart_max_attempts" widens on purpose — NR0003 §4 said failure
+            # "failure_restart_max_attempts" widens on purpose — the review said failure
             # restart shares the SAME [-1, 0, 1..max] shape as every other repeat count.
             "review_count": set(ai_execution_policy_service.repeat_count_choices(allow_zero=False)),
             "review_criteria": {"document_type_default", "last_rejection_only"},
@@ -443,7 +432,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "review_intent", "msg": "must be normal or rerun"})
     if body.action_scope != "review" and body.review_intent != "normal":
         errors.append({"loc": "review_intent", "msg": "rerun is only available for review"})
-    # 0405 P0004: "mode is always single; this dialog never starts a continuous work chain."
+    # "mode is always single; this dialog never starts a continuous work chain."
     if body.action_scope == "work_plan_proposal" and body.mode != "single":
         errors.append({"loc": "mode", "msg": "work_plan_proposal must be single"})
     if body.mode == "continuous" and body.action_scope not in ("new", "edit", "workflow_decide"):
@@ -506,9 +495,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 validate_doc_id(body.doc_ref)
             except ValueError as exc:
                 errors.append({"loc": "doc_ref", "msg": str(exc)})
-    # 0414 P0007: shape and value checks are CHEAP, so they run here with the rest of the
+    # shape and value checks are CHEAP, so they run here with the rest of the
     # field validation — before the project lookup, before the token, before the scratch
-    # directory. A request that will be refused must not leave anything behind (0299 R0001).
+    # directory. A request that will be refused must not leave anything behind.
     #
     # workflow_decide is excluded for the same reason continuation_auto_approve_item_seqs is:
     # before the decision there are no item_seqs to key on, so the maps are dropped to None
@@ -573,7 +562,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if not dirty:
             return JSONResponse(status_code=409, content={
                 "code": "base_dirty_empty", "message": "No tracked base changes to resolve."})
-        # 0481 T0010 #1: those files are a merge that is stopped on a conflict, not stray
+        # #1: those files are a merge that is stopped on a conflict, not stray
         # edits — committing or discarding them would destroy the merge. Say so instead of
         # letting this fall through to a generic refusal further down.
         merge_in_progress = base_dirty.get("merge_in_progress")
@@ -592,7 +581,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if body.continuation_reworker_provider_id is not None:
         if body.mode != "continuous":
             return _validation_failed([{"loc": "continuation_reworker_provider_id", "msg": "requires continuous mode"}])
-        # flowgate.v02.0129 CH0012: the requester's own runnable AI counts as available.
+        # the requester's own runnable AI counts as available.
         if body.continuation_reworker_provider_id not in ai_group_service._available(user_id):
             return JSONResponse(status_code=422, content={"code": "reworker_unavailable",
                                                           "message": "The selected reworker is unavailable."})
@@ -617,7 +606,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             return JSONResponse(status_code=422, content={"code": "ai_group_provider_unavailable",
                                                           "message": "A concrete provider is unavailable."})
 
-    # Needs the DB, so it runs after the cheap field checks above (0242 NR0003 recommendation 3).
+    # Needs the DB, so it runs after the cheap field checks above.
     if (
         body.mode == "continuous"
         and body.action_scope != "workflow_decide"
@@ -628,7 +617,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if target_error:
             return _validation_failed([target_error])
 
-    # 0352 T0004 §2/§3.4: this is the FRESH client request naming the selection — the entry
+    # this is the FRESH client request naming the selection — the entry
     # point where the full 422 validation (including "already done") runs. workflow_decide
     # is excluded: no item_seq exists before the decision (§2 "no partial selection before the decision").
     continuation_auto_approve_item_seqs: list[int] = []
@@ -651,7 +640,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }])
 
     # 0414 P0007: the sequence-aware half of the [검수] validation. Needs the DB, so it runs
-    # after the cheap checks (0242 NR0003 권고 3) and after the auto-approve selection is
+    # after the cheap checks and after the auto-approve selection is
     # normalized — eligibility reads BOTH, because which steps have worker output depends on
     # the instruction mode this very request is asking for.
     if body.mode == "continuous" and body.action_scope != "workflow_decide":
@@ -714,7 +703,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             locale=locale,
             continuous=is_continuous,
             merge_id=body.merge_id,
-            # 0226 NR0003 §4 (incidental): the review-mode flag previously never reached the
+            # (incidental): the review-mode flag previously never reached the
             # mention builder, so a review-mode first hop got the no-stop block instead
             # of the Q-allowed review variant.
             continuous_review_mode=body.continuation_review_mode,
@@ -722,9 +711,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
 
     def _mention_builder(raw_token: str, scratch_dir: str):
         # Each extra scope reproduces the text its [copy mention] counterpart put on the
-        # clipboard (group 0223 parallel-invoke; builders in invoke_mention_service).
+        # clipboard (parallel-invoke; builders in invoke_mention_service).
         if body.action_scope == "chat":
-            # 0515 T0009 §8: one inspect, reused for both token_id and the real
+            # one inspect, reused for both token_id and the real
             # source_access this token was fixed with at issue time.
             _chat_token_rec = token_service.inspect_for_replay(raw_token)
             return invoke_mention_service.build_conversation_mention(
@@ -735,20 +724,20 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 raw_token=raw_token,
                 token_id=_chat_token_rec["token_id"],
                 api_base_url=_operator_facing_api_base(request),
-                # 0293: the AI turn header carries the provider. Unlike the copy path,
+                # the AI turn header carries the provider. Unlike the copy path,
                 # here the server knows who is being invoked — but only when the run
                 # cannot fall back to a different provider (see the helper's docstring).
                 provider=ai_invoke_service.resolve_pinned_provider_name(
                     body.project, body.provider_id,
                 ),
                 provider_id=body.provider_id,
-                # 0362 T0012: whoever pressed [AI invoke]. Their saved range decides how
+                # whoever pressed [AI invoke]. Their saved range decides how
                 # far back the worker is told to start reading.
                 user_id=user_id,
                 source_access=_chat_token_rec.get("source_access"),
-                # flowgate.v02test.0026: "execute" for an execute-mode chat token.
+                # "execute" for an execute-mode chat token.
                 command_access=_chat_token_rec.get("command_access"),
-                # flowgate.v02.0032 T#1: this token belongs to a live run, so the CLI
+                # this token belongs to a live run, so the CLI
                 # provider is told how to request commands for it (chat run hook port).
                 command_execution=True,
                 locale=locale,
@@ -810,7 +799,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 return None
             return context + invoke_mention_service.SECTION_SEPARATOR + base
         if body.action_scope == "edit":
-            # flowgate.v02.0056 T#3 (0002-CH turn 6 §4): the per-document AI invoke ([edit-AI invoke], reused by
+            # (CH): the per-document AI invoke ([edit-AI invoke], reused by
             # the v0.2 document tab) hands the person's comment to the AI as next_step_message does, and an AI
             # working on a Designer card's document reads that card's memos turned on for AI reading.
             base = _standard_mention(raw_token, scratch_dir)
@@ -821,9 +810,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return _standard_mention(raw_token, scratch_dir)
 
     issue_builder = None
-    # 0504 NR0003 §8 F2: set only on the continuous first-hop branch below.
+    # set only on the continuous first-hop branch below.
     continuous_first_hop = False
-    # flowgate.default.0553 T0004 §3/§4: the rejected-state rework entry may now also carry
+    # the rejected-state rework entry may now also carry
     # document_review_loop. It must reuse this SAME stage-aware issuer, not a second copy —
     # `loop_stage` (set below by admission.py from compute_review_baseline()) is what actually
     # decides review-scoped vs rework-scoped issuance, so the loop's first hop comes out
@@ -831,14 +820,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     # one-shot rework (no loop) must NOT take this path — it stays on _build_mention's
     # 'rework' branch below, unchanged.
     if body.action_scope == "review" or (body.action_scope == "rework" and loop is not None):
-        # 0393 B0001 / NR0003 §4-2: the keyword MUST be declared here. _call_issue_builder
+        # the keyword MUST be declared here. _call_issue_builder
         # inspects this signature and only hands the run id to a builder that names it, so a
         # bare `def _issue_review():` minted a review token with ai_run_id NULL — and the
         # reviewing worker was then refused by the very lease its own run had just taken
         # (mutation_policy: GROUP_AI_RUN_OWNER_MISMATCH). `_issue_first_hop` below is the
         # shape every issuer in this file has to keep.
         def _issue_review(ai_run_id: Optional[str] = None):
-            # 0417 T0013: a document_review_loop hop currently at the rework stage needs an
+            # a document_review_loop hop currently at the rework stage needs an
             # edit-scoped token — its worker calls POST /inbox action=edit, which 403s
             # ("Context binding mismatch") on anything but an edit-scoped token. This mirrors
             # _spawn_rework_hop's issue_rework_request for the continuous-chain review gate.
@@ -890,10 +879,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             )
         issue_builder = _issue_failure_origin_review
     if body.action_scope == "workflow_sequence_edit":
-        # 0268 B0001 (NR0003 defect 1): the invoke twin of WorkflowDecisionModal's [copy mention].
+        # (defect 1): the invoke twin of WorkflowDecisionModal's [copy mention].
         # Same issuer as POST /workflow/sequence-edit-request, so the worker reads the exact
         # prompt the clipboard path produced — only the delivery differs.
-        # 0393 NR0003 §6: same structural gap as review, simply never exercised since the
+        # same structural gap as review, simply never exercised since the
         # lease landed. Declared here so it can never surface as its own bug report.
         def _issue_sequence_edit(ai_run_id: Optional[str] = None):
             issued = workflow_decision_service.request_sequence_edit(
@@ -932,7 +921,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_work_plan_fill
     if body.action_scope == "work_plan_proposal":
-        # 0405 P0004 [AI invoke — run it immediately with the same scope, references and authoring rules]:
+        # [AI invoke — run it immediately with the same scope, references and authoring rules]:
         # the invoke twin of the proposal dialog's [copy mention]. Both call advance_workflow,
         # so the head advances once and the worker reads the very mention a person would
         # have pasted — including the work-plan-scope section built from this scope.
@@ -955,10 +944,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_work_plan_proposal
     if body.action_scope == "test_run":
-        # 0268 B0001 (NR0003 defect 2): the invoke twin of TestRunStrip's delegation copy.
+        # (defect 2): the invoke twin of TestRunStrip's delegation copy.
         # issue_test_run_request returns the raw token under "token" (not "raw_token"),
         # so it is remapped here to the issue_builder contract start_run expects.
-        # 0393 NR0003 §6.
         def _issue_test_run(ai_run_id: Optional[str] = None):
             from modules.flow_gate.services import test_run_service
 
@@ -977,7 +965,6 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_test_run
     if body.action_scope == "workflow_decide":
-        # 0393 NR0003 §6.
         def _issue_workflow_decision(ai_run_id: Optional[str] = None):
             return workflow_decision_service.request_workflow_decision(
                 doc_id=body.doc_ref or "",
@@ -991,7 +978,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             )
         issue_builder = _issue_workflow_decision
     elif is_continuous and body.action_scope == "new" and not body.continuation_review_mode:
-        # 0226 B0001 ④ / NR0003 §4 (§5-5): the continuous first hop used to mint the
+        # ④ / the review: the continuous first hop used to mint the
         # token directly, bypassing advance_workflow — the ONLY place instruction heads
         # (N/T) are auto-created + auto-approved for an unmanned chain. Starting on an
         # N/T head therefore handed the AI the instruction document to write by hand.
@@ -1007,13 +994,13 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 continuous=True,
                 continuation_target_seq=body.continuation_target_seq,
                 continuation_review_mode=body.continuation_review_mode,
-                # 0317 T0013 defect ②: forward the instruction mode, exactly like
+                # defect ②: forward the instruction mode, exactly like
                 # _issue_workflow_decision above. Omitting it let it normalize to
                 # auto_approved, which then got baked into the token and propagated down the
                 # whole chain — so [write the instruction, then proceed](ai_direct) died on every hop, not just
                 # the first, and N/T instruction steps were silently auto-approved away.
                 continuation_instruction_mode=body.continuation_instruction_mode,
-                # 0359 L0007 §2.9: the first hop's token carries its run id too, so the
+                # the first hop's token carries its run id too, so the
                 # tokens table can answer "which execution held this?" from hop 1 onward.
                 ai_run_id=ai_run_id,
                 continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
@@ -1023,7 +1010,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "token_id": adv["token_id"],
                 "scratch_dir": adv["scratch_dir"],
                 "mention": adv["mention"],
-                # 0406 T0022 item 3: which document this hop's worker actually was, and which
+                # which document this hop's worker actually was, and which
                 # N/T the server handled with no worker attached at all. These must reach the
                 # run record for "the N/T vanished" to be explainable afterwards.
                 "worker_document_type": adv.get("worker_document_type"),
@@ -1057,7 +1044,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     try:
         result = None
         if continuous_first_hop:
-            # 0504 NR0003 §8 F2: a head that is a reviewed WorkPlan N/T starts at its review
+            # a head that is a reviewed WorkPlan N/T starts at its review
             # hop. The ordinary first hop would materialize it as pending_review and then
             # roll back on head_in_progress. None: nothing such waits -- start as before.
             result = ai_invoke_service.start_chain_at_instruction_review(
@@ -1088,7 +1075,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if result is not None:
         return JSONResponse(status_code=200, content=result)
 
-    # flowgate.v02.0152: a resend of a press this server has already seen answers with what
+    # a resend of a press this server has already seen answers with what
     # the first request did, before anything of a second run is created.
     start_claim = None
     if body.client_request_id is not None:
@@ -1102,14 +1089,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "message": "This AI call is still starting; ask again shortly.",
             })
         if start_claim.kind == chat_start_requests.CANCELLED:
-            # flowgate.v02gui.0011 B: the user stopped this press before it reached admission.
+            # B: the user stopped this press before it reached admission.
             return JSONResponse(status_code=409, content={
                 "code": "start_cancelled",
                 "message": "This AI call was stopped before it started.",
             })
     recovery_exec_id = None
     try:
-        # 0145 T#2: an explicit legacy-result re-review first proves its original
+        # an explicit legacy-result re-review first proves its original
         # attribution and binds a real review assignment/execution atomically.
         if body.document_review_loop and body.action_scope == "review":
             recovery_exec_id = graph_execution_hooks.call(
@@ -1180,7 +1167,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return JSONResponse(status_code=409, content={
             "code": "workflow_decision_conflict", "message": str(exc)})
     except Exception:
-        # 0481 T0010 rev6 (rejection 1-2): the three handlers above name the failures
+        # (rejection 1-2): the three handlers above name the failures
         # start_run is EXPECTED to raise. Anything else is a defect, and the one thing
         # that must not outlive it is the project admission lease this request took a
         # few lines up: a raw IntegrityError from the group-lease insert left it behind
@@ -1193,14 +1180,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if body.action_scope == "resolve_base_dirty":
         run_id = str(result.get("run_id") or "")
         if not run_id:
-            # 0481 T0010 rev6 (rejection 2): nothing to activate, so nothing stole the
+            # (rejection 2): nothing to activate, so nothing stole the
             # acquiring row either -- it is still this request's, and this request is
             # refusing. Leaving it behind is what made one failed press read as "this
             # project's AI cleanup is already running" until the 120s TTL expired.
             db_project_ai_leases.release(body.project, project_lease_owner)
             return JSONResponse(status_code=409, content={"code": "run_lease_lost", "message": "Project run lease was lost."})
         if db_project_ai_leases.activate(body.project, project_lease_owner, run_id) is None:
-            # 0482 T0011: activate() answering None means the acquiring row is no longer
+            # activate answering None means the acquiring row is no longer
             # this owner's -- another start replaced it. Cancel our own run and leave that
             # row alone; releasing here would delete the lease that is guarding it.
             ai_invoke_service.cancel_run(run_id, user_id=user_id, is_admin=True)
@@ -1603,7 +1590,7 @@ def get_ai_invoke_status(run_id: str, request: Request):
         payload = ai_invoke_service.get_run_detail(run_id)
     except HTTPException as exc:
         return _err(exc)
-    # 0359 L0007 §2.10.2: a persisted run outlives its worktree session, so a run id
+    # a persisted run outlives its worktree session, so a run id
     # alone could otherwise open another project's run — checked after the lookup,
     # so an unknown id is still a 404 regardless of the caller's permissions.
     project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]

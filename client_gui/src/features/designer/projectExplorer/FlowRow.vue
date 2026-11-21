@@ -1,9 +1,9 @@
 <template>
   <!-- v0.2 Flow = v0.1 group. Single click selects; double click keeps that selection and
        adds the activate/open intent (Enter activates). Opening a tab or loading the Canvas is
-       the Designer's job (D0002 §5.3), so nothing here touches the central workspace.
+       the Designer's job, so nothing here touches the central workspace.
        The active (Designer-opened) state is row styling only — no badge or text
-       (0025 T0006 §5); ExplorerRowFrame draws it and exposes it as aria-current. -->
+       ; ExplorerRowFrame draws it and exposes it as aria-current. -->
   <ExplorerRowFrame
     :class="{ 'is-archived': flow.archived }"
     :row-id="flow.id"

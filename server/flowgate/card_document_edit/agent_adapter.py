@@ -44,7 +44,7 @@ def edit_schema(run, schema):
 def _record_run_rejection(run, record):
     """Keep a token <-> run-context (2nd stage) rejection on the run it was judged against.
 
-    flowgate.v02.0136 T0004 T#3 (NR0003 rev2 §2.1/§6.2-4). The 1st stage
+    The 1st stage
     (inbox._check_context_binding) already lands in run["register_errors"] through
     register_binding.record_for_run; this stage only logged, so its 403s never reached the run
     diagnostics or, at finalize, register_context_failures. `run` is the live record the binder

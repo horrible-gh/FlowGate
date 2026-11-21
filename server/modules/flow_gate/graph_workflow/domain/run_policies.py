@@ -1,12 +1,12 @@
-"""Run policy implementations and the policies a revision needs (L0009 §2.6.2 / §2.6.3).
+"""Run policy implementations and the policies a revision needs.
 
 An implementation is registered under ``(key, value, impl_version)``; registration only adds
-(L0009 §1.6 POLICY_IMPL_RETENTION). A run stores the nine ``(value, impl_version)`` pairs it
+(POLICY_IMPL_RETENTION). A run stores the nine ``(value, impl_version)`` pairs it
 started with, and every later step rebuilds its policies from that snapshot only — never from
 the current default (``policies_of``; an unknown triple is E-33, not a fallback).
 
 The ``undecided`` implementation of every key is always registered: any call raises
-``PolicyUndecided``. Slot contracts (inputs and outputs of L0009 §2.6.1) as the resolver calls them:
+``PolicyUndecided``. Slot contracts (inputs and outputs of the earlier implementation) as the resolver calls them:
 
 - ``start_node.select(revision, state) -> [node_key]``
 - ``edge_condition.select(node_key, result, out_edges) -> [GraphEdge]``
@@ -17,7 +17,7 @@ The ``undecided`` implementation of every key is always registered: any call rai
 - ``gate_node.judge(node_key, decision, comment) -> "confirmed" | "rejected"`` (S6 gate decision)
 - ``report_pair`` / ``custom_node``: slots only (Q-5 / Q-11)
 
-flowgate.v02.0053 T#8: no revision needs ``custom_node`` any more. A Custom card runs as a plain document
+no revision needs ``custom_node`` any more. A Custom card runs as a plain document
 card — a work instruction (``graph_model.run_doc_type``) — so it needs what an instruction card needs
 (``report_pair``). The slot stays one of the nine a run snapshots (stored runs keep their entries).
 """
@@ -29,13 +29,13 @@ from .graph_model import Graph, run_doc_type
 from .run_scope_ports import run_scope
 from .policies import POLICY_KEYS, UNDECIDED, UNDECIDED_IMPL_VERSION
 
-# L0009 §2.6.3 RULE_REF — the D0004 §8 question each slot waits on.
+# RULE_REF — the the design question each slot waits on.
 RULE_REF = {
     "start_node": "Q-1", "edge_condition": "Q-2", "parallelism": "Q-3", "join": "Q-4",
     "report_pair": "Q-5", "rejection_path": "Q-6", "completion": "Q-10",
     "gate_node": "Q-11", "custom_node": "Q-11",
 }
-# L0009 §2.0 지시 타입 (AUTO_REPORT_MAP keys).
+# instruction types (AUTO_REPORT_MAP keys).
 INSTRUCTION_DOC_TYPES = frozenset({"N", "T", "T2", "TS"})
 
 
@@ -92,7 +92,7 @@ def implementation(key: str, value: str, impl_version: str) -> Optional[Any]:
 
 
 def policies_of(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """L0009 §2.6.2 ``policies_of``: the snapshot's nine entries -> implementations."""
+    """``policies_of``: the snapshot's nine entries -> implementations."""
     out = {}
     for key in POLICY_KEYS:
         entry = entries.get(key) or {}
@@ -104,9 +104,9 @@ def policies_of(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def required_policies(revision: Graph, bound_node_key: Optional[str] = None) -> set[str]:
-    """L0009 §2.6.3 ``required_policies`` for one revision and its root binding.
+    """``required_policies`` for one revision and its root binding.
 
-    flowgate.v02.0083 T#1 (0056 T#1 개정): the bound root is the run's input and is done at start whatever its
+    the bound root is the run's input and is done at start whatever its
     document's review status, so it never takes the rejection path; only the other cards need ``rejection_path``."""
     targets = run_scope(revision).targets
     nodes = [n for n in revision.nodes if n.key in targets]
@@ -135,7 +135,7 @@ def _rule_number(key: str) -> int:
 
 
 def undecided_for(required: set[str], entries: Mapping[str, Mapping[str, Any]]) -> list[dict]:
-    """L0009 §2.6.3 ``undecided_for``: P0008 S5-1 ``undecided_policies``, by question number."""
+    """``undecided_for``: the plan S5-1 ``undecided_policies``, by question number."""
     missing = [k for k in required if (entries.get(k) or {}).get("value") == UNDECIDED]
     missing.sort(key=lambda k: (_rule_number(k), POLICY_KEYS.index(k)))
     return [{"policy": k, "rule_ref": RULE_REF[k]} for k in missing]

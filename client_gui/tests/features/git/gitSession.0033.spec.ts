@@ -16,7 +16,7 @@ import {
   trConflicts,
 } from './fakeGitSource'
 
-// flowgate.v02.0033 — Git session rules (0033-D §3, §4) on an in-memory source.
+// Git session rules on an in-memory source.
 
 let session: GitSession | null = null
 
@@ -148,7 +148,7 @@ describe('conflict actions', () => {
     const s = await open(fake)
     fake.db.ai = resolvingRun
     await s.startAi()
-    // flowgate.v02gui.0004: no AI picked = the server's default chain (null goes to the source).
+    // no AI picked = the server's default chain (null goes to the source).
     expect(fake.source.startConflictAi).toHaveBeenCalledWith(G, 7, null)
     expect(s.groupCard.value).toBe('ai')
   })

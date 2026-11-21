@@ -61,7 +61,7 @@ async def test_sse_auth_flow(app):
         "jti": "jti-1",
         "totp_pending": False,
     }), patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False), patch(
-        # Connect now also reads the users row (0371 T0012): this light test app
+        # Connect now also reads the users row: this light test app
         # has no DB behind it, so the lookup is mocked exactly like the blacklist
         # check above.
         "modules.flow_gate.api.v1.events.sse_routes._load_user",

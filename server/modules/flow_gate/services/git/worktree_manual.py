@@ -1,4 +1,4 @@
-"""Group worktree status, manual index mutations, commit and revert (0066 D#1, E1--E6).
+"""Group worktree status, manual index mutations, commit and revert.
 
 No automatic absorption and no changes to the legacy scope/diff endpoints.
 Snapshots contain immutable object IDs; later consumers need not reopen the index.
@@ -90,7 +90,7 @@ def _read_index_once(root: Path) -> IndexSnapshot:
 
 
 def read_index_snapshot(group_id: str, *, attempts: int = 3) -> IndexSnapshot:
-    """Lock-free double read. T#4 can choose a retry bound without changing the format."""
+    """Lock-free double read. the earlier implementation can choose a retry bound without changing the format."""
     for _ in range(attempts):
         try:
             *_, root = _context(group_id)
@@ -366,7 +366,7 @@ def unstage(group_id: str, *, paths: list[str] | None = None, all: bool = False,
     return _change_index(group_id, paths=paths, all=all, worktree_token=worktree_token, unstage=True)
 
 
-# ── E4 commit, E5 revert, E6 remove (0066 D#1 §3-4, §3-5) ──────────────────
+# ── E4 commit, E5 revert, E6 remove ──────────────────
 
 def _commit_subject(message) -> str:
     # Same normalizer, limit and wording as FinalizeBody.commit_message; no lock yet.

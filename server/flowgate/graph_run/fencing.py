@@ -1,11 +1,11 @@
-"""0061 T#7: late results are fenced — a Stop blocks them from the moment ``stopping`` commits.
+"""late results are fenced — a Stop blocks them from the moment ``stopping`` commits.
 
 A write or result an attempt token brings (remote source write / remove, a chat command, a document registration and
 the result binder, the result stage, a review / rework hop) is taken only while
 
 (a) its run is ``running`` or ``paused`` (``WRITABLE``) — ``stopping``, ``idle`` and any other status refuse — with
-    the two idle exceptions the 0017-TR question 439 settled (``IDLE_EXCEPTED``: running, paused or idle): a person's
-    registration with the node's own token (no AI run on it; L0009 E-23, ``human_registration``) — its inbox
+    the two idle exceptions the the earlier implementation question 439 settled (``IDLE_EXCEPTED``: running, paused or idle): a person's
+    registration with the node's own token (no AI run on it; the earlier implementation E-23, ``human_registration``) — its inbox
     storage, its result binding and its Q&A registration alike — and the hop of a person's explicit review request
     (``graph_execution_hooks.explicit_request``), which then takes the run back to running. ``stopping`` and an
     invalidated attempt refuse them as any other;
@@ -17,7 +17,7 @@ the result binder, the result stage, a review / rework hop) is taken only while
 
 The engine's own start of a new execution (``request_write`` when a node opens) is no attempt token's write: it refuses
 only a run that is not running, paused or idle (``OPENING``); the execution itself then needs
-``execution_store.eligible`` (running / paused) to acquire. 0083 WP-3 (0061 T#2 개정): a person's approval on an idle
+``execution_store.eligible`` (running / paused) to acquire. 0083 WP-3: a person's approval on an idle
 run opens the next node at once (``frontier.defers``; before, its propagation waited for the next command) and takes
 the run back to running first (``command.wake_approval``), so that opening's execution is requested on a running run
 and can acquire; a stopped run and one under a Time Machine operation are not woken and their propagation waits.
@@ -105,7 +105,7 @@ def _closing() -> dict:
 
 
 def exclusive_held(flow_id: str) -> bool:
-    """flowgate.v02.0113 T#3: this thread holds the Flow's gate exclusively (``exclusive``) — every side effect of the
+    """this thread holds the Flow's gate exclusively (``exclusive``) — every side effect of the
     Flow's attempts in flight has ended and none starts until it is released (an explicit command's new attempt,
     L-2 §2.10, replaces an attempt only under it)."""
     return bool(_closing().get(flow_id))
@@ -259,7 +259,7 @@ def _execution_reason(ai_run_id: str, attempt_id: str) -> Optional[str]:
 
 
 def human_registration(token: Optional[dict], operation: str) -> bool:
-    """Q439 / L0009 E-23: a registration (inbox new / edit, its result binding, a Q&A question / answer) a person
+    """Q439 / the earlier implementation E-23: a registration (inbox new / edit, its result binding, a Q&A question / answer) a person
     makes with the node's own token — one no AI run was issued with (the node's dispatch token). It is taken on an
     idle run too."""
     return operation in HUMAN_REGISTRATIONS and bool(token) and not str(token.get("ai_run_id") or "").strip()
@@ -269,7 +269,7 @@ def _token_reason(token: dict, attempt_id: str, report: bool, operation: str = "
     statuses = REPORTING if report else (IDLE_EXCEPTED if human_registration(token, operation) else WRITABLE)
     why = reason(attempt_row(attempt_id), statuses)
     if why is None:
-        # T#8: the result reservation outlives a failed Git/DB attempt. Once frozen,
+        # the result reservation outlives a failed Git/DB attempt. Once frozen,
         # token writes may not change the result being recovered on a retry.
         result = run_store._one("SELECT result_commit, integration_status FROM graph_node_attempts "
                                 "WHERE attempt_id = ?", [attempt_id]) or {}
@@ -410,7 +410,7 @@ def node_refused(run_id: str, node_key: str, operation: str, attempt_id: Optiona
     and that attempt may write (a)(b). A node with no active attempt: its run must be one that may. A node opened
     before migration 151 with no attempt keeps the engine's own checks.
 
-    flowgate.v02.0105 T#2 (B-3): ``idle_ok`` takes an idle run too (``IDLE_EXCEPTED``) — only for a step judged under
+    (B-3): ``idle_ok`` takes an idle run too (``IDLE_EXCEPTED``) — only for a step judged under
     ``node_hold(idle_ok=True)`` with its Stop / Time Machine conditions (the run-end stage a run read reconciles), whose
     hold keeps a Stop's ``stopping`` and a Time Machine rewind from committing before the step is over."""
     found = _node_judgement(run_id, node_key, attempt_id, IDLE_EXCEPTED if idle_ok else WRITABLE)

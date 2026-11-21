@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0010 rev5 (반려 #1) — the start response's run identity.
+"""(rejection #1) — the start response's run identity.
 
 "충돌해결에서 AI호출 했더니 아무것도 안하고 가만히 있음... 뭔가 표시되는것도 없고."
 
@@ -44,7 +44,7 @@ MERGE_ID = 6
 
 @pytest.fixture
 def world(monkeypatch, tmp_path):
-    """The collaborators start_run touches, faked — same shape as 0268 T0004's fixture."""
+    """The collaborators start_run touches, faked — same shape as the earlier implementation's fixture."""
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc.db_docs, "get_by_id", lambda doc_id: None)

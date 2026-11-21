@@ -70,7 +70,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_supersede_declaration_resolve_token_end_to_end(self, origin_repo, monkeypatch):
-        """0604 T0008 §11.1~§11.7: a real zdiff3 session through the resolve-token route."""
+        """A real zdiff3 session through the resolve-token route."""
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
         from modules.flow_gate.services.git_service import GitServiceError

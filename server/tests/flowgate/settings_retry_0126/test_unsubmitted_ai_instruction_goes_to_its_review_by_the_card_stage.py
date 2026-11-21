@@ -1,4 +1,4 @@
-"""0126 T#5 A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
+"""Real settings routes, SQLite assignments/ledger, AI admission recorder.
 No external model, deployed server, or existing user data is used.
 """
 import json
@@ -22,7 +22,7 @@ from settings_retry_support_0126 import (history, new_settings, _submitted_ai_in
 
 @pytest.mark.parametrize('mode', ['step'])
 def test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage(env,decided,monkeypatch,starts,mode):
-    """flowgate.v02test.0015 (replaces the 0158 refusal case): an AI instruction written but never submitted (the v0.1
+    """Replaces the earlier refusal case: an AI instruction written but never submitted (the v0.1
     submit step never ran on it) goes to its review because the card's instruction stage ended -- the review start puts
     it in review itself (``pending_review``, the system as the actor, ``card_review_submitted``) and requests the loop
     in the same savepoint. Formerly the loop's admission refused it (``document_not_submitted``) on every try, and the

@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — ⑤ palette menu: palette card only (0006-D rev2 §5.3 ⑤). The palette blank area is
+// ⑤ palette menu: palette card only (D ⑤). The palette blank area is
 // not a menu target (PM decision, rev2), so this part has no blank kind and no card submenu.
 
 import { action, makeMenu } from './model'

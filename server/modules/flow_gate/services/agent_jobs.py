@@ -3,7 +3,7 @@
 Only this service enqueues work. Each mutation uses a conditional update so a stale
 owner cannot change an attempt.
 
-flowgate.v02.0129 T#2 (D0005 §3-4/§3-6): a Job created by an AI run carries
+a Job created by an AI run carries
 ``ai_run_id``. Only those Jobs get the extra lifecycle rules -- one claim only (a lease
 that expires after claim never returns the Job to NEW), cancel-vs-claim decided by one
 conditional update, finite stage limits enforced by the server itself
@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.services.agent_registry import AgentError, AgentService
+from modules.flow_gate.services.agent_registry import AgentError, AgentService, held_job_predicate, held_job_cutoff
 from modules.flow_gate.services.agent_registry import _row as _agent_row
 from modules.flow_gate.services.agent_registry import detail as _agent_detail
 from modules.flow_gate.services.agent_registry import digest as _agent_digest
@@ -32,7 +32,7 @@ RENEW_AFTER_SECONDS = 30
 OUTPUT_LIMIT_BYTES = 1024 * 1024
 TERMINAL = frozenset({"DONE", "FAILED", "CANCELLED", "TIMED_OUT", "REJECTED"})
 
-# AI-run Job stage limits (D0005 §3-4 DEFERRED -> T#2). They are derived from the Agent
+# AI-run Job stage limits (DEFERRED -> the earlier implementation). They are derived from the Agent
 # heartbeat/online window (agent_registry: heartbeat 30s, online TTL 90s) and the lease
 # above: an online Agent polls well inside AI_CLAIM_WAIT_SECONDS, a claimed Job must be
 # STARTED inside one lease, and a cancel request is seen on the next renew.
@@ -43,7 +43,7 @@ AI_CANCEL_GRACE_SECONDS = LEASE_TTL_SECONDS
 # How long the executor that owns retrieval has, after an Agent's terminal report, to
 # read the output before the supervisor takes the retrieval over and scrubs (§3-6).
 AI_RETRIEVAL_GRACE_SECONDS = 300
-# Result retrieval states of an AI-run Job (D0005 §3-6).
+# Result retrieval states of an AI-run Job.
 RETRIEVAL_PENDING = "pending"
 RETRIEVAL_COLLECTED = "collected"
 RETRIEVAL_HANDED_OVER = "handed_over"
@@ -53,7 +53,7 @@ CAUSE_SERVER_EXPIRED = "server_expired"
 CAUSE_CLAIM_TIMEOUT = "claim_timeout"
 CAUSE_SERVER_CANCELLED = "server_cancelled"
 
-# flowgate.v02test.0022 CH0002: why an AI-run Job ran out of claim wait (``claim_wait_cause``).
+# why an AI-run Job ran out of claim wait (``claim_wait_cause``).
 # Decided once, at claim_timeout, from what the server saw of the target Agent: its heartbeat
 # (online), its last authenticated claim poll and its last refused claim (``agents`` columns
 # written by claim()), and the Jobs it currently holds. Checked in this order:
@@ -70,7 +70,7 @@ PROCESS_OWNER_PREFIX = "proc_" + uuid.uuid4().hex
 
 _AI_TERMINAL_SQL = "('DONE','FAILED','CANCELLED','TIMED_OUT','REJECTED')"
 
-# flowgate.v02.0135 T#1: cancel_requested / stdout_truncated / stderr_truncated are BOOLEAN on
+# cancel_requested / stdout_truncated / stderr_truncated are BOOLEAN on
 # PostgreSQL (INTEGER on SQLite, TINYINT(1) on MySQL). The SQL below writes and compares them
 # only with the TRUE / FALSE literals, which all three engines accept. Comparing one with an
 # integer literal (0 / 1) is a PostgreSQL parse error (boolean = integer) and failed every claim:
@@ -151,7 +151,7 @@ class AgentJobService:
                 or (target_agent_id is not None and (not isinstance(target_agent_id, str) or not target_agent_id))):
             raise AgentError(422, "validation_failed", "Invalid Job identity or target")
         if ai_run_id is not None:
-            # An AI run never creates a Job "any Agent of the owner may take" (D0005 §3-3).
+            # An AI run never creates a Job "any Agent of the owner may take".
             if (not isinstance(ai_run_id, str) or not ai_run_id or not target_agent_id
                     or not isinstance(retrieval_owner, str) or not retrieval_owner):
                 raise AgentError(422, "validation_failed", "An AI run Job needs a run, a target Agent and an owner")
@@ -258,12 +258,12 @@ class AgentJobService:
         )
         self.s._execute_affected(
             """UPDATE agent_jobs SET status='FAILED',end_reason='lease_expired',
-                   diagnostics='Started Agent Job lease expired',finished_at=?,updated_at=?,
-                   lease_expires_at=NULL WHERE status='STARTED' AND lease_expires_at<=? AND ai_run_id IS NULL""",
+                   diagnostics='Started Agent Job lease expired',finished_at=?,updated_at=?
+                   WHERE status='STARTED' AND lease_expires_at<=? AND ai_run_id IS NULL""",
             [ts, ts, ts],
         )
 
-    # ── AI-run Job lifecycle (flowgate.v02.0129 T#2, D0005 §3-4/§3-6) ─────────────
+    # ── AI-run Job lifecycle ─────────────
 
     def _advance_ai(self, ts):
         """Server-driven stage limits for AI-run Jobs. Idempotent; call inside a transaction.
@@ -285,7 +285,7 @@ class AgentJobService:
             [],
         ):
             aid = row.get("target_agent_id")
-            agent = _agent_row(self.s, aid) if aid else None
+            agent = _agent_row(self.s, aid, at=now) if aid else None
             if agent:
                 info = _agent_detail(agent, at=now)
                 if info["online_status"] == "online" and info["running_jobs"] >= info["max_concurrent_jobs"]:
@@ -330,7 +330,7 @@ class AgentJobService:
             """UPDATE agent_jobs SET status='FAILED',end_reason='remote_termination_unconfirmed',
                    terminal_cause=?,diagnostics='AI Job ended without a terminal Agent report',
                    stdin_text='',command_line='',stdout=NULL,stderr=NULL,retrieval_state=?,scrubbed_at=?,
-                   finished_at=?,updated_at=?,lease_expires_at=NULL
+                   finished_at=?,updated_at=?
                    WHERE ai_run_id IS NOT NULL AND status IN ('CLAIMED','STARTED')
                    AND (lease_expires_at IS NULL OR lease_expires_at<=?
                         OR (cancel_requested=TRUE AND cancel_requested_at IS NOT NULL AND cancel_requested_at<=?))""",
@@ -339,19 +339,15 @@ class AgentJobService:
 
     def _claim_facts(self, agent_id, now):
         """What the server saw of one Agent, for claim_wait_cause. None = no such Agent."""
-        r = _agent_row(self.s, agent_id) if agent_id else None
+        r = _agent_row(self.s, agent_id, at=now) if agent_id else None
         if not r:
             return None
-        held = self.s._fetch_one(
-            "SELECT COUNT(*) AS n FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')",
-            [agent_id],
-        )
         return {"online": _agent_detail(r, at=now)["online_status"] == "online",
                 "heartbeat_at": r.get("current_heartbeat_at"),
                 "poll_at": r.get("last_claim_poll_at"),
                 "refusal_code": r.get("last_claim_refusal_code"),
                 "refusal_at": r.get("last_claim_refusal_at"),
-                "held": int((held or {}).get("n") or 0)}
+                "held": int(r.get("running_jobs") or 0)}
 
     def _claim_wait_cause(self, job, now, cache):
         """(claim_wait_cause, diagnostics) of a NEW AI-run Job whose claim wait ran out.
@@ -412,7 +408,7 @@ class AgentJobService:
         """Cancel an AI-run Job: a NEW Job ends at once; a claimed one is asked to stop.
 
         The NEW branch and claim() are both conditional on status='NEW' (claim also on
-        cancel_requested=FALSE), so exactly one of them wins (D0005 §3-4).
+        cancel_requested=FALSE), so exactly one of them wins.
         """
         with self.s.transaction():
             ts = _stamp(_now())
@@ -443,7 +439,7 @@ class AgentJobService:
 
         Returns the Job metadata plus ``collected``. Output is returned only when this
         caller still owned retrieval; otherwise ``collected`` is False and the bodies are
-        None, so an empty result is never mistaken for a real one (D0005 §3-6).
+        None, so an empty result is never mistaken for a real one.
         """
         with self.s.transaction():
             row = self._get(job_id, attempt_id)
@@ -560,7 +556,7 @@ class AgentJobService:
             touched += self._scrub(ts)
         return touched
 
-    # -- settlement (D0005 §3-4 "종결"): terminal AND, for an unconfirmed end, fenced --
+    # -- settlement ("settlement"): terminal AND, for an unconfirmed end, fenced --
 
     _UNSETTLED_SQL = ("(status IN ('NEW','CLAIMED','STARTED') OR (terminal_cause='" + CAUSE_SERVER_EXPIRED
                       + "' AND fenced_at IS NULL))")
@@ -632,7 +628,7 @@ class AgentJobService:
         )
 
     def _note_claim_refusal(self, credential, exc):
-        """Remember a refused claim on the Agent row (CH0002). The claim's own transaction
+        """Remember a refused claim on the Agent row. The claim's own transaction
         rolled back, so this is a separate one. Best effort: never masks the refusal."""
         if not 400 <= int(getattr(exc, "status", 0) or 0) < 500:
             return
@@ -662,7 +658,7 @@ class AgentJobService:
         with self.s.transaction():
             agent_id = self._auth(credential, claim=True)
             ts = _stamp(_now())
-            # CH0002: an authenticated poll, kept so a claim timeout can tell "the Agent
+            # an authenticated poll, kept so a claim timeout can tell "the Agent
             # stopped polling" from "it polled and did not take the Job".
             self.s._execute_affected("UPDATE agents SET last_claim_poll_at=? WHERE agent_id=?", [ts, agent_id])
             self._reclaim(ts)
@@ -671,7 +667,9 @@ class AgentJobService:
             from modules.flow_gate.db import dialect
             lock = " FOR UPDATE" if getattr(self.s, "dialect", dialect.SQLITE) != dialect.SQLITE else ""
             capacity = self.s._fetch_one("SELECT max_concurrent_jobs FROM agents WHERE agent_id=?" + lock, [agent_id])
-            held = self.s._fetch_all("SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')" + lock, [agent_id])
+            held = self.s._fetch_all(
+                "SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND "
+                + held_job_predicate() + lock, [agent_id, held_job_cutoff(_now())])
             if len(held) >= capacity["max_concurrent_jobs"]:
                 return None
             candidates = self.s._fetch_all(
@@ -706,7 +704,7 @@ class AgentJobService:
                            "lease_token": token, "lease_expires_at": expiry}
                     if row.get("ai_run_id"):
                         # Delivered exactly once (one claim only): the token-bearing input
-                        # is not kept after this hand-off (D0005 §3-6 "수신 시").
+                        # is not kept after this hand-off ("on receipt").
                         self.s._execute_affected(
                             """UPDATE agent_jobs SET stdin_text='',command_line='',updated_at=?
                                WHERE job_id=? AND attempt_id=?""",
@@ -790,15 +788,20 @@ class AgentJobService:
         state = result.get("status")
         if state not in TERMINAL:
             raise AgentError(422, "validation_failed", "Terminal status is required")
+        # Fingerprint the original report: retries must match even when stored output
+        # is clipped, and two reports with different discarded tails must conflict.
+        fingerprint = _hash(result)
+        result = dict(result)
         for key in ("stdout", "stderr"):
-            if len(result[key].encode("utf-8")) > OUTPUT_LIMIT_BYTES:
-                raise AgentError(422, "output_too_large", key + " exceeds 1 MiB")
+            encoded = result[key].encode("utf-8")
+            if len(encoded) > OUTPUT_LIMIT_BYTES:
+                result[key] = encoded[:OUTPUT_LIMIT_BYTES].decode("utf-8", errors="ignore")
+                result[key + "_truncated"] = True
         exit_code = result["exit_code"]
         if state == "DONE" and exit_code != 0:
             raise AgentError(422, "validation_failed", "DONE requires exit_code 0")
         if state == "FAILED" and exit_code == 0:
             raise AgentError(422, "validation_failed", "FAILED cannot have exit_code 0")
-        fingerprint = _hash(result)
         with self.s.transaction():
             agent_id = self._auth(credential)
             ts = _stamp(_now())

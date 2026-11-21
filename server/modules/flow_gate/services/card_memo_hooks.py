@@ -1,4 +1,4 @@
-"""Card memo mention port (flowgate.v02.0056 T#3, D0006 §2.3).
+"""Card memo mention port.
 
 A Designer card's memos (``flowgate.card_memos``, the v0.2 application package) reach the AI that works for
 the card: the memos a person turned on for AI reading go into the mention as one "User memos" section,

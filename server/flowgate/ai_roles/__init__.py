@@ -1,4 +1,4 @@
-"""AI roles storage (flowgate.v02.0113 T#1, DB-1).
+"""AI roles storage.
 
 The storage layer of the role feature: account role defaults, card role slots and card init state
 (``role_store``, migration 163), stage assignments (``assignment_store``, migration 164) and role invocation

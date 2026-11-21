@@ -1,4 +1,4 @@
-/** flowgate.v02.0132 T#4: the check card tells why its settings are locked (per `settings_lock_reason`), and the new error codes. */
+/** the check card tells why its settings are locked (per `settings_lock_reason`), and the new error codes. */
 import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 const ctx = vi.hoisted(() => ({ value: null as any }))

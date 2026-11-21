@@ -1,6 +1,6 @@
-"""0153 T#3: the non-destructive reconcile state machine.
+"""the non-destructive reconcile state machine.
 
-``TRANSITIONS`` is the decision table of T0009 §5.1 as module data. The pure
+``TRANSITIONS`` is the decision table of the earlier implementation as module data. The pure
 ``reconcile_plan.decide`` is asserted row by row without Git; the rows marked ``real``
 are also driven end to end against a real local-path bare ``origin`` (no file://
 capability gate). Remote states are made by pushing real commits to that origin —
@@ -46,8 +46,8 @@ BASE = dict(cycle_count=1, merge_commit=M, publish_commit=M, publish_lease=LEASE
             local=rp.LOCAL_OK)
 FETCHED = dict(BASE, probe=P(F), fetch=P(F))
 
-# ── the decision table (T0009 §5.1) ──────────────────────────────────────────
-# id, inputs (None: decided before decide(), i.e. by the T#2 gate), expected action,
+# ── the decision table ──────────────────────────────────────────
+# id, inputs (None: decided before decide, i.e. by the the earlier implementation gate), expected action,
 # expected reason/stage/cause, real-Git scenario.
 TRANSITIONS = [
     dict(id='G', inputs=None, action='preserve_failed', real=True),
@@ -217,7 +217,7 @@ def unmerged(root):
 
 
 def assert_consistent(mid, root, bare=None):
-    """T0009 §4 invariants: the re-read sqlite context against the real checkout/refs."""
+    """invariants: the re-read sqlite context against the real checkout/refs."""
     ctx = saved(mid)
     state, kind = ctx.get('review_state'), ctx.get('reconciliation_kind')
     head, mh = ref_value(root, 'HEAD'), ref_value(root, 'MERGE_HEAD')

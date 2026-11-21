@@ -33,7 +33,7 @@ export interface NormalizedApiInput {
 /**
  * Axios exception/response.data shape unification and network determination, shared by
  * gitErrors.ts's normalizeGitError and this module's normalizeApiError so both resolvers
- * agree on what counts as "no response reached the client" (D0005 §3.5).
+ * agree on what counts as "no response reached the client".
  */
 export function normalizeApiInput(input: unknown): NormalizedApiInput {
   const root = isRecord(input) ? input : {}
@@ -57,7 +57,7 @@ export interface NormalizedApiError {
 }
 
 /**
- * Finds a registered code across the two shapes T0010 §2.1 documents: the Git-style
+ * Finds a registered code across the two shapes the earlier implementation documents: the Git-style
  * `response.data.error.code` envelope and a `response.data.detail.code` object. A string or
  * array `detail` (FastAPI RequestValidationError, plain HTTPException(detail=str)) has no code.
  * `params` folds in either an explicit `.params` object (ai_repeat_count_out_of_range) or the
@@ -145,7 +145,7 @@ function resolveRegisteredApiErrorMessage(input: unknown, t: Translate): string 
 }
 
 /**
- * Common resolver for non-Git API errors (T0010 §2.2). Priority: registered code with valid
+ * Common resolver for non-Git API errors. Priority: registered code with valid
  * params -> unregistered/malformed -> caller's screen fallback key -> common guidance. Never
  * reads response.data.detail/error.message text -- only code + validated params ever reach
  * the returned string.

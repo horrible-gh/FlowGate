@@ -1,35 +1,35 @@
 <template>
-  <!-- flowgate.v02.0051 — one v7 slot line (0035 insp-v4 `.slot`): the document tab shows every card as
+  <!-- one v7 slot line (insp-v4 `.slot`): the document tab shows every card as
        slot lines — a document slot (지시서 · 레포트 · 요구사항 · 작업계획 · 시나리오) or a result slot (확인 결과 ·
        전개 · AI 위임). Display only: the feature decides the values and puts its buttons in the default slot.
        `focus` marks the line the user should look at (amber bar); `danger` the failed one (red bar).
        A feature may hand its own test ids for the state and the summary (`testIds`) and may render the
        summary itself through the `summary` slot. The name opens the document (`openable`: underlined on
        hover, an `open` event).
-       flowgate.v02.0056 F1 (0056 CH §5) — the 0053 state dot is gone: the line is `name · [state badge] ·
+       (CH) — the 0053 state dot is gone: the line is `name · [state badge] ·
        summary · buttons`. The state is a short text badge drawn only when it says something (a decision
        waits, something runs, the document was revised, or it is settled — dim); a neutral state ('작성 중',
        '완료') draws nothing (slotStateView). A line without a document (`empty`) says why in plain muted
        words where the badge would be.
-       flowgate.v02.0056 F2-1 — a line may name who writes it (`author`, O2 0007-TR §4-3): the instruction line
+       a line may name who writes it (`author`, O2 the earlier implementation): the instruction line
        of a run card says "지시 AI 또는 사람" in muted words before its state (slotAuthorKey; other authors draw
        nothing).
-       flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body).
-       flowgate.v02.0056 (0017-CH) — no author words, and a blank line has no words either: a dashed frame and a
+       a line whose document has no body yet (`blank`, O3 the earlier implementation has_body).
+       (CH) — no author words, and a blank line has no words either: a dashed frame and a
        dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text.
-       flowgate.v02.0068 T#1 — a line may carry a group before its buttons (the `io` slot: the document's
+       a line may carry a group before its buttons (the `io` slot: the document's
        [업로드][다운로드]), in its own column. When the line is narrow the name gives way first (its column
        shrinks to 72px); at a slot list of 360px or less the group goes to a second row of the line, at the right,
        and the line grows — no button is hidden.
-       flowgate.v02.0070 T#4 (B4) — the three line states are told apart in the line: no document (`empty`) — a dashed
+       (B4) — the three line states are told apart in the line: no document (`empty`) — a dashed
        frame and "문서 없음"; a document without a body (`blank`) — a solid frame, a dim name and "본문 비어 있음" in the
        same muted words; an unreadable body — the small ⚠ below.
-       flowgate.v02.0070 T#2 (B2) — an unreadable body is no longer words before the state: it is a small ⚠ at the
+       (B2) — an unreadable body is no longer words before the state: it is a small ⚠ at the
        head of the buttons (before 이력 · 열기), no bigger than the state badge; its words are the tooltip and the
        aria-label. The line reads `name · [state badge] · ⚠ · buttons`, and only the name ellipsises: on a narrow
        list such a line (`is-state-first`) keeps its badge, ⚠ and buttons whole; its summary gives way first, then
        the name (264px: the start of the name and … stay beside ⚠ · AI 호출 · 이력 · 열기 · ✎).
-       flowgate.v02.0070 (0015-T T4) — the ⚠ belongs to the document's state, not to the buttons: it sits right after
+       the ⚠ belongs to the document's state, not to the buttons: it sits right after
        the state badge (right after the name when the line draws no badge), and the buttons column holds only the
        buttons. The line reads `name · [state badge] ⚠ · summary · buttons`; on a narrow list the badge and ⚠ stay
        whole, the summary gives way first, then the name. -->
@@ -128,7 +128,7 @@ const props = withDefaults(
     focus?: boolean
     danger?: boolean
     testIds?: InspectorSlotTestIds | null
-    /** flowgate.v02.0056 F2-1: the line's author as the server sends it (`instruction_ai_or_human` is named). */
+    /** the line's author as the server sends it (`instruction_ai_or_human` is named). */
     author?: string | null
     /** flowgate.v02.0056 F2-2: the line's document has no body yet ("비어 있음"). */
     blank?: boolean
@@ -171,7 +171,7 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 const authorKey = computed(() => slotAuthorKey(props.author))
 
 /**
- * The line's document body cannot be read: the small ⚠ after the state badge (0015-T T4). flowgate.v02.0070 T#2 (B2):
+ * The line's document body cannot be read: the small ⚠ after the state badge. the earlier change the earlier implementation (B2):
  * such a line is also `is-state-first` — its buttons are fixed icons (the warning comes from a card's document line,
  * which has no shrinking nav), so on a narrow list the badge, ⚠ and buttons keep their width, the summary gives way
  * first and then the name.
@@ -184,7 +184,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   display: grid;
   /* The same 72..120px name track for documents and memos, independent of button count. */
   --slot-name-width: clamp(72px, 20cqi, 120px);
-  /* T#4: the buttons column may shrink below its content on a narrow Inspector (264px); the line's
+  /* the buttons column may shrink below its content on a narrow Inspector (264px); the line's
      nav label then ellipsises (InspectorSlotList) and the document icon / ✎ keep their place. */
   grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) minmax(0, max-content);
   gap: 9px;
@@ -327,7 +327,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   white-space: nowrap;
 }
 
-/* flowgate.v02.0070 T#2 (B2): the unreadable-body mark — a glyph the size of the state badge's words, in the
+/* (B2): the unreadable-body mark — a glyph the size of the state badge's words, in the
    warning colour; it never gives way, so the state badge before it stays the line's main state.
    0015-T T4: it follows the badge (or the name) in the value, closer than the value's usual gap. */
 .inspector-slot-unreadable {
@@ -459,7 +459,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   color: #9cb1c7;
 }
 
-/* 0017-CH: a document without a body. flowgate.v02.0070 T#4 (B4): the dashed frame is the line without a document's;
+/* a document without a body. the earlier change the earlier implementation (B4): the dashed frame is the line without a document's;
    a blank line keeps the usual frame (the document is there) and says "본문 비어 있음" in the muted words. */
 .inspector-slot.is-blank {
   border-color: #33506e;
@@ -481,7 +481,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   box-shadow: inset 3px 0 0 #ef4444;
 }
 
-/* flowgate.v02.0056 F2-1: who writes the line — muted, before the state; it gives way first when narrow. */
+/* who writes the line — muted, before the state; it gives way first when narrow. */
 .inspector-slot-author {
   flex: 0 1 auto;
   min-width: 0;
@@ -493,7 +493,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 
 /* Keep compact spacing through 280px: restoring wide gaps at 241px overlaps memo badges and controls.
-   flowgate.v02.0070 T#2 (B2): the 264px Inspector (a 236px list) — tighter gaps on every line, so the buttons keep
+   (B2): the 264px Inspector (a 236px list) — tighter gaps on every line, so the buttons keep
    lining up from line to line and a warning line with all its buttons still shows the start of its name. */
 @container (max-width: 280px) {
   .inspector-slot {

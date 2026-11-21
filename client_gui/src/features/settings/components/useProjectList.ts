@@ -4,11 +4,11 @@ import { listAllProjects, SettingsRequestError } from '../api'
 import type { ProjectModuleRef, ProjectRow } from '../types'
 import { STALE, useLiveRequests } from './useLiveRequests'
 
-// Every current project list consumer drops this row (features/project/api.ts, NR0003 §3.1): it is
+// Every current project list consumer drops this row (features/project/api.ts, the review): it is
 // a bookkeeping project, not one a person can select.
 const SYSTEM_PROJECT_ID = '__SYSTEM__'
 
-/** How a failed read is shown: 401 and 403 are 접근 불가, never an empty list or 미설정. */
+/** How a failed read is shown: 401 and 403 are Access denied, never an empty list or 미설정. */
 export interface ReadError {
   kind: 'unauthorized' | 'forbidden' | 'failed'
   message: string

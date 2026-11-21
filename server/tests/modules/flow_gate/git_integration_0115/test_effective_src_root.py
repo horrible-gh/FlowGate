@@ -89,7 +89,7 @@ class TestEffectiveSrcRoot(_Scenario):
 
         wt = src_root("GitProj", "gitprj_default_0001")
         wt.mkdir(parents=True, exist_ok=True)
-        # 0287 NR0004: the `.git` link is what makes it a worktree rather than a
+        # The `.git` link is what makes it a worktree rather than a
         # leftover directory from an interrupted teardown.
         (wt / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
         resolved = svc.effective_src_root("gitprj", "gitprj.default.0001")

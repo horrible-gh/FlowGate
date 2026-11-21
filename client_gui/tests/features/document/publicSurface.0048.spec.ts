@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#3 — the features/document public surface (D#1 §2.3 / §6.2 / §6.3). The
+ * the features/document public surface. The
  * index re-exports every api file and the common error file, and each export name starts with
  * its file's area so two files never clash. Data driven over the files, so a feature set filling
  * its own api file never edits this spec.

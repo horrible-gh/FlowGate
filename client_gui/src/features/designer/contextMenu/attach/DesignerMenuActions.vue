@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0060 T#2 (0006-D rev2 §4.3 2-B) — the windows of the context menu's existing server commands, in the
+  <!-- the windows of the context menu's existing server commands, in the
        look of the v0.2 dialogs (ModalShell, the File menu dialogs' layout): name input for 이름 변경 / 새 폴더 / 새 파일,
        the Flow 삭제 (dispose, DC) confirmation with its required reason and danger look, the delete confirmation that
        names the target and its scope, the upload with its overwrite check and result, the folder download notice, and
@@ -18,7 +18,7 @@
     @close="close"
   >
     <template #header="{ titleId }">
-      <!-- 0016-CH (시안 basodrr4 B안): a confirm leads with a large icon badge above the title; v02gui.0029: an input
+      <!-- 0016-CH (mockup basodrr4 option B): a confirm leads with a large icon badge above the title; v02gui.0029: an input
            window has a small badge beside its title; 수정 확인 keeps the plain title row. The close button is the shared
            line icon either way. -->
       <div class="dma-head" :class="{ 'is-hero': look !== 'plain', 'is-compact': look === 'compact', 'is-danger': look !== 'plain' && danger }" :data-look="look">
@@ -53,7 +53,7 @@
           </div>
         </dl>
 
-        <!-- 이름 변경 -->
+        <!-- Rename -->
         <template v-if="shown.kind === 'group.rename' || shown.kind === 'flow.rename'">
           <!-- v02gui.0012 (0004-CH seq 19/20): the Group window is the two inputs only — no facts, note or hint, and
                nothing is flagged before the user types; the button stays off until something changed. -->
@@ -75,8 +75,8 @@
           </ul>
         </template>
 
-        <!-- 그룹 아카이브 (v02gui.0027): display-only; the Group's Flows, documents, runs and Git stay as they are. -->
-        <!-- 0016-CH B안: title → the one key sentence → the Group in its own box → the supporting points → buttons. -->
+        <!-- Archive Group (v02gui.0027): display-only; the Group's Flows, documents, runs and Git stay as they are. -->
+        <!-- 0016-CH option B: title → the one key sentence → the Group in its own box → the supporting points → buttons. -->
         <template v-else-if="shown.kind === 'group.archive'">
           <p class="dma-lead" data-test="dma-group-archive-note">{{ t('archive.note') }}</p>
           <div class="dma-target" data-test="dma-fact-target" :data-label="t('group')">
@@ -91,7 +91,7 @@
           </ul>
         </template>
 
-        <!-- 그룹 삭제 (v02gui.0027 0008-T): an empty Group only. With Flows (archived and discarded count) nothing is deleted:
+        <!-- Delete Group (v02gui.0027 0008-T): an empty Group only. With Flows (archived and discarded count) nothing is deleted:
              the window says why and offers 대신 아카이브. Only the Group's record goes; no history is erased. -->
         <template v-else-if="shown.kind === 'group.delete'">
           <Alert v-if="deleteBlockedShown" tone="danger" class="dma-alert" data-test="dma-group-delete-blocked"
@@ -108,7 +108,7 @@
           </ul>
         </template>
 
-        <!-- Flow 삭제 = the existing dispose (DC). v02gui.0029: the Group delete's look — one sentence, the Flow in its box,
+        <!-- Flow Delete = the existing dispose (DC). v02gui.0029: the Group delete's look — one sentence, the Flow in its box,
              two points, then the required reason; a reason chip only fills the input (it can still be edited). -->
         <template v-else-if="shown.kind === 'flow.delete'">
           <ul class="dma-points" data-test="dma-dispose-points">
@@ -127,7 +127,7 @@
           </div>
         </template>
 
-        <!-- 새 폴더 / 새 파일 -->
+        <!-- New folder / new file -->
         <div v-else-if="shown.kind === 'folder.newFolder' || shown.kind === 'folder.newFile'" class="dma-field">
           <label class="dma-label" for="dma-name">{{ t('create.name') }}</label>
           <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
@@ -135,7 +135,7 @@
           <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
         </div>
 
-        <!-- 업로드 -->
+        <!-- Upload -->
         <template v-else-if="shown.kind === 'folder.upload'">
           <template v-if="!uploadResult">
             <label class="dma-pick">
@@ -177,7 +177,7 @@
           </div>
         </template>
 
-        <!-- 폴더 다운로드 -->
+        <!-- Download folder -->
         <template v-else-if="shown.kind === 'folder.download'">
           <ul class="dma-points">
             <li class="is-info"><LineIcon name="info" /><span>{{ t('download.zip') }}</span></li>
@@ -185,7 +185,7 @@
           </ul>
         </template>
 
-        <!-- 삭제 (파일 / 폴더). v02gui.0029: titled 파일 삭제 / 폴더 삭제; the name large in a red-edged box, its folder faint;
+        <!-- 삭제 (파일 / 폴더). v02gui.0029: titled Delete file / Delete folder; the name large in a red-edged box, its folder faint;
              what goes with it and that it cannot be undone as red points. -->
         <template v-else-if="shown.kind === 'folder.delete' || shown.kind === 'file.delete'">
           <ul class="dma-points is-warn" data-test="dma-remove-points">
@@ -194,7 +194,7 @@
           </ul>
         </template>
 
-        <!-- 수정 확인 -->
+        <!-- Review changes -->
         <template v-else-if="shown.kind === 'file.git.changes'">
           <p v-if="diffLoading" class="dma-hint" data-test="dma-diff-loading">{{ t('diff.loading') }}</p>
           <template v-else-if="diff">
@@ -231,7 +231,7 @@
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
         </template>
         <Button v-else-if="uploadResult" variant="primary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
-        <!-- v02gui.0027: a Group with Flows is not deleted; 대신 아카이브 runs the Group archive (none for an archived Group). -->
+        <!-- v02gui.0027: a Group with Flows is not deleted; Archive instead runs the Group archive (none for an archived Group). -->
         <template v-else-if="deleteBlockedShown">
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
           <Button v-if="canArchiveInstead" variant="primary" :disabled="busy || stale" :loading="busy" data-test="dma-archive-instead"
@@ -287,15 +287,15 @@ const { t } = useI18n({ useScope: 'local', messages: menuActionMessages, inherit
 const refusalId = 'designer-menu-action-refusal'
 /** The server's limit of a Group display name (module_routes.patch_module). */
 const GROUP_TITLE_MAX = 100
-/** Rows of the 수정 확인 diff shown at first and added by each 더 보기. */
+/** Rows of the Review changes diff shown at first and added by each 더 보기. */
 const DIFF_PAGE_ROWS = 2000
 
 const pending = computed(() => props.actions.pending.value)
-/** 파일 다운로드 has no window: it runs as soon as it is asked. */
+/** Download file has no window: it runs as soon as it is asked. */
 const shown = computed<MenuActionTarget | null>(() => (pending.value && pending.value.target.kind !== 'file.download' ? pending.value.target : null))
 
 const text = ref('')
-/** 그룹 이름 변경: the identifier input (v02gui.0012). */
+/** Rename Group: the identifier input (v02gui.0012). */
 const identText = ref('')
 const tried = ref(false)
 // The delete reason was typed in and left empty: the only moment its input error shows.
@@ -319,7 +319,7 @@ let checkSeq = 0
 let diffSeq = 0
 
 const danger = computed(() => ['flow.delete', 'folder.delete', 'file.delete', 'group.delete'].includes(shown.value?.kind ?? ''))
-/** 그룹 삭제: the Flow count of a 409 `module_not_empty` (the server's final word), else null. */
+/** Delete Group: the Flow count of a 409 `module_not_empty` (the server's final word), else null. */
 const serverFlowCount = ref<number | null>(null)
 /** The menu built again from now still has the item (the target is there, in the same scope, still enabled). */
 const stale = computed(() => !!pending.value && !uploadResult.value && !pending.value.stillValid())
@@ -335,9 +335,9 @@ const flowNow = computed(() => {
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
 /**
- * 0016-CH B안 / v02gui.0029 (0003-CH): how a window looks — `hero` = a confirm (the large badge above the title, the target
+ * 0016-CH option B / v02gui.0029 (0003-CH): how a window looks — `hero` = a confirm (the large badge above the title, the target
  * box, the point list, wide buttons), `compact` = an input window (a small badge beside the title, the same box and wide
- * buttons), `plain` = 수정 확인 (the title row and its facts).
+ * buttons), `plain` = Review changes (the title row and its facts).
  */
 const look = computed<'hero' | 'compact' | 'plain'>(() => {
   switch (shown.value?.kind) {
@@ -386,9 +386,9 @@ function parentOf(path: string): string {
   return parts.length > 1 ? `${parts.slice(0, -1).join('/')}/` : ''
 }
 /**
- * v02gui.0029: the target box of the windows other than the Group ones (they draw their own) and 수정 확인 (its facts):
+ * v02gui.0029: the target box of the windows other than the Group ones (they draw their own) and Review changes (its facts):
  * the Flow with its identifier, the file / folder by its name with its folder, or the folder a new entry / upload goes
- * to. The 그룹 이름 변경 window stays the two inputs only (0004-CH seq 19/20); an upload's result has no box.
+ * to. The Rename Group window stays the two inputs only (0004-CH seq 19/20); an upload's result has no box.
  */
 const box = computed<TargetBox | null>(() => {
   const target = shown.value
@@ -515,7 +515,7 @@ const groupChanged = computed(() =>
   text.value.trim() !== currentName.value || identText.value.trim() !== currentIdent.value)
 
 /**
- * 그룹 삭제: how many Flows keep the Group — the server's 409 count once it answered, else the Flow count the tree read
+ * Delete Group: how many Flows keep the Group — the server's 409 count once it answered, else the Flow count the tree read
  * gave (`flowTotal`, archived and discarded included). null = the Group may be deleted (the DELETE still decides).
  */
 const deleteBlockedCount = computed<number | null>(() => {
@@ -573,7 +573,7 @@ const GROUP_ARCHIVE_REFUSAL_TEXT: Readonly<Record<string, string>> = {
   already_archived: 'archive.server.already',
   module_not_found: 'rename.server.notFound',
 }
-/** v02gui.0027 (0008-T): the Group delete's refusals (module_routes delete_module) and those of its 대신 아카이브. */
+/** v02gui.0027 (0008-T): the Group delete's refusals (module_routes delete_module) and those of its Archive instead. */
 const GROUP_DELETE_REFUSAL_TEXT: Readonly<Record<string, string>> = {
   ...GROUP_ARCHIVE_REFUSAL_TEXT,
 }
@@ -658,7 +658,7 @@ function close() {
   if (current) props.actions.close(current.seq)
 }
 
-/** Right before a request: the target must still be what the menu saw (§3.3, T 4항). */
+/** Right before a request: the target must still be what the menu saw (§3.3, T 4 item). */
 function stillValid(): boolean {
   if (pending.value?.stillValid()) return true
   staleTried.value = true
@@ -795,7 +795,7 @@ async function submit() {
   busy.value = false
   if (!answer.ok) {
     const refused = answer.refusal ?? { reason: 'failed', status: null, code: null }
-    // v02gui.0027: the Group still has Flows — the window turns into the refusal with 대신 아카이브 (nothing deleted).
+    // v02gui.0027: the Group still has Flows — the window turns into the refusal with Archive instead (nothing deleted).
     if (target.kind === 'group.delete' && refused.code === 'module_not_empty') {
       serverFlowCount.value = Math.max(1, refused.count ?? groupNow.value?.flowTotal ?? 1)
       return
@@ -816,7 +816,7 @@ async function submit() {
   close()
 }
 
-/** 그룹 삭제 → 대신 아카이브 (v02gui.0027 0008-T): the existing Group archive, right here; a refusal stays in the window. */
+/** Delete Group → Archive instead (v02gui.0027 0008-T): the existing Group archive, right here; a refusal stays in the window. */
 async function archiveInstead() {
   const target = shown.value
   const server = props.actions.server
@@ -854,7 +854,7 @@ async function archiveInstead() {
 .dma-close {
   color: var(--fg2-text-3);
 }
-/* ── 0016-CH (시안 basodrr4 B안): the Group archive / delete confirm ──────────────────────────────────────────── */
+/* ── 0016-CH (mockup basodrr4 option B): the Group archive / delete confirm ──────────────────────────────────────────── */
 :global(.ui-modal-surface.ui-modal-surface--md.dma-hero-surface) {
   max-width: 460px;
   background: var(--fg2-pop-surface);
@@ -1025,7 +1025,7 @@ async function archiveInstead() {
   gap: 10px;
   padding: 16px 0 4px;
 }
-/* v02gui.0029: every window in the Group archive's look (all but 수정 확인) spaces its body the same way. */
+/* v02gui.0029: every window in the Group archive's look (all but Review changes) spaces its body the same way. */
 .dma-body:not([data-kind='file.git.changes']) {
   gap: 14px;
   padding: 10px 0 18px;
@@ -1197,7 +1197,7 @@ async function archiveInstead() {
   gap: 10px;
   padding: 16px 24px 20px;
 }
-/* B안: two equal, taller buttons across the confirm's width. */
+/* option B: two equal, taller buttons across the confirm's width. */
 .dma-actions.is-wide {
   padding: 4px 24px 24px;
 }

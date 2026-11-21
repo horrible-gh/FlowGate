@@ -1,4 +1,4 @@
-/** D0007 §8-10: use the existing Git detail window for retry/cancel/resolve. */
+/** use the existing Git detail window for retry/cancel/resolve. */
 import { computed, defineComponent, h, provide } from 'vue'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

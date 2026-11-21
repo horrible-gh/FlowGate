@@ -1,6 +1,6 @@
 """Remote Agent Job claim / lifecycle against a REAL PostgreSQL server (opt-in).
 
-flowgate.v02.0135 T#1. ``agent_jobs.cancel_requested`` / ``stdout_truncated`` /
+``agent_jobs.cancel_requested`` / ``stdout_truncated`` /
 ``stderr_truncated`` are BOOLEAN on PostgreSQL but INTEGER on SQLite, so the SQLite
 suite (test_agent_jobs_0636.py) could never see the ``boolean = integer`` error that made
 every ``POST /agent/jobs/claim`` answer HTTP 500 (text/plain, 21 bytes) on PostgreSQL:

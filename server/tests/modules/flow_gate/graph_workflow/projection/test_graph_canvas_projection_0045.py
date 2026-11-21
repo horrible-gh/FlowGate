@@ -1,9 +1,9 @@
-"""flowgate.v02.0045 T0011 (S1+S2) — legacy projector keeps only live documents (P0008 §2.4).
+"""(S1+S2) — legacy projector keeps only live documents.
 
 The v0.1 root lookup (``find_sequence_by_group_root``) also returns cancelled / superseded R·B,
 and a slot result document can be cancelled or superseded after it filled the slot. Neither
-may stay on the Canvas as a node or as the end of a reference edge (P0008 §2.4·§2.7,
-D0004 §3.7 "root 문서").
+may stay on the Canvas as a node or as the end of a reference edge (the plan·,
+"root document").
 """
 from __future__ import annotations
 

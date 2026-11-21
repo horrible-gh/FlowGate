@@ -53,7 +53,7 @@ def test_sending_both_a_file_and_inline_content_is_refused(review_env):
     )
     review_env["insert"].assert_not_called()
 def test_the_error_wording_matches_the_document_paths(review_env):
-    """T0005 §2-7: "new/edit 경로와 같은 문구를 쓴다". Two implementations of the same
+    """"use the same wording as the new/edit paths". Two implementations of the same
     contract drift apart the moment their strings differ, so the strings are pinned here."""
     from flowgate.card_document_edit import legacy_edit
     source = Path(inbox_routes.__file__).read_text(encoding="utf-8")

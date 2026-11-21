@@ -1,7 +1,7 @@
 /**
- * v02gui.0015 T2 (NR0006 §6-6) — a card whose current attempt did not take an earlier attempt's uncommitted changes says
+ * v02gui.0015 T2 — a card whose current attempt did not take an earlier attempt's uncommitted changes says
  * so: the run read's `uncarried_changes` ({ attempts, files, unknown }) is kept by both run transports and shown on the
- * Canvas card as a 미인계 chip (hover: how many attempts / files, that they are kept and not carried). None: no chip.
+ * Canvas card as a Not handed over chip (hover: how many attempts / files, that they are kept and not carried). None: no chip.
  * Every string has its ko / en / ja form.
  */
 import { mount, type VueWrapper } from '@vue/test-utils'

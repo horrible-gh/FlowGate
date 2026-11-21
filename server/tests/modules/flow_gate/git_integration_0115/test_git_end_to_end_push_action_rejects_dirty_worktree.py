@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_push_action_rejects_dirty_worktree(self, origin_repo):
-        # NR flowgate.default.0331.0005 §3: `push` may only send commits that
+        # `push` may only send commits that
         # already exist. A dirty worktree used to be silently absorbed into a
         # new commit and pushed — indistinguishable from `commit_push` — which
         # risked publishing worker edits nobody confirmed. It must now be

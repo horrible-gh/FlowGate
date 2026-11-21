@@ -1,4 +1,4 @@
-"""Regression tests for flowgate.default.0609 T0004.
+"""Regression tests for the earlier change the earlier implementation.
 
 Git-active AC final approval used to treat "git-active" (git config enabled and
 a worktree still registered) as reason enough to demand `git_action`, even when
@@ -10,9 +10,9 @@ no-work / already-applied groups behind
 This module locks the fix: the legacy path-shaped approval endpoint
 (document_review_transition_endpoint) now defers to
 `git_service.group_finalize_is_noop` -- the same real-Git-state judgment the
-finalize panel/gate already use (flowgate.default.0548 T0004) -- and only
+finalize panel/gate already use -- and only
 requires `git_action` when there is an actual pending merge/discard choice.
-Cases follow flowgate.default.0609 T0004 SS4 / NR0003 SS7 (A/B/C/F).
+Cases follow the earlier change the earlier implementation SS4 / the review SS7 (A/B/C/F).
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def _install(monkeypatch, ac, root, *, cfg, state, is_noop):
     monkeypatch.setattr(workflow, "db_docs", docs)
     monkeypatch.setattr(ps.db_wfseq, "get_sequence_by_doc_id", lambda _root_id: {"id": 10})
     monkeypatch.setattr(ps.db_wfseq, "get_effective_head", lambda _sequence_id: None)
-    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # The workflow-head guard fails closed without a sequence store, which
     # this DB-less fixture does not have; it is covered by test_tr2_lifecycle_0660.py.
     monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     monkeypatch.setattr(ps, "log_state_changed", MagicMock())
@@ -119,7 +119,7 @@ def test_case_b_already_applied_worktree_unregistered_approves_without_git_actio
     """Case B: git-active + already-applied (worktree already unregistered) + no
     git_action -> final approval succeeds, matching pre-existing behavior for
     unregistered slots, WITHOUT running any Git finalize/cleanup/rollback side
-    effect (T0004 §3: "기존 반영 상태 유지" / "불필요한 cleanup/rollback 없음").
+    effect ("preserve the applied state" / "no unnecessary cleanup/rollback").
 
     The legacy path-shaped endpoint has no git_action field and, per the guard
     at workflow.py just above the group_finalize_is_noop() check, must never
@@ -201,8 +201,8 @@ def test_case_f_non_git_active_group_unaffected(monkeypatch):
 # git_action field at all -- by construction it can never drive a discard.
 # The actual discard finalize is owned by the RPC orchestrator
 # (document_review_transition_rpc / _orchestrate_final_approval in
-# workflow.py), the same one flowgate.default.0555 T0006 pinned for
-# git_action="merge". T0004 §4 Case E requires the discard twin of that
+# workflow.py), the same one the earlier change the earlier implementation pinned for
+# git_action="merge". the earlier implementation Case E requires the discard twin of that
 # contract to keep working untouched by this revision's no-work carve-out.
 
 _DISCARD_DOC = {
@@ -219,9 +219,9 @@ _DISCARD_USER = {"user_id": "reviewer", "is_admin": True}
 
 def test_case_e_discard_required_git_action_discard_finalizes_normally(group_store, monkeypatch):
     """Case E: git-active + real discard required + git_action=discard -> normal
-    finalize succeeds exactly as before this revision (T0004 §3/§4).
+    finalize succeeds exactly as before this revision.
 
-    0669 units 6a/6b: the approval is a final_approval_publish job on the real job layer
+    units 6a/6b: the approval is a final_approval_publish job on the real job layer
     (approval_job_fakes); the Git body answers "discarded" and is only scripted."""
     import approval_job_fakes as fakes
 

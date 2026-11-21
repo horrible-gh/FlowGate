@@ -1,6 +1,6 @@
-"""0370 T0012 — the worker must be able to make bounded document queries.
+"""the worker must be able to make bounded document queries.
 
-0394 T0004 (NR0003 §4.2 S5) rewrote the first case here. 0370 satisfied this by printing
+rewrote the first case here. 0370 satisfied this by printing
 the whole lookup catalogue into every mention; the 0372 mention-reduction chain then took
 that block out of the document-workflow mentions and left the addresses in the help
 catalog, which those mentions link to. The old assertions searched the mention text for
@@ -52,10 +52,18 @@ def _assert_reaches_the_catalog(text: str) -> None:
     assert f"Authorization: Bearer {TOKEN}" in text
 
 
-def _assert_inline_lookup(text: str, doc_id: str = DOC_ID) -> None:
-    """The mention spells the bounded endpoints out in its own body."""
+def _assert_inline_lookup(text: str, doc_id: str = DOC_ID, *, brief: bool = False) -> None:
+    """The mention spells the bounded endpoints out in its own body (``brief``: the 0061 short form)."""
     assert "Efficient document lookup" in text or "[문서 조회 도구]" in text or "Document search and lookup rules" in text
-    _assert_bounded_endpoints(text, doc_id)
+    if brief:
+        # card 5: meta / outline / section / body search stay inline; the rest is the documents/partial leaf
+        assert f"/document/{doc_id}/meta" in text
+        assert f"/document/{doc_id}/outline" in text
+        assert f"/document/{doc_id}/section?section_id=<section_id>" in text
+        assert "/search/documents/content?q=<keyword>&project=flowgate" in text
+        assert f"{BASE}/help/items/documents/partial" in text or f"/document/{doc_id}/relations" in text
+    else:
+        _assert_bounded_endpoints(text, doc_id)
     assert f"Authorization: Bearer {TOKEN}" in text
 
 
@@ -86,9 +94,9 @@ def test_the_help_catalog_carries_the_bounded_reads(monkeypatch):
         "ko",
         BASE,
     )
-    assert "document_access" in help_catalog.visible_names(ctx)
+    assert "documents" in help_catalog.visible_names(ctx)
 
-    partial = help_catalog.build_item("document_access", ctx)["content"]["partial"]
+    partial = help_catalog.build_child("documents", "partial", ctx)["content"]["partial"]
     urls = "\n".join(
         entry["url"] for entry in partial.values() if isinstance(entry, dict) and "url" in entry
     )
@@ -166,9 +174,11 @@ def test_chat_and_q_answer_mentions_expose_the_same_queries(monkeypatch):
         group_name=GROUP_ID,
     )
     chat_text = "\n".join(chat_sections)
-    _assert_inline_lookup(chat_text, "<doc_id>")
+    _assert_inline_lookup(chat_text, "<doc_id>", brief=True)
 
     monkeypatch.setattr(q_answer_invoke_service.db_groups, "get_by_id", lambda _gid: None)
+    from modules.flow_gate.services import question_policy
+    monkeypatch.setattr(question_policy, "text", lambda *args, **kwargs: "")  # the user's policy needs a DB
     answer = q_answer_invoke_service.build_answer_mention(
         doc={
             "doc_id": DOC_ID,
@@ -181,4 +191,4 @@ def test_chat_and_q_answer_mentions_expose_the_same_queries(monkeypatch):
         scratch_dir="C:/scratch",
         api_base_url=BASE,
     )
-    _assert_inline_lookup(answer)
+    _assert_inline_lookup(answer, brief=True)

@@ -12,7 +12,7 @@
 </template>
 
 <script setup lang="ts">
-// The frame every Environment Settings screen renders in (mockup ⑩, flowgate.v02.0077): the
+// The frame every Environment Settings screen renders in (mockup ⑩, the earlier change): the
 // settings navigation on the left — 환경 설정 개요, the scopes of the shared settings menu
 // (../settingsMenu) and, under the scope shown, the page's own sub-navigation from the `nav` slot
 // — and the screen's content card on the right. The breadcrumb and the scope tab row of 0076 are
@@ -22,7 +22,7 @@ import SettingsNav from './SettingsNav.vue'
 import type { SettingsScopeKey } from '../settingsMenu'
 import '../settings.css'
 
-/** 'workspace' is only passed by the Workspace views, which no route opens any more (0076 T#1). */
+/** 'workspace' is only passed by the Workspace views, which no route opens any more. */
 export type SettingsScope = SettingsScopeKey | 'workspace'
 
 defineProps<{ scope: SettingsScope }>()

@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0048 T#11 — the test section's calls in features/document/api/testSpec.ts (D#1 §6.3, §12.1;
- * NR0003 §2.7): the requests sent to the existing v0.1 endpoints (GET /documents/{doc_id}/test-document,
+ * the test section's calls in features/document/api/testSpec.ts (the earlier implementation;
+ * ): the requests sent to the existing v0.1 endpoints (GET /documents/{doc_id}/test-document,
  * POST /documents/{ts_id}/test-spec/runs, POST /documents/test-run/{run_id}/cancel), the server's
  * snake_case answers (test_run_service.describe_test_document / shape_run) -> camelCase for a
  * specification TS, its TSR and a legacy TS, and how a refusal is read — the run routes' flat

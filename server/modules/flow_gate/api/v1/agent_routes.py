@@ -14,7 +14,7 @@ class AgentCreate(Strict):
  name:str=Field(min_length=1,max_length=100)
  max_concurrent_jobs:StrictInt=Field(default=4,ge=1,le=32)
  remote_workdir:str|None=None
- # flowgate.v02test.0019: workspace cleanup policy (default ON / 24 h, whole hours 1..720).
+ # workspace cleanup policy (default ON / 24 h, whole hours 1..720).
  workspace_cleanup_enabled:StrictBool=True
  workspace_cleanup_retention_hours:StrictInt=Field(default=24,ge=1,le=720)
  @model_validator(mode="after")
@@ -24,7 +24,7 @@ class AgentCreate(Strict):
 class AgentPatch(Strict):
  name:str|None=None;enabled:StrictBool|None=None
  max_concurrent_jobs:StrictInt|None=Field(default=None,ge=1,le=32)
- # flowgate.v02.0135 CH0006: null or blank clears it.
+ # null or blank clears it.
  remote_workdir:str|None=None
  workspace_cleanup_enabled:StrictBool|None=None
  workspace_cleanup_retention_hours:StrictInt|None=Field(default=None,ge=1,le=720)

@@ -1,6 +1,6 @@
-"""Tool-debris detection — the single rule shared by the screens and the check (0382 NR0003 proposal 3).
+"""Tool-debris detection — the single rule shared by the screens and the check (proposal 3).
 
-The 0382 B0001 incident happened because there were two rules. The screens (file explorer,
+The the regression incident happened because there were two rules. The screens (file explorer,
 change list, final approval) used "hide it if any path segment starts with a dot", while the
 submission check (tr_scope_service) used "only look at whether the first segment is a dot".
 So 261 ``server/.test-tmp-0313/...`` files ended up **invisible on every screen yet blocking
@@ -10,15 +10,15 @@ So the decision code is gathered here. The NR's conclusion that "tr_scope_servic
 is canonical" holds by name — that name merely re-exports this module, and git_service's
 screen filter calls the same function.
 
-There are four categories (inherited from 0299 D0004 §3.3, with one added in 0382).
+There are four categories (inherited from the design, with one added in 0382).
 
 1) Top-level entries starting with a dot — ``.git/``, ``.venv/``, ``.env`` and so on.
    The repository's own tracked policy files (``.gitattributes``, ``.gitignore`` …, see
-   ``REPO_CONFIG_FILENAMES``) are the exception (0608 TR0006): they are work, not debris,
+   ``REPO_CONFIG_FILENAMES``) are the exception: they are work, not debris,
    and ``git add -u`` commits an edit to them anyway, so hiding them from the manifest
    would let a repository policy change ride the commit unseen.
    The repository's own configuration directories (``.github/`` …, see
-   ``REPO_CONFIG_DIRECTORIES``) are the same kind of exception (flowgate.v02test.0033): a
+   ``REPO_CONFIG_DIRECTORIES``) are the same kind of exception: a
    new ``.github/workflows/ci.yml`` was dropped from the chat commit as debris without a
    word. Inside such a directory the other rules still apply to the rest of the path.
 2) **Dot directories mid-path** (added in 0382) — this is what catches ``server/.test-tmp-0313/...``.
@@ -51,7 +51,7 @@ EXCLUSION_REASONS = (
     REASON_EMPTY,
 )
 
-# 0382: name prefixes of scratch directories tests used to create inside the repository. The
+# name prefixes of scratch directories tests used to create inside the repository. The
 # test-side default moved outside the repo (proposal 2-a), but they are kept here too so that
 # already-created ones, and ones drifting in from other checkouts, are recognised identically by screens, checks and finalize.
 TEST_SCRATCH_PREFIX = ".test-tmp"
@@ -63,7 +63,7 @@ _EXCLUDED_DIR_SEGMENTS = frozenset({
 })
 _EXCLUDED_DIR_PREFIXES = ("pytest-cache-files-", TEST_SCRATCH_PREFIX)
 
-# 0608 TR0006: dot-named files that are the repository's own configuration. The finalize/TR
+# dot-named files that are the repository's own configuration. The finalize/TR
 # commit stages every tracked change (``git add -u``), so an edited ``.gitattributes`` is
 # committed whatever the rule says — the rule must therefore show it, or the reviewed
 # manifest and the commit disagree. Secrets (``.env``…) are deliberately not listed.
@@ -71,7 +71,7 @@ REPO_CONFIG_FILENAMES = frozenset({
     ".gitattributes", ".gitignore", ".dockerignore", ".editorconfig", ".gitlab-ci.yml",
 })
 
-# flowgate.v02test.0033: top-level dot directories that hold the repository's own
+# top-level dot directories that hold the repository's own
 # configuration (CI workflows and the like). They are work: a file under them is kept by
 # every screen, check and commit. Secret or tool directories (``.env``, ``.venv``…) are not listed.
 REPO_CONFIG_DIRECTORIES = frozenset({".github", ".gitlab", ".circleci"})
@@ -118,7 +118,7 @@ def exclusion_reason(path: str) -> Optional[str]:
 
 
 def is_excluded_path(path: str) -> bool:
-    """Is this debris left by a tool or the environment rather than work output (0299 D0004 §3.3 + 0382)?"""
+    """Is this debris left by a tool or the environment rather than work output ?"""
     return exclusion_reason(path) is not None
 
 

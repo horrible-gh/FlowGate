@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { chunkText, conflictChunks, splitConflictSegments } from '@/features/git/conflictChunks'
 
-// flowgate.v02gui.0004 — the direct resolver numbers chunks exactly as the server's
+// the direct resolver numbers chunks exactly as the server's
 // `_split_content_segments` does, so chunk N is chunk N of POST …/resolve.
 describe('conflictChunks', () => {
   it('alternates common text and chunks, numbered in file order, with or without a base section', () => {

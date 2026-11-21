@@ -1,4 +1,4 @@
-"""[Request AI answer] actually dispatches a worker (group 0248 B0001 / NR0003 regression).
+"""[Request AI answer] actually dispatches a worker (regression).
 
 The defect: POST /q/{doc_id}/items/{item_id}/answers/ai-request minted an edit token,
 returned it to the browser, and stopped. No worker was ever launched, so the button was a
@@ -7,7 +7,7 @@ exercised the endpoint at all (NR0003 "테스트 공백").
 
 What is defended here:
   1. the route calls ai_invoke_service.start_run exactly ONCE (the missing link itself),
-  2. the response carries the run handle and NO secret (P0005 표기 규칙 — the old response
+  2. the response carries the run handle and NO secret (the plan notation rules — the old response
      leaked raw_token/scratch_dir to the browser),
   3. the token handed to the run stays edit-scoped and doc_ref-bound, so the receiving
      route (_resolve_writer) still admits it,
@@ -118,7 +118,7 @@ def tmp_db():
         except Exception:
             pass
     # Pre-existing sqlite migration-chain defect, NOT part of this fix (reported in
-    # 0248 TR): there are two migration 063s, and 064_tokens_resolve_conflict_scope
+    # TR): there are two migration 063s, and 064_tokens_resolve_conflict_scope
     # rebuilds `tokens` with a column list that predates — and therefore drops —
     # continuation_instruction_mode from 063_tokens_continuation_instruction_mode.
     # Applying the chain to a fresh sqlite DB in filename order thus loses the column
@@ -148,7 +148,7 @@ def patch_store(tmp_db):
             return _QUERIES[key]
 
     conn_mod.STORE = _PatchedStore()
-    # 0661 (harness repair, as in test_qa_route_auth): token_scratch.create refuses a scratch
+    # (harness repair, as in test_qa_route_auth): token_scratch.create refuses a scratch
     # root outside the storage root, which a test host's temp dir is; the on-disk scratch
     # directory is irrelevant to these dispatch tests.
     from modules.flow_gate.services import token_service
@@ -244,7 +244,7 @@ def test_ai_request_starts_a_run_and_returns_no_secret(seed_data):
     assert body["run_id"] == "run-1"
     assert body["status"] == "running"
     assert body["item_id"] == item_id
-    # P0005: the browser must never see the work token again.
+    # the browser must never see the work token again.
     for leaked in ("raw_token", "token_id", "scratch_dir", "expires_at"):
         assert leaked not in body, f"{leaked} must not be returned to the browser"
 
@@ -277,7 +277,7 @@ def test_run_token_stays_edit_scoped_and_bound_to_the_document(seed_data, tmp_pa
 # ── 4. The mention pins the worker to one item ────────────────────────────────────────
 
 def test_mention_names_the_target_item_and_the_post_contract(seed_data, tmp_path):
-    """A generic Q&A dump would not tell the worker WHICH item to answer (NR0003)."""
+    """A generic Q&A dump would not tell the worker WHICH item to answer."""
     item_id = _make_item(body="A안과 B안 중 무엇인가요?", options=["A안", "B안"])
     with patch("modules.flow_gate.api.v1.q_tapi_routes.has_permission", return_value=True), \
          patch("modules.flow_gate.services.token_service._scratch_dir",
@@ -290,7 +290,7 @@ def test_mention_names_the_target_item_and_the_post_contract(seed_data, tmp_path
     assert "A안과 B안 중 무엇인가요?" in mention           # the item body, verbatim
     assert f"/q/{DOC}/items/{item_id}/answers" in mention  # the exact POST target
     assert issued["raw_token"] in mention                  # usable credential
-    # Server-assigned option ids must be echoable back in selected_option_ids (L0008 §2.3).
+    # Server-assigned option ids must be echoable back in selected_option_ids.
     from modules.flow_gate.services import q_answer_invoke_service
     item = q_answer_invoke_service.resolve_item(DOC, item_id)
     for opt in item["options"]:
@@ -338,7 +338,7 @@ def test_item_of_another_document_is_rejected(seed_data):
 
 
 def test_disposed_group_does_not_dispatch(seed_data):
-    """TR0079.0003 rework: a discarded group must not get an AI worker writing into it."""
+    """a discarded group must not get an AI worker writing into it."""
     item_id = _make_item()
     with patch("modules.flow_gate.api.v1.q_tapi_routes.has_permission", return_value=True), \
          patch("modules.flow_gate.process_service.is_group_disposed", return_value=True), \
@@ -505,7 +505,7 @@ def test_end_to_end_dispatch_lands_an_ai_answer_on_the_item(seed_data, tmp_path)
     assert record["outcome"] == "complete", "the scoped oracle must see the answer"
     assert record["oracle_mismatch"] is False
 
-    # The answer landed on the right item, attributed to the AI (D0005 §3.2).
+    # The answer landed on the right item, attributed to the AI.
     from modules.flow_gate.services import q_service
     item = next(i for i in q_service.get_qa_detail(DOC)["items"] if i["id"] == item_id)
     assert item["answer_count"] == 1

@@ -1,6 +1,6 @@
 """Content guards for the remote ``write`` / ``patch`` tools (v02gui 0015 T5).
 
-0006-NR §6-2 traced a 0005 incident where a worker read source through a layer that
+The review traced a 0005 incident where a worker read source through a layer that
 replaced values with ``***`` and wrote the masked text back, damaging dozens of files.
 The server cannot see what the client did to a read, so this module only judges what
 the server *can* see: the bytes on disk and the bytes it is asked to store.
@@ -9,7 +9,7 @@ the server *can* see: the bytes on disk and the bytes it is asked to store.
                          bytes it read (``read`` now returns ``source_sha256``); a
                          mismatch means someone else wrote in between. It does NOT
                          detect masking.
-(c) masked substitution -- the prefix rule (0006-NR §6-2 (c), rev 4). In a changed
+(c) masked substitution -- the prefix rule (the earlier implementation (c)). In a changed
                          hunk, an added line ``a`` and a removed line ``r`` are a
                          suspect pair when, for a ``***`` at index ``i`` of ``a``:
                          ``a[:i] == r[:i]`` (same head) and ``r[i:i+3] != "***"``
@@ -172,7 +172,7 @@ def _mask_positions(line: str) -> list[int]:
 
 
 def is_masked_substitution(added: str, removed: str) -> bool:
-    """The 0006-NR §6-2 (c) prefix rule for one (added, removed) line pair."""
+    """The the earlier implementation (c) prefix rule for one (added, removed) line pair."""
     for i in _mask_positions(added):
         head = added[:i]
         if not head.strip():

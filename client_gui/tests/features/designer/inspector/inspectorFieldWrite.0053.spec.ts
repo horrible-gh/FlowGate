@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#7 — the Inspector's common write of one value (useInspectorFieldWrite) with the
+ * the Inspector's common write of one value (useInspectorFieldWrite) with the
  * resource it answers into (useInspectorResource.replace): each change sent at once, its value pending (shown)
  * until answered, changes one after another in the order made, a refusal kept per field and the resource read
  * again, a new target dropping the pending values and the refusal, an answer for an earlier target not applied.

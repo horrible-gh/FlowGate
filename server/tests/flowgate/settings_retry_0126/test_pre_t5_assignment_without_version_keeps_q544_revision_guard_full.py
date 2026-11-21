@@ -1,4 +1,4 @@
-"""0126 T#5 A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
+"""Real settings routes, SQLite assignments/ledger, AI admission recorder.
 No external model, deployed server, or existing user data is used.
 """
 import json
@@ -28,7 +28,7 @@ def test_pre_t5_assignment_without_version_keeps_q544_revision_guard(
     from test_fg_command_review_0125 import _loop_row, _loop_end, _review_row, _revised
 
     key, _, result, revision = _spent(env, monkeypatch, starts, mode, follow=False)
-    # This existing card saved settings before T#5: its version is already positive.
+    # This existing card saved settings before settings versioning: its version is already positive.
     _, settings = new_settings(env, key)
     if evidence == 'asked':
         command(env, mode)

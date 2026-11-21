@@ -1,18 +1,18 @@
-"""Legacy projector: v0.1 sequence / documents -> Canvas nodes and edges (D0004 §3.2, P0008 §2·§3).
+"""Legacy projector: v0.1 sequence / documents -> Canvas nodes and edges.
 
 Pure over its inputs (the snapshot, the identity keys of sequence rows and already-fetched
 external documents). Positions, viewport and collapse are applied by the canvas service.
 
 - ``sequence`` projection (ownership v01 / conflict): root document + one node per slot,
   execution edges between adjacent slots, plus every other live document as a free node.
-  Only live documents (P0008 §2.4) are drawn or bound: a superseded root is shown as the live
-  end of its supersede chain, a cancelled root is not drawn (D0004 §3.7 "root 문서"), and a slot
+  Only live documents are drawn or bound: a superseded root is shown as the live
+  end of its supersede chain, a cancelled root is not drawn ("root document"), and a slot
   whose result document is no longer alive keeps its slot node without the document.
 - ``documents`` projection (unassigned): one node per live document, no execution edges. A
   Graph draft of the Flow is added on top by ``graph_projector.add_draft``.
 The ``graph`` projection (ownership graph / conflict) is built by ``graph_projector``.
 Reference edges (``triggered_by`` / ``target``) are drawn only between documents drawn in this
-Flow; anything else goes to ``external_relations`` (P0008 §2.7).
+Flow; anything else goes to ``external_relations``.
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ RELATIONS = (("triggered_by", "triggered_by"), ("target", "target_id"))
 @dataclass
 class Projection:
     projection: str                                       # "sequence" | "documents" | "graph"
-    nodes: list[dict] = field(default_factory=list)       # P0008 §2.6 without "position"
-    edges: list[dict] = field(default_factory=list)       # P0008 §2.7
+    nodes: list[dict] = field(default_factory=list)       # without "position"
+    edges: list[dict] = field(default_factory=list)       # 
     external_relations: list[dict] = field(default_factory=list)
     chain: list[str] = field(default_factory=list)        # root + slots, execution order
     free_docs: list[str] = field(default_factory=list)    # unbound document nodes, document order
@@ -103,7 +103,7 @@ def project(
     lookup: Callable[[list[str]], dict[str, dict]] = lambda _ids: {},
     hidden: frozenset = frozenset(),
 ) -> Projection:
-    """``hidden``: documents drawn inside a Graph draft card instead (flowgate.v02.0053 T#1)."""
+    """``hidden``: documents drawn inside a Graph draft card instead."""
     by_id = {d["doc_id"]: d for d in documents if d.get("doc_id")}
     supersedes = supersedes_map(documents)
     alive = sorted((d for d in documents if cm.is_alive(d, flow_id)), key=doc_order)
@@ -168,7 +168,7 @@ def project(
 
 
 def _sequence_root(flow_id, root_id, by_id, extra, result_ids) -> Optional[dict]:
-    """The live document shown as the sequence root, or None (P0008 §2.4, D0004 §3.7).
+    """The live document shown as the sequence root, or None.
 
     The v0.1 root lookup also returns cancelled / superseded R·B. A superseded root is shown as
     the live end of its chain in this Flow; a cancelled, foreign or missing root is not drawn.

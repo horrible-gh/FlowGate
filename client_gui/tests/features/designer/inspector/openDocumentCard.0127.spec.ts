@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0127 T#5 — the card coordinates an opener hands to the document window (0009-L §2.11): taken from the
+ * the card coordinates an opener hands to the document window: taken from the
  * target and the pressed line's slot at the time of the press; a sharing line resolves to its owner; nothing is guessed.
  */
 import { describe, expect, it } from 'vitest'

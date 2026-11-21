@@ -65,7 +65,7 @@ def test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed
     assert mt.preview_target(gid, "main")["incoming_work_base_commits"] == 0      # the preview's tip fallback
     assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
     view = _check_view(proj, gid, "main")
-    # flowgate.v02test.0020 rev2: the list reads no floor; main is listed and refused when saved / confirmed / run
+    # The list reads no floor; main is listed and refused when saved / confirmed / run
     assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
     assert view["merge_target_state"]["current"]["error"] is None
     assert _refused(proj, gid, "main", scope_floor_sha=b).code == "merge_target_incoming_work_base"

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0023 T0006 — project group tree in features/project (api + store).
+ * project group tree in features/project (api + store).
  *
  * The tree request path and its cache live in the project store so the Designer Project
  * Explorer and File Explorer (0024) share one source instead of each owning a tree store.
@@ -57,7 +57,7 @@ describe('fetchProjectGroupTree (api)', () => {
     ])
   })
 
-  // flowgate.v02.0088 F10: the Error carries only the server's own words; without them it is empty and the screen
+  // the Error carries only the server's own words; without them it is empty and the screen
   // shows its localized load_failed instead of an English default from the adapter.
   it('throws a plain Error on failure, empty when the server said nothing', async () => {
     getRequest.mockRejectedValue(new Error('boom'))

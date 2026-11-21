@@ -86,7 +86,7 @@ from test_fg_integration_persistence_0156 import (
 
 def test_s_d2_5_an_abort_in_the_failed_drain_s_window_still_fails_the_attempt(env, decided, repo, tap, record,
                                                                               monkeypatch):
-    """S-D2-5, the order of TR0008 rev 0's review: D2-b's conflict record raises; ``integrate``'s finally has dropped
+    """S-D2-5, the order an earlier review found: D2-b's conflict record raises; ``integrate``'s finally has dropped
     ``_opened`` while the drain still owns the Flow (its ``except`` not reached yet) when a person aborts the session
     on another thread. That close cannot own the Flow (``_as_drain_owner`` False) and its ``retry`` only marks
     ``_again``, which the failed drain's cleanup drops. The close is still the attempt's: ``failed``

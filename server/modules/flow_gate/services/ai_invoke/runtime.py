@@ -1,4 +1,4 @@
-"""AI invoke shared state + parameters (0501 NR0003 §12/§13 `runtime.py`).
+"""AI invoke shared state + parameters (`runtime.py`).
 
 The bottom of the package's dependency graph: this module imports nothing else from
 `ai_invoke/`, and every other module in the package may import it. It owns
@@ -12,7 +12,7 @@ The bottom of the package's dependency graph: this module imports nothing else f
   * the per-run bookkeeping of issued tokens and prompts, plus the text primitives
     (`excerpt`, `_redact_secrets`, `prompt_digest`) that bookkeeping is expressed in.
 
-Deliberately NOT here (NR0003 §13): how a run is admitted, executed, judged, finalized
+Deliberately NOT here: how a run is admitted, executed, judged, finalized
 or continued. This module answers "what does this process currently hold?", nothing
 about what to do with it.
 
@@ -89,7 +89,7 @@ admission_run_id: ContextVar[str | None] = ContextVar("ai_admission_run_id", def
 admission_identity: ContextVar[dict | None] = ContextVar("ai_admission_identity", default=None)
 
 
-# ── Parameters (L0006 §1) ─────────────────────────────────────────────────────
+# ── Parameters ─────────────────────────────────────────────────────
 RUN_TIMEOUT_BASE_SEC = 3600      # per target document
 
 RUN_TIMEOUT_CAP_SEC = 14400      # run total = min(BASE × docs_target, CAP)
@@ -102,7 +102,7 @@ LAST_MESSAGE_MAX_BYTES = 16384   # keep the tail, truncate the front
 
 OUTPUT_TAIL_BYTES = 8192         # stdout/stderr auxiliary tails
 
-# 0446 T0016 2/3-3: how many spilled source paths a finished hop reports and stores. It
+# 2/3-3: how many spilled source paths a finished hop reports and stores. It
 # was a bare `[:20]` inside _finalize_run; naming it is what lets the durable row, the
 # finished payload and the rework handoff all provably use the SAME 20 rather than three
 # independently-chosen limits.
@@ -110,7 +110,7 @@ SOURCE_DIRTY_FILES_LIMIT = 20
 
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 
-# 0608 T0007: a resolve_conflict API run reads its chunks through the read tools
+# a resolve_conflict API run reads its chunks through the read tools
 # (the mention stops carrying their text past 4,000 chars) and submits file by file, so
 # its budget follows the conflict instead of the flat 4 turns a one-shot submit needed:
 # 4 + 2 per open chunk (read, then resolve) + 1 per open file (its submit), never above
@@ -142,17 +142,17 @@ ORACLE_SETTLE_SEC = 3            # wait before judging (late-commit slack)
 
 CONCURRENT_RUNS_PER_GROUP = 1
 
-# ── 0359 L0007 §1: no-output retry, hop budget, stop codes ───────────────────
-# NR0003 §3: the hop loop only ever moved FORWARD ("a document was registered"); a hop that
+# ── the earlier implementation: no-output retry, hop budget, stop codes ───────────────────
+# the hop loop only ever moved FORWARD ("a document was registered"); a hop that
 # ran, produced nothing and exited 0 fell straight out of the loop with no retry, no record
 # and no signal. These parameters bound the retry branch that closes that hole.
 POST_PROCESS_RECOVERY_SEC = 120  # bounded terminal recovery after a provider has returned
 
 HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled by slots left
 
-# flowgate.default.0400 M0005: the duration section's fixed option list, as seconds —
+# the duration section's fixed option list, as seconds —
 # 30/45/60/90/120/180/240 minutes. A pick outside this range is rejected by the route (422).
-# 0446 T0010 §3-2: these two bounds are now shared by BOTH entry points — ContinuousWorkDialog
+# these two bounds are now shared by BOTH entry points — ContinuousWorkDialog
 # (a continuous hop) and AiInvokeDialog (a single rejection rework) — and by the route's own
 # validation, deliberately with no single-run-only pair beside them; a second pair would let
 # the screen, the route and the engine disagree about where the edge is. With no pick at all
@@ -167,16 +167,16 @@ NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-o
 # flowgate.default.0443 T0002 (R0001): ContinuousWorkDialog's 기본 설정 탭 "재시작 횟수"
 # select — the no-output retry count is now a per-run pick instead of the fixed constant
 # above. -1 is the "될 때까지" sentinel (unlimited attempts); 0..N (N = the configured
-# ceiling, flowgate.default.0490 T0005) are restart counts (RESTARTS, not total attempts —
+# ceiling, the earlier change the earlier implementation) are restart counts (RESTARTS, not total attempts —
 # total = restarts + 1). Default matches the constant's pre-existing behavior exactly:
 # 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
 #
-# flowgate.default.0501 T0019: 0490 T0005 turned the fixed tuple into this function in
+# turned the fixed tuple into this function in
 # ai_invoke_service.py's parameter block. That block IS runtime.py now, so the function
 # lands here — same body, same SSOT call, one address further in.
 def restart_max_attempts_choices() -> tuple[int, ...]:
     """The dialog's selectable "재시작 횟수" set. SSOT is ai_execution_policy_service
-    (flowgate.default.0490 T0005) — this used to be the fixed tuple (-1, 0, 1, 2, 3)."""
+    — this used to be the fixed tuple ."""
     return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
 
 RESTART_MAX_ATTEMPTS_DEFAULT = 1
@@ -185,12 +185,12 @@ RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open 
 
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
 
-RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
+RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size
 
 RUN_LIST_LIMIT_MAX = 100         # GET /ai-invoke/runs clamp ceiling
 
-# ── 0446 T0014 §2: no-progress threshold vs. absolute ceiling ────────────────
-# T0010 made the budget above choosable; NR0003 then measured what it is actually
+# ── the earlier implementation: no-progress threshold vs. absolute ceiling ────────────────
+# made the budget above choosable; the review then measured what it is actually
 # spent on — hops still registering documents when the hour ran out, and workers that
 # had been dead for fifty minutes when it did. One number cannot separate those two,
 # so from here the budget `_resolve_timeout_sec` returns is read as the NO-PROGRESS
@@ -217,7 +217,7 @@ STALL_WATCHDOG_JOIN_SEC = 40
 # rejection already happened — all of it is re-derived from document_reviews plus the
 # document's revision_no/doc_review_status on every read (§2.3), which is what makes a
 # restart, a cold [이어서 진행] and an in-flight hop boundary all agree for free.
-# flowgate.default.0490 T0005 retired the frozen REVIEW_COUNT_VALUES literal that stood
+# retired the frozen REVIEW_COUNT_VALUES literal that stood
 # here: resolve_review_count reads the same live SSOT the write path validates against
 # (ai_execution_policy_service.repeat_count_choices), so there is no second ceiling to
 # drift away from the setting.
@@ -247,12 +247,12 @@ REWORK_HOP_KIND = "rework"
 
 # A review/rework hop is mode="single" but it IS one of the chain's hops, so it takes the
 # chain's per-hop budget instead of the single-run formula. Both resolve to 3600 when no
-# pick was made, which is what a single run already got — no existing run moves (L0008 §5).
+# pick was made, which is what a single run already got — no existing run moves.
 CHAIN_MEMBER_HOP_KINDS = frozenset({REVIEW_HOP_KIND, REWORK_HOP_KIND})
 
-# L0008 §1.2. `review_hold` is deliberately NOT reused: that name already belongs to
+# `review_hold` is deliberately NOT reused: that name already belongs to
 # [AI 검토 모드]'s stop, and a reviewer's `hold` VERDICT is a different event.
-# 0414 M0020 + the 0022-TR rejection: the gate no longer stops on a round COUNT at all.
+# + the the earlier implementation rejection: the gate no longer stops on a round COUNT at all.
 # A finite budget cannot be "exhausted" (its last round is reworked and then the step
 # advances), and -1 has no ceiling left to reach. BOTH codes stay because chains parked
 # before those changes still carry them, and their cards must keep rendering the same
@@ -273,7 +273,7 @@ REVIEW_REJECT_DENIED_STOP_CODE = "review_reject_denied"  # issuer lacks document
 
 REVIEW_REJECT_FAILED_STOP_CODE = "review_reject_failed"  # the reject transition raised
 
-# 0688 T#2: a document submitted while a question of its own was open, whose answer has landed
+# a document submitted while a question of its own was open, whose answer has landed
 # since, but which no automatic review can check against that answer (the step is not reviewed,
 # or its one answer-check round is spent). Held for a human like a reviewer's 'hold'.
 QUESTION_ANSWER_UNVERIFIED_STOP_CODE = "question_answer_unverified"
@@ -284,9 +284,9 @@ REVIEW_STOP_CODES = frozenset({
     REVIEW_REJECT_FAILED_STOP_CODE, QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
 })
 
-# L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops
+# one criterion: can re-running this hop still do the work? Human-triage stops
 # (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
-# 0549 T0008: a hop that handed an approved TS to the test gate (inbox action test_run) ends
+# a hop that handed an approved TS to the test gate (inbox action test_run) ends
 # on TEST_RUN_PENDING. Like question_pending it waits on something outside the worker — here
 # the test result — so it parks the ordinary durable system row, and a PASS resumes it
 # through the ordinary resume_chain (test_run_service.continue_chain_after_test_gate).
@@ -294,7 +294,7 @@ REVIEW_STOP_CODES = frozenset({
 # the way forward after a failure-origin rework or a human check is exactly "resume".
 TEST_RUN_PENDING_STOP_CODE = "test_run_pending"
 TEST_GATE_BLOCKED_STOP_CODE = "test_gate_blocked"
-# 0014 HOLD 2.2: the reworker Provider the user chose at Start was deleted, disabled or is no
+# HOLD 2.2: the reworker Provider the user chose at Start was deleted, disabled or is no
 # longer effective when the rework hop must launch. The chain parks here instead of silently
 # handing the rework to another Provider; restoring the Provider and resuming continues it.
 REWORKER_UNAVAILABLE_STOP_CODE = "reworker_unavailable"
@@ -303,12 +303,12 @@ RESUMABLE_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
     "question_pending", TEST_RUN_PENDING_STOP_CODE, TEST_GATE_BLOCKED_STOP_CODE,
     REWORKER_UNAVAILABLE_STOP_CODE,
-    # 0414 L0008 §1.2: of the seven review stops, only this one answers "would re-running
+    # of the seven review stops, only this one answers "would re-running
     # the hop have a chance?" with yes — the reviewer simply said nothing. Four of the
     # remaining five need a person: a verdict says hold, the loop is not making progress,
     # or a permission/transition is broken.
     REVIEW_NO_VERDICT_STOP_CODE,
-    # 0414 0022-TR rejection review: resolve_review_gate no longer has a round-count branch
+    # rejection review: resolve_review_gate no longer has a round-count branch
     # at all, so a legacy review_cap_reached row answers "yes" too — resuming it re-derives
     # the gate from the current reviews/revision rows exactly like a fresh -1 chain, and
     # review+rework simply continues until a pass. REVIEW_EXHAUSTED_STOP_CODE stays out:
@@ -316,21 +316,21 @@ RESUMABLE_STOP_CODES = frozenset({
     REVIEW_CAP_REACHED_STOP_CODE,
 })
 
-# L0007 §2.11 — every stop code that must reach a human. The set is SPLIT by speaker: the
+# every stop code that must reach a human. The set is SPLIT by speaker: the
 # engine fires the three below (the inbox never sees them — no request arrives), the inbox
 # self-chain fires the rest (they also happen on a copy-mention chain with no engine run).
 # Disjoint by construction ⇒ a double notification is impossible.
 ENGINE_NOTIFY_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout",
-    # 0014 HOLD 2.2: an unattended chain that cannot honour the chosen reworker must reach a human.
+    # HOLD 2.2: an unattended chain that cannot honour the chosen reworker must reach a human.
     REWORKER_UNAVAILABLE_STOP_CODE,
-    # 0414 L0008 §1.2: every review stop is spoken by the ENGINE — the inbox never sees
+    # every review stop is spoken by the ENGINE — the inbox never sees
     # these branches (no request arrives). Putting them here and nowhere else keeps
     # INBOX_NOTIFY_STOP_CODES disjoint, so a double notification stays impossible.
     *REVIEW_STOP_CODES,
 })
 
-# "question_pending" (NR0003 follow-up proposal 1/3) is deliberately NOT in this set: it means
+# "question_pending" (follow-up proposal 1/3) is deliberately NOT in this set: it means
 # the hop stopped because it is waiting on a human answer, not because it failed, so it
 # must not raise the "continuous work failed" notification the three codes above do.
 INBOX_NOTIFY_STOP_CODES = frozenset({
@@ -343,21 +343,21 @@ assert not (ENGINE_NOTIFY_STOP_CODES & INBOX_NOTIFY_STOP_CODES), (
     "L0007 §2.11: the engine and inbox notification sets must stay disjoint"
 )
 
-# 0466 T0007 §3.2.5 × 0458 T0007 §2.1 (merge): a park corrects THREE surfaces -- the
+# × the earlier implementation (merge): a park corrects THREE surfaces -- the
 # stored record, the finished event and, when the stop is one this speaker owns, the
 # notification. The first two apply to every park; the third does not. All seven
 # REVIEW_STOP_CODES are members of ENGINE_NOTIFY_STOP_CODES (L194-199), so announcing a park
 # with the full NOTIFY_STOP_CODES would also raise a "continuous work failed" for
 # `review_verdict_hold` -- a hop waiting on a human answer, not a failure, by the same
 # reasoning that keeps `question_pending` out of the set entirely -- and for `review_stalled`
-# / `review_reject_denied` / `review_reject_failed`, none of which T0007 asked to speak here.
+# / `review_reject_denied` / `review_reject_failed`, none of which the earlier implementation asked to speak here.
 # `review_no_verdict` is the one review stop that must, because the reviewer left no row and
 # nothing else reports that.
 PARK_NOTIFY_STOP_CODES = (
     (NOTIFY_STOP_CODES - REVIEW_STOP_CODES) | {REVIEW_NO_VERDICT_STOP_CODE}
 )
 
-# ── Hop handoff durability (0406 T0022 work item 4) ─────────────────────────
+# ── Hop handoff durability (work item 4) ─────────────────────────
 # The next hop's intent lived only in a process-memory dict (_auto_resume). A server
 # restart wiped it wholesale; if the current hop was not exited the queue was popped
 # and then discarded, and a _spawn_auto_resume exception ended as a single log line.
@@ -385,7 +385,7 @@ HOP_HANDOFF_INTERRUPTED_STOP_CODE = "hop_handoff_interrupted"
 # The queue was there but the follow-up hop could not be spawned (_spawn_auto_resume).
 HOP_HANDOFF_FAILED_STOP_CODE = "hop_handoff_failed"
 
-# T0005 SS2: the single literal a launch-time 422 and the active-all resume-state
+# SS2: the single literal a launch-time 422 and the active-all resume-state
 # preview must agree on, so a paused card advance warning and its later toast are
 # word-for-word the same sentence.
 PROVIDER_UNAVAILABLE_CODE = "provider_unavailable"
@@ -406,7 +406,7 @@ _CHAT_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "body": {"type": "string", "description": "Complete assistant reply text"},
-        # flowgate.v02test.0023: the chat commit point.
+        # the chat commit point.
         "commit_message": {
             "type": "string",
             "description": (
@@ -523,7 +523,7 @@ _RESOLVE_TOOL_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
-                    # 0608 T0007 — instead of content: every chunk of the file, resolved.
+                    # instead of content: every chunk of the file, resolved.
                     "chunks": {
                         "type": "array",
                         "minItems": 1,
@@ -544,7 +544,7 @@ _RESOLVE_TOOL_SCHEMA = {
                             "path": {"type": "string"}, "content": {"type": "string"}},
                             "required": ["path", "content"], "additionalProperties": False},
                     },
-                    # 0604 D0005 §3.4 — optional; the worker forwards `files` verbatim.
+                    # optional; the worker forwards `files` verbatim.
                     "supersede": {
                         "type": "object",
                         "description": (
@@ -576,17 +576,17 @@ _runs_lock = threading.Lock()
 
 _run_counter = 0
 
-# 0401 NR0003 §4 / T0004 work item 7: which UTC date the counter above was last floored
+# work item 7: which UTC date the counter above was last floored
 # against the durable stores for. None until the first _next_run_id() call.
 _run_counter_floor_date: Optional[str] = None
 
-# Per-group resume serialization (0252 L0009 §2.4 step 1): the FIRST line of defense
+# Per-group resume serialization (step 1): the FIRST line of defense
 # against double resume. The atomic paused-row delete (delete_and_return) is the second.
 _group_resume_locks: dict[str, threading.Lock] = {}
 
 _group_resume_locks_guard = threading.Lock()
 
-# 0317 TR0011 (Q153 opt-1): per-hop worker RE-SPAWN for unmanned continuous chains.
+# (Q153 opt-1): per-hop worker RE-SPAWN for unmanned continuous chains.
 # The reject cause was that an uninterrupted continuous chain spawns ONE worker (one
 # provider process) that self-continues through every hop via next_token, so every
 # document was written by hop-1's provider (all three "Anthropic Claude Sonnet 5"). The
@@ -594,20 +594,20 @@ _group_resume_locks_guard = threading.Lock()
 # withholds next_token and records the next hop here; when the finished hop's worker
 # settles, the engine re-enters start_run for the next hop, which re-resolves THAT hop's
 # provider (_resolve_continuation_hop_provider / the per-step override map). Session-
-# scoped, in-memory, keyed by group_id, cleared at chain end — never persisted (T0010 o1).
+# scoped, in-memory, keyed by group_id, cleared at chain end — never persisted (o1).
 _auto_resume: dict[str, dict] = {}
 
 _auto_resume_lock = threading.Lock()
 
 
-# ── edit_once handoff gate (0515 T0009 §10) ─────────────────────────────────────────
+# ── edit_once handoff gate ─────────────────────────────────────────
 # Every /ai-invoke/start run gets exactly one of these. The worker thread body must
-# never touch the token/prompt admission handed it until the gate is OPEN (T0009 §10
-# "worker는 OPEN 전 token/prompt 사용 금지") -- concretely, the `ai_invoke_started`
-# broadcast at the top of worker._worker() must never fire before OPEN (T0009 §11).
+# never touch the token/prompt admission handed it until the gate is OPEN (the earlier implementation
+# "workers must not use the token/prompt before OPEN") -- concretely, the `ai_invoke_started`
+# broadcast at the top of worker._worker must never fire before OPEN.
 #
-# Two shapes, chosen by admission solely from `issue.one_shot_claimed` (T0009 §10
-# "claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를 두 벌 만들지 않는다"):
+# Two shapes, chosen by admission solely from `issue.one_shot_claimed` (the earlier implementation
+# "branch on claim presence only through issue.one_shot_claimed; do not create two worker implementations"):
 #   claim-less run (the overwhelming majority -- non-chat, or chat read_only/edit):
 #       PENDING -> OPEN directly. There is no one-shot commit to guard.
 #   one-shot run (chat edit_once, this call won the claim):
@@ -615,15 +615,15 @@ _auto_resume_lock = threading.Lock()
 #
 # Both sides can independently try to move the gate to ABORT (the worker's own
 # PENDING/SEALED wait timing out, or admission hitting a commit failure) -- only the
-# caller whose CAS actually lands runs cleanup (T0009 §10.1 "CAS 승자만 admission
-# 대신 cleanup(abort_handoff)한다"); everyone else just sees the state already ABORT
+# caller whose CAS actually lands runs cleanup (the earlier implementation "only the CAS winner runs cleanup
+# (abort_handoff) instead of admission"); everyone else just sees the state already ABORT
 # and stops without repeating it.
 PENDING = "PENDING"
 SEALED = "SEALED"
 OPEN = "OPEN"
 ABORT = "ABORT"
 
-# T0009 §10 상한.
+# limit.
 HANDOFF_PENDING_WAIT_SEC = 30
 HANDOFF_SEALED_WAIT_SEC = 120
 
@@ -657,20 +657,20 @@ class HandoffGate:
             return True
 
     def seal(self) -> bool:
-        """PENDING -> SEALED, before the one-shot commit (T0009 §10)."""
+        """PENDING -> SEALED, before the one-shot commit."""
         return self._cas(PENDING, SEALED)
 
     def open_direct(self) -> bool:
-        """PENDING -> OPEN. Claim-less run: no seal/commit step to guard (T0009 §10)."""
+        """PENDING -> OPEN. Claim-less run: no seal/commit step to guard."""
         return self._cas(PENDING, OPEN)
 
     def open_after_seal(self) -> bool:
-        """SEALED -> OPEN, after the one-shot commit succeeded (T0009 §10)."""
+        """SEALED -> OPEN, after the one-shot commit succeeded."""
         return self._cas(SEALED, OPEN)
 
     def abort(self) -> bool:
         """PENDING|SEALED -> ABORT. True only for the caller whose CAS actually won
-        (T0009 §10.1) -- that caller, and only that caller, runs abort_handoff."""
+        -- that caller, and only that caller, runs abort_handoff."""
         with self._lock:
             if self._state not in (PENDING, SEALED):
                 return False
@@ -762,7 +762,7 @@ def _next_run_id() -> str:
     return allocate()
 
 
-# ── Scratch lifecycle (L0006 §2.7) ───────────────────────────────────────────
+# ── Scratch lifecycle ───────────────────────────────────────────
 
 def _sanitize_project_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_\-]", "_", name) or "_"
@@ -778,7 +778,7 @@ SCRATCH_MANIFEST_NAME = ".flowgate-ai-scratch.json"
 
 SCRATCH_MANIFEST_SCHEMA = 1
 
-# 0139: v0.2 issues ``aiv2_``; ``aiv_`` (v0.1 / pre-0139 rows) stays recognisable.
+# v0.2 issues ``aiv2_``; ``aiv_`` (v0.1 / pre-0139 rows) stays recognisable.
 _RUN_ID_RE = re.compile(r"\Aaiv2?_[0-9]{8}_[0-9]{6}\Z")
 
 
@@ -872,7 +872,7 @@ def _create_scratch(project_id: str, run_id: str, execution_nonce: str | None = 
         try:
             scratch.mkdir(exist_ok=False)
         except FileExistsError as exc:
-            # 0140 T#1: never exist_ok/reuse/rename/suffix. The existing folder belongs to
+            # never exist_ok/reuse/rename/suffix. The existing folder belongs to
             # someone else; this run did not create it and must not register or clean it.
             conflict = ScratchPathConflict(run_id, os_errno=getattr(exc, "errno", None),
                                            os_winerror=getattr(exc, "winerror", None))
@@ -1306,7 +1306,7 @@ def _cleanup_retained_scratches(project_id: str) -> None:
         _scratch_delete_failure("", "sweep", exc)
 
 
-# flowgate.v02.0090 T0015 (NR0014 §4.1-1): one AI-run scratch sweep per project at a time, off
+# one AI-run scratch sweep per project at a time, off
 # the caller's thread. Since 0090 a retained backlog is really deleted, so a sweep awaited inside
 # start_run kept the request -- and the bootstrap's Graph recovery replay -- open for minutes.
 # A request that finds its project already sweeping only asks for one more pass after it.
@@ -1353,7 +1353,7 @@ def request_run_scratch_sweep(project_id: str) -> threading.Thread | None:
 
     The delete rules, ownership/lease checks and records are _cleanup_retained_scratches'
     own, unchanged. A thread that cannot start is only logged: the next request or the
-    next boot sweeps again, never a synchronous fallback (0084 T#1's sweep_on_issue shape).
+    next boot sweeps again, never a synchronous fallback ('s sweep_on_issue shape).
     """
     sweep = _svc()._cleanup_retained_scratches
     if not _claim_run_sweep(project_id):
@@ -1386,7 +1386,7 @@ def startup_sweep_run_scratches() -> int:
 
 
 def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
-    """Keep only the length and sha256 — never the text itself (0406 T0022 item 5).
+    """Keep only the length and sha256 — never the text itself.
 
     Deciding "did the user's text actually make it in?" does not need the text. Hashing
     the same string again and comparing is enough, and the length alone already settles
@@ -1399,7 +1399,7 @@ def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
 
 
 def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) -> Optional[str]:
-    """One-line, byte-bounded digest of a worker's message (L0007 §2.10.4).
+    """One-line, byte-bounded digest of a worker's message.
 
     Strips list markers / backticks and collapses whitespace so a markdown report reads as a
     sentence in a notification row, then cuts on a UTF-8 CHARACTER boundary — Korean is three
@@ -1430,7 +1430,7 @@ _PROMPT_ECHO_MIN_LEN = 40
 
 def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] = None,
                     known_prompts: Optional[Iterable[str]] = None) -> Optional[str]:
-    """flowgate.default.0466 T0007 §3.2.3: `stderr_tail`/`stdout_tail` are the provider
+    """`stderr_tail`/`stdout_tail` are the provider
     process's raw, unfiltered output — unlike `last_message`, nothing upstream of this
     scrubs them. A provider that echoes its own outgoing `Authorization: Bearer ...` call
     (or any bare `Bearer <token>` fragment) on failure must not have that value ride
@@ -1439,18 +1439,18 @@ def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] =
 
     rev4 (review finding): the two regexes above only catch a token wearing an
     `Authorization:`/`Bearer ` label. The run's own raw task token never wears one — it
-    reaches the provider process unlabeled, as the `FLOWGATE_TOKEN` env var (L3477) — so a
+    reaches the provider process unlabeled, as the `FLOWGATE_TOKEN` env var — so a
     process that dumps its own environment or echoes that value bare on failure slips past
     both patterns untouched. `known_tokens` is the run's actual raw token(s) (this attempt's
     current one plus every earlier attempt's, from `_note_issued_raw_token`); each is erased
     by exact literal match, independent of any label.
 
-    rev5 (review finding): none of the above touches the PROMPT itself — T0007 §3.2.3 bans
-    that separately from a credential ("토큰·Authorization·전체 프롬프트·무제한 stdout을
-    노출하지 마라"). A CLI worker that rejects its own stdin ("invalid input, got: <prompt>"
+    (review finding): none of the above touches the PROMPT itself — the earlier implementation bans
+    that separately from a credential ("do not expose tokens, Authorization,
+    full prompts, or unlimited stdout"). A CLI worker that rejects its own stdin ("invalid input, got: <prompt>"
     is the shape a parse error takes) echoes the exact text this run wrote to the child's
-    stdin — `run["mention"]`, set at issue time (L1843) and again on every reissued retry
-    (L3048) — into `last_message`/`stderr_tail`/`stdout_tail` untouched by either regex or
+    stdin — `run["mention"]`, set at issue time and again on every reissued retry
+    — into `last_message`/`stderr_tail`/`stdout_tail` untouched by either regex or
     `known_tokens`, and a SHORT prompt fits whole inside `LAST_MESSAGE_EXCERPT_BYTES`, so
     `excerpt()` alone never trims it away. `known_prompts` is every prompt text this run has
     written to a provider's stdin — the current attempt's and every earlier (possibly
@@ -1519,7 +1519,7 @@ def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] =
 
 
 def _note_issued_raw_token(run: dict, token: Optional[str]) -> None:
-    """Remember every raw task token this run has handed a provider process (T0007 rev4
+    """Remember every raw task token this run has handed a provider process (the earlier implementation
     §3.2.3), so a later `_redact_secrets` call can scrub an unlabeled echo of it.
 
     Deliberately NOT one of the explicit fields `_persist_run_record`/`finished_payload`
@@ -1537,10 +1537,10 @@ def _known_run_raw_tokens(run: dict) -> set[str]:
 
 def _note_issued_prompt(run: dict, mention: Optional[str]) -> None:
     """Remember every prompt text this run has handed a provider process's stdin — the
-    initial one and each reissued retry's (T0007 rev5 §3.2.3), mirroring
+    initial one and each reissued retry's, mirroring
     `_note_issued_raw_token`. A rotated-out EARLIER attempt's own prompt can still be the
     thing echoed into ITS archived `fallback_history` detail, so redacting only the
-    CURRENT `run["mention"]` (which a reissue overwrites in place, L3048) would miss it —
+    CURRENT `run["mention"]` (which a reissue overwrites in place, the earlier implementation) would miss it —
     same rotation problem the raw-token set already solves. Process-memory-only, same as
     the token set: never one of `_persist_run_record`/`finished_payload`'s explicit fields.
     """
@@ -1556,7 +1556,7 @@ def _known_run_prompts(run: dict) -> set[str]:
 def _actual_work_executor_provider_id(run: dict) -> Optional[str]:
     """The provider that ACTUALLY ran THIS run's hop — the caller decides whose run it is.
 
-    `run["continuation_selected_provider_id"]` (0435 T0004) is the chain HEAD picked
+    `run["continuation_selected_provider_id"]` is the chain HEAD picked
     before this attempt ran and is never updated afterward. When startup fell back past
     that head, `_execute_provider_chain` moved `run["provider_id"]` to whichever provider
     actually started (worker.py) — that is the one whose output this run's hop produced,
@@ -1587,7 +1587,7 @@ def _svc():
     import would put the shim back into this package's own graph and make the direction
     cyclic -- `ai_invoke_service` -> `facade` -> every module here -> `ai_invoke_service`
     -- which breaks the moment a fresh interpreter enters at `facade`. Deferring it keeps
-    the package's imports strictly one-way (0501 NR0003 §28) while leaving the seam
+    the package's imports strictly one-way while leaving the seam
     working byte for byte. It is the pattern the pre-package `ai_invoke_runtime.py`
     already used for exactly this reason.
     """
@@ -1596,7 +1596,7 @@ def _svc():
 
 
 def _absolute_cap_sec() -> int:
-    """The run's hard ceiling, in seconds (0446 T0014 §2-4).
+    """The run's hard ceiling, in seconds.
 
     Deliberately RUN_TIMEOUT_CAP_SEC itself, read at CALL time instead of copied into
     a second four-hour literal: that constant is already four hours, already the roof
@@ -1614,7 +1614,7 @@ def _absolute_cap_sec() -> int:
 
 
 def _absolute_remaining_sec(run: dict) -> float:
-    """Seconds left before the run's hard ceiling (0446 T0014 §2-4).
+    """Seconds left before the run's hard ceiling.
 
     Measured from `started_mono` — the HOP's start, not the attempt's — so a no-output
     retry inherits what is left of the four hours instead of being handed a fresh four.
@@ -1648,8 +1648,8 @@ def get_run_record(run_id: str) -> Optional[dict]:
 
 
 def record_run_write_plan(run_id: str, write_plan: dict) -> bool:
-    """Attach a write plan to the run it belongs to (flowgate.default.0481 T0008
-    item 1 / L0007 §2.5-§2.9): the worker-token submission endpoint's ONLY write
+    """Attach a write plan to the run it belongs to (the earlier change the earlier implementation
+    item 1 / the earlier implementation): the worker-token submission endpoint's ONLY write
     into the ai-invoke run record. A run is normally still live when its own
     write-plan turn submits this (the run has not exited yet), so the ordinary
     path mutates the SAME dict `_runs` holds, under its lock -- the next
@@ -1677,7 +1677,7 @@ def is_run_live(run_id: str) -> bool:
     The one definition of "alive" shared by the lease-owner mutation gate
     (``mutation_policy._locked``), the manual lease-release guard, and the
     ``GET /ai-invoke/leases`` route — a duplicated check here is exactly how the
-    screen and the server told two different stories before (0401 NR0003 §3 cause 3).
+    screen and the server told two different stories before.
     """
     run = get_run_record(run_id)
     return run is not None and run.get("status") != "finished"
@@ -1685,7 +1685,7 @@ def is_run_live(run_id: str) -> bool:
 
 def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
     """In-memory runs still going, scoped to exactly one of group/project (caller's
-    choice) — the "live" half of GET /ai-invoke/runs (L0007 §2.10.3)."""
+    choice) — the "live" half of GET /ai-invoke/runs."""
     svc = _svc()
     with svc._runs_lock:
         snapshot = list(svc._runs.values())
@@ -1719,7 +1719,7 @@ def run_list_item_live(run: dict) -> dict:
         "attempts_used": int(run.get("attempts_used") or 0),
         "hop_item_seq": run.get("hop_item_seq"),
         "started_at": run.get("started_at"),
-        # L0007 §2.10.3: the finish-only columns stay null on a live row — present, not
+        # the finish-only columns stay null on a live row — present, not
         # omitted, so a client can render every item through the same column set.
         "outcome": None,
         "docs_reached": None,

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0083 T#3 (0020-T D-1 · D-2 · D-3) — the work plan window of a WP card a person writes while its Flow runs.
+ * the work plan window of a WP card a person writes while its Flow runs.
  *
  * - the model: which plan is its run card's own (workPlanCardTarget: open with no result and the plan on its line, or in
  *   review with the plan as its result), its content lock (only the ownership conflict and the card's own AI — not the

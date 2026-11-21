@@ -1,4 +1,4 @@
-"""v0.2 card intervention (flowgate.v02.0119 T#3, T-2; 0004-CH seq 9 §1 / T-2, seq 13).
+"""v0.2 card intervention (T-2; the discussion seq 9 / T-2, seq 13).
 
 A general (non-gate) card in review is never approved by a person any more. When nothing completes it, it is one of two
 states, told from the reason its automatic completion was not made (the B-1 ``auto_approval_skipped`` run event the card
@@ -10,10 +10,10 @@ stage already records, ``card_settings.legacy_adapter.record_approval_wait``):
   ``stop_path`` way: a node not done propagates nothing, an AND join waits); independent branches go on. It moves again
   only by a memo and a rework / re-review request, or by the Time Machine — and by the person's explicit step / full
   command in two cases only (each revising 0119 T-2 within its own bounds; nothing is retried automatically):
-  (flowgate.v02.0124 T#1, 0003-NR §5.1) when its reason is a review loop's spent budget
+  when its reason is a review loop's spent budget
   (``reasons.command_rerequest_due``: ``review_not_passed:`` retry_exhausted / review_count_exhausted /
   total_timeout) on an assigned attempt an AI wrote and an AI reworks: the command requests its result review again as
-  the next assignment ``seq`` (``card_settings.assigned_review.rerequest_review_locked``); and (flowgate.v02.0125 T#1)
+  the next assignment ``seq`` (``card_settings.assigned_review.rerequest_review_locked``); and
   when its review count was spent on a revision no review answered: that command's re-review
   (``card_settings.assigned_review.command_review``). Every other reason, a person's document and a pre-feature
   attempt are not moved by a command.

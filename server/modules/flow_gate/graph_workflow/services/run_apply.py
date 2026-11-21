@@ -1,18 +1,18 @@
-"""Writing a resolver decision (L0009 §2.6.6) and the run event log (L0009 §2.6.9).
+"""Writing a resolver decision and the run event log.
 
 Always inside a Flow guard: one ``apply_decision`` call is one part of the guard transaction, so a
 node transition, its ``result_doc_id``, its event and its propagation record commit together or
-not at all. Conditional updates that miss their row raise (rollback, L0009 E-35 / E-36).
+not at all. Conditional updates that miss their row raise (rollback, the earlier implementation E-35 / E-36).
 
-flowgate.v02.0061 T#2: opening a node starts its attempt (``run_store.open_attempt``, before the dispatch so the
+opening a node starts its attempt (``run_store.open_attempt``, before the dispatch so the
 node's token is mapped to it) and its approval (``done``) ends it. After a decision, ``settle_run`` asks whether the
 run goes on (``run_state_ports.settle``): the running / idle judgement, the idle reason and the candidates a command
 may still open are v0.2 rules in ``flowgate.graph_run``; this module only writes what a step decides.
-0083 WP-3 (0061 T#2 개정): whether a person's decision on an idle run opens the next cards (``RunState.approval_wakes``)
+WP-3: whether a person's decision on an idle run opens the next cards (``RunState.approval_wakes``)
 and the run's wake before those openings are asked the same way (``graph_execution_hooks`` ``approval_wakes`` /
 ``wake_approval``; none when no handler is registered: the propagation waits as before).
 
-flowgate.v02.0061 T#11: the run state the resolver reads carries the Flow's held node keys (``RunState.held``, asked
+the run state the resolver reads carries the Flow's held node keys (``RunState.held``, asked
 through ``graph_execution_hooks`` ``held_nodes``; none when no handler is registered), so no opening takes a held node.
 A bound node still ``pending`` that has not taken its root document's state (its Hold kept it so at the start) is kept
 out of the openings the same way: only the next command's root bound start takes it (``run_service._take_root_binding``).
@@ -65,7 +65,7 @@ class RunContext:
         return self._docs
 
     def root_document(self) -> Optional[dict]:
-        """The bound root document: the live end of its supersede chain (L0009 E-18), or None."""
+        """The bound root document: the live end of its supersede chain, or None."""
         if not self.binding:
             return None
         docs = self.docs()
@@ -81,7 +81,7 @@ def load_context(run: dict, project_id: Optional[str], actor: Optional[str],
     binding = assignment_store.root_binding(run["group_id"])
     rows = {n["node_key"]: n for n in record["nodes"]}
     if binding and binding["node_key"] not in rows:
-        binding = None                                      # L0009 E-31: not in this revision
+        binding = None                                      # E-31: not in this revision
     graph = Graph(nodes=tuple(to_graph_node(n) for n in record["nodes"]),
                   edges=tuple(GraphEdge(e["edge_id"], e["source"], e["target"], e.get("condition"))
                               for e in record["edges"]))
@@ -96,16 +96,16 @@ def read_run_state(ctx: RunContext) -> RunState:
                for p in run_store.pending_propagations(ctx.run_id)]
     step = ctx.run.get("step_node_keys")
     status = ctx.run["status"]
-    held = frozenset(graph_execution_hooks.call("held_nodes", ctx.flow_id) or ())               # 0061 T#11
-    # flowgate.v02.0085 T#3: a gate waiting for its round split after an abandoned recovery is never opened either.
+    held = frozenset(graph_execution_hooks.call("held_nodes", ctx.flow_id) or ())               # 
+    # a gate waiting for its round split after an abandoned recovery is never opened either.
     held |= frozenset(graph_execution_hooks.call("opening_held", ctx.flow_id) or ())
     bound = ctx.binding["node_key"] if ctx.binding else None
     if bound and any(r["node_key"] == bound and r["status"] == "pending" and not int(r.get("root_bound") or 0)
                      for r in rows):
-        held |= {bound}             # 0061 T#11: never an ordinary opening of the bound node
+        held |= {bound}             # never an ordinary opening of the bound node
     if status == "running" and graph_execution_hooks.call("propagation_held", ctx.run_id):
-        status = "paused"           # 0061 T#9: a run holding for its integrations: a result's propagation waits
-    # 0083 WP-3 (0061 T#2 개정): may a person's decision on this idle run open the next cards (``frontier.defers``)?
+        status = "paused"           # a run holding for its integrations: a result's propagation waits
+    # WP-3: may a person's decision on this idle run open the next cards (``frontier.defers``)?
     wakes = status == "idle" and bool(graph_execution_hooks.call("approval_wakes", ctx))
     return RunState(status, nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
                     mode=ctx.run.get("run_mode") or "full",
@@ -114,7 +114,7 @@ def read_run_state(ctx: RunContext) -> RunState:
 
 
 def canvas_state_of(ctx: RunContext, node_key: str, status: str) -> Optional[str]:
-    """P0008 §2.3: a root-bound node shows its root document's state, any other its run status."""
+    """a root-bound node shows its root document's state, any other its run status."""
     if ctx.binding and node_key == ctx.binding["node_key"] and _is_root_bound(ctx, node_key):
         doc = ctx.root_document()
         return cm.document_state(doc.get("doc_review_status"), doc.get("type_code")) if doc else None
@@ -143,9 +143,9 @@ def emit_run_status(ctx: RunContext, from_status: Optional[str], to_status: str,
 def emit_node_state(ctx: RunContext, node_key: str, from_status: str, to_status: str, cause: str,
                     result_doc_id: Optional[str], dispatch: Optional[dict] = None,
                     note: Optional[dict] = None) -> int:
-    """``note`` (``actor_user_id``, ``reason``) is kept in the event log only; the SSE payload is P0008 §8.3.
-    flowgate.v02.0085 T#2: ``note["payload"]`` adds fields to the event payload (a gate decision's
-    ``gate_decision_id``: the event belongs to that decision, D0007 §7.2)."""
+    """``note`` (``actor_user_id``, ``reason``) is kept in the event log only; the SSE payload is the plan
+    ``note["payload"]`` adds fields to the event payload (a gate decision's
+    ``gate_decision_id``: the event belongs to that decision, the design)."""
     seq = int(ctx.run["last_event_seq"]) + 1
     state = canvas_state_of(ctx, node_key, to_status)
     payload = run_events.node_state_payload(ctx.run, seq, node_key, from_status, to_status, state, cause,
@@ -158,7 +158,7 @@ def emit_node_state(ctx: RunContext, node_key: str, from_status: str, to_status:
     ctx.run["last_event_seq"] = seq
     run_events.queue(ctx.project_id, ctx.flow_id, run_events.NODE_STATE, payload, doc_id=result_doc_id)
     if to_status != from_status:
-        # flowgate.v02gui.0019: a card the run opens / finishes / reviews is put back into the Flow's draft when a
+        # a card the run opens / finishes / reviews is put back into the Flow's draft when a
         # draft save left it out (``flowgate.graph_run.draft_restore``; nothing when no handler is registered).
         graph_execution_hooks.call("node_state_changed", ctx, node_key, to_status)
     return seq
@@ -170,26 +170,26 @@ def _assert_one(affected: int, what: str) -> None:
 
 
 def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, settle: bool = True) -> None:
-    """L0009 §2.6.6 ``apply_decision`` — transitions, propagation records, close, open, then whether the run goes
-    on (``settle_run``, 0061 T#2; ``settle=False`` for a step that applies its command afterwards).
+    """``apply_decision`` — transitions, propagation records, close, open, then whether the run goes
+    on (``settle_run``, the earlier implementation; ``settle=False`` for a step that applies its command afterwards).
 
     ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
-    flowgate.v02.0085 T#2 (D0007 §3.2): a gate's reject ends its attempt as a done node's approval does.
+    a gate's reject ends its attempt as a done node's approval does.
 
-    flowgate.v02.0119 T#2 (T-1): a ``review_approved`` that makes its node done turns the node's completion record
+    (T-1): a ``review_approved`` that makes its node done turns the node's completion record
     ``applied`` in the same transaction (``card_completion_ports.applied``) and its node event carries the record's
     ``completion_id``: the done and the openings below follow that one record.
 
-    0061 T#9: a code node's approval (``review_approved``) is done only once its attempt's result is merged into the
+    a code node's approval (``review_approved``) is done only once its attempt's result is merged into the
     Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
     integration is requested after the commit) and only whether the run goes on is judged.
 
-    0083 WP-3 (0061 T#2 개정): a decision that opens nodes on an idle run is a person's decision the run may be taken
+    WP-3: a decision that opens nodes on an idle run is a person's decision the run may be taken
     back to running for (``RunState.approval_wakes``, ``frontier.defers``): the run goes running first
     (``wake_approval``, the existing wake: cause ``work_resumed``), so the openings and their dispatch find it running;
     the settlement after them makes it idle again when no work goes on (the next card a person's).
 
-    0083 WP-3 rework (0061 T#2 개정): such a decision held back for its code result's merge (``defer_done``) wakes the
+    WP-3 rework: such a decision held back for its code result's merge (``defer_done``) wakes the
     run the same way at once — its propagation was judged ``done`` (``approval_wakes``), not ``pending`` — so the
     integration runs on a running run, not under the idle run's integration hold (``result_merge._wake``, whose
     propagation waits for the next command), and the merge's end applies the decision again, opening the next cards
@@ -200,7 +200,7 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     wakes = ctx.run.get("status") == "idle" and not ctx.command_pending
     if graph_execution_hooks.call("defer_done", ctx, d):
         if wakes and any(p.status == "done" for p in d.propagation_new):
-            graph_execution_hooks.call("wake_approval", ctx)      # 0083 WP-3 rework: kept until the merge's end
+            graph_execution_hooks.call("wake_approval", ctx)      # WP-3 rework: kept until the merge's end
         if settle:
             settle_run(ctx)
         return
@@ -212,7 +212,7 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
         node_note = note
         if t.cause == "review_approved" and t.to_status == "done":
-            # flowgate.v02.0119 T#2 (T-1): the completion record the done follows turns applied in this transaction
+            # (T-1): the completion record the done follows turns applied in this transaction
             # (before the attempt ends: the record is keyed by it) and the node event carries its id.
             completion_id = card_completion_ports.applied(ctx.flow_id, ctx.run_id, t.node, t.result_doc_id,
                                                           int(ctx.run["last_event_seq"]) + 1)
@@ -220,23 +220,23 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
                 node_note = {**(note or {}), "payload": {**((note or {}).get("payload") or {}),
                                                          "completion_id": completion_id}}
         if t.to_status == "done" or t.cause == "gate_rejected":
-            run_store.end_attempt(ctx.run_id, t.node)                  # 0061 T#2: the node's attempt ends
+            run_store.end_attempt(ctx.run_id, t.node)                  # the node's attempt ends
         seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=node_note)
         if t.result_doc_id and t.result_doc_id != t.expected_doc_id:
-            result_bound(ctx.flow_id, t.node, t.result_doc_id)        # flowgate.v02.0053 T#1: fills the line
+            result_bound(ctx.flow_id, t.node, t.result_doc_id)        # fills the line
         for p in d.propagation_new:
             if p.transition is t:
                 run_store.insert_propagation(ctx.run_id, seq, p.node, p.outcome, p.status)
     for p in d.propagation_done:
         _assert_one(run_store.mark_propagation_done(ctx.run_id, p.source_event_seq), f"propagation {p}")
     if d.close:
-        # L0009 D-03: the status a closed node takes waits on Q-4 / Q-6. No decided policy can ask
+        # D-03: the status a closed node takes waits on Q-4 / Q-6. No decided policy can ask
         # for it yet; refusing (rollback) is safer than inventing a status.
         raise NotImplementedError("closed node status is undecided (L0009 D-03)")
     for key in graph_execution_hooks.call("opening", ctx, d.open):
         if not graph_execution_hooks.call("can_open", ctx):
             break
-        run_store.open_attempt(ctx.run_id, key, int(ctx.run["revision_no"]))   # 0061 T#2: one active per node
+        run_store.open_attempt(ctx.run_id, key, int(ctx.run["revision_no"]))   # one active per node
         dispatch = node_dispatch.dispatch(ctx, key)
         _assert_one(run_store.open_node_run(ctx.run_id, key, dispatch), f"open {key}")
         emit_node_state(ctx, key, "pending", "open", "opened", None, dispatch)
@@ -247,18 +247,18 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
 
 
 def settle_run(ctx: RunContext) -> None:
-    """0061 T#2, inside the step's guard after its decision: whether the run goes on (``run_state_ports.settle``)."""
+    """inside the step's guard after its decision: whether the run goes on (``run_state_ports.settle``)."""
     run_state_ports.settle(ctx)
 
 
 def fill_line(ctx: RunContext, node_key: str, doc_id: str) -> None:
     """A document of a node's card that is not its result — the instruction its card run wrote or found
-    written (flowgate.v02.0056 T#2) — takes its card line, as a bound result does (no node event)."""
+    written — takes its card line, as a bound result does (no node event)."""
     result_bound(ctx.flow_id, node_key, doc_id)
 
 
 def dispatch_block(row: dict) -> Optional[dict]:
-    """P0008 §7.1 ``dispatch`` from a node run row (``None`` when never dispatched)."""
+    """``dispatch`` from a node run row (``None`` when never dispatched)."""
     if row.get("dispatch_token_issued") is None:
         return None
     out = {"token_issued": bool(row["dispatch_token_issued"]), "mention_id": row.get("dispatch_mention_id"),
@@ -268,7 +268,7 @@ def dispatch_block(row: dict) -> Optional[dict]:
     return out
 
 
-# flowgate.v02.0140 T#1-3: the node wire's ``dispatch.start_failure`` — the safe detail of the admission refusal that
+# the node wire's ``dispatch.start_failure`` — the safe detail of the admission refusal that
 # made the node's current start error (``node_dispatch._start_failure_info``: code, message, phase, retryable, run_id)
 START_FAILURE_KEY = "start_failure"
 _START_FAILURE_FIELDS = ("code", "message", "phase", "retryable", "run_id")

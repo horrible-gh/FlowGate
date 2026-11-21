@@ -1,5 +1,5 @@
 """The one AI title of a new chat -- POST /api/v1/conversations/{doc_id}/auto-title
-(flowgate.v02.0047 R0001 §2.2).
+.
 
 Whether a title is owed is the server's record (``documents.meta.chat_auto_title``, written by
 ``POST /conversations`` with ``auto_title: true``), never the caller's word: a second request,

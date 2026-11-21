@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_write_plan_stale_fingerprint_is_rejected(self, origin_repo, monkeypatch):
-        # 0481 TR0009 rev2: apply_write_plan re-checks `base_fingerprint` against
+        # apply_write_plan re-checks `base_fingerprint` against
         # the CURRENT review_fingerprint at apply time (L0007 §2.6 `require
         # plan.base_fingerprint == session.review_fingerprint`) — a plan built
         # against a fingerprint that is no longer current must not silently

@@ -95,7 +95,7 @@ def test_an_existing_historical_revision_cannot_write_the_new_execution_revision
     assert current['context']['graph_revision_no']==2
     historical=dict(current['context'],graph_revision_no=1)
     view=env['client'].get(url(key),params={'context':json.dumps(historical)},headers=_h())
-    # flowgate.v02.0130: viewing a historical revision does not lock the card; writing from it still refuses.
+    # viewing a historical revision does not lock the card; writing from it still refuses.
     assert view.status_code==200 and view.json()['locked'] is False and view.json()['context']==current['context']
     refused=save(env,key,'review_count',3,dict(current,context=historical),expect=409)
     assert refused['error']['params']['reason']=='settings_context'

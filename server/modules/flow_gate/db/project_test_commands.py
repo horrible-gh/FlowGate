@@ -1,4 +1,4 @@
-"""project_test_commands CRUD — sqloader.load pattern (flowgate.default.0152 L0004).
+"""project_test_commands CRUD — sqloader.load pattern.
 
 Inline SQL is prohibited; only use SQL registered in queries.json (`test_commands` namespace).
 Mirrors messages.py: get_store()._sql(...) + _fetch_*/_execute + now_iso(), with the

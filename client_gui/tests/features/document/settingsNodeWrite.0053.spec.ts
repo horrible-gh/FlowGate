@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0053 T#7 — the card settings change the settings tab sends (features/document/api/settings.ts):
- * PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings { field, value } (T#2, one value per request, null =
+ * the card settings change the settings tab sends (features/document/api/settings.ts):
+ * PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings { field, value } (the earlier implementation, one value per request, null =
  * the default back) answered by the card's settings; why a change was refused; the AI Team choices
  * (GET /api/v1/ai-groups).
  */

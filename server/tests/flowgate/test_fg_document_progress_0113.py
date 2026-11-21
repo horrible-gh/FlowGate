@@ -1,5 +1,5 @@
-"""flowgate.v02.0113 0038-T T#3 — the next stage by the card's documents, the review a satisfied card still takes, the
-wait reinterpreted by the next command, and [전체 실행]'s graph progress (0030-M §3 / §3.1 / §3.2, 0002-D 개정 §3.5.1 /
+"""the next stage by the card's documents, the review a satisfied card still takes, the
+wait reinterpreted by the next command, and [전체 실행]'s graph progress (0030-M §3 / §3.1 / §3.2, 0002-D revised §3.5.1 /
 §3.6-0 / §3.7 / §3.12).
 
 The harness of ``test_fg_ai_roles_l2_assignment`` (real routes, Graph engine, card settings / documents / approval
@@ -166,7 +166,7 @@ def test_a_person_s_card_goes_by_its_documents(env, decided, starts, row):
     key, docs = _row_card(env, row, ai=False)
     start(env)
     assert write_jobs(env) == [] and starts == []                       # no AI, whatever the row
-    if row in ("2_omit_report", "5_ins_report"):                         # 충족: 작성 생략 → 검수(사용하지 않음) → 다음
+    if row in ("2_omit_report", "5_ins_report"):                         # Satisfied: omit writing → review (not used) → next
         assert status(env, key) == "done"
         assert _review_status(docs["report"]) == "approved"
         assert one(env, key, "result_review", 1)["verdict"] == "auto_approved"
@@ -204,7 +204,7 @@ def test_a_person_s_report_written_before_the_instruction_never_completes_the_ca
     assert write_jobs(env) == [] and starts == []
 
 
-# ── 0045-TR rework: a report saved while the instruction waits is no report of after it (write order) ──────────
+# ── the earlier implementation rework: a report saved while the instruction waits is no report of after it (write order) ──────────
 
 EDITED_REPORT = "## 결과\n\n지시서 대기 중에 고친 레포트\n"
 

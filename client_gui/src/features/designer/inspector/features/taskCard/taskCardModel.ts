@@ -1,13 +1,13 @@
-// flowgate.v02.0051 stage 2 — the 작업 card's own lines (0035 v7 work.*: 지시서 + 레포트). Pure functions over
+// flowgate.v02.0051 stage 2 — the 작업 card's own lines (0035 v7 work.*: instruction + report). Pure functions over
 // the target: which lines the card shows, what each shows and whether it opens. Nothing here reads the
 // server. The run / stop / history operations of the card have no Inspector API yet (D#1 §8.4).
 // The v7 origin line (⇉ WP / 🤖 AI, "WP rev 1 · Step S1에서 전개") needs the WP deployment the Canvas read
 // does not carry.
-// flowgate.v02.0053 T#5 (0053 CH) — the lines are the documents the server made when the card was placed
-// (T#1 card lines: 지시서 T / T2, 레포트 TR / TR2), so a placed card opens both at once. A Node without card
+// (CH) — the lines are the documents the server made when the card was placed
+// (card lines: instruction T / T2, report TR / TR2), so a placed card opens both at once. A Node without card
 // lines (a document Node, a v0.1 sequence Node) shows its own document on its line and a Graph run's result
 // on the report line; the other line has no document (a hollow dot saying why — no "not yet" text). The
-// 지시서 line is hidden when the card's settings omit the instruction (v7).
+// instruction line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export type TaskSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
@@ -52,7 +52,7 @@ export function taskDocumentState(reviewStatus: string | null, docStatus: string
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  // a document being written asks nothing of the operator — a neutral state draws no badge.
   return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 
@@ -85,7 +85,7 @@ function taskLine(key: TaskSlot['key'], types: readonly string[], facts: TaskCar
   return emptyLine(key, key === 'report' ? 'empty.after_run' : facts.docId !== null ? 'empty.unconnected' : null)
 }
 
-/** The card's lines: 지시서 (unless the settings omit it) · 레포트. */
+/** The card's lines: instruction (unless the settings omit it) · report. */
 export function taskCardSlots(facts: TaskCardFacts, instructionOmitted = false): readonly TaskSlot[] {
   const report = taskLine('report', TASK_REPORT_TYPES, facts)
   return instructionOmitted ? [report] : [taskLine('instruction', TASK_INSTRUCTION_TYPES, facts), report]

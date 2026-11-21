@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#3 — the common error reading of the document API (D#1 §6.2, owned by T#3).
+// the common error reading of the document API (owned by the earlier implementation).
 // A document call throws the transport error as it is; a caller turns it into the HTTP status,
 // the server code and a kind it can show a reason for (409 contention, 403 permission, 404 gone,
 // no response). Only code and status are read — never a server message text (the same rule as

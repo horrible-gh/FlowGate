@@ -69,13 +69,13 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_lets_an_unvalidatable_file_type_through_the_merge(self, origin_repo):
-        # 0481 TR0010 rev3, human rejection 2026-09-08 10:33 ("머지는 되지도 않음").
+        # Human rejection on 2026-09-08 10:33 ("the merge does not even happen").
         #
-        # This test used to assert the opposite: TR0009 rev1 (AI review finding 1)
-        # read L0007 §2.7 as covering every changed path in the candidate, so an
+        # This test used to assert the opposite: an earlier AI review finding
+        # read the syntax-validation rule as covering every changed path in the candidate, so an
         # extension with no registered validator vetoed the approval. §2.7 scopes
         # that rule to the WRITE PLAN's own targets (`syntax_validation_scope` =
-        # "변경되거나 생성된 모든 plan 대상 파일"), and applying it to a merge made any
+        # "every plan target file changed or created"), and applying it to a merge made any
         # merge carrying a `.md`, `.txt`, `.lock` or `.tsbuildinfo` permanently
         # unapprovable — [승인] could only ever answer pre_commit_validation_failed.
         #

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0038 — Header search assist (0001-R §2.2). Focus opens a panel with the
+  <!-- Header search assist. Focus opens a panel with the
        searchable scopes and clickable examples; the chosen scope stays on the input as a chip
        and in the placeholder after the panel closes. Enter hands { scope, query } out — there
        is no search API or result screen yet (later Feature). -->

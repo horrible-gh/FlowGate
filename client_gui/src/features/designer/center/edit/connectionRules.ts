@@ -1,19 +1,19 @@
-// flowgate.v02.0045 S3 — connection pre-check (D0004 §2.3 "연결 규칙 미리검사"): while the user
+// S3 — connection pre-check ("Connection rule pre-check"): while the user
 // drags a connection, tell at once whether the draft would take it, with the server validator's
 // own criteria (L0009 §2.5). The server stays the judge (validation / confirmation).
 //
 // - refused: an end that is not a node of the editable draft (document, slot or revision nodes
 //   have no definition to connect), or a second edge between the same two nodes (always a
 //   `duplicate_edge` error).
-// - allowed with warnings: structures whose execution rule is still undecided (D0004 §8) — a
+// - allowed with warnings: structures whose execution rule is still undecided — a
 //   branch (Q-2), a join (Q-4) or a cycle (Q-6). They can be saved in a draft but block
 //   confirmation until the rule is decided (`rule_undecided`).
-// - flowgate.v02.0117 T#2: refused, a card connected to itself (`self_edge`). Since flowgate.v02.0061 every cycle is a
+// - the earlier change the earlier implementation: refused, a card connected to itself (`self_edge`). Since the earlier change every cycle is a
 //   validation error (rule 4), and the Canvas never draws a self edge (vueFlowMapping), so one taken here could
 //   neither be seen nor removed while it kept the draft from being confirmed — no run of the Flow started.
 import type { DraftModel } from './draftModel'
 
-// flowgate.v02.0061 T#14 (the Center session's, not this pre-check's): `locked` — the Flow's run is running, paused or
+// (the Center session's, not this pre-check's): `locked` — the Flow's run is running, paused or
 // stopping; `protected` — the target is a done / open / review node, whose incoming lines never change.
 export type ConnectionRefusal = 'not_editable' | 'duplicate' | 'self_edge' | 'locked' | 'protected'
 export type ConnectionWarning = 'branch' | 'join' | 'cycle'

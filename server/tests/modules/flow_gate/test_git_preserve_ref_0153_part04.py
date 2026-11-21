@@ -146,7 +146,7 @@ def test_push_timeout_then_restart_on_another_instance_reuses_the_ref(env):
     gs.startup_recovery()
     after = saved(mid)
     assert len(env.probes) == 1
-    # 0153 T#3: the unchanged remote gets the same preserved commit re-pushed.
+    # the unchanged remote gets the same preserved commit re-pushed.
     assert after['review_state'] == gs.REVIEW_STATE_COMPLETED
     assert names(env).count('reset') == 0 and names(env).count('push') == 1
     assert 'update-ref' not in names(env)

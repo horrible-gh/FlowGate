@@ -1,5 +1,5 @@
-// flowgate.v02.0060 T#2 — display strings of the context menu's 2-B windows (rename, Flow 삭제 = dispose (DC),
-// new folder / file, upload, folder download, delete, 수정 확인). Owned by this folder and used through a local
+// display strings of the context menu's 2-B windows (rename, Flow Delete = dispose (DC),
+// new folder / file, upload, folder download, delete, Review changes). Owned by this folder and used through a local
 // vue-i18n scope that follows the app locale, as the menu's own strings are (contextMenu/messages.ts).
 
 const ko = {
@@ -42,7 +42,7 @@ const ko = {
     title: '그룹 아카이브', submit: '아카이브', note: '기록은 보존하고 기본 목록에서 숨깁니다.',
     hint: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다. "아카이브 포함"을 켜면 다시 보이고, 그룹 메뉴의 그룹 복원으로 되돌릴 수 있습니다.',
     server: { already: '이미 아카이브된 그룹입니다.' },
-    // 0016-CH B안: the confirm's point list (the hint above, one line each).
+    // 0016-CH option B: the confirm's point list (the hint above, one line each).
     points: {
       kept: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다.',
       visible: '"아카이브 포함"을 켜면 다시 보입니다.',

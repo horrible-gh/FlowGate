@@ -1,5 +1,5 @@
-"""Branch merge job (flowgate.default.0669 unit 8a; 0666 0008-D §3.6.1, §3.11, §7,
-0009-L §2.28, §4.4).
+"""Branch merge job (the earlier change unit 8a; the design,,,
+).
 
 ``merge_branches`` no longer takes the old project mutex. The request registers a
 ``branch_merge_publish`` job and runs it once right away with its own claim (as

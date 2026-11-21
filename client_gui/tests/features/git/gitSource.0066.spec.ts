@@ -2,7 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0066 T#5 — the Group worktree boundary on GitSource (0066 D#2 §2-3, §5-1, C4):
+// the Group worktree boundary on GitSource:
 // the HTTP source fills the optional `worktree` with the api.ts "Group worktree" functions, and a
 // source without it (every 0033 / 0065 test source) still is a GitSource and makes no worktree
 // request.
@@ -74,7 +74,7 @@ describe('createHttpGitSource().worktree', () => {
     expect(loadFlowChanges).toHaveBeenCalledWith(P, G, { base: 'release' })
   })
 
-  // flowgate.v02.0067 T#4 — the Git modeless `Diff` tab detail reads through the source too.
+  // the Git modeless `Diff` tab detail reads through the source too.
   it('reads a group file diff through the existing project /diff loader; base only for a compared target', async () => {
     const store = useProjectStore()
     const diff = {

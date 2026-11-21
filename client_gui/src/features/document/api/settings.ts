@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#3 — skeleton of the settings document API (D#1 §6.3). Owned by T#9 (settings), which
+// skeleton of the settings document API. Owned by the earlier implementation (settings), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `settings`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   the Node run settings the D#2 conclusion names (v0.1 sequence row; POST /api/v1/ai-invoke/start
 //   continuation_restart_max_attempts / continuation_step_timeout_sec / document_review_loop)
 //
-// flowgate.v02.0048 T#9 — the Inspector settings tab's calls. D#2 item (1) concluded "no change": the run
+// the Inspector settings tab's calls. the earlier implementation item  concluded "no change": the run
 // AI, the review count and the reviewer are already stored on the v0.1 sequence row and a continuous hop
 // reads them itself, so every call is an existing endpoint (no new server API):
 //   root      GET   /api/v1/flows/{flow_id}/graph -> { ok, ownership: { state, sequence_root_doc_id, … }, … }
@@ -307,8 +307,8 @@ export async function settingsRunRead(groupId: string): Promise<SettingsRun> {
   return toSettingsRun(response.data)
 }
 
-// flowgate.v02.0053 T#5 — the card (Node) settings T#2 stores (server/flowgate/card_settings), read by the
-// documents tab for the one value it shows: a card whose instruction is omitted has no 지시서 line (v7).
+// the card (Node) settings the earlier implementation stores (server/flowgate/card_settings), read by the
+// documents tab for the one value it shows: a card whose instruction is omitted has no instruction line (v7).
 //   node      GET   /api/v1/flows/{flow_id}/nodes/{node_key}/settings -> { ok, flow_id, node_key, card_kind,
 //             locked, fields: { <name>: { value, stored, default, choices } } } — `value` is the stored
 //             value, else the default; `card_kind` is null for a card without settings. 404 node_not_found
@@ -324,7 +324,7 @@ export interface SettingsNodeField {
   readonly choices: readonly unknown[] | null
 }
 
-/** Read-only judgement returned with check card settings (0098 T#1). */
+/** Read-only judgement returned with check card settings. */
 export interface SettingsMergeTargetEntry {
   readonly branch: string | null
   readonly checked: boolean
@@ -347,7 +347,7 @@ export interface SettingsContext {
   readonly draft_version: number | null
 }
 
-/** A card's settings (T#2). */
+/** A card's settings. */
 export interface SettingsNode {
   readonly context?: SettingsContext
   readonly settingsEditable?: boolean
@@ -359,7 +359,7 @@ export interface SettingsNode {
   readonly pushRemoteCheckRequired?: boolean
   readonly settingsVersion?: number
   /**
-   * flowgate.v02.0148 T#2: the PATCH answer left the three merge target values out on purpose (`merge_targets_kept: true`,
+   * the PATCH answer left the three merge target values out on purpose (`merge_targets_kept: true`,
    * the answer to `keep_merge_targets=true`). Only then may the caller carry its earlier views over; absent = a full answer.
    */
   readonly mergeTargetsKept?: boolean
@@ -405,12 +405,12 @@ export async function settingsNodeRead(flowId: string, nodeKey: string, refreshM
   return toSettingsNode(response.data)
 }
 
-/** Whether the card omits its instruction (`instruction` = omit): its 지시서 line is not shown. */
+/** Whether the card omits its instruction (`instruction` = omit): its instruction line is not shown. */
 export function settingsInstructionOmitted(node: SettingsNode | null | undefined): boolean {
   return node?.fields.instruction?.value === 'omit'
 }
 
-// flowgate.v02.0053 T#7 — the settings tab changes the card's settings one value at a time (no save button):
+// the settings tab changes the card's settings one value at a time (no save button):
 //   change    PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings { field, value } -> the card's settings
 //             as they are now (the GET shape). `value` null takes the default back. Refusals are the Graph
 //             envelope `{ ok: false, error: { code, message, params } }`: 409 node_settings_locked (the card
@@ -419,12 +419,12 @@ export function settingsInstructionOmitted(node: SettingsNode | null | undefined
 //   teams     GET   /api/v1/ai-groups -> { items: [{ ai_group_id, name, enabled, supervisor: { provider_name } | null }] }
 //             The AI Team choices of a requirement card (the server takes the ids of this table only).
 
-/** Query signal of flowgate.v02.0148 T#1: the PATCH answer may leave the merge target views out (`merge_targets_kept: true`). */
+/** Query signal of the earlier change the earlier implementation: the PATCH answer may leave the merge target views out (`merge_targets_kept: true`). */
 export const KEEP_MERGE_TARGETS_QUERY = 'keep_merge_targets=true'
 
 /**
  * Changes one setting; gate callers pass the confirmed version for the server's concurrency check. `keepMergeTargets` opts in
- * to an answer without the merge target options / work base / lookup state (flowgate.v02.0148 T#2): the caller then carries
+ * to an answer without the merge target options / work base / lookup state: the caller then carries
  * its earlier views over, and only when the answer says `mergeTargetsKept`. A server that does not know the signal answers in
  * full, so nothing changes for it.
  */
@@ -439,7 +439,7 @@ export async function settingsNodeWrite(flowId: string, nodeKey: string, field: 
   return toSettingsNode(response.data)
 }
 
-// flowgate.v02.0061 T#15 — a card's Hold (T#11) is the card setting `hold` of the same call: true = held, false / null =
+// a card's Hold is the card setting `hold` of the same call: true = held, false / null =
 // released (the default). The Designer's card context menu sets and releases it; the server judges it by the Flow's run
 // (409 graph_run_locked while the run is running / paused / stopping, 409 graph_hold_done_node for a done card) and a
 // release only changes the setting — nothing starts before the next run command.
@@ -489,7 +489,7 @@ export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
 }
 
 /**
- * flowgate.v02.0056 F2-1 — the reason a 422 card settings change names (`error.params.errors[0].reason`: unknown_ai,
+ * the reason a 422 card settings change names (`error.params.errors[0].reason`: unknown_ai,
  * not_a_text, invalid_text, not_a_setting_of_this_card …), or null.
  */
 export function settingsNodeErrorReason(error: unknown): string | null {
@@ -503,7 +503,7 @@ export function settingsNodeErrorReason(error: unknown): string | null {
 }
 
 /**
- * flowgate.v02.0056 F2-1 — the server's own message of a refused card settings change, as it sent it (x-locale),
+ * the server's own message of a refused card settings change, as it sent it (x-locale),
  * or null (no answer, no message, or only the code repeated).
  */
 export function settingsNodeErrorMessage(error: unknown): string | null {

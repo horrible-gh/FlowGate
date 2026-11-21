@@ -1,4 +1,4 @@
-"""TR2 connected E2E (0565 T0028 §3): real DB, real Git worktree, real HTTP routes.
+"""TR2 connected E2E: real DB, real Git worktree, real HTTP routes.
 
 Nothing on the approval path is replaced by a double. The only seams are the ones every
 connected suite in this tree uses (0332 ``git_active``): where the group worktree lives
@@ -746,7 +746,7 @@ def test_time_machine_revert_and_reapply_move_source_history(env):
 
 
 def test_sse_sources_for_save_attempt_phases_and_review_status(env, monkeypatch):
-    """What the client refresh hangs off (T0028 §B-2): every event is emitted by the
+    """What the client refresh hangs off: every event is emitted by the
     real save/approval path, project-wide, naming the TR2 document."""
     import modules.flow_gate.api.v1.events.publisher as publisher
     from modules.flow_gate.api.v1.events.event_types import EventType

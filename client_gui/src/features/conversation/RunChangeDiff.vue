@@ -1,7 +1,7 @@
 <template>
-  <!-- flowgate.v02.0032 — the stored diff of one run change file in its modeless change window (D0006 §3.8.3, §6.1). Content comes from the run start / run end trees
+  <!-- the stored diff of one run change file in its modeless change window. Content comes from the run start / run end trees
        the server recorded, never from the current worktree.
-       flowgate.v02test.0031 B — mode 'full' shows the stored run end text (run start text for a deleted file) with line numbers, no add/del colours. -->
+       B — mode 'full' shows the stored run end text (run start text for a deleted file) with line numbers, no add/del colours. -->
   <div class="rc-diff" data-test="rc-diff" :data-state="fileDiff.status" :data-mode="mode">
     <div class="rc-diff-head">
       <span class="rc-diff-path" :title="fileDiff.path">{{ fileDiff.path }}</span>

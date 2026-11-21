@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0065 T#2 — features/git/api.ts: the existing project Git settings contracts the
+// features/git/api.ts: the existing project Git settings contracts the
 // `Git 연결` window uses (v0.1 GitSettingsView), their request bodies and what the client keeps.
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())

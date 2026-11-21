@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0011 (S2) — Canvas change signals over the existing SSE stream (P0008 §8.1 /
+ * (S2) — Canvas change signals over the existing SSE stream (the plan /
  * §8.3): project-scoped stream with the current token, `graph_canvas_changed` of another tab /
  * device / user reported per Flow, this tab's own events (origin_client_id) dropped, a resync
  * after a reconnect, a fresh stream after a closed one, and unsubscribe closing the stream.

@@ -1,11 +1,11 @@
 /**
  * flowgate.v02.0072 T#3 — the WP card's 「작업계획」 line connected to the v0.2 work plan edit window (T#1) and its Step
- * window (T#2). The real Frame (DesignerInspector, real registry) and the real windows host (WorkPlanEditWindows) are
+ * window. The real Frame (DesignerInspector, real registry) and the real windows host (WorkPlanEditWindows) are
  * mounted; `@shared/api` is the boundary: the plan's GET / PUT and the Flow's AI run read answer, every other read of
  * the Frame's features is offline.
  *
  * - the documents area is one line; its name and document icon open the one edit window of the plan (no document
- *   window; flowgate.v02.0074 T#1: the line has no ✎); asking again brings it back (minimized → restored), no second
+ *   window; the earlier change the earlier implementation: the line has no ✎); asking again brings it back (minimized → restored), no second
  *   window;
  * - Step ✎ → Step window → [저장] applies to the parent (dirty, no PUT) → parent [저장] is one PUT of the whole body
  *   with base_revision_no → the Designer is asked to read the Flow again; a card moved before the Step [저장] keeps
@@ -13,7 +13,7 @@
  *   error stays on its row;
  * - the opener's verdict: a revision view opens it read only (no ✎ on the line), the Flow's run lock locks it, and
  *   the window follows the Flow's verdict when it changes — also when another card of the Flow is selected;
- * - TR0012 rev1: through the real Center column (its Dock and Frame) the open window follows its own Flow's run as the
+ * - the earlier implementation: through the real Center column (its Dock and Frame) the open window follows its own Flow's run as the
  *   session's run marks tell it, whatever is selected (no card, a card of another Flow): a run started, paused or
  *   stopping locks the parent's inputs and [저장] and the Step window's inputs, [저장] and attachment together, nothing
  *   is sent meanwhile and both drafts stay; the run's end frees them. A run locked when the window opened that ends
@@ -198,7 +198,7 @@ describe('the 작업계획 line opens the work plan edit window (flowgate.v02.00
     expect(wpOpened()).toEqual([DOC])
     expect(q('wp-edit-window')!.dataset.doc).toBe(DOC)
     expect(wpGets()).toBe(before + 1)
-    // flowgate.v02.0074 T#1 (R §1.3): no ✎ on the line — the document icon is the other way in.
+    // (R): no ✎ on the line — the document icon is the other way in.
     expect(planLine().querySelector('[data-test="inspector-slot-edit"]')).toBeNull()
     for (const button of ['inspector-slot-open']) {
       await openFromLine(button)
@@ -218,7 +218,7 @@ describe('the 작업계획 line opens the work plan edit window (flowgate.v02.00
     await openFromLine()
     expect(workPlanEditWindowList()[0].request).toMatchObject({ docId: DOC, projectId: 'flowgate', groupId: FLOW, title: '작업계획 — 설계 1장 · 작업 2세트' })
     expect(q('wp-edit-title')!.getAttribute('title')).toBe('작업계획 — 설계 1장 · 작업 2세트')
-    // flowgate.v02.0074 T#1 (R §2.2): no r{n} in the title bar; revision 2 is the next PUT's base (below).
+    // (R): no r{n} in the title bar; revision 2 is the next PUT's base (below).
     expect(q('wp-edit-revision')).toBeNull()
   })
 })
@@ -243,7 +243,7 @@ describe('Step window → parent dirty → parent save and read again (flowgate.
     expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('인스펙터에서 연 단계')
     expect(lastBody!.x_origin_note).toEqual({ kept: true })
     expect(q('wp-edit-dirty')).toBeNull()
-    // flowgate.v02.0074 T#1: no r{n} shown; the saved revision 3 is the base of the next save.
+    // no r{n} shown; the saved revision 3 is the base of the next save.
     expect(q('wp-edit-revision')).toBeNull()
     expect(intents).toContainEqual({ kind: 'refresh-flow', flowId: FLOW })
     await type(q('wp-edit-step-note', row('c_t2|main')), '두 번째 저장')
@@ -280,7 +280,7 @@ describe('Step window → parent dirty → parent save and read again (flowgate.
     answer = { ...answer, revision_no: 5 }
     await click(q('wp-edit-conflict-reload'))
     await click(document.body.querySelectorAll<HTMLElement>('.ui-confirm-actions button')[1])
-    // flowgate.v02.0074 T#1: no r{n} shown; the read revision 5 is the base of the next save.
+    // no r{n} shown; the read revision 5 is the base of the next save.
     expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     await type(q('wp-edit-step-note', row('c_t2|main')), '다시 읽은 뒤')
@@ -380,7 +380,7 @@ describe('a WP card without its plan; sign-out (flowgate.v02.0072 T#3)', () => {
 })
 
 
-// --- TR0012 rev1: the open window follows its own Flow's run, whatever is selected ---------------------------------
+// --- the earlier implementation: the open window follows its own Flow's run, whatever is selected ---------------------------------
 
 /** Another Flow of the project, open in the Designer. */
 const OTHER_FLOW = 'flowgate.v02.0099'
@@ -598,7 +598,7 @@ describe('the open window follows its own Flow’s run, whatever is selected (fl
   })
 })
 
-// --- flowgate.v02.0074 T#1 --------------------------------------------------------------------------------
+// --- the earlier change the earlier implementation --------------------------------------------------------------------------------
 
 describe('flowgate.v02.0074 T#1', () => {
   it('one way in (R §1.3): an editable Flow has no ✎; the document icon opens the plan editable', async () => {

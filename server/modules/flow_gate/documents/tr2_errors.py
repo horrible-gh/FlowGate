@@ -21,7 +21,7 @@ TR2_ERRORS: dict[str, Tr2ErrorSpec] = {
         ("tr2_source_locked", True, 409, "Source is locked"),
         ("tr2_worktree_dirty", True, 409, "Worktree is dirty"),
         ("tr2_git_unavailable", True, 503, "Git worktree is unavailable"),
-        # 0660 T0004 §1: the two source-root failures a retry cannot fix. A git-off project
+        # the two source-root failures a retry cannot fix. A git-off project
         # whose src/<project_name>/<branch> is absent needs an operator to place the source
         # (or enable git integration); a group worktree whose provisioning failed for any
         # reason other than lock contention needs the git state looked at.
@@ -47,13 +47,13 @@ TR2_ERRORS: dict[str, Tr2ErrorSpec] = {
         ("tr2_recovery_required", False, 409, "Recovery required"),
         ("tr_history_recovery_required", False, 409, "TR history recovery required"),
         ("tr2_history_revision_required", False, 409, "A new revision is required"),
-        # 0660 T0004 §3 (RC3): a Time Machine reopen whose commit cancel was blocked leaves
+        # (RC3): a Time Machine reopen whose commit cancel was blocked leaves
         # the approval commit live. Until the cancel is retried successfully the proposal
         # must not be saved, restored or approved against that source.
         ("tr2_revert_pending", False, 409, "The approved commit is still live; retry the commit cancel first"),
         ("tr2_history_invariant_error", False, 500, "TR2 history invariant violated"),
         ("tr2_precheck_failed", False, 422, "Precheck failed"),
-        # 0565 T0030 §5/§6: the stored proposal itself, kept apart from apply recovery.
+        # the stored proposal itself, kept apart from apply recovery.
         ("tr2_body_missing", False, 409, "The proposal file is missing"),
         ("tr2_body_corrupt", False, 409, "The proposal file is unreadable or damaged"),
         ("tr2_body_schema_invalid", False, 409, "The stored proposal does not match the TR2 schema"),
@@ -76,7 +76,7 @@ _PUBLIC_REASON_CODES = frozenset({
     "tr2_spec_invalid", "tr2_path_unsafe", "tr2_body_missing", "tr2_body_corrupt",
     "tr2_body_schema_invalid", "tr2_storage_mismatch", "tr2_revision_unusable",
 })
-# 0660 T0004 §1.3: the source-root codes name WHY with a closed enum, so a screen can tell
+# the source-root codes name WHY with a closed enum, so a screen can tell
 # "wait and retry" from "place the source" without ever seeing a path or Git stderr. Only
 # these values pass; anything else (an internal SRC_ROOT_* name, a provisioning error
 # text) is withheld exactly like any other non-public reason.
@@ -87,7 +87,7 @@ _PUBLIC_REASON_VALUES: dict[str, frozenset[str]] = {
     "tr2_revert_pending": frozenset({"commit_cancel_blocked"}),
 }
 # The detail keys a client may see for those closed-enum codes: where (``loc``) and why
-# (``reason``). Any other key a raiser attaches stays in the server log (0660 T0004 §1.3).
+# (``reason``). Any other key a raiser attaches stays in the server log.
 _PUBLIC_ENUM_DETAIL_KEYS = frozenset({"loc", "reason"})
 # A drive path, a UNC path or an absolute POSIX path of two or more segments.
 _HOST_PATH = re.compile(r"[A-Za-z]:[\\/]|\\\\|(?:^|[\s'\"(=])/[^/\s]+/")
@@ -104,7 +104,7 @@ def _scrub(value):
 
 
 def public_details(code: str, details: dict | None) -> dict:
-    """What an HTTP client may see of an error's details (T0030 §5)."""
+    """What an HTTP client may see of an error's details."""
     kept = dict(details or {})
     allowed = _PUBLIC_REASON_VALUES.get(code)
     if allowed is not None:

@@ -33,7 +33,7 @@ def decode_pre_instruction_attachment(raw) -> Optional[dict]:
 
 def pre_instruction_attachment_json_malformed(raw) -> bool:
     """True when ``raw`` holds non-empty stored content that decode_pre_instruction_attachment
-    cannot turn into a usable reference dict (0554 T0014 §5 rework, review rej_01M334Z5Y72GK6BW).
+    cannot turn into a usable reference dict (rework, review rej_01M334Z5Y72GK6BW).
 
     An empty/absent column (``None``, blank string) means "no attachment" and is NOT malformed
     — that is the ordinary case for most rows. This exists so a caller that must fail-closed
@@ -159,7 +159,7 @@ def insert_sequence_item(
 ) -> None:
     """Insert a sequence item.
 
-    0399 DB0012 §2/§4: ``note`` · ``source_doc_id`` · ``source_revision_no`` carry the step
+     /: ``note`` · ``source_doc_id`` · ``source_revision_no`` carry the step
     note and its origin (which work plan poured the row, at which revision). They default to
     the same values migration 079 gives a pre-existing row — an empty note and no source — so
     every existing caller that only knows about the structural columns keeps working and
@@ -225,7 +225,7 @@ def update_sequence_item_plan_snapshot(
 ) -> None:
     """Atomically replace the WorkPlan-owned execution snapshot for one pending row.
 
-    0649 T#1 (NR0003 O0): ``source_wp_card_id`` records which card the row now serves.
+    ``source_wp_card_id`` records which card the row now serves.
     ``None`` leaves the stored value as it is (the SQL coalesces), so a caller that does not
     know about cards can never wipe the identity a pour already wrote.
     """
@@ -254,7 +254,7 @@ def update_sequence_item_plan_snapshot(
 
 
 def update_sequence_item_card_id(item_id: int, sequence_id: int, source_wp_card_id: str) -> None:
-    """Write only ``source_wp_card_id`` on one row (NR0003 O0 lazy backfill).
+    """Write only ``source_wp_card_id`` on one row (O0 lazy backfill).
 
     The one write a started row may receive besides nothing: its position, result document
     and every other column stay exactly as they are. Scoped by ``sequence_id`` as well, so
@@ -276,7 +276,7 @@ def update_sequence_item_echo_settings(
     reviewer_provider_id: Optional[str] = None,
     reviewer_provider_display_name: Optional[str] = None,
 ) -> None:
-    """In-place update of a protected report row's execution settings (NR0003 O1 echo).
+    """In-place update of a protected report row's execution settings (O1 echo).
 
     A protected pending report row (its instruction already started) is never deleted and
     re-inserted, so its id/item_seq/sort_order survive an edit. What a person may still
@@ -300,7 +300,7 @@ def update_sequence_item_echo_settings(
 def delete_pending_items(sequence_id: int) -> None:
     """Delete all items in PENDING status.
 
-    0649 T#1 (NR0003 O1): no longer used by the sequence edit — that path keeps protected
+    no longer used by the sequence edit — that path keeps protected
     pending rows and calls :func:`delete_unprotected_pending_items`. Kept for callers that
     really mean "every pending row".
     """
@@ -310,7 +310,7 @@ def delete_pending_items(sequence_id: int) -> None:
 
 
 def delete_unprotected_pending_items(sequence_id: int, keep_ids: Iterable[int]) -> None:
-    """Delete pending rows except ``keep_ids`` (the protected rows, NR0003 O1)."""
+    """Delete pending rows except ``keep_ids`` (the protected rows, the review O1)."""
     keep = sorted({int(item_id) for item_id in keep_ids})
     if not keep:
         delete_pending_items(sequence_id)
@@ -322,7 +322,7 @@ def delete_unprotected_pending_items(sequence_id: int, keep_ids: Iterable[int]) 
     store._execute(sql, [sequence_id, *keep])
 
 
-# ── Started / protected rows (0649 T#1, NR0003 §3.6 / O1) ─────────────────────
+# ── Started / protected rows ─────────────────────
 
 def is_started_row(row: dict) -> bool:
     """The single predicate for "this row has started": it holds a result document.
@@ -334,7 +334,7 @@ def is_started_row(row: dict) -> bool:
 
 
 def protected_row_ids(items: Iterable[dict]) -> set[int]:
-    """Rows no save may move, delete or renumber (NR0003 O1).
+    """Rows no save may move, delete or renumber.
 
     = every started row + the pending automatic report row sitting right after a started
     instruction (by sort_order) whose type is that instruction's report type. Without the
@@ -391,10 +391,10 @@ def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
     DB004 §3.1: served by the uq_wfseq_items_result_doc index (migration 090; before it,
     the plain idx_wfseq_items_result_doc).
 
-    0457 T0007 / NR0003 §4.4: from migration 090 onward a non-NULL ``result_doc_id`` is
+    from migration 090 onward a non-NULL ``result_doc_id`` is
     unique across the whole table, so at most one row can match and "the earliest" is
     simply "the one". The ordering is not therefore decoration — it is what this function
-    answers on a database that predates the constraint. B0001 left 0454's ``0005-TR`` in
+    answers on a database that predates the constraint. the regression left 0454's ``the earlier implementation`` in
     slots 4 and 6 at once, and the query used to be an unordered ``LIMIT 1``, so which slot
     a document belonged to was whatever the engine happened to return first. It now sorts
     by ``sort_order ASC`` and breaks a tie on ``id ASC``, which makes such a document
@@ -413,7 +413,7 @@ def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
 def find_duplicate_result_doc_slots() -> list[dict]:
     """Return every slot whose non-NULL ``result_doc_id`` is shared with another slot.
 
-    0457 T0007 / NR0003 §7-1: the whole-table integrity check behind the
+    the whole-table integrity check behind the
     uq_wfseq_items_result_doc index (migration 090). One row per offending *slot*, not per
     document, carrying ``result_doc_id`` · ``sequence_id`` · ``item_id`` · ``item_seq`` ·
     ``sort_order`` — enough to name both sides of a collision without a second query, which
@@ -470,7 +470,7 @@ def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
     A produced child — a slot's ``result_doc_id`` such as an approved N — is a member
     of the same sequence but is not its root. After next-step creation the FE lands on
     that child (openAfter), so a follow-up create must resolve the sequence from the
-    child too; otherwise the child's prev_doc_id yields no sequence → 422 (0048 TR0009).
+    child too; otherwise the child's prev_doc_id yields no sequence → 422.
     """
     seq = get_sequence_by_doc_id(doc_id)
     if seq is not None:
@@ -488,7 +488,7 @@ def find_sequence_by_group_root(group_id: Optional[str]) -> Optional[dict]:
     :func:`get_sequence_for_member_doc` never resolves it. This walks the group's
     root documents instead — the same lookup the recover endpoint's item_seq-specified
     path and the /relations orphan fallback both need, kept in one place so they cannot
-    drift (0457 T0009).
+    drift.
     """
     from . import documents as db_documents
 
@@ -551,11 +551,11 @@ def is_orphaned_workflow_member(doc_id: str) -> bool:
 def get_item_by_id(item_id: int) -> Optional[dict]:
     """Return the workflow_sequence_items row by PK(id).
 
-    0457 T0005: the occupancy invariant in
+    the occupancy invariant in
     :func:`modules.flow_gate.workflow.pipeline_service.register_workflow_result` has to
     read back *which document a given slot holds*. Every other selector in this module
     answers "which slot is the head" — a different question that must not be reused for
-    this one, which is exactly the substitution B0001 was made of.
+    this one, which is exactly the substitution the regression was made of.
     """
     store = get_store()
     sql = _sql(store, "workflow_sequences.get_sequence_item_by_id")
@@ -565,7 +565,7 @@ def get_item_by_id(item_id: int) -> Optional[dict]:
 def claim_item_result_doc_id(item_id: int, result_doc_id: str) -> Optional[dict]:
     """Claim a slot for ``result_doc_id`` — only when it is empty or already holds it.
 
-    0457 B0001 / NR0003 §7-3: :func:`set_item_result_doc_id` overwrites unconditionally,
+    func:`set_item_result_doc_id` overwrites unconditionally,
     so a caller that resolved the wrong slot silently evicted the document sitting in it.
 
     The guard cannot be a read-then-write in Python. Under PostgreSQL READ COMMITTED two
@@ -613,7 +613,7 @@ def get_predecessor_result_doc_id(
     Returns None when no prior item has produced a document yet — i.e. the sequence is
     at its first step and the only context is the sequence-owning R document.
 
-    Used by the mention builders (T0004 / R0001) to anchor Section 1 'Document
+    Used by the mention builders to anchor Section 1 'Document
     information' at the current step's predecessor document instead of the
     sequence-owning R. Pure Python over get_sequence_items() — no new SQL.
     """
@@ -638,7 +638,7 @@ def get_predecessor_result_doc_ids(
     Returns ``[]`` when no prior item has produced a document yet.
 
     Used by advance_workflow to seed Section 3 'Reference documents' with the immediate
-    predecessor and the one before it (R0001 / T0004: the worker should receive
+    predecessor and the one before it (the requirement / the earlier implementation: the worker should receive
     "previous document + the one before it + R" = 3 reference documents). Pure Python
     over get_sequence_items() — no new SQL.
     """

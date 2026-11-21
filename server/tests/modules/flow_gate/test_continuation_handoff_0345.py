@@ -1,4 +1,4 @@
-"""Regression coverage for the continuous-hop monitor handoff (group 0345).
+"""Regression coverage for the continuous-hop monitor handoff (the earlier change).
 
 An engine-driven continuous chain deliberately finishes one AI invoke run before
 starting the next run with a newly resolved provider. The inbox boundary must

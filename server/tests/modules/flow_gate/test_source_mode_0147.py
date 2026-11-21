@@ -54,7 +54,7 @@ def test_mention_keeps_remote_crud_by_default(monkeypatch):
     out = mention_service.build_mention(**_mention_kwargs())
 
     assert "## Remote project source CRUD" in out
-    # 0349 TR-2: the section shrank to a help pointer, so the marker for "this step may
+    # TR-2: the section shrank to a help pointer, so the marker for "this step may
     # write" is the tool list, not a /remote/write example. tool_registry.DISPLAY_ORDER
     # since gained "diff"/"log" (merge-base patch/commit lookups), so the full read_write
     # kind now lists nine tools, not seven.

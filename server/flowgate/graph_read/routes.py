@@ -1,4 +1,4 @@
-"""0145 AI read transport. Only two GET routes; v1 remains user-only."""
+"""AI read transport. Only two GET routes; v1 remains user-only."""
 from fastapi import APIRouter, Request
 from modules.flow_gate.graph_workflow.api import envelope
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError

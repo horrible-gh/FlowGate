@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — file row (0024-D §7.2): icon, name, Base-relative status and
+// file row: icon, name, Base-relative status and
 // the select / open / open-diff intents. It never opens an editor or a resolver itself —
 // the container forwards the intent to the Designer. A file the Flow deleted cannot be
 // opened (there is nothing to open), but its diff still can.

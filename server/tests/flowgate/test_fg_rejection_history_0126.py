@@ -1,4 +1,4 @@
-"""0126 rejection preserves non-empty review and assignment histories."""
+"""rejection preserves non-empty review and assignment histories."""
 import pytest
 from test_fg_human_intervention_0126 import (
     FA, _sql, db_path, decided, env, wired, starts, record_starts, roles, stored,

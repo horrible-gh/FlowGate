@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#10 — the R↔B kind switch's state and call (D#1 §7.2 / §7.3, §8.2, D#2 §3.4).
+// the R↔B kind switch's state and call.
 // Two reads through useInspectorResource, as the header actions do: the target document's state
 // (group disposed) and whether an AI run owns its Flow's group (`/ai-invoke/active`), each read
 // again on its own hub events. The switch calls the existing v0.1 converter through
@@ -17,11 +17,11 @@
 // switch was made in (its `flowId`): that Flow is read again at once even when its tab is not the
 // active one, and no other Flow's Canvas or selection is touched (rev2).
 //
-// flowgate.v02.0064 T#4 (P0006 §3.1 / §6.1): the document state is read with the server's judgement
+// the document state is read with the server's judgement
 // (kindSwitchPreviewRead): `preview` is that judgement (a number swap or a succession); a refused judgement
 // disables the switch with its reason; no judgement yet blocks nothing. The link to the document a succeeded
 // root came from is features/kindSwitchOrigin.
-// flowgate.v02.0070 (0015-T T2): picking the other kind runs the switch at once, a number swap and a succession
+// picking the other kind runs the switch at once, a number swap and a succession
 // alike — no confirmation and no read awaited before the call; the server judges and runs it.
 import { computed, inject, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import {

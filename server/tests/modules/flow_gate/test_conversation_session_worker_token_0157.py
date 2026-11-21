@@ -1,4 +1,4 @@
-"""A worker token sent to the session conversation routes names the worker route (flowgate.v02.0157).
+"""A worker token sent to the session conversation routes names the worker route.
 
 The plural ``/documents/{doc_id}/conversation/turns`` and ``.../turn`` routes are session-only.
 A chat worker token sent there used to get the JWT decoder's generic 401

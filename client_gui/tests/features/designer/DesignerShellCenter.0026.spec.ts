@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0026 — Designer Shell x Designer Center (0003-D §4.1 / §7.1). The real Shell
+ * Designer Shell x Designer Center. The real Shell
  * with the real 0023 Project Explorer, 0024 File Explorer, project store, Center session and
- * server Graph source (flowgate.v02.0045); only the HTTP layer (`@shared/api`) is mocked, as
+ * server Graph source; only the HTTP layer (`@shared/api`) is mocked, as
  * DesignerShell.0025. This file alone gives the Canvas a size and a ResizeObserver stand-in.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -96,7 +96,7 @@ beforeEach(() => {
       return { data: { data: { group_id: decodeURIComponent(group[1]), branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
-    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    // the Designer reads Flow Graphs from the server Canvas API.
     const canvas = answerFlowCanvas(url)
     if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
@@ -114,7 +114,7 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
-// flowgate.v02.0039 T#3: entering leaves the Designer without a work target; these suites
+// entering leaves the Designer without a work target; these suites
 // check the work state, so the user first chooses the Project row (one click).
 async function mountShell() {
   const pinia = createPinia()
@@ -182,8 +182,8 @@ describe('Designer Shell x Center — opening Flows', () => {
     expect(canvas.attributes('data-flow-id')).toBe('p.ui.0002')
     const nodes = w.findAll('[data-test="designer-canvas-node"]')
     expect(nodes.length).toBeGreaterThan(0)
-    // flowgate.v02.0045: real Flow Nodes from GET /flows/{id}/canvas, no sample badge.
-    // flowgate.v02.0045 T0019: no ownership badge either.
+    // real Flow Nodes from GET /flows/{id}/canvas, no sample badge.
+    // no ownership badge either.
     expect(nodes.map((node) => node.attributes('data-node-id'))).toEqual(['doc:p.ui.0002.0001-R', 'doc:p.ui.0002.0002-N'])
     expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-canvas-ownership"]').exists()).toBe(false)
@@ -206,7 +206,7 @@ describe('Designer Shell x Center — opening Flows', () => {
 describe('Designer Shell x Center — Explorers follow the active tab', () => {
   it('a tab click moves the Project Explorer mark and the File Explorer target to that Flow', async () => {
     const w = await mountShell()
-    // flowgate.v02.0042: the mode tabs are available once a Flow is open.
+    // the mode tabs are available once a Flow is open.
     await activate(w, 'Designer v0.2', 'Canvas')
     await selectMode(w, '파일')
     await selectMode(w, '프로젝트')
@@ -276,7 +276,7 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
     await settle()
 
     expect(tabIds(w)).toEqual([])
-    // flowgate.v02.0042: no open Flow is no work target — the empty Center frame, no guidance text.
+    // no open Flow is no work target — the empty Center frame, no guidance text.
     expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(get(w, 'designer-workspace').text()).toBe('')
@@ -296,7 +296,7 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 
     expect(tabIds(w)).toEqual([])
     expect(w.find('[data-test="designer-canvas"]').exists()).toBe(false)
-    // flowgate.v02.0039 T#3: the new Project starts without a work target — empty Center frame.
+    // the new Project starts without a work target — empty Center frame.
     expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(fileFlow(w)).toBeNull()
     expect(projectActive(w)).toBeNull()
@@ -305,7 +305,7 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 })
 
 describe('Designer Shell x Center — Korean wording', () => {
-  // flowgate.v02.0038: the top band follows its confirmed design wording (Project / Group /
+  // the top band follows its confirmed design wording (Project / Group /
   // Flow / Node, 0001-R rev2) and carries the FlowGate brand, so this rule covers the Body.
   it('names the Flow object 플로우 everywhere in the Korean Designer Body with tabs and Canvas open', async () => {
     const w = await mountShell()

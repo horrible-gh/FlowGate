@@ -1,6 +1,6 @@
-"""flowgate.v02.0090 T#3 — snapshot deletes through the shared delete + journal (NR0003 §6.2).
+"""snapshot deletes through the shared delete + journal.
 
-Short adapter assertions on the T#1 state fixtures (token ``owned``) and the
+Short adapter assertions on the the earlier implementation state fixtures (token ``owned``) and the
 existing snapshot fixture (``snapshot_env``); no new Git or file-lock experiment.
 
 (a) A published snapshot is recorded at G/snapshot/<project-key>/<snapshot-id>.json

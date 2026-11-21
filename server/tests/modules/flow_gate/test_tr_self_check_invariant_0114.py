@@ -1,4 +1,4 @@
-"""flowgate.v02.0114 T#4: D 0006 9.2-7 (g) through the real run path.
+"""9.2-7 (g) through the real run path.
 
 Several Groups and two server instances of one host (one SQLite connection per thread, the
 same ``node_key``) queue Self-check requests at random and at the same time. 0053 1-B: every
@@ -311,7 +311,7 @@ def harness(stores, monkeypatch, tmp_path):
         return control, ownership
 
     monkeypatch.setattr(executor, "spawn", spawn)
-    # 0053 1-B: the snapshot of this multi-repository fixture tree is a plain folder copy.
+    # the snapshot of this multi-repository fixture tree is a plain folder copy.
     monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
 
     def snapshot(root, run_id):

@@ -1,4 +1,4 @@
-"""flowgate.v02.0114 T#4: the host-wide Self-check resource cap (D 0006 3.5 (1)(4)(5)(6), 8-5,
+"""the host-wide Self-check resource cap (the earlier implementation 3.5 , 8-5,
 9.2-7 (a)(b)(c)(d)(g)(h)).
 
 Real pieces: a fully migrated SQLite store (migration 164: ``cpu_reservation``,
@@ -222,7 +222,7 @@ def admission(store, monkeypatch, tmp_path):
 
 
 def test_7a_a_full_host_queues_requests_and_reserves_when_a_worker_claims_them(store, admission):
-    """0053 1-B: no 409 ``selfcheck_host_capacity_exhausted`` any more -- every request is queued
+    """no 409 ``selfcheck_host_capacity_exhausted`` any more -- every request is queued
     (no reservation yet), and the reservation is decided when a queue worker claims it, by the
     same D 3.5 (4) rule under the capacity lock. A run that does not fit waits."""
     x = admission.admit(GROUPS[0], {"program": "pytest", "parallel_share": 4})
@@ -444,7 +444,7 @@ def test_the_tool_schema_help_and_service_share_the_request_fields():
     assert schema["properties"]["parallel_share"] == {"type": "integer", "minimum": 1}
     assert tuple(help_catalog.SELF_CHECK_REQUEST_FIELDS) == tuple(schema["properties"])
     assert service.REQUEST_FIELDS == frozenset(help_catalog.SELF_CHECK_REQUEST_FIELDS)
-    # 0053 1-B: no capacity refusal any more -- the description tells the request is queued.
+    # no capacity refusal any more -- the description tells the request is queued.
     assert "selfcheck_host_capacity_exhausted" not in tools.DESCRIPTIONS["run_self_check"]
     assert "queued" in tools.DESCRIPTIONS["run_self_check"]
 
@@ -455,7 +455,7 @@ def test_help_explains_the_cap_the_share_and_the_queue(locale):
     content = help_catalog._content_tr_self_check(ctx)
     parallel = content["parallel"]
     assert parallel["request_field"] == "parallel_share"
-    # 0053 1-B: the 409 capacity refusal is gone; the help explains the queue instead.
+    # the 409 capacity refusal is gone; the help explains the queue instead.
     assert "refusal_code" not in parallel and "refusal" not in parallel
     assert set(parallel) >= {"reservation", "guarantee", "pytest", "serial_only", "queue"}
     assert content["verification"].startswith("Self-check:")

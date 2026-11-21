@@ -1,4 +1,4 @@
-"""Each user's default AI (flowgate.v02.0017 CH0006 (3), migration 134).
+"""Each user's default AI (the earlier change the discussion , migration 134).
 
     provider_id  the user's default AI (a system AI or one of their own). No row, or NULL after
                  the AI was deleted, means "follow the system default".

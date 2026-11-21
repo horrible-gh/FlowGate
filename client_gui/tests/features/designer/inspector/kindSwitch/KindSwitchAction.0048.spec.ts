@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#10 — the kind switch in the Inspector header with `@/features/document` mocked as a
+ * the kind switch in the Inspector header with `@/features/document` mocked as a
  * small server (D#1 §12.1, D#2 §3.4): the button and its confirmation, the converter call (R -> B, B -> R),
  * `refresh-flow` after a switch (the server sends no event), the switch kept disabled until the Canvas
  * moves the target, the refusals (flat 409 flow_owned_by_graph / flow_ownership_conflict, the converter's
@@ -7,10 +7,10 @@
  * Canvas read again when the Flow moved under it, the guards (disposed, AI running) read through the real
  * hub, read-only views and a Node change. Last, the real registry puts the switch in the Frame header of an
  * unassigned R / B root only — never on v01, Graph or conflict Flows or on other cards.
- * flowgate.v02.0051 stage 2: the switch is drawn as the v7 header 종류 배지 ▾ (headerKind) — the badge opens
+ * stage 2: the switch is drawn as the v7 header kind badge ▾ (headerKind) — the badge opens
  * a menu, picking the other kind opens the same confirmation; a disabled switch carries its reason as the
  * badge's hover text instead of a line.
- * flowgate.v02.0070 (0015-T T2): picking the other kind switches at once — no 종류 전환 confirmation, and no read awaited
+ * picking the other kind switches at once — no kind switch confirmation, and no read awaited
  * before the call: a read still pending (or settling after the part is gone / the selection cleared) starts nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -47,7 +47,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     ...actual,
     kindSwitchConvert: (...args: unknown[]) => convertCall(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
-    // flowgate.v02.0064 T#4: the switch reads the document state with its judgement (P0006 §6.1).
+    // the switch reads the document state with its judgement.
     kindSwitchPreviewRead: (...args: unknown[]) => documentRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     // The other features sharing the Frame in the registry cases.
@@ -63,7 +63,7 @@ const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail
 const i18n = prepareInspectorI18n()
 
 const FLOW = UNASSIGNED_GRAPH.flowId
-/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+/** each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
 const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
 const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = UNASSIGNED_REQ_NODE.document!.docId
@@ -163,7 +163,7 @@ const B_NODE: FlowGraphNode = {
 const TARGET_B = targetOf(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [B_NODE] }, B_NODE.id))
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
-/** flowgate.v02.0051 stage 2: the switch is the v7 header 종류 배지 ▾ — the badge opens a menu; 0015-T T2: the other kind switches. */
+/** stage 2: the switch is the v7 header kind badge ▾ — the badge opens a menu; the earlier implementation T2: the other kind switches. */
 const openButton = () => find('kind-switch-open')
 const line = () => find('kind-switch-line')
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
@@ -298,11 +298,11 @@ describe('a switch (D#2 §3.4)', () => {
     expect(docs.get(ROOT_B)?.typeCode).toBe('B')
     // The old id is gone on the server: it is not read again.
     expect(documentRead).not.toHaveBeenCalled()
-    // flowgate.v02gui.0012: a finished switch shows no line beside the badge.
+    // a finished switch shows no line beside the badge.
     expect(line().exists()).toBe(false)
     // Until the Canvas moves the selection, the target still names the old id.
     expect(openButton().attributes('disabled')).toBeDefined()
-    // flowgate.v02gui.0003: the badge already shows the kind the server switched to (no wait for the Canvas read).
+    // the badge already shows the kind the server switched to (no wait for the Canvas read).
     expect(openButton().attributes('data-kind')).toBe('B')
     expect(openButton().text()).toContain('버그')
     await openButton().trigger('click')

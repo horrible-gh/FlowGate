@@ -1,4 +1,4 @@
-"""0126 T#4 A1/A2/A5: settings-only capability, actual HTTP/SQLite and durable history.
+"""A1/A2/A5: settings-only capability, actual HTTP/SQLite and durable history.
 
 AI dispatch/JWT/SSE transport use the existing isolated recorders. No deployed flow is edited.
 Display reasons, verdicts and document statuses are deliberately not node statuses.

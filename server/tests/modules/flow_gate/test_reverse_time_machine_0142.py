@@ -231,7 +231,7 @@ def test_restore_stops_at_first_changed_document_and_keeps_return_point(rt_store
 
 
 def _seed_group_with_phantom(storage_root: Path, suffix: str) -> dict:
-    """Replica of live group flowgate.default.0094: a T/TR continuous-work chain wired into
+    """Replica of live group the earlier change: a T/TR continuous-work chain wired into
     a workflow sequence, PLUS a phantom TR (an abandoned/superseded revision) that shares the
     group's seq space but never filled a sequence slot. The reverse time-machine must ignore
     the phantom entirely (0142 rework — it previously got swept into the rewind, inflating the
@@ -285,7 +285,7 @@ def _seed_group_with_phantom(storage_root: Path, suffix: str) -> dict:
 
 
 def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
-    """0142 rework — the group-0094 boundary bug: a phantom doc (0003-TR) that is not part of
+    """the group-0094 boundary bug: a phantom doc (TR) that is not part of
     the workflow sequence must not be rewound, snapshotted, or counted. The restore count must
     match the 8 real steps, never 9."""
     from modules.flow_gate.db import documents as db_docs
@@ -293,7 +293,7 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
 
     ids = _seed_group_with_phantom(rt_store, "x")
     docs = ids["docs"]
-    phantom = docs[3]  # 0003-TR
+    phantom = docs[3]  # 
 
     reopened = doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=docs[2], target_seq=2),
@@ -316,7 +316,7 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
 
 
 def test_mid_flight_rewind_records_return_point_and_restores_in_progress(rt_store):
-    """0158 gate relaxation (fixes B0001) — a workflow rewound while still mid-flight (wf_in_progress,
+    """gate relaxation (fixes the regression) — a workflow rewound while still mid-flight (wf_in_progress,
     a step pending) now records a return point over its approved baseline, so the reverse time machine
     is available. Restoring to front re-declares the root wf_in_progress (its pre-rewind status), never
     a false wf_done, and a step that was genuinely pending stays pending. This is the case the old
@@ -365,7 +365,7 @@ def test_mid_flight_rewind_records_return_point_and_restores_in_progress(rt_stor
 
 
 def test_stale_return_point_is_discarded_on_fresh_rewind(rt_store):
-    """0158 — a return point left behind after the worker redid the rewound steps forward (re-approved
+    """a return point left behind after the worker redid the rewound steps forward (re-approved
     them through the pipeline instead of using restore) no longer describes an active rewind. A new
     rewind must discard that stale point and capture a fresh baseline, never extend the old one (which
     would keep an outdated snapshot and a stale root_prev_status)."""
@@ -402,7 +402,7 @@ def test_stale_return_point_is_discarded_on_fresh_rewind(rt_store):
 
 
 def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):
-    """0142 T0013 — reached_front must finalize (root→wf_done, clear the return point) ONLY when
+    """reached_front must finalize (root→wf_done, clear the return point) ONLY when
     every snapshot doc is actually approved. A pre-existing polluted return point whose prev_status
     was itself pending_review must NOT be cleared into a wf_done-over-pending state, which is what
     laundered the pollution forward and made restore a permanent no-op."""
@@ -441,7 +441,7 @@ def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):
 
 
 def test_reopen_logs_an_audit_event(rt_store):
-    """0142 T0013 — the rewind side previously wrote no workflow event, leaving a return point (and
+    """the rewind side previously wrote no workflow event, leaving a return point (and
     its later restore) with no audit trail. reopen must now log a workflow_reopen event."""
     from modules.flow_gate.db import workflow_events as db_events
     from modules.flow_gate.documents.routers import documents as doc_routes

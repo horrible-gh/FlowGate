@@ -1,6 +1,6 @@
-"""flowgate.default.0060 — document attachments, end to end against a real SQLite schema.
+"""document attachments, end to end against a real SQLite schema.
 
-T0016 §9-1 names the boundary cases from L0012 §5 that must be covered; this file is that
+names the boundary cases from the earlier implementation that must be covered; this file is that
 list. Each test says which rule it pins, because a green assertion with no rule attached is
 the thing that lets a rule quietly die.
 
@@ -94,7 +94,7 @@ class _Store:
         self._conn.commit()
 
     def _execute_affected(self, sql, params=None):
-        # 0064 T#3: attachment writes commit under the Flow guard, whose bump reads this count.
+        # attachment writes commit under the Flow guard, whose bump reads this count.
         count = self._conn.execute(sql, params or []).rowcount
         self._conn.commit()
         return count
@@ -125,7 +125,7 @@ def env(attachments_db, tmp_path, monkeypatch):
     """Temp storage root + the real document body, with the store pointed at the temp DB.
 
     The body file has to exist: `resolve_attach_dir` prefers where the body ACTUALLY is
-    (L0012 §2-1 ①) and only falls back to the calculated path when it cannot resolve.
+    (①) and only falls back to the calculated path when it cannot resolve.
     """
     from modules.flow_gate.db import connection as conn_mod
 
@@ -214,7 +214,7 @@ def test_migration_080_creates_the_registry_and_is_safe_to_reapply(env):
 # ── upload ──────────────────────────────────────────────────────────────────────
 
 def test_upload_writes_the_file_next_to_the_body_and_records_a_relative_path(env):
-    """D0010 §3-1 (colocate) + NR0003 G4 / P0011 §9 (no absolute path ever leaves)."""
+    """(colocate) + the review G4 / the plan (no absolute path ever leaves)."""
     result = upload([FakePart("요구사항.xlsx", b"hello")])
 
     assert result["count"] == 1
@@ -236,7 +236,7 @@ def test_zero_byte_upload_is_accepted(env):
 
 
 def test_same_name_parts_in_one_request_do_not_overwrite_each_other(env):
-    """L0012 §2-4 — the defect the single-shot epoch dedupe had.
+    """the defect the single-shot epoch dedupe had.
 
     Three parts named `a.txt` in one request used to compute the same `a_{epoch}.txt` in the
     same second and silently overwrite one another. D2 (in-request reservation) + D5
@@ -252,12 +252,12 @@ def test_same_name_parts_in_one_request_do_not_overwrite_each_other(env):
     assert len(set(names)) == 3, names
     bodies = sorted((room_of(env) / n).read_bytes() for n in names)
     assert bodies == [b"first", b"second", b"third"]
-    # response order == request order (P0011 §2)
+    # response order == request order
     assert [item["size"] for item in result["attachments"]] == [5, 6, 5]
 
 
 def test_backslash_path_is_not_smuggled_through_as_one_filename(env):
-    """L0012 §2-2 S3 — `Path(name).name` let this through as a single component on Linux."""
+    """S3 — `Path(name).name` let this through as a single component on Linux."""
     item = upload([FakePart(r"..\..\etc\passwd", b"x")])["attachments"][0]
 
     assert item["filename"] == "passwd"
@@ -266,7 +266,7 @@ def test_backslash_path_is_not_smuggled_through_as_one_filename(env):
 
 
 def test_upload_over_the_size_limit_is_cut_and_leaves_nothing_behind(env):
-    """L0012 §2-3 U2 + §2-5 A9 — 413, and the rollback removes the partial file."""
+    """U2 + A9 — 413, and the rollback removes the partial file."""
     from modules.flow_gate.documents.attachments import AttachmentError
     from modules.flow_gate.documents.attachments.constants import ATTACH_MAX_UPLOAD_BYTES
 
@@ -368,7 +368,7 @@ def test_read_no_longer_refuses_a_script_it_just_accepted(env):
 
 
 def test_trailing_dot_is_stripped_before_the_extension_is_read(env):
-    """L0012 §2-2 S5 — Windows drops a trailing dot, so the sanitizer does it first.
+    """S5 — Windows drops a trailing dot, so the sanitizer does it first.
 
     The rule outlived the deny list it was written for: it is what makes ``report.txt.`` land
     as ``report.txt`` and be typed from ``txt`` instead of from an empty extension.
@@ -392,7 +392,7 @@ def test_empty_multipart_is_422(env):
 
 
 def test_a_missing_document_is_404_across_all_six_paths(env):
-    """P0011 §8 — every attachment path rejects an unknown document consistently."""
+    """every attachment path rejects an unknown document consistently."""
     from modules.flow_gate.documents.attachments import (
         AttachmentError,
         copy_to_source,
@@ -434,7 +434,7 @@ def test_list_of_a_document_with_no_attachments_is_200_and_empty(env):
 
 
 def test_list_is_ordered_by_uploaded_at_then_filename(env):
-    """P0011 §3 / DB0013 §4 idx_attachments_doc_uploaded."""
+    """ idx_attachments_doc_uploaded."""
     from modules.flow_gate.documents.attachments import list_attachments
 
     upload([FakePart("b.txt", b"b"), FakePart("a.txt", b"a")])
@@ -450,7 +450,7 @@ def test_list_is_ordered_by_uploaded_at_then_filename(env):
 # ── path jail ───────────────────────────────────────────────────────────────────
 
 def test_a_dotdot_name_never_reaches_the_filesystem(env):
-    """L0012 §2-6 J1 — the URL segment must be a bare name; it is a lookup key, not a path."""
+    """J1 — the URL segment must be a bare name; it is a lookup key, not a path."""
     from modules.flow_gate.documents.attachments import AttachmentError, resolve_download
 
     for hostile in ("..", "../secret.txt", r"..\secret.txt", "a/b.txt"):
@@ -460,7 +460,7 @@ def test_a_dotdot_name_never_reaches_the_filesystem(env):
 
 
 def test_a_registry_row_pointing_at_another_documents_room_is_refused(env):
-    """L0012 §2-6 J5 — being inside the storage root is not enough.
+    """J5 — being inside the storage root is not enough.
 
     This is the poisoned-row case: the path is perfectly legal storage, just not THIS
     document's. 403, not 404 — the row exists, it is the location that is wrong.
@@ -478,7 +478,7 @@ def test_a_registry_row_pointing_at_another_documents_room_is_refused(env):
 
 
 def test_an_absolute_registry_path_is_refused(env):
-    """L0012 §2-6 J3 — corrupted rows are caught before anything is opened."""
+    """J3 — corrupted rows are caught before anything is opened."""
     from modules.flow_gate.documents.attachments import AttachmentError, resolve_download
 
     upload([FakePart("notes.txt", b"x")])
@@ -493,7 +493,7 @@ def test_an_absolute_registry_path_is_refused(env):
 
 
 def test_a_symlinked_component_inside_the_room_is_refused(env):
-    """L0012 §2-6 J6 — checked per component, not just at the leaf.
+    """J6 — checked per component, not just at the leaf.
 
     The skip is decided by ATTEMPTING the symlink, not by `os.name`: this host creates them
     fine (Windows Developer Mode), and a blanket skipif would have reported green here
@@ -517,7 +517,7 @@ def test_a_symlinked_component_inside_the_room_is_refused(env):
 
 
 def test_a_row_whose_file_vanished_reads_as_404(env):
-    """L0012 §2-6 J7 / §3-1 ghost_row — externally indistinguishable from "no such row"."""
+    """J7 / ghost_row — externally indistinguishable from "no such row"."""
     from modules.flow_gate.documents.attachments import AttachmentError, resolve_download
 
     upload([FakePart("notes.txt", b"x")])
@@ -531,7 +531,7 @@ def test_a_row_whose_file_vanished_reads_as_404(env):
 # ── download ────────────────────────────────────────────────────────────────────
 
 def test_download_headers_carry_rfc5987_and_an_etag(env):
-    """L0012 §2-7 / P0011 §4 — `filename*` always; ASCII `filename` only when it is ASCII."""
+    """`filename*` always; ASCII `filename` only when it is ASCII."""
     from modules.flow_gate.documents.attachments import resolve_download
 
     upload([FakePart("요구사항.xlsx", b"x"), FakePart("plain.txt", b"y")])
@@ -548,7 +548,7 @@ def test_download_headers_carry_rfc5987_and_an_etag(env):
 
 
 def test_html_is_downloaded_as_octet_stream(env):
-    """L0012 §1-2 attach_download_forced_octet_types — never render an attachment inline."""
+    """attach_download_forced_octet_types — never render an attachment inline."""
     from modules.flow_gate.documents.attachments import resolve_download
 
     upload([FakePart("page.html", b"<b>hi</b>")])
@@ -559,7 +559,7 @@ def test_html_is_downloaded_as_octet_stream(env):
 # ── delete ──────────────────────────────────────────────────────────────────────
 
 def test_delete_removes_both_the_file_and_the_row(env):
-    """P0011 §5 — a 200 means the next identical delete is a 404."""
+    """a 200 means the next identical delete is a 404."""
     from modules.flow_gate.documents.attachments import AttachmentError, delete_attachment
 
     upload([FakePart("notes.txt", b"x")])
@@ -575,7 +575,7 @@ def test_delete_removes_both_the_file_and_the_row(env):
 
 
 def test_a_ghost_row_heals_itself_on_the_next_identical_delete(env):
-    """L0012 §2-8 X4/X5 + §3-2 — the reason the file is removed BEFORE the row.
+    """X4/X5 + — the reason the file is removed BEFORE the row.
 
     A row whose file is already gone (the metadata step failed last time, or something
     outside removed the file) must not be a permanent 500. Repeating the same delete finds
@@ -594,7 +594,7 @@ def test_a_ghost_row_heals_itself_on_the_next_identical_delete(env):
 # ── read ────────────────────────────────────────────────────────────────────────
 
 def test_read_auto_returns_text_for_text_and_base64_for_binary(env):
-    """L0012 §2-9 R8 / §4-3 — `auto` never answers 415; failing to decode IS the answer."""
+    """R8 / — `auto` never answers 415; failing to decode IS the answer."""
     from modules.flow_gate.documents.attachments import read_attachment
 
     upload([FakePart("notes.txt", "FlowGate 첨부".encode()), FakePart("pixel.bin", b"\x00\x01\x02")])
@@ -608,7 +608,7 @@ def test_read_auto_returns_text_for_text_and_base64_for_binary(env):
 
 
 def test_read_text_mode_refuses_undecodable_bytes(env):
-    """L0012 §2-9 R7 — 415 only when the caller forced `text`."""
+    """R7 — 415 only when the caller forced `text`."""
     from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
 
     upload([FakePart("pixel.bin", b"\xff\xfe\x00\x9c")])
@@ -619,7 +619,7 @@ def test_read_text_mode_refuses_undecodable_bytes(env):
 
 
 def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env):
-    """L0012 §2-9 R4 — R4 runs before R5, so an oversized file is never even loaded.
+    """R4 — R4 runs before R5, so an oversized file is never even loaded.
 
     Cutting the content and answering 200 would let the caller treat a fragment as the whole
     file, which is why `truncated` is in the contract but always false.
@@ -636,7 +636,7 @@ def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env):
 
 
 def test_read_at_exactly_the_limit_is_allowed(env):
-    """L0012 §5 — the comparison is `>`, so the boundary itself passes."""
+    """the comparison is `>`, so the boundary itself passes."""
     from modules.flow_gate.documents.attachments import read_attachment
     from modules.flow_gate.documents.attachments.constants import ATTACH_READ_MAX_BYTES
 
@@ -645,7 +645,7 @@ def test_read_at_exactly_the_limit_is_allowed(env):
 
 
 def test_an_unknown_encoding_is_422_not_500(env):
-    """L0012 §5 — codec lookup failure is a bad request, not a crash."""
+    """codec lookup failure is a bad request, not a crash."""
     from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
 
     upload([FakePart("notes.txt", b"hi")])
@@ -667,7 +667,7 @@ def src_root(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(git_service, "effective_src_root_ex", lambda *_: (root, "worktree"))
     monkeypatch.setattr(git_service, "base_src_root", lambda *_a, **_k: root)
-    # 0064 T#3: a group copy now resolves its worktree through the TR2 source policy (base tree);
+    # a group copy now resolves its worktree through the TR2 source policy (base tree);
     # the same stand-in answers there for this suite's Group, after the policy's own Group lock.
     real_group_root = tr2_file_policy._group_root
     monkeypatch.setattr(tr2_file_policy, "_group_root",
@@ -703,7 +703,7 @@ def test_copy_into_the_base_checkout(env, src_root):
 
 
 def test_copy_refuses_to_overwrite(env, src_root):
-    """L0012 §2-10 C8 — reject, never overwrite, never silently rename.
+    """C8 — reject, never overwrite, never silently rename.
 
     The upload path DOES auto-rename, and the difference is deliberate: there the name came
     from a file and the result is visible in the list; here the path came from the caller and
@@ -724,7 +724,7 @@ def test_copy_refuses_to_overwrite(env, src_root):
 
 
 def test_copy_refuses_a_case_only_collision_on_every_platform(env, src_root):
-    """L0012 §2-10 C8 — otherwise the same request overwrites on Windows and coexists on Linux."""
+    """C8 — otherwise the same request overwrites on Windows and coexists on Linux."""
     from modules.flow_gate.documents.attachments import AttachmentError, copy_to_source
 
     upload([FakePart("Notes.txt", b"new")])
@@ -756,7 +756,7 @@ def test_copy_refuses_a_malformed_target_path(env, src_root, target_path):
 
 
 def test_copy_does_not_apply_the_upload_extension_denylist_to_its_target(env, src_root):
-    """L0012 §2-10 C4 — `.ps1` is an ordinary file in a source tree.
+    """C4 — `.ps1` is an ordinary file in a source tree.
 
     The deny-list exists to stop a receiver clicking and running something; a copy result
     never goes to a browser. Blocking it here would make "put the script I was sent into the
@@ -772,7 +772,7 @@ def test_copy_does_not_apply_the_upload_extension_denylist_to_its_target(env, sr
 
 
 def test_copy_refuses_when_the_group_worktree_cannot_be_resolved(env, monkeypatch):
-    """L0012 §2-10 C5 — fail closed. The base checkout must NOT be substituted.
+    """C5 — fail closed. The base checkout must NOT be substituted.
 
     `storage_paths.resolve_project_src_root` silently falls back to the base checkout, which
     would dirty it under a group tab and jam every other group's finalize — the same reason
@@ -794,7 +794,7 @@ def test_copy_refuses_when_the_group_worktree_cannot_be_resolved(env, monkeypatc
 
 
 def test_copy_refuses_an_unknown_group(env, src_root):
-    """P0011 §8 TARGET_GROUP_NOT_FOUND — the group must belong to the document's project."""
+    """TARGET_GROUP_NOT_FOUND — the group must belong to the document's project."""
     from modules.flow_gate.documents.attachments import AttachmentError, copy_to_source
 
     upload([FakePart("notes.txt", b"x")])
@@ -806,7 +806,7 @@ def test_copy_refuses_an_unknown_group(env, src_root):
 # ── RPC compatibility wrapper ───────────────────────────────────────────────────
 
 def test_the_rpc_wrapper_and_the_rest_route_produce_the_same_result(env):
-    """T0016 §3-3 / NR0015 §2-3 — one shared service body, two entry points.
+    """one shared service body, two entry points.
 
     The RPC used to call the REST *route function* directly. Now both call
     `upload_attachments`, so the two cannot drift; this pins that they agree field for field
@@ -819,7 +819,7 @@ def test_the_rpc_wrapper_and_the_rest_route_produce_the_same_result(env):
     class _Request:
         headers = {"content-length": "10"}
 
-    # flowgate.chat.0017 CH0002: the attachment routes check the project permission now; the session user
+    # the attachment routes check the project permission now; the session user
     # dict carries is_admin like get_current_user's (ACTOR alone is the service-level actor).
     response = asyncio.run(
         documents_router.upload_attachment_rpc(
@@ -838,7 +838,7 @@ def test_the_rpc_wrapper_and_the_rest_route_produce_the_same_result(env):
     assert rpc["content_sha256"] == rest["content_sha256"]
     assert rpc["size"] == rest["size"]
     assert rpc["path_base"] == rest["path_base"] == "storage"
-    # NR0003 G4: no absolute path in the compatibility response either
+    # G4: no absolute path in the compatibility response either
     assert not Path(rpc["path"]).is_absolute()
     assert rpc["path"].startswith(f"documents/{PROJECT_ID}/")
     # dedupe kicked in for the second upload of the same name
@@ -846,10 +846,10 @@ def test_the_rpc_wrapper_and_the_rest_route_produce_the_same_result(env):
     assert rpc["original_filename"] == rest["original_filename"] == "shared.txt"
 
 
-# ── numbering scan regression (T0016 §9-2) ──────────────────────────────────────
+# ── numbering scan regression ──────────────────────────────────────
 
 def test_the_numbering_check_stays_green_after_an_attachment_room_appears(env):
-    """L0012 §2-12 — before this, adding one attachment turned the whole check red.
+    """before this, adding one attachment turned the whole check red.
 
     `verify.py` reported every file under project_root that no document row pointed at, and
     flipped `ok` to False if there was even one. The attachment room lives at
@@ -866,7 +866,7 @@ def test_the_numbering_check_stays_green_after_an_attachment_room_appears(env):
 
 
 def test_a_file_in_a_room_with_no_registry_row_is_reported_without_failing_the_check(env):
-    """L0012 §2-12 W3 — the safety net for mid-migration files. Reported, but `ok` stays true."""
+    """W3 — the safety net for mid-migration files. Reported, but `ok` stays true."""
     from modules.flow_gate.numbering.verify import verify_id_widths
 
     upload([FakePart("registered.txt", b"x")])
@@ -896,7 +896,7 @@ def test_a_real_orphan_outside_any_room_still_fails_the_check(env):
 # generic "upload failed" message. Two things made that report undiagnosable, and both are
 # pinned here:
 #   1. A1~A6 (the upload preamble) ran OUTSIDE the try, so anything unexpected there escaped
-#      as FastAPI's bare 500 — no P0011 envelope, no error code the card can read.
+#      as FastAPI's bare 500 — no the plan envelope, no error code the card can read.
 #   2. The package logged nothing at all, so `server/logs/default.log` held no trace of the
 #      failed request. That is why the cause had to be hunted from disk forensics.
 
@@ -922,7 +922,7 @@ def test_an_unexpected_failure_in_the_preamble_answers_the_envelope_not_a_bare_5
     error = excinfo.value
     assert (error.status_code, error.code) == (500, "ATTACHMENT_STORE_FAILED")
     assert error.details["reason"] == "storage"
-    # P0011 §1-4 — the envelope still carries no path and no exception text.
+    # the envelope still carries no path and no exception text.
     assert "no such table" not in str(error.body())
     assert "OperationalError" not in str(error.body())
     # ...but the server log carries both, with the traceback.
@@ -984,7 +984,7 @@ def test_a_group_lock_is_never_swallowed_into_the_500_branch(env):
 
 
 def test_the_route_turns_an_unexpected_crash_into_the_envelope(env):
-    """Route shell — a service that raises something else still answers P0011, and logs."""
+    """Route shell — a service that raises something else still answers the plan, and logs."""
     import json
 
     from modules.flow_gate.documents.attachments import unexpected
@@ -1084,7 +1084,7 @@ def test_a_jail_that_cannot_be_resolved_at_all_denies_instead_of_waving_it_throu
     assert not (room_of(env) / "메모.txt").exists()
 
 
-# ── flowgate.default.0554 T0008 — reserved WorkPlan attachment lifecycle ─────
+# ── the earlier change the earlier implementation — reserved WorkPlan attachment lifecycle ─────
 
 def test_general_attachment_list_hides_reserved_work_plan_files(monkeypatch):
     from modules.flow_gate.documents.attachments import service
@@ -1193,7 +1193,7 @@ def test_attachment_reference_codes_distinguish_scope_name_and_missing_row(monke
 
 
 def test_reserved_attachment_saved_for_real_is_read_back_through_the_real_worker_route(env):
-    """0554 T0014 §4/I2 rework (rej_01M33DPHG59E1H56 finding 4): the four tests above (and
+    """I2 rework (rej_01M33DPHG59E1H56 finding 4): the four tests above (and
     the pre-instruction tests in test_ai_invoke_pre_instruction_0554.py) all monkeypatch
     ``validate_reference``/``resolve_registered_attachment`` directly and never create a real
     reserved registry row + file, so they never prove a worker can actually READ one back.

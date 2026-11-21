@@ -64,7 +64,7 @@ class _MockTxn:
 
     def execute(self, sql, params=None):
         # No commit here: a transaction that commits every statement cannot roll
-        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # anything back, and then an atomic unit of work (the design INV-6: AC
         # approval + root completion + intent consume, all or nothing) silently
         # tests as "each write landed on its own". begin_transaction below owns
         # the commit/rollback.
@@ -78,7 +78,7 @@ class _MockTxn:
         transaction's cursor (that is the one portable place all three real
         adapters expose it). A mock that hides its cursor makes every CAS write
         raise "database driver did not expose affected row count" — a harness
-        gap, not a product one (0555 T0008).
+        gap, not a product one.
         """
         return self._cur
 

@@ -1,4 +1,4 @@
-// 내 설정 API adapter (flowgate.v02.0076 T#2, D §2.1/§2.2). Only the existing self-service
+// "내 설정" API adapter (flowgate.v02.0076 T#2, D §2.1/§2.2). Only the existing self-service
 // contracts are called — GET/PATCH /api/v1/me/ui-settings and the /auth session and password
 // routes. The administrator routes (/users/{uid}, /system/users/{id}/tfa-reset) and
 // /auth/totp/setup are never called from here.
@@ -15,6 +15,7 @@ import {
   type UiSettingsResponse,
 } from '@shared/aiFinishedCardRetention'
 import i18n from '@shared/i18n'
+import { TASKBAR_STYLE_FIELD, type TaskbarStyle } from '@/core/overlay/modelessRegistry'
 
 export interface AuthSession {
   session_id: string
@@ -32,7 +33,7 @@ export class MeRequestError extends Error {
     readonly status: number | null,
     readonly violations: string[] = [],
     /**
-     * flowgate.v02.0088 F17: the gui.settings.self.errors.* key `message` was made from, so a screen that keeps the
+     * the gui.settings.self.errors.* key `message` was made from, so a screen that keeps the
      * error on display can show it again in the current language.
      */
     readonly messageKey: string | null = null,
@@ -71,9 +72,13 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
   }
 }
 
-// ── 계정 · 화면: 완료 카드 유지 시간 ─────────────────────────────────────────────
+// ── Account and display: completed card retention time ─────────────────────────────────────────────
 
 export const getUiSettings = () => call(() => getRequest<UiSettingsResponse>(UI_SETTINGS_PATH), 'load_failed')
+
+/** Theme writes carry only their own field; dock sizes and retention remain untouched. */
+export const saveTaskbarStyle = (style: TaskbarStyle) =>
+  call(() => patchRequest<UiSettingsResponse>(UI_SETTINGS_PATH, { [TASKBAR_STYLE_FIELD]: style }), 'save_failed')
 
 /** PATCH only the retention field; nothing else rides along. */
 export const saveRetention = (minutes: number) =>
@@ -97,7 +102,7 @@ export function retentionIn(body: UiSettingsResponse | null | undefined): number
   return typeof value === 'number' && (RETENTION_DOMAIN_MINUTES as readonly number[]).includes(value) ? value : null
 }
 
-// ── 보안 · 세션 ───────────────────────────────────────────────────────────────
+// ── "보안" · "세션" ───────────────────────────────────────────────────────────────
 
 /** A body without a session list is a failure, not an empty list. */
 export async function listSessions(): Promise<AuthSession[]> {

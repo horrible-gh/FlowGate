@@ -1,16 +1,16 @@
-"""Every token issuer that start_run hands ai_run_id to must actually accept it (0393 T0005).
+"""Every token issuer that start_run hands ai_run_id to must actually accept it.
 
 B0001 reported "검수요청 3연속 실패" — the review issuer never declared the ai_run_id
 keyword, so ai_invoke_service._call_issue_builder (which inspects the signature) called it
 bare, the minted token's ai_run_id column stayed NULL, and the reviewing worker's own
 submission was rejected by the lease its own run had just acquired
-(mutation_policy.assert_group_mutation_allowed: GROUP_AI_RUN_OWNER_MISMATCH). NR0003 §6
+(mutation_policy.assert_group_mutation_allowed: GROUP_AI_RUN_OWNER_MISMATCH). the review
 found the same structural gap in three more issuers that had simply not been hit yet:
 workflow_sequence_edit, test_run, and workflow_decide — plus a fifth spot, the TSR branch
 inside advance_workflow, which drops ai_run_id on the floor even though the ordinary path
-two dozen lines below it already forwards the same parameter (0359 L0007 §2.9).
+two dozen lines below it already forwards the same parameter.
 
-Per T0005 §2-5 this suite does NOT hand-pick the scopes it checks — it walks
+Per the earlier implementation this suite does NOT hand-pick the scopes it checks — it walks
 `ai_invoke_routes._ALLOWED_SCOPES`, the real module-level constant `start_ai_invoke` itself
 validates against, so a newly added action_scope is covered automatically the moment it is
 declared. For each scope it drives the real `start_ai_invoke` route function (mocking only
@@ -87,7 +87,7 @@ def _route_edges(monkeypatch):
     monkeypatch.setattr(routes, "has_permission", lambda *_a, **_k: True)
     monkeypatch.setattr(routes, "_continuation_target_error", lambda *_a, **_k: None)
     monkeypatch.setattr(_token_routes_mod, "_build_api_base", lambda _request: API_BASE)
-    # T0011: resolve_base_dirty's admission check reads real base-dirty state before the
+    # resolve_base_dirty's admission check reads real base-dirty state before the
     # rest of start_ai_invoke runs — the one scope in this harvesting sweep that touches
     # git_service before issue_builder is even built. Stub it non-empty so the sweep drives
     # every scope through the same DB-free edges the docstring above promises.
@@ -95,7 +95,7 @@ def _route_edges(monkeypatch):
         routes.git_service, "project_git_status",
         lambda _pid: {"status": {"base_dirty": {"files": ["a.py"]}}},
     )
-    # 0481 D0006 §3.2 / L0007 §2.2: resolve_conflict is now a second scope that touches
+    # resolve_conflict is now a second scope that touches
     # git_service before issue_builder is built — record_auto_authority stamps the
     # session's [자동] choice. Stubbed non-DB like project_git_status above, for the
     # same reason: this sweep's contract is DB-free edges for every scope.

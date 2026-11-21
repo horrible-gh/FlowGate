@@ -1,4 +1,4 @@
-"""The deploy chain after a WP card (flowgate.v02.0074 T#4, D0006 §3.6.2) — pure, no storage.
+"""The deploy chain after a WP card — pure, no storage.
 
 The chain is the path from the WP card along edges that have no condition, are their source's only outgoing edge and
 their target's only incoming edge, and lead to a card deployed from this plan. Its last card is the tail; the node

@@ -19,7 +19,7 @@ import {
   type FakeWorktreeState,
 } from './fakeWorktreeSource'
 
-// flowgate.v02.0067 T#1 — the Git tab home and the Git modeless (0067-R §2, §3, §7; v27): the
+// the Git tab home and the Git modeless (R,; v27): the
 // summary line and four equal entries stacked one per row, one window for all four with its top
 // tabs, tab context kept across switches, nothing on the Center canvas, and the `상태` tab.
 registerAppMessages(i18n)
@@ -364,7 +364,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
 
   it('a normal screen keeps 700 × 560; made smaller while open it shrinks and moves inside, keeping its tab and input; restored, it fits', async () => {
     setViewport(1280, 800)
-    // flowgate.v02.0067 T#2: the message opens once something is staged.
+    // the message opens once something is staged.
     const t = setup({ status: worktreeStatus({ files: [staged('src/a.ts')] }) })
     await mountPanel(t)
     await click(entry('files'))

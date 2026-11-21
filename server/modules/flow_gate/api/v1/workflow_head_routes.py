@@ -161,7 +161,7 @@ def get_workflow_sequence(doc_id: str, request: Request):
     items = db_wfseq.get_sequence_items(seq["id"])
     provider_view = provider_view_of(doc.get("project_id"))
     head = db_wfseq.get_effective_head(seq["id"])
-    # 0332 D0005 §6.1: the workflow strip's per-cell commit marker. Resolved by slot
+    # the workflow strip's per-cell commit marker. Resolved by slot
     # identity (result_doc_id), so a repeated type marks the right cell, and looked up
     # for the whole strip in ONE query. Never raises — an empty map just means the
     # strip draws no markers and looks exactly as it did before.
@@ -212,7 +212,7 @@ def _serialize_item(
     commit_states: Optional[dict] = None,
 ) -> dict:
     return {
-        # 0332 D0005 §6.1 — the slot's source commit, or None. A slot whose TR changed
+        # the slot's source commit, or None. A slot whose TR changed
         # no source carries None and the cell stays unmarked: "quiet" is the design,
         # not a missing value.
         "tr_commit": (commit_states or {}).get(item.get("result_doc_id")),
@@ -223,7 +223,7 @@ def _serialize_item(
         "doc_class": item.get("doc_class"),
         "sort_order": item.get("sort_order"),
         "status":    _derive_status(item.get("result_doc_id"), item.get("result_doc_review_status")),
-        # 0018 R0001 — workflow-strip time-machine: expose the slot's realised document
+        # workflow-strip time-machine: expose the slot's realised document
         # so the FE can map a clicked strip cell to its rollback target with slot identity
         # (repeated types resolve correctly). result_doc_id = the document that filled this
         # slot; result_seq = that document's documents.seq, i.e. the reopen target_seq.

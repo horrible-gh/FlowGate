@@ -1,9 +1,9 @@
 """Upload, list, download, delete, read and copy — the six attachment paths.
 
-flowgate.default.0060 L0012 §2-5 (A1~A9), §2-6~§2-10; P0011 §2~§7 for the wire shapes.
+(A1~A9), ~; the plan~ for the wire shapes.
 
 Every blocking call — file read/write, mkdir, unlink, hashing, git worktree lookup — is
-pushed through ``anyio.to_thread``. L0012 §5 and ``file_transfer_routes.py:118-121`` give the
+pushed through ``anyio.to_thread``. the earlier implementation and ``file_transfer_routes.py:118-121`` give the
 same reason: a 100 MiB request handled on the event loop freezes every other request,
 SSE heartbeats included, for the whole transfer.
 """
@@ -63,14 +63,14 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 
 
 def _now_rfc3339() -> str:
-    """P0011 §1-2 — RFC 3339 UTC."""
+    """RFC 3339 UTC."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── shared preamble ─────────────────────────────────────────────────────────────
 
 def load_document(doc_id: str) -> dict:
-    """A1 — 404 DOCUMENT_NOT_FOUND, the second rung of the L0012 §4-1 ladder."""
+    """A1 — 404 DOCUMENT_NOT_FOUND, the second rung of the the earlier implementation ladder."""
     from modules.flow_gate.documents import document_service
 
     doc = document_service.get_document(doc_id)
@@ -85,12 +85,12 @@ def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
     """A3 / X2 / C3 -- the change-class guard, reusing the existing two.
 
     ``_reject_if_group_disposed`` and ``assert_group_mutation_allowed`` are the guards the
-    current upload already runs (NR0015 6-1); this only re-labels their failures into the
-    P0011 ``DOCUMENT_NOT_MUTABLE`` envelope so every attachment error has one shape.
+    current upload already runs; this only re-labels their failures into the
+    ``DOCUMENT_NOT_MUTABLE`` envelope so every attachment error has one shape.
     Imported lazily -- ``documents.py`` imports this module, so a module-level import here
     would close the cycle.
 
-    ``actor`` is a worker token record when this is called from the T0004 worker copy route
+    ``actor`` is a worker token record when this is called from the the earlier implementation worker copy route
     (a raw source-tree mutation the same way /remote/write is) and a Console user row from
     every other caller. The two shapes need different ``MutationPrincipal`` kinds: a worker
     token maps to ``worker_principal`` so it is recognised as the SAME actor the group AI
@@ -135,7 +135,7 @@ def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
 
 
 def _attachment_object(row: dict) -> dict:
-    """P0011 §1-3 — the one attachment object every JSON API returns."""
+    """the one attachment object every JSON API returns."""
     return {
         "doc_id": row.get("doc_id"),
         "original_filename": row.get("original_filename"),
@@ -214,7 +214,7 @@ def _rollback(done: list[dict]) -> None:
     Files left behind are not in the registry, so they appear in no list, no download and
     no read, and §2-12 W3 keeps the numbering scan from calling them orphans.
 
-    0064 T#3: only the file this request created is removed — the path must still hold it
+    only the file this request created is removed — the path must still hold it
     (``identity``, taken right after the ``O_EXCL`` create and again once it is complete).
     """
     from modules.flow_gate.storage.files import is_same_file_as
@@ -249,9 +249,9 @@ async def upload_attachments(
     reserved: set = set()
     request_total = 0
 
-    # 0060 TR0017 rev2 — A1~A6 run INSIDE the try as well. They used to sit outside it, so
+    # A1~A6 run INSIDE the try as well. They used to sit outside it, so
     # anything unexpected in the preamble (registry query, path resolution, mkdir) was left
-    # for FastAPI to answer as a bare `500 Internal Server Error`: no P0011 envelope, no
+    # for FastAPI to answer as a bare `500 Internal Server Error`: no the plan envelope, no
     # error code the card can read, and — because this package logged nothing — no trace in
     # the server log either. That is exactly the symptom this document was rejected for.
     try:
@@ -273,7 +273,7 @@ async def upload_attachments(
                     "This filename prefix is reserved for WorkPlan pre-instructions.",
                     filename=safe, reason="reserved_work_plan_prefix",
                 )
-            # E1~E2. No extension is refused here — see constants §1-3 and TR0017 rev3.
+            # E1~E2. No extension is refused here — see constants and the earlier implementation.
             content_type = resolve_content_type(safe)
 
             final_name, fd = await anyio.to_thread.run_sync(
@@ -356,7 +356,7 @@ async def upload_attachments(
 
 
 def _attachment_write_guard(doc_id: str, call: Callable[[], Any], operation: str) -> Any:
-    """0064 L0005 2.7.1 — an attachment write commits under the guard an R↔B conversion of ``doc_id`` holds.
+    """2.7.1 — an attachment write commits under the guard an R↔B conversion of ``doc_id`` holds.
 
     That is the document's Flow guard, or the document's own row lock when it has no Flow. The document is
     read again inside: a conversion that moved the document (new id, new room) before this write got the
@@ -378,7 +378,7 @@ def _commit_registry(
     actor: Optional[dict] = None,
     room: Optional[Path] = None,
 ) -> list[dict]:
-    """A8 — one transaction for the whole request, under the Flow guard (0064 L0005 2.7.1).
+    """A8 — one transaction for the whole request, under the Flow guard.
 
     Inside it the document is read again and must still be mutable with the same room the files
     were written to; otherwise the upload is refused and the caller removes its files (A9).
@@ -441,7 +441,7 @@ def _commit_registry(
     ]
 
 
-# ── §2-6 list (P0011 §3) ────────────────────────────────────────────────────────
+# ── list ────────────────────────────────────────────────────────
 
 def list_attachments(doc_id: str) -> dict:
     """A document with no attachments is a 200 and an empty array, never a 404."""
@@ -463,7 +463,7 @@ def resolve_download(doc_id: str, name: str) -> tuple[Path, dict]:
     """Returns (file path, response headers).
 
     Not a change-class path, so a disposed group or a running AI run does NOT block it —
-    D0010 §6-1 keeps list and download alive while the document is read-only.
+    keeps list and download alive while the document is read-only.
     """
     doc = load_document(doc_id)
     row, path = resolve_registered_attachment(doc, name)
@@ -505,7 +505,7 @@ def delete_attachment(doc_id: str, name: str, actor: Optional[dict]) -> dict:
             "Reserved WorkPlan attachments are removed only by the WorkPlan lifecycle.",
             doc_id=doc_id, filename=name, reason="reserved_work_plan_attachment",
         )
-    # 0064 L0005 2.7.1: the lookup, the path checks, the unlink and the row removal run under the
+    # 2.7.1: the lookup, the path checks, the unlink and the row removal run under the
     # guard an R↔B conversion holds (Flow guard, or the row lock without a Flow), on the document as it is then.
     return _attachment_write_guard(doc_id, lambda: _delete_locked(doc_id, name, actor), "delete:guard")
 
@@ -606,7 +606,7 @@ def read_attachment(doc_id: str, name: str, mode: str = "auto", encoding: str = 
 
     # R3 — gone. It used to answer 415 UNSUPPORTED_READ_TYPE for the §1-3 kinds, and its
     #      whole justification was "upload already refused these, so this only catches a
-    #      legacy-migrated one". Upload accepts them now (TR0017 rev3), and refusing to read
+    #      legacy-migrated one". Upload accepts them now, and refusing to read
     #      back a file the same screen just accepted is the same wall one door further in.
     #      ``mode=auto`` already answers correctly for these: R6 sniffs NUL bytes and hands
     #      an executable back base64-encoded, exactly like any other binary.
@@ -773,7 +773,7 @@ def _seal_under_root(root: Path, segments: list[str]) -> Path:
        always report ``is_symlink()``; this is what catches those.
 
     A link answers 403 SOURCE_PATH_OUTSIDE_ROOT rather than the 400
-    ``tree_routes.py:163`` uses, because P0011 §8 defines this code as "after normalization
+    ``tree_routes.py:163`` uses, because the plan defines this code as "after normalization
     and symlink checks the target is outside the root" — and a link can point outside
     without our being able to prove cheaply that it does not.
     """

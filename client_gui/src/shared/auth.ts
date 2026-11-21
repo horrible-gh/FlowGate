@@ -34,9 +34,9 @@ export function isAdminFromToken(): boolean {
   return !!p?.is_admin
 }
 
-// T0005 §5: the only allow-listed internal prefix a post-login `next` query param may point
+// the only allow-listed internal prefix a post-login `next` query param may point
 // at. Anything outside it (external origin, protocol-relative, or another path) is rejected
-// so /login never becomes an open redirect. flowgate.v02gui.0024: v0.1's /main and /settings
+// so /login never becomes an open redirect. the earlier change: v0.1's /main and /settings
 // are gone (the server redirects them into /app), so /app is the only entry left.
 const SAFE_RETURN_PREFIXES = ['/app']
 

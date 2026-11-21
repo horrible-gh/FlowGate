@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_commit_only_action_keeps_worktree_waiting(self, origin_repo):
-        # NR flowgate.default.0331.0005 §3: `commit_only` commits dirty edits
+        # `commit_only` commits dirty edits
         # locally without pushing or merging, and — unlike merge/push — must NOT
         # tear the slot down, since the group can still be merged/pushed/archived
         # later.

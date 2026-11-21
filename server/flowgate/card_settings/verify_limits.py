@@ -1,10 +1,10 @@
-"""The one place that tells a card's 검증 limits — flowgate.v02test.0053 0003-T (1-A).
+"""The one place that tells a card's verification limits — the earlier change the earlier implementation (1-A).
 
 ``resolve_verify_limits(flow_id, node_key) -> VerifyLimits(max_runs, run_timeout_sec)``: the card's own value, else the
 fixed card default (``fields.DEFAULT_VERIFY_MAX_RUNS`` / ``DEFAULT_VERIFY_RUN_MINUTES``: 3 runs, 2 minutes). There is no
-system setting any more (flowgate.v02test.0053 0002-CH turn 68: 검증 is managed per card only; a value an older
+system setting any more (verification is managed per card only; a value an older
 server stored in the system settings is left in place and no longer read). Cards 1-C (count / time applied to the
-self-check) and 1-D (the card document's 검증 line) must read the limits through this function and nowhere else.
+self-check) and 1-D (the card document's verification line) must read the limits through this function and nowhere else.
 
 - The card's values are its run settings ``verify_max_runs`` (a whole number of 1 or more) and ``verify_run_minutes``
   (1..30), stored by ``flowgate.card_settings`` like every card setting. A value that is absent, ``null`` or not

@@ -1,4 +1,4 @@
-"""0010-L 5.2/5.3: isolated transport harness and the common O1--O14 observer.
+"""5.2/5.3: isolated transport harness and the common O1--O14 observer.
 
 Only external identity/RBAC, card definitions, provider admission and notification
 sinks are doubles. SQLite transactions, files, history, token consumption, CAS,

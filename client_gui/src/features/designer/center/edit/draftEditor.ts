@@ -1,4 +1,4 @@
-// flowgate.v02.0045 S3 — the editor of one Flow's Graph draft: applies edit commands, keeps
+// S3 — the editor of one Flow's Graph draft: applies edit commands, keeps
 // their undo, and stores the whole draft (P0008 S3-1, whole replacement) after a quiet time.
 //
 // - One save of the draft on the wire at a time; edits made meanwhile go out in the next save,
@@ -9,11 +9,11 @@
 //   status becomes `conflict` and edits are kept on screen until the Graph is read again.
 // - `dispose` (tab closed) sends what waits; edits made while a save ran still go out right after
 //   it, and that save's `onKeys` still reports the renames (the owner stores the new positions).
-// - flowgate.v02.0053 T#5: every stored save is reported (`onSaved`) with what the server answered,
+// - the earlier change the earlier implementation: every stored save is reported (`onSaved`) with what the server answered,
 //   so the Center can show the card lines the save made without reading the Flow again.
-// - flowgate.v02.0059 T#2: an undone entry waits in a redo stack (same renames as the undo stack);
+// - the earlier change the earlier implementation: an undone entry waits in a redo stack (same renames as the undo stack);
 //   a new edit empties it, a fresh read of the Flow empties both.
-// - flowgate.v02.0059 T#2 (0011-CH contract C): card moves go on the same stacks (editHistory.ts
+// - the earlier change the earlier implementation (CH contract C): card moves go on the same stacks (editHistory.ts
 //   `move` entries, `record`); stepping one hands its positions to `onMove` (the Center's move path and
 //   layout save) and saves no draft. `place` keeps the draft's own positions where the cards are, so a
 //   removed card comes back where it was. An editor without `save` edits nothing: it keeps the move
@@ -39,11 +39,11 @@ export interface DraftEditorOptions {
   save?(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
   /** The draft (and undo) after a save renamed `tmp_` keys. */
   onKeys(keyMap: Readonly<Record<string, string>>): void
-  /** flowgate.v02.0053 T#5: a save was stored (after `onKeys`); its answer carries the card lines. */
+  /** a save was stored (after `onKeys`); its answer carries the card lines. */
   onSaved?(result: FlowDraftSaveResult): void
   /** Status / model / undo availability changed. */
   onChange(): void
-  /** flowgate.v02.0059 T#2: puts the cards of a stepped move entry there; whether any card went. */
+  /** puts the cards of a stepped move entry there; whether any card went. */
   onMove?(placements: NodePlacement[]): boolean
   delayMs?: number
 }
@@ -62,9 +62,9 @@ export interface DraftEditor {
   apply(command: EditCommand, undoable?: boolean): boolean
   undo(): boolean
   redo(): boolean
-  /** flowgate.v02.0059 T#2: cards moved by one action — one undo entry (redo dropped). Whether it was kept. */
+  /** cards moved by one action — one undo entry (redo dropped). Whether it was kept. */
   record(moves: readonly NodeMove[]): boolean
-  /** flowgate.v02.0059 T#2: the draft's nodes take these positions (no save, no history). */
+  /** the draft's nodes take these positions (no save, no history). */
   place(placements: readonly NodePlacement[]): void
   /** Sends a waiting save now. */
   flush(): void

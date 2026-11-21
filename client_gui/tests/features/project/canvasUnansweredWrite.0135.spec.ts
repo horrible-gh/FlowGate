@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0135 T#4 — a card that disappeared without being deleted. Measured on stg: a new Flow's seed card
+ * a card that disappeared without being deleted. Measured on stg: a new Flow's seed card
  * save (PUT /graph/draft) answered after ~2.5 min (the card document write gate walked every document row). The
  * GUI gave up at 30 s, read the Flow again as stored (not committed yet: no card) and so dropped the card from the
  * screen; minutes later the server stored it and announced it with this tab's `origin_client_id`, which this tab

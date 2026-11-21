@@ -1,4 +1,7 @@
-"""0654 T0004: the tr_self_check help item (0684 T#4 removed the source_bundles item).
+"""The Self-check help contract (the source_bundles item was removed).
+
+0061 card 6: the flat ``tr_self_check`` item is no longer addressable; its contract is the ``submit`` area's
+``self_check`` / ``check_*`` leaves, built from the internal ``tr_self_check`` supplier these tests read.
 
 The item is documentation only. These tests pin it to the contracts it describes
 (``api_server_tools.SCHEMAS["run_self_check"]``, ``tr_self_check_service`` and
@@ -26,7 +29,7 @@ SELF_CHECK_ERROR_CODES = {
     "selfcheck_invalid_cwd", "selfcheck_disabled", "selfcheck_already_running",
     "selfcheck_source_busy", "selfcheck_worktree_unavailable",
 }
-# 0053 1-B: a start is no longer refused with selfcheck_recovery_incomplete (a queued request runs in
+# a start is no longer refused with selfcheck_recovery_incomplete (a queued request runs in
 # its own snapshot, without the Group lock), so the help no longer documents it as an error.
 
 
@@ -39,20 +42,25 @@ def _ctx(locale="en", *, principal_kind="worker", action_scope="edit", doc_type=
 
 
 def _content(locale="en"):
-    return help_catalog.build_item("tr_self_check", _ctx(locale))["content"]
+    return help_catalog._CONTENT_SUPPLIERS["tr_self_check"](_ctx(locale))
 
 
 # ── H1 visibility ────────────────────────────────────────────────────────────
 
+def _listed_leaves(ctx):
+    from modules.flow_gate.services.help import render
+    return {row["name"] for row in render.enumerate_children("submit", ctx)}
+
+
 def test_visible_only_for_a_worker_on_a_tr_edit_step():
-    assert help_catalog.decide_visibility("tr_self_check", _ctx()).visible is True
-    assert "tr_self_check" in help_catalog.visible_names(_ctx())
+    assert help_catalog.decide_visibility("submit/self_check", _ctx()).visible is True
+    assert "self_check" in _listed_leaves(_ctx())
 
 
 def test_visible_for_a_worker_on_a_tr_new_step():
-    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists (doc_type is the head type).
-    assert help_catalog.decide_visibility("tr_self_check", _ctx(action_scope="new")).visible is True
-    assert "tr_self_check" in help_catalog.visible_names(_ctx(action_scope="new"))
+    # a TR(new) worker runs Self-check before its TR exists (doc_type is the head type).
+    assert help_catalog.decide_visibility("submit/self_check", _ctx(action_scope="new")).visible is True
+    assert "self_check" in _listed_leaves(_ctx(action_scope="new"))
 
 
 @pytest.mark.parametrize("overrides", [
@@ -68,13 +76,15 @@ def test_visible_for_a_worker_on_a_tr_new_step():
     {"principal_kind": "user_session"},
 ])
 def test_hidden_everywhere_else(overrides):
-    decision = help_catalog.decide_visibility("tr_self_check", _ctx(**overrides))
+    decision = help_catalog.decide_visibility("submit/self_check", _ctx(**overrides))
     assert decision.visible is False
     assert decision.reason
 
 
 def test_catalog_registration_is_complete():
-    assert "tr_self_check" in help_catalog.CATALOG_ORDER
+    from modules.flow_gate.services.help import tree
+    assert "tr_self_check" not in help_catalog.CATALOG_ORDER  # the flat name is gone ...
+    assert "self_check" in tree.AREA_LEAVES["submit"]  # ... its contract is a leaf of `submit`
     assert help_catalog.ITEM_FORM["tr_self_check"] == "content"
     assert "tr_self_check" in help_catalog._CONTENT_SUPPLIERS
     for locale in LOCALES:
@@ -88,7 +98,7 @@ def test_catalog_registration_is_complete():
 def test_request_field_set_matches_the_tool_schema(locale):
     fields = {f["name"] for f in _content(locale)["request"]["fields"]}
     schema = api_server_tools.SCHEMAS["run_self_check"]
-    # 0114 T#4: parallel_share (the wished processor share) joined the request contract.
+    # parallel_share (the wished processor share) joined the request contract.
     assert fields == {"program", "args", "cwd", "timeout_seconds", "parallel_share"}
     assert fields == set(schema["properties"])
     assert {f["name"] for f in _content(locale)["request"]["fields"] if f["required"]} == set(schema["required"])
@@ -116,12 +126,20 @@ def test_help_timeout_bounds_match_the_service():
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_canonical_example_passes_the_real_validation(locale):
-    example = _content(locale)["request"]["example"]
+    # The example's timeout is the card's per-run verify limit (no token here → the default
+    # limits), the same value the help lists as the field default and the one a run is capped
+    # at — so copying the example never asks for more time than the run will get.
+    from flowgate.card_settings.verify_limits import default_limits
+    run_limit = default_limits().run_timeout_sec
+    content = _content(locale)
+    example = content["request"]["example"]
     assert example == {
-        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": 180,
+        "program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".", "timeout_seconds": run_limit,
     }
+    defaults = {field["name"]: field["default"] for field in content["request"]["fields"]}
+    assert defaults["timeout_seconds"] == run_limit
     program, args, cwd, timeout = service._validate_request(example)
-    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", 180)
+    assert (program, args, cwd, timeout) == ("pytest", ["-q", "server/tests/test_x.py"], ".", run_limit)
 
 
 @pytest.mark.parametrize("locale", LOCALES)
@@ -157,7 +175,7 @@ def test_lifecycle_describes_run_read_cancel_and_terminal_states(locale):
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_no_fallback_names_no_other_backend(locale):
-    # 0684 T#4: Source Bundle, AI Scratch and run_test no longer exist, so the help stops
+    # Source Bundle, AI Scratch and run_test no longer exist, so the help stops
     # naming them as refused fallbacks; "no other execution path" is the whole rule.
     text = " ".join(_content(locale)["no_fallback"])
     for token in ("Source Bundle", "AI Scratch", "run_test", "access_source_bundle", "run_source_bundle"):
@@ -191,7 +209,7 @@ def test_documented_error_codes_exist_in_the_service_or_policy_source():
         assert f'"{row["code"]}"' in source, row["code"]
 
 
-# ── H7 / H8 (0684 T#4) ───────────────────────────────────────────────────────
+# ── H7 / H8 ───────────────────────────────────────────────────────
 
 def test_source_bundle_recovery_item_is_retired():
     assert "source_bundles" not in help_catalog.CATALOG_ORDER
@@ -224,19 +242,19 @@ def test_locales_are_actually_translated():
 
 # ── H10 index / bulk regression ──────────────────────────────────────────────
 
-def test_index_lists_the_item_after_test_commands_for_tr_edit_only():
-    order = help_catalog.visible_names(_ctx())
-    assert order.index("tr_self_check") == order.index("changed_files_format") - 1
-    new_order = help_catalog.visible_names(_ctx(action_scope="new"))
-    assert new_order.index("tr_self_check") == new_order.index("changed_files_format") - 1
-    assert "tr_self_check" not in help_catalog.visible_names(_ctx(action_scope="review"))
+def test_submit_area_lists_the_self_check_leaves_for_tr_authoring_only():
+    assert {"self_check", "check_http"} <= _listed_leaves(_ctx())
+    assert {"self_check", "check_http"} <= _listed_leaves(_ctx(action_scope="new"))
+    assert "self_check" not in _listed_leaves(_ctx(action_scope="review"))
+    # The old flat name is not an item for a worker any more.
+    assert help_catalog.decide_visibility("tr_self_check", _ctx()).reason == "unknown_item"
 
 
-def test_build_item_shape_is_the_usual_content_envelope():
-    item = help_catalog.build_item("tr_self_check", _ctx("ko"))
-    assert item["name"] == "tr_self_check"
+def test_self_check_leaf_shape_is_the_usual_content_envelope():
+    item = help_catalog.build_child("submit", "self_check", _ctx("ko"))
+    assert item["name"] == "submit" and item["child"] == "self_check"
     assert item["form"] == "content"
-    assert item["title"] == help_catalog.TITLES["ko"]["tr_self_check"]
+    assert item["content"]["role"]
     json.dumps(item, ensure_ascii=False)
 
 
@@ -267,8 +285,8 @@ def _registered_draft_routes():
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_tr_new_http_operations_match_the_registered_draft_routes(locale):
-    # 0638 T#1: the TR(new) help points at the token-owned draft routes, never a document path.
-    content = help_catalog.build_item("tr_self_check", _ctx(locale, action_scope="new"))["content"]
+    # the TR(new) help points at the token-owned draft routes, never a document path.
+    content = help_catalog._CONTENT_SUPPLIERS["tr_self_check"](_ctx(locale, action_scope="new"))
     assert content["stage"] == "new"
     http = content["http"]
     assert http["note"] and http["note"] != _content(locale)["http"]["note"]

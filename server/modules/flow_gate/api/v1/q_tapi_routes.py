@@ -1,4 +1,4 @@
-"""Q&A T-API endpoints — document-bound query/answer (group 0022 Q/A/V revamp).
+"""Q&A T-API endpoints — document-bound query/answer (Q/A/V revamp).
 
 Endpoints:
   POST /api/v1/q/{doc_id}/questions             — add query ([+query] / AI registration)
@@ -6,13 +6,13 @@ Endpoints:
   GET  /api/v1/q/{doc_id}                        — document Q&A tree
   GET  /api/v1/q                                 — 'open queries' aggregate (dashboard)
 
-Q&A is sub-data of a document, so it all follows the parent document's permissions (D0005 §3.2/§4).
+Q&A is sub-data of a document, so it all follows the parent document's permissions.
 Auth:
   Read (get_current_user)  : login session JWT. Read=perm_document_read.
   Write (register query/answer) : login session JWT (human) **or** inbox/edit worker token (AI).
      The AI worker has no login session and holds only an edit-scoped token, so when the token's
      doc_ref matches the path {doc_id}, registration is allowed under perm_document_create for issued_to.
-     Without this path the worker cannot leave ambiguities as a Q and ends up guessing (0022/TR0009 rev0 rejection).
+     Without this path the worker cannot leave ambiguities as a Q and ends up guessing.
 """
 from __future__ import annotations
 
@@ -290,10 +290,10 @@ class QuestionItemIn(BaseModel):
     rejected_answer_id: Optional[int] = None
     title: Optional[str] = None
     body: str
-    # Plain label strings — ids are always server-assigned (L0008 §2.1/§2.3), so the
+    # Plain label strings — ids are always server-assigned, so the
     # request surface never takes one. q_service re-validates: it is the final gate for
     # callers that reach the service without passing through this route.
-    # flowgate.v02gui.0015 T3: or ``{"label", "requires"}`` (``QuestionOptionIn``).
+    # or ``{"label", "requires"}`` (``QuestionOptionIn``).
     options: List[Union[str, QuestionOptionIn]] = []
 
     @field_validator("body")
@@ -397,7 +397,7 @@ def _resolve_ai_provenance(ai_run_id: Optional[str]) -> dict:
     if ai_run_id and not snapshot:
         snapshot = resolve_persisted_run_provenance(ai_run_id)
     if ai_run_id and not snapshot:
-        # 0661 T0004 F6: the run id came from the VERIFIED token, not from the body, so it
+        # the run id came from the VERIFIED token, not from the body, so it
         # is evidence in its own right even when the provider half cannot be read (the
         # run finalized already, or this process never saw it). Keeping it lets the
         # asker/answer row be matched to its run — the self-answer guard and the
@@ -471,7 +471,7 @@ def _register_answer_response(
             author_provenance=_resolve_ai_provenance(ai_run_id) if body.author_kind == "ai" else None,
             auto_resume_api_base_url=_operator_facing_api_base(request),
             auto_resume_locale=request.headers.get("x-locale") or "ko",
-            # 0661 T0004 F6: the token's verified run — the asker run may not close its
+            # the token's verified run — the asker run may not close its
             # own question (q_service.register_answer raises 403).
             writer_ai_run_id=ai_run_id if body.author_kind == "ai" else None,
         )
@@ -527,7 +527,7 @@ def post_add_questions(
     if ch_rejected is not None:
         return ch_rejected
     if forced_kind is not None and q_service.is_question_responder_run(ai_run_id):
-        # 0661 T0004 safety boundary 5: an answer-only responder registering a question
+        # safety boundary 5: an answer-only responder registering a question
         # of its own would park nothing (it is a single run) yet leave a fresh open Q that
         # keeps the original chain parked and could draw another responder — a Q→Q loop.
         # The responder has exactly two outputs: an answer, or the escalate signal.
@@ -555,7 +555,7 @@ def post_add_questions(
             if not question.body.strip():
                 return _fail(422, "body must not be empty")
         body.asker_kind = forced_kind
-        # B0001 / NR0003 (group 0059): the worker token is bound to the workflow spine
+        # (the earlier change): the worker token is bound to the workflow spine
         # (the sequence-owning R/B), so a clarifying question would otherwise land on
         # that far-upstream anchor where the console user never looks. Re-aim it at the
         # current work-context document (in-progress report doc, else its predecessor
@@ -662,16 +662,16 @@ def post_escalate_to_user(
 
 
 # ── Answer hand-off — give one query item to an AI worker ────────────────────────────
-# D0005 §3.2 / L0007 §3.4: hand the query to an AI worker and let the answer land back on
+# hand the query to an AI worker and let the answer land back on
 # the same item as author_kind='ai' via POST /answers; no separate A document.
 #
 # Two routes, the same pair the legacy Q-document flow offers via qa_routes `dispatch_mode`:
 #   /answers/ai-mention → mint the token, return the mention for the user's own worker.
 #   /answers/ai-request → run it in-app through the shared ai_invoke engine.
 #
-# 0248 B0001: ai-request used to stop at token_service.issue and return the raw token to a
+# ai-request used to stop at token_service.issue and return the raw token to a
 # browser that had nowhere to show it — no worker was launched and no UI surfaced the token,
-# so the click returned 200 and did nothing (NR0003). Its response now carries the run handle
+# so the click returned 200 and did nothing. Its response now carries the run handle
 # only; the token is injected into the run server-side. ai-mention is the copy path that was
 # missing altogether, which left a user with no provider configured no way to get an answer
 # except to write it themselves.
@@ -689,7 +689,7 @@ def _resolve_dispatch_target(doc_id: str, item_id: int, user_id: str):
     from modules.flow_gate.db import groups as db_groups
     if db_groups.is_archived(doc.get("group_id")):
         return None, None, _fail(409, "Restore the archived Flow before making changes.", {"code": "flow_archived"})
-    # TR0079.0003 rework (3rd pass): do not hand out a token for a disposed group — that
+    # (3rd pass): do not hand out a token for a disposed group — that
     # would let an AI worker answer into the discarded group's Q&A.
     from modules.flow_gate import process_service as _process_service
     if _process_service.is_group_disposed(doc.get("group_id")):
@@ -798,7 +798,7 @@ def post_request_ai_answer(
     })
 
 
-# ── GET /q — 'open queries' aggregate (dashboard, D0005 §3.7) ────────────────────────────
+# ── GET /q — 'open queries' aggregate (dashboard, the design) ────────────────────────────
 
 @router.get("/q")
 def get_open_queries(

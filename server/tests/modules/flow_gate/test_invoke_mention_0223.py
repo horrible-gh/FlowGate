@@ -52,10 +52,10 @@ class TestConversationMention:
 
     @pytest.fixture(autouse=True)
     def _short_conversation(self, monkeypatch):
-        """0362 T0012: the builder now reads the head to size the recent-turn window.
+        """the builder now reads the head to size the recent-turn window.
 
         These cases pin text shapes and run without a database. A head of 0 is the
-        short conversation of P0009 시나리오 12 — nothing folds, and the mention is the
+        short conversation of the plan scenario 12 — nothing folds, and the mention is the
         one this file already describes. The two cases with a provider cursor set their
         own head, because a cursor beyond the end of the conversation is not a state
         the mention should be asked to render.
@@ -101,10 +101,13 @@ class TestConversationMention:
         assert "Just talk" not in text
         assert "Read the conversation context selected for this invocation" in text
         assert "Submit: POST http://h:1/api/v1/conversation/p.default.0001.0008-CH/turn" in text
-        assert "based_on_seq records what you had actually read" in text
+        # v02test.0061 card 5: the mention carries the brief turn contract; the full
+        # wording lives behind the conversation/turn help leaf.
+        assert "based_on_seq: send head_seq from your last read, never a guess." in text
+        assert "GET http://h:1/api/v1/help/items/conversation/turn" in text
         assert '"dry_run": true' in text
-        assert "body_sha256" in text
-        assert "body_chars" in text
+        # body_sha256 / body_chars (optional fingerprint) are explained behind the encoding leaf.
+        assert "GET http://h:1/api/v1/help/items/conversation/encoding" in text
 
     def test_old_full_body_contract_is_absent(self):
         text = self._build()
@@ -156,7 +159,7 @@ class TestConversationMention:
     def test_no_provider_asks_the_worker_to_fill_or_omit_display_name(self):
         text = self._build()
         assert '"display_name": "<your model name>"' in text
-        assert "omit the field" in text
+        assert "If your model name is unknown, omit display_name." in text
         assert "not used to determine identity" in text
 
     def test_known_provider_is_baked_into_display_name_verbatim(self, monkeypatch):
@@ -173,18 +176,18 @@ class TestConversationMention:
         assert "## 🤖 AI(" not in text
 
 class TestConversationMentionLookupBlock:
-    """0334 R0001 — the chat mention must carry the read-only lookup APIs.
+    """the chat mention must carry the read-only lookup APIs.
 
     Without them a chat worker asked about the source had nothing to call, guessed
     at a local directory and reported the guess as fact. The scopes were always
     there; the text was not.
 
-    0392 B0001/NR0003 settled on chat=none: the chat token's action_scope is "chat",
+    settled on chat=none: the chat token's action_scope is "chat",
     and back then tool_registry.kind_for_step demoted every "chat" to "none" (same
     judge /help/tools uses), so the "Remote project source CRUD" block was always
     absent for a chat mention, remote mode or not.
 
-    0431 T0004/NR0003 reverses that policy: kind_for_step now returns "read" for
+    reverses that policy: kind_for_step now returns "read" for
     "chat" at the same early branch as "review"/"workflow_decide", so a chat token
     really does resolve to ["read", "grep"] and the CRUD block advertises exactly
     the four read-only tools (read/grep/glob/stat) in remote mode. Local mode still
@@ -198,7 +201,7 @@ class TestConversationMentionLookupBlock:
         monkeypatch.setattr(
             mention_service, "_include_remote_source_crud", lambda project: remote_mode
         )
-        # 0362 T0012: no database here either — see TestConversationMention._short_conversation.
+        # no database here either — see TestConversationMention._short_conversation.
         monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda doc_id: 0)
         return ims.build_conversation_mention(
             doc_id="p.default.0001.0008-CH",
@@ -211,7 +214,7 @@ class TestConversationMentionLookupBlock:
         )
 
     def test_source_crud_block_offers_read_tools_to_chat_in_remote_mode(self, monkeypatch):
-        # 0431 T0004/NR0003: kind_for_step("chat", "CH") now returns ("read", None), so
+        # kind_for_step("chat", "CH") now returns ("read", None), so
         # the CRUD block that other document types get in remote mode appears here too --
         # this must match what /help/tools actually grants a chat token now
         # (read/grep/glob/stat), never write/patch/remove.
@@ -252,7 +255,7 @@ class TestConversationMentionLookupBlock:
     @pytest.mark.parametrize("remote_mode", [True, False])
     def test_submission_json_remains_the_tail_of_the_mention(self, monkeypatch, remote_mode):
         # The new turn submission contract comes first; lookup guidance closes the mention
-        # with the warning that submission consumes the token. 0431 T0004/NR0003: chat now
+        # with the warning that submission consumes the token. the earlier implementation/the review: chat now
         # gets the CRUD block in remote mode
         # (source_crud_block_offers_read_tools_to_chat_in_remote_mode), so help/tools appears
         # there too -- but search/documents stays the anchor because it is the one lookup
@@ -321,10 +324,10 @@ class TestTemplates:
 
 
 class TestEditTurnEndAddendum:
-    """Group 0446 T0005 (NR0003 §6-1 R1): rework (edit/single) mentions carry a
+    """Group the earlier implementation: rework (edit/single) mentions carry a
     turn-end / no-background-wait addendum that continuous mentions already had.
 
-    NR0003 found that _CONTINUOUS_TEXT's "do NOT stop / no background wait" text
+    The review found that _CONTINUOUS_TEXT's "do NOT stop / no background wait" text
     never reached rework (action_scope=edit) mentions, because build_mention's
     continuous_mode = continuous and not is_edit excludes edit unconditionally. These
     cases pin: (a) the addendum is present on an edit/non-continuous mention in every
@@ -384,7 +387,7 @@ class TestEditTurnEndAddendum:
         clarify = mention_service._CLARIFY_TEXT[locale]
         assert clarify["lead"] in text
         assert clarify["warn"] in text
-        assert clarify["positive"] in text
+        assert "options" in clarify["warn"] and "positive" not in clarify   # 0061 card 7: one guard paragraph
         assert '/help/items/question' in text
         assert 'do not ask interactive questions' in text
 

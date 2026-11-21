@@ -1,4 +1,4 @@
-"""0010-L section 5: route matrix, rejection observations and synchronized races."""
+"""route matrix, rejection observations and synchronized races."""
 import importlib
 import json
 import threading

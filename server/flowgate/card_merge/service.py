@@ -1,4 +1,4 @@
-"""flowgate.v02test.0042: the card's merge state and a person's choices on it (see the package docstring).
+"""the card's merge state and a person's choices on it (see the package docstring).
 
 State (``view``), from the card's active attempt (``result_merge``):
 

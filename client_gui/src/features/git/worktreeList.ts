@@ -1,4 +1,4 @@
-// flowgate.v02.0066 — what the Git tab's changed-files accordion draws, computed from one E1
+// what the Git tab's changed-files accordion draws, computed from one E1
 // answer (0066 D#2 §3-6). Pure: no Vue, no server. The worktree session keeps the inputs (search,
 // filter, folder state, display limits, selection) and the components draw the result.
 //
@@ -16,7 +16,7 @@ export type WorktreeSectionKey = 'changes' | 'staged'
 export type WorktreeFilter = 'all' | 'M' | 'A' | '?' | 'D' | 'locked'
 export const WORKTREE_FILTERS: readonly WorktreeFilter[] = ['all', 'M', 'A', '?', 'D', 'locked']
 
-/** default = only the first folder open; open / closed = the file menu's 모든 폴더 열기 / 접기. */
+/** default = only the first folder open; open / closed = the file menu's Expand all folders / 접기. */
 export type WorktreeFolderMode = 'default' | 'open' | 'closed'
 
 /** What a row shows in one section: its file and the letter of that section. */
@@ -38,7 +38,7 @@ export interface WorktreeFolderView {
   rows: WorktreeListRow[]
   // Matching rows past the display limit.
   remaining: number
-  // flowgate.v02.0067 T#2 — every matching row of this folder that may be checked, folded or past
+  // every matching row of this folder that may be checked, folded or past
   // the display limit included: what the folder checkbox selects and reads its state from.
   selectable: string[]
 }
@@ -228,7 +228,7 @@ export function unstageTargets(selected: readonly string[], status: WorktreeStat
   return status.files.filter((f) => set.has(f.path) && inStaged(f) && f.canUnstage).map((f) => f.path)
 }
 
-// ── `Diff` list (flowgate.v02.0067 T#4, v27 `gw-diff-search` / `gw-diff-pages`) ─────────────────────
+// ── `Diff` list (v27 `gw-diff-search` / `gw-diff-pages`) ─────────────────────
 
 /** Rows one page of the `Diff` tab's comparison list shows (v27: 16). */
 export const WORKTREE_DIFF_PAGE = 16

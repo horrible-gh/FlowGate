@@ -1,6 +1,6 @@
-"""flowgate.v02.0064 T-B5 — who answered a Q&A question: the recorded run evidence and the read.
+"""T-B5 — who answered a Q&A question: the recorded run evidence and the read.
 
-Covers (L0005 2.18 / 6, P0006 §5.1·§5.3 / V-P-15, DB0007 §2.6):
+Covers:
   V-B5-1  no in-memory run record + a persisted ai_invoke_runs row -> the provider id/name are
           stored, requested_provider_id / fallback_used stay null.
   V-B5-2  neither record has a provider -> only ai_run_id is stored (and a failing DB lookup
@@ -129,7 +129,7 @@ def test_memory_record_wins_and_the_db_is_not_read():
 
 
 def test_memory_record_without_provider_ids_still_reads_the_db():
-    """L0005 2.18: a memory record that yields {} (provider id missing) does not stop the lookup."""
+    """2.18: a memory record that yields {} (provider id missing) does not stop the lookup."""
     run = {"action_scope": "edit", "requested_provider_id": None, "provider_id": None}
     with patch(_RUNTIME_GET, return_value=run), patch(_DB_GET, return_value=dict(PERSISTED_ROW)):
         snap = _routes()._resolve_ai_provenance("run_20261016_0040")
@@ -276,7 +276,7 @@ def _answers(item_id: int) -> list[dict]:
 
 
 def test_v_p_15_persisted_run_answer_stores_and_reads_the_provider_name(store):
-    """P0006 §5.3: a new AI answer whose run is only in ai_invoke_runs is stored with its provider."""
+    """a new AI answer whose run is only in ai_invoke_runs is stored with its provider."""
     from modules.flow_gate.services import q_service
 
     item_id = _question()
@@ -308,7 +308,7 @@ def test_v_b5_2_run_only_answer_reads_run_id_without_provider(store):
 
 
 def test_author_name_is_the_username_for_a_person_and_null_otherwise(store):
-    """P0006 §5.1: the four answer kinds of the example, each with its author_name."""
+    """the four answer kinds of the example, each with its author_name."""
     from modules.flow_gate.services import q_service
 
     item_id = _question()

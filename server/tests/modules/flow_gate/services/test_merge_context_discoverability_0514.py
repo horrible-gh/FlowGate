@@ -1,4 +1,4 @@
-"""Merge context discoverability regressions -- group 0514 T0004.
+"""Merge context discoverability regressions -- the earlier implementation.
 
 0514.0003-NR found that a separate Merge Context Tool is unnecessary: `merge_preview`
 already returns merge_base/head/target_sha/merge_tree, and `read/grep/glob/stat` already
@@ -89,7 +89,7 @@ def test_merge_preview_source_description_lists_all_four_returned_values():
 
 
 def test_merge_preview_source_description_does_not_claim_ref_reaches_the_worktree():
-    # T0004 §3.3/TC-3: the four returned values are committed-tree refs only. The
+    # TC-3: the four returned values are committed-tree refs only. The
     # worktree (with uncommitted changes) is reached by omitting ref, never by passing
     # one of merge_preview_source's return values -- the description must not blur that.
     description = api_server_tools.DESCRIPTIONS["merge_preview_source"]

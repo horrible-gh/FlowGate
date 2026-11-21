@@ -1,7 +1,7 @@
-"""flowgate.v02.0085 T#3 rework (review rej_01M5NT4F9CPN06M6): one focused regression test per defect of the
+"""(review rej_01M5NT4F9CPN06M6): one focused regression test per defect of the
 review, on the ``gate_publish`` harness and a real Git repository.
 
-flowgate.v02.0098 T#2 (TR0009): moved unchanged from ``test_fg_gate_publish_rework_0085`` (before that
+moved unchanged from ``test_fg_gate_publish_rework_0085`` (before that
 ``test_fg_gate_publish_0085``), whose harness, fixtures and shared helpers it imports. ``--dist loadfile``
 gives one file to one worker, and the 19 cases of the one file took longer than the 1800 s Self-check limit
 allows on a loaded host.
@@ -27,7 +27,7 @@ from test_fg_gate_publish_0085 import (  # noqa: E402,F401
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary required")
 
 
-# ── T#3 rework (continued): the end cleanup, the checkpoints and the recovery requests ──
+# ── the earlier implementation rework (continued): the end cleanup, the checkpoints and the recovery requests ──
 
 def test_the_end_cleanup_waits_for_its_locks_checks_again_under_them_and_holds_the_basis_target(git_env, monkeypatch):
     """A busy G leaves the job blocked (a later claim goes on); a run entered again after the locks were taken is seen
@@ -81,7 +81,7 @@ def test_the_end_cleanup_waits_for_its_locks_checks_again_under_them_and_holds_t
 
 
 def test_gate_checkpoints_are_listed_beside_the_group_archives_and_restored_without_being_consumed(git_env):
-    """D0007 §7.1: the existing archive list shows every round's checkpoint (told apart from the v0.1 archives); a
+    """the existing archive list shows every round's checkpoint (told apart from the v0.1 archives); a
     checkpoint restore keeps the checkpoint and its refs and may run again; the v0.1 restore path is unchanged."""
     from flowgate.gate_decisions import checkpoints
     from modules.flow_gate.api import inbox_routes

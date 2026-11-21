@@ -1,6 +1,6 @@
-"""0301 T0004 (B0001) — inbox edit must re-point documents.file_path to where it wrote.
+"""inbox edit must re-point documents.file_path to where it wrote.
 
-Reproduction (NR0003 §3-A): after a time-machine rollback / stale-or-empty file_path,
+Reproduction: after a time-machine rollback / stale-or-empty file_path,
 the AI re-does the work through inbox ``action: edit``. Step 6b writes the new body to a
 *recomputed* canonical path when the stored file_path cannot be resolved, but the Step 7
 CAS update historically bumped only revision_no/updated_at — it never wrote file_path back.
@@ -88,9 +88,9 @@ def _patch_store(_db):
             raise NotImplementedError
 
     original = conn_mod.STORE
-    # 0394 T0004: 이 모듈은 자기 pepper 로 갈아끼워야 하지만, 그건 이 모듈이 도는
-    # 동안만이다. 다른 스위트도 import 시점에 각자 ACTIVE_ID 를 발행하므로, 돌려놓지
-    # 않으면 뒤에 오는 쪽이 남의 pepper 로 토큰을 검증하게 된다.
+    # this module must install its own pepper only while its tests run.
+    # Other suites also issue ACTIVE_ID values at import time. Without restoring it,
+    # later suites would validate tokens using another suite's pepper.
     original_pepper = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
     os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
     conn_mod.STORE = _PatchedStore()
@@ -165,7 +165,7 @@ def test_edit_repoints_file_path_for_empty_column(tmp_path):
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.storage import paths as storage_paths
 
-    # Target doc with the exact B0001 symptom: a DB row whose file_path column is empty,
+    # Target doc with the exact the regression symptom: a DB row whose file_path column is empty,
     # so no on-disk .md can be located from it.
     db_docs.create({
         "doc_id": DOC_ID,
@@ -221,7 +221,7 @@ def test_edit_repoints_file_path_for_empty_column(tmp_path):
         assert resp.status_code == 200, resp.text
         assert resp.json()["revision_no"] == 1
 
-        # The fix: file_path is now persisted, non-empty, and stored relative (B0001 guard).
+        # The fix: file_path is now persisted, non-empty, and stored relative (guard).
         doc = db_docs.get_by_id(DOC_ID)
         stored = doc["file_path"]
         assert stored, "file_path must be re-pointed to the written location, not left empty"

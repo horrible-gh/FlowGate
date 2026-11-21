@@ -1,7 +1,7 @@
-"""flowgate.v02gui.0028: card AIs check the user's question policy and the past Q&A before they register a Q, and the
+"""card AIs check the user's question policy and the past Q&A before they register a Q, and the
 chat sees why an automatic answer failed.
 
-Q624 / Q625 (0003-NR): the asking card raised questions the policy says the AI decides itself, and asked again for
+Q624 / Q625 (NR): the asking card raised questions the policy says the AI decides itself, and asked again for
 something already refused, because the policy reached it only through the ``notices`` help item and the past Q&A
 search only reached the answering AI. Every Q-registration guide (clarification, continuous, review phase) and the
 ``question`` help item now carry the same check-before-asking steps with the past Q&A search address; the chat
@@ -37,6 +37,43 @@ def test_clarification_guide_checks_policy_and_past_answers_before_the_post(loca
     assert "notices" in body
     if locale != "ko":
         assert not HANGUL.search(body)
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_clarification_guide_leaves_register_time_details_to_the_help_leaves(locale):
+    """Most cards never register a Q, so the ordinary guide keeps the policy line and
+    the past Q&A search address, and what is needed only while registering (reuse / 409 handling, list format,
+    transport rule) is read from the help leaves the guide names. Nothing is lost: the leaves carry it."""
+    import json
+    from modules.flow_gate.services import ai_text_guard, help_catalog, mention_service
+    body = mention_service._clarification_guide_body(BASE, ANCHOR, "raw", locale)
+    rule = ai_text_guard.transport_rule(locale)
+    for moved in ("existing_answer_requires_reason", "next_cursor", "rejected_answer_id", "<answer_id>", rule):
+        assert moved not in body
+    assert f"GET {BASE}/help/items/question/register" in body
+    assert f"GET {BASE}/help/items/question/precheck" in body
+    content = help_catalog.build_question_content(locale)
+    assert content["transport"] == rule
+    precheck = json.dumps(content["registration_precheck"])
+    for kept in ("reused_answer", "existing_answer_requires_reason", "next_cursor", "rejected_answer_id",
+                 "reuse_rejection_reason", "answer_preview", "/search/{answer_id}"):
+        assert kept in precheck
+    assert "options" in content["note"]                              # the Q&A panel sentence moved here
+    # the full text stays for the guides whose task is to register a Q
+    assert rule in mention_service._question_precheck(BASE, ANCHOR, locale)
+
+
+def test_question_leaves_show_what_left_the_guide(monkeypatch):
+    from modules.flow_gate.services import ai_text_guard, question_policy
+    from modules.flow_gate.services.help import leaves
+    monkeypatch.setattr(question_policy, "text", lambda *a, **k: "")
+    ctx = {"base_url": "/flowgate/api/v1", "locale": "ko", "project": "flowgate", "group_id": "g1",
+           "action_scope": "new", "token_rec": {"issued_to": "u1"}}
+    register = leaves.leaf_content("question", "register", ctx)
+    assert register["transport"] == ai_text_guard.transport_rule("ko")
+    assert {"note", "options_requires", "example"} <= set(register)
+    precheck = leaves.leaf_content("question", "precheck", ctx)
+    assert {"before_asking", "registration_precheck", "search"} <= set(precheck)
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

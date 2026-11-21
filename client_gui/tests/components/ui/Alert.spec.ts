@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Alert from '@/components/ui/Alert.vue'
 
-// T0008 §6/§14: tone/title/message, dismissible on/off, action slot, stays mounted on its
+// tone/title/message, dismissible on/off, action slot, stays mounted on its
 // own (no Toast-style auto-dismiss), and is independent from AlertDialog.
 describe('components/ui/Alert (T0008)', () => {
   it('renders the default info tone with title and message content', () => {

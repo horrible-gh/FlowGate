@@ -2,7 +2,7 @@
 // editable areas keep the native menu; a right click inside the open menu is ignored; the innermost
 // handler claims the event so an outer area does not handle it again; the menu opens — and the
 // signal is consumed once — only when at least one item is visible (disabled items count).
-// flowgate.v02.0060 0017-T: blocking the browser's own menu is a separate rule (the mockup v2 contextmenu rule):
+// blocking the browser's own menu is a separate rule (the mockup v2 contextmenu rule):
 // inside the Designer a right click never shows it — a target opens the Designer menu, a place without one (or a
 // target with no item, or one excluded from the menu) shows nothing — and only editable areas keep it.
 

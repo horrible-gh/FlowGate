@@ -1,8 +1,8 @@
-"""flowgate.default.0501 T6: every `_svc().<name>` reference in the ai_invoke package
+"""every `_svc().<name>` reference in the ai_invoke package
 is a genuine, individually-justified compatibility seam -- not the "import the whole
-service and reach through it for everything" hub T0012 §12/§27 forbids.
+service and reach through it for everything" hub the earlier implementation forbids.
 
-T6 moved the engine into `ai_invoke/` (NR0003 §12) and, with it, changed the SPELLING of
+T6 moved the engine into `ai_invoke/` and, with it, changed the SPELLING of
 the seam from a module-level `import ai_invoke_service as svc` to a call-time `_svc()`.
 The reason is §28: with the shim imported at module level the package's own graph is
 cyclic (`ai_invoke_service` -> `facade` -> every module -> `ai_invoke_service`) and a
@@ -11,11 +11,11 @@ what makes the graph one-way while leaving every existing monkeypatch working, a
 test's inventory is unchanged in substance: a name may be reached through the shim only
 because a test patches it there, or because it is the one documented cycle break.
 
-T0012 §13-15 requires T5 to keep every EXISTING `monkeypatch.setattr(<alias of
+The review requires T5 to keep every EXISTING `monkeypatch.setattr(<alias of
 ai_invoke_service>, "<name>", fake)` seam working, and §8 forbids a direct
 ai_invoke_chain <-> ai_invoke_review import cycle (so the handful of names
 ai_invoke_review.py needs back from ai_invoke_chain.py go through ai_invoke_service
-instead, by design). T6/NR0003 §28 adds a second, parallel case: `worker.py` may not
+instead, by design). T6/the review adds a second, parallel case: `worker.py` may not
 import `chain.py` either (chain.py reaches admission -> ... and finalize.py, and
 finalize.py reaches admission -- an import from worker back to chain would close a
 cycle through either), so the two post-hop auto-resume names worker.py needs from
@@ -38,7 +38,7 @@ _SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
 _TESTS_DIR = _SERVER_DIR / "tests"
 
 # Every module of the package, globbed rather than listed: a hardcoded file list is
-# exactly the "physical filenames became a test contract" problem NR0003 §9 named, and
+# exactly the "physical filenames became a test contract" problem the review named, and
 # it silently stops covering whatever the next split adds. facade.py is excluded because
 # re-exporting the surface IS its job.
 _PKG_DIR = _SERVICES_DIR / "ai_invoke"
@@ -47,13 +47,13 @@ _SPLIT_MODULES = tuple(
            if p.stem not in ("__init__", "facade"))
 )
 
-# T0012 §8 / NR0003 §18: chain.py <-> review.py may not import each other
+# chain.py <-> review.py may not import each other
 # bidirectionally. chain.py imports review.py directly (allowed -- only one direction of
 # the pair). The reverse handful of names -- review.py reaching chain.py's own
 # handoff/auto-resume primitives -- keep going through the ai_invoke_service shim
 # instead of a forbidden direct import back.
 #
-# NR0003 §28 (T6): the same shape recurs between worker.py and chain.py. worker.py
+# : the same shape recurs between worker.py and chain.py. worker.py
 # reaches chain.py's post-hop auto-resume machinery (spawn the next hop if the inbox
 # self-chain queued one; drop it and park a durable row on a crash), but chain.py itself
 # reaches admission.py and finalize.py, and finalize.py reaches admission.py too -- a

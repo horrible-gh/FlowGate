@@ -1,6 +1,6 @@
-"""flowgate.v02test.0014: back-to-back reviews of one revision and a loop left "active".
+"""back-to-back reviews of one revision and a loop left "active".
 
-Reported on flowgate.v02test.0012: a TR with r1 and `doc_review_status` NULL got two
+Reported on the earlier change: a TR with r1 and `doc_review_status` NULL got two
 `issues` reviews and no rejection, and its card stayed running/locked. Four guards:
 
 1. a rejection that cannot be written stops the loop -- it no longer reserves the review

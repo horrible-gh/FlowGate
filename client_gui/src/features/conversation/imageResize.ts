@@ -1,4 +1,4 @@
-// flowgate.v02test.0029 T0005 — shrinking a message image in the browser before it is uploaded (the server has no
+// shrinking a message image in the browser before it is uploaded (the server has no
 // image library: it refuses an image whose long side is over MAX_IMAGE_DIMENSION, so the browser makes it fit).
 //
 // An image that already fits is sent exactly as it is (same bytes, so an animated GIF stays animated). A larger one is

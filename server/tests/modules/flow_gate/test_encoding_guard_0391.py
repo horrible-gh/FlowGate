@@ -1,10 +1,10 @@
-"""0391 T0005 -- corrupted-body guard (proposal 3) + body-fingerprint match (proposal 4).
+"""corrupted-body guard (proposal 3) + body-fingerprint match (proposal 4).
 
-B0001: chat/document submissions land with Hangul mangled to '?' (ascii-replace
+chat/document submissions land with Hangul mangled to '?' (ascii-replace
 mojibake) because nothing rejects it at the real registration path -- the existing
 detector only ran on a workflow-step-name swap and on chat's dry-run, and the chat
-mention never even mentioned dry-run existed (NR0004). This suite covers the three
-inbox_routes.py real-registration sites (new/edit/review) added in T0005 Step 5.9,
+mention never even mentioned dry-run existed. This suite covers the three
+inbox_routes.py real-registration sites (new/edit/review) added in the earlier implementation Step 5.9,
 plus the new line-based detector in workflow_decision_service.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def test_text_is_corrupted_none_and_empty():
 
 
 def test_text_is_corrupted_catches_what_the_whole_body_ratio_misses():
-    """NR0004 §4: B0001's own body measured 0.404 on the whole-body ratio (frontmatter
+    """'s own body measured 0.404 on the whole-body ratio (frontmatter
     + code blocks + English identifiers dilute it) -- below the 0.5 threshold, so the
     OLD whole-body check (_label_is_corrupted) would have let it through. One corrupted
     line among many clean ones must still trip the NEW line-based check."""
@@ -79,7 +79,7 @@ def _patch_new_validation(monkeypatch):
         "token_id": "tok-0391-new",
         "project": "flowgate",
         "issued_to": "worker-0391",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": "flowgate.default.0391",
         "action_scope": "new",
@@ -195,7 +195,7 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    # T0004 작업 7: 한국어 문구를 직접 단언하는 테스트라 ko 로케일을 명시한다.
+    # task 7: explicitly select ko because this test asserts Korean wording.
     response = post_inbox(
         _new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64),
         headers={"x-locale": "ko"},
@@ -203,13 +203,13 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    # 0545 T0021: force 우회 안내는 지문 불일치 메시지에서 제거했다 -- force는
-    # corruption heuristic만 우회하고 지문 불일치는 force와 무관하게 거부된다.
+    # remove force-bypass guidance from fingerprint-mismatch messages.
+    # Force bypasses only corruption heuristics; fingerprint mismatches always fail.
     assert "force_encoding_reason" not in payload["error_message"]
 
 
 def test_new_fingerprint_match_passes_even_when_body_looks_corrupted(monkeypatch):
-    """T0005 §6-4's documented limit: a fingerprint proves transit integrity, not that
+    """'s documented limit: a fingerprint proves transit integrity, not that
     the original text was clean -- if the sender hashed the already-corrupted text,
     the guard can never know. A matching fingerprint is trusted over the heuristic."""
     import hashlib
@@ -237,7 +237,7 @@ def test_new_char_count_mismatch_rejects(monkeypatch):
 
 
 def test_new_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
-    """0545 T0021 (NR0017 §3 Finding 2): force_encoding_reason must not rescue a
+    """force_encoding_reason must not rescue a
     fingerprint mismatch -- only the corruption heuristic is a force-bypassable layer.
     Before the fix, the force early-return in _encoding_guard() ran before the
     fingerprint block ever executed, so this exact combination (corrupted content +
@@ -283,7 +283,7 @@ def _patch_edit_validation(monkeypatch):
         "token_id": "tok-0391-edit",
         "project": "flowgate",
         "issued_to": "worker-0391",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": "flowgate.default.0391",
         "action_scope": "edit",
@@ -390,7 +390,7 @@ def test_edit_force_encoding_reason_bypasses(monkeypatch):
 
 
 def test_edit_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
-    """0545 T0021: same NR0017 §3 Finding 2 combination as the new-path regression test,
+    """same the review Finding 2 combination as the new-path regression test,
     exercised through _handle_edit -- both share _encoding_guard() so both must reject."""
     _patch_edit_validation(monkeypatch)
     response = post_inbox(
@@ -453,7 +453,7 @@ def _patch_review_validation(monkeypatch):
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
     monkeypatch.setattr(review_receipt_service, "classify", lambda *_a, **_k: "ok")
     monkeypatch.setattr(review_receipt_service.db_receipts, "claim", lambda **_k: True)
-    # 0535 T0007 §3: review registration now runs inside one store.transaction().
+    # review registration now runs inside one store.transaction.
     install_null_transaction_store(monkeypatch)
     return {"insert_review": insert_review, "consume": consume}
 
@@ -524,7 +524,7 @@ def test_review_exact_fingerprint_does_not_bypass_corruption(monkeypatch):
     ))
 
     assert response.status_code == 422
-    # 0474 T0007 §1.1: review's corrupted-content message no longer offers the
+    # review's corrupted-content message no longer offers the
     # force_encoding_reason escape hatch at all (allow_force_bypass=False), so the
     # pre-fix "the bypass exists" assertion is inverted -- it must NOT be mentioned.
     assert "force_encoding_reason" not in response.json()["error_message"]
@@ -533,11 +533,11 @@ def test_review_exact_fingerprint_does_not_bypass_corruption(monkeypatch):
 
 
 def test_review_exact_fingerprint_with_valid_force_still_rejects(monkeypatch):
-    """0474 T0007 §1.1 (NR0006 §2/§13.1): review sets allow_force_bypass=False, so a
+    """review sets allow_force_bypass=False, so a
     valid force_encoding_reason can no longer let a corrupted review through even with
     an exact fingerprint attached to the corrupted text itself. This is the inverted
     contract of the old test_review_exact_fingerprint_with_valid_force_passes -- that
-    pass-through was the exact hole NR0006 identified."""
+    pass-through was the exact hole the review identified."""
     import hashlib
 
     mocks = _patch_review_validation(monkeypatch)
@@ -554,7 +554,7 @@ def test_review_exact_fingerprint_with_valid_force_still_rejects(monkeypatch):
 
 
 def test_review_long_plausible_force_reason_still_rejects_corruption(monkeypatch):
-    """0474 T0007 §1.4: no accidental bypass survives even for a long (50+ char),
+    """no accidental bypass survives even for a long (50+ char),
     plausible-looking reason -- length/content of force_encoding_reason must never
     matter once allow_force_bypass=False."""
     mocks = _patch_review_validation(monkeypatch)
@@ -582,7 +582,7 @@ def test_review_short_force_does_not_bypass_corruption(monkeypatch):
 
 
 def test_review_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
-    """0545 T0021 -- NR0017 §3 exact reproduction. Before the fix: force_encoding_reason
+    """exact reproduction. Before the fix: force_encoding_reason
     short-circuited _encoding_guard() before the fingerprint block ever ran, so a
     completely fabricated body_sha256/body_chars (here "0"*64 / 99999, matching neither
     the real hash nor length of CORRUPT) plus a valid force reason passed straight
@@ -616,7 +616,7 @@ def test_review_corrupted_finding_locus_rejected(monkeypatch):
 
 
 def test_review_mixed_unicode_and_run_of_question_marks_rejected_end_to_end(monkeypatch):
-    """0474 T0007 §1.4 integration check: §1.1 (force bypass removed) and §1.2 (run-of-
+    """integration check: (force bypass removed) and (run-of-
     '?' detector) working together at the route level through a real dry_run call, not
     just unit-tested in isolation. Before this group's fix, a line mixing live Hangul/
     Japanese/emoji with a corrupted run passed the old isascii()-gated detector."""
@@ -630,7 +630,7 @@ def test_review_mixed_unicode_and_run_of_question_marks_rejected_end_to_end(monk
     mocks["consume"].assert_not_called()
 
 
-# ── inbox_routes review dry-run receipt gate (0474 T0007 §1.3) ──────────────────────
+# ── inbox_routes review dry-run receipt gate ──────────────────────
 
 def _patch_review_dry_run_receipt(monkeypatch):
     from modules.flow_gate.services import review_receipt_service
@@ -675,7 +675,7 @@ def test_review_clean_dry_run_still_issues_receipt(monkeypatch):
 
 
 def test_review_dry_run_corruption_gate_blocks_receipt_even_if_step_5_9_is_bypassed(monkeypatch):
-    """0474 T0007 §1.3: the dry-run block's own corruption check on _review_validation
+    """the dry-run block's own corruption check on _review_validation
     is an INDEPENDENT layer from §1.1's Step 5.9 guard -- simulate a Step 5.9
     regression (_encoding_guard patched to always pass) and confirm §1.3 alone still
     refuses to mint a receipt for corrupted content."""
@@ -691,7 +691,7 @@ def test_review_dry_run_corruption_gate_blocks_receipt_even_if_step_5_9_is_bypas
 
 
 def test_review_receipt_service_issue_refuses_corrupted_validation_directly():
-    """0474 T0007 §1.3/§1.4: review_receipt_service.issue() itself must refuse a
+    """review_receipt_service.issue itself must refuse a
     corrupted validation dict regardless of caller -- this is the defense that stays
     in place even if §1.1's Step 5.9 guard (and the route-level §1.3 check alongside
     it) both regress or a new caller skips them."""
@@ -712,8 +712,8 @@ def test_review_receipt_service_issue_refuses_corrupted_validation_directly():
         )
 
 
-# ── inbox_routes._encoding_validation_result: force_used after the reorder (0545 T0021
-# 작업 항목 4) ──────────────────────────────────────────────────────────────────────
+# ── inbox_routes._encoding_validation_result: force_used after the reorder (the earlier implementation
+# ── Task item 4 ──
 # The premise the reorder establishes: by the time _encoding_validation_result runs,
 # _encoding_guard() has already passed, so a fingerprint (if supplied) is guaranteed to
 # have matched -- a mismatch would already have returned 422 before dry-run/real-submit
@@ -766,8 +766,8 @@ def test_encoding_validation_result_force_used_false_when_fingerprint_matched_an
     assert result["force_used"] is False
 
 
-# ── workflow step labels: reject instead of silently swapping (T0005 §5-5/§5-6) ────
-# NR0004 §2: decide/edit used to run the label through _safe_label(), replacing a
+# ── workflow step labels: reject instead of silently swapping ────
+# decide/edit used to run the label through _safe_label, replacing a
 # corrupted label with the document type name. The sender was never told and the text
 # they meant to write was gone. These pin the new contract: refuse, explain, and offer
 # the same force_encoding_reason door the other four paths use.
@@ -822,7 +822,7 @@ def test_decide_workflow_rejects_corrupted_label_with_an_actionable_message(monk
 
     message = str(excinfo.value)
     assert message.startswith("corrupted_label:")
-    # §5-6: (가) what is wrong, (다) how to get through anyway.
+    # §5-6: (a) what is wrong, (c) how to get through anyway.
     assert "깨진 글자" in message
     assert "force_encoding_reason" in message
     assert inserted.get("rows") is None  # nothing inserted
@@ -886,8 +886,8 @@ def test_reject_helper_is_not_used_on_the_read_path(monkeypatch):
     assert wf_decision._safe_label(CORRUPT_LABEL, "N") == "조사지시"
 
 
-# ── T0004: submission validation errors follow the requested locale ─────────────
-# NR0003 발견 2-5: _encoding_guard(), the Step 5.8 workflow-head 409, and the
+# ── the earlier implementation: submission validation errors follow the requested locale ─────────────
+# _encoding_guard, the Step 5.8 workflow-head 409, and the
 # new/edit TR-scope empty-notice fallback used to ignore locale entirely and always
 # answer in Korean. These pin the en/ja no-leak contract plus the continuation_locale
 # > x-locale priority and the ko default's preserved meaning.
@@ -914,8 +914,8 @@ def _assert_no_korean(payload):
     assert not leaks, f"Korean syllable leak(s): {leaks}"
 
 
-# 선택된 로케일의 문구가 실제로 돌아왔는지까지 확인한다 — "한글만 없으면 통과"는
-# 로케일 맵을 잘못 골라도 초록이라 T0004 완료 기준을 증명하지 못한다.
+# Assert the selected locale wording, not merely the absence of Korean:
+# the wrong locale map could otherwise pass without proving the earlier implementation acceptance criteria.
 _LOCALE_SNIPPETS = {
     "corrupted": {"en": "looks like corrupted characters", "ja": "文字化け"},
     "fingerprint": {
@@ -952,7 +952,7 @@ def test_new_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
     assert response.status_code == 422
     _assert_no_korean(payload)
     assert _LOCALE_SNIPPETS["fingerprint"][locale] in payload["error_message"]
-    assert "0" * 64 in payload["error_message"]  # 지문 세부가 로케일과 무관하게 남는다
+    assert "0" * 64 in payload["error_message"]  # Fingerprint details remain independent of locale
 
 
 @pytest.mark.parametrize("locale", ["en", "ja"])
@@ -987,7 +987,7 @@ def test_review_corrupted_comment_locale_has_no_korean(monkeypatch, locale):
     assert response.status_code == 422
     _assert_no_korean(payload)
     assert _LOCALE_SNIPPETS["corrupted"][locale] in payload["error_message"]
-    # 필드 식별자도 로케일 중립 내부 키라 en/ja 응답에 한글 라벨이 섞이지 않는다.
+    # Field identifiers are locale-neutral internal keys, with no Korean labels in en/ja.
     assert "comment" in payload["error_message"]
 
 
@@ -1005,9 +1005,9 @@ def test_review_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
 
 
 def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch):
-    """T0004 작업 2 / NR0003 발견 2: the token's continuation_locale (unmanned worker)
+    """task 2 / the review: the token's continuation_locale (unmanned worker)
     must win over the request's x-locale header, matching every other locale
-    resolution in this file (0355 L0007 §2-1)."""
+    resolution in this file."""
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
@@ -1015,7 +1015,7 @@ def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch
         "token_id": "tok-0391-new-locale",
         "project": "flowgate",
         "issued_to": "worker-0391",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": "flowgate.default.0391",
         "action_scope": "new",
@@ -1033,14 +1033,14 @@ def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch
 
 def test_new_ko_response_preserves_existing_meaning(monkeypatch):
     """No x-locale / continuation_locale falls back to ko (unchanged default), and
-    the 422 keeps the fingerprint word the pre-T0004 behavior asserted on."""
+    the 422 keeps the fingerprint word the pre-the earlier implementation behavior asserted on."""
     _patch_new_validation(monkeypatch)
     response = post_inbox(_new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64))
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    # 지문 세부(기대/실제 sha256)는 ko 에서도 그대로 남는다. 0545 T0021: force 우회 안내는
-    # 지문 불일치 메시지에서 뺐다 -- force는 corruption heuristic만 우회한다.
+    # Expected/actual SHA256 details remain in ko too. the earlier implementation removes force guidance
+    # from fingerprint-mismatch messages because force bypasses only corruption heuristics.
     assert "sha256" in payload["error_message"]
     assert "0" * 64 in payload["error_message"]
     assert "force_encoding_reason" not in payload["error_message"]
@@ -1150,8 +1150,8 @@ def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, l
 
 
 def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
-    """T0004 작업 5: 폴백은 서비스가 빈 notice 를 줬을 때만 쓰인다 — 비어 있지 않은
-    notice 는 로케일 폴백보다 먼저 이긴다(`or` 의 좌변)."""
+    """task 5: use fallback only when the service notice is empty; a nonempty
+    notice takes precedence over the locale fallback, as the left operand of or."""
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.services import tr_scope_service
 

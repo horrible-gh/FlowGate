@@ -22,7 +22,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 @pytest.fixture(scope="module")
 def test_db_path(migrated_sqlite_db):
-    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): shared conftest.py factory —
+    """shared conftest.py factory —
     applies every migration so the schema always matches current product (e.g.
     project_settings' `branch` column), the same guarantee the old per-file loop over
     every migration gave, without a second copy of the loop to keep in sync."""
@@ -152,7 +152,7 @@ def mock_db(test_db_path):
             "modules.flow_gate.rbac.decorators",
             "modules.flow_gate.rbac.role_service",
             # rbac.decorators._has_permission delegates to permission_service
-            # (0276 T0009), so its bound get_store needs the same treatment.
+            # , so its bound get_store needs the same treatment.
             "modules.flow_gate.rbac.permission_service",
             # Settings services do `from ..db.connection import get_store` at import
             # time, so their bound `get_store` is whatever the name pointed at when the
@@ -168,7 +168,7 @@ def mock_db(test_db_path):
         _m.get_store = lambda store=store: store
     # permission_service memoises resolved permission sets in a module-level dict.
     # Clear it around each test so entries resolved against a previous test's
-    # store cannot leak into this one (0276 T0009).
+    # store cannot leak into this one.
     from modules.flow_gate.rbac import permission_service as _perm_svc
     _perm_svc.invalidate_all()
     try:
@@ -208,14 +208,13 @@ class TestSystemSettingsService:
         assert get_one("log_level")["setting_value"] == "INFO"
 
     def test_storage_root_empty_uses_default(self, monkeypatch):
-        """빈 storage_root 는 기본 경로로 대체된다.
+        """An empty storage_root falls back to the default path.
 
-        0394 T0004: 이 케이스는 FLOWGATE_STORAGE_DIR 이 **없어야** 성립한다
-        (`get_storage_root` 의 1순위가 그 변수다). 그런데 스스로 지운 적이 없고, 앞서
-        실행된 다른 모듈이 정리하면서 그 변수를 지워 준 덕에 통과하고 있었다 — 그
-        누출을 막자 이 케이스가 빨간불이 됐다. NR0003 §5.1 이 말한 "옆 테스트 덕에
-        우연히 통과" 의 실물이라, 전제를 자기 손으로 만들도록 고친다. monkeypatch 는
-        테스트가 끝나면 원래 값을 되돌려 준다.
+        this case requires FLOWGATE_STORAGE_DIR to be absent because
+        get_storage_root gives it priority. It previously passed only because an
+        earlier module leaked its cleanup by deleting that variable. Fixing the leak
+        exposed this dependency. Establish the precondition explicitly;
+        monkeypatch restores the original value when the test finishes.
         """
         from modules.flow_gate.settings.system_settings_service import get_one, set_values
 
@@ -634,7 +633,7 @@ class TestProjectCreate:
         assert "DuplicateProject257" in detail["message"]
         mock_db._execute("DELETE FROM projects WHERE project_name = 'DuplicateProject257'")
 
-    # flowgate.v02.0152: an archived project is not in the Designer's (active-only) list,
+    # an archived project is not in the Designer's (active-only) list,
     # so a create that collides with it must say so instead of a bare "already exists".
     def test_create_project_archived_name_conflict(self, mock_db):
         client = self._make_client()

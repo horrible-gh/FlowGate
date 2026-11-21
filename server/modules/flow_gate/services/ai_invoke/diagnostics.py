@@ -1,4 +1,4 @@
-"""Run history and status read models (0501 NR0003 §12 `diagnostics.py`).
+"""Run history and status read models (`diagnostics.py`).
 
 Read-only projections over a run -- `GET /ai-invoke/runs`, `GET /ai-invoke/runs/{id}`,
 the group's active-run status, `get_status`, and the stored-row -> API-shape mapping
@@ -9,7 +9,7 @@ from the durable `ai_invoke_runs` record `finalize` writes.
 `get_status` used to live on `chain.py`, which made this module import `chain` for it
 while `chain.py` imported this one back for `_run_detail_from_row` -- a direct cycle.
 It is a live-run status projection with no chain-specific state (mode/cancel/handoff),
-so NR0003 §12's boundary puts it here instead: `chain.py` now reaches it the same
+so the review's boundary puts it here instead: `chain.py` now reaches it the same
 one-way `diagnostics.get_status` `_run_detail_from_row` was already reached the other
 direction.
 """
@@ -33,7 +33,7 @@ from .runtime import (
 )
 
 
-# ── 0359 L0007 §2.10.2~3: run lookup that survives a restart (bundle 4) ──────────
+# ── the earlier implementation~3: run lookup that survives a restart (bundle 4) ──────────
 # Live runs never leave `_runs` (a process only forgets them on restart), so the
 # DB fallback below is only ever consulted for a run that finished in an EARLIER
 # process. Memory wins whenever both would answer — the moment right after
@@ -61,6 +61,44 @@ def ai_run_succeeded(row: dict) -> bool:
     )
 
 
+def _execution_status(run: dict) -> dict:
+    """Project remote execution separately from the invocation's lifecycle status.
+
+    Retrieval pending is also set on NEW/STARTED jobs; only a terminal report proves
+    the remote process ended. Never infer process exit from an answer being posted.
+    """
+    info = run.get("remote_job")
+    if not info:
+        return {"execution_phase": run.get("status", "unknown")}
+    job_id, attempt_id = info.get("job_id"), info.get("attempt_id")
+    if not job_id or not attempt_id:
+        return {"execution_phase": "starting"}
+    from modules.flow_gate.services.agent_jobs import AgentJobService, TERMINAL
+    from modules.flow_gate.services.agent_registry import AgentService
+    try:
+        row = AgentJobService().get_ai_job(job_id, attempt_id)
+        state = row["status"]
+        phase = "unknown"
+        if state == "NEW":
+            phase = "queued"
+            aid = row.get("target_agent_id")
+            if aid:
+                agent = AgentService().get(aid)
+                if agent["online_status"] == "online" and agent["running_jobs"] >= agent["max_concurrent_jobs"]:
+                    phase = "queued_capacity"
+        elif state == "CLAIMED":
+            phase = "starting"
+        elif state == "STARTED":
+            phase = "running"
+        elif state in TERMINAL:
+            phase = "retrieving" if row.get("terminal_cause") == "agent_report" else "settling"
+        return {"execution_phase": phase, "agent_job_status": state,
+                "agent_retrieval_state": row.get("retrieval_state")}
+    except Exception:
+        logger.debug("Remote execution status unavailable for %s", run.get("run_id"), exc_info=True)
+        return {"execution_phase": "unknown"}
+
+
 def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) -> dict:
     run = _svc().get_run_record(run_id)
     if run is None:
@@ -68,18 +106,18 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
     if run["status"] == "finished":
         return {"ok": True, "run_id": run_id, "status": "finished", "mode": run["mode"],
                 **_svc().finished_payload(run)}
-    # 0226 NR0003 §5-2: count run-attributed documents (the same oracle filter the
+    # count run-attributed documents (the same oracle filter the
     # final judge uses) instead of the raw group max-seq delta, which inflated the
     # live counter with drafts (auto-created N/T) and documents outside this run.
     docs_so_far = 0
     if run.get("completion_oracle") is None:
         # A scoped-oracle run targets 0 documents; counting group documents here would
-        # report progress like 1/0 against work it does not measure (0248 B0001).
+        # report progress like 1/0 against work it does not measure.
         try:
             docs_so_far = len(_svc()._oracle_new_docs(run))
         except Exception:
             pass
-    # 0252 P0008 S4: surface the accepted pause request so a reload/poll does not
+    # S4: surface the accepted pause request so a reload/poll does not
     # silently revert the card from "stop scheduled" back to plain running.
     status = run["status"]
     if status == "running" and run.get("pause_requested"):
@@ -88,9 +126,10 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "ok": True,
         "run_id": run_id,
         "status": status,
+        **_execution_status(run),
         "mode": run["mode"],
         "group_id": run["group_id"],
-        # 0481 T0010 rev3: the `ai_invoke_started` SSE frame already ships both of
+        # the `ai_invoke_started` SSE frame already ships both of
         # these, and the browser reads them (`payloadGroupKey` files a
         # resolve_base_dirty card under `project:<id>`; the document column keeps
         # a resolve_conflict run's own screen mounted instead of covering it).
@@ -114,7 +153,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
         "elapsed_ms": int((time.monotonic() - run["started_mono"]) * 1000),
-        # 0414 P0007 상태 응답 — the same review facts a live card needs mid-hop.
+        # status response — the same review facts a live card needs mid-hop.
         "hop_item_seq": run.get("hop_item_seq"),
         "hop_kind": run.get("hop_kind"),
         "hop_review_count": run.get("hop_review_count"),
@@ -122,13 +161,13 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "hop_reviewer_provider_name": run.get("hop_reviewer_provider_name"),
         "continuation_review_count_overrides": run.get("continuation_review_count_overrides"),
         "continuation_reviewer_overrides": run.get("continuation_reviewer_overrides"),
-        # 0359 P0006 [hop budget]: a live card can now say how much of the budget is gone
+        # [hop budget]: a live card can now say how much of the budget is gone
         # without anyone re-deriving the formula from the server log.
         "timeout_sec": run.get("timeout_sec"),
         "deadline_at": run.get("deadline_at"),
         "attempts_used": int(run.get("attempts_used") or 0),
         "attempts_max": run.get("attempts_max"),
-        # 0538 T0004: the watchdog (provider_cli._progress_watchdog_loop) already writes
+        # the watchdog (provider_cli._progress_watchdog_loop) already writes
         # these onto `run` every poll -- this is a pure read-model exposure, no new
         # storage. A run the watchdog has not polled yet reads back as None/0, same as
         # any other field this run has not reached.
@@ -140,7 +179,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "last_self_check_progress": run.get("last_self_check_progress"),
         "self_check_observation": run.get("self_check_observation", "none"),
         "progress_observations": int(run.get("progress_observations") or 0),
-        # T0004 §7: the weaker liveness watermark (document/source progress OR subprocess
+        # the weaker liveness watermark (document/source progress OR subprocess
         # churn) -- a run whose process snapshot is unsupported still gets this from
         # document/source alone, same as `last_progress_at` above.
         "last_activity_at": run.get("last_activity_at"),
@@ -156,12 +195,12 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
 
 
 def get_run_detail(run_id: str) -> dict:
-    """Detail lookup for GET /ai-invoke/{run_id} (L0007 §2.10.2).
+    """Detail lookup for GET /ai-invoke/{run_id}.
 
     A live or same-process-finished run answers exactly as :func:`get_status`
     always has — only ``persisted`` is added, so no existing caller's response
     shape moves. A run this process never saw falls back to the `ai_invoke_runs`
-    row DB0008 kept for it. flowgate.v02test.0024 D adds ``source_access`` (both
+    row  kept for it. the earlier change D adds ``source_access`` (both
     halves) and ``requested_provider_id`` (live half), additive like the rest.
     """
     record = _svc().get_run_record(run_id)
@@ -169,7 +208,7 @@ def get_run_detail(run_id: str) -> dict:
         payload = get_status(run_id)
         payload["persisted"] = False
         token_id = record.get("token_id")
-        # flowgate.v02test.0024 D: a live detail names its provider only once it spawned one;
+        # D: a live detail names its provider only once it spawned one;
         # the chat's own pinned choice is the name to show until then (no fallback in a chat).
         payload["requested_provider_id"] = record.get("requested_provider_id")
     else:
@@ -199,7 +238,7 @@ def get_run_detail(run_id: str) -> dict:
 
 
 def chat_source_access(token_id: Optional[str]) -> Optional[str]:
-    """flowgate.v02test.0024 D: the read/edit access a chat run actually got.
+    """D: the read/edit access a chat run actually got.
 
     ``tokens.source_access`` is fixed when the run's token is issued from the user's stored
     mode (an edit_once that lost its claim is ``read``), so it is the applied value, not the
@@ -212,7 +251,7 @@ def chat_source_access(token_id: Optional[str]) -> Optional[str]:
 
 
 def chat_command_access(token_id: Optional[str]) -> Optional[str]:
-    """flowgate.v02gui.0026 (0004-CH): ``execute`` when a chat run got the execute mode, else None.
+    """(CH): ``execute`` when a chat run got the execute mode, else None.
 
     An execute-mode token keeps ``source_access="read"`` and carries ``command_access="execute"``
     (token_service), so ``source_access`` alone made the run line say "read". Any other token,
@@ -276,7 +315,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),
-        # 0492 T0018 item 3: the axis-classified form of the same failures, when this run
+        # the axis-classified form of the same failures, when this run
         # has one. `register_errors` above is deliberately left as it was — every existing
         # reader still uses it, and it is both the backfill source and the rollback safety
         # net. A run from before migration 094 has no rows here and keeps answering out of
@@ -285,10 +324,10 @@ def _run_detail_from_row(row: dict) -> dict:
         "tool_call_misses": row.get("tool_call_misses"),
         "turn_limit_exhausted": bool(row.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(row.get("oracle_mismatch")),
-        # 0505 T0006 (DB0005 3.3): same names, same restart-half contract as the four
+        # ( 3.3): same names, same restart-half contract as the four
         # exit diagnostics below -- a run from before migration 095 has none of this
         # and reads back as None on every one of these ten keys. transport_fallback_kind
-        # (0496 T0006 §3.2) is the eleventh, on migration 101, and reads back the same
+        # is the eleventh, on migration 101, and reads back the same
         # way for any run that predates it.
         "operator_api_base": row.get("operator_api_base"),
         "transport_api_base": row.get("transport_api_base"),
@@ -302,7 +341,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
         "api_turn_trace": row.get("api_turn_trace") or [],
-        # -- flowgate.default.0481 T0008 item 1: same three names `finished_payload`
+        # -- the earlier change the earlier implementation: same three names `finished_payload`
         # answers with for a live finish, read here off the already-parsed
         # `db.ai_invoke_runs._row_to_payload` shape (`write_plan` is the decoded
         # dict, not the raw `write_plan_json` column).
@@ -327,7 +366,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "document_review_loop": _svc().document_review_loop_payload({
             "document_review_loop": _svc()._restore_document_review_loop(row["run_id"])
         }),
-        # 0406 T0022 items 3 and 5: the same questions must stay answerable after the run
+        # items 3 and 5: the same questions must stay answerable after the run
         # ends: who ran this hop, what the server handled, whether a handoff note went in.
         "worker_document_type": row.get("worker_document_type"),
         "continuation_instruction_mode_requested": row.get(
@@ -346,7 +385,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
         "prompt_final_length": row.get("prompt_final_length"),
         "prompt_final_sha256": row.get("prompt_final_sha256"),
-        # 0446 T0016 §3-4: same names, same meaning as `finished_payload` — this is the
+        # same names, same meaning as `finished_payload` — this is the
         # restart half of the pair, and a field that reads differently here than it did in
         # memory is exactly the divergence that section forbids.
         "timeout_kind": row.get("timeout_kind"),
@@ -393,7 +432,7 @@ def _run_list_item_stored(row: dict) -> dict:
 def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
                limit: Optional[int] = None, cursor: Optional[str] = None,
                doc_ref: Optional[str] = None) -> dict:
-    """GET /ai-invoke/runs (L0007 §2.10.3): live runs (memory) merged with finished
+    """GET /ai-invoke/runs: live runs (memory) merged with finished
     runs (DB0008's `ai_invoke_runs`), newest first. Exactly one of group_id/project
     scopes the query — the route layer validates format and permission; this
     function still enforces the XOR and existence checks so a direct caller gets
@@ -472,7 +511,7 @@ def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
 
 
 def _group_mutation_locked(group_id: str) -> bool:
-    """0026 (0009-CH): the fact the write guard refuses a person's change on (mutation_policy: an active group
+    """(CH): the fact the write guard refuses a person's change on (mutation_policy: an active group
     lease). `active` also counts a chat answer or an unfinished run that holds no lease, so a screen that locks
     writes on `active` refused uploads the server would have taken. An unreadable lease does not lock: the
     server still refuses on the same fact."""

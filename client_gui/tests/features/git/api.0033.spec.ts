@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0033 — features/git/api.ts: request shapes of the existing Git contracts and
+// features/git/api.ts: request shapes of the existing Git contracts and
 // the snake_case-to-model boundary (0033-D §4.4).
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
@@ -34,7 +34,7 @@ beforeEach(() => {
 const axiosError = (status: number, data: unknown) => Object.assign(new Error('x'), { isAxiosError: true, response: { status, data } })
 
 describe('reads', () => {
-  // flowgate.v02gui.0004: the content is kept now — the direct resolver splits it into chunks.
+  // the content is kept now — the direct resolver splits it into chunks.
   it('conflicts: files with marker counts, content and resolved state', async () => {
     getRequest.mockResolvedValue({
       data: {
@@ -58,7 +58,7 @@ describe('reads', () => {
         { path: 'a/b.ts', conflictCount: 1, content: '<<<<<<< x', resolved: false },
         { path: 'c.ts', conflictCount: 0, content: '', resolved: true },
       ],
-      // flowgate.v02test.0052 0008: the two additive answers (none here)
+      // the two additive answers (none here)
       abortFailure: null,
       companionFiles: [],
     })
@@ -83,7 +83,7 @@ describe('reads', () => {
     await expect(fetchConflicts('p.m.0001', 9)).resolves.toMatchObject({ trConflict: false })
   })
 
-  // flowgate.v02test.0042: a Graph card result's merge session is marked — its card handles it, not this panel.
+  // a Graph card result's merge session is marked — its card handles it, not this panel.
   it('conflicts: a graph_attempt_merge session is marked graphMerge', async () => {
     getRequest.mockResolvedValue({ data: { ok: true, merge_id: 12, kind: 'graph_attempt_merge', tr_conflict: { review_state: 'open' }, files: [] } })
     await expect(fetchConflicts('p.m.0001', 12)).resolves.toMatchObject({ mergeId: 12, graphMerge: true, trConflict: true })

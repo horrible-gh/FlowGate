@@ -46,7 +46,7 @@ from tests.regression.manual_merge.test_manual_merge_0066 import (
 @pytest.mark.parametrize("secret", [SECRET, SECRET_KO], ids=["ascii", "non_ascii"])
 @pytest.mark.parametrize("managed", [False, True])
 def test_conflict_answer_and_stored_result_never_name_a_hidden_path(proj, monkeypatch, managed, secret):
-    """Rework P1 (D#1 §3-1(3)): a committed hidden file in conflict is counted, never named,
+    """Rework P1 (the earlier implementation): a committed hidden file in conflict is counted, never named,
     in the E9 answer and the job result; the conflict session keeps finalize's own line.
     Rework 2: a non-ASCII hidden name arrives Git-quoted and is judged by its real path."""
     from modules.flow_gate.db import git_integration as db_git

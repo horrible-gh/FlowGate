@@ -1,5 +1,5 @@
-// AI API adapter (WP0002 / T0003, flowgate.v02.0017 T0002). Reuses `@shared/api` transport.
-// AI evaluation and AI groups belong to no project (flowgate.v02.0017 CH0006 (4)); only the
+// AI API adapter. Reuses `@shared/api` transport.
+// AI evaluation and AI groups belong to no project (the earlier change the discussion ); only the
 // connection test still runs under a project.
 
 import { deleteRequest, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
@@ -73,7 +73,7 @@ function fieldErrorsOf(source: Readonly<Record<string, unknown>>): AiFieldError[
 
 // The AI routes answer {"error": {"code"}}; show the localized reason for a known code
 // (gui.ai.errors.<code>) instead of one generic "failed" line, and keep an unknown code visible.
-// flowgate.v02.0088 F11: every call names its operation's localized fallback by key, used for a
+// every call names its operation's localized fallback by key, used for a
 // network failure, an empty body or an unknown code without the server's own words; the server's
 // own diagnostic is kept as it came, and an axios transport line never stands in for it.
 function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFieldError[], providers: ProviderItem[]): string {
@@ -82,7 +82,7 @@ function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFiel
   if (status === 401) return String(i18n.global.t('error.unauthorized'))
   if (status === 403) return String(i18n.global.t('error.forbidden'))
   if (code === 'provider_in_use') return String(i18n.global.t('common.toast.ai_provider_in_use'))
-  // flowgate.v02.0113 T#2 rework: the first AI setup was refused because cards of the Flow run - name them.
+  // the first AI setup was refused because cards of the Flow run - name them.
   if (code === 'ai_role_setup_cards_running') {
     const params = normalizeApiError(error).source.params as { cards?: unknown } | undefined
     const list = params?.cards
@@ -143,7 +143,7 @@ export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]>
   return data.items ?? []
 }
 
-// ── Owned AI lists: 시스템 AI (administrator) / 내 AI (the signed-in user) ────────
+// ── Owned AI lists: "시스템 AI" (administrator) / "내 AI" (the signed-in user) ────────
 
 export async function fetchSystemAi(): Promise<SystemAiSettings> {
   return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'gui.ai.request_failed.system_load')
@@ -178,7 +178,7 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
   )
 }
 
-// Read-only system AI for users who are not administrators (the AI 관리 list shows both owners).
+// Read-only system AI for users who are not administrators (the "AI 관리" list shows both owners).
 export async function fetchVisibleSystemAi(): Promise<VisibleSystemAi> {
   return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'gui.ai.request_failed.system_load')
 }
@@ -192,7 +192,7 @@ export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSetting
   return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers: wire }), 'gui.ai.request_failed.my_save', wire)
 }
 
-// flowgate.v02test.0025: one order over system AI and my AI (AI 관리 list, every AI selection list).
+// flowgate.v02test.0025: one order over system AI and my AI ("AI 관리" list, every AI selection list).
 export async function fetchMyAiOrder(): Promise<UserAiOrder> {
   return call(() => getRequest<UserAiOrder>('/api/v1/me/ai-order'), 'gui.ai.request_failed.order_load')
 }
@@ -405,7 +405,7 @@ export async function putMyAiRoles(roles: AiRoleValues): Promise<MyAiRoles> {
   return toMyAiRoles(await call(() => putRequest<RoleRaw>('/api/v1/me/ai-roles', { roles: values }), 'gui.ai.request_failed.my_save'))
 }
 
-/** flowgate.v02.0113 T#2 rework: the first AI setup's answer - the Flow's cards it applied to and the account as saved
+/** the first AI setup's answer - the Flow's cards it applied to and the account as saved
  *  (null when the server could not read it back; the caller reads it again). */
 export interface FirstAiRoleSetupAnswer {
   flowId: string

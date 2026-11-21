@@ -1,4 +1,4 @@
-"""T0007 current Markdown download regressions."""
+"""current Markdown download regressions."""
 from __future__ import annotations
 
 import os

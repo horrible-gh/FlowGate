@@ -22,12 +22,12 @@ def _run(tmp_path):
 
 # The advertised source tools for a "read" kind, in provider-alias order.
 READ_SOURCE_NAMES = tuple(name for name, op in tools.SOURCE_OPS.items() if op in tools.tool_registry.READ_TOOLS)
-# flowgate.chat.0017 CH0002: new / edit / review workers with a read or read_write kind may hand a file to a
+# new / edit / review workers with a read or read_write kind may hand a file to a
 # person for approval as an attachment of their own card (it answers at once and never waits).
 REQUEST = [tools.ATTACHMENT_REQUEST_NAME]
 
 
-# 0672 T0004: Source Bundle left the general path -- a T step gets live source tools only.
+# Source Bundle left the general path -- a T step gets live source tools only.
 @pytest.mark.parametrize("scope, expected", [
     ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]),
     ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]),
@@ -58,8 +58,8 @@ def test_tr_review_uses_live_reads_and_selfcheck_evidence_without_bundle(monkeyp
     assert set(READ_SOURCE_NAMES) <= set(names)
 
 
-# 0492 TR0026: advertisement now comes from the one common judgment, so T -- whose write
-# scope 0427 T0004 recalled -- is advertised read-only, and TSR/TS join TR as read_write.
+# advertisement now comes from the one common judgment, so T -- whose write
+# scope the earlier implementation recalled -- is advertised read-only, and TSR/TS join TR as read_write.
 @pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])
 def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
@@ -67,7 +67,7 @@ def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]
 
 
-# 0684 T#4: Source Bundle is gone. The kind -- and so the live source tools -- still follows
+# Source Bundle is gone. The kind -- and so the live source tools -- still follows
 # doc_ref exactly as before; no (doc_ref, head) pair brings back access_source_bundle,
 # run_source_bundle or run_test (the TS(new) "TS"/"TR over TS" rows advertised them before).
 @pytest.mark.parametrize("doc_type, head_type", [
@@ -79,7 +79,7 @@ def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
 def test_mutating_types_get_read_write_tier(monkeypatch, tmp_path, doc_type, head_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": doc_type})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (head_type, False))
-    # 0638 T#1: a TR(new) step (head TR) also gets Self-check, owned by its token until it registers the TR.
+    # a TR(new) step (head TR) also gets Self-check, owned by its token until it registers the TR.
     self_check = list(tools.SELF_CHECK_NAMES) if head_type == "TR" else []
     assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + self_check + REQUEST + ["search_question_answers"]
 
@@ -87,7 +87,7 @@ def test_mutating_types_get_read_write_tier(monkeypatch, tmp_path, doc_type, hea
 @pytest.mark.parametrize("scope", ["new", "edit", "review"])
 @pytest.mark.parametrize("step_type", ["TS", "TSR"])
 def test_retired_bundle_tools_are_neither_advertised_nor_registered(monkeypatch, tmp_path, scope, step_type):
-    """0684 T#4: the TS/TSR worker Bundle tools are deleted, not just hidden."""
+    """the TS/TSR worker Bundle tools are deleted, not just hidden."""
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (step_type, False))
     run = _run(tmp_path); run["action_scope"] = scope
@@ -101,7 +101,7 @@ def test_retired_bundle_tools_are_neither_advertised_nor_registered(monkeypatch,
 
 @pytest.mark.parametrize("step_type", ["N", "NR", "T", "TR", "TSR", "TS"])
 def test_advertised_source_tools_never_exceed_the_granted_scopes(monkeypatch, tmp_path, step_type):
-    """Advertised == granted: both halves must resolve through tool_registry (0349 D0004 D-2)."""
+    """Advertised == granted: both halves must resolve through tool_registry."""
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
     advertised = {tools.SOURCE_OPS[d["name"]] for d in tools.definitions_for_run(_run(tmp_path)) if d["name"] in tools.SOURCE_OPS}
     kind, _reason = tools.tool_registry.kind_for_step("new", step_type)
@@ -243,8 +243,8 @@ def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TR", False))
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
-    # 0672 T0004: TR(new) keeps the full live toolset and no longer receives Bundle tools.
-    # 0638 T#1: ...and runs Self-check before its TR exists.
+    # TR(new) keeps the full live toolset and no longer receives Bundle tools.
+    # and runs Self-check before its TR exists.
     assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + list(tools.SELF_CHECK_NAMES) + REQUEST + ["search_question_answers"]
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove", "move"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
@@ -262,7 +262,7 @@ def _stub_route_response(status=200, payload=None):
 
 
 def test_read_document_ranges_are_converted_to_http_contract(monkeypatch, tmp_path):
-    """0505 T0018: _api_read_document now calls document_routes.get_document_section
+    """_api_read_document now calls document_routes.get_document_section
     in-process instead of routing a path string through _api_bound_request -- the a-b
     range contract this asserted moves from a URL suffix to an explicit kwarg."""
     captured = {}
@@ -443,9 +443,11 @@ def test_read_help_item_child_visibility_supplier_and_no_url(monkeypatch, tmp_pa
     ctx = {"base_url": "/flowgate/api/v1", "locale": "en"}
     monkeypatch.setattr(tools.token_service, "verify", lambda _raw: token)
     monkeypatch.setattr(tools.help_catalog, "resolve_context", lambda *_args: ctx)
-    monkeypatch.setattr(tools.help_catalog, "CATALOG_ORDER", ("visible", "hidden"))
+    # 0061 card 6: "unknown" is the visibility judgment's own reason, not a catalog-membership test.
     monkeypatch.setattr(tools.help_catalog, "decide_visibility",
-                        lambda name, _ctx: SimpleNamespace(visible=name == "visible"))
+                        lambda name, _ctx: SimpleNamespace(
+                            visible=name == "visible",
+                            reason={"visible": None, "hidden": "not_chat"}.get(name, "unknown_item")))
     monkeypatch.setattr(tools.help_catalog, "enumerate_children",
                         lambda *_args: [{"name": "child"}])
     monkeypatch.setattr(tools.help_catalog, "build_item",

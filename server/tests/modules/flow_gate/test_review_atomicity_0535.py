@@ -1,6 +1,6 @@
 """POST /inbox action=review is one durable unit: token claim + review row + event.
 
-flowgate.default.0535 T0007 §3/§4.4/§4.5. Everything here runs against a REAL SQLite
+Everything here runs against a REAL SQLite
 database built from this repo's migrations, through the real HTTP route: nothing that
 decides the outcome (the review INSERT, its readback, the token CAS, the token_consumed
 event, the rollback) is mocked, because a mock cannot show a rollback. Only the three
@@ -314,7 +314,7 @@ def test_the_provenance_snapshot_is_written_with_the_row_it_belongs_to(env):
 
 
 def test_the_route_passes_the_snapshot_to_insert_review_and_stores_exactly_that(env, monkeypatch):
-    """T0007 §4.2: the insert arguments and the persisted row are checked together, so a
+    """the insert arguments and the persisted row are checked together, so a
     correct call that stores something else (or a wrong call that happens to read back
     plausibly) cannot pass."""
     import modules.flow_gate.db.document_reviews as reviews_module
@@ -347,7 +347,7 @@ def test_the_route_passes_the_snapshot_to_insert_review_and_stores_exactly_that(
 
 @pytest.mark.parametrize("value, stored", [(True, 1), (False, 0), (None, None)])
 def test_the_three_states_round_trip_through_a_real_sqlite_store(env, value, stored):
-    """T0007 §4.1: SQLite keeps the Optional[bool] in an INTEGER CHECK(0,1) column; the
+    """SQLite keeps the Optional[bool] in an INTEGER CHECK column; the
     write must survive the CHECK and the read must shape back to true/false/null."""
     from modules.flow_gate.api.v1.document_routes import _shape_review
     from modules.flow_gate.db import document_reviews as db_reviews
@@ -373,7 +373,7 @@ def test_the_three_states_round_trip_through_a_real_sqlite_store(env, value, sto
 def test_a_failure_inside_the_boundary_leaves_no_review_and_an_unconsumed_token(
     env, fail_on, what,
 ):
-    """T0007 §4.4. The readback case is the one TR0006 could not reach: the INSERT
+    """The readback case is the one the earlier implementation could not reach: the INSERT
     succeeds and only the read after it fails, which used to leave the review row
     committed behind a 500."""
     db = env["db"]
@@ -586,7 +586,7 @@ _PROVENANCE_COLUMNS = (
     "actual_provider_name", "provider_source", "attempt_no", "fallback_used",
 )
 
-# 0583 T0004 section 3.1: everything except the run id is evidence ABOUT A PROVIDER.
+# everything except the run id is evidence ABOUT A PROVIDER.
 # The run id is the round's identity, and it is decided on its own axis.
 _PROVIDER_EVIDENCE_COLUMNS = _PROVENANCE_COLUMNS[1:]
 
@@ -611,11 +611,11 @@ def _raise(_run_id):
 def test_unprovable_provenance_is_stored_as_null_not_as_false(
     env, monkeypatch, case, token_overrides, run_record,
 ):
-    """T0007 §2 row 3: NULL means "no evidence to decide", and False must never stand in
+    """row 3: NULL means "no evidence to decide", and False must never stand in
     for it. `bool(requested and actual and requested != actual)` used to answer False for
     every one of these.
 
-    0583 T0004 §3.1 splits the axes: the last two cases DO have a verified review run
+    splits the axes: the last two cases DO have a verified review run
     bound to this document -- only its provider snapshot is incomplete -- so the round
     stays attributable through `review_run_id` while every provider column is still NULL.
     The first five have no usable run at all, so nothing is stamped. Keeping the run id
@@ -657,7 +657,7 @@ def test_a_submitted_payload_cannot_forge_the_provenance(env, monkeypatch):
         assert row[column] is None, column
 
 
-# ── 7. mandatory durable receipt admission (0545 T0008) ─────────────────────────
+# ── 7. mandatory durable receipt admission ─────────────────────────
 
 def _preflight(body=None):
     candidate = dict(body or _body())

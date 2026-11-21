@@ -1,4 +1,4 @@
-"""0127 T#6: chat connection base (0010-L §2.1 W1~W4, §2.2~§2.4, §2.7, §3.1, §3.2, §4.3).
+"""chat connection base.
 
 Unit level: the call acceptance port and the optional tool keys (W1/W2), the API worker's
 acceptance/dispatch order (W3), the cancel/finalize gate hooks (W4), ``chat_authz``
@@ -314,13 +314,13 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
     ctx = chat_run_hooks.accept_chat_call(make_run(), {"id": "call_0", "name": "x", "input": {}})
     assert isinstance(ctx, call_ledger.CallContext) and ctx.run_id == RUN_ID and ctx.tool_call_id == "call_0"
-    # 0145 adds scoped Graph reads; run_command and the T#7 card ports retain their handlers.
+    # adds scoped Graph reads; run_command and the the earlier implementation card ports retain their handlers.
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    # flowgate.v02test.0023: the control tower tools follow the Graph reads; the attachment request
+    # the control tower tools follow the Graph reads; the attachment request
     # (chat.0017) follows run_command. Neither uses the call ledger.
-    # flowgate.v02gui.0010: the card question list / answer follow the attachment request (both on the call ledger).
-    # flowgate.v02gui.0028: the card role read / change follow the control tower tools (no call ledger either).
-    # flowgate.v02gui.0032: the AI list read before a placement follows them.
+    # the card question list / answer follow the attachment request (both on the call ledger).
+    # the card role read / change follow the control tower tools (no call ledger either).
+    # the AI list read before a placement follows them.
     assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run",
                                           "place_flow_cards", "start_flow_run",
                                           "get_card_roles", "set_card_roles", "get_ai_options",
@@ -800,7 +800,7 @@ def test_closed_records_are_bounded_by_the_referenced_limit(monkeypatch):
     assert chat_gate.closed_reason("aiv_kept") == chat_gate.CANCELLED
 
 
-# ── gate lifetime: drain timeout → eviction → last release (TR0023 rework) ───
+# ── gate lifetime: drain timeout → eviction → last release ───
 
 def _limit(monkeypatch, value):
     from flowgate.conversation import commands

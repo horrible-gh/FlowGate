@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02gui.0004 — 0001-B §B: the held approval stays pinned to the commit it froze (that pin is never moved
+// §B: the held approval stays pinned to the commit it froze (that pin is never moved
 // here). This block says which commit that is, whether the group HEAD has moved past it and why the approval cannot
 // go on, and offers "새 커밋으로 다시 승인": close the conflict review (existing merge abort) → cancel the parked
 // decision (existing gate-decision cancel, only when the server says cancelable) → the person presses [승인] on the

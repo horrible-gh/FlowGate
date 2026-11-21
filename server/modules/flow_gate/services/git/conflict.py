@@ -1,6 +1,6 @@
 """Conflict-session lifecycle and merge-conflict resolution.
 
-Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
@@ -34,7 +34,7 @@ _log = logging.getLogger(__name__)
 
 TR_CONFLICT_REVIEW_OPEN = "open"
 TR_CONFLICT_REVIEW_RESOLVED = "resolved"
-# flowgate.v02test.0052 T0003: ``context.abort_failure.trigger`` of a failed Graph
+# ``context.abort_failure.trigger`` of a failed Graph
 # attempt merge give-up (person, sweep or Stop).
 GRAPH_ATTEMPT_ABORT_TRIGGER = "graph_attempt_abort"
 
@@ -44,7 +44,7 @@ _CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES = 3
 _SUPERSEDE_SIDES = ("ours", "theirs")
 # A dropped line counts as "changed in place" only when the kept side's replacement
 # run holds an edited version of it (difflib ratio). This pairs lines; it never admits
-# a chunk by an overall inclusion rate (D0005 §3.4 / T0008 §10).
+# a chunk by an overall inclusion rate.
 _SUPERSEDE_CHANGED_LINE_MIN_RATIO = 0.6
 _SUPERSEDE_HINT = (
     "Use a per-file `supersede` declaration ({\"side\": \"ours|theirs\", \"reason\": \"...\"}) "
@@ -55,9 +55,9 @@ _SUPERSEDE_HINT = (
 )
 
 
-# ── 0608 T0005: line endings of conflict files ────────────────────────────────────
+# ── the earlier implementation: line endings of conflict files ────────────────────────────────────
 #
-# 0599 merge 98 wrote its six resolved files through `Path.write_text`, which on the
+# merge 98 wrote its six resolved files through `Path.write_text`, which on the
 # Windows server turns every "\n" into "\r\n": the LF i18n files and two LF server files
 # came out CRLF and the CRLF WorkPlanEditor.vue came out "\r\r\n" (6132cf58). From then on
 # every group touching those files met a whole-file EOL conflict — 0594's ten conflict
@@ -184,7 +184,7 @@ def _eol_normalized_merge(root: Path, path: str) -> Optional[tuple[int, bytes]]:
 
 
 def separate_eol_conflicts(root: Path, paths: list[str]) -> dict:
-    """Take line-ending noise out of an in-flight merge's conflicts (0608 T0005).
+    """Take line-ending noise out of an in-flight merge's conflicts.
 
     For each unmerged path whose stages differ in CRLF/LF, merge again on LF-normalised
     text. A path that then merges cleanly is an **EOL-only** conflict: it is written in its
@@ -298,7 +298,7 @@ def open_tr_conflict_session(
 ) -> Optional[dict]:
     """Keep a conflicted revert alive as a conflict session instead of destroying it.
 
-    flowgate.v02.0061 T#9: a Graph attempt's conflicted merge is kept the same way (``kind``
+    a Graph attempt's conflicted merge is kept the same way (``kind``
     ``graph_attempt_merge``); ``extra_context`` adds what names it (the attempt, its node and result).
 
     Returns ``{"merge_id": int, "files": [...]}``, or **None** when the conflict cannot be
@@ -432,7 +432,7 @@ def commit_tr_conflict(
             f"git still reports {len(unmerged)} unmerged path(s)",
         )
 
-    # 0666 D 3.10: the Group's G — another Group's work no longer blocks this commit.
+    # D 3.10: the Group's G — another Group's work no longer blocks this commit.
     lock = _acquire_group_lock(project_id, group_id, "tr_conflict")
     if lock is None:
         raise GitServiceError(
@@ -441,7 +441,7 @@ def commit_tr_conflict(
     graph_merge = kind == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE
     try:
         if graph_merge:
-            # 0061 T#9: under G the session must still be open and its merge the one in flight — an abort (a
+            # under G the session must still be open and its merge the one in flight — an abort (a
             # person's, the sweep's, a Stop's) that won the lock leaves nothing to commit on.
             _graph_merge_owned(group_id, merge_id, root)
         if review_fingerprint is not None:
@@ -464,13 +464,13 @@ def commit_tr_conflict(
         # A resolution that keeps the tree exactly as HEAD has it — "take ours" on every
         # chunk, which is a perfectly reasonable answer and one an AI will sometimes give.
         # There is nothing to commit then, and an empty commit is noise in the history
-        # (D0005 K3). It is not a failure either: the outcome the person asked for is
+        #. It is not a failure either: the outcome the person asked for is
         # already true of the tree, and the ledger records it the same way the cancel loop
         # records its own empty reverts.
         staged = _gs._run_git(
             ["diff", "--cached", "--quiet"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
-        # 0061 T#9: a merge is committed even when its tree is HEAD's — its commit is what records the attempt's
+        # a merge is committed even when its tree is HEAD's — its commit is what records the attempt's
         # result as a parent on the group branch, and it ends the in-flight merge.
         empty = staged.returncode == 0 and kind != _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE
         commit = None
@@ -487,7 +487,7 @@ def commit_tr_conflict(
         # Either way the revert is over; the sequencer state is what is left of it.
         _gs._run_git(["revert", "--quit"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
         if graph_merge:
-            # 0061 T#9: closed under the same G as the commit, so no abort can come between them.
+            # closed under the same G as the commit, so no abort can come between them.
             _gs.db_git.close_session(merge_id, "done")
             _gs._set_status(group_id, context.get("prev_status") or "waiting")
     finally:
@@ -500,7 +500,7 @@ def commit_tr_conflict(
         "ok": True,
         "result": {
             "status": "empty" if empty else "committed", "kind": kind, "commit": commit,
-            # 0668: the common review vocabulary, next to the TR-specific status.
+            # the common review vocabulary, next to the TR-specific status.
             "review_state": "completed",
             "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
             "ledger_row_id": context.get("ledger_row_id"),
@@ -519,7 +519,7 @@ def abort_tr_conflict(group_id: str, merge_id: int, *, no_wait: bool = False) ->
     exactly as it was, because nothing about it changed: the commit it names is still live
     (a cancel that gave up) or still cancelled (a reapply that gave up).
 
-    flowgate.v02.0061 T#9: a ``graph_attempt_merge`` session is aborted under the group's G
+    a ``graph_attempt_merge`` session is aborted under the group's G
     (:func:`_abort_graph_attempt_merge`; ``no_wait`` for the sweep).
     """
     from modules.flow_gate.services import git_service as _gs
@@ -545,7 +545,7 @@ def abort_tr_conflict(group_id: str, merge_id: int, *, no_wait: bool = False) ->
 
 
 def _graph_merge_owned(group_id: str, merge_id: int, root: Path) -> dict:
-    """flowgate.v02.0061 T#9, under G: the ``graph_attempt_merge`` session is still open and the merge in flight
+    """under G: the ``graph_attempt_merge`` session is still open and the merge in flight
     in the group worktree, if any, is its own (``MERGE_HEAD`` = its result). Returns its fresh context."""
     from modules.flow_gate.services import git_service as _gs
     fresh = _gs.db_git.get_session(merge_id)
@@ -561,7 +561,7 @@ def _graph_merge_owned(group_id: str, merge_id: int, root: Path) -> dict:
 def _abort_graph_attempt_merge(
     group_id: str, merge_id: int, project_id: str, root: Path, *, no_wait: bool = False,
 ) -> dict:
-    """flowgate.v02.0061 T#9: give up on a Graph attempt's conflicted merge — a person's abort, the sweep's (TTL,
+    """give up on a Graph attempt's conflicted merge — a person's abort, the sweep's (TTL,
     orphan) and a Stop's alike. Under the group's G (the lock its resolution and commit take): the session must still
     be open and the merge in flight its own; ``merge --abort`` must succeed and leave no ``MERGE_HEAD`` and no
     unmerged path before the session closes. A refused lock or a failed abort raises and keeps the session open (the
@@ -576,7 +576,7 @@ def _abort_graph_attempt_merge(
     try:
         context = _graph_merge_owned(group_id, merge_id, root)
         if _gs._rev_parse(root, "MERGE_HEAD") is not None:
-            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session
+            # task 3(b): audited on the session
             # (``ref_operations[].stderr_tail``) and, on failure, marked "정리 실패"
             # (``context.abort_failure``, trigger ``graph_attempt_abort``) — a person's
             # abort, the sweep's and a Stop's all come through here.
@@ -613,7 +613,7 @@ def _abort_graph_attempt_merge(
 
 
 def _freeze_tr_candidate(root: Path, context: dict) -> dict:
-    """0668 T0004 — the TR conflict's review candidate, frozen like a merge's.
+    """the TR conflict's review candidate, frozen like a merge's.
 
     A TR conflict used to end at ``review_state='resolved'`` with no record of WHAT was
     resolved, so the commit press could not tell the tree it was shown from the tree it
@@ -685,14 +685,14 @@ def _tr_review_context(group_id: str, merge_id: int) -> tuple[dict, dict, Path]:
 
 
 def tr_conflict_review(group_id: str, merge_id: int) -> dict:
-    """0668 T0004 — GET …/review for a TR conflict: the common review screen's payload.
+    """GET …/review for a TR conflict: the common review screen's payload.
 
     Same shape as ``get_merge_review`` so one screen serves both. What a TR review does
     not have is said with the capability flags rather than with a different screen: no
     review conversation and no reject (there is no resolver baseline to re-run a revert
     from — the resolver itself is where a TR resolution is redone), only approve.
 
-    flowgate.v02test.0052 T0003 할 일 4(c): opening (reading) the review is NOT activity;
+    task 4(c): opening (reading) the review is NOT activity;
     it never calls ``touch_session`` and leaves ``touched_at`` (the sweep TTL basis) as it is.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -759,7 +759,7 @@ def _split_content_segments(content: str) -> Optional[list[dict]]:
     what lets a chunk's resolution be found by ANCHOR instead of by scanning the whole
     file: the text immediately around a chunk is unedited context, so locating where
     THAT landed in the submitted file brackets exactly where this chunk's own resolution
-    must sit (0602 T0004 rev2 review finding — see :func:`_anchor_chunk_selections`).
+    must sit (review finding — see:func:`_anchor_chunk_selections`).
     """
     from modules.flow_gate.services import git_service as _gs
     segments: list[dict] = []
@@ -825,7 +825,7 @@ def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
 
 
 def _chunk_added_lines(side: list[str], base: list[str]) -> list[str]:
-    """Lines in ``side`` that are not in ``base`` (trimmed comparison — E12 note in T0012)."""
+    """Lines in ``side`` that are not in ``base`` (trimmed comparison — E12 note in the earlier implementation)."""
     base_set = {line.strip() for line in base}
     return [line for line in side if line.strip() not in base_set]
 
@@ -872,7 +872,7 @@ def _select_conflict_chunk(
     piece of common text elsewhere in the file that happens to equal ``ours`` or
     ``theirs`` verbatim — before this chunk, after it, or belonging to a neighboring
     chunk's own window — can never stand in for this chunk's actual resolution (0602
-    T0004 rev2 review finding: an unbounded, cursor-forward search over the WHOLE
+    review finding: an unbounded, cursor-forward search over the WHOLE
     remaining file let a coincidental match sitting in ordinary, unedited context
     outrank — or hide — the chunk's real resolved text).
 
@@ -992,9 +992,9 @@ def _chunk_original_ranges(segments: list[dict]) -> list[tuple[int, int]]:
 
 
 def _content_from_chunk_resolutions(path: str, original: str, chunks) -> str:
-    """0608 T0007: the whole-file submission a per-chunk resolution stands for.
+    """the whole-file submission a per-chunk resolution stands for.
 
-    An API model's single reply is capped (NR0003 §8): 0594's finalize.py is 111,807
+    An API model's single reply is capped: 0594's finalize.py is 111,807
     chars as a file but its 10 chunks are at most ~22k chars even when both sides are
     kept. So a file may be sent as ``chunks: [{"chunk": n, "content": "<lines that
     replace the whole marker block n>"}]`` instead of ``content``. The chunks are
@@ -1121,7 +1121,7 @@ def _conflict_side_violations(original: str, submitted: str) -> list[dict]:
 def _conflict_side_dropped(original: str, submitted: str) -> bool:
     """True if an unmerged nearby chunk group selects exactly one changed side.
 
-    The boolean view of :func:`_conflict_side_violations` (0604 T0008 split it out so
+    The boolean view of:func:`_conflict_side_violations` (the earlier implementation split it out so
     the resolve path can report every violating chunk and check `supersede` against
     each one); the verdict itself is unchanged.
     """
@@ -1129,7 +1129,7 @@ def _conflict_side_dropped(original: str, submitted: str) -> bool:
 
 
 def _supersede_evidence(kept: list[str], dropped: list[str], base: list[str]) -> dict:
-    """0604 D0005 §3.4 condition 3·4 — does ``kept`` really carry ``dropped``'s changes?
+    """condition 3·4 — does ``kept`` really carry ``dropped``'s changes?
 
     Only the dropped side's own meaningful additions over ``base`` are evidence
     subjects. They are aligned against the kept side of THE SAME chunk, in order
@@ -1232,14 +1232,14 @@ def _supersede_findings(path: str, supersede, violations: list[dict], companions
     return problems, records
 
 def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
-    """D0006 §3.3 / L0007 §2.4 — per-chunk selection the review screen overlays on
+    """per-chunk selection the review screen overlays on
     the real diff: which conflict chunk resolved to ``ours``/``theirs``/``both``/
     ``manual``, and (best-effort) where that ended up in the submitted text.
 
     Shares its chunk-local, context-anchored match with :func:`_conflict_side_dropped`
     via :func:`_anchor_chunk_selections` — the priority order in
-    :func:`_select_conflict_chunk` mirrors L0007 §2.4, with the same pragmatic narrowing
-    noted there: a left-to-right search within the anchored window rather than L0007's
+    :func:`_select_conflict_chunk` mirrors the earlier implementation, with the same pragmatic narrowing
+    noted there: a left-to-right search within the anchored window rather than the earlier implementation's
     stricter "unique match only" rule, so an ambiguous/no-match chunk still gets a
     selection label, just no line range.
     """
@@ -1274,12 +1274,12 @@ def _session_context(
     downstream — the file list, the resolved writes, the abort — which is why the two kinds
     can share a table, a screen, a set of endpoints and an AI run at all.
 
-    0594 T0012: for a finalize merge the root comes from the attempt's pinned target
+    for a finalize merge the root comes from the attempt's pinned target
     (``merge_target.resolve_session_target``) — the shared base checkout for a base
     (or legacy) target, the managed target workspace otherwise. This is the ONLY
     place a conflict file read/write root is decided.
 
-    0630 T0005: a ``branch_merge`` session has no group. It is addressed by
+    a ``branch_merge`` session has no group. It is addressed by
     ``project_id`` (and ``group_id=None``) and its root is its managed target
     workspace. A group-addressed call can never reach it and a project-addressed call
     can never reach a group's session — the owner is part of the identity check.
@@ -1319,7 +1319,7 @@ def resolve_conflict_src_root(
 def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     from modules.flow_gate.services import git_service as _gs
     session, cfg, _project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
-    # flowgate.v02test.0052 T0003: reading the list is NOT activity. Only a real operation
+    # reading the list is NOT activity. Only a real operation
     # (a resolution submission, an abort) bumps the sweep TTL; opening the screen used to
     # restart the 24 h clock every time, so a stuck session could never age out.
     state = (_gs.db_git.get_state(group_id) if group_id else None) or {}
@@ -1348,23 +1348,23 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
     return {
         "ok": True,
         "merge_id": merge_id,
-        # 0630 T0005: for an ordinary branch merge "the incoming branch" is its source.
+        # for an ordinary branch merge "the incoming branch" is its source.
         "branch": state.get("branch") or branch_merge_info.get("source_branch"),
         "owner_type": _session_owner_type(session),
         "project_id": _session_project_id(session),
         "source_branch": branch_merge_info.get("source_branch"),
         "base_branch": (cfg.get("base_branch") or "main"),
-        # 0594 T0012 (additive): the branch this merge lands on ("ours").
+        # (additive): the branch this merge lands on ("ours").
         "target_branch": target_branch,
         "files": files,
         "resolved_paths": [row["path"] for row in _gs.db_git.session_files(merge_id) if row["resolved"]],
         "companion_candidates": conflict_companions.candidates(root, {f["path"] for f in files}),
         "companion_files": context.get("conflict_companions") or [],
         "checkpoint_recovery": context.get("checkpoint_recovery"),
-        # 0608 T0005: session files that differed only in line endings and were already
+        # session files that differed only in line endings and were already
         # merged on normalised text (apply_eol_separation) — nothing to resolve there.
         "eol_only_paths": list(context.get("eol_only_paths") or []),
-        # flowgate.v02test.0052 T0003 (additive): the last failed abort/cleanup of this
+        # (additive): the last failed abort/cleanup of this
         # session — {trigger, reason (git's last stderr line), returncode, at} — or None.
         "abort_failure": context.get("abort_failure"),
         # The two commits a finalize merge joined, for reading either side's whole file
@@ -1409,12 +1409,12 @@ def _apply_conflict_resolution_locked(
     registered path set and the exact pre-write file content before the first write.
     Thus no Git mutation of the same workspace (TR2 approval, review action, merge)
     can interleave between the final ownership check and write/git-add/session update.
-    0669 unit 8b: that lock is the session's G / W / B, no longer the project mutex.
+    unit 8b: that lock is the session's G / W / B, no longer the project mutex.
     """
     from modules.flow_gate.services import git_service as _gs
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    # 0669 unit 8b: the session's workspace domain (TR / group update: the Group's G;
+    # unit 8b: the session's workspace domain (TR / group update: the Group's G;
     # finalize / branch merge: the target's G / W / B) instead of the project mutex. The
     # domain comes from a pre-lock read; everything below re-reads under it as before.
     from . import branch_merge_publish as _bmp
@@ -1460,7 +1460,7 @@ def _apply_conflict_resolution_locked(
                 "do not submit a resolution",
             )
 
-        # flowgate.v02test.0052 T0003 (0001-B 1절 8): a merge session whose workspace is no
+        # a merge session whose workspace is no
         # longer merging (MERGE_HEAD gone) is refused BEFORE any file is written. It used
         # to write + `git add` + mark "resolved" and only then fail at the freeze, so every
         # retry just grew the "resolved" count while the session stayed stuck.
@@ -1585,7 +1585,7 @@ def _apply_conflict_resolution_locked(
                 },
             }
         elif _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
-            # 0668 T0004: freeze the candidate under the same mutex as the writes, so the
+            # freeze the candidate under the same mutex as the writes, so the
             # common review screen shows exactly what the commit press will record.
             context = _gs.db_git.session_context(session)
             context.update(_freeze_tr_candidate(root, context))
@@ -1662,7 +1662,7 @@ def _apply_conflict_resolution_locked(
 def _record_group_update_resolution(
     group_id: Optional[str], merge_id: int, root: Path, context: dict, cfg: dict,
 ) -> dict:
-    """flowgate.default.0665 T0004: the resolved update advances the scope floor to the
+    """the resolved update advances the scope floor to the
     source SHA the session pinned when it opened.  A session opened before that pin
     existed records nothing (the floor stays at the older, over-inclusive value).  A
     failed record undoes the merge commit and closes the session as aborted, so an
@@ -1695,7 +1695,7 @@ def resolve_conflicts(
     session, cfg, project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     is_branch_merge = _is_branch_merge_session(session)
     _gs.db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
-    # 0481 T0010 rev6 (rejection 3): a review-conversation turn's run must never submit a
+    # (rejection 3): a review-conversation turn's run must never submit a
     # resolution. Until rev5 it was launched with the ordinary resolver mention -- resolve
     # every conflict, call the bound endpoint -- so it did, and a submission re-freezes the
     # candidate further down. That new fingerprint then fails
@@ -1716,7 +1716,7 @@ def resolve_conflicts(
     session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
 
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
-    # 0604 T0008: side-drop and supersede failures are collected across ALL files and
+    # side-drop and supersede failures are collected across ALL files and
     # reported in one 422, instead of stopping at the first failing file.
     staged: list[tuple[str, Path, str, str]] = []
     side_dropped: list[dict] = []
@@ -1767,7 +1767,7 @@ def resolve_conflicts(
                 422, "invalid_request", f"'{path}' is not part of merge session {merge_id}"
             )
         if chunks is not None:
-            # 0608 T0007: per-chunk resolutions become the whole-file submission right
+            # per-chunk resolutions become the whole-file submission right
             # here, so everything below validates them exactly like `content`.
             try:
                 current = (root / path).read_text(encoding="utf-8", errors="replace")
@@ -1798,7 +1798,7 @@ def resolve_conflicts(
             if _gs.has_conflict_markers(original):
                 evaluated_paths.add(path)
                 violations = _conflict_side_violations(original, content)
-            # 0604 D0005 §3.4 — an explicit, evidence-checked declaration is the only
+            # an explicit, evidence-checked declaration is the only
             # thing that can excuse a violating chunk; it never touches a clean one.
             supersede = f.get("supersede")
             if supersede is not None:
@@ -1870,7 +1870,7 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
         return None, None
 
 
-# ── flowgate.v02test.0052 T0003: abort unblocking ─────────────────────────────────────
+# ── the earlier change the earlier implementation: abort unblocking ─────────────────────────────────────
 
 # The resolve refusal for a session whose workspace is no longer merging.
 MERGE_NOT_IN_PROGRESS = "merge_not_in_progress"
@@ -1911,7 +1911,7 @@ def _abort_failed_error(
 
 def _raise_if_merge_gone(session: dict, root: Path, merge_id: int) -> None:
     """Refuse a resolution for a merge-kind session whose workspace observably has no
-    MERGE_HEAD (0001-B 1절 8). 409 ``merge_not_in_progress`` with a one-line reason and
+    MERGE_HEAD. 409 ``merge_not_in_progress`` with a one-line reason and
     ``next_action="abort"`` — the abort now closes such a session as already cleaned."""
     from modules.flow_gate.services import git_service as _gs
     if _gs.db_git.session_kind(session) not in _MERGE_HEAD_SESSION_KINDS:
@@ -2015,7 +2015,7 @@ def force_cleanup_preview(group_id: str, merge_id: int) -> dict:
 
 def force_cleanup_merge(group_id: str, merge_id: int, *, actor: Optional[str] = None) -> dict:
     """Administrator-only way out of a merge session whose ``merge --abort`` fails
-    (0001-B 1절 3, T0003 할 일 5). Under the same session lock as [abort]:
+    (B section 1 3, the earlier implementation task 5). Under the same session lock as [abort]:
 
     1. the ordinary abort (index refresh + ``merge --abort``) is tried first;
     2. only if it fails: the session's own managed target workspace is reset to the
@@ -2173,20 +2173,20 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
     session, _cfg, project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     kind = _gs.db_git.session_kind(session)
     if _is_branch_merge_session(session):
-        # 0630 T0005 (D0004 §19): no group status to return to — the attempt itself records
+        # no group status to return to — the attempt itself records
         # `aborted`, its tokens/run are stopped and only its own workspace is released.
         from . import branch_merge as _branch_merge
         return _branch_merge.abort(project_id, merge_id)
     if kind in _gs.db_git.TR_SESSION_KINDS:
         return abort_tr_conflict(group_id, merge_id)
     if kind == _gs.db_git.SESSION_KIND_MERGE:
-        # 0594 T0012 §9.1/§9.3: ownership is proven BEFORE git touches the target
+        # ownership is proven BEFORE git touches the target
         # root. A workspace whose marker names another owner keeps its MERGE_HEAD,
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     already_cleaned = False
     if root.exists():
-        # flowgate.v02test.0052 T0003 (0001-B 1절 2): a workspace that is observably no
+        # a workspace that is observably no
         # longer merging — MERGE_HEAD absent and no unmerged path — has nothing to abort.
         # It is "already cleaned": the session closes exactly like a successful abort.
         # An unobservable MERGE_HEAD (a failed read) is never taken as absent.
@@ -2217,7 +2217,7 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
             "status": "aborted", "branch_preserved": True,
             "already_cleaned": already_cleaned,
         }}
-    # 0555 T0008 §8 (D0005 §3.6 B10): abort ends the Git attempt this final approval
+    # abort ends the Git attempt this final approval
     # was riding on, so its parked intent is discarded — never carried over to a
     # later session. The AC stays pending_review and the root stays in progress, so
     # pressing 최종승인 again simply starts over with a fresh intent id. Note this is
@@ -2226,7 +2226,7 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
     if kind == _gs.db_git.SESSION_KIND_MERGE:
         _gs.db_git.invalidate_resolution_checkpoint_for_merge(merge_id)
     discarded = approval_intent.discard_intent(merge_id)
-    # 0594 T0012 §9.3: an attempt records `aborted` and releases only its own
+    # an attempt records `aborted` and releases only its own
     # workspace (owner marker match); a legacy row is closed exactly as before.
     merge_target.close_session_attempt(
         session, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"},

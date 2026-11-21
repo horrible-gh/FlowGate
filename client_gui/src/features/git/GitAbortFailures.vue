@@ -9,7 +9,7 @@
       </button>
     </div>
   </section>
-  <!-- flowgate.v02test.0052 (0008 할 일 3): administrators only — the open merges marked "정리 실패" (the abort was refused
+  <!-- flowgate.v02test.0052 (0008 task 3): administrators only — the open merges marked "정리 실패" (the abort was refused
        and nothing could close them), each with the reason git gave and the forced cleanup. Nobody else sees it or asks for it. -->
   <section v-if="isAdmin && items.length" class="gx-card danger" data-test="git-abort-failures">
     <div class="gx-title">{{ t('gui.git.abort_failures.title', { n: items.length }) }}</div>

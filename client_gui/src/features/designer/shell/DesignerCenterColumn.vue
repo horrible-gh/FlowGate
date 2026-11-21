@@ -2,17 +2,17 @@
   <!-- Center column: Workspace over the Bottom Dock. The Bottom Dock is a child of this
        column (not of the Body), so it can never reach under the Left / Right Docks. The
        Designer Center session passes through to the Workspace; the Bottom Inspector
-       (flowgate.v02.0036) gets the session's selected Node; flowgate.v02.0049: the Minimap gets the
+       gets the session's selected Node; the earlier change: the Minimap gets the
        active Flow's ready Graph, Viewport and Canvas size, and its moves go back to the session.
-       flowgate.v02.0039 T#3: `unselected` (no work target yet) passes to both.
-       flowgate.v02.0046: a resize handle on the Workspace ↔ Bottom Dock line asks the Shell for
+       `unselected` (no work target yet) passes to both.
+       a resize handle on the Workspace ↔ Bottom Dock line asks the Shell for
        a new Bottom Dock height; the Workspace (and its Canvas) takes the rest.
-       flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the session's selection context.
+       the Inspector gets the session's selection context.
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
        or, for a Tool Panel, passed up to the Shell.
-       flowgate.v02.0070 T#1 (B1): the Inspector header's card title save goes to the session's saveNodeTitle for the
+       (B1): the Inspector header's card title save goes to the session's saveNodeTitle for the
        Flow and card the edit was opened on (never the active Flow at answer time).
-       flowgate.v02test.0056: `bottomHeight` is the height the person chose. When the column is too low
+       `bottomHeight` is the height the person chose. When the column is too low
        for it and the Workspace minimum, the Bottom Dock is drawn lower here (fitBottomHeight) and the
        chosen height is left alone. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
@@ -58,7 +58,7 @@ const props = withDefaults(
     bottomHeight: number
     placing?: boolean
     unselected?: boolean
-    /** flowgate.v02.0059 0017-T: the density's card drag step (the Shell's), for the Canvas; null = 자율형. */
+    /** the density's card drag step (the Shell's), for the Canvas; null = freeform. */
     moveStep?: number | null
   }>(),
   { unselected: false, placing: false, moveStep: null },
@@ -67,18 +67,18 @@ const props = withDefaults(
 // Each drag step carries the column's own height, which the Shell's clamp keeps the Workspace's room in.
 const emit = defineEmits<{
   'resize-bottom': [height: number, columnHeight: number]
-  /** flowgate.v02test.0056: the bottom handle was let go. */
+  /** The bottom handle was let go. */
   'resize-end': []
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
   'show-tool': [tool: 'git']
 }>()
 
-// flowgate.v02.0048 T#1: the Bottom Dock's Inspector reads the session's selection context, and its Host
+// the Bottom Dock's Inspector reads the session's selection context, and its Host
 // intents (inspector/inspectorHost.ts) are carried out here, about the active Flow — or, for a
-// refresh-flow naming its Flow (T#10), that open Flow even when another tab is active. Provided
+// refresh-flow naming its Flow, that open Flow even when another tab is active. Provided
 // (the Dock injects the same key) so the Dock's props and events stay as they are.
-// flowgate.v02test.0042 (시안 v7): "open this card's '병합 · 충돌' tab" — the Canvas card's 병합 충돌, a notification's [열기],
+// flowgate.v02test.0042 (mockup v7): "open this card's '병합 · 충돌' tab" — the Canvas card's 병합 충돌, a notification's [열기],
 // the Git panel's [카드로 이동] and the tab's own [‘…’ 카드로 이동] send one window event; here the card's Flow is shown
 // (opened when it is not), the card selected and the Inspector asked for the tab. A Git session names its merge id
 // instead of a card: the card is the one whose node run's integration reason is that session (`merge_session:<id>`).
@@ -130,7 +130,7 @@ watchEffect(() => {
   pendingMerge.value = null
 })
 
-// flowgate.v02test.0052 (0008 할 일 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and
+// flowgate.v02test.0052 (0008 task 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and
 // select its check card, whose Inspector holds [승인]. Same event name as `SELECT_GATE_NODE_EVENT` of the Git part (its gateOperations).
 function onSelectGateNode(event: Event): void {
   const detail = (event as CustomEvent<{ flowId?: unknown; nodeKey?: unknown; flowName?: unknown }>).detail ?? {}
@@ -188,9 +188,9 @@ provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   saveTitle: props.center.canEditNodeTitles
     ? (flowId: string, nodeId: string, title: string) => props.center.saveNodeTitle(flowId, nodeId, title)
     : null,
-  // flowgate.v02.0072 TR0012 rev1: a work plan window follows its own Flow's run lock, also when another Flow is active.
+  // a work plan window follows its own Flow's run lock, also when another Flow is active.
   flowRunLock: (flowId: string) => props.center.runMarks(flowId).lock,
-  // flowgate.v02.0083 T#3: and its WP card's latest node run — the run read's (the latest) over the Canvas read's, the
+  // and its WP card's latest node run — the run read's (the latest) over the Canvas read's, the
   // bound result and the plan line from the Canvas read. Null while the Flow's Graph is not shown.
   cardRun(flowId: string, nodeKey: string) {
     const load = props.center.state.graphs?.[flowId]
@@ -224,7 +224,7 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
   if (!node) return
   const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId && !!item.scenario === !!requested.scenario)
   if (!doc) return
-  // The 시나리오 button opens the shared TS document through its owner line, the 지시서 (as the Inspector does).
+  // The 시나리오 button opens the shared TS document through its owner line, the instruction (as the Inspector does).
   const ownerSlot = doc.scenario ? 'instruction' : doc.ownerSlot
   const card = node.definition && ownerSlot ? {
     projectId: props.center.state.projectId!, flowId, nodeKey: node.id,
@@ -235,7 +235,7 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
 
 const columnRef = ref<HTMLElement | null>(null)
 
-// flowgate.v02test.0056: the column's own height, followed while the window changes size. 0 until it is
+// The column's own height, followed while the window changes size. 0 until it is
 // measured (and where there is no layout), which draws the chosen height as it is.
 const measuredHeight = ref(0)
 let columnObserver: ResizeObserver | null = null
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
 
 const shownBottomHeight = computed(() => fitBottomHeight(props.bottomHeight, measuredHeight.value))
 
-// flowgate.v02.0049: the Minimap reads the session's active Flow only — a Graph that is not ready
+// the Minimap reads the session's active Flow only — a Graph that is not ready
 // (loading, error, no tab) draws nothing, so another Flow's map never stays on screen.
 const minimap = computed(() => {
   const { center } = props
@@ -268,7 +268,7 @@ const minimap = computed(() => {
     graph: load?.status === 'ready' ? (load.graph as FlowGraph) : null,
     viewport: center.activeView.value?.viewport ?? null,
     canvasSize: center.canvasSize.value,
-    // flowgate.v02.0068 T#2: the lines join the sides the Canvas joins, at the cards' measured sizes.
+    // the lines join the sides the Canvas joins, at the cards' measured sizes.
     nodeSizes: center.activeNodeSizes.value,
   }
 })

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0038 — Designer top band (0001-R rev2 / 0007-T): Header, Menu Bar and Toolbar
+ * Designer top band: Header, Menu Bar and Toolbar
  * stacked in the Shell's Top container.
  *
  * The Shell is mounted with its real parts and the real project store; only the HTTP layer
@@ -53,7 +53,7 @@ const TREE = [
 ]
 
 // --- Canvas environment for Vue Flow under jsdom (same stand-ins as DesignerShell.0025) -----
-// flowgate.v02.0042: the work state needs an open Flow, so the Canvas renders in these suites.
+// the work state needs an open Flow, so the Canvas renders in these suites.
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
@@ -85,7 +85,7 @@ beforeEach(() => {
   // 0156 T1 R4: run clicks here settle with flushPromises only; an in-memory Web Locks replaces the timed lease fallback.
   installMemoryWebLocks()
   localStorage.clear()
-  // flowgate.v02.0105 T#1: a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
+  // a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
   sessionStorage.clear()
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'test', email: null, isAdmin: false })
@@ -147,9 +147,9 @@ async function doubleClickRow(w: VueWrapper<any>, label: string) {
   await settle()
 }
 
-// flowgate.v02.0039 T#3: entering leaves the Designer without a work target (Toolbar and most
+// entering leaves the Designer without a work target (Toolbar and most
 // menu items unavailable — DesignerInitialState.0039.spec.ts). These suites check the band in
-// the work state, so the user first opens a Flow (flowgate.v02.0042: only an open Flow is the
+// the work state, so the user first opens a Flow (the earlier change: only an open Flow is the
 // work target; a plain click only selects).
 async function mountShell() {
   const pinia = createPinia()
@@ -203,7 +203,7 @@ describe('Designer top band — structure', () => {
       await settle()
       await get(wrapper, 'designer-header-notifications').trigger('click'); await settle()
       expect(wrapper.get('#designer-notifications').text()).toContain('Flow 목록을 확인할 수 없습니다')
-      expect(wrapper.get('#designer-notifications').text()).not.toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+      expect(wrapper.get('#designer-notifications').text()).not.toContain('실행·대기·결과 회수 중인 작업이 없습니다.')
     } finally { cache.mockRestore() }
   })
 
@@ -270,7 +270,7 @@ describe('Designer top band — Menu Bar', () => {
     expect(pop.text()).not.toMatch(/저장/)
     expect(pop.findAll('[role="separator"]')).toHaveLength(3)
 
-    // flowgate.v02.0043: the recent submenus list what was opened — mountShell opened the Flow
+    // the recent submenus list what was opened — mountShell opened the Flow
     // `Canvas` of the Group `UI 개선` (DesignerFileMenu.0043.spec.ts covers the lists in full).
     await pop.get('[data-test="designer-menu-sub"][data-sub="recent-flow"]').element.parentElement!.dispatchEvent(new MouseEvent('mouseenter'))
     await flushPromises()
@@ -282,7 +282,7 @@ describe('Designer top band — Menu Bar', () => {
 
   it('Edit, Run, View and Help hold the confirmed items', async () => {
     const w = await mountShell()
-    // flowgate.v02.0059 T#2: 정렬 / 배치 is a submenu (›) of the 정렬 / 분배 commands.
+    // alignment / layout is a submenu (›) of the alignment / distribution commands.
     expect(itemTexts(await openMenu(w, 'edit')).map((text) => text.replace('›', '').trim())).toEqual([
       '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치', '전체 선택',
     ])
@@ -346,7 +346,7 @@ describe('Designer top band — Menu Bar', () => {
     await openPop(w).get('[data-command="project.open"]').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
     expect(openPop(w).attributes('data-menu')).toBe('edit')
-    // flowgate.v02.0059 T#2: no edit history yet, so Undo / Redo are disabled and the focus lands on
+    // no edit history yet, so Undo / Redo are disabled and the focus lands on
     // the first enabled item of the Edit menu.
     const items = openPop(w).findAll('[data-command]')
     const enabled = items.filter((el) => el.attributes('disabled') === undefined && el.attributes('aria-disabled') !== 'true')
@@ -414,11 +414,11 @@ describe('Designer top band — Toolbar', () => {
   it('keeps the confirmed tools only: [선택] for multi-selection, no add node / connect, with 정렬 / 배치 ▾', async () => {
     const w = await mountShell()
     // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons. flowgate.v02.0059 T#1:
-    // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
-    // flowgate.v02gui.0030: 첨부파일 (the Flow attachment window) closes the band.
+    // [선택] (multi-selection toggle) is back next to alignment / layout ▾.
+    // attachments (the Flow attachment window) closes the band.
     expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브', '첨부파일'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
-    // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
+    // the zoom is one control showing the current zoom.
     expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
     expect(get(w, 'designer-toolbar').findAll('output')).toHaveLength(0)
     expect(get(w, 'designer-tool-density').findAll('[role="radio"]').map((b) => b.attributes('aria-label'))).toEqual([
@@ -431,7 +431,7 @@ describe('Designer top band — Toolbar', () => {
     await w.get(`[data-test="designer-tool-run"][data-command="${command}"]`).trigger('click')
     await settle()
   }
-  // The Run menu starts the same server run (flowgate.v02test.0001 B0001 §2 / T0004 T#2).
+  // The Run menu starts the same server run.
   const menuRun = async (w: VueWrapper<any>, command: string) => {
     await (await openMenu(w, 'run')).get(`[data-command="${command}"]`).trigger('click')
     await settle()
@@ -653,8 +653,8 @@ describe('Designer top band — part events', () => {
     activeTabs: ['project', 'palette'],
   }
 
-  // flowgate.v02.0059 T#2 (0011-CH contract D): the same 정렬 / 분배 commands in the Toolbar drop-down (with
-  // 자동 배치 after them) and in the Edit menu's 정렬 / 배치 submenu, emitted as they are.
+  // (CH contract D): the same alignment / distribution commands in the Toolbar drop-down (with
+  // auto-layout after them) and in the Edit menu's alignment / layout submenu, emitted as they are.
   it('the Toolbar 정렬 / 배치 ▾ and the Edit menu 정렬 / 배치 list and emit the same commands', async () => {
     const targets = { ...ALL_MENU_TARGETS, selectedCount: 3 }
     const toolbar = mount(DesignerToolbar, {
@@ -666,7 +666,7 @@ describe('Designer top band — part events', () => {
     await toolbar.get('[data-tool="arrange"]').trigger('click')
     expect(toolbar.get('[data-tool="arrange"]').attributes('aria-expanded')).toBe('true')
     const toolbarItems = toolbar.findAll('[data-test="designer-arrange-item"]')
-    // flowgate.v02.0068 T#2: 자동 배치 is 가로 / 세로 자동정렬.
+    // flowgate.v02.0068 T#2: auto-layout is horizontal / 세로 자동정렬.
     expect(toolbarItems.map((el) => el.attributes('data-arrange'))).toEqual([...DESIGNER_ARRANGE_GROUPS.flat(), 'edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
     expect(toolbarItems.map((el) => el.text())).toEqual([
       '왼쪽 정렬', '가로 가운데 정렬', '오른쪽 정렬', '위쪽 정렬', '세로 가운데 정렬', '아래쪽 정렬', '가로 균등 분배', '세로 균등 분배', '가로 자동정렬', '세로 자동정렬',

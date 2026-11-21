@@ -1,6 +1,6 @@
 """Recorded work-base commits and the one group change-scope floor resolver.
 
-flowgate.default.0665 T0004 (NR0003 §5.2/§6/§7.2).  A group forks from its work
+A group forks from its work
 base (``groups.work_base_ref``), but every "what did this group change" question used
 to be answered against ``merge-base(<project base_branch>, HEAD)``.  A group forked
 from ``v0.2`` therefore reported the whole ``main..v0.2`` history as its own work, and
@@ -21,7 +21,7 @@ review package, archive) goes through :func:`resolve_scope_floor`; a floor that 
 missing, unverified or fails an integrity rule is an explicit error, never a silent
 fallback to the project base or ``main``.
 
-Integrity rules (NR0003 §6):
+Integrity rules:
 
 3. the floor is an ancestor of the group HEAD; ``work_base_sha`` is an ancestor of
    ``work_base_sync_sha`` when the latter exists;
@@ -259,7 +259,7 @@ def resolve_scope_floor(
     Raises ``GitServiceError(409, group_work_base_unverified | group_work_base_diverged)``.
     Never substitutes the project base or a branch tip for a missing record.
 
-    ``recover=False`` (flowgate.v02.0098 T#1, a read-only caller) never runs the legacy
+    ``recover=False`` (a read-only caller) never runs the legacy
     auto-recovery, which records a floor, an audit row and possibly ``groups.work_base_ref``:
     a group without a record stays ``group_work_base_unverified``.
     """
@@ -632,7 +632,7 @@ def backfill_project(project_id: str, *, apply: bool = False, actor: Optional[st
     """Dry-run (default) or apply the classification for every group of a project.
 
     Apply also pins a NULL ``groups.work_base_ref`` of a Git-active group to the
-    current effective value (NR0003 §7.3) so a later project base change cannot move it.
+    current effective value so a later project base change cannot move it.
     A group whose pin fails is left unapplied (``applied=False`` + ``apply_error``,
     listed in ``apply_failed``): a floor recorded against a still-mutable name could
     be reinterpreted by the next base change.
@@ -732,7 +732,7 @@ def confirm_work_base(
     sync = (work_base_sync_sha or "").strip() or None
     if sync and sync.lower() == "none":
         sync = None
-    # 0669 unit 9b: the Group's G (the floor check reads only its worktree) through the
+    # unit 9b: the Group's G (the floor check reads only its worktree) through the
     # freeze guard, instead of the project mutex.
     from .worktree import _slot_lock, _slot_unlock
     lock_ctx, held, refused = _slot_lock(project_id, group_id, holder_kind="work_base_confirm")

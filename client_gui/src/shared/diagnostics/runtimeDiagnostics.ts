@@ -1,5 +1,5 @@
 // Bounded-memory runtime diagnostics for the intermittent browser-freeze investigation
-// (flowgate.default.0616 T0004). Observation only — nothing here changes SSE/AI/UI
+//. Observation only — nothing here changes SSE/AI/UI
 // behavior, and every recorder is best-effort (a diagnostics failure must never break the
 // flow it observes). Never store document body/prompt/token/attachment content or raw
 // paths — timestamp/duration/count/source/state metadata only.
@@ -109,12 +109,12 @@ export type DiagnosticsEntry =
       refreshEpoch: number | null
     }
 
-// T0004 §3: bounded ring buffer, 300-500 entries. Oldest entries drop first.
+// bounded ring buffer, 300-500 entries. Oldest entries drop first.
 const MAX_ENTRIES = 400
 const buffer: DiagnosticsEntry[] = []
 
 // Any single measured duration at/above this is treated as a long-task-like candidate
-// even on a browser without PerformanceObserver longtask support (T0004 §4 fallback).
+// even on a browser without PerformanceObserver longtask support (fallback).
 const LONG_TASK_LIKE_MS = 50
 
 function push(entry: DiagnosticsEntry): void {
@@ -140,7 +140,7 @@ export function registerDiagnosticsContext(
 }
 
 // The most recent SSE/reconnect/visibility signal, attached to every long-task entry so a
-// captured freeze can be correlated to what just happened (T0004 §4). `lastRecoverySourceAt`
+// captured freeze can be correlated to what just happened. `lastRecoverySourceAt`
 // is the wall-clock time it was set, so consumers can tell a label recorded moments ago from
 // one that has been sitting stale since before an offline/hidden window started (rev2 finding
 // 2 — e.g. an SSE `ping` seen right before going offline must not read as "just happened").
@@ -207,7 +207,7 @@ let longTaskObserver: PerformanceObserver | null = null
 // PerformanceObserver longtask entries are the primary signal (Chrome/Edge). Where the
 // browser does not support the entry type, callers still get equivalent coverage from the
 // explicit performance.now() duration measurements taken around ai-refresh / persist /
-// markdown-parse below, which double as the "보조 지표" duration fallback T0004 §4 asks for.
+// markdown-parse below, which double as the "secondary metric" duration fallback the earlier implementation asks for.
 export function startLongTaskObserver(): void {
   if (typeof window === 'undefined' || longTaskObserver) return
   try {
@@ -229,7 +229,7 @@ export function startLongTaskObserver(): void {
 }
 
 export function recordSseEvent(eventType: string): void {
-  // A plain SSE event is itself a recovery-chain signal (T0004 §4): a refresh/parse/long
+  // A plain SSE event is itself a recovery-chain signal: a refresh/parse/long
   // task that follows must be able to point back at the event that caused it, not at a
   // stale reconnect/visibility source from an earlier tick.
   noteRecoverySource(`sse_event:${eventType}`)
@@ -247,7 +247,7 @@ export function recordReconnectOpened(reason: string, waitMs: number): void {
 }
 
 // One logical screen-refresh transaction per flush. The epoch is intentionally a loose,
-// best-effort correlator (T0004 §7 "가능하면") rather than a strict per-event id: fan-out
+// best-effort correlator ("if possible") rather than a strict per-event id: fan-out
 // recorders elsewhere read `getCurrentRefreshEpoch()` whenever their own watcher fires.
 let refreshEpoch = 0
 export function getCurrentRefreshEpoch(): number {
@@ -308,7 +308,7 @@ export function recordFanOut(kind: string, epoch: number | null): void {
 
 // Coalesces same-tick visibility-recovery signals from independent modules (SSE, AI-run
 // store, token refresh) under one generation number so their entries can be read as one
-// timeline (T0004 §8) without introducing an actual coordinator — none is added by this T.
+// timeline without introducing an actual coordinator — none is added by this T.
 let visibilityGeneration = 0
 let lastVisibilityTickAt = 0
 export function beginVisibilityRecoveryTick(): number {
@@ -380,7 +380,7 @@ export function recordMarkdownParse(
   // module-global read — by the time a >=50ms parse finishes, a second, unrelated SSE event
   // may already have overwritten the module-global `lastRecoverySource`, which previously let
   // the promoted long_task entry name a different cause than the markdown_parse entry it is
-  // supposed to represent (breaking the T0004 §4/§13 event-to-long-task correlation).
+  // supposed to represent (breaking the the earlier implementation event-to-long-task correlation).
   if (parseMs >= LONG_TASK_LIKE_MS) {
     pushLongTask(parseMs, 'markdown_parse', recoverySource, recoverySourceAgeMs)
   }
@@ -433,7 +433,7 @@ export function summarizeDiagnostics(): {
   return { total: buffer.length, byType, maxLongTaskMs, slowAiRefreshCount, maxAiRefreshMs }
 }
 
-// Dev-console access (T0004 §11): `window.__fgDiagnostics.dump()` / `.summary()` / `.clear()`.
+// Dev-console access: `window.__fgDiagnostics.dump()` / `.summary()` / `.clear()`.
 // Non-sensitive metadata only, so this is left available in every build rather than
 // dev-gated — the freeze this investigates happens on a real running session, not only in
 // a dev server.

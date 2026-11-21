@@ -1,4 +1,4 @@
-"""Conversation production contract (flowgate.v02.0032 D0006).
+"""Conversation production contract.
 
 * chat command requests: approval-gated command execution for chat AI runs, one
   contract for both transports (API ``run_command`` tool, CLI ``/chat-commands``);

@@ -8,7 +8,7 @@ import { createGitCenterDiff, type GitCenterDiffSession } from '@/features/git/g
 import type { GitDiffIntent } from '@/features/git/types'
 import { G, P, gitError, networkError } from './fakeGitSource'
 
-// flowgate.v02.0066 T#6 — C29: the Center Diff session and screen (0066 D#2 §3-10, §6-6): which
+// C29: the Center Diff session and screen: which
 // intents open, latest answer only, closing, and every state / error line. The server message
 // is never shown.
 // flowgate.v02.0067 T#4 — the screen is the Git modeless `Diff` tab detail: `‹ 목록으로` (raised as

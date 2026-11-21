@@ -1,4 +1,4 @@
-"""0066 E4--E6: real Git contents, real TR2 mutation guard and HTTP contracts."""
+"""E4--E6: real Git contents, real TR2 mutation guard and HTTP contracts."""
 from __future__ import annotations
 
 import json

@@ -15,7 +15,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 // server that keeps the system_settings rows, the storage-root answer, the users and a paused run's
 // stored picks, and that answers the way the real routes do (422 texts/codes, 409 codes, the
 // Scratch pair written all-or-nothing). Every call is recorded with its body, so "PATCH 1건",
-// "두 키만", "요청 0건" and "재조회값" are read off the request list and the server state.
+// "only two keys", "zero requests" and "re-read values" are read off the request list and the server state.
 // The server's own behaviour on the real routers/auth/RBAC/store is pinned separately by
 // server/tests/test_system_general_users_0076.py.
 
@@ -228,7 +228,7 @@ beforeEach(async () => {
     scratch_ttl_value: { value: '7', type: 'integer' },
     source_mode: { value: 'remote', type: 'string' },
     storage_root: { value: '/data/stored-root', type: 'string' },
-    // flowgate.v02test.0053 0002-CH turn 68: rows an older server stored for the removed 검증 system setting (ignored).
+    // Rows an older server stored for the removed verification system setting (ignored).
     verify_max_runs: { value: '3', type: 'integer' },
     verify_run_timeout_sec: { value: '180', type: 'integer' },
   }
@@ -276,7 +276,7 @@ afterEach(() => {
 })
 
 describe('V01 (시스템 부분) — 일반 joins the menus', () => {
-  // 0120 T#2: Agents moved to the personal menu while remaining administrator-only.
+  // Agents moved to the personal menu while remaining administrator-only.
   it('A: hub 시스템 card opens 일반 and lists 일반 · 사용자 · 전체 프로젝트; Agents is offered under 내 설정', async () => {
     const hub = await open('/settings')
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')

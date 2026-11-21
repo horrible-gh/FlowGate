@@ -1,6 +1,6 @@
-"""flowgate.default.0520 T0004 -- Test Report locale propagation regression.
+"""Test Report locale propagation regression.
 
-NR0003 root cause: the UI's chosen locale never reached test_runs (route -> service -> DB),
+root cause: the UI's chosen locale never reached test_runs (route -> service -> DB),
 so the background TSR-assembly worker -- which runs outside any request context -- always
 fell back to assemble_tsr()'s "ko" default. test_d_point_locale_0430.py already pins the
 *string* tables (_tsr_content per locale, zero-Korean-leakage). These tests instead pin the
@@ -106,7 +106,7 @@ def test_validate_and_create_run_persists_the_effective_locale(monkeypatch, tmp_
 
 
 def test_validate_and_create_run_defaults_to_ko_when_no_locale_given(monkeypatch, tmp_path):
-    """Legacy/direct unit callers (T0004 Sec.9) still get the prior default."""
+    """Legacy/direct unit callers (Sec.9) still get the prior default."""
     inserted = {}
     svc = _wire_validate_and_create_run(monkeypatch, tmp_path, inserted=inserted)
 
@@ -169,7 +169,7 @@ def test_ui_session_route_falls_back_to_ko_without_the_header(monkeypatch):
 
 
 def test_repair_token_route_prefers_continuation_locale_over_the_header(monkeypatch):
-    """0520 T0004 Sec.4.2/Sec.11: the token's own continuation_locale -- inherited
+    """Sec.4.2/Sec.11: the token's own continuation_locale -- inherited
     hop-to-hop by engine_recipe_service._emit_repair for an unmanned chain -- outranks
     the request header, the same priority every other continuation-token consumer in
     this codebase already uses (inbox_routes.py).
@@ -273,7 +273,7 @@ def test_worker_uses_the_locale_refetched_from_the_db_row_not_the_admission_time
     """The object handed to _execute_run_inner at admission carries no locale -- only the
     fresh db_test_runs.get_run() read after the run finishes does. A test that only checks
     a locale variable still in scope on the same call stack cannot catch a regression here
-    (T0004 Sec.14.6); this one forces the read through the DB refetch.
+    (Sec.14.6); this one forces the read through the DB refetch.
     """
     captured = {}
 
@@ -298,7 +298,7 @@ def test_worker_uses_the_locale_refetched_from_the_db_row_not_the_admission_time
 
 def test_worker_falls_back_to_ko_for_a_run_row_with_no_locale(exec_env):
     """Runs created before this column existed keep the prior silent-ko default rather
-    than crashing on a missing key (T0004 Sec.9: legacy/direct callers keep the default)."""
+    than crashing on a missing key (Sec.9: legacy/direct callers keep the default)."""
     captured = {}
 
     def fake_assemble_tsr(doc, run, cases, locale="ko"):
@@ -427,7 +427,7 @@ def test_inbox_worker_token_defaults_to_ko_with_no_locale_source_at_all(monkeypa
     assert captured["locale"] == "ko"
 
 
-# -- flowgate.default.0621 T0004 §4.4/§6.3: test_run's dry-run branch shares the same
+# -- the earlier change the earlier implementation: test_run's dry-run branch shares the same
 # effective_locale as the real run admitted right below it. Before this fix, effective_locale
 # was computed *after* _maybe_dry_run returned, so a dry-run request never got a chance to see
 # it -- these pin case A (header-only) and case B (continuation_locale still outranks the

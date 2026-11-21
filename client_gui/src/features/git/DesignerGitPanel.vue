@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — the Designer right Tool Panel `Git` tab content (0033-D §5.1). Public
+// the Designer right Tool Panel `Git` tab content. Public
 // part of features/git: a Tool Panel Container mounts
 // `<DesignerGitPanel :project-id :flow :active :read-only @badge-change @open-diff
 //   @open-confirm-settings @windows-change />` and may call refresh / restoreWindow /
@@ -65,16 +65,16 @@
 // The panel owns one Git session for its lifetime; the container keeps it mounted after the
 // first show so the badge stays live while the tab is hidden (§3.8).
 //
-// flowgate.v02.0066 — beside it the panel owns the Group worktree session (0066 D#2 §2-2): the
+// beside it the panel owns the Group worktree session: the
 // worktree area below the exception cards once git/status confirmed Git on (§3-1), refresh and
 // tab activation reading both sessions, the worktree count added to a count badge (§3-8), the
 // worktree `open-diff` intent (origin worktree, diffSource group) and `git-center-diff-refresh`.
 // A worktree confirm dialog is bound to the project / Flow / generation it was opened in: it
 // closes when that context goes and its action runs only while the context is still current.
-// T#7: the `Diff` pane rows raise the same intent with the target as compareBase, and a merge
+// the `Diff` pane rows raise the same intent with the target as compareBase, and a merge
 // dialog also closes when the merge target changes (0066 D#2 §3-2-2 ⑤ ⑦).
 //
-// flowgate.v02.0067 T#4 — the worktree diff no longer goes up: the panel owns the Center Diff
+// the worktree diff no longer goes up: the panel owns the Center Diff
 // session and its intents open it as the detail of the Git modeless `Diff` tab (0067-R §6); the
 // session's `git-center-diff-refresh` goes straight to it. Only the 0033 intents (conflict / AI /
 // review / uncommitted Base file) still raise `open-diff`, as before.
@@ -125,7 +125,7 @@ const props = withDefaults(
     readOnly?: boolean
     source?: GitSource
     /**
-     * flowgate.v02test.0052: a system administrator — the forced cleanup of a merge git refuses to abort is theirs only.
+     * a system administrator — the forced cleanup of a merge git refuses to abort is theirs only.
      * Absent = the signed-in person's own flag (`core/auth/currentUser`, from /auth/me); the server checks it again.
      */
     isAdmin?: boolean
@@ -158,7 +158,7 @@ const worktree = createGitWorktreeSession({
   source: props.source,
   onCenterDiffRefresh: (request) => diff.refresh(request),
 })
-// flowgate.v02test.0013 — an AI run of the shown Flow changes working files with no Git action of
+// an AI run of the shown Flow changes working files with no Git action of
 // the panel: when it ends (or the event stream reconnects after a drop) the worktree area reads
 // again, also while the tab is hidden so the count badge stays right (§3-8). Only frames of the
 // shown Flow count; matching events within the coalesce window are one read, and requestReads
@@ -177,7 +177,7 @@ useInspectorEvents(
     changed: () => worktree.refresh(),
   },
 )
-// flowgate.v02gui.0004 (0001-B §A-1, 관찰 2): a conflict (or its end) is shown as it happens — the Git ledger frames of
+// (B §A-1, observation 2): a conflict (or its end) is shown as it happens — the Git ledger frames of
 // the shown Flow read git/status and the conflict again, also while the tab is hidden (badge), with no F5. The
 // inspector event hook coalesces a burst of frames into one read.
 const GIT_LEDGER_EVENTS = [
@@ -359,7 +359,7 @@ watch(
   },
 )
 
-// flowgate.v02.0065 — Git 미연동 / read failure / Git 연결 (0065-R §3.1, §3.2). One branch shows
+// flowgate.v02.0065 — "Git 미연동" / read failure / "Git 연결" (0065-R §3.1, §3.2). One branch shows
 // either the read-failure card, the "미연동" card (a status the server answered with Git off) or
 // the 0033 exception area — a failed re-read never leaves an earlier exception card (and its
 // actions) up beside it. "미연동" also hides the header, as v12 does; it stays in the DOM.
@@ -367,7 +367,7 @@ watch(
 // `windows-change` keeps reporting the 0033 windows only.
 //
 // A re-read the network failed keeps the last answer and only notes it on the header (0033
-// §4.5). Over a connected project that is right; over "Git off" it would leave 미연동 up with
+// §4.5). Over a connected project that is right; over "Git off" it would leave Disconnected up with
 // the header (and its note) hidden — even after a connect turned Git on. There it is a read
 // failure: the error card with retry, until a read answers.
 const staleUnlinked = computed(
@@ -475,7 +475,7 @@ function openConnect(): void {
 }
 
 // Settings that exist with Git off open the window filled in (never the token: only whether
-// one is stored). A failed read leaves the form empty with a note; 미연동 stays as it is.
+// one is stored). A failed read leaves the form empty with a note; Disconnected stays as it is.
 // A request of a closed window still running is waited for, so the form shows what it left.
 async function loadConnectConfig(projectId: string, gen: number): Promise<void> {
   await connectSettled.get(projectId)
@@ -553,7 +553,7 @@ async function runConnect(projectId: string, gen: number, input: GitConfigSave):
     return stopConnect({ tone: 'error', messageKey: requestFailureKey(error, 'gui.git.connect.result.test_failed') })
   }
 
-  // 2. Save with Git on — `연결` is the Git 사용 switch (0065-R §3.3).
+  // 2. Save with Git on — `연결` is the Git use switch (0065-R §3.3).
   try {
     await connectSrc().saveGitConfig(projectId, input)
   } catch (error) {

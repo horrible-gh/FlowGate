@@ -45,7 +45,7 @@ function lineOf(slot: DesignSlot): InspectorSlotView {
     key: slot.key,
     kind: slot.kind,
     name: t(k(`slot.${slot.key}`)),
-    // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+    // the kind's key travels with the line (see openCardLineAction).
     nameKey: k(`slot.${slot.key}`),
     id: slot.id,
     empty: slot.empty,
@@ -55,12 +55,12 @@ function lineOf(slot: DesignSlot): InspectorSlotView {
     danger: slot.state?.tone === 'danger',
     open: slot.open,
     author: authorOf(slot.key),
-    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line.
+    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · Empty · the history number · [AI 호출] of the card's own line.
     ...cardLineRow(props.target, slot, slot.key),
   }
 }
 
-/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI 또는 사람), as the server sent it. */
+/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI or a person), as the server sent it. */
 function authorOf(key: string): string | null {
   return props.target.cardDocuments.find((line) => line.slot === key)?.author ?? null
 }
@@ -71,12 +71,12 @@ function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

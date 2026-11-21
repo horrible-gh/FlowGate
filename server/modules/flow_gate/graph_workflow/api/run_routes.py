@@ -1,6 +1,6 @@
-"""Run routes (P0008 §7 S5-1~S5-5, S6-1). Thin: no judgement lives here.
+"""Run routes. Thin: no judgement lives here.
 
-flowgate.v02.0113 T#5: ``GET /runs/{run_id}/command-result[?command_seq=N]`` — the result of one step / full command
+``GET /runs/{run_id}/command-result[?command_seq=N]`` — the result of one step / full command
 (``flowgate.graph_run.command_result``, a read only): 200 ``{"command_result": …}``, 404 ``command_not_found``, 422 for a
 ``command_seq`` that is not a positive integer."""
 from __future__ import annotations
@@ -26,7 +26,7 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
         user_id = envelope.authenticate(request)
         envelope.client_id_of(request)
         revision_no, errors = parse_start(body)
-        mode, mode_errors = parse_mode(body)                    # flowgate.v02.0061 T#2: step / full
+        mode, mode_errors = parse_mode(body)                    # step / full
         command_request_id, cid_errors = parse_command_request_id(body)
         errors = errors or mode_errors  # Preserve legacy validation precedence without an ID.
         errors = errors + [e for e in cid_errors if e not in errors]

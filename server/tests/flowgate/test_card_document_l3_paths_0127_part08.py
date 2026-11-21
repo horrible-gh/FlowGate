@@ -99,7 +99,7 @@ def test_CI04_to_CI08_ledger_refusal_observations(l3,case):
         result=chat_tools.stub_handler(l3.run,inp)
     else:
         result=chat_adapter.revise_card_document_call_handler(l3.run,ctx)
-    # Section 5 uses the reason shorthand; 0010-L 2.5 and P#2 5.2 give
+    # Section 5 uses the reason shorthand; the earlier implementation 2.5 and P#2 5.2 give
     # the normative full envelope, including invalid_request as the code.
     expected_errors=([{'field':'tool_call_id','reason':'required'}] if case=='empty_provider_id' else
         [{'field':'call_context','reason':'invalid_format','validation':{'reason':'call_identity_unavailable'}}])

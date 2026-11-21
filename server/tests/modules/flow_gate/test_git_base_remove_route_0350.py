@@ -1,8 +1,8 @@
-"""flowgate.default.0350 — route boundary for POST …/git/base-remove.
+"""route boundary for POST …/git/base-remove.
 
 `git_integration_0115/test_base_remove_and_retry0350*.py` exercises
 `git_service.base_remove` directly, so the *service* is well covered. The HTTP
-route that TR0005 added alongside it was not: nothing asserted the path string,
+route that the earlier implementation added alongside it was not: nothing asserted the path string,
 the request-body field name, the RBAC dependency, or that a `GitServiceError`
 leaves as the git envelope rather than a bodyless 500. Every one of those is a
 contract the client depends on —
@@ -146,7 +146,7 @@ class TestBaseRemoveRoute0350:
         assert calls["remove"] == []
 
     def test_never_folded_into_the_tracked_revert_route(self, calls):
-        """T0004 §2.1: the destructive delete stays a separate entry point.
+        """the destructive delete stays a separate entry point.
 
         base-revert restores tracked content that still exists in HEAD;
         base-remove discards the only copy of a file that was never committed.

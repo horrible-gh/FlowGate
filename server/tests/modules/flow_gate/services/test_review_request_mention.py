@@ -45,7 +45,7 @@ def test_review_mention_is_review_genre_not_create_next():
 
 def test_review_mention_submission_payload_is_action_review():
     m = _build()
-    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): the submission section
+    # set 3 (D-0003 "retain minimal result-submission guidance"): the submission section
     # keeps the address + credential and points at the `submit` help item for the
     # action:review body; the verdict semantics stay inline in the Verdict guide.
     assert "Submit your review: POST http://127.0.0.1:8088/flowgate/api/v1/inbox" in m
@@ -65,7 +65,7 @@ def test_review_mention_includes_target_get_and_token():
     # Worker must be able to read the doc and authenticate the submission.
     assert "GET http://127.0.0.1:8088/flowgate/api/v1/document/test.none.0002.0003-DS" in m
     assert "Bearer RAWTOKEN123" in m
-    # T0004 (0506): the Scratch directory section stays active (workers still need
+    # : the Scratch directory section stays active (workers still need
     # {SCRATCH} guidance for file artifacts) but no longer interpolates the actual
     # server-local absolute path — that stays internal/runtime metadata only.
     assert "D:\\test\\storage2\\work\\test\\tok_x" not in m

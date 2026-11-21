@@ -1,4 +1,4 @@
-// flowgate.v02test.0056 (R 0056.0001 §2) — reading and saving the Designer's three Dock sizes.
+// Reading and saving the Designer's three Dock sizes.
 //
 // They are the logged-in person's own settings: GET/PATCH /api/v1/me/ui-settings carries them as
 // designer_left_width / designer_right_width / designer_bottom_height (the server keeps one row per

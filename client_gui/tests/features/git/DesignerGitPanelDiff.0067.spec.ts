@@ -18,7 +18,7 @@ import {
   type FakeWorktreeState,
 } from './fakeWorktreeSource'
 
-// flowgate.v02.0067 T#4 — the `Diff` tab of the Git modeless (0067-R §6, v27 `compareBase()` /
+// the `Diff` tab of the Git modeless (the earlier implementation, v27 `compareBase()` /
 // `workDiff()`) in the real DesignerGitPanel with in-memory sources: the comparison list first, with a
 // path search and pages (§6-1); a file opens in the same window and `목록으로` goes back to the list
 // it came from — `파일 관리` when it was opened there (§6-2); `파일 경로` with the full path once and

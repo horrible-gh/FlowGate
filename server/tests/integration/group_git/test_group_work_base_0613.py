@@ -331,9 +331,9 @@ def test_outbox_create_new_group_persists_validated_work_base_ref(
 def test_outbox_create_existing_group_applies_work_base_ref_when_unlocked(
     repo, tmp_path, monkeypatch
 ):
-    """flowgate.default.0613 TR0014 rev2: the rejection removed the blanket
+    """the rejection removed the blanket
     "existing group = readonly" rule. Before real Git work has locked the group,
-    picking a Base Branch for it is ordinary group setup. flowgate.v02.0104 D0004
+    picking a Base Branch for it is ordinary group setup. the earlier change the design
     §3.4: it is now the PATCH route's change path (row lock + conditional save) on
     the real group row, only without the expected comparison."""
     db_groups.insert_group("p.default.0001", "p", "default", "Existing", None, None)
@@ -404,7 +404,7 @@ def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(repo, mo
 def test_group_work_base_locked_reads_permanent_git_history_not_just_current_worktree(
     monkeypatch, state, locked
 ):
-    """flowgate.default.0613 TR0014 rev2: worktree.unregister_worktree() clears
+    """worktree.unregister_worktree clears
     worktree_registered on slot cleanup while status/initial_source_sync_at stay
     as permanent group history, and worktree.py's terminal-reopen path resolves
     C1 ancestry against resolve_group_work_base_ref again. A provisioning
@@ -643,14 +643,14 @@ def test_h1_async_and_h2_share_the_same_durable_resolver(monkeypatch):
         (("p", "default", "p.default.1", "remote_access"), {}),
     ]
 
-# ── T0013 follow-ups: migration ordinal, Base Branch delete guard, options boundary ──
+# ── the earlier implementation follow-ups: migration ordinal, Base Branch delete guard, options boundary ──
 
 _MIGRATIONS = Path(__file__).resolve().parents[3] / "sql" / "migrations"
 _DIALECTS = ("sqlite", "postgres", "mysql")
 
 
 def test_work_base_migration_owns_ordinal_119_in_every_dialect():
-    """T0013 §1: 118 is held by the unmerged sibling 0517 (118_snapshot_lineage.sql).
+    """118 is held by the unmerged sibling 0517 (118_snapshot_lineage.sql).
 
     The work-base migration therefore takes the next ordinal free on both sides, with
     one identical file name per dialect, and the ledger carries any database that
@@ -665,7 +665,7 @@ def test_work_base_migration_owns_ordinal_119_in_every_dialect():
         assert sorted(p.name for p in directory.glob("119*_*.sql")) == [
             "119_group_work_base_ref.sql"
         ]
-        # 118 is flowgate.default.0517's snapshot lineage (merged since); never this migration
+        # 118 is the earlier change's snapshot lineage (merged since); never this migration
         assert [p.name for p in directory.glob("118*_*.sql")] == ["118_snapshot_lineage.sql"]
     assert ("118_group_work_base_ref.sql", "119_group_work_base_ref.sql") in RENAMES
 
@@ -743,7 +743,7 @@ def branch_repo(tmp_path, monkeypatch):
 def test_delete_is_blocked_while_an_active_group_pins_the_branch_as_base(
     branch_repo, group_store,
 ):
-    """T0013 §2 minimum regression, steps 1-5."""
+    """minimum regression, steps 1-5."""
     # 1-2. an ordinary local branch stored as an OPEN group's Base Branch.
     group_store.add_group("p.default.0001", "p", "release-base")
 
@@ -802,7 +802,7 @@ def test_existing_delete_guards_keep_their_codes_and_order(branch_repo, group_st
 
 
 def test_work_base_options_list_exactly_what_group_creation_accepts(repo, monkeypatch):
-    """T0013 §3: the requirement dialog's options are the validator's accepted set."""
+    """the requirement dialog's options are the validator's accepted set."""
     _git(repo, "branch", "slot-owned")
     monkeypatch.setattr(
         git_service.db_git, "get_config", lambda _pid: {"enabled": 1, "base_branch": "main"}
@@ -896,8 +896,8 @@ def test_requirement_author_reads_options_but_not_the_branch_manager_catalog(mon
     assert client.get("/api/v1/projects/secret/git/work-base-options").status_code == 403
 
 
-# ── 0009-TR#1 rev3: the three diff call sites must key off the group's OWN
-# durable work base, not the project-wide base_branch (D0004/L0006 §2.2 scope) ──
+# ── the earlier implementation#1: the three diff call sites must key off the group's OWN
+# durable work base, not the project-wide base_branch (scope) ──
 
 def test_diff_call_sites_use_the_pinned_group_work_base_not_project_base(repo, monkeypatch):
     """rev2 changed ``_group_diff_context``, ``collect_scope_changes`` and
@@ -991,7 +991,7 @@ def test_seeded_author_role_contract_matches_the_options_permission(migrated_sql
 
 @pytest.mark.parametrize("branch_count", [0, 1, 60])
 def test_options_batch_ownership_matches_old_filter_once(repo, monkeypatch, branch_count):
-    """D0104 §7.1: one ownership read, including cleaned-up/failed rows, for B branches."""
+    """one ownership read, including cleaned-up/failed rows, for B branches."""
     names = [f"feature/{i:03}" for i in range(branch_count)]
     states = [
         {"group_id": f"p.default.{i}", "branch": name,

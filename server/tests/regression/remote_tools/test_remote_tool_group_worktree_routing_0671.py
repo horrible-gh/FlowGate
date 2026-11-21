@@ -1,5 +1,5 @@
 """Two REAL managed git worktrees, mutated through the real routing API
-(flowgate.default.0671 T0002; this TR's own last rejection, finding 2).
+(this TR's own last rejection, finding 2).
 
 The previous revision's ``env`` fixture gave each group its own ``git init``'d directory and
 set ``group_git_state.worktree_registered = 1`` by a raw SQL insert, with

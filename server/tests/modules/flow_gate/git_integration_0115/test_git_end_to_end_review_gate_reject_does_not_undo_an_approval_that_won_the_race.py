@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_reject_does_not_undo_an_approval_that_won_the_race(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev5 (AI review finding, same class): `reject_merge_review`
+        # AI review finding (same class): `reject_merge_review`
         # checked review_state BEFORE taking the project lock and then restored
         # the conflict from that pre-lock context — so an approval that committed
         # while the rejection was waiting for the lock was both undone in the

@@ -1,7 +1,7 @@
-"""Attachments of a root converted by number swap (0064 L0005 2.7.1, DB0007 §2.5 / §4 Q9·Q10).
+"""Attachments of a root converted by number swap.
 
-A number swap changes the document id (``…0001-R`` → ``…0001-B``) and the attachment room next to the
-body (``0001-R/`` → ``0001-B/``), so the rows and the files move together:
+A number swap changes the document id (``…the earlier implementation`` → ``…the earlier implementation``) and the attachment room next to the
+body (``the earlier implementation/`` → ``the earlier implementation/``), so the rows and the files move together:
 
 1. ``require_target_empty``: the target id has no attachment row at all (an orphan of an earlier swap
    included) — checked after the target id is known, when staging starts and before the first row write.
@@ -14,12 +14,12 @@ body (``0001-R/`` → ``0001-B/``), so the rows and the files move together:
 4. ``finish_attachment_room``: only queues the cleanup of the old files and the empty old room after the
    outermost commit; another row pointing at the same file keeps it.
 
-A succession (L0005 2.9.3, 0064 T#4) stages the same way (1, 2) and then ``copy_attachments`` registers the
+A succession stages the same way  and then ``copy_attachments`` registers the
 copies as the new document's rows; the original rows, files and room stay and nothing is queued for them.
 
 Every cleanup — the old files after the commit, the copies and a room made here after a rollback — removes
 only what it owns (the file identity taken when the file was read or made, a room only while empty) and runs
-under the durable lock of the guard the next writer of those paths takes (``flow_guard.run_cleanup``, 0064 T#3).
+under the durable lock of the guard the next writer of those paths takes (``flow_guard.run_cleanup``, the earlier implementation).
 """
 from __future__ import annotations
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
@@ -145,7 +145,7 @@ def stage_attachment_room(doc: dict, new_id: str, new_file_path: Optional[str], 
         if dict(row) != snapshot.get(name):
             raise ConversionRefused("attachments_changed", doc_id=doc_id)
         dst = new_room / row["filename"]
-        if os.path.islink(dst) and not os.path.islink(new_room):  # a link already at the target (L0005 2.9.3)
+        if os.path.islink(dst) and not os.path.islink(new_room):  # a link already at the target
             raise ConversionRefused("attachment_target_exists", doc_id=doc_id, filename=name)
         resolved = dst.resolve(strict=False)
         if resolved.parent != room_key or not within_storage_jail(resolved, project_id):
@@ -253,7 +253,7 @@ def referenced_by_any_attachment(abs_path) -> bool:
 
 
 def copy_attachments(doc: dict, new_id: str, stage: AttachStage, mode: str) -> None:
-    """L0005 2.9.3, a succession: register the copies ``stage_attachment_room`` made as the new document's rows.
+    """2.9.3, a succession: register the copies ``stage_attachment_room`` made as the new document's rows.
 
     No file is copied here. Before the first INSERT the target id is empty again (an empty ``moves`` too) and
     the source rows are still the snapshot (order free); every row — ghosts too — becomes a new row with its

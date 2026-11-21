@@ -1,4 +1,4 @@
-"""AI roles a chat chooses for the cards it places (flowgate.v02gui.0032, decisions 6-8).
+"""AI roles a chat chooses for the cards it places (decisions 6-8).
 
 The chat picks each placed card's instruction / execution / review AI itself; the AI role group defaults only fill
 what it leaves out (they stand in for "nothing chosen" when a person places a card), and an AI group's preset is used

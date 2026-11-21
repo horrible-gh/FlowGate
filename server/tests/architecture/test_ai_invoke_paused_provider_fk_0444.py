@@ -1,4 +1,4 @@
-"""0444 TS0011 — NR0003 §4-3/§5 provider FK regression coordinates.
+"""provider FK regression coordinates.
 
 MySQL cannot be started on the FlowGate test host, so the MySQL half fixes the exact
 migration contract statically.  The SQLite half executes the user-visible invariant
@@ -47,7 +47,7 @@ def test_non_mysql_086_counterparts_remain_explicit_no_ops():
 
 
 def test_deleting_a_provider_degrades_the_paused_pin_not_the_chain(migrated_sqlite_db):
-    """NR0003 §5 runtime oracle, exercised through the real SQLite migration set."""
+    """runtime oracle, exercised through the real SQLite migration set."""
     seed_sql = """
     INSERT INTO projects(project_id, project_name, is_active, created_at, updated_at)
       VALUES('flowgate', 'FlowGate', 1, datetime('now'), datetime('now'));

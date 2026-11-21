@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F1 — the review history window's rules (documentWindow/documentHistoryModel.ts): one
+ * the review history window's rules (documentWindow/documentHistoryModel.ts): one
  * timeline of a document's rejections and AI reviews newest first (ties keep the stored order, entries
  * without a time go last), the 전체 / 반려 / AI 검수 filter with its counts, the verdict word, the short time
  * and the note of what a rerun replaced. Pure.

@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0065 — git/status could not be read (0065-R §3.1): its own block and words so a
+// git/status could not be read: its own block and words so a
 // read or network failure is never taken for "Git 미연동". The session's statusError keeps the
 // network / unreadable split; retry reads the status again.
 import { useI18n } from 'vue-i18n'

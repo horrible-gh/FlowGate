@@ -7,7 +7,7 @@ const OPTIONS = [
   { value: 'b', label: 'Beta', disabled: true },
 ]
 
-// T0004 §5.4/§9: value binding, change/update, disabled, keyboard interaction.
+// value binding, change/update, disabled, keyboard interaction.
 describe('components/ui/Select (T0004)', () => {
   it('renders each option with its label', () => {
     const wrapper = mount(Select, { props: { options: OPTIONS, modelValue: 'a' } })

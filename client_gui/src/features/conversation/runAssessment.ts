@@ -1,4 +1,4 @@
-// flowgate.v02.0147 T#2: stored body evidence and process completion are independent.
+// stored body evidence and process completion are independent.
 import type { AiRunState, ConversationTurn, StatusTone } from './types'
 import type { ChatRunState } from './api'
 
@@ -27,7 +27,7 @@ export function runBodyState(turns: readonly ConversationTurn[], runId: string, 
 
 const FAILURE_REASONS = new Set(['timeout', 'all_providers_failed', 'worker_error', 'spawn_failed', 'provider_start_failed', 'orphaned_by_restart'])
 /**
- * flowgate.v02test.0035: whether a finished run (its `end_reason` / `exit_code`, as the `ai_invoke_finished` event sends
+ * whether a finished run (its `end_reason` / `exit_code`, as the `ai_invoke_finished` event sends
  * them) failed — the same rule runStatusLines uses for a finished run. A stop (`cancelled`) is not a failure.
  */
 export function finishedRunFailed(endReason: string | null | undefined, exitCode: unknown): boolean {

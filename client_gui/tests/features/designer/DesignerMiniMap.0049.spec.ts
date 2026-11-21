@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0049 — the bottom MiniMap: alone (what it draws, how a press / drag turns into a
+ * the bottom MiniMap: alone (what it draws, how a press / drag turns into a
  * Viewport) and inside the Center column with the real Canvas (Vue Flow) and a real Center
  * session — the Graph, Viewport and Canvas size it draws are the session's, and its moves reach
  * the Canvas. jsdom lays nothing out: the Canvas size comes from a stubbed offsetWidth / Height

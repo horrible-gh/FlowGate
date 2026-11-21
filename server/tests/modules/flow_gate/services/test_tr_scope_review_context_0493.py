@@ -1,4 +1,4 @@
-"""Reviewer-facing actual/reported scope manifest in build_review_mention (0493 T0005).
+"""Reviewer-facing actual/reported scope manifest in build_review_mention.
 
 T1: a reviewer must not rely only on the TR body's self-reported changed-files list.
 The server-computed manifest -- one row per ACTUAL worktree change, tagged reported /
@@ -132,7 +132,7 @@ def test_scope_context_section_absent_when_no_stored_verdict():
 
 
 def test_scope_context_section_unconfirmed_dict_shape_not_treated_as_two_fake_paths():
-    """0009-TR#1 rev2 regression: inbox_routes._tr_scope_meta() persists ``unconfirmed``
+    """#1 regression: inbox_routes._tr_scope_meta persists ``unconfirmed``
     as ``{"count", "items"}`` (same shape as ``file_manifest``), not a bare list. Reading
     that dict directly as a list made an EMPTY result iterate as its own keys, printing
     "count" and "items" as if they were reported-but-missing file paths."""
@@ -160,7 +160,7 @@ def test_scope_context_section_unconfirmed_dict_shape_not_treated_as_two_fake_pa
 
 
 def test_scope_context_section_names_graph_attempt_basis():
-    """0110 T#2: the reviewer sees which tree the manifest was measured on and from which commit."""
+    """the reviewer sees which tree the manifest was measured on and from which commit."""
     meta = {
         "tr_scope": {
             "verdict": "pass", "codes": [], "unconfirmed": {"count": 0, "items": []},

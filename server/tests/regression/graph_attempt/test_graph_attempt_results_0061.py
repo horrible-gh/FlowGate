@@ -1,4 +1,4 @@
-"""0061 T#8 regression specifications. TR compiles; TS/TSR runs behavior.
+"""regression specifications. TR compiles; TS/TSR runs behavior.
 
 SQLite uses the real additive migrations. Git tests create two linked attempt
 worktrees. Process/Flow/event/config/lock boundaries are controlled by fixtures.

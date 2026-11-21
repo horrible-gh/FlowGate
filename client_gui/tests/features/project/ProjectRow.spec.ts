@@ -4,8 +4,8 @@ import ProjectRow from '@/features/project/ProjectRow.vue'
 import type { Project } from '@/features/project/types'
 import { setTestLocale } from './projectI18n'
 
-// WP0005 T#2 §2.3/§8: selected is a non-color-only signal, and the row never nests one
-// interactive element inside another. flowgate.v02.0040: the row no longer marks the
+// selected is a non-color-only signal, and the row never nests one
+// interactive element inside another. the earlier change: the row no longer marks the
 // current Project at all.
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -135,7 +135,7 @@ describe('features/project/ProjectRow', () => {
     expect(wrapper.find('.project-row-updated').text()).toContain('2026-09-26')
   })
 
-  // flowgate.v02.0088 F04: the row's words follow the language; the Project name and the date are data.
+  // the row's words follow the language; the Project name and the date are data.
   it.each([
     ['ja', '最終更新 2026-09-20', '開く'],
     ['en', 'Last modified 2026-09-20', 'Open'],

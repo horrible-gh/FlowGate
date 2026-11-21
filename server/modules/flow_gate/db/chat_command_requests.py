@@ -1,4 +1,4 @@
-"""Durable chat command requests (flowgate.default.0670 T0004, NR0003 §7.1).
+"""Durable chat command requests.
 
 One row per command an AI chat run asked to execute. The row is the single source of
 truth for the approval state machine -- the browser only ever renders it and posts a
@@ -6,7 +6,7 @@ decision; the waiting AI run reads the same row back. Status transitions are gua
 compare-and-set updates (``WHERE status IN (...)``) so a late click, a policy
 decision and a run finalization can never both win.
 
-flowgate.default.0675 T0004: each row also carries its conversation anchor
+each row also carries its conversation anchor
 (``chat_activity_anchor``), decided here on insert and re-decided when the run's AI
 reply turn lands, so the screen places it without guessing from loaded turns.
 """

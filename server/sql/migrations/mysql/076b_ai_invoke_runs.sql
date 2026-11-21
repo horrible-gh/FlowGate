@@ -1,19 +1,19 @@
 -- 076b_ai_invoke_runs.sql
 -- flowgate.default.0359 (B0001 → NR0003 → P0006 → L0007 → DB0008).
--- SQLite 원본(sql/migrations/sqlite/076b_ai_invoke_runs.sql)의 MySQL/MariaDB 판이다.
--- 근거·컬럼 설계는 원본 주석과 DB0008 §3.4 참고. 방언 차이 넷만 여기서 다룬다.
+-- MySQL/MariaDB version of the SQLite original (sql/migrations/sqlite/076b_ai_invoke_runs.sql).
+-- See the original comments and DB0008 §3.4 for rationale and columns. Four dialect differences:
 --
--- 1. 키 열(run_id/group_id/project_id/provider_id/issued_to/started_at/finished_at)을
---    TEXT → VARCHAR(191). MySQL 은 TEXT 를 접두 길이 없이 인덱싱/FK 할 수 없다.
--- 2. 짧은 열거 열(mode/status/outcome/end_reason/stop_code)을 VARCHAR 로 승격한다.
---    TEXT 열에는 리터럴 DEFAULT 를 줄 수 없다(status 기본값 'finished').
--- 3. FK 를 표 수준 CONSTRAINT 로 쓴다 — InnoDB 는 열 정의에 인라인으로 적은 REFERENCES 를
---    조용히 무시한다(마이그레이션 067이 겪은 문제. 059의 방식을 따른다).
--- 4. CREATE INDEX IF NOT EXISTS → CREATE INDEX. MySQL 8 에는 IF NOT EXISTS 가 없고,
---    원장이 한 번만 적용을 보장하므로 필요 없다(052 선례). BEGIN/COMMIT 도 생략한다
---    (DDL 이 암묵적으로 커밋되므로 명시적 트랜잭션은 의미가 없다).
+-- 1. Convert key columns (run_id/group_id/project_id/provider_id/issued_to/started_at/finished_at)
+--    from TEXT to VARCHAR(191). MySQL cannot index/reference TEXT without a prefix length.
+-- 2. Promote short enum columns (mode/status/outcome/end_reason/stop_code) to VARCHAR.
+--    TEXT columns cannot have literal defaults (status defaults to 'finished').
+-- 3. Write FKs as table-level CONSTRAINTs: InnoDB silently ignores inline REFERENCES
+--    in column definitions (the problem in migration 067; follow 059).
+-- 4. Replace CREATE INDEX IF NOT EXISTS with CREATE INDEX. MySQL 8 lacks IF NOT EXISTS,
+--    and the migration ledger guarantees one application (precedent: 052). Also omit BEGIN/COMMIT
+--    because DDL commits implicitly, making explicit transactions meaningless.
 --
--- ALTER TABLE ... ADD COLUMN 4줄은 원본과 동일하다(051·059의 MySQL 판과 같은 형태).
+-- The four ALTER TABLE ... ADD COLUMN lines match the original (as in the MySQL versions of 051/059).
 
 CREATE TABLE IF NOT EXISTS ai_invoke_runs (
     run_id               VARCHAR(191) PRIMARY KEY,

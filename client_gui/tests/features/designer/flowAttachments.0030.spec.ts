@@ -28,7 +28,7 @@ describe('Flow attachment undo (delete at once, ↶ for five seconds)', () => {
     await vi.advanceTimersByTimeAsync(5000)
     expect(commit).not.toHaveBeenCalled()
   })
-  // flowgate.v02test.0036 T#1: closing a window no longer clears the queue (the work manager keeps it). clear() is what
+  // closing a window no longer clears the queue (the work manager keeps it). clear is what
   // a read-only Flow and the end of the session do; flowAttachmentOperations.0036.spec.ts covers those paths.
   it('clear (read-only / session end) cancels the countdown and a staged file is never staged twice', async () => {
     vi.useFakeTimers()

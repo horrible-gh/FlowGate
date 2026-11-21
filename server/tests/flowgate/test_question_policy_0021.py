@@ -40,7 +40,7 @@ def slot(pid):
 
 
 def test_review_ai_first_then_independent_default_never_the_askers_provider(routing):
-    # flowgate.v02test.0051 T0005 (A1): the asking ROLE no longer decides — the actual asker's provider does. A review AI
+    # (A1): the asking ROLE no longer decides — the actual asker's provider does. A review AI
     # that is the asker's own provider is skipped for an independent enabled default; the instruction role never answers.
     routing["slots"] = {"review": slot("A"), "instruction": slot("A")}
     for role in ("execution", "review", "instruction", None):
@@ -189,7 +189,7 @@ def test_assistant_asks_once_more_before_failing_0004_ch(monkeypatch):
     assistant._worker("r", "u1", {}, "prompt")
     assert assistant.result("u1", "r")["reply"]["message"] == "ok"
     assert prompts[0] == "prompt" and assistant.RETRY_NOTES["reply_invalid"] in prompts[1]
-    # 0026 (0004-CH): three attempts in all before a failure reaches the screen.
+    # (CH): three attempts in all before a failure reaches the screen.
     answers = iter(["not json", "still not json", "again not json"])
     assistant._requests["r"] = {"user_id": "u1", "status": "running"}
     assistant._worker("r", "u1", {}, "prompt")
@@ -294,7 +294,7 @@ def test_assistant_uses_selected_personal_provider(monkeypatch):
     assert seen[0].provider_id == "personal" and seen[0].credential == "private-key"
 
 
-# 0026 (0009-CH): the final turn (summary + whole draft) failed again and again while the short turns worked.
+# (CH): the final turn (summary + whole draft) failed again and again while the short turns worked.
 def test_assistant_reads_draft_with_raw_newlines_0009_ch():
     draft = "## AI가 스스로 결정하는 것\n- 테스트는 AI가 진행\n\n## 예외\n- 운영 배포는 하지 않는다"
     raw = '{"message": "정리했습니다", "choices": [], "policy": "' + draft + '"}'

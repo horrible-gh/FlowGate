@@ -1,4 +1,4 @@
-"""q_service answer/status tests — document-bound container model (group 0022 Q/A/V revamp)."""
+"""q_service answer/status tests — document-bound container model (Q/A/V revamp)."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -42,7 +42,7 @@ def test_register_answer_human_transitions_done_when_all_answered():
         "doc_id": doc_id, "item_id": 10, "answer_id": 21,
         "author_kind": "human", "status": "done",
     }
-    # 0582 T0005 §D: register_answer always forwards the three author_* provenance
+    # §D: register_answer always forwards the three author_* provenance
     # columns now (None here — a human answer never resolves an AI provenance).
     insert_answer.assert_called_once_with(
         question_item_id=10, body="Answer", author_kind="human", author_id="usr_test",
@@ -81,7 +81,7 @@ def test_register_answer_ai_nulls_author_id_and_stays_pending():
 
     assert result["author_kind"] == "ai"
     assert result["status"] == "pending"
-    # 0582 T0005 §D: the caller passed no author_provenance, so all three columns
+    # §D: the caller passed no author_provenance, so all three columns
     # stay None -- legitimately unknown, not silently dropped.
     insert_answer.assert_called_once_with(
         question_item_id=10, body="AI answer", author_kind="ai", author_id=None,

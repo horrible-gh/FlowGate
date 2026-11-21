@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0012 0001-B item B — changing a Group identifier renames the module key everywhere.
+"""item B — changing a Group identifier renames the module key everywhere.
 
 Contract under test:
   - PATCH /projects/{pid}/modules/{name} changes title and/or identifier independently; "neither" is a no-op.
@@ -8,12 +8,12 @@ Contract under test:
   - An identifier another group uses is refused (409 module_identifier_taken) and the refusal names it.
   - Running work in the module refuses the rename (409 module_rename_busy); nothing changes.
   - Format / reserved identifiers are refused with a stable code.
-  - flowgate.v02test.0040 T0005: every refusal is a warning, an unexpected failure an exception record and a
+  - the earlier change the earlier implementation: every refusal is a warning, an unexpected failure an exception record and a
     success an info line with its duration and document count, all of them reaching logs/default.log; a Flow /
     document lock not free in time (one wait budget for all the locks together, not one per lock) is 409
     module_rename_busy (reason flow_lock_timeout / document_lock_timeout) with nothing changed; a module above the
     document limit is refused (409 module_rename_too_large) before any lock is taken.
-  - flowgate.v02test.0040 T0007: an identifier an archived group holds is still refused (409 module_identifier_taken),
+  - the earlier change the earlier implementation: an identifier an archived group holds is still refused (409 module_identifier_taken),
     with details.holder.archived / archived_at and a message saying the holder is archived; the archived group's own
     identifier change succeeds, keeps project_modules.archived_at / archived_by, and frees the identifier.
 
@@ -452,7 +452,7 @@ def test_git_worktree_and_branch_move_and_revert(tmp_path):
     assert _git(old_wt, "rev-parse", "--abbrev-ref", "HEAD") == f"{P}_v02gui_0001"
 
 
-# ── statement count: a rename must not cost one round trip per column or per value (0004-CH) ──────
+# ── statement count: a rename must not cost one round trip per column or per value (CH) ──────
 
 def test_rewrite_statements_do_not_grow_with_values(conn):
     from modules.flow_gate.db.module_rename import KeyRewriter, defer_foreign_keys, rewrite_database
@@ -528,7 +528,7 @@ def test_git_check_lists_refs_once(tmp_path):
         {"branch": f"{P}_v02chat_0002", "where": "origin"}, {"branch": f"{P}_v02chat_0003", "where": "local"}]
 
 
-# ── v02test.0040 T0005: logs, lock timeout -> 409, too large refused before any lock ─────────────────
+# ── v02test.0040 the earlier implementation: logs, lock timeout -> 409, too large refused before any lock ─────────────────
 
 _MR_LOGGER = "modules.flow_gate.services.module_rename"
 _FG_LOGGER = "modules.flow_gate.graph_workflow.services.flow_guard"
@@ -752,7 +752,7 @@ _G = [G] + [f"{P}.v02gui.{n:04d}" for n in range(2, 10)]
 ], ids=["nine_flows_4_9s_each", "free_lock_after_deadline", "document_lock_same_deadline"])
 def test_lock_waits_add_up_to_one_budget_not_one_per_lock(conn, storage, monkeypatch, flows, frees, loose, waits,
                                                          timed_out):
-    """TR0006 review: lock_wait_sec bounds the waiting for all the rename's locks together, so the locks taken
+    """review: lock_wait_sec bounds the waiting for all the rename's locks together, so the locks taken
     first are released (refusal 409) no later than lock_wait_sec after the first acquire began."""
     from flowgate.card_document_edit import write_gate
     from modules.flow_gate.db.module_rename import ModuleRenameRefused
@@ -870,7 +870,7 @@ def test_route_too_large_keeps_the_saved_title(client, conn):
     assert conn.execute("SELECT title FROM project_modules WHERE module_id = ?", [f"{P}:v02gui"]).fetchone()[0] == "v0.1 big"
 
 
-# ── v02test.0040 T0007: an archived group holds its identifier, says so, and can give it up ──────────────
+# ── v02test.0040 the earlier implementation: an archived group holds its identifier, says so, and can give it up ──────────────
 
 ARCHIVED_AT = "2026-11-17T11:35:00+09:00"
 

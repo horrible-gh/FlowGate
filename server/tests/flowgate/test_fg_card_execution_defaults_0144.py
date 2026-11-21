@@ -1,4 +1,4 @@
-"""0144 T0013: card defaults agree with dispatch without writing over stored choices."""
+"""card defaults agree with dispatch without writing over stored choices."""
 from copy import deepcopy
 
 import pytest

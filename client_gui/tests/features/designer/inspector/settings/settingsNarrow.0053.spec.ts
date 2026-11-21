@@ -1,16 +1,16 @@
 /**
- * flowgate.v02.0053 T#7 — the settings tab on a narrow Inspector (264px in a wide window). jsdom draws no
+ * the settings tab on a narrow Inspector (264px in a wide window). jsdom draws no
  * layout, so the drawn result was checked in Chromium (the real Frame and registry, 1348px window, Inspector
  * 264px up to 1084px, ko / en / ja: no overlap, nothing outside the tab, every choice clicked where it is drawn).
  * This keeps the rules that make it so, so they are not lost:
  *
  * - the block title line wraps (title one word, sub fills and wraps, the controls go to the next line);
- * - the requirement 범위 | AI Team and 안전 한도 rows follow the block's width, not the window's (no viewport
+ * - the requirement scope | AI Team and safety limit rows follow the block's width, not the window's (no viewport
  *   media query): two to a line only while both fit whole, never more than two;
- * - the check card's 용도 line wraps its choice under its label when it does not fit beside it;
+ * - the check card's purpose line wraps its choice under its label when it does not fit beside it;
  * - a control row may take more than one line (`wrap`): the 병합 대상 select with its two switches.
  *
- * flowgate.v02.0056 F2-1: the progress-after-review row (the other `wrap` row) is removed with its setting; the
+ * the progress-after-review row (the other `wrap` row) is removed with its setting; the
  * RUN card's 지시 AI row is a one-line select row.
  */
 import { readFileSync } from 'node:fs'

@@ -1,4 +1,4 @@
-"""0374 T0004 — reject new inbox documents whose type differs from the workflow head."""
+"""reject new inbox documents whose type differs from the workflow head."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -29,7 +29,7 @@ def _patch_validation(monkeypatch, head):
         "token_id": "tok-0374",
         "project": "flowgate",
         "issued_to": "worker-0374",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": "flowgate.default.0374",
         "action_scope": "new",
@@ -62,7 +62,7 @@ def _patch_validation(monkeypatch, head):
 
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_repeated_t_tr_head_rejects_tr_before_any_storage(monkeypatch, dry_run):
-    """The NR0003 incident: a second T head cannot accept a stale TR identity."""
+    """The the review incident: a second T head cannot accept a stale TR identity."""
     from modules.flow_gate.api import inbox_routes
 
     _patch_validation(monkeypatch, {"id": 18, "type": "T"})

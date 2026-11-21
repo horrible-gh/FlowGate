@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell ref="shell" :open="true" :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))" :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))" :initial-width="initialWidth" :initial-height="initialHeight"
+  <ModelessShell kind-color="#e7a244" ref="shell" :open="true" :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))" :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))" :initial-width="initialWidth" :initial-height="initialHeight"
     :min-width="540" :min-height="350" :minimized="win.minimized" @update:minimized="win.minimized = $event" @close="requestClose">
     <template #header><span class="step-title" data-test="wp-step-title"><span class="step-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path :d="paletteIconPath('pencil')" /></svg></span><strong>{{ t('title') }}</strong><span class="step-title-context">{{ target ? t('heading', { card: cardLabel, doc: docLabel }) : '—' }}</span><span v-if="dirty" :title="t('dirty')">●</span></span></template>
     <div class="step-window" data-test="wp-step-window" :data-row="target?.rowId" :data-window="win.id">
@@ -102,7 +102,7 @@ const charCount = computed(() => Array.from(props.win.draft.preInstructionText ?
 const attachmentName = computed(() => String(props.win.draft.preInstructionAttachment?.original_filename ?? ''))
 // 0073 T#2: the row is named as the main window names it — its card (작업 1) and document (작업 지시서), never the
 // Step key; the review is set in the main window's review popover, so this window has no review controls.
-// T0015: compact document identity, counter inside the text field, and no repeated card name in the body.
+// compact document identity, counter inside the text field, and no repeated card name in the body.
 const cardLabel = computed(() => {
   const current = target.value
   if (!current) return ''
@@ -120,7 +120,7 @@ function selected(event: Event): void {
   input.value = ''
   if (file) void uploadWorkPlanStepFile(props.win, file)
 }
-// 0073 T#3: the attachment area shows the file icon, its name and choose/replace/remove; the size limit, the upload
+// the attachment area shows the file icon, its name and choose/replace/remove; the size limit, the upload
 // and cleanup rule and the save-first rule are in the ⓘ tooltip, the parent-draft note is on [저장]'s tooltip, and a
 // refused file says why in the error line. The checks themselves are unchanged (workPlanStepEditWindows). The tooltips
 // are native titles: the Tooltip primitive's bubble sits on --fg2-overlay-z (9999), under every ModelessShell panel.

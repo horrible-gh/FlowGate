@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0052 0008 — "복구 동선과 버튼 정리": the Git tab's conflict recovery path, end to end on a mounted
+ * "Recovery paths and button cleanup": the Git tab's conflict recovery path, end to end on a mounted
  * DesignerGitPanel with an in-memory source and a mocked run API.
  *   (1) [병합 중단] on the conflict card: abort, THEN cancel the approval parked on it, then the guidance
  *   (2) a closed merge session: [재시도] / [다시 반영] are off with their reason, [이 승인 취소] leads (card and window)

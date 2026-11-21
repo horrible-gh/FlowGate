@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from inbox_client import post_inbox
 
-# 0394 T0004 (NR0003 §13-5): the two inbox cases below used to call the private
+# the two inbox cases below used to call the private
 # `_handle_test_run` under `asyncio.run(...)`, which stopped working the moment that
 # handler became a plain `def` dispatched with anyio.to_thread — an internal change with
 # no effect on the endpoint. They post to /api/v1/inbox now; the assertions are the same.
@@ -142,7 +142,7 @@ def test_inbox_test_run_dry_run(monkeypatch):
             "token_id": "tok-1",
             "project": "flowgate",
             "issued_to": "user-1",
-            # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+            # `group_id` is a real tokens column (migration 075a) and inbox
             # Step 3 now compares it as the `group` axis.
             "group_id": "flowgate.default.0138",
             "action_scope": "test_run",
@@ -185,7 +185,7 @@ def test_inbox_test_run_accepts_and_consumes(monkeypatch):
             "token_id": "tok-1",
             "project": "flowgate",
             "issued_to": "user-1",
-            # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+            # `group_id` is a real tokens column (migration 075a) and inbox
             # Step 3 now compares it as the `group` axis.
             "group_id": "flowgate.default.0138",
             "action_scope": "test_run",

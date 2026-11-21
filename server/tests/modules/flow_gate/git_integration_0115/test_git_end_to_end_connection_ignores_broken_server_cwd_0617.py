@@ -69,11 +69,11 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_connection_ignores_broken_server_cwd_0617(self, origin_repo):
-        """flowgate.default.0617 T0004 (NR0003 §5/§7/§8-1): ls-remote must not
+        """ls-remote must not
         inherit the server process's own cwd. Reproduce the reported failure by
         chdir-ing the process into a directory whose `.git` is a broken linked-
         worktree gitdir pointer (the exact shape preview tooling produced in
-        NR0003 §3), and confirm test_connection still reaches the real origin
+        the reported failure), and confirm test_connection still reaches the real origin
         instead of failing on local repository discovery first.
         """
         from modules.flow_gate.services import git_service as svc

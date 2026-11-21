@@ -86,7 +86,7 @@ def test_06_multi_file_partial_resolve_keeps_the_rest_open(proj):
     assert view["resolved_count"] == 1 and view["unresolved"] == ["other.txt"]
     assert view["resolver_type"] == "human"
 def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
-    """T#3: conflict route must NOT auto-start the AI resolver. The attempt is left
+    """conflict route must NOT auto-start the AI resolver. The attempt is left
     open in 'conflict' state with ai.status=not_started and auto_start=False."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
@@ -106,7 +106,7 @@ def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
     assert resp.status_code == 202, resp.text
     body = resp.json()
     assert body["status"] == "conflict" and body["merge_id"]
-    # T#3 key assertions: resolver was NOT started automatically
+    # key assertions: resolver was NOT started automatically
     assert calls == [], "auto-start must not fire on conflict (T#3)"
     ai = body["ai"]
     assert ai["status"] == "not_started", f"expected not_started, got {ai['status']}"
@@ -121,7 +121,7 @@ def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
     from modules.flow_gate.db import git_concurrency as gc
     assert gc.list_locks_in_scope(p.pid) == []
 def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(proj, monkeypatch):
-    """T#3: /ai-resolve is the ONLY way to start the resolver.
+    """ai-resolve is the ONLY way to start the resolver.
     First call creates a run; duplicate call returns already_running (single live run)."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
@@ -142,8 +142,8 @@ def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(p
     assert resp.status_code == 202, resp.text
     body = resp.json()
     merge_id = body["merge_id"]
-    assert body["ai"]["status"] == "not_started"    # T#3: no run yet
-    assert calls == []                              # T#3: starter not called
+    assert body["ai"]["status"] == "not_started"    # no run yet
+    assert calls == []                              # starter not called
 
     # Step 2: user opens dialog and clicks [AI 호출] → /ai-resolve
     from modules.flow_gate.services.git import branch_merge as bm_mod

@@ -1,4 +1,4 @@
-"""0132 T#3: NR §5.3-8(a-f), §5.3-9(e-j), activity matrix and migration safety.
+"""NR (a-f), (e-j), activity matrix and migration safety.
 
 Real SQLite, intake/routes/Flow guards and resolver; job states model parked and live writers.
 Actual Git/Runner/Sweeper mixed-wait paths are in test_fg_gate_run_resume_0132.py.

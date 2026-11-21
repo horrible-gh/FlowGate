@@ -5,7 +5,7 @@ from .connection import get_store, now_iso
 
 
 def _invalidate_auth_cache(user_id: str) -> None:
-    """Drop the auth middleware's cached copy of this user row (0276 T0009).
+    """Drop the auth middleware's cached copy of this user row.
 
     is_active / is_admin gate access, so a change must apply immediately rather
     than at TTL expiry. Imported lazily: `modules.flow_gate.auth.__init__` pulls
@@ -32,7 +32,7 @@ def get_by_username(username: str) -> Optional[dict]:
 
 
 def usernames_by_ids(user_ids: list[str]) -> dict[str, str]:
-    """``{user_id: username}`` for the given ids in one query (flowgate.v02.0064 T-B5, DB0007 §2.6).
+    """``{user_id: username}`` for the given ids in one query.
 
     Ids with no row (a removed user) are simply absent from the result.
     """
@@ -102,7 +102,7 @@ def update(user_id: str, updates: dict[str, Any]) -> Optional[dict]:
         f"UPDATE users SET {set_clause} WHERE user_id = ?",
         [*updates.values(), user_id],
     )
-    # 0276: the auth path caches this row for a few seconds; a change to
+    # the auth path caches this row for a few seconds; a change to
     # is_active / is_admin must not wait for the TTL.
     _invalidate_auth_cache(user_id)
     return get_by_id(user_id)

@@ -5,7 +5,7 @@ Three cases, driven through the endpoint with a real issued token:
   2. no sequence on the document         → next_type is the "undecided" placeholder
   3. sequence decided, head in progress  → next_type marks the head as already running
 
-flowgate.default.0394 T0004 (NR0003 §7.1 / §13-14) — this file is the survivor of four.
+this file is the survivor of four.
 
 T330 left `test_t330_direct_mention.py`, `test_t330_mention_integration.py`,
 `test_t330_mention_verification.py` and `test_t330_verify_mention.py` side by side, about

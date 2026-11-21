@@ -1,4 +1,4 @@
-"""flowgate.v02.0152 -- the first AI call of a chat failed with "could not call the AI"; the second worked.
+"""the first AI call of a chat failed with "could not call the AI"; the second worked.
 
 Cause (code-confirmed): ``POST /ai-invoke/start`` answered only after admission had hashed the
 whole group worktree -- twice for a chat run (admission's own ``_chat_start_tree`` and the chat

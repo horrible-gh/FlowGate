@@ -1,4 +1,4 @@
-"""0045: immutable recovery inputs exercised through real Git worktree creation."""
+"""immutable recovery inputs exercised through real Git worktree creation."""
 from unittest.mock import Mock
 import pytest
 from test_graph_attempt_workspaces_0061 import harness, repo, prepare, PROJECT, GROUP

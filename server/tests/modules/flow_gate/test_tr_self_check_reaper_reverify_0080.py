@@ -1,6 +1,6 @@
-"""0080 T#3: the Self-check reaper, operator re-verification and a lost G heartbeat.
+"""the Self-check reaper, operator re-verification and a lost G heartbeat.
 
-The card's core checks (NR0007 §5 items 5, 6, 7):
+The card's core checks (items 5, 6, 7):
 
 1. the sweeper's reaper step (``job_sweeper.step_selfcheck_reaper``) ends nothing while the
    owning server or the process tree is UNKNOWN -- an owner whose lookup fails (its
@@ -29,7 +29,7 @@ And the review fixes of the same card, each as the regression it closes:
 
 Fixtures: ``flow`` of tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 and ``world`` of
 test_tr_self_check_recover_proof_0080 (run rows, owner server rows and G written directly,
-real short python children). Injected, as in T#1/T#2: the identity lookup failure
+real short python children). Injected, as in the earlier implementation/the earlier implementation: the identity lookup failure
 (``executor.probe_start_identity``), a failing heartbeat write, the keeper's store read
 (``lock_manager.selfcheck_regain``), a failing spawn / result read (``executor.spawn`` /
 ``executor.wait``) and the candidate page size. Not covered: the UI, POSIX, multi-server.
@@ -216,7 +216,7 @@ def _running_hold(store, rid):
 
 
 def _settled(store, rid, timeout=60.0):
-    """0053 1-B: wait until a queue worker claimed the run and is done with it (ended or held)."""
+    """wait until a queue worker claimed the run and is done with it (ended or held)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         row = _row(store, rid)
@@ -289,7 +289,7 @@ def test_a_partial_spawn_stays_protected_after_its_worker(world, monkeypatch, kn
     row = _row(store, rid)
     assert row["status"] == "pending" and row["active_key"] is None and row["error_code"] is None, row
     assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", proof.TREE_UNPROVEN)
-    # 0053 1-B: a queue run holds no G -- the unproved run keeps only its own slot (reservation).
+    # a queue run holds no G -- the unproved run keeps only its own slot (reservation).
     assert _g(store) is None
     assert row["cpu_reservation"] >= 1
     assert db_runs.host_reservations(row["host_node_key"], 64)[1] >= row["cpu_reservation"]

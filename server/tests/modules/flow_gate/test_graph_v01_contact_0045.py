@@ -1,8 +1,8 @@
-"""flowgate.v02.0045 T0013 (S4) — v0.1 contacts delegate to the engine router (D0004 §4.3).
+"""(S4) — v0.1 contacts delegate to the engine router.
 
 Regression: for an unassigned or v0.1 Flow every contact gives the v0.1 result unchanged (the
 same request with the contact bypassed answers the same and leaves the same rows). A Graph or
-conflict Flow is refused with the v0.1 flat error (P0008 §9 S4-9~S4-11). L0009 §2.2.3: an
+conflict Flow is refused with the v0.1 flat error. the earlier implementation: an
 unassigned Flow's decide runs inside the Flow guard — a v0.1 failure leaves it unassigned, and a
 decide and a Graph confirmation racing on one Flow never both win (E-05). The real v0.1 decision
 routes run against a real SQLite DB; only the bearer check and SSE delivery are stubbed.
@@ -193,7 +193,7 @@ def test_decide_on_conflict_flow_is_refused(env):
 
 
 def test_failed_decide_inside_the_guard_leaves_the_flow_unassigned(env, monkeypatch):
-    """L0009 E-06: the v0.1 exception rolls the whole guarded unit back and reaches v0.1 as is."""
+    """E-06: the v0.1 exception rolls the whole guarded unit back and reaches v0.1 as is."""
     routes = env["routes"]
     real = routes.decide_workflow
 
@@ -259,7 +259,7 @@ def test_document_events_reach_the_result_binder_only_for_graph_flows(env, monke
     v01_contact.after_review_decided(None, "x", "approve")                    # no Flow: nothing
 
 
-# ── assignment race (L0009 E-05) ─────────────────────────────────────────────
+# ── assignment race ─────────────────────────────────────────────
 
 def test_decide_and_confirmation_racing_on_one_flow_never_both_win(env):
     from modules.flow_gate.db.connection import get_store

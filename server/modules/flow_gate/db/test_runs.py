@@ -25,7 +25,7 @@ def get_run(run_id: str) -> Optional[dict]:
 
 
 def get_running_by_doc(doc_id: str) -> Optional[dict]:
-    # 0358 T0004 §4: 'cancelling' is still an active row (the kill/cleanup hasn't
+    # 'cancelling' is still an active row (the kill/cleanup hasn't
     # landed yet) — the concurrent-run gate must keep 409-ing until the terminal
     # 'cancelled' row appears. Only 'cancelled' — not 'running'/'cancelling' — allows
     # a fresh admission.
@@ -39,7 +39,7 @@ def get_running_by_doc(doc_id: str) -> Optional[dict]:
 def get_active_by_group(group_id: str) -> Optional[dict]:
     """The most recent still-running/cancelling run of ANY document in a group.
 
-    0441 TR0005 rev2 (rejection: every OTHER document of the group must go inert too):
+    (rejection: every OTHER document of the group must go inert too):
     ``get_running_by_doc`` answers the per-document admission gate, so it can only lock
     the tab the run was started from. The action bar has to go inert on every document of
     the group, so the same 'running'/'cancelling' predicate is asked group-wide here.
@@ -128,7 +128,7 @@ def insert_spec_run(
     locale: Optional[str],
     case_meta: list[str],
 ) -> dict:
-    """Record one specification-TS result submission as a terminal run (0549 T0008).
+    """Record one specification-TS result submission as a terminal run.
 
     A contract-2 run never executes anything on this server, so it is born terminal:
     ``status`` is passed/failed, ``picked_at`` is stamped, and TestRunWorker's
@@ -185,7 +185,7 @@ def _run_kind(row: dict) -> Optional[str]:
 
 
 def _is_initialization(row: dict) -> bool:
-    """0684 T#1 (D#1 §7): a zero-result initialization run left by approvals before 0684.
+    """a zero-result initialization run left by approvals before 0684.
 
     Kept as history, never read as an attempt, a recent failure or a result.
     """
@@ -195,7 +195,7 @@ def _is_initialization(row: dict) -> bool:
 def latest_spec_run(doc_id: str, revision_no: Optional[int] = None) -> Optional[dict]:
     """Newest contract-2 result record for a TS (optionally for one TS revision).
 
-    0684 T#1: an execution run (``run_kind=spec_execution``) is not a result record -- its
+    an execution run (``run_kind=spec_execution``) is not a result record -- its
     results are recorded as a run of their own -- so a just-admitted or live run never
     hides the earlier record its report keeps for the Cases it does not run.
     """
@@ -237,7 +237,7 @@ def set_run_tsr_doc(run_id: str, tsr_doc_id: str) -> None:
 
 def set_execution_case_result(*, case_row_id: int, status: str, actual: Optional[str],
                               case_meta: str) -> None:
-    """0684 T#1 (D#1 §3-4): one Case result of a live execution run, kept as it arrives.
+    """one Case result of a live execution run, kept as it arrives.
 
     The run's Case row carries it until the run records its result record, so the report
     and the views show a finished Case while the remaining Cases still run.
@@ -251,7 +251,7 @@ def set_execution_case_result(*, case_row_id: int, status: str, actual: Optional
 
 def mark_spec_report_failed(run_id: str) -> None:
     """A specification result whose TSR could not be written is not a gate pass
-    (0257 NR0003 §2 applied to 0549): terminal failed with a distinct error."""
+    (applied to 0549): terminal failed with a distinct error."""
     get_store()._execute(
         "UPDATE test_runs SET status = 'failed', error = 'report_assembly_failed' "
         "WHERE run_id = ? AND contract_version = 2",
@@ -396,7 +396,7 @@ def set_run_port(run_id: str, port: int) -> None:
 
 
 def set_run_source_root(run_id: str, source_root: str, source_root_kind: str) -> None:
-    """Record the tree this run actually executed in (0280 NR0003 §6-2).
+    """Record the tree this run actually executed in.
 
     *source_root* is storage-root-relative; *source_root_kind* is 'worktree' or the
     reason the run fell back to the base project-branch tree. Written once, right
@@ -419,14 +419,14 @@ def finish_run(
 ) -> None:
     """Terminal write for a natural completion (setup_failed/passed/failed).
 
-    Gated to rows still 'running' (0358 T0004 risk 2): once a cancel has moved a run to
+    Gated to rows still 'running' (risk 2): once a cancel has moved a run to
     'cancelling'/'cancelled', a racing natural completion must not resurrect it as
     passed/failed. This WHERE clause is a real guard at the SQL level regardless of
     FlowGateStore._execute's missing affected-row count — it just does not by itself
     tell the caller which side won a race. Callers that need to branch on the outcome
     must serialize with test_run_service._get_run_lock(run_id) around this call.
 
-    0684 T#1: a contract-2 run linked to the report it opened at admission keeps that
+    a contract-2 run linked to the report it opened at admission keeps that
     link when it finishes without assembling one (``tsr_doc_id`` None keeps the column).
     """
     get_store()._execute(
@@ -465,7 +465,7 @@ def list_active_spec_runs() -> list[dict]:
 
 
 def mark_orphaned_running() -> int:
-    """Startup reap (0358 T0004 §4): 'running' rows the crashed process never
+    """Startup reap: 'running' rows the crashed process never
     finished become failed/orphaned_by_restart as before; 'cancelling' rows — a
     cancel was accepted but cleanup never landed before the restart — become
     cancelled/cancelled_by_restart rather than being left stuck mid-cancel forever.
@@ -502,7 +502,7 @@ def latest_spec_result(doc_id: str, revision_no: int, basis_id: str) -> Optional
         except (TypeError, ValueError):
             continue
         if meta.get("run_kind") == "initialization":
-            continue  # 0684 T#1: zero results is no result (D#1 §7)
+            continue  # zero results is no result
         if meta.get("basis_id") == basis_id and not meta.get("stale"):
             return row
     return None

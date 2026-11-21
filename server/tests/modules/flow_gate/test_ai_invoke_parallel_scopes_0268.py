@@ -8,7 +8,7 @@ allowlist, so no amount of front-end wiring could have started a run for them.
 Two things are pinned here:
 
 1. `_ALLOWED_SCOPES` admits both scopes (the structural half of the fix).
-2. Each scope is judged by the row ITS OWN token may write — the 0259 B0001 rule. Neither
+2. Each scope is judged by the row ITS OWN token may write — the the regression rule. Neither
    scope can register a document, so the document oracle would report 'none' for a perfect
    worker; and, symmetrically, a worker that does nothing must still settle 'none' rather
    than inherit a trivially-satisfied docs_target of 0.
@@ -156,7 +156,7 @@ def _run(world, action_scope, work=None):
 # ── The structural half: the allowlist was the actual blocker ────────────────
 
 class TestScopesAreInvokable:
-    """NR0003 §2.2: both surfaces were copy-only because these scopes were not admitted."""
+    """both surfaces were copy-only because these scopes were not admitted."""
 
     def test_sequence_edit_and_test_run_are_allowed_invoke_scopes(self):
         assert "workflow_sequence_edit" in routes._ALLOWED_SCOPES
@@ -177,7 +177,7 @@ class TestScopesAreInvokable:
         assert "test_run" not in ("new", "edit", "workflow_decide")
 
 
-# ── The judging half: 0259 B0001's rule applied to the two new scopes ────────
+# ── The judging half: the regression's rule applied to the two new scopes ────────
 
 class TestPerfectWorkerSucceeds:
 
@@ -195,7 +195,7 @@ class TestPerfectWorkerSucceeds:
 
 
 class TestNoWorkStillFails:
-    """The fix must judge the work, not rename the verdict (0259 B0001의 규칙)."""
+    """The fix must judge the work, not rename the verdict (the the regression rule)."""
 
     def test_test_run_worker_that_starts_nothing_is_none(self, world):
         run = _run(world, "test_run", work=None)
@@ -217,7 +217,7 @@ class TestNoWorkStillFails:
 
 
 class TestSequenceEditProbeShape:
-    """Why max_item_seq and not a plain count (NR0003 → _probe_sequence_max_item)."""
+    """Why max_item_seq and not a plain count (→ _probe_sequence_max_item)."""
 
     def test_probe_reads_the_max_item_seq_of_the_bound_sequence(self, world):
         assert svc._probe_sequence_max_item(TARGET) == 2

@@ -1,11 +1,11 @@
-"""flowgate.default.0459 T0007 — group-keyed paused chain 명시적 취소·해제 API.
+"""group-keyed paused chain explicit cancel/release API.
 
-Covers the server half of NR0003 방향 C / WP T#2:
+Covers the server half of the review approach C / WP the earlier implementation:
 
   * DB layer (``ai_invoke_paused_chains.release_owned``): compare-and-swap delete,
     NULL-safe on ``paused_at``/``stop_run_id``, race survival (a row upserted after the
     caller's read is never taken), a control case proving a bare ``delete_by_group``
-    would have destroyed that newer row, AND (0459 TR0008 rev1) a write that lands
+    would have destroyed that newer row, AND a write that lands
     strictly between the initial SELECT and the DELETE statement itself, plus two
     processes deleting the same snapshot -- the exact zero-row CAS races now proved
     by the production store's affected-row contract instead of a post-SELECT guess.
@@ -15,7 +15,7 @@ Covers the server half of NR0003 방향 C / WP T#2:
     run exists and the DISTINCT 409 ``group_lease_active`` when only a valid lease
     does (both preserved, ``force_release_group_lease`` never called), an expired
     lease is invisible (falls through to the CAS delete).
-  * The same ownership rule retrofitted onto ``resume_chain``, including (0459 TR0008
+  * The same ownership rule retrofitted onto ``resume_chain``, including (the earlier implementation
     rev1) the exact replacement race the rev0 review flagged: a non-owner/non-admin
     cannot consume or relaunch someone else's paused chain, an admin override still
     works, AND a row that changes owner strictly between the ownership read and the
@@ -154,7 +154,7 @@ class FakePausedStore:
                 or row.get("paused_at") != paused_at
                 or (row.get("stop_kind") or "user") != normalized
                 or row.get("stop_run_id") != stop_run_id):
-            # 0459 TR0008 rev2: the row EXISTS but no longer matches the caller's
+            # the row EXISTS but no longer matches the caller's
             # snapshot -- a real conflict, distinct from "nothing to consume" (None).
             return db_paused.ReleaseSuperseded(dict(row))
         return self.rows.pop(group_id)
@@ -189,7 +189,7 @@ class _MiniStore:
 
 class _RacingMiniStore:
     """Like ``_MiniStore``, but models a concurrent upsert landing strictly BETWEEN
-    ``release_owned``'s initial SELECT and its DELETE statement (0459 TR0008 rev1) --
+    ``release_owned``'s initial SELECT and its DELETE statement --
     the exact window the rev0 review flagged. The DELETE's actual affected-row count
     must be zero when its predicate reaches a replacement row; a later SELECT only
     decides whether that zero means absent or superseded.
@@ -405,7 +405,7 @@ class TestReleaseOwnedDbLayer:
             stop_kind="user", stop_run_id=None,
         )
 
-        # 0459 TR0008 rev2: NOT a bare None -- the row is still THERE, just no longer
+        # NOT a bare None -- the row is still THERE, just no longer
         # matching the snapshot, so it must come back as a ReleaseSuperseded wrapping
         # the current row, never folded into "nothing to consume".
         assert isinstance(result, db_paused.ReleaseSuperseded)
@@ -445,7 +445,7 @@ class TestReleaseOwnedDbLayer:
 
     def test_a_write_landing_between_the_select_and_the_delete_is_not_reported_released(
             self, monkeypatch):
-        """0459 TR0008 rev1 -- the exact bug the rejection flagged: a concurrent
+        """the exact bug the rejection flagged: a concurrent
         upsert that lands AFTER the initial SELECT (so the pre-DELETE Python compare
         still sees the old, matching snapshot) but BEFORE the DELETE statement
         actually reaches the table must not be reported as a successful delete.
@@ -464,7 +464,7 @@ class TestReleaseOwnedDbLayer:
             stop_kind="user", stop_run_id=None,
         )
 
-        # NOT the stale `initial` row, and NOT a bare None either (0459 TR0008
+        # NOT the stale `initial` row, and NOT a bare None either (the earlier implementation
         # rev2) -- the race was caught by the post-DELETE verification, and the
         # CURRENT surviving row must come back wrapped, not silently reported as
         # released=true nor collapsed into "nothing to consume".
@@ -476,7 +476,7 @@ class TestReleaseOwnedDbLayer:
 
 class _MySQLRepeatableReadMiniStore:
     """Models MySQL/InnoDB's default REPEATABLE READ semantics for the survivor
-    re-read (0459 TR0008 rev4 review): a PLAIN SELECT in this transaction reuses the
+    re-read (review): a PLAIN SELECT in this transaction reuses the
     snapshot its first read established and cannot see a DIFFERENT transaction's
     DELETE + COMMIT that lands after that snapshot was taken, no matter how much
     later it runs. Only a locking read (``FOR UPDATE``) performs InnoDB's "current
@@ -524,10 +524,10 @@ class _MySQLRepeatableReadMiniStore:
 
 
 class TestReleaseOwnedMySQLRepeatableReadIsolation:
-    """0459 TR0008 rev4 review: the survivor re-read after a zero-row CAS must be a
+    """review: the survivor re-read after a zero-row CAS must be a
     locking read, or MySQL's default REPEATABLE READ makes it report a row that a
     DIFFERENT, already-committed transaction deleted as still superseding this call
-    -- exactly the ``already_released`` vs ``ReleaseSuperseded`` collapse T0007 §5
+    -- exactly the ``already_released`` vs ``ReleaseSuperseded`` collapse the earlier implementation
     forbids in the other direction.
     """
 
@@ -638,7 +638,7 @@ class _DriverOperationalError(Exception):
 
 
 class _CheckreadRaisingMiniStore:
-    """Models MariaDB's default ``innodb_snapshot_isolation=ON`` (0459 TR0008 rev5,
+    """Models MariaDB's default ``innodb_snapshot_isolation=ON`` (the earlier implementation,
     reproduced against a live MariaDB 12.2 instance): the CAS DELETE itself raises
     MySQL error 1020 (``ER_CHECKREAD``) instead of quietly returning affected=0 when
     its WHERE clause matched this transaction's snapshot but a DIFFERENT,
@@ -677,7 +677,7 @@ class _CheckreadRaisingMiniStore:
 
 
 class TestReleaseOwnedMariaDBCheckreadOnDelete:
-    """0459 TR0008 rev5: MariaDB's snapshot-isolation DML guard can make the CAS
+    """MariaDB's snapshot-isolation DML guard can make the CAS
     DELETE itself fail instead of silently returning zero affected rows -- this must
     be treated exactly like the ordinary affected==0 CAS-loser path, not surfaced as
     an unhandled 500, and never used to swallow an unrelated driver error.
@@ -775,7 +775,7 @@ class TestReleaseOwnerAndIdempotency:
         assert GROUP not in env["store"].rows
 
     def test_owner_releases_the_representative_group_lease_denied_row(self, env):
-        """T0004 section 11 / section 18.1: the work order's named representative
+        """the work order's named representative
         payload -- stop_kind=system, stop_code=group_lease_denied -- is the
         non-resumable (resumeAvailable=false) terminal case this whole feature
         exists for. no_output_exhausted alone never proves this exact stop_code
@@ -844,7 +844,7 @@ class TestReleaseVsActiveRunAndLease:
         # A valid lease here means "another process may be resuming/starting/handing
         # off" -- exactly the case this single-process in-memory registry cannot
         # faithfully simulate (get_active reconciles a memory-invisible run as stale
-        # in test mode, T0007 note below), so the lease boundary is mocked directly.
+        # in test mode, the earlier implementation note below), so the lease boundary is mocked directly.
         env["store"].put()
         monkeypatch.setattr(svc.db_group_ai_leases, "get_active",
                             lambda group_id: {"group_id": GROUP, "run_id": "aiv_lease_run"})
@@ -857,7 +857,7 @@ class TestReleaseVsActiveRunAndLease:
             svc.release_paused_chain(group_id=GROUP, user_id=OWNER, is_admin=False)
 
         assert exc.value.status_code == 409
-        # 0459 TR0008 rev1: DISTINCT from the active-run 409 above (run_already_active)
+        # DISTINCT from the active-run 409 above (run_already_active)
         # -- a caller blocked by a lease needs a different remedy (release the lease
         # separately from the locked-group screen) than a caller blocked by another
         # session's active run (adopt that run).
@@ -998,10 +998,10 @@ class TestReleaseVsResumeOrdering:
 
 
 class TestReleaseConflictVsSupersededRow:
-    """0459 TR0008 rev2 -- the exact bug the rejection flagged: ``release_owned``'s
+    """the exact bug the rejection flagged: ``release_owned``'s
     CAS miss (a newer pause/system-stop lands strictly between
     ``release_paused_chain``'s ownership read and the CAS delete) was being folded
-    into the SAME idempotent ``already_released`` 200 as a truly absent row. T0007
+    into the SAME idempotent ``already_released`` 200 as a truly absent row. the earlier implementation
     §5 permits that idempotent success ONLY when nothing exists for the group_id at
     all -- a superseded row is still a live pause somebody else owns, and reporting
     it as "already gone" told the store to delete a card for a chain that never left
@@ -1092,7 +1092,7 @@ class TestResumeOwnership:
 
     def test_a_row_replaced_between_the_ownership_read_and_consume_is_never_taken(
             self, env, monkeypatch):
-        """0459 TR0008 rev1 -- the exact race the rejection flagged: the ownership
+        """the exact race the rejection flagged: the ownership
         check reads OWNER's row, but a DIFFERENT user's newer pause replaces it in the
         gap before the consume step runs (a real upsert landing there). The old
         owner's already-authorized call must NOT silently consume or relaunch the new

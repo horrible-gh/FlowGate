@@ -1,11 +1,11 @@
 <template>
-  <!-- flowgate.v02.0048 T#13 — the WP summary of the documents tab (D#1 §10.2 T#13 row). A thin container:
+  <!-- the WP summary of the documents tab (row). A thin container:
        useWorkPlan reads, workPlanModel summarizes.
        flowgate.v02.0051 stage 2 — the v7 작업계획 card (0035 plan.m.*): the 작업계획 (WP) slot line and the
        전개 result line (empty "전개 전": no deploy API), built from the common slot list part.
        flowgate.v02.0053 T#5 (0053 CH) — 작업계획 · 전개 are the card's documents (made when it was placed): both
        open (document icon or name); no type code in a name.
-       flowgate.v02.0056 F1 (0056 CH §5) — the 0048 details (rev, totals, provider assignment, one row per
+       (CH) — the 0048 details (rev, totals, provider assignment, one row per
        card, "Step 편집은 …") are gone: the plan itself shows them in its document window. Under the lines
        stays what an operator acts on — how many cards the workflow started, and a warning when Steps
        have no AI assigned. The `rev n · Step n` line summary is gone as well.
@@ -13,9 +13,9 @@
        ⇉ 전개 actions stay as they were). Its document icon / name open the plan in the v0.2 work plan edit window
        (features/workPlanWindow through openDocument.ts: quantities, Steps, ✎ → the Step window), not the document
        window; the line's history, [업로드][다운로드], [작성] (no document yet) and [AI 호출] stay the card line's.
-       flowgate.v02.0074 T#1 (R §1.3) — one way in: the line has no ✎ (the document icon / name open it).
-       flowgate.v02.0074 T0017: no dashed block under the line — a plan with no started cards shows no progress line
-       (the block was not a drop target; the T#1 placeholder is gone). -->
+       (R) — one way in: the line has no ✎ (the document icon / name open it).
+       no dashed block under the line — a plan with no started cards shows no progress line
+       (the block was not a drop target; the the earlier implementation placeholder is gone). -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
     <InspectorSlotList :decisions="documentDecisions" :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
@@ -59,14 +59,14 @@ const { view, status, errorKey, reload } = useWorkPlan(() => props.target)
 const hasDocument = computed(() => props.target.docId !== null)
 
 /**
- * The document icon (or the name): flowgate.v02.0072 T#3 — the plan's work plan edit window (read only there when the
+ * The document icon (or the name): the earlier change the earlier implementation — the plan's work plan edit window (read only there when the
  * Flow is: ownership conflict, revision view, its run lock).
  */
 function openLine(line: InspectorSlotView) {
   if (line.id) openWorkPlan(props.target, line.id, host)
 }
 
-/** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+/** The history button: the line's review·rejection history window. */
 function historyLine(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }
@@ -86,9 +86,9 @@ function stateOf(reviewStatus: string | null, docStatus: string | null) {
 }
 
 /**
- * The plan line: the card's plan document (made when the card was placed, flowgate.v02.0053 T#5), else the bound
- * plan; a line without a document says why. flowgate.v02.0072 T#3: the one document line (R0001 §1.2, 0005-NR §1 —
- * the 전개 line is not shown).
+ * The plan line: the card's plan document (made when the card was placed, the earlier change the earlier implementation), else the bound
+ * plan; a line without a document says why. the earlier change the earlier implementation: the one document line (the requirement, the earlier implementation —
+ * the deployment line is not shown).
  */
 const lines = computed<InspectorSlotView[]>(() => {
   const target = props.target
@@ -100,7 +100,7 @@ const lines = computed<InspectorSlotView[]>(() => {
       ? {
           key: 'plan',
           name: t(k('slot.plan')),
-          // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+          // the kind's key travels with the line (see openCardLineAction).
           nameKey: k('slot.plan'),
           id: planId,
           state: planState.view,

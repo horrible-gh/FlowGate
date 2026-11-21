@@ -1,12 +1,12 @@
-"""The change summary attached to a save response (group 0370, P0002 scenarios 14-16 / L0003 §2-9).
+"""The change summary attached to a save response (the earlier change, the plan scenarios 14-16 / the earlier implementation).
 
 The "before" side is the backup file the save already creates (`previous_revision_path`), and
 the "after" side is the file just written. This summary is **stored nowhere** — no table and
-no column is added; it is returned in the response only (P0002 §5).
+no column is added; it is returned in the response only.
 
 The most important rule: **whatever goes wrong while building the summary, the save is
 already done.** Raising a failure here makes a worker think the save failed and submit the
-same document again (P0002 scenario 14). So every failure converges on the single
+same document again (scenario 14). So every failure converges on the single
 `{"changed": null, "error": "summary unavailable"}`.
 """
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _common_line_flags(before: list[str], after: list[str]) -> tuple[list[bool],
     """Mark, per line, whether it belongs to the common subsequence of two line lists.
 
     Line comparison is **literal**: no trimming of surrounding whitespace, no case folding —
-    changing only the indentation is still a change (L0003 §2-9).
+    changing only the indentation is still a change.
 
     The common part is measured with ``difflib.SequenceMatcher``'s matching blocks. True LCS
     dynamic programming would be 400 million cells at the ``SUMMARY_MAX_LINES`` cap (20,000
@@ -69,7 +69,7 @@ def _line_stats(before: list[str], after: list[str]) -> dict:
     b_common, a_common = _common_line_flags(before, after)
     common = sum(1 for flag in b_common if flag)
     # chars_added/chars_removed count **only characters within lines**, not newlines, so that a
-    # person can check the arithmetic straight off the response (L0003 §2-9).
+    # person can check the arithmetic straight off the response.
     return {
         "lines_removed": len(before) - common,
         "lines_added": len(after) - common,
@@ -83,7 +83,7 @@ def _section_bodies(doc: DocumentText) -> list[dict]:
 
     Paired sections are compared on an **``include_children = false`` basis** (own body text
     only). Including descendants would mark every ancestor as "changed" when a single line of
-    the deepest subheading is edited, making the summary useless (L0003 §2-9).
+    the deepest subheading is edited, making the summary useless.
 
     Numbering prefixes are **NOT stripped** from the key. If ``## 2. Structure`` became
     ``## 3. Structure`` the document did change, so reporting it as changed is right. (Lookup's
@@ -153,7 +153,7 @@ def build(
     """Build the change summary by comparing before and after. Every failure is ``summary unavailable``.
 
     No ``before_path`` means a first registration: with no prior revision to compare, ``before``
-    is ``null``, ``changed`` is true, and everything counts as added (P0002 scenario 15).
+    is ``null``, ``changed`` is true, and everything counts as added (scenario 15).
     """
     return build_text(doc_id=doc_id, after_text=read_canonical(after_path), after_revision_no=after_revision_no,
                       before_text=read_canonical(before_path) if before_path else None,
@@ -211,7 +211,7 @@ def build_text(*, doc_id, after_text, after_revision_no, before_text=None, befor
 
         if not changed:
             # Identical fingerprints mean all counts are 0 and every section is unchanged. The
-            # revision number still increments — this rule does not alter save behaviour (P0002 scenario 16).
+            # revision number still increments — this rule does not alter save behaviour (scenario 16).
             summary["sections_unchanged"] = after_doc.section_total
             return summary
 
@@ -226,7 +226,7 @@ def build_text(*, doc_id, after_text, after_revision_no, before_text=None, befor
 
         sections_added = [_entry(s, doc_id, after_revision_no) for s in added]
         # A removed section's line numbers and ref are relative to the **old** revision. That is
-        # exactly what the `@r` in a ref is for (L0003 §2-9).
+        # exactly what the `@r` in a ref is for.
         old_rev = before_revision_no if before_revision_no is not None else 0
         sections_removed = [_entry(s, doc_id, old_rev) for s in removed]
 

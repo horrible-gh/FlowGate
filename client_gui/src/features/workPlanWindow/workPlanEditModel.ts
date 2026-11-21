@@ -1,4 +1,4 @@
-// flowgate.v02.0072 T#1 — the rules of the v0.2 work plan edit window, with no screen and no server call. New for
+// the rules of the v0.2 work plan edit window, with no screen and no server call. New for
 // v0.2 (the v0.1 WorkPlanEditor, client/src/main/components/WorkPlanEditor.vue, is the reference for what the editor
 // does, not code taken over): the quantity boxes, the Steps drawn by card (a single Step, or a set's instruction with
 // its result), the per-Step AI and one-line note, the plan default AI / note and [apply to all], and card moves.
@@ -14,16 +14,16 @@
 // (the server's apply reads the Step's provider only — NR §2), so nothing here falls back to it.
 //
 // Rows are named by an identity that never changes while the window is open: the card's card_id, or a temporary
-// id for a card the server has not named yet, plus the row's role (`main` | `result`). A Step's key (`T#1`) is
-// renumbered whenever a card moves, so it never names a row (0649 T#3). The Step window (T#2) and the review popover
-// (0073 T#2) edit a row through this identity (stepDraftOf / applyStepDraft, setStepReview).
+// id for a card the server has not named yet, plus the row's role (`main` | `result`). A Step's key (`the earlier implementation`) is
+// renumbered whenever a card moves, so it never names a row. The Step window and the review popover
+// edit a row through this identity (stepDraftOf / applyStepDraft, setStepReview).
 //
-// flowgate.v02.0073 T#1 — the window does not show the DS and T2 types (WORK_PLAN_HIDDEN_TYPES): no quantity box, no
+// the window does not show the DS and T2 types (WORK_PLAN_HIDDEN_TYPES): no quantity box, no
 // card, not in the shown totals. That is a filter of what is drawn only: their quantities, counted types and Steps stay
 // in the body and go back whole, [apply to all] still reaches their unlocked Steps, and a card move among the shown
 // cards leaves every hidden card in its slot (moveShownCard). A type's icon is the Designer Palette's (workPlanTypeIcon).
 //
-// flowgate.v02.0073 T#2 — a row's review is set in one place, the main window's review popover (setStepReview); the
+// a row's review is set in one place, the main window's review popover (setStepReview); the
 // Step window edits the pre-instruction and its attachment only (WorkPlanStepDraft has no review), so neither can
 // write over what the other set.
 import type { SelectOption } from '@/components/ui/Select.vue'
@@ -42,7 +42,7 @@ export const WORK_PLAN_LOCKED_TYPES: ReadonlySet<string> = new Set(['TSR'])
 export const WORK_PLAN_COUNT_MIN = 0
 export const WORK_PLAN_COUNT_MAX = 20
 
-/** Types the window does not draw (0073 T#1); a T2 card carries its TR2 result with it. Display only. */
+/** Types the window does not draw; a T2 card carries its TR2 result with it. Display only. */
 export const WORK_PLAN_HIDDEN_TYPES: ReadonlySet<string> = new Set(['DS', 'T2'])
 
 /** The instruction type of a result type (TR → T), else the type itself. */
@@ -325,7 +325,7 @@ export function unitOf(body: WorkPlanEditBody, type: string): 'sheet' | 'set' {
 
 /**
  * The boxes shown: the body's counted types in its order, then the known types it does not count yet (0) — without
- * the hidden types (0073 T#1), whose quantities stay in the body as they are.
+ * the hidden types, whose quantities stay in the body as they are.
  */
 export function quantityBoxes(body: WorkPlanEditBody): WorkPlanQuantityBox[] {
   const order = [...body.counted_types]
@@ -397,7 +397,7 @@ function newCard(body: WorkPlanEditBody, type: string): WorkPlanCard {
 }
 
 /**
- * Sets the type's quantity (v0.1 setQuantity, 0649 T#3): only that type's cards change and the order a person made
+ * Sets the type's quantity (v0.1 setQuantity, the earlier implementation): only that type's cards change and the order a person made
  * stays. Growing brings back the cards removed in this session first (their id and values, at their place but never in
  * front of a started card), then appends new cards at the end; shrinking removes the type's last cards that have not
  * started. A type the body does not count yet joins counted_types / quantities. Call planQuantity first.
@@ -431,7 +431,7 @@ export function applyQuantity(draft: WorkPlanDraft, type: string, next: number, 
   return withCards(draft, cards, { body, removed: { ...draft.removed, [type]: stack } })
 }
 
-// --- Card moves (0649 T#3, NR0003 O7) ---------------------------------------------------------------------
+// --- Card moves ---------------------------------------------------------------------
 
 /** Index of the last started card, or -1: nothing may be placed at or before it. */
 export function lastStartedIndex(cards: readonly WorkPlanCard[], started: ReadonlySet<string>): number {
@@ -463,7 +463,7 @@ export function canMoveCardBy(draft: WorkPlanDraft, index: number, delta: number
   return to > lastStartedIndex(rest, started)
 }
 
-// --- The shown cards (0073 T#1) ------------------------------------------------------------------------------
+// --- The shown cards ------------------------------------------------------------------------------
 
 /** The window draws this card (its head Step's type is not hidden). */
 export function cardShown(card: WorkPlanCard): boolean {
@@ -495,7 +495,7 @@ export function shownCardsOf(draft: WorkPlanDraft): WorkPlanShownCard[] {
   return out
 }
 
-/** Row ids the window does not draw: the rows of hidden cards and omitted instructions (T0017). */
+/** Row ids the window does not draw: the rows of hidden cards and omitted instructions. */
 export function hiddenRowIds(draft: WorkPlanDraft): Set<string> {
   return new Set(rowsOf(draft).filter((row) => !cardShown(draft.cards[row.cardIndex]) || stepOmitted(row.step)).map((row) => row.rowId))
 }
@@ -610,7 +610,7 @@ export function applyDefaults(draft: WorkPlanDraft, displayName: (providerId: st
   return { ...draft, cards, body: { ...draft.body, steps: cards.flatMap((card) => card.steps) } }
 }
 
-// --- A row's review (0073 T#2: the main window's review popover) ---------------------------------------------
+// --- A row's review (the main window's review popover) ---------------------------------------------
 
 /**
  * Sets a row's review count and reviewer (null = the project's default reviewer at run time), as a person's value.
@@ -646,7 +646,7 @@ export function reviewCountOptions(choices: readonly number[], current: number, 
   return counts.map((count) => ({ value: String(count), label: label(count) }))
 }
 
-// --- The Step window boundary (T#2)---------------------------------------------------------------------
+// --- The Step window boundary ---------------------------------------------------------------------
 
 /** What the Step window edits of one row: its pre-instruction and attachment (the review is the popover's). */
 export interface WorkPlanStepDraft {
@@ -689,7 +689,7 @@ export function applyStepDraft(draft: WorkPlanDraft, rowId: string, values: Work
   return { status: 'applied', draft: replaceStep(draft, row, step) }
 }
 
-// --- 지시 생략 (flowgate.v02.0074 T#5, D#1 §3.7 · §6.2) ----------------------------------------------------------
+// --- Omit instruction ----------------------------------------------------------
 // One click on a row puts the fixed text 「승인 되었습니다」 in its Step's pre-instruction (the parent draft, as a person's
 // edit), saves the plan once and deploys it (first / add): the card's instruction line — the 「설계 지시」 (DS) line of a
 // design card — gets that text, and the run approves it without an instruction AI (approve_instruction or the card
@@ -811,7 +811,7 @@ export function unassignedSteps(draft: WorkPlanDraft): number {
   return draft.cards.flatMap((card) => card.steps).filter(unassigned).length
 }
 
-/** unassignedSteps split by what the window draws (0073 T#1): the shown Steps, and the hidden ones. */
+/** unassignedSteps split by what the window draws: the shown Steps, and the hidden ones. */
 export function unassignedByShown(draft: WorkPlanDraft): { shown: number; hidden: number } {
   let shown = 0
   let hidden = 0
@@ -824,7 +824,7 @@ export function unassignedByShown(draft: WorkPlanDraft): { shown: number; hidden
 }
 
 /**
- * The summary line in what the window draws (0073 T#1): the hidden types' sheets / sets and Steps are not counted.
+ * The summary line in what the window draws: the hidden types' sheets / sets and Steps are not counted.
  * The body (quantities, counted_types, Steps) is not changed by this.
  */
 export function totalsOf(draft: WorkPlanDraft): { designSheets: number; workSets: number; steps: number } {
@@ -839,7 +839,7 @@ export function totalsOf(draft: WorkPlanDraft): { designSheets: number; workSets
   return { designSheets, workSets, steps: draft.cards.filter(cardShown).reduce((sum, card) => sum + card.steps.filter((step) => !stepOmitted(step)).length, 0) }
 }
 
-// --- Type icons (0073 T#1) -----------------------------------------------------------------------------------
+// --- Type icons -----------------------------------------------------------------------------------
 
 export interface WorkPlanTypeIcon {
   /** A Palette glyph key (designer/palette/paletteIcons.ts paletteIconPath). */
@@ -1019,7 +1019,7 @@ export interface WorkPlanLockInput {
   readonly editLockedReason: string | null
   readonly refused?: WorkPlanRefusal | null
   /**
-   * flowgate.v02.0083 T#3 (D-1): the plan is its run card's own (workPlanCardTarget) — then only the Flow's ownership
+   * (D-1): the plan is its run card's own (workPlanCardTarget) — then only the Flow's ownership
    * conflict and the card's own AI (its write or its review) lock the content, not `external` (the revision view, the
    * run lock: structure locks) nor `aiRunning` (the Flow's AI run). Absent or null: the plan locks as before.
    */
@@ -1039,7 +1039,7 @@ export function workPlanLockReason(input: WorkPlanLockInput): WorkPlanLockReason
   return input.refused ?? null
 }
 
-// --- The run card's own plan (flowgate.v02.0083 T#3) -----------------------------------------------------------
+// --- The run card's own plan -----------------------------------------------------------
 
 /**
  * A WP card of a Flow's run as the Designer knows it now (the opener's reader of the Center session): its node, its latest
@@ -1133,7 +1133,7 @@ export function workPlanSubmitFailure(error: {
   return 'other'
 }
 
-/** Row errors of a failed save, pinned to the row identity of the Step key the server named (0649 T#3). */
+/** Row errors of a failed save, pinned to the row identity of the Step key the server named. */
 export function errorsByRow<E extends { readonly key: string | null }>(draft: WorkPlanDraft, errors: readonly E[]): { rows: Record<string, E[]>; top: E[] } {
   const rows: Record<string, E[]> = {}
   const top: E[] = []

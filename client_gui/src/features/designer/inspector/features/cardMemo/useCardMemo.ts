@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — the card memos of the selected card and their writes (O3 0009-TR §4-5). The list is read
+// the card memos of the selected card and their writes. The list is read
 // when a stored card is the target (a `tmp_` card and a Node without a definition have none). No server event
 // announces a memo change, so every write follows its own answer at once and reads the list again.
 // A write keeps the card it was made for: a window may outlive the selection of its card.

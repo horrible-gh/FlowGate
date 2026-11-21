@@ -111,7 +111,7 @@ def insert_container_for_doc(
 
 
 def list_open_items(project_id: Optional[str] = None) -> list[dict]:
-    """List unanswered items across documents (aggregates 'open queries', D0005 §3.7).
+    """List unanswered items across documents (aggregates 'open queries', the design).
 
     project_id=None → all projects; otherwise scoped to that project.
     Each row: {doc_id, seq, title, type_code}. type_code is the host document's
@@ -125,7 +125,7 @@ def list_open_items(project_id: Optional[str] = None) -> list[dict]:
     or deleted_at set). Keying the wf_done exclusion off the group root rather than
     the individual host document is what suppresses questions that live on a
     non-root child doc (e.g. a T/N whose review is merely 'approved') inside an
-    already-completed group (B0001).
+    already-completed group.
     """
     store = get_store()
     return store._fetch_all(

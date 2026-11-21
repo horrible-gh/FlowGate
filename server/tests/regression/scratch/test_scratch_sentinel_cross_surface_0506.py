@@ -1,11 +1,11 @@
-"""0506 T0004 §11-16 — cross-surface sentinel regression.
+"""cross-surface sentinel regression.
 
-TR0005 rev0 was rejected because the sentinel regression only covered the standard new
-mention, the review mention, and the submit-help paths. T0004 §12 lists every worker-facing
+was rejected because the sentinel regression only covered the standard new
+mention, the review mention, and the submit-help paths. the earlier implementation lists every worker-facing
 surface that must be sentinel-free; this file adds the surfaces the first revision skipped:
 
   * build_mention(action_scope="edit") — the edit/rework hand-off (§13, the edit-specific
-    guidance assertion T0004 gives as the worked example).
+    guidance assertion the earlier implementation gives as the worked example).
   * qa_service.build_ment_text — the QA ment_copy prompt.
   * q_answer_invoke_service.build_answer_mention — issue_answer_token feeds this to BOTH
     [copy mention] and [ask the AI to answer] (dispatch_answer_run calls issue_answer_token
@@ -44,7 +44,7 @@ SENTINEL = r"C:\FLOWGATE_SECRET_SCRATCH\TOKEN_123"
 
 
 def test_edit_mention_is_sentinel_free_and_keeps_generic_doc_path_guidance():
-    """T0004 §13: action_scope='edit' is the repeatedly-missed surface — the rejected/rework
+    """action_scope='edit' is the repeatedly-missed surface — the rejected/rework
     hand-off. The sentinel must not leak, but the doc_path XOR guidance itself must stay."""
     mention = mention_service.build_mention(
         project="test",

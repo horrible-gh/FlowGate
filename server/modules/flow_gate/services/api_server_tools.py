@@ -17,13 +17,13 @@ from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
 CONFLICT_SCOPE = "resolve_conflict"
-# 0608 T0007: a conflict resolver changes files only through the bound resolve endpoint,
+# a conflict resolver changes files only through the bound resolve endpoint,
 # which validates every chunk. Whatever the registry grows into, these never reach it.
 _CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove", "move"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SELF_CHECK_NAMES = ("run_self_check", "read_self_check", "cancel_self_check")
-# flowgate.chat.0017 CH0002: a card worker hands a file of its worktree to a person for approval
+# a card worker hands a file of its worktree to a person for approval
 # as an attachment of its own card's document. Answers at once; the decision never blocks the run.
 ATTACHMENT_REQUEST_NAME = "request_attachment_upload"
 ATTACHMENT_REQUEST_SCOPES = frozenset({"new", "edit", "review"})
@@ -95,7 +95,7 @@ _WRITE_GUARD_PROPERTIES = {
 }
 
 SCHEMAS = {
-    # start_line/end_line (0608 T0007, NR0003 §3.5): the /remote/read line selector the
+    # start_line/end_line: the /remote/read line selector the
     # HTTP tool always had -- how a conflict chunk's advertised range is read back.
     "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
     "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}, "ref": {"type": "string"}}, ["pattern"]),
@@ -110,12 +110,12 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}, **_WRITE_GUARD_PROPERTIES}, ["path", "content"]),
     "move_source_file": _obj({"source_path": {"type": "string", "minLength": 1}, "target_path": {"type": "string", "minLength": 1}}, ["source_path", "target_path"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
-    # 0114 T#4: parallel_share -- the processors (workers) the run wishes to use; default 1.
+    # parallel_share -- the processors (workers) the run wishes to use; default 1.
     "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}, "parallel_share": {"type": "integer", "minimum": 1}}, ["program"]),
     "read_self_check": _obj({
         "self_check_run_id": {"type": "string", "minLength": 1},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-        # 0114 T#3: with self_check_run_id, also judge that run against this baseline run.
+        # with self_check_run_id, also judge that run against this baseline run.
         "baseline_run_id": {"type": "string", "minLength": 1},
     }),
     "cancel_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
@@ -145,13 +145,13 @@ SCHEMAS = {
     },["snapshot_id","task_kind","command"]),
 }
 
-# 0064 T-B4d (P0006 §4.2.5): the card title candidate of a new / edit registration. The model sees a string; validate
+# T-B4d: the card title candidate of a new / edit registration. The model sees a string; validate
 # never refuses it (``x-flowgate-lenient``), so no value of it fails a registration — the title service judges it.
 NODE_TITLE_SCHEMA = {"type": "string", "x-flowgate-lenient": True}
 REGISTER_SCHEMAS = {
     "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "doc_type"]),
     "edit": _obj({"content": {"type": "string"}, "expected_revision": {"type": "integer", "minimum": 0}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "expected_revision", "edit_reason"]),
-    # 0474 T0007 §1.1: force_encoding_reason removed -- review never accepts a
+    # force_encoding_reason removed -- review never accepts a
     # model-authored corruption bypass, so the schema no longer exposes the field.
     "review": _obj({"verdict": {"type": "string", "enum": ["pass", "issues", "hold"]}, "findings": {"type": "array", "items": _obj({"locus": {"type": "string"}, "note": {"type": "string"}})}, "comment": {"type": "string"}, "body_sha256": {"type": "string"}, "body_chars": {"type": "integer"}}, ["verdict"]),
     "test_run": _obj({}),
@@ -202,7 +202,7 @@ DESCRIPTIONS["read_self_check"] = (
     "a failure into a pass; a reusable=false answer cannot be used as comparison evidence."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
-# 0064 T-B4d (P0006 §4.2.5 ①): one tool shares the four scope schemas, so the description names the scopes.
+# T-B4d (①): one tool shares the four scope schemas, so the description names the scopes.
 DESCRIPTIONS["register_document"] = (
     "Register the document for this step. Optional node_title (new and edit scopes only; other scopes reject it): "
     "a 20-30 character card title that tells at a glance what this work is; do not simply repeat the card kind name "
@@ -220,7 +220,7 @@ DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
 )
-# ref-capable source tools (0514 T0004 §3.3): the bare name.replace("_", " ") default left
+# ref-capable source tools: the bare name.replace("_", " ") default left
 # no hint that ref switches between the working tree and a committed Git tree, or that
 # merge_preview_source's own return values are meant to be fed back in as ref. Overriding
 # these descriptions lets a provider discover that link from the tool definition alone,
@@ -260,7 +260,7 @@ DESCRIPTIONS["merge_preview_source"] = (
 def ready() -> bool:
     """Static readiness: registry, strict binder and the TR Self-check runner are all present.
 
-    0684 T#4: run_test (a Source Bundle Scratch runner) is gone; the API provider's test
+    run_test (a Source Bundle Scratch runner) is gone; the API provider's test
     capability is the Self-check path a TR edit run verifies through.
     """
     return (set(SOURCE_NAMES) <= set(SCHEMAS) and set(SELF_CHECK_NAMES) <= set(SCHEMAS)
@@ -282,7 +282,7 @@ def _is_tr_new(run: dict) -> bool:
     """A TR(new) run: before the TR exists, the step is the workflow head, not doc_ref's own type.
 
     Same head lookup as remote_tool_service / help_catalog, so the advertisement, the help
-    item and tr_self_check_service.draft_target agree on what a TR(new) step is (0638 T#1).
+    item and tr_self_check_service.draft_target agree on what a TR(new) step is.
     """
     if run.get("action_scope") != "new" or not run.get("doc_ref"):
         return False
@@ -306,7 +306,7 @@ def definitions_for_run(run: dict) -> list[dict]:
     item_id = question_tools.responder_item(run)
     if item_id is not None:
         names = [name for name in names if name not in ("register_document", "create_question")]
-    # One judgment for both halves (0349 D0004 D-2): tool_registry.kind_for_step decides what
+    # One judgment for both halves: tool_registry.kind_for_step decides what
     # is advertised here, and remote_tool_service grants that same kind at call time, so an
     # API provider can never be handed a tool its live token would 403 on -- nor be denied one
     # its token would allow. The remote service still authenticates each live token and picks
@@ -318,14 +318,14 @@ def definitions_for_run(run: dict) -> list[dict]:
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if tr_edit or _is_tr_new(bound):
         # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
-        # worktree plus read-only Self-check evidence. 0638 T#1: a TR(new) worker runs it too,
+        # worktree plus read-only Self-check evidence. the earlier implementation: a TR(new) worker runs it too,
         # before its TR exists; the runs are owned by its token and linked on registration.
         names += list(SELF_CHECK_NAMES)
     elif tr_review:
         names += ["read_self_check"]
     if scope in ATTACHMENT_REQUEST_SCOPES and kind in ATTACHMENT_REQUEST_KINDS:
         names.append(ATTACHMENT_REQUEST_NAME)
-    # 0684 T#4: Source Bundle and its TS worker tools (access/run_source_bundle, run_test) are
+    # Source Bundle and its TS worker tools (access/run_source_bundle, run_test) are
     # gone. Every step works on the live source tools; an official TS result comes only from
     # the server spec run.
     result = []
@@ -350,7 +350,7 @@ def definitions_for_run(run: dict) -> list[dict]:
 def conflict_tool_definitions() -> list[dict]:
     """The tools a resolve_conflict API run may call besides ``resolve_git_conflict``.
 
-    0608 T0007: the same judgment as everywhere else -- ``tool_registry.kind_for_step``
+    the same judgment as everywhere else -- ``tool_registry.kind_for_step``
     gives resolve_conflict the ``read`` kind, ``tool_names`` turns it into the operations
     the conflict mention's Remote source section lists, and ``remote_tool_service`` grants
     that same kind (read/grep scopes) to the run's token at call time and binds it to the
@@ -368,7 +368,7 @@ def conflict_tool_definitions() -> list[dict]:
 
 def open_conflict_counts(run: dict) -> tuple[int, int]:
     """``(files, chunks)`` still carrying conflict markers in the run's merge session."""
-    # 0630 T0005: a branch merge is addressed by project (see git_service.merge_session_owner_args).
+    # a branch merge is addressed by project (see git_service.merge_session_owner_args).
     owner_group, owner_project = git_service.merge_session_owner_args(run["merge_id"], run["group_id"])
     conflicts = git_service.list_conflicts(
         owner_group, int(run["merge_id"]), **({"project_id": owner_project} if owner_project else {}),
@@ -379,7 +379,7 @@ def open_conflict_counts(run: dict) -> tuple[int, int]:
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
     if schema.get("x-flowgate-lenient"):
-        return                                  # 0064 T-B4d: no type / length / enum check (the name is allowlisted)
+        return                                  # T-B4d: no type / length / enum check (the name is allowlisted)
     if schema is READ_DOCUMENT_SCHEMA:
         normalize_read_document_input(value)
         return
@@ -460,12 +460,18 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     ctx = help_catalog.resolve_context(token_rec, locale, base_url)
     envelope = {"ok": True, "version": help_catalog.VERSION, "base_url": ctx["base_url"], "locale": ctx["locale"]}
     item, child = tool_input.get("item"), tool_input.get("child")
+    if item and "/" in item:
+        item, slash_child = item.split("/", 1)
+        if child and child != slash_child:
+            raise ToolError(422, "schema_validation_failed", "Conflicting help child")
+        child = slash_child
     if not item:
         assembled = help_catalog.build_index(ctx)
-        return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "context": help_catalog.context_envelope(ctx), "items": assembled["items"], "hidden": assembled["hidden"]}
-    if item not in help_catalog.CATALOG_ORDER:
+        return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "items": assembled["items"]}
+    decision = help_catalog.decide_visibility(item, ctx)
+    if decision.reason == "unknown_item":
         return 404, {"ok": False, "http_status": 404, "error_message": f"Unknown help item: {item}", "help_url": help_url()}
-    if not help_catalog.decide_visibility(item, ctx).visible:
+    if not decision.visible:
         return 403, {"ok": False, "http_status": 403, "error_message": f"Help item '{item}' is not available for this token", "help_url": help_url()}
     try:
         if child:
@@ -541,7 +547,7 @@ def run_source_snapshot(
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
-    # 0672 T0004 stage 3: a path-only guard from the shared source module; live source calls
+    # stage 3: a path-only guard from the shared source module; live source calls
     # never reach into the legacy Snapshot service.
     try:
         source_common.guard_artifact_promotion(name, tool_input)
@@ -581,7 +587,7 @@ SELF_CHECK_WORKER_REASONS = {
 
 
 def _baseline_arg(tool_input: dict) -> dict:
-    """0114 T#3: read_self_check's optional baseline run, passed on only when it is named."""
+    """read_self_check's optional baseline run, passed on only when it is named."""
     baseline_run_id = tool_input.get("baseline_run_id")
     return {"baseline_run_id": baseline_run_id} if baseline_run_id else {}
 
@@ -592,7 +598,7 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         token = token_service.verify(raw_token)
     except Exception as exc:
         raise ToolError(401, "selfcheck_token_invalid") from exc
-    # 0110 T#3: a Graph attempt token is not refused here; tr_self_check_service runs it in its
+    # a Graph attempt token is not refused here; tr_self_check_service runs it in its
     # attempt tree (or answers 409 graph_attempt_inactive / graph_worktree_unavailable).
     doc_id = run.get("doc_ref")
     scope = run.get("action_scope")
@@ -625,7 +631,7 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
 
 
 def _draft_self_check_call(run: dict, token: dict, name: str, tool_input: dict) -> tuple[int, dict]:
-    """0638 T#1: TR(new) Self-check. The live token owns the runs; there is no TR id yet.
+    """TR(new) Self-check. The live token owns the runs; there is no TR id yet.
 
     The run must be the token's own run; draft_target then checks the token's sequence
     document, project/group and that the workflow head is a pending TR.
@@ -652,7 +658,7 @@ def _draft_self_check_call(run: dict, token: dict, name: str, tool_input: dict) 
 
 
 def attachment_request_call(run: dict, tool_input: Any) -> tuple[int, dict]:
-    """flowgate.chat.0017 CH0002: the card worker's attachment upload request (in-process)."""
+    """the card worker's attachment upload request (in-process)."""
     from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
 
     return attachment_request_tools.call(run, tool_input)

@@ -2,7 +2,7 @@ import type { Translate } from './apiErrors'
 
 /**
  * A single Work Plan validation error as work_plan_service.render_errors() sends it
- * (T0007 §1.1): `params` is locale-independent -- a `what_key` (see `EMPTY_SELECTION_WHAT`
+ * : `params` is locale-independent -- a `what_key` (see `EMPTY_SELECTION_WHAT`
  * below) is carried as its stable identifier, not a word already picked in one locale -- so
  * a client can re-render `msg` in any locale from `code`+`params` alone.
  */
@@ -66,7 +66,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'pre_instruction_attachment_original_name_mismatch',
   'pre_instruction_attachment_digest_mismatch',
   'pre_instruction_attachment_outside_storage',
-  // 0649 T#1/T#3 (NR0003 §5.1) — mixed card order and card identity.
+  // mixed card order and card identity.
   'pair_not_adjacent',
   'ordinal_order_invalid',
   'card_id_invalid',
@@ -75,7 +75,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'card_id_missing',
   'card_id_unknown',
   'card_id_type_changed',
-  // flowgate.v02.0074 T0017 — a started card's instruction omission is locked on save.
+  // a started card's instruction omission is locked on save.
   'instruction_mode_started',
 ])
 
@@ -88,7 +88,7 @@ const EMPTY_SELECTION_WHAT_KEYS: ReadonlySet<string> = new Set(['counted_types',
  * Renders one Work Plan field error under the caller's current locale. Trusts only
  * `code`+`params`, never the server's request-locale `msg` text — the same principle
  * apiErrors.ts's resolveApiError follows. `msg` is kept only as the fallback for a code
- * this client build does not yet have a translation key for (T0007 §1.2).
+ * this client build does not yet have a translation key for.
  */
 export function renderWpFieldError(err: WpFieldError, t: Translate): string {
   if (!err.code || !KNOWN_CODES.has(err.code)) return err.msg

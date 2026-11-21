@@ -1,8 +1,8 @@
 <template>
-  <ModelessShell v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
+  <ModelessShell kind-color="#f0a23a" v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
     :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 660)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
-    <!-- flowgate.v02.0094: the kind, then — muted, as the write window names its card — which case: its id and title once. -->
+    <!-- the kind, then — muted, as the write window names its card — which case: its id and title once. -->
     <template #header><span class="heading" data-test="case-heading"><span class="heading-kind">{{ t(k('name')) }}</span><span class="heading-case" :title="caseLabel" data-test="case-window-id">{{ caseLabel }}</span></span></template>
     <div class="case" data-test="case-window">
       <InspectorPaneState v-if="card.test.status.value === 'error'" state="error" retryable @retry="card.reload()" />
@@ -13,7 +13,7 @@
         <label v-if="requirementChoice === '__custom'"><span>{{ t(k('custom')) }}</span><Input v-model="draft.requirement" :disabled="locked" data-test="case-requirement" /></label>
         <label v-for="field in textFields" :key="field"><span>{{ t(k(field)) }}</span><Textarea v-model="draft[field]" :rows="field === 'precondition' ? 2 : 4" :disabled="locked" :data-test="`case-${field}`" /></label>
         <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.execution_mode" :options="modeOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.execution_mode = $event" /></div></div>
-        <!-- flowgate.v02.0094 B0005: no language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
+        <!-- no language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
         <label v-if="draft.execution_mode === 'automated'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
           <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" /></span></label>
         <div class="field" role="group" :aria-label="t(k('required'))"><span>{{ t(k('required')) }}</span><div class="control"><InspectorSegment :model-value="draft.required ? 'stop' : 'ignore'" :options="requiredOptions" :disabled="locked" :aria-label="t(k('required'))" data-test="case-required" @update:model-value="draft.required = $event === 'stop'" /></div></div>

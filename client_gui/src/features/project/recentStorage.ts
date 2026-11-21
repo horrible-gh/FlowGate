@@ -1,4 +1,4 @@
-// flowgate.v02.0043 — local persistence of the Designer File menu's 최근 Project / Group / Flow
+// local persistence of the Designer File menu's Recent Project / Group / Flow
 // lists (0001-R §3.5). Same boundary rule as currentProjectStorage.ts: no other module reads or
 // writes these keys. The lists survive a reload, hold the newest entry first, one entry per id,
 // and at most RECENT_LIMIT entries each. A stored value that is not a well-formed list is read

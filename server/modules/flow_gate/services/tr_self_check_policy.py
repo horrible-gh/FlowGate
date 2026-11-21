@@ -29,7 +29,7 @@ INTERPRETERS = {
 }
 HOST_KEYS = ("SYSTEMROOT", "WINDIR", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "JAVA_HOME", "DOTNET_ROOT", "GOROOT")
 
-# flowgate.v02.0114 T#4 (D 0006 3.5): the host-wide resource cap. Every Self-check run of a host
+# the host-wide resource cap. Every Self-check run of a host
 # (same instance_registry.node_key) reserves R logical processors (at least 1, whatever the
 # program), the active and protected runs' reservations never sum above the cap, and the run's
 # whole process tree is limited to its R processors by the operating system (executor).
@@ -154,7 +154,7 @@ def controlled_path(worktree: Path, host_path: str | None = None) -> tuple[str, 
 
 def resolve_command(program: str, args: list[str], worktree: Path, path_value: str,
                     denied: frozenset = DENIED, deny_git_helpers: bool = True) -> ResolvedCommand:
-    # 0670 T0004 / flowgate.v02.0032 T#1: ``denied``/``deny_git_helpers`` let the chat
+    # ``denied``/``deny_git_helpers`` let the chat
     # command policy reuse this exact resolution (argv checks, PATH control, launcher
     # adapter) with its own deny list. The defaults are the Self-check policy, unchanged.
     name = canonical_name(program)

@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0121 T#4 — a card whose AI call failed (node_run.dispatch.error_code `ai_invoke_failed`) shows 실행 미완료
- * with the server's short cause (dispatch.error_detail) as its own sentence — e.g. "모델 수용량 초과로 호출이
- * 종료되었습니다." — never the provider's output; a failure with no cause told keeps 실행 미완료 as before. Every cause has a
+ * with the server's short cause (dispatch.error_detail) as its own sentence — e.g. "모델 수용량 초과로 호출이 종료되었습니다."
+ * — never the provider's output; a failure with no cause told keeps "실행 미완료" as before. Every cause has a
  * ko / en / ja string.
  *
  * rej_01M6FFMXBCPX855V (P2): the Canvas card and the Inspector state pill word the cause by one rule

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0060 0017-T — the browser's own menu in the Designer (the mockup v2 contextmenu rule): blocking it is a
+ * the browser's own menu in the Designer (the mockup v2 contextmenu rule): blocking it is a
  * separate rule from the menu targets. A right click on a target opens the Designer menu; a place with no target, a
  * target whose menu has no item and a place excluded from the menu show nothing; only editable areas (input / textarea /
  * select / contenteditable) keep the browser menu. The block lives while the Designer Shell is mounted.

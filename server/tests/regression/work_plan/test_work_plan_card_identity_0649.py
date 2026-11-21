@@ -1,8 +1,8 @@
-"""Legacy sequence rows → work-plan cards — flowgate.default.0649 T#1 (NR0003 O0, §3.8).
+"""Legacy sequence rows → work-plan cards — the earlier change the earlier implementation.
 
 A row poured before ``source_wp_card_id`` existed is classified by evidence and revision
-continuity, never by "same key today": linked / retired / unresolved. The G9 history — a T#2
-deleted by lowering the quantity and re-added as a new card that got the key T#2 back — must
+continuity, never by "same key today": linked / retired / unresolved. The G9 history — a the earlier implementation
+deleted by lowering the quantity and re-added as a new card that got the key the earlier implementation back — must
 retire the old started row instead of making the new card look started. Unprovable rows are
 not guessed: a reflecting write is refused (legacy_card_unresolved) until acknowledged, then
 recorded once as ``retired:unresolved:{id}`` and never asked about again.
@@ -132,8 +132,8 @@ def test_a_pending_retired_row_is_an_orphan_and_is_not_reused():
 
 def test_e1_wins_over_a_disagreeing_e3_estimate():
     revisions = {0: _legacy({"T": 2}), 1: _legacy({"T": 2})}
-    # E3 would call row 1 "T#1" (first T in revision 0 and in the block); the document
-    # that actually ran says it was T#2.
+    # E3 would call row 1 "the earlier implementation" (first T in revision 0 and in the block); the document
+    # that actually ran says it was the earlier implementation.
     items = [_row(1, "T", result="doc-x")]
     provenance = {"doc-x": {"source_wp_doc_id": WP, "source_wp_revision_no": 0,
                             "source_wp_step_key": "T#2"}}
@@ -171,7 +171,7 @@ def test_a_missing_snapshot_in_the_range_is_unresolved():
 def test_disagreeing_e3_counts_from_a_past_double_pour_are_unresolved():
     revisions = {0: _legacy({"T": 1}), 1: _legacy({"T": 1})}
     # Revision 1 was poured again after revision 0 already started: "first T of r1" says
-    # T#1, "second T of the block" says T#2.
+    # "second T of the block" says the earlier implementation.
     items = [_row(1, "T", rev=0, result="doc-a"), _row(2, "T", rev=1, result="doc-b")]
     result = _classify(revisions, items)
     assert _classes(result)[1] == ("linked", "T#1")
@@ -319,8 +319,8 @@ def test_plan_reflecting_edit_records_the_acknowledged_unresolved_rows(
             {"type": "T", "source": _WP, "rev": 0, "result": f"{_GROUP}.0005-T"},
             {"type": "TR", "source": _WP, "rev": 0},
         ])
-        # 0649 T#2 (NR0003 O5): a reflecting save pours every card that has not started —
-        # the post-write check refuses a payload that leaves the plan's T#2 out.
+        # a reflecting save pours every card that has not started —
+        # the post-write check refuses a payload that leaves the plan's the earlier implementation out.
         payload = [
             {"type": "T", "label": "T", "source_doc_id": _WP, "source_revision_no": 2,
              "source_wp_card_id": "T#1"},

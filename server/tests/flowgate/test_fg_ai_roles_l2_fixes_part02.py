@@ -109,7 +109,7 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
     _write_written(doc_id, "## 본문\n\n내용\n")
     raced = []
     if path == "result":
-        # flowgate.v02.0119 T#2 (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
+        # (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
         # record and the document's status display) is the span the edit lands in. The node takes the document as its
         # result in review (``completion.target_of``) for this check alone.
         run = run_store.active_run(FA)
@@ -124,7 +124,7 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
             _set_revision(doc_id, 1)                                   # an edit inside the completion's span
             return out
     else:
-        # 0119 T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
+        # T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
         # transition is never called, and wrapping the whole write would race after its commit.
         from flowgate.card_completion import legacy_adapter as completion_records
 

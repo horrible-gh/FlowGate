@@ -1,7 +1,7 @@
 // flowgate.v02test.0001 B0001 §2 / T0004 T#2 — the menu's 다음 단계 / 전체 실행 on a v0.1 (sequence) Flow.
 //
 // A v0.1 Flow has no Graph run (the server refuses it with 409 flow_owned_by_v01), so its work documents run through
-// the existing v0.1 single AI run (`ai-invoke/start`, scope `edit` / `rework`) — the path the header's ▶ 실행 / ↻ 재작업
+// the existing v0.1 single AI run (`ai-invoke/start`, scope `edit` / `rework`) — the path the header's ▶ 실행 / ↻ rework
 // buttons used to be the only entry of. Those buttons are gone; this is the same call behind the two menu commands
 // (Q535 answer o1): no new server contract, no approval bypass, no automatic retry.
 //

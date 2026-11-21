@@ -1,9 +1,9 @@
-"""flowgate.default.0550 T0030 (NR0025 권고3): every facade-attribute patch a test in
+"""every facade-attribute patch a test in
 this corpus performs on `git_service.<name>` must actually be reachable from inside the
 `git/` package -- not shadowed by a module that bound its own early copy at import time,
 and not read as a bare name inside the very module that defines it.
 
-Two failure modes share one root cause (D0006 §3.2's split turned one `git_service.py`
+Two failure modes share one root cause (the design's split turned one `git_service.py`
 module into a facade + a dozen `git/*.py` modules, and only call sites written as
 `_gs.<name>` still see a later `setattr(git_service, "<name>", fake)`):
 
@@ -20,7 +20,7 @@ module into a facade + a dozen `git/*.py` modules, and only call sites written a
     bare name resolves to the module's own `__dict__` instead, and the patch is quietly
     ignored.
 
-This file makes both modes mechanical instead of asserted in prose (NR0025 §3's
+This file makes both modes mechanical instead of asserted in prose (the review's
 one-off scan, generalized): it collects, by AST, every name any test in
 `server/tests/**/*.py` actually patches on some alias of `git_service` (patch-form A),
 collects every `git/*.py` module's early-bound imports (B-1) and its own bare
@@ -29,13 +29,13 @@ involved -- the moment a future edit reintroduces either shape for a name some t
 relies on the facade seam for.
 
 Design choices carried over from the model for this pattern, `server/tests/
-test_ai_invoke_svc_seam_scope_0501.py` (T0012 §13-15 / NR0003 §28):
+test_ai_invoke_svc_seam_scope_0501.py`:
   1. The `git/*.py` module list comes from a glob, not a hardcoded tuple -- a future
      split must not have to remember to add itself to a test's private list.
   2. Patch detection is alias-agnostic -- `monkeypatch.setattr(gs, ...)`,
      `setattr(svc, ...)` and `patch.object(git_service, ...)` are the same patch
      regardless of the local name a test file imported `git_service` under.
-0501 scans with regex; this file scans with `ast` instead, because B-1/B-2 need real
+scans with regex; this file scans with `ast` instead, because B-1/B-2 need real
 scope information (module-top-level vs. nested, Load vs. Store context, a function's
 default-value sub-expressions vs. its body) that a line-oriented regex cannot see
 reliably.
@@ -61,7 +61,7 @@ _GIT_MODULE_PATHS = tuple(
 _FACADE_DOTTED_PREFIX = "modules.flow_gate.services.git_service."
 
 
-# ─────────────────────────── A면: 시험이 패치하는 이름 ───────────────────────────
+# A: names patched by tests.
 
 def _git_service_aliases(tree: ast.AST) -> set[str]:
     """Every local name this file's imports bind to the `git_service` module.
@@ -250,7 +250,7 @@ def _scan_facade_seam() -> tuple[set[str], dict, list, list]:
     return test_names | operational_names, sites, test_unresolved, operational_unresolved
 
 
-# ───────────────────── B면: 파사드 패치가 닿지 않는 자리 ─────────────────────────
+# B: places unreachable through a facade patch.
 
 def _default_value_name_positions(tree: ast.AST) -> set[tuple[int, int]]:
     """(lineno, col_offset) of every `Name` node inside a function's default-value
@@ -378,7 +378,7 @@ def _format_locations(locations) -> str:
     return ", ".join(f"{loc[0]}:{loc[1]}" for loc in locations) or "(none)"
 
 
-# ──────────────────────────────── 시험 ────────────────────────────────────────
+# Tests.
 
 def test_no_facade_patch_target_is_early_bound_in_a_git_module():
     patched, sites, _test_unresolved, _operational_unresolved = _scan_facade_seam()
@@ -438,14 +438,14 @@ def test_the_seam_scan_itself_is_not_vacuous():
 
     # 2. The A-side (test corpus) scan found a believable inventory, not an empty set
     #    from a broken alias/AST walk.
-    # 0555 T0008: re-measured to 375. It read 366 (0578 T0006's measurement) and had
+    # re-measured to 375. It read 366 ('s measurement) and had
     # already drifted to 374 before this group touched anything — eight files added by
     # other merged groups that did not re-measure, which is why this assertion was
-    # already failing on the branch base. T0008 adds
+    # already failing on the branch base. the earlier implementation adds
     # tests/test_final_approval_conflict_intent_0555.py, the ninth.
-    # 0594 T0010: re-measured after adding test_git_branches_0594.py. Measured with
+    # re-measured after adding test_git_branches_0594.py. Measured with
     # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
-    # 0594 T0012: re-measured after adding test_git_merge_target_0594.py (380 -> 381);
+    # re-measured after adding test_git_merge_target_0594.py (380 -> 381);
     # the patched-name counts below were re-measured too and did not move.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
     # merge 104 (main + 0594): re-measured on the merged tree — 391.
@@ -455,19 +455,19 @@ def test_the_seam_scan_itself_is_not_vacuous():
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()
     patched = test_patched | operational
-    # 0555 T0008: 71 -> 72 / 73 -> 75. Re-measured, not adjusted by the delta: the
+    # 71 -> 72 / 73 -> 75. Re-measured, not adjusted by the delta: the
     # test-patched count was exact on the branch base, but the combined count had
     # already drifted to 74 there (an operational rebinding another merged group added
     # without re-measuring), which is the second reason this assertion was already
-    # failing before T0008. The one name T0008 adds is `_emit`, which
+    # failing before the earlier implementation. The one name the earlier implementation adds is `_emit`, which
     # tests/test_final_approval_conflict_intent_0555.py patches to observe WHEN the
     # git completion event is published relative to the deferred approval commit
-    # (D0005 §3.12). `_emit` is defined in git_service.py itself, not in a git/*
+    #. `_emit` is defined in git_service.py itself, not in a git/*
     # module, so `test_no_facade_patch_target_is_reached_bare_inside_its_module` has
     # nothing to say about it -- this is an inventory count, not a new seam.
     # merge 104 (main + 0594): re-measured on the merged tree, 76 / 79 -- the exact
     # union of both sides (main measured 75 / 78, 0594 measured 72 / 74); the one name
-    # 0594 adds over main is `get_storage_root` (tests/test_git_branches_0594.py).
+    # adds over main is `get_storage_root` (tests/test_git_branches_0594.py).
     assert len(test_patched) == 76, (
         f"expected 76 test facade-patched names, found {len(test_patched)}"
     )
@@ -490,7 +490,7 @@ def test_the_seam_scan_itself_is_not_vacuous():
         )
 
     # 3. No dynamic patch this scanner cannot resolve to a literal name (§3.4.1's
-    #    "해석 불가능한 동적 패치" list). The baseline for this corpus is 0; a nonzero
+    #    "unresolvable dynamic patch" list). The baseline for this corpus is 0; a nonzero
     #    count means some test patches a `git_service` alias with a computed attribute
     #    name that this scanner -- and therefore §3.4's whole guarantee -- cannot see.
     assert test_unresolved == [], (

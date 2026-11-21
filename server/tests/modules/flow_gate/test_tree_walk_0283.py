@@ -1,10 +1,10 @@
-"""0283 TS0006 — get_file_tree tree-walk hardening (TR0005 §B).
+"""get_file_tree tree-walk hardening.
 
 Behavioural coverage for the fix to bug 0283.0001-B ("트리를 불러오지 못했습니다."):
 `get_file_tree`'s directory walk used to be `os.listdir` wrapped in a bare
 `except (OSError, PermissionError): return`, so a single transient failure on
 remote/UNC storage silently produced an empty or partial tree with no log line.
-TR0005 replaced it with `os.scandir` behind a bounded retry/backoff helper
+replaced it with `os.scandir` behind a bounded retry/backoff helper
 (`_list_dir_with_retry`) that logs a warning once the retries are exhausted, and
 guarded `os.path.relpath` against the Windows cross-drive `ValueError`.
 

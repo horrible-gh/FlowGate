@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_worker_token_cannot_grant_itself_auto(self):
-        # D0006 §3.2 / L0007 §2.2: the worker-token resolve body model has no `auto`
+        # The worker-token resolve body model has no `auto`
         # field and forbids extras outright — a token cannot self-approve.
         from pydantic import ValidationError
 

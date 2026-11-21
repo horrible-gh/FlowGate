@@ -1,4 +1,4 @@
-"""0642 TR2 candidate admission and post-commit registry reflection contracts."""
+"""TR2 candidate admission and post-commit registry reflection contracts."""
 from __future__ import annotations
 
 import pytest

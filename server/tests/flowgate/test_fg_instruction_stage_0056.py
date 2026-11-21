@@ -1,4 +1,4 @@
-"""flowgate.v02.0056 T#2 — the instruction AI and the two stages of a card run (0002-CH turn 5 / 6 §3 / 10 O2).
+"""the instruction AI and the two stages of a card run (CH / 6 / 10 O2).
 
 On the same real SQLite DB, routes and fixtures as ``test_fg_card_settings`` (card documents, card settings and the
 card approval port registered as ``startup`` registers them):
@@ -46,7 +46,7 @@ from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status, _run_ended,
     _source_scopes, _start_ai, _through_instruction, _work_run_ended, _write_written,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -58,7 +58,7 @@ ROOT = f"{FA}.0001-R"
 
 @pytest.fixture(autouse=True)
 def card_outputs_port():
-    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    """(T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
     registered as ``startup`` registers it — it replaced the removed card approval port."""
     from flowgate.card_completion import outputs
     from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
@@ -379,7 +379,7 @@ def _before_migration_148(env):
         conn.close()
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2 §2.13, G-14)
+# (T) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2, G-14)
 
 
 
@@ -402,5 +402,5 @@ def _before_migration_148(env):
 
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

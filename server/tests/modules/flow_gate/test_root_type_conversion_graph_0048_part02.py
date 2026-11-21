@@ -52,7 +52,7 @@ def test_unassigned_refusals_inside_the_guard_reach_the_caller_unchanged(env, mo
     db_documents.create({"doc_id": f"{FU}.0002-N", "project_id": "flowgate", "module": "v02", "group_id": FU,
                          "type_code": "N", "seq": 2, "title": "child", "status": "open", "owner_id": USER,
                          "triggered_by": root(FU), "target_id": root(FU)})
-    # 0064 T#4 (P0006 §3.5): a root with child documents is succeeded, no longer refused.
+    # a root with child documents is succeeded, no longer refused.
     children = convert(env, root(FU))
     assert children.status_code == 200, children.text
     assert (children.json()["conversion"]["mode"], children.json()["conversion"]["child_count"]) == ("succession", 1)

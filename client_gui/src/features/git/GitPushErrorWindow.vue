@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#52b788"
     :open="true"
     :title="win.title"
     :minimized="win.minimized"
@@ -20,7 +20,7 @@
             <dt>{{ effect.phase }}</dt><dd>{{ effect.status }} · {{ effect.sha_after ?? effect.target_ref ?? effect.error_code ?? '—' }}<span v-if="effect.recovery_state"> · {{ effect.recovery_state }}</span></dd>
           </template>
         </dl>
-        <!-- flowgate.v02test.0052 (0008 할 일 4): the merge session of this approval is closed — [재시도] only re-reads it and can
+        <!-- flowgate.v02test.0052 (0008 task 4): the merge session of this approval is closed — [재시도] only re-reads it and can
              never succeed, so it is off (with the reason) and the working button, [이 승인 취소], leads. Same set as the card. -->
         <p v-if="closed" class="gx-reason" data-test="git-closed-note">{{ t('gui.git.gate_job.closed_note') }}</p>
         <div class="gx-actions">
@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — remote apply failure details (0033-D §6.2): only what the server really
+// remote apply failure details: only what the server really
 // gives — the error code — plus the record's target and time. The server keeps the git stderr
 // in its log only, so diagnostics read "not provided" (G2); its `message` is not UI text.
 // There is no retry here: `다시 반영` stays on the card.

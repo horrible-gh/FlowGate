@@ -1,4 +1,4 @@
-// flowgate.v02.0026 — display table of Node kind / state keys (0003-D §4.1.5 / §6.3): the
+// display table of Node kind / state keys: the
 // i18n key, glyph and accent of each known key. Keys are open: anything not listed renders as
 // the default 'unknown' kind (muted accent), and an unknown state shows no state at all —
 // a new key from a future server never breaks the Canvas. The key lists must match
@@ -58,7 +58,7 @@ const KIND_TABLE: Record<FlowNodeKindKey, Omit<FlowNodeKindDisplay, 'key'>> = {
 }
 
 /**
- * flowgate.v02.0061 T#15 — the Hold mark of a held card (R): a stop-sign like glyph, an open palm inside a round frame.
+ * the Hold mark of a held card (R): a stop-sign like glyph, an open palm inside a round frame.
  * Same glyph format as the kinds (24x24 path, stroke="currentColor").
  */
 export const FLOW_NODE_HOLD_ICON =
@@ -80,7 +80,7 @@ function isKnown<T extends string>(list: readonly T[], value: string): value is 
 
 /**
  * v7 (0035 insp.js iconOf / colorOf): a 버그 (B) root — a requirement Node whose document is a B — takes the bug
- * glyph and the red accent. flowgate.v02.0070 T#4 (B4): one rule for the Canvas card head and the Inspector header.
+ * glyph and the red accent. the earlier change the earlier implementation (B4): one rule for the Canvas card head and the Inspector header.
  */
 const BUG_KIND = { icon: 'M8 8a4 4 0 0 1 8 0v7a4 4 0 0 1-8 0Z M4 12h4M16 12h4M5 7l3 2M19 7l-3 2M5 18l3-2M19 18l-3-2', accent: '#ef4444' }
 
@@ -141,7 +141,7 @@ export interface FlowNodeKindView extends FlowNodeKindDisplay {
 }
 
 /**
- * flowgate.v02.0070 T#4 (B4) — the one kind display of a Node (kind, document type): name key, glyph and accent.
+ * (B4) — the one kind display of a Node (kind, document type): name key, glyph and accent.
  * The Canvas card head and the Inspector header both take it, so a 요구사항 switched to a 버그 shows the same kind
  * in both. The card's own title is not part of it.
  */

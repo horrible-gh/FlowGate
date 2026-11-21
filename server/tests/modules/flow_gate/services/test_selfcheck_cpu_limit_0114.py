@@ -1,4 +1,4 @@
-"""flowgate.v02.0114 T#4: the run tree's processor limit (D 0006 3.5 (2), 8-12, 9.2-7 (c)(f)).
+"""the run tree's processor limit (the earlier implementation 3.5 , 8-12, 9.2-7 (c)(f)).
 
 Windows (the FlowGate server host): ``executor.spawn(cpu_limit=R)`` gives the run's named Job an
 affinity of R processors before the suspended target is assigned and resumed. Checked through

@@ -1,23 +1,19 @@
-"""실행 계층(Fast/Standard/Full)과 병렬 실행의 계약 — 0394 T0014 (NR0003 §13-12 / §13-13).
+"""Execution-tier/parallel contracts: the earlier implementation (sections 13-12/13-13).
 
-T0004 가 계층 선택과 pytest-xdist 도입을 만들었지만, **그 둘을 지키는 테스트는 한 건도
-없었다.** 계층은 설정 파일 하나(`server/pytest.ini`)와 conftest 의 훅 몇 개에 얹혀 있고,
-병렬 안전성은 requirements.txt 의 주석과 TESTING.md 의 문장으로만 존재했다. 그런 것은
-지워져도 아무 불이 켜지지 않는다 — NR0003 §5.3 이 "규칙은 전역인데 검사는 국소" 라고
-지적한 자리와 정확히 같은 모양이고, 여기서는 아예 검사가 없었다.
+added tier selection and pytest-xdist without tests protecting either.
+Tier behavior depended on server/pytest.ini and conftest hooks; parallel safety
+existed only in requirements.txt comments and TESTING.md. Removing those rules
+would trigger no failure, the global-rule/local-check gap noted in the review 5.3.
 
-이 파일이 고정하는 계약은 다섯이다.
+Protect five contracts: tier configuration/markers exist; rules classify modules
+and explicit markers override them; tier deferrals are reported separately from
+capability skips; parallel execution cannot start with file-splitting distribution;
+and worker observations of environment leakage reach the controller report.
 
-1. 계층을 걸 자리(설정 파일과 마커 등록)가 있다.
-2. 계층 판정은 목록이 아니라 규칙에서 나오고, 명시 마커가 그 규칙을 이긴다.
-3. 계층 때문에 건너뛴 건수는 능력 부족 skip 과 섞이지 않고, 실행 끝에 반드시 보고된다.
-4. 병렬 실행은 파일을 쪼개는 분배로는 시작조차 되지 않는다.
-5. 병렬 실행에서도 워커가 본 것(환경변수 누출)이 컨트롤러 보고에 합쳐진다.
-
-3·5 는 실제 결함에서 나왔다. `--tier=fast -n 2` 는 117 건을 건너뛰고도 "이 실행은 전체가
-아닙니다" 를 한 줄도 찍지 않았다. 수집 훅이 워커 안에서 돌아 그 사실이 컨트롤러에
-도달하지 못했기 때문이다. 병렬로 돌리는 순간 계층 경고가 사라진다면, 그것은 NR0003 §5.2
-가 없애려던 조용한 skip 이 다른 문으로 돌아온 것이다.
+Contracts 3/5 came from a real bug: --tier=fast -n 2 skipped 117 tests without
+warning that the run was incomplete, because collection hooks ran inside workers
+and their state never reached the controller. Parallelism must not bring back
+the silent skips the review 5.2 intended to eliminate.
 """
 from __future__ import annotations
 
@@ -37,9 +33,9 @@ _TESTING_MD = _REPO_ROOT / "TESTING.md"
 
 @pytest.fixture(scope="module")
 def conf(pytestconfig):
-    """지금 이 실행을 움직이고 있는 conftest 모듈 그 자체.
+    """The conftest module driving this very run.
 
-    새로 import 하면 사본이 생겨, 정작 훅이 쓰는 전역과 다른 것을 검사하게 된다.
+    A new import creates a copy with globals different from those used by hooks.
     """
     for plugin in pytestconfig.pluginmanager.get_plugins():
         source = getattr(plugin, "__file__", None)
@@ -49,7 +45,7 @@ def conf(pytestconfig):
 
 
 class _RecordingParser:
-    """pytest_addoption 이 무엇을 등록하는지만 받아 적는다."""
+    """Record only what pytest_addoption registers."""
 
     def __init__(self) -> None:
         self.options: list[tuple[tuple, dict]] = []
@@ -67,18 +63,18 @@ class _FakeItem:
 
 
 def _write_module(directory: Path, name: str, body: str) -> Path:
-    """계층 판정에 먹일 가짜 테스트 모듈 (tmp_path 안, 저장소 밖)."""
+    """A fake module for tier classification, under tmp_path outside the repository."""
     module_file = directory / name
     module_file.write_text(body, encoding="utf-8")
     return module_file
 
 
-# ── 1. 계층을 걸 자리 ────────────────────────────────────────────────────────
+# 1. Configuration and registered tier markers.
 
 
 class TestTierConfigurationExists:
     def test_pytest_ini_exists_and_registers_every_tier(self):
-        """NR0003 §10.4: 저장소에 설정 파일이 하나도 없어 계층을 붙일 자리부터 없었다."""
+        """10.4: originally no configuration file existed to define tiers."""
         assert _PYTEST_INI.is_file(), (
             "server/pytest.ini 가 없다. 계층 마커를 등록할 자리가 사라지면 "
             "--tier 는 남아도 `@pytest.mark.fast` 는 unknown marker 경고가 된다."
@@ -91,7 +87,7 @@ class TestTierConfigurationExists:
         assert "\n    full:" not in markers, "없어진 full 계층의 마커가 남아 있다"
 
     def test_tier_option_defaults_to_standard(self, conf):
-        """기본값은 카드를 끝낼 때 도는 standard 다. '전부' 를 뜻하는 계층은 없다."""
+        """The default is standard, the tier run when finishing a card. No tier means "everything"."""
         parser = _RecordingParser()
         conf.pytest_addoption(parser)
 
@@ -106,7 +102,7 @@ class TestTierConfigurationExists:
         assert conf._TIER_ORDER == ("veryfast", "fast", "standard", "heavy", "slow")
 
     def test_full_is_refused_with_the_way_out(self, conf):
-        """예전 습관대로 --tier=full 을 치면 조용히 덜 돌지 않고, 갈 곳을 알려 주며 멈춘다."""
+        """Typing --tier=full out of habit stops with a pointer to the right option instead of silently running less."""
         import argparse
 
         with pytest.raises(argparse.ArgumentTypeError) as raised:
@@ -133,19 +129,19 @@ class TestTierConfigurationExists:
         _Option.install_check = True
         assert conf._install_check(_Config()) is True
         _Option.install_check = False
-        # 이미 이 변수를 켜고 전체를 돌리던 스크립트는 그대로 전체를 돈다.
+        # Scripts that already set this variable to run everything still run everything.
         monkeypatch.setenv("FLOWGATE_REQUIRE_FULL_SUITE", "1")
         assert conf._install_check(_Config()) is True
 
 
-# ── 2. 계층 판정은 규칙에서 나온다 ───────────────────────────────────────────
+# 2. Rules determine tiers.
 
 
 class TestTierIsDerivedNotListed:
-    """NR0003 §10.4: 목록으로 관리하면 새 파일이 어느 계층에도 안 들어간다."""
+    """10.4: a file-list policy can leave new files outside every tier."""
 
     def test_unmeasured_module_is_never_below_standard(self, conf, tmp_path):
-        """재 본 적 없는 파일이 수시로 도는 계층에 끼어들면 그 계층이 느려진다."""
+        """An unmeasured file slipping into a frequently run tier would slow that tier down."""
         module_file = _write_module(
             tmp_path,
             "test_plain.py",
@@ -186,7 +182,7 @@ class TestTierIsDerivedNotListed:
         assert conf._tier_for_module(module_file) == "install"
 
     def test_a_brand_new_file_always_lands_somewhere(self, conf, tmp_path):
-        """어느 계층에도 안 들어가는 파일은 존재할 수 없어야 한다."""
+        """No file may fall outside every tier."""
         for index, body in enumerate(
             (
                 "def test_a():\n    pass\n",
@@ -198,14 +194,14 @@ class TestTierIsDerivedNotListed:
             assert conf._tier_for_module(module_file) in (*conf._TIER_ORDER, "install")
 
     def test_explicit_marker_beats_the_rule(self, conf):
-        """규칙이 틀린 파일을 위한 탈출구 — 마커 한 줄이 이긴다."""
+        """An explicit marker overrides the rule for exceptional files."""
         assert conf._declared_tier(_FakeItem({"veryfast"})) == "veryfast"
         assert conf._declared_tier(_FakeItem({"slow"})) == "slow"
         assert conf._declared_tier(_FakeItem({"install"})) == "install"
         assert conf._declared_tier(_FakeItem(set())) is None
 
     def test_install_check_runs_everything(self, conf, monkeypatch):
-        """설치 검증은 계층을 보지 않는다 — 수집 훅이 즉시 돌아 나와야 한다."""
+        """The install check ignores tiers: the collection hook must return immediately."""
         monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
 
         class _Option:
@@ -218,10 +214,10 @@ class TestTierIsDerivedNotListed:
                 raise AssertionError("설치 검증이 계층을 읽었다")
 
         items = [_FakeItem(set())]
-        conf.pytest_collection_modifyitems(_Config(), items)   # 마커를 못 달아도 통과해야 한다
+        conf.pytest_collection_modifyitems(_Config(), items)   # This must pass even without marker support.
 
     def test_install_only_tests_are_deferred_at_every_tier(self, conf, monkeypatch, tmp_path):
-        """가장 높은 계층(slow)에서도 설치 검증 몫은 돌지 않는다."""
+        """Install-only tests do not run even at the highest tier (slow)."""
         monkeypatch.delenv("FLOWGATE_REQUIRE_FULL_SUITE", raising=False)
         module_file = _write_module(tmp_path, "test_plain.py", "def test_one():\n    pass\n")
 
@@ -245,7 +241,7 @@ class TestTierIsDerivedNotListed:
         assert not heavy.added, "slow 계층이 그 아래 heavy 를 건너뛰었다"
 
 
-# ── 3. 계층 유예는 능력 부족 skip 과 섞이지 않는다 ───────────────────────────
+# 3. Tier deferrals remain distinct from capability skips.
 
 
 class TestTierSkipsAreAccountedSeparately:
@@ -259,17 +255,17 @@ class TestTierSkipsAreAccountedSeparately:
         assert conf._classify_skip("무슨 다른 사유") == "other"
 
     def test_skip_reason_written_by_the_hook_uses_the_same_mark(self, conf):
-        """꼬리표가 한쪽만 바뀌면 유예 건수가 조용히 0 이 된다."""
+        """Changing only one side of a marker contract silently zeroes deferred counts."""
         source = _CONFTEST_PATH.read_text(encoding="utf-8")
         assert 'reason=f"tier {tier} > requested {requested} {_TIER_SKIP_MARK}"' in source, (
             "수집 훅이 쓰는 skip 사유와 _TIER_SKIP_MARK 가 어긋났다"
         )
 
     def test_deferral_is_counted_from_reports_not_from_collection(self, conf):
-        """병렬에서도 남으려면 집계가 리포트 쪽이어야 한다.
+        """Aggregate through reports so parallel runs retain the count.
 
-        수집 훅은 워커 안에서 돌고, 거기서 만든 전역은 요약을 찍는 컨트롤러에게
-        보이지 않는다. 그래서 유예 건수는 `pytest_runtest_logreport` 가 센다.
+        Collection hooks run in workers; their globals are invisible to the
+        controller summary. pytest_runtest_logreport counts deferrals instead.
         """
         source = _CONFTEST_PATH.read_text(encoding="utf-8")
         report_hook = source.split("def pytest_runtest_logreport", 1)[-1].split("\ndef ", 1)[0]
@@ -281,12 +277,12 @@ class TestTierSkipsAreAccountedSeparately:
         assert "전체 통과가 아닙니다" in summary, "계층 실행의 경고 문구가 사라졌다"
 
     def test_executed_count_excludes_every_kind_of_skip(self, conf, monkeypatch):
-        """실행 건수는 계층 유예만이 아니라 **건너뛴 것 전부**를 뺀 값이다.
+        """Executed counts exclude all skipped tests, not only tier deferrals.
 
-        실측에서 어긋났다. `--tier=fast` 는 요약에 "1614건 실행" 을 찍었는데 pytest 는
-        `1613 passed, 1654 skipped` 를 찍었다. 차이 한 건은 run.bat 이 없어 빠진
-        테스트였고, 계층 유예가 아니라는 이유로 실행 건수 쪽에 남아 있었다.
-        조용히 빠진 테스트를 드러내려고 만든 줄이 스스로 한 건을 감춘 셈이다.
+        A real --tier=fast run reported 1614 executed while pytest reported
+        1613 passed, 1654 skipped. The difference was a missing-run.bat skip,
+        still counted as executed because it was not a tier deferral. A line
+        intended to expose skipped tests must not conceal one itself.
         """
         class _Reporter:
             def __init__(self):
@@ -308,8 +304,8 @@ class TestTierSkipsAreAccountedSeparately:
             def getoption(self, name, default=None):
                 return "fast" if name == "--tier" else default
 
-        # 실제로 나왔던 숫자 그대로: 3,267 건 중 1,653 건은 계층 유예,
-        # 1 건은 run.bat 이 없어 빠졌다 → 실행된 것은 1,613 건이다.
+        # Actual figures: 3,267 tests, 1,653 tier deferrals, and one missing-run.bat
+        # skip leave 1,613 tests executed.
         monkeypatch.setattr(conf, "_items_started", 3267)
         monkeypatch.setattr(conf, "_tier_deferred", 1653)
         monkeypatch.setattr(conf, "_skips_by_capability", {"tier": 1653, "run_bat": 1})
@@ -326,7 +322,7 @@ class TestTierSkipsAreAccountedSeparately:
         )
 
     def test_the_count_is_exact_when_nothing_else_was_skipped(self, conf, monkeypatch):
-        """다른 skip 이 없으면 군더더기 문구도 붙지 않는다."""
+        """Do not add redundant wording when there are no other skips."""
         class _Reporter:
             def __init__(self):
                 self.lines: list[str] = []
@@ -359,19 +355,19 @@ class TestTierSkipsAreAccountedSeparately:
         assert "그 밖의 사유로" not in tier_line, tier_line
 
 
-# ── 4. 병렬 실행은 파일을 쪼개지 않는다 ──────────────────────────────────────
+# 4. Parallel distribution must not split files.
 
 
 class TestParallelExecutionIsFileWise:
     def test_xdist_is_pinned_and_installed(self):
-        """NR0003 §10.3: 테스트를 한 건도 지우지 않고 전체 시간을 줄이는 유일한 지렛대."""
+        """10.3: reduce total runtime without deleting tests through parallelism."""
         requirements = _REQUIREMENTS.read_text(encoding="utf-8")
         assert "pytest-xdist==" in requirements, "requirements.txt 에 pytest-xdist 핀이 없다"
         assert importlib.util.find_spec("xdist") is not None, "pytest-xdist 가 설치돼 있지 않다"
 
     def test_safe_distributions_are_allowed(self, conf):
-        assert conf._dist_mode_problem(None, "no") is None       # 순차 실행
-        assert conf._dist_mode_problem(0, "load") is None        # -n0 은 병렬이 아니다
+        assert conf._dist_mode_problem(None, "no") is None       # Serial execution.
+        assert conf._dist_mode_problem(0, "load") is None        # -n0 is not parallel.
         assert conf._dist_mode_problem(8, "loadfile") is None
         assert conf._dist_mode_problem(8, "loadscope") is None
 
@@ -382,7 +378,7 @@ class TestParallelExecutionIsFileWise:
         assert "loadfile" in problem, "거절 메시지가 올바른 사용법을 알려 주지 않는다"
 
     def test_configure_refuses_an_unsafe_parallel_run(self, conf, pytestconfig):
-        """문서가 아니라 실행이 막아야 한다 — `-n auto` 만 친 사람은 문서를 안 읽는다."""
+        """Enforce this at execution: someone typing only -n auto may not read the docs."""
         state_before = dict(conf._capability_state)
         try:
             class _Option:
@@ -401,7 +397,7 @@ class TestParallelExecutionIsFileWise:
             conf._capability_state.update(state_before)
 
     def test_configure_leaves_workers_alone(self, conf, pytestconfig):
-        """워커는 자기 몫을 순차로 돈다. 거기서 dist 를 따지면 실행이 통째로 죽는다."""
+        """Each worker runs its share serially; enforcing dist there kills the whole run."""
         state_before = dict(conf._capability_state)
         try:
             class _Option:
@@ -419,7 +415,7 @@ class TestParallelExecutionIsFileWise:
             conf._capability_state.update(state_before)
 
 
-# ── 5. 워커가 본 것은 컨트롤러 보고에 합쳐진다 ───────────────────────────────
+# 5. Worker observations reach the controller report.
 
 
 class TestWorkerObservationsReachTheController:
@@ -454,7 +450,7 @@ class TestWorkerObservationsReachTheController:
                 conf._env_leaks.remove(line)
 
     def test_the_xdist_hook_is_optional(self, conf):
-        """xdist 없는 호스트에서도 conftest 는 그대로 읽혀야 한다."""
+        """conftest must still import on a host without xdist."""
         options = getattr(conf.pytest_testnodedown, "pytest_impl", {})
         assert options.get("optionalhook") is True, (
             "optionalhook 이 아니면 pytest-xdist 가 없는 환경에서 conftest 가 "
@@ -462,7 +458,7 @@ class TestWorkerObservationsReachTheController:
         )
 
 
-# ── 6. 사용법이 남아 있다 ────────────────────────────────────────────────────
+# 6. Usage instructions remain available.
 
 
 class TestUsageIsWrittenDown:
@@ -473,23 +469,23 @@ class TestUsageIsWrittenDown:
             assert needle in text, f"TESTING.md 에 {needle} 사용법이 없다"
 
 
-# ── 7. 공용 연결은 다음 사람에게 깨끗하게 넘어간다 ───────────────────────────
+# 7. Shared connections are clean for the next borrower.
 #
-# 0394 T0014 — 병렬 실행이 실제로 드러낸 결함의 회귀 테스트.
+# regression for a defect exposed by parallel execution.
 #
-# `--tier=standard -n auto --dist loadfile` 에서
+# During --tier=standard -n auto --dist loadfile,
 # `test_auto_approved_locale_0099.py::test_migration_051_adds_column_and_round_trips`
-# 한 건이 FOREIGN KEY 로 죽었다. 원인은 병렬이 아니었다. 세션 스코프 연결 하나를 네
-# 파일이 공유하는데 그 중 하나가 INSERT 만 하고 commit 도 정리도 하지 않아, 다음 파일이
-# **쓰기 트랜잭션이 열린 연결**을 물려받는다. sqlite 의 `PRAGMA foreign_keys` 는
-# 트랜잭션 안에서 조용히 무시되므로, FK 를 끄고 도는 테스트가 FK 가 켜진 채 돌았다.
+# one case failed with FOREIGN KEY, but parallelism was not the cause.
+# Four files shared one session connection; one inserted without committing
+# or cleaning up, leaving a write transaction for the next file. SQLite
+# silently ignores PRAGMA foreign_keys inside a transaction, leaving FKs on.
 #
-# 순차 실행에서는 알파벳 순서가 우연히 이 둘을 안전한 쪽으로 놓아 한 번도 안 보였다.
-# 파일을 워커에 나눠 주는 순간 그 우연이 사라진 것뿐이다. 그래서 이 계약을 고정한다 —
-# 병렬을 쓰든 안 쓰든, 한 테스트가 받은 연결에는 남의 트랜잭션이 열려 있으면 안 된다.
+# Serial alphabetical order accidentally placed the files in a safe order.
+# Worker assignment removed that coincidence. With or without parallelism,
+# a borrowed connection must not carry another test's open transaction.
 #
-# 두 케이스는 이 순서로 붙어 있어야 의미가 있다. 앞은 일부러 더럽히고, 뒤는 다음 사람이
-# 무엇을 받는지 본다.
+# Keep these two cases adjacent and ordered: the first deliberately dirties
+# the connection, and the second inspects what the next borrower receives.
 
 _PROBE_TOKEN_SQL = (
     "INSERT INTO tokens (token_id, hash, pepper_id, project, action_scope, "
@@ -501,7 +497,7 @@ _PROBE_TOKEN_SQL = (
 
 class TestSharedConnectionIsHandedOverClean:
     def test_a_test_may_leave_a_write_transaction_open(self, test_db):
-        """정리하지 않는 테스트는 실제로 있다 — 그것이 다음 사람을 깨면 안 된다."""
+        """Tests without cleanup exist; they must not break the next borrower."""
         test_db.execute(_PROBE_TOKEN_SQL)
         assert test_db.in_transaction, "이 케이스의 전제(쓰기 트랜잭션이 열린다)가 깨졌다"
 
@@ -515,19 +511,19 @@ class TestSharedConnectionIsHandedOverClean:
         ).fetchone()
         assert leftover is None, "앞 테스트가 공용 DB 에 행을 남겼다"
 
-        # 죽은 자리가 정확히 여기였다: 트랜잭션이 열려 있으면 이 PRAGMA 는 아무 일도
-        # 하지 않고, 그런데도 예외 하나 나지 않는다.
+        # This was the failure point: inside a transaction the PRAGMA silently does
+        # nothing, without raising an exception.
         test_db.execute("PRAGMA foreign_keys = OFF")
         assert test_db.execute("PRAGMA foreign_keys").fetchone()[0] == 0
         test_db.execute("PRAGMA foreign_keys = ON")
 
     def test_the_fixture_rolls_back_on_both_sides(self, conf):
-        """빌려줄 때와 돌려받을 때 양쪽에서 닫는다 — 한쪽만이면 첫 테스트가 못 받는다."""
+        """Clean both before lending and after return; otherwise the first test loses."""
         source = _CONFTEST_PATH.read_text(encoding="utf-8")
-        # 이름을 `body` 로 두면 안 된다. 저장소 쓰기 가드(0382)는 __file__ 에서 유도된
-        # 이름을 파일 전체에서 전이적으로 추적하는데, 위쪽 `_write_module(..., body)` 가
-        # 같은 이름을 쓰고 있어 `module_file` 까지 저장소 경로로 물들고, tmp_path 에
-        # 쓰는 줄이 저장소 쓰기로 신고된다.
+        # Do not name this body. The 0382 write guard transitively tracks names derived
+        # from __file__ across the file. _write_module(..., body) above shares that
+        # name, tainting module_file as a repository path and falsely reporting the
+        # tmp_path write as a repository mutation.
         fixture_source = source.split("def test_db(all_migrations_db)", 1)[-1]
         assert fixture_source.count("all_migrations_db.rollback()") == 2, (
             "test_db 픽스처가 yield 앞뒤에서 트랜잭션을 닫지 않는다"

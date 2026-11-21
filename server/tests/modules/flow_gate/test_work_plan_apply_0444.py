@@ -1,15 +1,15 @@
-"""0444 T0005 — NR0003 §4-1 · §4-4 regressions.
+"""· regressions.
 
 Two defects with one symptom: a new work plan's provider/note reaches nothing.
 
-* §4-1 (NR0003 §2-3) — ``build_step_map`` matched by type+ordinal over the WHOLE sequence,
+* — ``build_step_map`` matched by type+ordinal over the WHOLE sequence,
   so a finished row another plan left behind stole the new plan's slot and ``project``
   reported it ``already_started`` while silently dropping provider/note.
-* §4-4 (NR0003 §2-2) — the pour path's ``resolve_step_provider`` only checked the id
+* — the pour path's ``resolve_step_provider`` only checked the id
   *format*. An unregistered or disabled provider passed the pour screen and was stopped
   only much later, on the apply path, by ``_usable_provider``.
 
-NR0003 §6 recorded that most server suites monkeypatch the DB away and therefore could not
+recorded that most server suites monkeypatch the DB away and therefore could not
 see either defect. So this suite builds a **real migrated sqlite** sequence (the
 ``real_sequence`` pattern from test_workflow_sequence_provider_0408.py) and reads the rows
 back through the production query — ``status`` is a derived column there, not a dict key a
@@ -149,7 +149,7 @@ def view(*rows, readable=True):
 REGISTERED_VIEW = view(*REGISTRY)
 
 
-# ── §4-1 / NR0003 §2-3 ────────────────────────────────────────────────────────
+# ── the review ────────────────────────────────────────────────────────
 # Contract: the sequence cells this plan may fill are (a) rows still ``pending`` or
 # (b) rows this very plan poured. Rows somebody else already started or finished are
 # out of the ordinal count and out of the candidate set.
@@ -273,7 +273,7 @@ def test_new_rows_are_appended_after_every_existing_row(real_sequence):
     assert min(x["sort_order"] for x in added) > max(x["sort_order"] for x in items)
 
 
-# ── §4-4 / NR0003 §2-2 — the pour path checks registration too ────────────────
+# ── the review — the pour path checks registration too ────────────────
 
 PLAN_WITH_DEFAULT = {
     "steps": [], "defaults": {"provider_id": FALLBACK, "note": ""},

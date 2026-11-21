@@ -1,4 +1,4 @@
-"""0145 T#1 -> T#2 -> T#3, real SQLite/migrations/inbox/Graph; external AI is a recorder."""
+"""> the earlier implementation -> the earlier implementation, real SQLite/migrations/inbox/Graph; external AI is a recorder."""
 import copy
 import hashlib
 import json

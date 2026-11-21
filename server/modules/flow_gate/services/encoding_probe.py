@@ -1,6 +1,6 @@
 """Language-neutral transport proof and corruption signals for AI-submitted text.
 
-flowgate.v02gui.0009 (chat 0002-CH): the question-mark heuristic
+(chat the discussion): the question-mark heuristic
 (``workflow_decision_service._text_is_corrupted``) is tied to one failure shape -- a
 script whose every glyph turns into ASCII '?' -- so it rejects ordinary punctuation
 ("??") yet misses a partial loss (cp949 keeps kana but drops Japanese-only kanji) and

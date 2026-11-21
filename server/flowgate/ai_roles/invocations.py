@@ -36,7 +36,7 @@ def guarded(fn):
 def admission(fn):
     """Record an explicit origin's HTTP refusal exactly once across nested callers.
 
-    flowgate.v02test.0004 T#1: a refusal that only repeated a start of the same Graph execution — another start of it
+    a refusal that only repeated a start of the same Graph execution — another start of it
     already owns it (``duplicate_start``) — records nothing: the execution runs (or ran) once under its owner, and an
     ``admission_refused`` record of it would read as that work failing and become the next call's ``prev_inv_id``.
     It is logged as an informational diagnostic only. Every other refusal is recorded as before."""
@@ -56,12 +56,12 @@ def admission(fn):
     return call
 
 
-# flowgate.v02test.0004 T#1: the refusal code a duplicate start of an owned execution answers (``scheduling.busy``).
+# the refusal code a duplicate start of an owned execution answers (``scheduling.busy``).
 DUPLICATE_START_CODE = "run_in_progress"
 
 
 def duplicate_start(exc, graph_exec_id):
-    """flowgate.v02test.0004 T#1: ``exc`` refused a start of the Graph execution ``graph_exec_id`` that another start of
+    """``exc`` refused a start of the Graph execution ``graph_exec_id`` that another start of
     the same execution already owns. Both must hold: the refusal's code is ``run_in_progress`` and the execution
     ledger says the execution is owned by another launcher (``scheduling.duplicate_start``, the ``duplicate_start``
     Graph hook) — the message text is never read. No Graph execution, another code, no Graph port, or a read that
@@ -104,7 +104,7 @@ def _request(record, req):
         record["requested_model_" + key] = req[key]
 
 
-# flowgate.v02test.0004 T#2: a record of a start refused at admission — nothing was launched, so it is never the
+# a record of a start refused at admission — nothing was launched, so it is never the
 # previous call of a later one (``_latest``). Every launched record stays one, failed or not.
 NOT_LAUNCHED = "admission_refused"
 
@@ -131,7 +131,7 @@ def writer_unit_hash(record, origin=None):
     """The work unit of the writer a review round (``review_of``) reviews when no rework precedes it: the unit of the
     same target's write stage (seq 0), only when that writer is an AI (the run's ``origin`` author, else the card's
     assignment or the legacy document's writer). None otherwise. Shared by ``_links`` and the read model's display of a
-    stored link (``invocation_view._shown_prev``, flowgate.v02test.0004 T#2) so both follow one condition."""
+    stored link (``invocation_view._shown_prev``, the earlier change the earlier implementation) so both follow one condition."""
     origin = origin or {}
     purpose = record.get("purpose") or ""
     author = origin.get("author")
@@ -279,7 +279,7 @@ def flush(run, final=False):
                 break  # S-1: no later insert may overtake this record.
             saved.append(record)
             if record["inv_id"] in outputs and store.write_output(outputs[record["inv_id"]]):
-                outputs.pop(record["inv_id"], None)  # T#5: this launch's own output, stored once
+                outputs.pop(record["inv_id"], None)  # this launch's own output, stored once
             if record.get("chain_root_id") is None:
                 try:
                     first = store.first(record["unit_key_hash"])
@@ -315,7 +315,7 @@ def begin(run, provider):
 
 
 def _seen(run):
-    """flowgate.v02.0113 T#5: the run's output fields as this launch begins — what is still the same object when it
+    """the run's output fields as this launch begins — what is still the same object when it
     ends was left by an earlier launch, not written by this one."""
     errors = run.get("register_errors")
     return {"last_message": run.get("last_message"), "stderr_tail": run.get("stderr_tail"),
@@ -324,7 +324,7 @@ def _seen(run):
 
 
 def _launch_output(run, record, seen, detail):
-    """flowgate.v02.0113 T#5: the output this launch itself left (its last message, stderr / stdout tail, the
+    """the output this launch itself left (its last message, stderr / stdout tail, the
     registration errors it added, the classification detail) — none of an earlier launch's."""
     def fresh(key):
         value = run.get(key)

@@ -1,5 +1,5 @@
 -- 205_review_count_exclusions.sql
--- flowgate.v02test.0051 T0007 (A2, R 0051.0001 A-3 "질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다", NR 0003 §2.4):
+-- flowgate.v02test.0051 T0007 (A2, R 0051.0001 A-3 "rejections caused by questions do not count toward the review budget", NR 0003 §2.4):
 -- a document review loop's review verdict that was caused by a question wait is recorded here and left out of the
 -- loop's review_count only (review._document_loop_counted_rounds). The review row itself is never changed or
 -- deleted: it stays the verdict of its round (rejection, rework, stall check, history). Insert-only.

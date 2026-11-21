@@ -1,4 +1,4 @@
-"""0053 1-C: resolve a work stage's limits and render its single-line allowance.
+"""resolve a work stage's limits and render its single-line allowance.
 
 The durable invocation origin, not a provider hop/token, identifies a Graph stage.
 Rework rounds have distinct origins. Queue rows retain that key and their charged starts,

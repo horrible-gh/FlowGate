@@ -1,4 +1,4 @@
-"""flowgate.v02test.0056 — the Designer's three dock sizes in /me/ui-settings (R 0056.0001 §2).
+"""The Designer's three dock sizes in /me/ui-settings.
 
 Pinned here:
 

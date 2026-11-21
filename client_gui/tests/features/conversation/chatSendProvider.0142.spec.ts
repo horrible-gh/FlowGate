@@ -4,7 +4,7 @@ import { createChatStart } from '@/features/conversation/chatStart'
 import { createConversationSession } from '@/features/conversation/conversationSession'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0142 T#1 — the AI chosen when a chat message is sent is the AI of that message's run:
+// the AI chosen when a chat message is sent is the AI of that message's run:
 // a change of the picker while the turn is stored, after a failed try, or while a new chat is created
 // does not reach `startChatRun`; and an empty / unusable choice ends with a notice, never a default AI.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }

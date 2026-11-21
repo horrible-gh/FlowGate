@@ -105,7 +105,7 @@ def test_a_lost_compare_and_set_requests_nothing(env, decided, monkeypatch, star
     assert len(ledger(env)) == requests and one(env, a, "result_review", 2)["intent_kind"] is None
 def test_a_stop_during_the_re_requested_review_keeps_its_seq_and_the_next_command_goes_on(
         env, decided, monkeypatch, starts, fork_join):
-    """§6.11 with the Stop contract as it is (0061 T#7, not changed here): the Stop cancels seq 2's request, puts the
+    """with the Stop contract as it is (not changed here): the Stop cancels seq 2's request, puts the
     card back to pending and invalidates its attempt; the next command opens the card again as a new attempt. The
     stopped attempt's seq 1..2 stay as its history."""
     a, _a2, _a3, _result, first = _spent(env, monkeypatch, starts)

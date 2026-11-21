@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#11 — local helper of the test section's specs (D#1 §12.3: a feature keeps its own
+ * local helper of the test section's specs (the earlier implementation: a feature keeps its own
  * helpers in its own folder). Server-shaped `/test-document` answers (test_run_service
  * describe_test_document / shape_run) for a specification TS, its TSR and a legacy TS, and Canvas
  * selections of TS / TSR / V Nodes in each ownership, built from the shared support fixtures.

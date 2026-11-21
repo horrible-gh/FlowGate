@@ -1,14 +1,14 @@
-"""HTTP adapter of the card run settings (flowgate.v02.0053 T#2). Mounted under the ``/flowgate``
-context like the Graph routes; same envelope (P0008 §1.2 / §1.3), user JWT only, RBAC read / write.
+"""HTTP adapter of the card run settings. Mounted under the ``/flowgate``
+context like the Graph routes; same envelope, user JWT only, RBAC read / write.
 
     GET   /api/v1/flows/{flow_id}/nodes/{node_key}/settings    the card's settings (value · default · choices)
     PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings    {"field": <name>, "value": <value | null>}
 
 A PATCH changes exactly one value and answers the card's settings as they are now (null = default).
-0061 T#11: ``{"field": "hold", "value": true | false | null}`` sets / releases the card's Hold (``settings.write``).
-flowgate.v02.0098 T#1: ``GET ...?refresh_merge_targets=true`` judges a check card's merge target candidates again instead
+``{"field": "hold", "value": true | false | null}`` sets / releases the card's Hold (``settings.write``).
+``GET ...?refresh_merge_targets=true`` judges a check card's merge target candidates again instead
 of reading their cache (a read option only: nothing is written).
-flowgate.v02.0148 T#1: ``PATCH ...?keep_merge_targets=true`` omits the target view only for an unrelated
+``PATCH ...?keep_merge_targets=true`` omits the target view only for an unrelated
 check setting and answers ``merge_targets_kept: true``. Without that opt-in the full response is unchanged.
 """
 from __future__ import annotations

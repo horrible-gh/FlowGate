@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#2 (0005-L §2.7 / §2.8) — 가로 / 세로 자동정렬 of a shown Graph: the input (layoutInput.ts), the
+// flowgate.v02.0068 T#2 (0005-L §2.7 / §2.8) — horizontal / 세로 자동정렬 of a shown Graph: the input (layoutInput.ts), the
 // groups' order, stages and lanes (layoutLanes.ts), the bands with obstacle avoidance and pierce repair and the
 // unconnected areas (layoutBands.ts) give a candidate — the new position of every card that moves (shown and
 // movable). The candidate is checked whole before anything moves; one failed check refuses all of it:
@@ -6,7 +6,7 @@
 // move counts where it really is, a collapsed card too) — V4 every target edge, judged by the unchanged facingSide
 // at the real sizes, faces the direction (Right → Left / Bottom → Top) — V5 no pierce the repair did not try.
 // Same Graph, same direction, same sizes: the same result, whatever the moving cards' positions and node ids.
-// The former 자동 배치 (autoLayout.ts layout / autoLayoutPlacements, the server's rules) stays for the server
+// The former auto-layout (autoLayout.ts layout / autoLayoutPlacements, the server's rules) stays for the server
 // match tests. Pure: no Vue, no Vue Flow.
 import { facingSide, type NodeRect } from '../canvas/edgeGeometry'
 import type { NodePlacement } from '../edit/editHistory'

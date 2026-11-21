@@ -1,6 +1,6 @@
 """AI attachment upload requests — intake, preview, decision, expiry and recovery.
 
-flowgate.chat.0017 CH0002 (final design, approved at seq 11). One structure for chat and
+(final design, approved at seq 11). One structure for chat and
 card AI runs::
 
     AI run --(file)--> intake: authorize, validate, stage + sha256, row(pending) --> {request_id}

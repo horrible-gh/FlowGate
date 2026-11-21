@@ -16,14 +16,14 @@
 </template>
 
 <script setup lang="ts">
-// The v0.2 App Shell (T0011 §5, extended by T0010/T#3 §2): layout and route assembly only
-// — Topbar, Sidebar, the routed screen, and (T#3) the single Project Dialog mount. It owns
+// The v0.2 App Shell: layout and route assembly only
+// — Topbar, Sidebar, the routed screen, and the single Project Dialog mount. It owns
 // no feature state or API calls of its own; each screen under RouterView brings its own,
-// and ProjectDialog is reached only through features/project's public surface (D0004 §4.1)
+// and ProjectDialog is reached only through features/project's public surface
 // — this file never touches ProjectList/ProjectRow/ProjectCreateDialog or Dialog-local
-// state. The GUI-generation switch stays in the Topbar (T0009 §8).
+// state. The GUI-generation switch stays in the Topbar.
 //
-// A route with `meta.fullscreen` (the Designer, flowgate.v02.0025 T0006 §1) is a dedicated
+// A route with `meta.fullscreen` (the Designer, the earlier change the earlier implementation) is a dedicated
 // workspace: Topbar and Sidebar are not rendered and the routed screen gets the whole
 // viewport. Every other route keeps the App chrome exactly as before.
 //
@@ -32,11 +32,11 @@
 // the Sidebar and the Dashboard open. If the move does not happen, the Dialog's one-shot
 // explicit-open signal is dropped so it cannot reach a later, unrelated Designer entry.
 //
-// flowgate.v02.0043: the Designer's File › Designer 닫기 leaves the Designer for the Dashboard.
+// flowgate.v02.0043: the Designer's File › Designer "닫기" leaves the Designer for the Dashboard.
 // The Designer Shell is router-free as well, so it emits `close-designer` and the move happens
 // here, on the routed screen.
 //
-// flowgate.v02.0053 T#3: the single mount of the document windows (features/documentWindow). They are
+// the single mount of the document windows (features/documentWindow). They are
 // teleported modeless panels over whatever screen is shown; openers reach them through the feature's
 // public surface only.
 import { RouterView, useRoute, useRouter } from 'vue-router'
@@ -67,7 +67,7 @@ function closeDesigner(): void {
 </script>
 
 <style scoped>
-/* Outer shell is one column: Topbar row over the body row (T0009 rev1: never reuse v0.1's
+/* Outer shell is one column: Topbar row over the body row (the earlier implementation: never reuse v0.1's
    shared two-column `.app-shell` grid, which trapped routed content in a sidebar-width
    cell). The sidebar/content split is the body's own grid below. */
 .gui-app-shell {

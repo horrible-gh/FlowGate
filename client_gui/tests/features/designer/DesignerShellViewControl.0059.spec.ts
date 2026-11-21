@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#1 — the Toolbar and the View menu drive the same Canvas Viewport (fit, zoom in /
+ * the Toolbar and the View menu drive the same Canvas Viewport (fit, zoom in /
  * out, 100%, zoom select) and the Toolbar value follows it. Scaffold as DesignerShellCenter.0026:
  * the real Shell, project store, Center session and server Graph source; only `@shared/api` is mocked.
  */
@@ -95,7 +95,7 @@ beforeEach(() => {
       return { data: { data: { group_id: decodeURIComponent(group[1]), branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
-    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    // the Designer reads Flow Graphs from the server Canvas API.
     const canvas = answerFlowCanvas(url)
     if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
@@ -113,7 +113,7 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
-// flowgate.v02.0039 T#3: entering leaves the Designer without a work target; these suites
+// entering leaves the Designer without a work target; these suites
 // check the work state, so the user first chooses the Project row (one click).
 async function mountShell() {
   const pinia = createPinia()
@@ -150,7 +150,7 @@ async function openFlow(w: VueWrapper<any>, label: string) {
 }
 
 const tool = (w: VueWrapper<any>, command: string) => w.get(`[data-test="designer-tool"][data-command="${command}"]`)
-// flowgate.v02.0059 0017-T: the one zoom control shows the zoom as its chosen entry.
+// the one zoom control shows the zoom as its chosen entry.
 const toolbarZoom = (w: VueWrapper<any>) => (get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text
 const canvasZoom = (w: VueWrapper<any>) => Number(get(w, 'designer-canvas').attributes('data-zoom'))
 
@@ -197,7 +197,7 @@ describe('Designer Shell — Canvas view controls (flowgate.v02.0059 T#1)', () =
     expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).value).toBe('50')
   })
 
-  // flowgate.v02.0059 0017-T: 115% (no preset) is shown once and stays one with zoom in / out, presets and 100%.
+  // 115% (no preset) is shown once and stays one with zoom in / out, presets and 100%.
   it('a zoom that is no preset (115%) is shown once and follows zoom in / out, a preset and 100%', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')

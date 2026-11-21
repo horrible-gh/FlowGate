@@ -1,8 +1,8 @@
-"""Run scope of a Graph — flowgate.v02.0061 (0002-CH turns 7 / 13 / 15, rules 1-2).
+"""Run scope of a Graph — the earlier change (CH turns 7 / 13 / 15, rules 1-2).
 
 A run follows edges from its start nodes, so what a run may reach is decided by the graph alone:
 
-- a run start node is a start node (no incoming live edge, L0009 §2.0) whose document type is a root type
+- a run start node is a start node (no incoming live edge, the earlier implementation) whose document type is a root type
   (``R`` 요구사항 / ``B`` 버그, ``graph_model.ROOT_DOC_TYPES``) and that has at least one outgoing live edge: a
   root node with no edge at all is an isolated node (rule 1), not a start (turn 15 rule 3), so it neither
   counts for ``multiple_start`` nor is opened by a run;

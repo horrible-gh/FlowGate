@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — the single menu owner of the Designer (0006-D rev2 §2.1 메뉴 호스트, §3.4, §7.2):
+// the single menu owner of the Designer (D menu host):
 // current snapshot + items, position, open generation and the focus to return to. Opening again
 // replaces the menu (one menu only); a selection or invalidation carrying an older generation is
 // ignored so a stale target can never run. Reuses the core overlay z-index / focus-return helpers.

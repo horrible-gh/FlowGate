@@ -93,7 +93,7 @@ class TestBaseDirtyDelegationAdmission0481(_Scenario):
 
 
     def test_an_ordinary_scope_still_goes_through_the_base_tree_guard(self, project_scoped_admission_origin):
-        # The base-tree guard itself (0299 R0001) must not be weakened for the scopes it was
+        # The base-tree guard itself must not be weakened for the scopes it was
         # written for. An `edit` run on a group with no worktree still engages the gate, and
         # the gate's self-heal provisions the group — the exact work the project-scoped skip
         # above must NOT do for a group that does not exist.

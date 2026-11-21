@@ -1,4 +1,4 @@
-"""0010-L 5.7/5.8: chat reads stay valid only until another authorized save.
+"""5.7/5.8: chat reads stay valid only until another authorized save.
 
 These use the same isolated DB observer as the route matrix. Legacy entrypoints
 are invoked directly where their HTTP authentication is already covered by the

@@ -1,4 +1,4 @@
-"""Focused acceptance tests for flowgate.default.0395 T0015."""
+"""Focused acceptance tests for the earlier change the earlier implementation."""
 from __future__ import annotations
 
 import json
@@ -75,15 +75,15 @@ def test_logical_key_mapping_counts_occurrences():
 
 
 def test_a_finished_row_is_skipped_and_the_skip_is_reported():
-    """Rewritten from test_completed_slot_still_counts_for_ordinal (0444 NR0003 §2-3).
+    """Rewritten from test_completed_slot_still_counts_for_ordinal.
 
-    The old name stated the old expectation: a done row kept its ordinal, so T#1 mapped
-    onto item 4. NR0003 named that the top root cause — project() then filed the stolen row
+    The old name stated the old expectation: a done row kept its ordinal, so the earlier implementation mapped
+    onto item 4. the review named that the top root cause — project then filed the stolen row
     as ``already_started`` and dropped the new plan's provider and note, while the genuinely
     pending row was never touched. The contract now: a slot is a row that is still pending
     (or one this plan poured itself), and rows left out are reported, not dropped in silence.
     """
-    # 0649 T#1 (NR0003 §3.6): a finished row is one holding a result document — the single
+    # a finished row is one holding a result document — the single
     # "started" predicate. ``status`` alone (which only a hand-built dict can set without
     # result_doc_id) no longer makes a row started.
     items = [item(4, "T", "done", result="flowgate.default.0395.0004-T"), item(9, "T")]
@@ -302,7 +302,7 @@ def test_no_workflow_tag_is_none():
 
 
 def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
-    """P0009 §7.3: every warning is reachable and fully translated.
+    """every warning is reachable and fully translated.
 
     This intentionally drives all warning branches at once. Adding a new code to
     ``WARNING_CODES`` without adding its trigger or any locale must fail here.
@@ -323,7 +323,7 @@ def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
     messages = {}
     for locale in ("ko", "en", "ja"):
         warnings = []
-        # 0649 T#2 (NR0003 O2): a plan breaks its started prefix one way at a time, so the
+        # a plan breaks its started prefix one way at a time, so the
         # three started-card codes are driven by three calls.
         for order_code in ("order_conflicts_started", "started_card_removed",
                            "card_identity_mismatch"):
@@ -341,12 +341,11 @@ def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
                 unmatched_keys=["T#2"],
                 skipped_done_item_seqs=[7],
                 locale=locale,
-                # 0649 T#1 (NR0003 O0): the unresolved / retired legacy rows of this plan.
+                # the unresolved / retired legacy rows of this plan.
                 card_classification={
                     "unresolved_started": [{"item_id": 11, "item_seq": 11}],
                     "retired_started": [{"item_id": 12, "item_seq": 12}],
                 },
-                # 0649 T#2 (NR0003 O2-O4).
                 order_blocker={"code": order_code, "cards": [{"card_id": "T#1", "key": "T#1"}]},
                 orphan_rows=[{"id": 13, "item_seq": 13, "type": "T"}],
                 interleaved_rows=[{"id": 14, "item_seq": 14, "type": "D"}],

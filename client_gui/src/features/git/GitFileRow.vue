@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — one Git file row: state letter (or the "status unknown" mark) + path.
+// one Git file row: state letter (or the "status unknown" mark) + path.
 // Selecting it only raises the diff intent; the diff itself is the Center's (0033-D §4.7).
 import { useI18n } from 'vue-i18n'
 import type { GitFileLetter } from './types'

@@ -92,7 +92,7 @@ class TestGitEndToEnd(_Scenario):
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
         assert out["result"]["merge_commit"]
-        # flowgate.default.0232 B0001: the merge commit no longer reuses the work
+        # The merge commit no longer reuses the work
         # subject — reusing it stamped two commits of identical title+diff onto
         # origin ("same code committed twice"). The top of origin main is now a
         # conventional Merge commit; the confirmed work subject rides in on its
@@ -107,7 +107,7 @@ class TestGitEndToEnd(_Scenario):
             ["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]
         ).split()
         assert "work.txt" in files
-        # B flowgate.default.0172.0001-B: a merge lands the work in default but
+        # A merge lands the work in default but
         # must NOT publish the intermediate work branch to origin.
         heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
         assert "refs/heads/gitprj_default_0100" not in heads

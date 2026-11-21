@@ -1,4 +1,4 @@
-"""Node identity rematch after a v0.1 sequence changed (D0004 §3.6, L0009 §2.3.4~§2.3.6).
+"""Node identity rematch after a v0.1 sequence changed.
 
 Pure: the caller passes the recorded mapping rows (``prev``), the current v0.1 rows
 (``cur``), the protected row ids, a slot-key generator and a supersede-chain predicate.

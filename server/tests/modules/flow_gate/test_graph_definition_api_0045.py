@@ -1,7 +1,7 @@
-"""flowgate.v02.0045 T0013 (S3+S4) — Graph definition / confirmation API on a real SQLite DB.
+"""(S3+S4) — Graph definition / confirmation API on a real SQLite DB.
 
-P0008 §5 (S3-1~S3-6, GET graph / revisions), §6 (S4-1~S4-7), §3 Canvas S1-4 / S1-5 with Graph
-nodes, §8 (graph_canvas_changed draft / revision, flow_ownership_changed), L0009 §2.4
+(S3-1~S3-6, GET graph / revisions), (S4-1~S4-7), Canvas S1-4 / S1-5 with Graph
+nodes, (graph_canvas_changed draft / revision, flow_ownership_changed), the earlier implementation
 (confirmation order, root binding), DB0010 §3.3 / §3.4 / §5.3 (migrations 142 / 143, cleanup).
 Auth (verify_bearer), RBAC and SSE delivery are stubbed at the Graph API boundary.
 """
@@ -95,7 +95,7 @@ def env(db_path, monkeypatch, tmp_path):
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes
     from modules.flow_gate.graph_workflow.services import canvas_events
 
-    # flowgate.v02.0053 T#1: with the card document ports registered (startup / an earlier lifespan in
+    # with the card document ports registered (startup / an earlier lifespan in
     # this process) a draft save files the cards' documents; keep them in a temp storage root.
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
@@ -300,7 +300,7 @@ def test_s3_4_format_errors_and_unregistered_doc_type(env):
 
 
 
-# ── Canvas with a draft (P0008 S1-4) ─────────────────────────────────────────
+# ── Canvas with a draft ─────────────────────────────────────────
 
 
 

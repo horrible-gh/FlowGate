@@ -1,7 +1,7 @@
-"""Read-only AI summary composed from authoritative resources (flowgate.v02.0017 T0002 §6),
+"""Read-only AI summary composed from authoritative resources,
 still served under a project for the v0.1 settings screen.
 
-connections  the system AI and which of them are usable (no project policy since CH0006 (4))
+connections the system AI and which of them are usable (no project policy since the discussion )
 evaluation   recent scores, active runs, judge and last evaluation time (not per project)
 ai_groups    Supervisor, members, roles, their counts and state per team (not per project)
 

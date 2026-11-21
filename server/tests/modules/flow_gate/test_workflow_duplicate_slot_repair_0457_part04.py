@@ -80,7 +80,7 @@ def test_a_document_in_two_slots_resolves_to_the_earlier_one(incident_db):
     """The legacy shape: the lookup must not be at the engine's discretion.
 
     Before the ordering was added the query was `WHERE result_doc_id = ? LIMIT 1` with no
-    `ORDER BY`, so which slot 0005-TR belonged to was whatever came back first. Databases
+    `ORDER BY`, so which slot the earlier implementation belonged to was whatever came back first. Databases
     that have not yet run 090 still hold states like this one.
     """
     from modules.flow_gate.db import workflow_sequences as db_wfseq

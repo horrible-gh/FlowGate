@@ -1,4 +1,4 @@
-"""0371 T0012 — SSE streams must obey session/user revocation (NR0007 §4).
+"""SSE streams must obey session/user revocation.
 
 Before this change ``/api/v1/events/stream`` validated only the JWT itself:
 decode, ``type == access``, 2FA finished, jti not blacklisted. The two lookups
@@ -257,7 +257,7 @@ async def test_a_refused_connection_leaves_no_subscriber_behind(app):
 
 @pytest.mark.asyncio
 async def test_open_stream_ends_at_the_next_heartbeat_after_a_revoke():
-    """The bound NR0007 §4 asks for: a revoke lands within one heartbeat."""
+    """The bound the review asks for: a revoke lands within one heartbeat."""
     live = {"active": True}
     gen, patchers = await _open_stream(session_active=lambda sid: live["active"])
     try:
@@ -467,7 +467,7 @@ _SOURCE = (
 
 def test_auth_lookups_never_run_on_the_event_loop():
     """These are synchronous DB reads inside an `async def` handler — exactly the
-    0279 T0005 pattern that once froze the whole server for 40 seconds. The
+    pattern that once froze the whole server for 40 seconds. The
     connect check and both in-stream re-checks must be offloaded."""
     assert "await anyio.to_thread.run_sync(_authenticate, jwt_token)" in _SOURCE
     assert _SOURCE.count("await anyio.to_thread.run_sync(_revocation_reason, ctx)") == 1

@@ -1,4 +1,4 @@
-"""A person writes a card line that has no document (flowgate.v02.0056 T#3, 0002-CH turn 6 §5 / turn 10 O3).
+"""A person writes a card line that has no document.
 
 The document tab shows every line of a card; a line with no live document (its type was not registered when the
 card was placed, its document was cancelled or deleted) offers [작성]. Saving it makes the line's document through
@@ -7,7 +7,7 @@ document, ``doc_created``) with the person's text after its front matter, and li
 
 - **the node is open in the Flow's active run and the line is of its result's type** (the type the result
   binder takes, ``result_binder.result_type``): the document is the node's result, registered with the node's
-  dispatch token (L0009 E-23: the token stays a person's). Everything that decides and spends the token is one
+  dispatch token (E-23: the token stays a person's). Everything that decides and spends the token is one
   Flow guard transaction, so of two writes on one node only one ever registers: the node is judged again under
   the guard (open, its result's type, not in its card's instruction stage, its AI and the card's review not
   working, its dispatch token not spent), the document is made, the token is claimed (a compare-and-swap
@@ -24,7 +24,7 @@ document, ``doc_created``) with the person's text after its front matter, and li
   (``card_settings.legacy_adapter.node_of_ai_run``).
 - **otherwise**: a draft of the line's type (the person's text in it), linked to the line as the card's own.
 
-flowgate.v02.0113 T#3 (L-2 §2.6, T §4.3): **the node is in a person's instruction stage holding its instruction stage
+(L-2, T): **the node is in a person's instruction stage holding its instruction stage
 token (T-2) and the line is its instruction line** (its instruction's type; a TEST card's TS line): the instruction is
 registered with that token as the result path registers a result — the same guard, the document made with the
 person's text, the token claimed (compare-and-swap consume), the document opened and submitted, the card's untouched
@@ -40,7 +40,7 @@ line of a test card shows its instruction's document and is never written on its
 Flow guard; only the result path's Graph contact follows its commit, taking the Graph's own guard as the inbox's
 does.
 
-flowgate.v02.0083 T#3 (0014-CH turn 8 D-2): a work plan card a person writes has its plan on its line from the start
+(CH D-2): a work plan card a person writes has its plan on its line from the start
 (the card's empty draft, filled in the work plan editor and saved by ``PUT …/work-plan``), so its result path takes
 no text and makes no document: the write registers that very draft — the same guard, refusals, token claim and
 submission (``register_result``) — and the line already holds it. A plan of no work set (or one that cannot be read)
@@ -138,7 +138,7 @@ def _shown_line(flow_id: str, node: dict, slot: cs.CardSlot) -> Optional[dict]:
 def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str], user_id: str,
                locale: Optional[str] = None) -> dict:
     """``POST /flows/{flow_id}/nodes/{node_key}/slots/{slot}/document``; a document it makes (also a result) is
-    titled in ``locale``, the request's (flowgate.v02.0088)."""
+    titled in ``locale``, the request's."""
     flow_id = group["group_id"]
     legacy.require_writable(flow_id)
     if not repository.available():
@@ -155,9 +155,9 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         running = legacy.running_node(flow_id, node_key)       # judged under the guard: one writer at a time
         if running is not None and running["result_type"] == slot.doc_type:
             return _reserve_result(group, node, slot, ordinal, running, content, user_id, locale), None
-        if running is not None and _instruction_line(running, slot):          # 0113 T#3: T-2 (L-2 §2.6)
+        if running is not None and _instruction_line(running, slot):          # T-2 (L-2)
             return _reserve_instruction(group, node, slot, ordinal, running, content, user_id, locale), None
-        if slot.doc_type == "WP" and legacy.card_working(flow_id, node_key):     # 0083 T#3: e.g. its review loop
+        if slot.doc_type == "WP" and legacy.card_working(flow_id, node_key):     # e.g. its review loop
             raise _refused(409, "node_ai_working", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot},
                            "The card's AI is still working on it.")
         row, doc = _line(flow_id, node, slot)
@@ -212,7 +212,7 @@ def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, ru
 
 
 def _instruction_line(running: dict, slot: cs.CardSlot) -> bool:
-    """flowgate.v02.0113 T#3: the line is the instruction line of a node in its instruction stage holding a live
+    """the line is the instruction line of a node in its instruction stage holding a live
     instruction stage token (a person's instruction stage, T-2)."""
     return bool(running.get("instruction_stage") and running.get("stage_token_id")
                 and slot.slot == cs.INSTRUCTION and running.get("instruction_type") == slot.doc_type)
@@ -220,7 +220,7 @@ def _instruction_line(running: dict, slot: cs.CardSlot) -> bool:
 
 def _reserve_instruction(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, running: dict,
                          content: Optional[str], user_id: str, locale: Optional[str] = None) -> tuple[str, str]:
-    """flowgate.v02.0113 T#3 (L-2 §2.6, T §4.3), inside the Flow guard: a person's instruction made with their text, its
+    """(L-2, T), inside the Flow guard: a person's instruction made with their text, its
     instruction stage token (T-2) claimed, the document submitted and the instruction line holding it — ``(doc_id,
     token_id)``, as ``_reserve_result`` registers a result. Any refusal raises, so the guard's transaction leaves
     nothing (and a document made before the refusal leaves no file)."""
@@ -252,12 +252,12 @@ def _reserve_instruction(group: dict, node: dict, slot: cs.CardSlot, ordinal: in
 
 
 def _reserve_plan(node: dict, slot: cs.CardSlot, running: dict, user_id: str, params: dict) -> tuple[str, str]:
-    """flowgate.v02.0083 T#3: the result path of a work plan line — the card's own plan draft on the line, as its editor
+    """the result path of a work plan line — the card's own plan draft on the line, as its editor
     saved it, registered with the node's dispatch token (no new document; the line already holds it)."""
     flow_id = params["flow_id"]
     row, doc = _line(flow_id, node, slot)
     if doc is None or legacy.work_sets(doc) < 1:
-        raise _invalid("content", "empty_body")               # 작업 0세트: nothing to approve
+        raise _invalid("content", "empty_body")               # Zero work sets: nothing to approve
     token_id = running["token_id"]
     if not token_id:
         raise _refused(409, "node_token_unavailable", params, "The card's run token is already used.")

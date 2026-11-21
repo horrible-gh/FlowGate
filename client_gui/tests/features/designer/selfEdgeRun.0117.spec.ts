@@ -1,8 +1,8 @@
 // flowgate.v02.0117 T#2 — [다음 단계] / [전체 실행] on a Flow whose stored draft holds a self edge.
 //
-// Fixture: the Graph of the reported Flow flowgate.v02test.0001 as stored (draft version 11, no revision, no run):
+// Fixture: the Graph of the reported Flow the earlier change as stored (draft version 11, no revision, no run):
 // 버그(B) -> 작업(T) -> 확인(gate), plus the edge ge_4j1uazydwsba from 작업 to itself. The server validator (rule 4,
-// flowgate.v02.0061) answers that draft with one `cycle` issue, so before the fix its confirmation was refused on
+// ) answers that draft with one `cycle` issue, so before the fix its confirmation was refused on
 // every run command, no `POST /runs` went out, and the Canvas drew no edge to remove (vueFlowMapping skips self
 // edges). The fake source below judges a saved draft the same way (a self edge -> `graph_validation_failed`).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

@@ -1,11 +1,11 @@
-// flowgate.v02.0033 — model of the Designer Git part. The server's snake_case stays inside
+// model of the Designer Git part. The server's snake_case stays inside
 // api.ts (and features/project for the read loaders); the session, the cards and whatever a
 // Tool Panel Container does with the part's events only ever see these shapes.
 //
 // Project / Base Git status itself is features/project's ProjectGitStatus (0033-D §4.2: no
 // Git-only store); this file adds what the part derives from it and what only it owns.
 //
-// flowgate.v02.0066 adds the Group worktree models (Worktree* / ManualMerge* / MergeResult* /
+// adds the Group worktree models (Worktree* / ManualMerge* / MergeResult* /
 // RefsFetch*) at the end. They belong to the Group worktree of the current Flow, never to the
 // Base checkout card (GitBase*): 0066 D#2 §2-1.
 import type { GroupScopeFloor } from '@/features/project'
@@ -19,7 +19,7 @@ export interface GitBadge {
 /** File state letter shown in a Git file row. null = not known (yet). */
 export type GitFileLetter = 'C' | 'A' | 'D' | 'M' | '?'
 
-// worktree (flowgate.v02.0066): a Group worktree file, or a file of the target comparison list.
+// worktree: a Group worktree file, or a file of the target comparison list.
 export type GitFileOrigin = 'conflict' | 'dirty' | 'review' | 'worktree'
 
 /** `open-diff` intent (0033-D §4.7). The Center diff tab is a later group's. */
@@ -34,9 +34,9 @@ export interface GitDiffIntent {
   status: GitFileLetter | null
   origin: GitFileOrigin
   // base: GET /projects/{pid}/git/diff?path= · review: GET .../merge/{merge_id}/review-diff?path=
-  // group (flowgate.v02.0066): GET /projects/{pid}/git/groups/{gid}/diff?path=[&base=]
+  // group: GET /projects/{pid}/git/groups/{gid}/diff?path=[&base=]
   diffSource: 'base' | 'review' | 'group'
-  // flowgate.v02.0066, worktree intents only (the dirty / conflict / review ones never carry the
+  // worktree intents only (the dirty / conflict / review ones never carry the
   // key): null = the group work base floor against the worktree file; a name = the merge-base
   // with that target, i.e. the target the comparison list was read for (0066 D#2 §5-2).
   compareBase?: string | null
@@ -59,7 +59,7 @@ export interface GitWindowDescriptor {
   minimized: boolean
   groupId: string | null
   mergeId: number | null
-  // flowgate.v02gui.0004: the conflict file the resolver window shows (conflict windows only).
+  // the conflict file the resolver window shows (conflict windows only).
   path?: string | null
 }
 
@@ -69,7 +69,7 @@ export interface GitConflictFile {
   path: string
   // Conflict markers still in the file, counted by the server.
   conflictCount: number
-  // flowgate.v02gui.0004: the working file as the server read it (markers included) — what the
+  // the working file as the server read it (markers included) — what the
   // direct resolver splits into chunks. '' when the server could not read it.
   content: string
   // The server recorded a resolution for this file (`resolved_paths`).
@@ -92,10 +92,10 @@ export interface GitConflictSession {
   // handles it; this panel only points there. Absent = not one.
   graphMerge?: boolean
   files: GitConflictFile[]
-  // flowgate.v02test.0052 (0001-B §4): the last failed abort / cleanup of this session as the server recorded it
+  // the last failed abort / cleanup of this session as the server recorded it
   // (`abort_failure`), null when there is none. `reason` is git's own line.
   abortFailure?: GitAbortFailure | null
-  // flowgate.v02test.0052 (card B): files that the resolution carried along with the session's own (`companion_files`),
+  // (card B): files that the resolution carried along with the session's own (`companion_files`),
   // e.g. the file main moved a conflicted file to. `sourcePath` is the session file they came from.
   companionFiles?: GitCompanionFile[]
 }
@@ -181,7 +181,7 @@ export interface GitRejectResult {
 export interface GitProviders {
   providerIds: string[]
   defaultProviderId: string | null
-  // flowgate.v02gui.0004: the same list with the names the AI picker shows.
+  // the same list with the names the AI picker shows.
   providers: GitProviderOption[]
 }
 
@@ -265,7 +265,7 @@ export interface GitNotice {
   params?: Record<string, string | number>
 }
 
-// ── Git connect window (flowgate.v02.0065) ─────────────────────────────────────────────
+// ── Git connect window ─────────────────────────────────────────────
 
 /** Provider choices of the connect window — the values the existing Git settings use. */
 export type GitConnectProvider = 'generic' | 'github' | 'gitlab' | 'gitea' | 'gitbucket'
@@ -300,7 +300,7 @@ export interface GitConnectMessage {
   params?: Record<string, string | number>
 }
 
-// ── Existing project Git settings contracts (flowgate.v02.0065 T#2) ────────────────────
+// ── Existing project Git settings contracts ────────────────────
 // The shapes of GET/PUT git/config, POST git/test-connection and GET/POST git/provision as the
 // connect window needs them. No token, masked or not, is ever part of a model here.
 
@@ -353,7 +353,7 @@ export interface GitProvisionResult {
   provision: GitProvisionView | null
 }
 
-// ── Group worktree (flowgate.v02.0066) ─────────────────────────────────────────────────
+// ── Group worktree ─────────────────────────────────────────────────
 // The Group worktree endpoints of 0066 D#1 E1–E12 as the Git tab reads them (0066 D#2 §5-1).
 // No server `message` and no diagnostic text is ever part of these models; an error keeps its
 // code and only the detail values the screen reads (WorktreeErrorDetails).
@@ -734,7 +734,7 @@ export interface RefsFetchResult {
   group: RefsFetchGroup | null
 }
 
-// ── Worktree area and Center Diff (flowgate.v02.0066 T#6) ──────────────────────────────
+// ── Worktree area and Center Diff ──────────────────────────────
 
 /** A line of the worktree area (0066 D#2 §3-3). Codes only: the text is gui.git.worktree.notice.*. */
 export interface WorktreeNotice {
@@ -745,14 +745,14 @@ export interface WorktreeNotice {
   link?: 'unstage_all'
 }
 
-/** `git-center-diff-refresh` (worktree session → the panel's Center Diff, 0067 T#4): read the open group diff again, or close it. */
+/** `git-center-diff-refresh` (worktree session → the panel's Center Diff, the earlier implementation): read the open group diff again, or close it. */
 export interface GitCenterDiffRefresh {
   groupId: string
   // Close a diff opened from the target comparison list (compareBase set) instead of reading it.
   closeCompare: boolean
 }
 
-/** The one group file diff on screen (0066 D#2 §3-10) — the Git modeless `Diff` tab detail since 0067 T#4. */
+/** The one group file diff on screen — the Git modeless `Diff` tab detail since the earlier implementation. */
 export interface CenterDiffTarget {
   projectId: string
   groupId: string
@@ -771,5 +771,5 @@ export interface CenterDiffError {
   code: string | null
 }
 
-// flowgate.v02.0067 T#1 — the four tabs of the Git modeless the Git tab entries open (0067-R §3).
+// the four tabs of the Git modeless the Git tab entries open.
 export type GitWorktreeTab = 'files' | 'merge' | 'diff' | 'status'

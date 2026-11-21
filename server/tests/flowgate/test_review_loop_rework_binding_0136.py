@@ -1,6 +1,6 @@
-"""flowgate.v02.0136 T0004: a document review loop's rework submission binds to its own hop token.
+"""a document review loop's rework submission binds to its own hop token.
 
-Regression for B0001 / NR0003 rev 2. A review-loop run keeps ``run["action_scope"]="review"``
+Regression for the regression / the review. A review-loop run keeps ``run["action_scope"]="review"``
 (the oracle, the judge and the retry gates read it), but every token the run is handed --
 the first hop's (``admission.start_run``), a stage transition's and a same-stage reissue's
 (``worker._prepare_retry_token``) -- must move ``run["register_context"]`` and
@@ -17,7 +17,7 @@ _adopt_continuation_token / _inbox_register / _absorb_binding_failure,
 invoke_mention_service.issue_rework_request, workflow_decision_service.request_review, the card
 document revision store and finalize._persist_register_context_failures.
 Stubbed in ``world``: the admission prelude (provider list, group lease, git sync), the worker
-THREAD body (no AI process), permission checks and notifications -- the same stubs the NR0003
+THREAD body (no AI process), permission checks and notifications -- the same stubs the the review
 isolated harness (appendix A) and the repository's admission tests use. Those tests check the
 FUNCTION boundaries (binding, reissue, adoption); their reviewer verdict is emulated by stamping the
 review token consumed and their rework is an ``edit_reason=worker_self`` submission.
@@ -81,7 +81,7 @@ def world(env, monkeypatch):
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "test")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_test", "agent-test-pepper-0136")
     integration.register()
-    # flowgate.v02.0146 T#2: ``start_run`` claims its run id through the run-id allocator contract, which a freshly
+    # ``start_run`` claims its run id through the run-id allocator contract, which a freshly
     # migrated store has not activated. Run on its own it stopped at ``ai_run_allocator_cutover_required`` and only
     # passed when an earlier module had activated a store; activate this test's own store (real contract, no stub).
     from modules.flow_gate.db import ai_run_identity
@@ -95,7 +95,7 @@ def world(env, monkeypatch):
     app.include_router(inbox.router, prefix="/flowgate")
     client = TestClient(app)
 
-    # Admission prelude -- same shape as the NR0003 harness / test_ai_invoke_review_admission_0544.
+    # Admission prelude -- same shape as the the review harness / test_ai_invoke_review_admission_0544.
     monkeypatch.setattr(admission.ai_settings_service, "resolve_effective",
         lambda _p: {"providers": [{"id": "prov-rev", "name": "REV"}, {"id": "prov-rw", "name": "RW"}],
                     "source": "project", "registered_count": 2})
@@ -188,7 +188,7 @@ def make_builder(foreign_group=None, foreign_doc=None):
     ``foreign_group`` makes the NEXT mint carry another group -- a token the run must refuse
     to adopt (project/group are immutable for the life of a run). ``foreign_doc`` makes it name
     another document of the SAME project/group -- refused too: a review loop is pinned to its
-    own document (T0004 §2-4/§5-4)."""
+    own document."""
     from modules.flow_gate.services import invoke_mention_service, workflow_decision_service
 
     def _issue(ai_run_id=None):
@@ -224,7 +224,7 @@ def start_loop(world, *, rejected, builder=None):
     if rejected:
         world.env.db._execute("UPDATE documents SET doc_review_status='rejected' WHERE doc_id=?", [D])
     else:
-        # A loop starts on a submitted document (flowgate.v02test.0014: compute_review_baseline
+        # A loop starts on a submitted document (the earlier change: compute_review_baseline
         # refuses one with no review status). `gated` already sets this; `world` left it NULL.
         world.env.db._execute("UPDATE documents SET doc_review_status='pending_review' "
                               "WHERE doc_id=? AND COALESCE(doc_review_status,'')=''", [D])

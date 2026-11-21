@@ -1,13 +1,13 @@
-"""Group 0452 T0005 — the per-user finished-card retention setting.
+"""Group the earlier implementation — the per-user finished-card retention setting.
 
 Three things are pinned here, in the order the work was specified:
 
-1. reading and saving the value, in both directions (L0003 §2-1/§2-8),
+1. reading and saving the value, in both directions,
 2. the endpoint that carries it, including the shape of a refusal,
 3. the table it lives in, including the constraints DB0004 deliberately did NOT put in
    the schema.
 
-The recurring theme is the asymmetry L0003 §2-8 asked for: a value *arriving* in a save
+The recurring theme is the asymmetry the earlier implementation asked for: a value *arriving* in a save
 is refused, while a value already *sitting* in storage is repaired on the way out and the
 call proceeds — a setting must never be able to stop finished cards from working.
 
@@ -85,14 +85,14 @@ class _MemoryStore:
 def memory_store(monkeypatch):
     mem = _MemoryStore()
     monkeypatch.setattr(uss, "ui_settings_store", mem)
-    # flowgate.v02test.0056: the Designer sizes have their own row; an empty one here keeps
+    # The Designer sizes have their own row; an empty one here keeps
     # these retention cases away from the real table.
     monkeypatch.setattr(uss, "designer_layout_store", _MemoryStore())
     return mem
 
 
-# flowgate.v02test.0056: the settings also carry the Designer's three dock sizes.
-SIZE_DEFAULTS = {"designer_left_width": 280, "designer_right_width": 300, "designer_bottom_height": 320}
+# The settings also carry the Designer's three dock sizes.
+DESIGNER_DEFAULTS = {"designer_left_width": 280, "designer_right_width": 300, "designer_bottom_height": 320, "designer_taskbar_style": "flowgate"}
 
 
 # ── 1. reading the setting ────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ class TestResolveSettings:
     def test_never_saved_is_manual_delete_only_and_says_so(self, memory_store):
         settings, is_default = uss.resolve_ui_settings("u1")
         assert is_default is True
-        assert settings == {FIELD: -1, **SIZE_DEFAULTS, "updated_at": None}
+        assert settings == {FIELD: -1, **DESIGNER_DEFAULTS, "updated_at": None}
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
         assert uss.resolve_ui_settings(None) == (uss.defaults(), True)
@@ -117,7 +117,7 @@ class TestResolveSettings:
         assert settings["updated_at"] == "2026-08-23T18:22:41+09:00"
 
     def test_an_explicit_thirty_from_before_the_default_changed_is_not_migrated(self, memory_store):
-        # T#2 changes the fallback to -1 but must not touch rows a user already saved.
+        # changes the fallback to -1 but must not touch rows a user already saved.
         memory_store.row = {
             "user_id": "u1", FIELD: 30,
             "created_at": "x", "updated_at": "2026-08-23T18:22:41+09:00",
@@ -154,9 +154,9 @@ class TestResolveSettings:
     def test_response_carries_the_domain_so_no_screen_holds_its_own_copy(self, memory_store):
         body = uss.settings_response("u1")
         assert body["domain"][FIELD] == [-1, 0, 30, 60, 120, 180, 360, 720, 1440]
-        assert body["defaults"] == {FIELD: -1, **SIZE_DEFAULTS}
+        assert body["defaults"] == {FIELD: -1, **DESIGNER_DEFAULTS}
         assert "updated_at" not in body["defaults"]
-        assert body["settings"] == {FIELD: -1, **SIZE_DEFAULTS, "updated_at": None}
+        assert body["settings"] == {FIELD: -1, **DESIGNER_DEFAULTS, "updated_at": None}
         assert body["is_default"] is True
 
     def test_an_unreachable_store_answers_defaults_instead_of_failing(self, monkeypatch):

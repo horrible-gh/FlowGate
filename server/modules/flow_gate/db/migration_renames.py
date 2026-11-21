@@ -1,10 +1,10 @@
 """Carry sqloader's applied-migration bookkeeping across a file rename.
 
-flowgate.default.0394 T0004 (NR0003 §4.4, recommendation 1).
+
 
 `sql/migrations/<dialect>/` had ten numbers carrying more than one file — two
 parallel groups each picked the same next number, and the loser was only ever
-distinguished by the rest of its name. T0004 gives each file a unique ordinal by
+distinguished by the rest of its name. the earlier implementation gives each file a unique ordinal by
 appending a letter to the later arrivals (`076_ai_invoke_runs.sql` ->
 `076b_ai_invoke_runs.sql`), which keeps every file in the exact position it
 already occupied in sort order.
@@ -34,7 +34,7 @@ Three cases, all of which have to be safe because this runs on every boot:
 Adding to RENAMES is safe for the same reason; entries never expire, and an old
 name that no database has is simply not found.
 
-flowgate.default.0408 TR0018 §0 adds a second failure mode: this file only ever
+adds a second failure mode: this file only ever
 described *one* rename per collision, but 078/079 turned out to have **two
 independent already-applied histories** for the same content. Group 0408's own
 checkout carried 078_continuation_auto_approve.sql / 078_seed_work_plan_doctype.sql
@@ -53,9 +53,9 @@ one-`new`-per-`old` constraint is dropped. See `apply_migration_renames`'s "both
 rows present" branch: it already deletes the disqualified duplicate instead of
 raising, which is exactly what makes convergence safe.
 
-flowgate.default.0414 T0017: 080 collided the same way (0406's
+080 collided the same way (0406's
 ai_invoke_prompt_audit.sql against 0408's workflow_sequence_provider.sql), split
-into 080a/080b in sort order. The shared dev preview's database (M0016's boot
+into 080a/080b in sort order. The shared dev preview's database (the earlier implementation's boot
 failure) turned out to hold a THIRD name for the provider file —
 081_workflow_sequence_provider.sql, from before 081/082 were claimed elsewhere and
 it was renumbered down to 080 — so that ordinal has three convergent `old` names
@@ -100,14 +100,14 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
     ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
     ("079a_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
-    # flowgate.default.0413 T0007: 080 ordinal collided between
+    # 080 ordinal collided between
     # 080_ai_invoke_prompt_audit.sql (0406) and 080_workflow_sequence_provider.sql
     # (0408). 0408 is the later arrival, so it moves to the next free ordinal
     # instead of taking a letter suffix.
     #
-    # flowgate.default.0452: the ordinal it landed on, 081, turned out to already be taken
-    # too — flowgate.default.0410 independently added 081_document_origin_snapshot.sql in a
-    # parallel branch that could not see this file's 081 (the same class of collision T0007
+    # the ordinal it landed on, 081, turned out to already be taken
+    # too — the earlier change independently added 081_document_origin_snapshot.sql in a
+    # parallel branch that could not see this file's 081 (the same class of collision the earlier implementation
     # itself was fixing, one ordinal later). Unlike 080, this one was not caught by
     # `test_no_two_migrations_share_an_ordinal` before it shipped, and a real
     # `DatabaseMigrator` reboot hit it as `duplicate column name: provider_id`. THREE already-
@@ -115,12 +115,12 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # situation, module docstring above) every entry converges directly on the final name
     # rather than chaining through the now-taken 081:
     #
-    #   080_…   databases migrated before T0007 moved the file off 080.
+    #   080_… databases migrated before the earlier implementation moved the file off 080.
     #   080b_…  what the dev deployment (FlowGate-dev/server/storage/flowgate.db) actually
     #           holds — a letter suffix assigned in yet another branch, for the very same
-    #           080 collision, before T0007 chose to move the file instead. Read straight
+    #           080 collision, before the earlier implementation chose to move the file instead. Read straight
     #           off that database's `migrations` table while diagnosing this rejection.
-    #   081_…   databases migrated after T0007 but before this fix. This is what the stg
+    #   081_… databases migrated after the earlier implementation but before this fix. This is what the stg
     #           deployment's PostgreSQL ledger holds.
     #
     # The 0406 side of the same collision is a pure letter-suffix rename on an unchanged
@@ -130,16 +130,16 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("080_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
     ("080b_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
     ("081_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
-    # flowgate.default.0332: this group authored its ledger migration as 085 against a base whose
+    # this group authored its ledger migration as 085 against a base whose
     # newest file on disk was 083. origin/main has since merged 084_ai_invoke_provider_pin.sql and
     # 085_conversation_backward_page_audit.sql, so 085 is taken and both of this group's files move
-    # up one — the later arrival takes the next free ordinal, the same rule 0413 T0007 applied to
+    # up one — the later arrival takes the next free ordinal, the same rule the earlier implementation applied to
     # 080_workflow_sequence_provider.sql. Any database that already ran this branch under the old
     # names (a developer checkout, the preview slot) is carried across by these lines; without
     # them the MySQL dialect of the ledger file would re-run its `group_git_state` ADD COLUMNs,
     # which carry no IF NOT EXISTS, and the boot migration would fail.
     #
-    # T0021: a parallel group reached 086 first, so the ledger file moves once more, to
+    # a parallel group reached 086 first, so the ledger file moves once more, to
     # 086a_tr_commit_ledger.sql — a letter suffix rather than the next free number, so it keeps its
     # position between the sibling's 086 and this group's own 087/088. That makes **two** already-
     # applied histories for one file (078/079's situation, module docstring above): databases that
@@ -156,7 +156,7 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("086_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
     ("086a_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
     ("086_tr_commit_reapply.sql", "087_tr_commit_reapply.sql"),
-    # flowgate.default.0505 T0006/T0020: this migration shipped as
+    # this migration shipped as
     # 095_ai_invoke_api_diagnostics.sql and was renamed to its current slug,
     # 095_ai_invoke_run_transport_diagnostics.sql, with no numbering collision --
     # the ordinal 095 never moved, only the name after it did, so neither pass
@@ -169,23 +169,23 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # columns this file adds -- so a reboot against the renamed file re-ran the
     # first ADD COLUMN and failed with "duplicate column name: operator_api_base".
     ("095_ai_invoke_api_diagnostics.sql", "095_ai_invoke_run_transport_diagnostics.sql"),
-    # flowgate.default.0482 T0016 (main merge): this group authored its two migrations
+    # (main merge): this group authored its two migrations
     # as 093/094 against a base whose newest file was 092. origin/main has since merged
     # 093_openai_api_base_url_contract.sql, 094_ai_invoke_provider_selection.sql,
     # 094_register_context_failures.sql, 095_… and 096_…, so both of this group's files
     # move to the next free ordinals -- the same "later arrival takes the next free
-    # number" rule 0413 T0007 and 0332 applied. Neither file creates anything a second
+    # number" rule the earlier implementation and 0332 applied. Neither file creates anything a second
     # run would survive (the sqlite/postgres CREATE TABLE carry IF NOT EXISTS, but the
     # MySQL project_ai_leases INDEX clause does not), and any checkout that already ran
     # this branch under the old names is carried across by these two lines.
     ("093_git_terminal_cleanup.sql", "097_git_terminal_cleanup.sql"),
     ("094_project_ai_leases.sql", "098_project_ai_leases.sql"),
-    # flowgate.default.0503 T0014 (main merge): this group authored 102/103/104 against a
+    # (main merge): this group authored 102/103/104 against a
     # base whose newest file on disk was 101. origin/main has since merged
     # 102_ai_invoke_review_loop_card_dismissed.sql, 103_group_ai_lease_events.sql,
     # 103_tr_commit_ledger_terminal_reopen.sql and 104_document_review_provider_provenance.sql,
     # so all three of this group's files move to the ordinals that are free on both sides --
-    # the same "later arrival takes the next free number" rule 0413 T0007, 0332 and 0482 T0016
+    # the same "later arrival takes the next free number" rule the earlier implementation, 0332 and the earlier implementation
     # applied. Neither renumbered file survives a second run (the sqlite tokens rebuild drops
     # and recreates the table; the MySQL/postgres ADD COLUMNs carry no IF NOT EXISTS), so any
     # checkout that already ran this branch under the old numbers is carried by these lines.
@@ -199,15 +199,15 @@ RENAMES: tuple[tuple[str, str], ...] = (
         "104_tokens_failure_origin_review_scope.sql",
         "107_tokens_failure_origin_review_scope.sql",
     ),
-    # flowgate.default.0613 T0013: this group authored its work-base migration as 118 against
-    # a main whose newest file was 117. The unmerged sibling flowgate.default.0517 already
+    # this group authored its work-base migration as 118 against
+    # a main whose newest file was 117. The unmerged sibling the earlier change already
     # carries 118_snapshot_lineage.sql in all three dialects, so this file takes the next
     # ordinal free on both sides -- the same "later arrival takes the next free number" rule
-    # 0413 T0007, 0332, 0482 T0016 and 0503 T0014 applied. The MySQL/postgres ADD COLUMN
+    # 0332, the earlier implementation and the earlier implementation applied. The MySQL/postgres ADD COLUMN
     # carries no IF NOT EXISTS, so a checkout that already ran this branch under 118 (the
     # preview slot, a developer database) would fail to boot without this line.
     ("118_group_work_base_ref.sql", "119_group_work_base_ref.sql"),
-    # flowgate.v02test.0051: this group authored its three migrations as 200/200/201 while
+    # this group authored its three migrations as 200/200/201 while
     # feature/v0.2.0 meanwhile claimed 200_server_logs, 201 (two files) and 202. The later
     # arrival takes the next free ordinals (203-205) and keeps its own relative order. A
     # checkout that already ran this branch under the old numbers is carried by these lines.
@@ -317,7 +317,7 @@ def apply_migration_renames(
             if new in applied:
                 # Both rows present: the new file was applied by hand (or a
                 # previous boot was interrupted between the two statements), OR —
-                # 0408 TR0018 — an earlier entry in THIS pass already carried a
+                # an earlier entry in THIS pass already carried a
                 # convergent old name over to `new` (module docstring: two
                 # histories, one final name). Either way, drop the orphan so the
                 # table keeps one row per file.

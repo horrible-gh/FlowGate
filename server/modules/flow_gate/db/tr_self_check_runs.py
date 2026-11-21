@@ -1,4 +1,4 @@
-"""TR Self-check runs repository (flowgate.default.0650 T0002 / 0634 0007-DB).
+"""TR Self-check runs repository (0007-DB).
 
 Advisory self-check execution audit & one-active invariant store.
 Does NOT store test222 verdicts (pass/fail/approved), raw secrets, or unbounded stdout.
@@ -104,7 +104,7 @@ def decide_reservation(limit: int, serial_reserve: int, reserved_total: int, des
 def _require_open_owner(store, owner_token_id: str) -> None:
     """Fail the draft insert unless its TR(new) owner token is still unconsumed and unrevoked.
 
-    0638 T#1 rev1: runs inside the insert's transaction. On MySQL/PostgreSQL the row lock
+    runs inside the insert's transaction. On MySQL/PostgreSQL the row lock
     (FOR UPDATE) is taken BEFORE the insert, the same order token consumption takes it
     before link_owner_runs, so a registration either waits for this insert to commit (and
     its link then sees the row) or has already consumed the token (and this insert rolls
@@ -223,26 +223,26 @@ def create_pending(
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
 
-    0080 T#1: ``owner_instance_id`` (the server whose worker runs it) and ``owner_marker``
+    ``owner_instance_id`` (the server whose worker runs it) and ``owner_marker``
     (the run-unit process ownership record, tr_self_check_proof.owner_marker) land with the
     row, i.e. before anything is spawned, so recovery can judge even a run that never got
     to ``mark_running``.
 
-    0638 T#1: ``tr_doc_id=None`` is a draft run owned by a TR(new) token; it then needs both
+    ``tr_doc_id=None`` is a draft run owned by a TR(new) token; it then needs both
     ``owner_token_id`` and ``draft_doc_ref`` (ck_selfcheck_owner, enforced here for MySQL).
     The owner token must still be open when the row commits (:func:`_require_open_owner`);
     otherwise :class:`DraftOwnerClosedError` and nothing is written, so no draft row can
     land after its registration's link and stay unlinked.
 
-    0110 T#3: ``attempt_id`` / ``input_commit`` (migration 162) name the Graph attempt tree a
+    ``attempt_id`` / ``input_commit`` (migration 162) name the Graph attempt tree a
     run executes in and the commit that tree started from; both land in the insert's
     transaction. A group worktree run writes neither column.
 
-    0114 T#3: ``host_node_key`` (migration 163) is the admitting server's host identifier
+    ``host_node_key`` (migration 163) is the admitting server's host identifier
     (``instance_registry.node_key``), copied into the row in the insert's transaction so a
     baseline comparison never depends on instance registration rows that may be gone.
 
-    0114 T#4: ``host_capacity=(cap, serial reserve)`` makes the insert reserve processors for
+    ``host_capacity=(cap, serial reserve)`` makes the insert reserve processors for
     the run (D 3.5 (4)-(6)). In the same transaction, after the capacity lock: the Group's
     active run is checked again (the "already running" refusal stays first and distinct), the
     host's active and protected reservations are summed (:func:`host_reservations`), R is
@@ -427,7 +427,7 @@ def list_drafts_by_group(project_id: str, group_id: str, limit: int = 20) -> lis
 
 
 def link_owner_runs(owner_token_id: str, tr_doc_id: str, project_id: str, group_id: str) -> int:
-    """Attach a TR(new) token's draft runs to the TR it registered (0638 T#1).
+    """Attach a TR(new) token's draft runs to the TR it registered.
 
     Only rows of the same project/group that are still unlinked move; a linked row is never
     re-pointed. Active rows move too: their worker thread addresses them by run id only.
@@ -451,7 +451,7 @@ def get_active(project_id: str, group_id: str) -> dict | None:
 
 
 def _claim_fence(claim: str | None) -> tuple[str, list[Any]]:
-    """0053 1-B rev2: the WHERE fragment that fences a queue worker's write to its own claim.
+    """: the WHERE fragment that fences a queue worker's write to its own claim.
 
     ``claim`` is the token ``claim_next_queued`` stored in ``queue_lease_owner`` for one claim of
     one worker. A lease that lapsed before any spawn hands the run back to the queue
@@ -539,13 +539,13 @@ def verify_used(stage_key: str, store=None) -> int:
 
 
 def mark_spawn_started(run_id: str, process_owner_kind: str, claim: str | None = None) -> bool:
-    """0080 T#3: the stamp a spawn writes before its first Popen -- ``process_owner_kind``
+    """the stamp a spawn writes before its first Popen -- ``process_owner_kind``
     on a pending row with no process recorded yet. From then on a missing target record
     means "a process may exist that no record names" (``tr_self_check_proof.tree_state``),
     not "nothing was spawned". CAS: pending, recovery_state none, no spawn stamped yet;
     False = do not spawn.
 
-    0053 1-B rev2: a queue worker passes its ``claim``; the stamp is written only while that
+    : a queue worker passes its ``claim``; the stamp is written only while that
     claim is the run's current one. The same row is what ``release_expired_claims`` needs
     unstamped, so the stamp and a lease hand-over exclude each other: either this worker
     stamps (and the run is never handed over) or the run was handed over (and this worker
@@ -580,7 +580,7 @@ def record_spawn_ownership(
     supervisor_start_identity: str | None = None,
     claim: str | None = None,
 ) -> bool:
-    """0080 T#3: what a spawn learnt about the run's processes, stored as soon as it is
+    """what a spawn learnt about the run's processes, stored as soon as it is
     known (right after each Popen, and again when a failed spawn is held) so a later
     reaper proves the tree from it. Only adds: a recorded value is never cleared.
     ``claim``: a queue worker's claim fence (``_claim_fence``)."""
@@ -812,7 +812,7 @@ def finish_cancelled(
     return get_run(run_id)
 
 def record_result_summary(run_id: str, result_summary: str | None, environment_evidence: str | None) -> dict | None:
-    """0114 T#3 (D 3.2): the result block summary of a run that already completed normally.
+    """(D 3.2): the result block summary of a run that already completed normally.
 
     Written after, and apart from, the terminal write: only a ``completed`` row that did not
     time out and has no summary yet moves, and no status, exit code or source field is
@@ -845,7 +845,7 @@ def mark_recovering(run_id: str, claim: str | None = None) -> dict | None:
 
 
 def claim_recovering(run_id: str) -> str | None:
-    """The CAS of ``mark_recovering`` without its read back (0080 T#2 reclaim gate).
+    """The CAS of ``mark_recovering`` without its read back (reclaim gate).
 
     Returns the ``updated_at`` the CAS wrote -- the caller's handle for
     ``abandon_recovering`` -- or None when the row was not an active ``none`` row. Nothing
@@ -933,7 +933,7 @@ def finish_recovered_interrupted(
 
 def finish_recovered_cancelled(run_id: str) -> dict | None:
     """A cancel of a run no worker of this process drives, after the release proof
-    (0080 T#2, NR0007 §5 item 3-a): cancelled, recovered, active_key cleared.
+    (a): cancelled, recovered, active_key cleared.
 
     Same CAS as ``finish_recovered_interrupted``: only a row this caller took into
     ``recovering`` moves."""
@@ -973,7 +973,7 @@ def list_recovery_incomplete_project_ids() -> list[str]:
 def has_group_recovery_incomplete(project_id: str, group_id: str) -> bool:
     """Active recovery_incomplete run of this Group (0666 L 2.24.3; idx on project_id, group_id).
 
-    0053 1-B: only a run admitted before the queue (``enqueued_at IS NULL``) ran in the Group's
+    only a run admitted before the queue (``enqueued_at IS NULL``) ran in the Group's
     worktree under its G, so only such a run keeps the Group closed. A queue run executes in its
     own snapshot and holds no G: an unproved one keeps its execution slot (its reservation stays
     in :func:`host_reservations`), never the Group."""
@@ -1031,7 +1031,7 @@ def purge_old_terminal(cutoff_iso: str, batch_size: int = 500) -> int:
     )
 
 
-# 0146: immutable parent scope is written in create_pending's transaction. Reads do
+# immutable parent scope is written in create_pending's transaction. Reads do
 # not join tokens/documents, so consuming a token or linking a draft cannot replay it.
 _PROGRESS_RANK = {"queued": 0, "pending": 0, "running": 1, "completed": 2, "failed": 2, "cancelled": 2}
 
@@ -1075,7 +1075,7 @@ def _progress_stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
-# 0146 T#3. All scope writes share the capacity row with create_pending.
+# All scope writes share the capacity row with create_pending.
 # No registry lock is held for this transaction, and no process operation is done here.
 _OWNER_KEYS = ("scope_id", "ai_run_id", "hop_id", "provider_attempt_id",
                "owner_token_id", "project_id", "group_id")

@@ -1,4 +1,4 @@
-"""flowgate.default.0519 T0007 SS1: canonical CLI preset command builder endpoints.
+"""SS1: canonical CLI preset command builder endpoints.
 
 Covers the new read-only /system/ai-settings/cli-preset-command and
 /projects/{id}/ai-settings/cli-preset-command routes: response parity with

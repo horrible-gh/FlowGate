@@ -1,4 +1,4 @@
-"""The operator-facing API base of an AI start that has no HTTP request (flowgate.v02test.0017 CH0002).
+"""The operator-facing API base of an AI start that has no HTTP request.
 
 A chat or AI invoke run takes its base from the request (``token_routes._build_api_base``: the origin the
 person's browser reached). A Graph AI start (``ai_node_starter``) and the card follow-ups that reuse its base

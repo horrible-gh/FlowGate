@@ -7,7 +7,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 import { UNDO_MS } from '@/features/designer/flowAttachments/undo'
 import type { FlowFile } from '@/features/designer/flowAttachments/api'
 
-// flowgate.v02test.0036 T#5 (R3/R4/R5): failures kept with the Flow, the rule for when they go away, the delete
+// (R3/R4/R5): failures kept with the Flow, the rule for when they go away, the delete
 // group's own result and the one source of the ring time. Fake timers: five seconds are the undo time.
 
 const api = vi.hoisted(() => ({ readFiles: vi.fn(), deleteFile: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(), downloadZip: vi.fn() }))

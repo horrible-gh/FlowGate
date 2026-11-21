@@ -1,9 +1,9 @@
-"""Graph confirmation and engine assignment (D0004 §3.1 / §3.3 / §3.7, L0009 §2.4.3, P0008 §6 S4).
+"""Graph confirmation and engine assignment.
 
 Inside one Flow guard: ownership re-judged -> base revision -> draft version -> structure and root
 binding -> (revision + assignment + root binding) recorded together. Anything failing leaves
 nothing behind, so an unassigned Flow either becomes Graph with all three records or stays
-unassigned (L0009 §4.4 fixes the order of the checks, i.e. the precedence of the error codes).
+unassigned (fixes the order of the checks, i.e. the precedence of the error codes).
 """
 from __future__ import annotations
 
@@ -32,31 +32,31 @@ def _binding_response(status: str, binding, revision_no: int, record: Optional[d
 
 def confirm_revision(group: dict, user_id: str, draft_version: int, base_revision_no: Optional[int],
                      client_id: Optional[str]) -> dict:
-    """``POST /flows/{flow_id}/graph/revisions`` -> 201 body (P0008 S4-1~S4-7)."""
+    """``POST /flows/{flow_id}/graph/revisions`` -> 201 body."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     require_writable(flow_id)
 
     def body() -> dict:
         require_writable(flow_id)
-        own = read_ownership(flow_id)                                            # 1 담당
+        own = read_ownership(flow_id)                                            # 1 assignment
         require_graph_editable(flow_id, own)
         run_state_ports.require_editable(flow_id)
-        latest = definition_store.latest_revision_no(flow_id)                    # 2 기준 개정
+        latest = definition_store.latest_revision_no(flow_id)                    # 2 base revision
         if base_revision_no != latest:
             raise GraphApiError(409, "revision_conflict", {
                 "flow_id": flow_id, "base_revision_no": base_revision_no, "latest_revision_no": latest,
             })
-        draft = definition_store.draft(flow_id)                                  # 3 초안
+        draft = definition_store.draft(flow_id)                                  # 3 draft
         if draft is None:
             raise GraphApiError(404, "draft_not_found", {"flow_id": flow_id})
         if draft["draft_version"] != draft_version:
             raise version_conflict(flow_id, draft_version, draft)
         run_state_ports.protect_definition(flow_id, draft["nodes"], draft["edges"])
-        issues, binding = check_draft(flow_id, own, draft)                       # 4 구조·결합
+        issues, binding = check_draft(flow_id, own, draft)                       # 4 structure and binding
         if issues:
             raise GraphApiError(422, "graph_validation_failed",
                                 {"flow_id": flow_id, "draft_version": draft_version, "issues": issues})
-        revision_no = (latest or 0) + 1                                          # 5 한 단위 기록
+        revision_no = (latest or 0) + 1                                          # 5 atomic record
         confirmed_at = definition_store.insert_revision_from_draft(
             flow_id, revision_no, draft_version, base_revision_no, user_id)
         record = assignment_store.root_binding(flow_id)

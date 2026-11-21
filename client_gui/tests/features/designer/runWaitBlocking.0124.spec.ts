@@ -1,4 +1,4 @@
-// flowgate.v02.0124 T#2 — a run left by no-op / waiting for a person's intervention says which card blocks it and why
+// a run left by no-op / waiting for a person's intervention says which card blocks it and why
 // (0003-NR §5.3, §6.7~10): the server's command-result `blocking` -> the Shell's existing toast. No new button, window or band.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
@@ -19,7 +19,7 @@ const EXHAUSTED = 'review_not_passed:retry_exhausted'
 const blockingOf = (title: string | null, reason: string | null, release: string | null, key = 'gn_a') =>
   ({ node_key: key, title, doc_type: 'T', kind: 'needs_intervention', reason, release })
 
-/** A needs_intervention no-op command result, as the server answers it (T#2 S1: `nodes=[]`, `blocking` the card). */
+/** A needs_intervention no-op command result, as the server answers it (S1: `nodes=[]`, `blocking` the card). */
 function result(over: Record<string, unknown> = {}) {
   return toFlowCommandResult({
     run_id: 'run_1', flow_id: 'f', command_seq: 5, latest: true, scope: 'step', started_at: '2026-11-01T00:00:00.000+00:00',

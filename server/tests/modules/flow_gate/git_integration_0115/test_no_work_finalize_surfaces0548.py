@@ -76,7 +76,7 @@ class TestNoWorkFinalizeSurfaces0548(_Scenario):
         assert svc.ensure_worktree("gitnowork", "default", group) == "ok"
         # …and then nobody touches a single source file.
 
-        # 1) 머지 다이얼로그 — the AC confirm dialog asks with context=approval while
+        # 1) Merge dialog — the AC confirm dialog asks with context=approval while
         #    the root is still wf_in_progress. No work ⇒ no choice block.
         preview = svc.get_finalize_state(group, preview_ac=True)["state"]
         assert preview["status"] == "none"
@@ -97,7 +97,7 @@ class TestNoWorkFinalizeSurfaces0548(_Scenario):
         assert out.get("quiet") is None
         assert out["error"]["code"] == "invalid_state"
 
-        # 4) 문서에 머지 섹션 — GitFinalizePanel renders only on status != 'none'.
+        # 4) Merge section in the document — GitFinalizePanel renders only on status != 'none'.
         assert svc.get_finalize_state(group)["state"]["status"] == "none"
 
         # And none of this quiet ever became a silent merge/push.
@@ -108,7 +108,7 @@ class TestNoWorkFinalizeSurfaces0548(_Scenario):
 
 
     def test_a_group_that_really_worked_keeps_every_git_surface(self, nowork_surface_origin):
-        """T0004 §4 — the other half of the contract, on the same real repo."""
+        """The other half of the contract, on the same real repo."""
         from modules.flow_gate.services import git_service as svc
         from modules.flow_gate.storage.paths import src_root
 
@@ -129,7 +129,7 @@ class TestNoWorkFinalizeSurfaces0548(_Scenario):
     def test_a_stale_pending_slot_with_nothing_in_it_loses_the_gate(
         self, nowork_surface_origin,
     ):
-        """The durable form of 문서에 머지 섹션: a slot that entered the gate before
+        """The durable form of the merge section in the document: a slot that entered the gate before
         0199's entry guard existed (or while divergence was briefly unmeasurable)
         used to sit in `awaiting_choice` forever with nothing to finalize."""
         from modules.flow_gate.db import git_integration as db_git

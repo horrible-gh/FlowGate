@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0053 T#6 — a person asks on the Q&A tab (0053 CH §2), with `@/features/document` mocked as a
+ * a person asks on the Q&A tab (CH), with `@/features/document` mocked as a
  * small server that also starts the AI run and refuses.
- * flowgate.v02.0056 F1 (0056 CH §3) — registering a question and asking an AI are two steps:
+ * (CH) — registering a question and asking an AI are two steps:
  *
  * - the question line (field + [+]) is at the top of the tab, always; a document without questions shows
- *   only the line, no sentence; [+] is an icon whose name / tooltip is 질문 등록, closed while blank;
+ *   only the line, no sentence; [+] is an icon whose name / tooltip is Submit question, closed while blank;
  * - [+] or Enter registers the question (asker 'human', trimmed) and reads the questions and the guard
  *   again — no AI is asked by itself; the line clears; Enter ending an IME composition does not send;
  * - every open question has its AI line: a picker of the project's AIs (the project default picked first)
@@ -15,7 +15,7 @@
  * - asking and requesting close while something is on its way, on a read-only Flow, a disposed group or an
  *   AI run, with the reason as the tooltip; the AI-asks / person-answers flow stays as it was;
  * - in the real Frame, a card just placed registers a question and gets the AI answer on request.
- * flowgate.v02.0070 T#5 (B5) — the AI line (and the answer form) is in the question's ↗ window only, offered while the
+ * (B5) — the AI line (and the answer form) is in the question's ↗ window only, offered while the
  * document's card line says it has a body: the targets carry such a line (`bodyLine`); the list keeps 열기.
  */
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -238,14 +238,14 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-// flowgate.v02.0150: the tab with the Frame's window host, which draws its ↗ windows.
+// the tab with the Frame's window host, which draws its ↗ windows.
 async function mountTab(target: InspectorTarget) {
   wrapper = mount(QnaTabWithWindows, { props: { target }, global: { plugins: [i18n, pinia] }, attachTo: document.body })
   await flushPromises()
   return wrapper
 }
 
-/** flowgate.v02.0070 T#5: the card line of a document whose body is there (answering and asking an AI need one). */
+/** the card line of a document whose body is there (answering and asking an AI need one). */
 const bodyLine = (docId: string): FlowGraphCardDocument => ({
   slot: 'report',
   docType: 'TR',
@@ -272,7 +272,7 @@ const itemEl = (w: VueWrapper<any>, id: number) => w.find(`[data-test="qna-item"
 const ids = (w: VueWrapper<any>) => w.findAll('[data-test="qna-item"]').map((el) => Number(el.attributes('data-item')))
 const askFailure = (w: VueWrapper<any>) => w.find('[data-test="qna-ask-failure"]')
 const inputValue = (w: VueWrapper<any>) => (askInput(w).element as HTMLInputElement).value
-// flowgate.v02.0070 T#5: the AI line is in the question's ↗ window (teleported to the body); open it first.
+// the AI line is in the question's ↗ window (teleported to the body); open it first.
 const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
 const inWindow = (id: number) => new DOMWrapper(windowOf(id) ?? document.createElement('div'))
 const aiButton = (_w: VueWrapper<any>, id: number) => inWindow(id).get('[data-test="qna-window-ai-request"]')
@@ -421,7 +421,7 @@ describe('asking: register the question only (flowgate.v02.0056 F1)', () => {
 
   it('the AI-asks / person-answers flow stays: an AI question is answered by the user as before', async () => {
     const w = await mountTab(v01Target())
-    // flowgate.v02.0070 T#5: answered in the question's window.
+    // answered in the question's window.
     expect(itemEl(w, 10).find('[data-test="qna-answer-form"]').exists()).toBe(false)
     await open(w, 10)
     expect(windowOf(10)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
@@ -479,7 +479,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     const item = itemEl(w, 31)
     expect(item.attributes('data-state')).toBe('answered')
     expect(item.attributes('data-awaiting')).toBe('false')
-    // flowgate.v02.0070 T#5: the answer is read in the window.
+    // the answer is read in the window.
     const answer = inWindow(31).get('[data-test="qna-window-answer"]')
     expect(answer.get('.inspector-qna-text').text()).toBe('테스트 통과가 완료 기준입니다.')
     expect(answer.attributes('data-side')).toBe('ai')
@@ -581,7 +581,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     expect(qaAiCall).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0070 T#5: the AI line is the window's only; the list line keeps its waiting mark.
+  // the AI line is the window's only; the list line keeps its waiting mark.
   it('the ↗ window carries the AI line and the waiting chip; the list line has no AI line and says it waits', async () => {
     vi.useFakeTimers()
     const w = await mountTab(v01Target())
@@ -675,7 +675,7 @@ describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
 // --- When asking is closed --------------------------------------------------------------------------
 
 describe('asking and requesting: closed with the reason as the tooltip', () => {
-  // flowgate.v02.0063: a Flow whose answers stay closed shows neither the question line nor the AI line.
+  // a Flow whose answers stay closed shows neither the question line nor the AI line.
   it.each([
     ['ownership conflict', { readOnly: 'conflict' as const }, false],
     ['a disposed group', {}, true],
@@ -715,7 +715,7 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
     expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
-  // flowgate.v02.0150: an open ↗ window stays whatever is selected, and its AI pick with it; closed, the pick goes.
+  // an open ↗ window stays whatever is selected, and its AI pick with it; closed, the pick goes.
   it('the unsent question belongs to its document; an AI pick stays with its open window and goes with it', async () => {
     const w = await mountTab(v01Target())
     await askInput(w).setValue('쓰던 질문')
@@ -776,7 +776,7 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
     structureEditable: true,
     definition: { nodeType: 'document', docType: 'T', paletteItemId: null, label: '새 카드', assignee: null, rootBound: false },
     document: { docId: INSTRUCTION, typeCode: 'T', seq: null, title: '카드 · instruction', docReviewStatus: null, status: 'draft', supersedes: [] },
-    // flowgate.v02.0070 T#5: the instruction is written (a body to check) — an AI answer is asked only then.
+    // the instruction is written (a body to check) — an AI answer is asked only then.
     cardDocuments: [line('instruction', 'T', INSTRUCTION, 'human', true), line('report', 'TR', `${FLOW}.0010-TR`, 'run')],
   })
 

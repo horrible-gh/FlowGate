@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 "not decided yet" marks (0035 insp.css `.tbd-box` / `.tbd-inline`):
+  <!-- the v7 "not decided yet" marks (insp.css `.tbd-box` / `.tbd-inline`):
        `box` is the framed note of a card the mockup left empty (설계: "설명 대기"), `tag` the small
        pill next to an item still under discussion (확인 용도: "토론 중"). Display only: the feature
        says what is undecided; nothing here decides it (0051 turn 7: 설계·확인 카드의 미확정 기능은

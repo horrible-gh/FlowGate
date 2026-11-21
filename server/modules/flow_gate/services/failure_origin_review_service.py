@@ -1,6 +1,7 @@
-"""Dedicated failure-origin review issuance and evidence prompt (0503 T0009)."""
+"""Dedicated failure-origin review issuance and evidence prompt."""
 from __future__ import annotations
 from modules.flow_gate.services import terminal_prompt
+from modules.flow_gate.services.prompt_blocks.compose import compose
 
 from typing import Optional
 
@@ -9,7 +10,7 @@ from modules.flow_gate.services import ai_invoke_service, token_service
 
 CLASSIFICATIONS = ("product_defect", "test_defect", "hold")
 
-# NR0003 §10-12, §14, §28: what a TS worker is told to do with each classification, once
+# ,: what a TS worker is told to do with each classification, once
 # it has been picked (not what the classifier is asked to judge — see build_failure_origin_mention).
 _REWORK_CONSTRAINT = {
     "product_defect": (
@@ -25,7 +26,7 @@ _REWORK_CONSTRAINT = {
 }
 
 
-# 0549 T0008: for a specification TS the "test" side is not the TS text but the automation,
+# for a specification TS the "test" side is not the TS text but the automation,
 # the Case ID mapping and the evidence that produced the verdict. The expected result in the
 # approved TS is the requirement and is never the thing to change.
 _SPEC_REWORK_CONSTRAINT = {
@@ -94,7 +95,7 @@ def build_failure_origin_mention(*, doc: dict, run: dict, items: list[dict],
     evidence = _build_evidence(doc=doc, run=run, items=items)
     lines = "\n".join(f"- {key}: {value}" for key, value in evidence.items())
     return (
-        terminal_prompt.prepare("## Failure-origin review\n---\n"
+        compose("## Failure-origin review\n---\n"
         "Classify which side violates the original requirement; do not merely choose the "
         "fastest way to make tests green. Use exactly one canonical classification: "
         "product_defect, test_defect, or hold.\n\n"
@@ -109,10 +110,10 @@ def build_failure_origin_mention(*, doc: dict, run: dict, items: list[dict],
 
 
 def build_rework_instruction(*, classification: str, doc: dict, run: dict, items: list[dict]) -> str:
-    """The classification-specific handoff attached to a reopened TS (NR0003 §10-12).
+    """The classification-specific handoff attached to a reopened TS.
 
     ``classification`` must be ``product_defect`` or ``test_defect`` — ``hold`` never reopens
-    (T0009 §9), so it has no rework instruction to build.
+    , so it has no rework instruction to build.
     """
     constraint = (
         _SPEC_REWORK_CONSTRAINT if _is_spec_run(run) else _REWORK_CONSTRAINT

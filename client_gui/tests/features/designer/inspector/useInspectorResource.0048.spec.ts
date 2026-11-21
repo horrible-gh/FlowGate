@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#3 — the Inspector's common read (D#1 §7.2): read the target document,
+ * the Inspector's common read: read the target document,
  * read it again on the caller's server events (target frames only, coalesced, and after a
  * reconnect), loading / error / stale states, a document change drops the previous document's
  * answers, and leaving unsubscribes. The real project event hub runs under the test on the fake

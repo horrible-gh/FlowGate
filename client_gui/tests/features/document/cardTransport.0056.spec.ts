@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — the transport of the O3 contracts (flowgate.v02.0056.0009-TR §4), with `@shared/api` mocked:
+ * the transport of the O3 contracts, with `@shared/api` mocked:
  * - §4-1 card line fields: `has_body` and the history counts on the Canvas card line, kept only when sent;
  * - §4-2 [작성]: POST …/slots/{slot}/document { content }, the 201 answer (bound_as_result, line) and a refusal's
  *   code · message · first 422 error · doc_id;

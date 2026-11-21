@@ -1,7 +1,7 @@
 """Source fingerprint: the one scan, exclusion and hash rule set for a Group worktree.
 
-0684 T#2 (D#1 §2-1, §3-3, §3-6): moved here from the Source Bundle materializer so the
-Test Basis no longer depends on Bundles; 0684 T#4 removed Source Bundle itself and this
+moved here from the Source Bundle materializer so the
+Test Basis no longer depends on Bundles; the earlier implementation removed Source Bundle itself and this
 module is now the only owner of these rules. Three measurements share them:
 
 * ``inspect_source`` -- Live Probe: hash the worktree in place (decision paths: run
@@ -33,7 +33,7 @@ from modules.flow_gate.services.source_common import (
 # when Bundle was removed), so a fingerprint over the same tree is the same value.
 POLICY_VERSION = "source-fingerprint-v1"
 
-# 0684 T#4 (D#1 §7): the Source Bundle names these limits used to fall back to
+# the Source Bundle names these limits used to fall back to
 # (FLOWGATE_BUNDLE_MAX_FILES, ..._MAX_FILE_BYTES, ..._MAX_TOTAL_BYTES, ..._BUILD_SECONDS) are no
 # longer read. A deployment that still sets one gets a warning naming the neutral variable.
 _RETIRED_LIMIT_NAMES = {
@@ -151,7 +151,7 @@ def _identity(root: Path, deadline):
 
 def _excluded(relative: str, is_dir: bool) -> bool:
     name = PurePosixPath(relative).name
-    # The two retired Bundle store names stay excluded: part of source-fingerprint-v1 (0684 T#4).
+    # The two retired Bundle store names stay excluded: part of source-fingerprint-v1.
     if name in EXCLUDED_DIR_NAMES or (is_dir and name in {"source-bundles", "source-bundle-scratch"}) or name.startswith(EXCLUDED_DIR_PREFIXES):
         return True
     if is_dir:
@@ -317,7 +317,7 @@ def inspect_source(root: Path, deadline):
             "bytes_hashed": sum(item["size"] for item in entries)}
 
 
-# ── measurements with a memo (D#1 §3-6) ──────────────────────────────────────
+# ── measurements with a memo ──────────────────────────────────────
 
 _MEMO: dict[str, tuple[str, dict]] = {}
 _MEMO_GUARD = threading.Lock()

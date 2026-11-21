@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_py_compile_failure_blocks_approval(self, origin_repo):
-        # D0006 §3.5 / L0007 §2.7: a Python syntax error in the frozen candidate
+        # A Python syntax error in the frozen candidate
         # blocks approval even though the identity/fingerprint check passed.
         import uuid
 
@@ -93,7 +93,7 @@ class TestGitEndToEnd(_Scenario):
         out = svc.finalize(group, "merge")
         merge_id = out["result"]["merge_id"]
 
-        # keeps a trace of both sides (0478 T0012's conflict_side_dropped check
+        # keeps a trace of both sides (the conflict_side_dropped check
         # would otherwise 422 on this add/add chunk before the syntax check ever
         # runs) while still being invalid Python.
         out = svc.resolve_conflicts(group, merge_id, [{

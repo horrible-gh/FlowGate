@@ -165,7 +165,7 @@ def _repo_pair(tmp_path: Path) -> tuple[Path, Path]:
     """A base checkout (with an 'origin' remote) and a SEPARATE group worktree of the
     same repository, seeded with a shared.txt both sides will edit differently.
 
-    NR0025 §8 / T0028 §3.4 (1): update_from_base ff-only-merges base_root against
+    : update_from_base ff-only-merges base_root against
     origin/<base branch> before merging base_branch into wt_path, so the two paths
     must be distinct checkouts, not one repo playing both roles.
     """
@@ -226,7 +226,7 @@ def _patch_group_update(
 
 
 def test_group_update_records_conflict_status_merge_id_and_files(tmp_path, monkeypatch):
-    """T0028 §3.3 test A — a REAL content conflict, resolved by the real merge, must
+    """test A — a REAL content conflict, resolved by the real merge, must
     surface status/merge_id/conflict_files and open a real (unaborted) conflict."""
     base_root, wt_path = _repo_pair(tmp_path)
     cfg = {"base_branch": "main"}
@@ -244,7 +244,7 @@ def test_group_update_records_conflict_status_merge_id_and_files(tmp_path, monke
     assert len(calls) == 1
     assert calls[0]["files"] == ["shared.txt"]
     assert calls[0]["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
-    # 0665 T0004 added the pinned source and floor to the session context; the original
+    # added the pinned source and floor to the session context; the original
     # keys stay.
     assert {k: calls[0]["context"][k] for k in ("prev_status", "branch")} == {
         "prev_status": "waiting", "branch": "group/test"}
@@ -304,14 +304,14 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
     assert {k: result["result"][k] for k in ("status", "merge_id", "conflict_files")} == {
         "status": "conflict", "merge_id": 73, "conflict_files": ["conflict.txt"],
     }
-    assert result["result"]["source_sha"]       # 0665 T0004: the pinned source rides along
+    assert result["result"]["source_sha"]       # the pinned source rides along
     assert created["group_id"] == group_id
     assert created["files"] == result["result"]["conflict_files"]
     assert created["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
 
 
 def test_group_update_conflicts_go_through_facade_seam(tmp_path, monkeypatch):
-    """T0028 §3.3 test B — update_from_base must read conflicts via the git_service
+    """test B — update_from_base must read conflicts via the git_service
     facade attribute (`_gs._unmerged_paths`), not a name bound at finalize.py import
     time. Patching the facade attribute must change what the caller returns."""
     base_root, wt_path = _repo_pair(tmp_path)
@@ -337,7 +337,7 @@ def _repo_pair_no_identity(tmp_path: Path) -> tuple[Path, Path]:
     touch a DIFFERENT new file so the --no-ff merge needs a real merge commit
     without a content conflict.
 
-    flowgate.default.0619 T0004/NR0003: reproduces the reported failure host, where
+    reproduces the reported failure host, where
     the server account has no global git user.name/user.email either.
     """
     seed_env = dict(os.environ)
@@ -400,8 +400,8 @@ def _no_host_identity_env(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_update_from_base_succeeds_without_host_git_identity(tmp_path, monkeypatch):
-    """T0004 §4A / §6.1: update_from_base must not depend on the server host's
-    global/local git identity. Before the fix this reproduced NR0003's exact
+    """A /: update_from_base must not depend on the server host's
+    global/local git identity. Before the fix this reproduced the review's exact
     failure: 'fatal: unable to auto-detect email address'."""
     _no_host_identity_env(tmp_path, monkeypatch)
     base_root, wt_path = _repo_pair_no_identity(tmp_path)
@@ -423,7 +423,7 @@ def test_update_from_base_succeeds_without_host_git_identity(tmp_path, monkeypat
 
 
 def test_update_from_base_merge_commit_committer_is_flowgate_identity(tmp_path, monkeypatch):
-    """T0004 §4B / §6.3: the merge commit's committer must be the FlowGate default,
+    """B /: the merge commit's committer must be the FlowGate default,
     regardless of host git identity."""
     _no_host_identity_env(tmp_path, monkeypatch)
     base_root, wt_path = _repo_pair_no_identity(tmp_path)
@@ -442,7 +442,7 @@ def test_update_from_base_merge_commit_committer_is_flowgate_identity(tmp_path, 
 
 
 def test_update_from_base_keeps_configured_author_with_flowgate_committer(tmp_path, monkeypatch):
-    """T0004 §4C / §6.4: a project-configured author_name/author_email must still be
+    """C /: a project-configured author_name/author_email must still be
     used as the merge commit's author while the committer stays the FlowGate identity."""
     _no_host_identity_env(tmp_path, monkeypatch)
     base_root, wt_path = _repo_pair_no_identity(tmp_path)

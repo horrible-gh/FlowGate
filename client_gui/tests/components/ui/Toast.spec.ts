@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Toast from '@/components/ui/Toast.vue'
 
-// T0008 §5/§14: render/tone/dismiss lifecycle, accessibility semantic, no focus stealing.
+// render/tone/dismiss lifecycle, accessibility semantic, no focus stealing.
 describe('components/ui/Toast (T0008)', () => {
   beforeEach(() => {
     vi.useFakeTimers()

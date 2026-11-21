@@ -1,4 +1,4 @@
-"""Front matter identity fields of a converted root (0064 L0005 2.6.1).
+"""Front matter identity fields of a converted root.
 
 The judgement (``root_conversion.judge_root_conversion``) and the rewrite of the staged body share
 ``check``: both read the same ``type`` / ``doc_number`` values with the same rules. A rewrite changes
@@ -6,7 +6,7 @@ only the bytes of those two values; the key, the space after the colon, a commen
 (LF, CRLF, none), the BOM, every other line and the body after the front matter keep every byte.
 
 Accepted values are one-line YAML scalars: plain (``type: R``, ``type: R  # memo``), single quoted
-(``'R'``, ``''`` for a quote) and double quoted (``"0001-R"``, only ``\\"`` / ``\\\\`` escapes).
+(``'R'``, ``''`` for a quote) and double quoted (``"the earlier implementation"``, only ``\\"`` / ``\\\\`` escapes).
 Anything else — an empty value, a block scalar, a flow collection, an anchor / alias / tag, an
 unclosed quote, a value continued on the next line, a lone ``\\r`` line ending — is unsafe, as are
 a duplicated key, a value naming another document and a front matter without its end delimiter.
@@ -51,7 +51,7 @@ class IdentityUnsafe(ValueError):
 
 
 def doc_code_alternates(code: str) -> set[str]:
-    """Both spellings of one document number (``0001-R`` and ``R0001``), the rule of
+    """Both spellings of one document number (``the earlier implementation`` and ``the requirement``), the rule of
     ``api.inbox_routes._doc_code_alternates``."""
     code = (code or "").strip()
     alts = {code}
@@ -188,7 +188,7 @@ def check(data: bytes, type_code: str, doc_code: str) -> IdentityCheck:
 def scalars(data: bytes, keys) -> Optional[dict]:
     """The one-line scalar values of ``keys`` in the front matter of ``data``, read by the rules of ``check``.
 
-    0064 T-B1d (L0005 2.11.3, ``parse_front_matter_scalars``): ``{}`` when there is no front matter; None when
+    T-B1d (2.11.3, ``parse_front_matter_scalars``): ``{}`` when there is no front matter; None when
     the front matter cannot be read safely (no end delimiter, a duplicated key, a value that is not a one-line
     scalar). A key that is absent is left out.
     """

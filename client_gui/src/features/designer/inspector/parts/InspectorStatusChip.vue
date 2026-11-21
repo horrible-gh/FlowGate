@@ -1,7 +1,7 @@
 <template>
-  <!-- flowgate.v02.0048 T#1 — Inspector status chip (D#1 §2.2 parts): one short state label with a
+  <!-- Inspector status chip (parts): one short state label with a
        tone. The feature maps its own value to the label and tone; this part only shows them.
-       flowgate.v02.0051 — the v7 pill (0035 insp-v4 `.pill` / `.status-pill`): seven tones (the five
+       the v7 pill (insp-v4 `.pill` / `.status-pill`): seven tones (the five
        0048 tones plus `running` (purple) and `hold` (steel)), an optional leading ● dot, an optional
        sub text after the label ("· 자동", "2/4") and a hover title (the reason behind the state). -->
   <span

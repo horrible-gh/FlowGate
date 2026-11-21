@@ -1,4 +1,4 @@
-"""0406 T0022 — 1,000-character sequence/work-plan note contract with real DB round trips."""
+"""1,000-character sequence/work-plan note contract with real DB round trips."""
 from __future__ import annotations
 
 import sqlite3
@@ -127,7 +127,7 @@ def test_normalizer_never_silently_cuts_read_values():
         wpseq.normalize_note(too_long, strict=True)
 
 
-# T0007 §2 — TEMPLATE_RULES's note-length sentence must be generated from STEP_NOTE_MAX_CHARS,
+# TEMPLATE_RULES's note-length sentence must be generated from STEP_NOTE_MAX_CHARS,
 # not a retyped "200", so a future change to the constant cannot leave the guidance stale.
 def test_template_rules_note_guidance_matches_the_canonical_limit():
     for loc in ("ko", "en", "ja"):

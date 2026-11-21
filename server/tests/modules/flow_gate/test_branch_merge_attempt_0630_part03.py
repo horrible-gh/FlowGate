@@ -44,7 +44,7 @@ from tests.modules.flow_gate.test_branch_merge_attempt_0630 import (
 )
 
 def test_08b_concurrent_explicit_ai_resolve_requests_start_single_live_run(proj, monkeypatch):
-    """T#3: Concurrent explicit /ai-resolve requests are guarded by an atomic per-attempt lock.
+    """Concurrent explicit /ai-resolve requests are guarded by an atomic per-attempt lock.
     Even when multiple requests arrive while start_run is in-flight, exactly ONE live run is created."""
     import threading
     import time

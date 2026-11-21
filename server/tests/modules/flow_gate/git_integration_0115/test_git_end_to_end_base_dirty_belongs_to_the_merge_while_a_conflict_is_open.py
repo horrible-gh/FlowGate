@@ -69,12 +69,12 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_base_dirty_belongs_to_the_merge_while_a_conflict_is_open(self, origin_repo):
-        """0481 T0010 #1 — why [AI에게 맡기기] kept answering "…시작하지 못했습니다.".
+        """Why the "Hand to AI" action kept answering that it could not start.
 
         A stopped merge leaves its unmerged AND its cleanly-merged paths in the base
         checkout's `git status --porcelain`, so `base_dirty` fills up with the merge itself
-        and the Git panel offers it as stray-edit cleanup: [AI에게 맡기기], per-file
-        [되돌리기], [커밋]. All three are wrong there, and the AI one could never start.
+        and the Git panel offers it as stray-edit cleanup: "Hand to AI", per-file
+        "Revert", "Commit". All three are wrong there, and the AI one could never start.
         `base_dirty.merge_in_progress` is the fact the panel needs to say so instead.
         """
         from modules.flow_gate.db import git_integration as db_git

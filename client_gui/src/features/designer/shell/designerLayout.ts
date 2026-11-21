@@ -1,24 +1,24 @@
-// flowgate.v02.0025 — Designer Shell layout state (0003-D §3.8).
+// Designer Shell layout state.
 //
 // Screen state owned by one DesignerShell instance: which left Explorer is showing, whether
 // the left Dock is collapsed, and the Dock sizes the Body / CenterColumn apply. It is not a
 // Pinia store. Children receive it as props and ask the Shell to change it through events.
 //
-// flowgate.v02test.0056 (R 0056.0001 §2): the three Dock sizes (leftWidth / rightWidth /
+// The three Dock sizes (leftWidth / rightWidth /
 // bottomHeight) are saved per person through the project store (/me/ui-settings) — when a
-// resize handle is let go and on 창 › 창 배치 초기화 — and read back when the Designer opens.
+// resize handle is let go and on the Window › Reset window layout menu item — and read back when the Designer opens.
 // The tabs and the collapsed flags are not saved: they start again from the initial values.
 // These fields always hold the size the person chose. When the window has no room for it the
 // Body / CenterColumn draw it smaller (fitDockWidths / fitBottomHeight) and leave these fields
 // alone, so a larger window shows the chosen size again.
 //
 // The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
-// values. flowgate.v02.0046: the Body / CenterColumn resize handles change these same fields
+// values. the earlier change: the Body / CenterColumn resize handles change these same fields
 // (leftWidth / rightWidth / bottomHeight) within the bounds below.
-// flowgate.v02.0036: the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
+// the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
 // header + tabs above its content) keeps a usable Content area next to the Canvas.
 // The bottom Dock keeps its established 320px initial height for Inspector content.
-// flowgate.v02.0037: the right Dock became the Tool Panel; which tool it shows is layout state
+// the right Dock became the Tool Panel; which tool it shows is layout state
 // too, so the choice survives a collapse the same way the left Explorer mode does.
 
 export type DesignerLeftMode = 'project' | 'file'
@@ -50,7 +50,7 @@ export const DESIGNER_RAIL_WIDTH = 40
 export const DESIGNER_CENTER_MIN_WIDTH = 360
 
 /**
- * flowgate.v02.0036 — the bottom Dock splits Inspector 7 : Minimap 3 (0035 v7). The Inspector
+ * the bottom Dock splits Inspector 7: Minimap 3 (v7). The Inspector
  * track never drops below this, so at the 360px Center minimum it still holds every v7 tab
  * (see inspectorTabStripMinWidth); the Minimap placeholder gives way first.
  */
@@ -65,7 +65,7 @@ export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.fr
   activeLeftMode: 'project',
   leftCollapsed: false,
   leftWidth: 280,
-  activeRightTool: 'palette',
+  activeRightTool: 'conversation',
   rightCollapsed: false,
   rightWidth: 300,
   bottomHeight: 320,
@@ -76,7 +76,7 @@ export function createDesignerLayout(): DesignerLayoutState {
 }
 
 /**
- * flowgate.v02.0046 — drag resize bounds. A Dock never goes below its minimum; it only grows
+ * drag resize bounds. A Dock never goes below its minimum; it only grows
  * while the Center keeps DESIGNER_CENTER_MIN_WIDTH (the Workspace DESIGNER_WORKSPACE_MIN_HEIGHT
  * above the bottom Dock). When there is no such room left (a narrow window) the Dock can still
  * shrink but not grow past its current size, and the Body scrolls sideways as before.
@@ -110,7 +110,7 @@ export function clampBottomHeight(layout: DesignerLayoutState, height: number, c
   return clampDockSize(height, DESIGNER_BOTTOM_MIN_HEIGHT, room, layout.bottomHeight)
 }
 
-/** flowgate.v02test.0056 — the three saved Dock sizes, in px. */
+/** The three saved Dock sizes, in px. */
 export interface DesignerDockSizes {
   leftWidth: number
   rightWidth: number
@@ -160,7 +160,7 @@ export function dockSizesFromStored(stored: { leftWidth: unknown; rightWidth: un
 export type DesignerFitKeep = 'left' | 'right' | null
 
 /**
- * flowgate.v02test.0056 (R 0056.0001 §2.3) — the left / right column widths to draw in a Body
+ * The left / right column widths to draw in a Body
  * `bodyWidth` px wide. When the chosen widths and the Center minimum do not fit, the expanded
  * Docks are drawn smaller, never below their minimums; a collapsed Dock (its rail) is not
  * changed. Narrower than both minimums the Body scrolls sideways as before. `bodyWidth` 0 means
@@ -197,7 +197,7 @@ export function fitDockWidths(
 }
 
 /**
- * flowgate.v02test.0056 — the Bottom Dock height to draw in a Center column `columnHeight` px
+ * The Bottom Dock height to draw in a Center column `columnHeight` px
  * high: the chosen height, or what the Workspace minimum leaves (never below the Dock minimum).
  * `columnHeight` 0 means "not measured yet" and changes nothing.
  */

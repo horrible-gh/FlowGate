@@ -1,5 +1,5 @@
 """Real F1-F5 freeze-stage observation, and real Self-check / real-Git approval overlap
-(flowgate.default.0671 TR0003's last rejection, findings 2-4).
+('s last rejection, findings 2-4).
 
 Everything that actually does Git or approval work is real and unstubbed on this file:
 ``approval_freeze.run_freeze`` (all of F1-F5), ``git_service.finalize`` /

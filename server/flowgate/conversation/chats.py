@@ -1,4 +1,4 @@
-"""Standalone CH creation for the Conversation [new chat] button (D0006 §3.10).
+"""Standalone CH creation for the Conversation [new chat] button.
 
 A standalone CH is a non-slot conversation document. It has nothing to do with the
 workflow: no effective-head check, no sequence result slot, no parent auto-close, no
@@ -6,14 +6,14 @@ workflow: no effective-head check, no sequence result slot, no parent auto-close
 AI run's group lease (the lease middleware exempts this route explicitly). Filling a
 pending CH head of a workflow stays the job of ``POST /documents/next-empty``.
 
-Decision order (D0006 §3.10.2): input -> ``perm_document_create`` -> project -> group ->
+Decision order: input -> ``perm_document_create`` -> project -> group ->
 group belongs to project -> group not disposed -> number reservation -> document file +
 row -> CH auto-complete (approved) -> 201.
 
-flowgate.v02.0047: ``"auto_title": true`` (optional) creates the chat owing its one AI title
+``"auto_title": true`` (optional) creates the chat owing its one AI title
 on the title it is created with (``auto_title.owed_meta``); without it nothing is owed.
 
-flowgate.v02.0135 T#3: ``"client_request_id"`` (optional) names one create intent of the caller. A
+``"client_request_id"`` (optional) names one create intent of the caller. A
 create whose answer was lost (the GUI's 30 s timeout while the server still made the chat, minutes
 later on stg) is sent again with the same id: the chat that intent already made is answered (200,
 ``"replayed": true``) instead of a second one, and a retry that arrives while the first create is
@@ -85,7 +85,7 @@ def owes_auto_title(body: Any) -> bool:
 
 
 def client_request_id(body: Any) -> Optional[str]:
-    """The caller's create intent id (0135 T#3), or None when the body has none."""
+    """The caller's create intent id, or None when the body has none."""
     value = body.get(CLIENT_REQUEST_FIELD) if isinstance(body, dict) else None
     if value is None:
         return None
@@ -156,7 +156,7 @@ def _content(*, project_id: str, module: str, group_id: str, doc_code: str, titl
 
 
 def public(doc: dict) -> dict:
-    """The 201 body (D0006 §5.4). ``status`` is the review status a CH is created with."""
+    """The 201 body. ``status`` is the review status a CH is created with."""
     return {
         "ok": True,
         "doc_id": doc["doc_id"],

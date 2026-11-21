@@ -1,4 +1,4 @@
-/** 0589 T#1 — the rendered UI locale is the single source for X-Locale. */
+/** the rendered UI locale is the single source for X-Locale. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { InternalAxiosRequestConfig } from 'axios'
 

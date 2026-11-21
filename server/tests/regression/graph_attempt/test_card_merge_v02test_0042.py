@@ -1,4 +1,4 @@
-"""flowgate.v02test.0042 regression: a card result's merge conflict is handled on the card.
+"""regression: a card result's merge conflict is handled on the card.
 
 1. A conflict found by the merge is deferred: the merge is undone, no group session opens (the group stays free for
    the other cards), the attempt waits in ``conflict`` / ``conflict_deferred`` with its overlapping files.

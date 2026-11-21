@@ -1,6 +1,6 @@
-"""Pre-change basis (anchor) store for Self-check baseline reuse (flowgate.v02.0114 T#3).
+"""Pre-change basis (anchor) store for Self-check baseline reuse.
 
-One anchor per work unit -- a TR and its rework (D 0006 3.3). It is written once, when the
+One anchor per work unit -- a TR and its rework. It is written once, when the
 unit's first token is issued, and never rewritten: later tokens of the unit only add a row to
 ``tr_self_check_anchor_tokens``. Both writes are "create only when absent" on a UNIQUE key
 (``open_key`` for an unregistered TR(new) draft, ``tr_doc_id`` for a registered TR), so

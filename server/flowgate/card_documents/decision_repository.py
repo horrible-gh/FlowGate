@@ -1,4 +1,4 @@
-"""0126 T#1: append-only human decisions and durable request receipts (migration 171).
+"""append-only human decisions and durable request receipts (migration 171).
 
 A card version covers both slots. All writes require the caller's Flow guard. A badge is
 never human approval evidence: consumers must use ``projection`` / ``valid_approval``.
@@ -85,6 +85,6 @@ def projection(flow_id, node_key, slot, doc, mark=None):
 
 
 def valid_approval(flow_id, node_key, slot, doc):
-    """T#2 entry: revision/body-bound evidence, never a fabricated AI verdict/completion."""
+    """entry: revision/body-bound evidence, never a fabricated AI verdict/completion."""
     decision = projection(flow_id, node_key, slot, doc).get("human_decision")
     return decision if decision and decision["valid"] and decision["action"] == "approve" else None

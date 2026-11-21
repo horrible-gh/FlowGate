@@ -1,4 +1,4 @@
-// flowgate.default.0481 T0010 rev4 — "attempt_id must be a UUID" (2026-09-08 12:29).
+// "attempt_id must be a UUID" (2026-09-08 12:29).
 //
 // `crypto.randomUUID` is a secure-context-only API. The reviewer's browser opens this app at
 // `http://192.168.0.252:8080` (the deploy's own ALLOWED_ORIGIN), where Chrome reports

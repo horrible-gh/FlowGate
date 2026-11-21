@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#9 — the settings tab's rules (D#1 §8, §10.2 T#9 row; D#2 §2.2 / §2.4). Pure functions
+// the settings tab's rules (the earlier implementation row; the earlier implementation). Pure functions
 // over the target, the Flow's v0.1 sequence rows (`GET /workflow/sequence`, normalized by
 // `@/features/document`) and the choices: which row the Node is, whether it can still be set, the
 // choices of each field and whether anything changed.
@@ -17,7 +17,7 @@
 // started, the row not in the sequence read, a save in flight; the reviewer also when the review count is
 // 0, and saving when nothing changed.
 //
-// flowgate.v02.0053 T#7 — these are the rules of a v0.1 Flow's Node only (a sequence step without a Graph
+// these are the rules of a v0.1 Flow's Node only (a sequence step without a Graph
 // card). A change is saved at once (no save button, v7); a Graph card's settings follow cardSettingsModel.
 // What a running hop took from the row is no longer drawn (v7 has no such block).
 import { reviewCountKind } from './reviewCountModel'
@@ -59,7 +59,7 @@ export function settingsRowState(row: Pick<SettingsRowFacts, 'status'>): Setting
 }
 
 /**
- * flowgate.v02.0052 T#2 — where the step stands, as the server derives `status` (get_sequence_items):
+ * where the step stands, as the server derives `status` (get_sequence_items):
  * pending = no result document yet; done = its result document is approved; in_progress = the result
  * document exists and is not approved (running, in review, rejected and reworked). Only pending can be set.
  */

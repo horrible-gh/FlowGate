@@ -4,7 +4,7 @@ export function stripFrontmatter(md: string): string {
   return m ? md.slice(m[0].length) : md
 }
 
-// T0004 task 2.4 (group 0460) — the leading "next-document header".
+// task 2.4 (the earlier change) — the leading "next-document header".
 //
 // A FlowGate document body can open with a plain 7-line
 // "next_type -> ... -> target_id" block (not YAML frontmatter -- no ---
@@ -19,8 +19,8 @@ export function stripFrontmatter(md: string): string {
 // body is handed to the Markdown renderer, exactly the way stripFrontmatter()
 // removes the YAML header above it. rev1-rev4 wrapped it in a fenced `text`
 // block instead, which kept the seven fields on screen as a code box at the top
-// of every document -- rejected with "당장 이 문서만 봐도 헤더가 문서에 그대로
-// 드러나잖아".
+// of every document -- rejected with "Even in this document, the headers appear
+// verbatim in the body".
 //
 // This is display-only: `content` itself, "Markdown 복사" and "헤더 포함 복사"
 // still hand back the stored bytes. Only a *complete*, in-order 7-field block at
@@ -40,7 +40,7 @@ const NEXT_HEADER_KEY_ORDER = [
 const NEXT_HEADER_LINE_RE = /^(next_type|next_type_detail|project|module|group_id|group|title|target_id):\s*(.*)$/
 
 function headerLineKey(line: string): string | null {
-  // R0001 rev4: split('\n') leaves the CR of a CRLF document at the end of every
+  // split('\n') leaves the CR of a CRLF document at the end of every
   // line, and JS `.` never matches CR while a non-multiline `$` only matches the
   // very end of the string -- so `(.*)$` failed on every CRLF header line and no
   // CRLF document was ever recognised. Drop the CR before matching.
@@ -49,7 +49,7 @@ function headerLineKey(line: string): string | null {
   return m[1] === 'group_id' ? 'group' : m[1]
 }
 
-// R0001 rev4 -- what counts as "the very start" of the document. stripFrontmatter()
+// what counts as "the very start" of the document. stripFrontmatter
 // above consumes the closing `---` plus ONE line ending, so the blank line that
 // separates a frontmatter block from the body is still present when this function
 // runs, and every stored FlowGate document has one. A literal

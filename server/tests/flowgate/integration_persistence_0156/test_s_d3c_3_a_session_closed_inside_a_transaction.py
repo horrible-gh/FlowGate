@@ -109,7 +109,7 @@ def test_s_d3c_3_a_session_closed_inside_a_transaction(env, decided, repo, tap, 
     assert row["integration"] == CONFLICT and row["sessions"] == [(merge_id, "aborted")], row
     lock_release(sc.flow)
     row = rec.step("lock_release")
-    # 0156 T#3 Q3: the first G release settles the lost close; no restart or new merge.
+    # The first G release settles the lost close; no restart or new merge.
     assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
     assert row["merges"] == 0 and not row["merge_head"], row
     assert not [session for session in row["sessions"] if session[1] == "open"], row

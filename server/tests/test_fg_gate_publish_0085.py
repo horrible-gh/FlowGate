@@ -1,4 +1,4 @@
-"""flowgate.v02.0085 T#3 (D0007 §7.1 / §7.2 / §7.3; §8-4, 6, 7, 12, 13, 14 (retry / cancel / resolve), 15, 17, 18
+"""(the design / /;, 6, 7, 12, 13, 14 (retry / cancel / resolve), 15, 17, 18
 (closing, contention, lease)) — the confirm gate's ``gate_publish`` job on a real Git repository: snapshot, merge /
 commit, push, archive, the one-transaction completion, failures and their recovery (retry / cancel / resolve), the
 credential scrub and the end cleanup of the group slot.
@@ -10,7 +10,7 @@ group worktree. The job is run through the existing Runner (``job_runner.try_cla
 restart through the existing Sweeper reconcile (``job_sweeper.step_expired_leases``). Failures are injected at the
 Git command (``git_service._run_git``) or at one step; representative combinations only.
 
-T#3 rework (review rej_01M5NT4F9CPN06M6): the end cleanup is its own ``gate_cleanup`` job (run here through the same
+(review rej_01M5NT4F9CPN06M6): the end cleanup is its own ``gate_cleanup`` job (run here through the same
 Runner), resolve takes the reviewed evidence (version and references), and the last block holds one focused regression
 test per defect of the review: the group's acceptance order and the snapshot reservation against the attempt
 integration, the lease fencing of every worker write during merge / push / archive and after a close, an archive cut
@@ -18,9 +18,9 @@ off after its ref (cancel / Stop), an orphan pin, a cleanup cut off at each step
 checkpoints in the existing archive list / restore, two copies of one recovery request, the reviewed evidence, an
 effects_confirmed without a pinned snapshot, and an unwritable recovery ref kept as an obligation.
 
-flowgate.v02.0098 T#2 (TR0009): ``--dist loadfile`` gives one file to one worker, and this file's serial
+``--dist loadfile`` gives one file to one worker, and this file's serial
 time alone exceeded the 1800 s Self-check limit. The tests from §8-7 on were therefore moved unchanged:
-§8-7 to ``test_fg_gate_publish_recovery_0085``, §8-12 to §8-18 to ``test_fg_gate_publish_retry_0085``, the T#3
+to ``test_fg_gate_publish_recovery_0085``, to to ``test_fg_gate_publish_retry_0085``, the the earlier implementation
 rework block to ``test_fg_gate_publish_rework_0085`` and ``test_fg_gate_publish_rework_recovery_0085``; the 0098
 target tests are in ``test_fg_gate_publish_0098`` and ``test_fg_gate_publish_0098_resume``. They use this
 harness and the helpers kept at the end of this file.
@@ -85,7 +85,7 @@ def git_env(product, monkeypatch, tmp_path_factory, request, git_repositories):
     for name in ("FLOWGATE_INTERACTIVE_WAIT_SEC", "FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC",
                  "FLOWGATE_R_INTERACTIVE_WAIT_SEC"):
         monkeypatch.setenv(name, "0.2")
-    # flowgate.v02.0098 T#2 (TR0009): the server keeps its instance alive with the startup()
+    # the server keeps its instance alive with the startup
     # heartbeat loop, and the direct Runner / Sweeper calls here need the same loop. Without it
     # a Git step slower than the default FLOWGATE_INSTANCE_DEAD_AFTER_SEC (60 s) on a loaded
     # host failed ensure_lease with LeaseLost. The default lease and death limits stay intact.
@@ -125,7 +125,7 @@ def _gate(env, key, **values):
 
 
 def _alive():
-    """flowgate.v02.0098 T#2 (TR0009): one heartbeat of this instance before a direct Runner / Sweeper claim.
+    """one heartbeat of this instance before a direct Runner / Sweeper claim.
 
     A confirm runs its preflight Git checks inside the Flow guard's write transaction. On a loaded host that took
     about 45 s, every heartbeat of the startup() loop meanwhile failed with "database is locked", and the job
@@ -205,7 +205,7 @@ def _start_linear(r):
 
 
 def _evidence(env, key):
-    """The evidence the person reviewed, as the run read shows it (D0007 §7.2 resolve: version and references)."""
+    """The evidence the person reviewed, as the run read shows it (resolve: version and references)."""
     rec = _nodes(_current(env))[key]["gate"]["recovery"]
     return {"evidence_version": rec["evidence_version"], "evidence_refs": rec["evidence_refs"]}
 
@@ -300,7 +300,7 @@ def test_commit_mode_pushes_the_integrated_head_and_never_commits_the_dirty_work
 
 
 
-# ── Stop contention (D0007 §7.3 Stop paragraph) ──────────────────────────────
+# ── Stop contention (Stop paragraph) ──────────────────────────────
 
 
 

@@ -1,6 +1,6 @@
-"""Project-control remote tool — pipeline tests (group 0003 R0001 / T0012).
+"""Project-control remote tool — pipeline tests.
 
-Covers P0005 (message format) · L0006 (processing logic) · DB0007 (storage):
+Covers the plan (message format) · the earlier implementation (processing logic) ·  (storage):
   ① auth 401 (not logged)  ② permission 403 (denied)  ③ path 422 (error)  ④ validity 422
   ⑤ execution read/write/grep/glob/remove + 404/409/413  ⑥ op_log  ⑦ completion mention
   §7 fail-fast priority (403 ▶ 422), result↔error_code consistency.
@@ -194,7 +194,7 @@ def test_no_token_401_not_logged(env):
     assert payload["ok"] is False
     assert payload["error"]["code"] == "unauthorized"
     assert payload["op"] == "read"
-    assert env.oplogs() == []  # subject not identified → not logged (L0006 §3.1)
+    assert env.oplogs() == []  # subject not identified → not logged
 
 
 def test_invalid_token_401(env):
@@ -639,7 +639,7 @@ def test_glob_matches(env):
     assert payload["total"] == 1
 
 
-# ── ⑤ grep/glob `path` contract (B0001 / NR0003) ───────────────────────────────
+# ── ⑤ grep/glob `path` contract ───────────────────────────────
 # `path` is optional; omitting it defaults to the project source root. When present
 # it must be a non-empty in-root relative string — an explicit empty string is
 # rejected by the safety layer before the executor's root fallback ever runs, even
@@ -691,7 +691,7 @@ def test_path_subdir_scopes_glob_results(env):
     assert payload["paths"] == ["docs/readme.md"]
 
 
-# NR0003 §1-§2: pathlib's glob()/rglob() silently return nothing when `base` is a
+# pathlib's glob/rglob silently return nothing when `base` is a
 # file or a nonexistent path, so a wrong `path` used to be indistinguishable from a
 # genuine zero-match search (both `ok:true, total:0`). _exec_grep/_exec_glob now
 # reject both the same way _exec_read already rejects its mirror case.
@@ -731,8 +731,8 @@ def test_path_invalid_values_422(env, operation, extra, bad_path):
     assert status == 422
 
 
-# ── ⑤-b The worker mention's own examples must be executable (NR0003 §8-2) ─────
-# B0001 was reported by a worker who copied the grep/glob request body straight out
+# ── ⑤-b The worker mention's own examples must be executable ─────
+# was reported by a worker who copied the grep/glob request body straight out
 # of the mention. Asserting only that the `path` key is gone (mention-side test) does
 # not prove the copied body is accepted, so run the emitted JSON through the real
 # handler. `step_type` covers both the mutating (T/TR) and read-only (N/NR) sections.
@@ -740,7 +740,7 @@ def test_path_invalid_values_422(env, operation, extra, bad_path):
 def _worker_example(step_type: str, operation: str) -> dict:
     """The request body a worker on this step is handed for `{operation}`.
 
-    0349 TR-2: the mention no longer prints request bodies — it names the tools and points
+    TR-2: the mention no longer prints request bodies — it names the tools and points
     at GET /help/tools/{name}, which serves this example. So the copy path being tested is
     now help → worker, and the example is read from the same catalog that endpoint renders
     (tool_registry), for the same reason as before: whatever the worker is handed must be
@@ -796,7 +796,7 @@ def test_router_envelope_and_status(env):
     assert r2.json()["error"]["code"] == "unauthorized"
 
 
-# ── Step-type resolution (0334 R0001 / NR0003 발견 7) ─────────────────────────
+# ── Step-type resolution ─────────────────────────
 
 def _step_type_for(monkeypatch, *, doc_type, head_type):
     """Resolve a doc_ref's step type against a stubbed sequence + document store."""
@@ -837,7 +837,7 @@ def test_doc_type_is_the_fallback_when_there_is_no_sequence(monkeypatch):
 def test_unknown_doc_resolves_to_no_step_type(monkeypatch):
     assert _step_type_for(monkeypatch, doc_type=None, head_type=None) is None
 
-# ── TR-1 TSR worker-token scope expansion (0349 T0008) ─────────────────────
+# ── TR-1 TSR worker-token scope expansion ─────────────────────
 
 @pytest.mark.parametrize("action_scope", ["new", "edit"])
 def test_next_step_worker_token_gets_crud_for_tsr_head(monkeypatch, action_scope):
@@ -862,13 +862,13 @@ def test_test_run_token_still_gets_no_remote_grant(monkeypatch):
     }) == []
 
 
-# ── 0431 T0004/NR0003: chat=read policy end-to-end ──────────────────────────
+# ── the earlier implementation/the review: chat=read policy end-to-end ──────────────────────────
 
 def test_existing_chat_worker_grant_with_empty_scopes_is_reconciled_to_read_grep(env):
     """A chat worker grant persisted under the old chat=none policy has no scope
     rows at all. The backing token is still valid, so the next authenticated call
     must reconcile the stored scope set to exactly {read, grep} -- no separate
-    migration or grant-issuing code path is involved (NR0003 §2)."""
+    migration or grant-issuing code path is involved."""
     from modules.flow_gate.db import remote_tool_grants as db_grants
     from modules.flow_gate.services import token_service
 
@@ -938,7 +938,7 @@ def test_chat_worker_token_lazily_gets_read_grep_grant_on_first_call(env):
     ("remove", {"path": "docs/readme.md"}, 403),
 ])
 def test_chat_worker_token_gets_exactly_read_grep_glob_stat(env, op, body, expected_status):
-    """R0001's ask, pinned end to end: a chat token can call read/grep/glob/stat and
+    """'s ask, pinned end to end: a chat token can call read/grep/glob/stat and
     is refused write/patch/remove -- never the read_write kind, never a TR/TSR/TS
     write grant inherited through any other path."""
     worker_token = f"raw-chat-worker-token-boundary-{op}-0431"

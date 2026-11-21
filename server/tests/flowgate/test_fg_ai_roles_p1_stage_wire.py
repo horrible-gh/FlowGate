@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 — P-1 §6 / §7: the three node run keys a run read adds, the no-call stage events and the
+"""P-1 /: the three node run keys a run read adds, the no-call stage events and the
 ledger's assignment reference / origin.
 
 The harness of ``test_fg_ai_roles_l2_assignment``. A run read is ``GET /runs/current`` (its node runs are
@@ -24,7 +24,7 @@ ASSIGNMENT_KEYS = {"stage", "seq", "current", "role", "actor", "actor_reason", "
 STAGE_EVENT_KEYS = {"flow_id", "run_id", "revision_no", "event_seq", "from", "to", "cause", "reason", "node_key",
                     "attempt_id", "stage", "seq", "role", "actor", "actor_reason", "source", "cause_code", "provider_id",
                     "provider_name", "author", "decided_at",
-                    # 0126 T#5: the immutable resolution event also records the settings version and the review tuple
+                    # the immutable resolution event also records the settings version and the review tuple
                     "settings_version", "review_rounds", "rework_provider_id"}
 
 
@@ -137,11 +137,11 @@ def test_p1_6_3_a_result_review_wait_setup_is_shown_on_the_node_in_review(env, d
 
 
 def test_p1_6_4_the_b1_submission_mark_is_the_one_of_the_row_approval_wait_reason_shows(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): a refused automatic approval of the instruction no longer lets the result
+    """(T-2 rework): a refused automatic approval of the instruction no longer lets the result
     stage start behind it (it was left to a card approval that no longer exists): the card stays in its instruction
     stage, a system error whose B-1 carries the instruction's mark, and the next read retries it. The mark shown is
     always the one of the row ``approval_wait_reason`` reads — the instruction's in its stage, the result's after."""
-    from flowgate.card_completion import instruction as card_instruction   # 0119 T-3: the completion's own approval
+    from flowgate.card_completion import instruction as card_instruction   # T-3: the completion's own approval
     from flowgate.card_settings import legacy_adapter
 
     def refused(*_a, **_k):
@@ -221,7 +221,7 @@ def test_p1_7_2_a_loop_s_next_hop_keeps_its_reference_with_the_hop_s_purpose_pro
 
 
 def test_p1_7_2_the_run_memory_takes_the_card_call_s_origin(env, decided, monkeypatch):
-    """T#4's input: the AI start hands the job's origin to the admission (its run memory)."""
+    """'s input: the AI start hands the job's origin to the admission (its run memory)."""
     from modules.flow_gate.graph_workflow.services import ai_node_starter
     from modules.flow_gate.services import ai_invoke_service
 

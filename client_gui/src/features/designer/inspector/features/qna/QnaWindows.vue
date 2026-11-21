@@ -1,12 +1,12 @@
 <template>
-  <!-- flowgate.v02.0052 묶음 A — v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the
+  <!-- batch A — v7 ↗ (insp.js openQA / openWin): one modeless window per opened question — the
        full question, every answer and the full answer form; several may be open at once.
-       flowgate.v02.0070 T#5: the only place a question is answered, after its context above the form.
-       flowgate.v02.0150 — the windows of ONE document, drawn apart from the Q&A tab: `target` is the target the windows
+       the only place a question is answered, after its context above the form.
+       the windows of ONE document, drawn apart from the Q&A tab: `target` is the target the windows
        were opened for (not the selection), so the questions read, the answers sent and the AI asked are always that
        document's, and a selection change, a tab change or a click elsewhere never closes them. A window closes only by
        its own × (`close`); Esc does not close it. -->
-  <ModelessShell
+  <ModelessShell kind-color="#4ba3ff"
     v-for="(win, index) in windows"
     :key="win.id"
     :open="true"
@@ -43,7 +43,7 @@
         <span v-if="windowItem(win.itemId)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc"><LineIcon name="file" class="inspector-qna-doc-icon" />{{ t(k('detail.doc'), { docId: windowItem(win.itemId)!.docId }) }}</span>
         <p v-if="windowItem(win.itemId)!.title" class="inspector-qna-window-q">{{ windowItem(win.itemId)!.title }}</p>
         <p class="inspector-qna-text inspector-qna-qbody" data-test="qna-window-body">{{ windowItem(win.itemId)!.body }}</p>
-        <!-- flowgate.v02.0070 T#5: the stored options stay readable where they cannot be picked. -->
+        <!-- the stored options stay readable where they cannot be picked. -->
         <span
           v-if="windowItem(win.itemId)!.options.length && !(windowItem(win.itemId)!.answerable && availability.answer.visible)"
           class="inspector-qna-sub"
@@ -61,7 +61,7 @@
         </ul>
 
         <div v-if="windowItem(win.itemId)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
-          <!-- 0016-CH: the options are a stacked radio list (시안 A안); the rest of the window follows B안. -->
+          <!-- 0016-CH: the options are a stacked radio list (mockup option A); the rest of the window follows option B. -->
           <div v-if="windowItem(win.itemId)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
             <button
               v-for="option in windowItem(win.itemId)!.options"
@@ -85,7 +85,7 @@
             data-test="qna-window-body-input"
             @update:model-value="(value: string) => setBody(win.itemId, value)"
           />
-          <!-- The form's last row: the ask-an-AI controls on the left, 답변 on the right. -->
+          <!-- The form's last row: the ask-an-AI controls on the left, Answer on the right. -->
           <div class="inspector-qna-foot">
           <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
             <LineIcon name="bot" class="inspector-qna-ai-icon" />
@@ -132,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0150 — the ↗ windows of one document (moved here from QnaTab): the Frame's window host draws them for
+// the ↗ windows of one document (moved here from QnaTab): the Frame's window host draws them for
 // every document with an open window (QnaWindowHost), and a history Q&A (a document window's aside) draws its own.
 // The questions, the answer form and the AI line read and write through their own useQna of `target`.
 import { computed, reactive, watch } from 'vue'
@@ -156,7 +156,7 @@ const props = defineProps<{
   target: InspectorTarget
   /** The open windows of that document, in opening order. */
   windows: readonly QnaWindow[]
-  /** flowgate.v02.0070 T#4: read only history — the questions and answers are read, nothing is answered. */
+  /** read only history — the questions and answers are read, nothing is answered. */
   history?: boolean
 }>()
 
@@ -182,13 +182,13 @@ const {
   providersStatus,
 } = useQna(() => props.target, { history: () => props.history === true })
 
-/** History: only reading is offered (answering and the AI line close in the model, 0070 T#5 body context `history`). */
+/** History: only reading is offered (answering and the AI line close in the model, the earlier implementation body context `history`). */
 const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
 const availability = computed<QnaAvailability>(() =>
   props.history ? { ...liveAvailability.value, ask: HISTORY_CLOSED } : liveAvailability.value,
 )
 
-/** flowgate.v02.0070 T#5: the window's one line while the body cannot be checked, or null. */
+/** the window's one line while the body cannot be checked, or null. */
 const bodyLine = computed(() => qnaBodyLine(availability.value))
 
 // --- The AI line (0056 F1) ------------------------------------------------------------------------
@@ -289,7 +289,7 @@ function windowSub(item: QnaItemView): string {
 }
 
 /**
- * The Flow is read only (the first reason answering is closed on), or the questions are history (T#4; 0070 T#5: a
+ * The Flow is read only (the first reason answering is closed on), or the questions are history (the earlier implementation; the earlier implementation: a
  * superseded document too): the window says so.
  */
 const readOnlyReason = computed(() => {
@@ -315,7 +315,7 @@ function firstLine(body: string): string {
   return body.split(/\r?\n/, 1)[0] ?? ''
 }
 
-/** The response proves only answered or not: both unanswered states read 미답변. */
+/** The response proves only answered or not: both unanswered states read Unanswered. */
 function stateKey(state: QnaItemState): string {
   return state === 'answered' ? 'state.answered' : 'state.unanswered'
 }
@@ -326,7 +326,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 </script>
 
 <style scoped>
-/* 0016-CH (시안 basodrr4 B안, 선택지만 A안): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
+/* 0016-CH (mockup basodrr4 option B, choices only option A): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
    colours; the question body sits in an inset block, the options are a stacked radio list, and the form ends with the
    ask-an-AI controls on the left and 답변 on the right. */
 .inspector-qna-answers {
@@ -470,7 +470,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   color: var(--fg2-text-2);
 }
 
-/* The question body: an inset block, one step larger than the rest (B안 .qbody). */
+/* The question body: an inset block, one step larger than the rest (option B .qbody). */
 .inspector-qna-qbody {
   padding: 12px 14px;
   border: 1px solid var(--fg2-line);

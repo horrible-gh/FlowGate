@@ -1,4 +1,4 @@
-/** 0068 T0011: both Arrange entry points expose and emit the same directional commands. */
+/** both Arrange entry points expose and emit the same directional commands. */
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'

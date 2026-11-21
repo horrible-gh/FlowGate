@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0056 F1 — the review history windows kept beside the document windows
- * (documentWindow/documentWindows.ts): one 검수·반려 이력 window per document, cascaded from their own origin;
+ * the review history windows kept beside the document windows
+ * (documentWindow/documentWindows.ts): one review·rejection history window per document, cascaded from their own origin;
  * a second open request restores and raises the one window; minimize, close, and close-all with the
  * document windows.
  */

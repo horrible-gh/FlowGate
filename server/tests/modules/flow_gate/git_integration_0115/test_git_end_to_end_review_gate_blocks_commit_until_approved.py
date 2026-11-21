@@ -108,7 +108,7 @@ class TestGitEndToEnd(_Scenario):
         assert review["review_fingerprint"] == fingerprint
         assert review["can_approve"] is True
         assert "shared.py" in {c["path"] for c in review["changes"]}
-        # D0006 §3.3 / L0007 §2.4: which chunk resolved to which side, for the
+        # Which chunk resolved to which side, for the
         # review screen to overlay on the diff — "both" here because the submitted
         # content keeps ours followed by theirs.
         origins = [o for o in review["conflict_origins"] if o["path"] == "shared.py"]

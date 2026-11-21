@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_review_gate_rejection_racing_the_materialize_window_is_serialized(
         self, origin_repo, monkeypatch,
     ):
-        # 0481 TR0009 rev5 (AI review finding), propose-only half: the same
+        # AI review finding, propose-only half: the same
         # window let a plain answer be appended as `accepted` to a session a
         # rejection had already returned to the resolver. A [반려] fired from
         # inside the window must be serialized too — the answer lands on the

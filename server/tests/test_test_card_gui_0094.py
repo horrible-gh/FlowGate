@@ -1,6 +1,6 @@
-"""0094: Chromium drives the real card; authoring/run HTTP handlers and the Case's own command execute.
+"""Chromium drives the real card; authoring/run HTTP handlers and the Case's own command execute.
 No test framework is assumed: a JavaScript case runs with `node --test`, a Python case as a plain script,
-and the one command need not name a test file — a script outside the test folders runs with its arguments (B0005).
+and the one command need not name a test file — a script outside the test folders runs with its arguments.
 Only authentication, storage and the source Basis are isolated using the existing 0549 fixture.
 """
 import json
@@ -165,7 +165,7 @@ def test_gui_save_run_and_read_report(env, monkeypatch, tmp_path, language, answ
             assert not parsed['errors'] and parsed['cases'][0]['required'] is False
             assert (parsed['cases'][0]['automation_ref'], parsed['cases'][0]['run_command'], parsed['cases'][0]['run_cwd']) == ('', command, '')
             assert 'Keep this note  ' in env.contents[TS_ID]
-            # Rows are centred: as much room above the text as below, the edit button on the text's line (B0005 §2-4).
+            # Rows are centred: as much room above the text as below, the edit button on the text's line.
             rows = page.evaluate("""() => [...document.querySelectorAll('[data-case] td')].filter(td => td.textContent.trim()).map(td => {
                 const range = document.createRange(); range.selectNodeContents(td)
                 const t = range.getBoundingClientRect(), c = td.getBoundingClientRect(), b = td.closest('tr').querySelector('[data-test="scenario-edit"]').getBoundingClientRect()

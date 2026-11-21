@@ -197,8 +197,8 @@ def assign_user_role(
             detail=f"Invalid role: {body.role_id}",
         )
 
-    # flowgate.v02.0020: a project role is granted through its workspace (membership/exception
-    # and the role row in one transaction), never around it (R0001 §3.1).
+    # a project role is granted through its workspace (membership/exception
+    # and the role row in one transaction), never around it.
     from modules.flow_gate.settings import workspace_service
 
     try:

@@ -1,14 +1,14 @@
-"""flowgate.v02test.0004 T#1 / T#2 / T#4 — a duplicate start of one Graph AI execution.
+"""a duplicate start of one Graph AI execution.
 
-B flowgate.v02test.0004.0001-R / NR 0003-NR: ``request_write`` queues its own start job (``node_dispatch.start_ai``) and
+B the earlier change / the earlier implementation-NR: ``request_write`` queues its own start job (``node_dispatch.start_ai``) and
 the same transaction's settle refill (``scheduling.queue_requests``) queues a replay of the same, still unclaimed request.
 Both start after the commit: the first claims the execution (``scheduling.admit``) and runs it, the second is refused
 ``run_in_progress``. That refusal was stored as an ``admission_refused`` role invocation record — shown as the work
 failing — and became the next review's ``prev_inv_id``.
 
-Now (T#1) a refused start of an execution another start of it already owns records nothing (the ledger tells it, never
+Now a refused start of an execution another start of it already owns records nothing (the ledger tells it, never
 the message); every other refusal — another execution's lease, no free slot, a Time Machine operation, another refusal
-code — is recorded as before and its durable request is replayed by the refill as before. (T#2) a start refused at
+code — is recorded as before and its durable request is replayed by the refill as before. a start refused at
 admission is never the previous call of a later one; a launched record, failed or not, stays one; a record stored
 before names its refusal still, and the card's invocation list shows the previous call it would name now.
 
@@ -116,7 +116,7 @@ def _attempt_requests(env, job):
                            "AND status IN ('requested', 'running')", (job["graph_attempt_id"],))
 
 
-# ── T#1 / T#4-1 / T#4-2: the duplicate start ─────────────────────────────────
+# ── the earlier implementation / the earlier implementation / the earlier implementation: the duplicate start ─────────────────────────────────
 
 @pytest.mark.parametrize("order", ["refused_after_launch_began", "refused_before_launch_began"])
 def test_a_duplicate_start_runs_the_execution_once_records_no_refusal_and_the_review_links_the_real_run(
@@ -153,7 +153,7 @@ def test_a_duplicate_start_runs_the_execution_once_records_no_refusal_and_the_re
     assert (review["link_kind"], review["prev_inv_id"]) == ("review_of", written["inv_id"])
 
 
-# ── T#1 / T#4-3 / T#4-4: real refusals stay refusals, and their request is replayed ─────────
+# ── the earlier implementation / the earlier implementation / the earlier implementation: real refusals stay refusals, and their request is replayed ─────────
 
 @pytest.mark.parametrize("cause", ["another_execution_lease", "no_free_slot", "time_machine_operation"])
 def test_a_real_refusal_is_recorded_and_its_durable_request_is_replayed_later(env, decided, monkeypatch, questions,
@@ -248,7 +248,7 @@ def test_duplicate_start_is_read_from_the_ledger_state_only(env, decided, monkey
     assert inv.duplicate_start(busy, exec_id) is False
 
 
-# ── T#2: the previous call is a launched record ─────────────────────────────
+# ── the earlier implementation: the previous call is a launched record ─────────────────────────────
 
 def _refused_row(o, exec_id="e"):
     inv.refused(o, HTTPException(409, BUSY), exec_id)
@@ -293,7 +293,7 @@ def test_a_record_stored_naming_a_refusal_is_shown_with_its_real_previous_call(e
     rv = run("rv", o)
     r1 = launch(rv)
     inv.finalize(rv)
-    # a review stored before T#2 (#421 of the incident) named the refusal as its previous call
+    # a review stored before the earlier implementation (#421 of the incident) named the refusal as its previous call
     _sql(env["db"], "UPDATE ai_role_invocations SET prev_inv_id = ? WHERE inv_id = ?", (refusal["inv_id"], r1["inv_id"]))
     stored = [r for r in store.for_node(FA, "removed", 50) if r["inv_id"] == r1["inv_id"]][0]
     assert stored["prev_inv_id"] == refusal["inv_id"]                          # the stored row is never rewritten
@@ -306,7 +306,7 @@ def test_a_record_stored_naming_a_refusal_is_shown_with_its_real_previous_call(e
 
 
 def test_a_review_stored_naming_a_refused_rework_is_shown_with_its_ai_writer(env, monkeypatch):
-    """A review stored before T#2 named a refused rework of its own unit, and no rework of that unit launched: it is
+    """A review stored before the earlier implementation named a refused rework of its own unit, and no rework of that unit launched: it is
     shown with the AI writer's launch — the previous call ``_links`` picks on the same records (rework first, else the
     AI writer's write, ``invocations.writer_unit_hash``). The stored row and ``recorded_prev_inv_id`` keep the refusal."""
     from flowgate.ai_roles import assignment_store

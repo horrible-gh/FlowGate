@@ -1,4 +1,4 @@
-"""0435 T0004: an explicit per-step provider owns startup without a fallback tail."""
+"""an explicit per-step provider owns startup without a fallback tail."""
 from __future__ import annotations
 
 from test_ai_invoke_0187 import _provider, _wait_finished, fake_env  # noqa: F401

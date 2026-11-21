@@ -1,6 +1,6 @@
 """Limits of AI attachment upload requests: system defaults, per-project overrides, hard caps.
 
-flowgate.chat.0017 CH0002 final design §8. Resolution of one key::
+final design. Resolution of one key::
 
     effective = clamp(project override ?? system value ?? DEFAULT, MIN, HARD_MAX)
 

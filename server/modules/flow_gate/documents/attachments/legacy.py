@@ -1,17 +1,17 @@
 """Move attachments left in the old side tree into the document's own room.
 
-flowgate.default.0060 L0012 §2-11 (M1~M8), DB0013 §3-4.
+(M1~M8),.
 
 The old location is ``{storage_root}/projects/{project_dir}/attachments/{doc_id}/`` and it
 was written without a registry, so the ONLY clue about which document a file belongs to is
-the directory name (D0010 §3-8).
+the directory name.
 
 This is an operational procedure, not part of server start-up. DB0013 §3-4 gives two
 reasons: the source cannot be expressed as ``INSERT ... SELECT`` (it is a directory listing),
 and the copy is heavy I/O that would block boot. Run it from
 ``server/tools/migrate_legacy_attachments.py`` after 080 is applied.
 
-0064 L0005 2.7.1: each registration commits under the guard an R↔B conversion of the document holds
+2.7.1: each registration commits under the guard an R↔B conversion of the document holds
 and re-checks the document there (``_register_copy``).
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ def migrate_legacy_attachments(project_id: str, dry_run: bool = True) -> dict:
     document. The extension deny-list is deliberately NOT applied — the goal is not to erase
     material that is already uploaded; ``read`` blocks those at §2-9 R3 instead.
 
-    0064 L0005 2.7.1: the registration (M6) commits under the guard an R↔B conversion of the
+    2.7.1: the registration (M6) commits under the guard an R↔B conversion of the
     document holds (``_register_copy``). The copy is written first, like an upload's stream; under
     the guard the document is read again and must still exist, be mutable and own the room the copy
     went to. Otherwise the file lands in ``refused``: only this run's copy is removed and the
@@ -182,7 +182,7 @@ def _identity_of(dest: Path, created: bool = False):
 def _remove_copy(dest: Path, owned=None) -> None:
     """Remove a copy this run wrote and did not register (nothing lists or reads it).
 
-    0064 T#3: only while the path still holds that copy (``owned``: its file identity)."""
+    only while the path still holds that copy (``owned``: its file identity)."""
     from modules.flow_gate.storage.files import remove_owned_file
 
     try:
@@ -197,7 +197,7 @@ def _remove_copy(dest: Path, owned=None) -> None:
 def _register_copy(
     doc_id: str, room: Path, entry: Path, dest: Path, final_name: str, sha: str, content_type: str
 ) -> bool:
-    """M6 under the guard an R↔B conversion of ``doc_id`` holds (0064 L0005 2.7.1).
+    """M6 under the guard an R↔B conversion of ``doc_id`` holds.
 
     False: the same content was registered meanwhile (M4). Raises ``AttachmentError`` when the
     document is gone (404 ``DOCUMENT_NOT_FOUND``), not mutable (409 ``DOCUMENT_NOT_MUTABLE``) or

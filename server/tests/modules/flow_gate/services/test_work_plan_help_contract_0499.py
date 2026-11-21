@@ -1,9 +1,9 @@
-"""design_template/WP help contract vs validator drift guard (flowgate.default.0499 T0004).
+"""design_template/WP help contract vs validator drift guard.
 
-NR0003 found the help item published only key/provider_id/note while validate() actually
+The review found the help item published only key/provider_id/note while validate actually
 requires 11 canonical step fields plus pair_role/origin/locked_reason enums, the N/T/TS
 pairing rules and TSR's server-assembled shape. These tests pin the fix: the help payload
-now publishes the full contract (T0004 completion criteria 1-8, 11) and its worked example
+now publishes the full contract (completion criteria 1-8, 11) and its worked example
 passes validate() unchanged (criteria 9-10), without weakening validate() itself (criterion 12).
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _wp_help_ctx():
 
 
 def test_help_payload_publishes_all_step_fields_and_enums(seed):
-    """T0004 §18 — every canonical field/enum/pairing-key literal must reach the worker."""
+    """every canonical field/enum/pairing-key literal must reach the worker."""
     from modules.flow_gate.services import help_catalog
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -53,7 +53,7 @@ def test_help_payload_publishes_all_step_fields_and_enums(seed):
 
 
 def test_help_payload_publishes_pairing_and_single_step_rules(seed):
-    """T0004 §19 — N/NR, T/TR, TS/TSR pairing plus the single-step pair_role/pair_key rule."""
+    """N/NR, T/TR, TS/TSR pairing plus the single-step pair_role/pair_key rule."""
     from modules.flow_gate.services import help_catalog
 
     payload = help_catalog.build_child("design_template", "WP", _wp_help_ctx())
@@ -66,7 +66,7 @@ def test_help_payload_publishes_pairing_and_single_step_rules(seed):
 
 
 def test_help_example_passes_the_real_validator_unchanged(seed):
-    """T0004 §20 — the help item's own worked example must PASS validate() as-is."""
+    """the help item's own worked example must PASS validate as-is."""
     from modules.flow_gate.services import help_catalog
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -77,7 +77,7 @@ def test_help_example_passes_the_real_validator_unchanged(seed):
 
 
 def test_help_example_tsr_steps_are_the_server_assembled_shape(seed):
-    """T0004 §21 — TSR must never carry a provider/note or a non-system origin."""
+    """TSR must never carry a provider/note or a non-system origin."""
     from modules.flow_gate.services import help_catalog
 
     payload = help_catalog.build_child("design_template", "WP", _wp_help_ctx())
@@ -93,8 +93,8 @@ def test_help_example_tsr_steps_are_the_server_assembled_shape(seed):
 
 
 def test_t_two_sets_plus_ts_two_sets_regression():
-    """T0004 §22 — the exact failure NR0003 reproduced: T count 2 + TS count 2 must expand
-    to T#1/TR#1/T#2/TR#2/TS#1/TSR#1/TS#2/TSR#2, each pair pointing back at the other's key."""
+    """the exact failure the review reproduced: T count 2 + TS count 2 must expand
+    to the earlier implementation/TR#1/the earlier implementation/TR#2/TS#1/TSR#1/TS#2/TSR#2, each pair pointing back at the other's key."""
     from modules.flow_gate.services import work_plan_service as wp
 
     quantities = {
@@ -117,7 +117,7 @@ def test_t_two_sets_plus_ts_two_sets_regression():
 
 
 def test_step_contract_is_read_from_the_same_constants_the_validator_uses():
-    """T0004 §15/§17 — help and validate() must share one source, never two typed-out copies."""
+    """help and validate must share one source, never two typed-out copies."""
     from modules.flow_gate.services import work_plan_service as wp
 
     contract = wp.step_contract()
@@ -166,7 +166,7 @@ def test_field_count_rule_permits_x_prefixed_extension_fields(seed):
 
 
 def test_provider_unspecified_rule_is_published_and_enforced(seed):
-    """rev2 fix — automated review: T0004 §12/§26.8 requires the help to state that
+    """fix — automated review: the earlier implementation requires the help to state that
     provider-unspecified is BOTH provider_id=null and provider_display_name=null, and
     validate() must actually enforce that pairing so a worker can derive the rule from
     the validator too, not just from prose."""

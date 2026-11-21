@@ -1,4 +1,4 @@
-"""Merge-review conversation turn copy (flowgate.default.0578 T0006 §2.2, D0005 §3.1).
+"""Merge-review conversation turn copy.
 
 ``_materialize_pending_conversation_run`` no longer writes a finished Korean sentence
 into the turn it stores: it stores a ``message_code`` (what happened) plus the
@@ -6,17 +6,17 @@ into the turn it stores: it stores a ``message_code`` (what happened) plus the
 that through the client's ``main.git_review.turn_message.*`` keys; this module is the
 other surface -- the AI history ``token_routes`` replays into a worker's prompt, which
 has no Vue i18n dictionary and has to render the same nine events itself, in the
-locale that worker's run started in (D0005 §3.6).
+locale that worker's run started in.
 
 Two rules this module exists to keep:
 
 * ``git_service`` never calls it. A translated sentence is never stored alongside the
-  code it was rendered from (D0005 §3.2) -- that would be exactly the persisted natural
-  language NR0003 F1 measured, only harder to find.
+  code it was rendered from -- that would be exactly the persisted natural
+  language the review F1 measured, only harder to find.
 * It never raises. An unknown code, a missing interpolation value, a params dict of
   the wrong shape: every one of them falls back to the generic status line, because the
   alternative is an exception thrown from inside prompt assembly, which loses the whole
-  history rather than one line of it (T0006 §3 work item 1-3).
+  history rather than one line of it (work item 1-3).
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from typing import Any, Mapping, Optional
 
 from modules.flow_gate import template_provision
 
-# The stored `message_code` vocabulary (T0006 §2.2). `status` stays what it always was
+# The stored `message_code` vocabulary. `status` stays what it always was
 # and is NOT derivable from these: `accepted` covers three of them.
 CODE_STALE_RUN = "review_stale_run"
 CODE_RUN_LOST = "review_run_lost"
@@ -48,7 +48,7 @@ TURN_MESSAGE_CODES = (
     CODE_RUN_FAILED,
 )
 
-# Which of the three L0007 §2.9 identity checks fired. The CONDITIONS are unchanged and
+# Which of the three the earlier implementation identity checks fired. The CONDITIONS are unchanged and
 # still live in `_materialize_pending_conversation_run`; only their outcome is carried
 # here, as codes instead of sentences.
 STALE_APPROVAL_SETTLED = "approval_settled"
@@ -307,7 +307,7 @@ def render_turn_message(
     """The product sentence for one stored ``message_code`` in ``locale``.
 
     ``status`` is only ever used for the generic fallback line; it is NOT consulted to
-    pick a sentence, because `accepted` maps to three different codes (T0006 §2.2).
+    pick a sentence, because `accepted` maps to three different codes.
     Never raises -- see the module docstring.
     """
     normalized = template_provision.normalize_locale(locale)

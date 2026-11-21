@@ -1,4 +1,4 @@
-"""0291 T — SSE broadcast project routing (D0005 §3-1).
+"""T — SSE broadcast project routing.
 
 A document write used to push a refresh signal into every connected stream, so a
 user looking at project B re-queried their whole screen because someone edited a
@@ -155,7 +155,7 @@ async def test_unsubscribe_clears_the_interest_entry():
 
 @pytest.mark.asyncio
 async def test_routing_stats_count_suppressed_deliveries():
-    """The suppressed count is the measurable effect of this change (NR0003 4-8)."""
+    """The suppressed count is the measurable effect of this change."""
     await subscribe("user-a", "proj_alpha")
     await subscribe("user-b", "proj_beta")
     await subscribe("user-c", "proj_beta")

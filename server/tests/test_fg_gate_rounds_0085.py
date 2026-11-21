@@ -1,4 +1,4 @@
-"""0085 T#4: D0007 §8-3, 8, 9 and the Time Machine portion of 18 only.
+"""8, 9 and the Time Machine portion of 18 only.
 
 Real product routes/SQLite; publish + rewind uses a local bare origin. Faults at
 Git and at the last DB annotation prove failed rewinds retain the recovery flag.

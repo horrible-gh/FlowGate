@@ -1,4 +1,4 @@
-"""Self-check and approval/finalize running at the same time (flowgate.default.0669 T0003).
+"""Self-check and approval/finalize running at the same time.
 
 Real code, real SQLite store, real threads and real child processes:
 
@@ -274,7 +274,7 @@ def test_finalize_job_of_another_group_runs_during_selfcheck(env):
 
 
 def test_finalize_job_on_the_selfcheck_group_runs_without_waiting(env):
-    """0053 1-B: the running Self-check holds no G, so its own Group's finalize does not wait
+    """the running Self-check holds no G, so its own Group's finalize does not wait
     for it (it waited out the run before) and the run still ends with its result."""
     run_a, _ = _start_check("g_a")
     _wait_running("g_a", run_a["self_check_run_id"])

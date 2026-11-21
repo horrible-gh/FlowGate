@@ -1,4 +1,4 @@
-"""One chat AI run per AI-call press -- ``client_request_id`` on /ai-invoke/start (flowgate.v02.0152).
+"""One chat AI run per AI-call press -- ``client_request_id`` on /ai-invoke/start.
 
 The browser waits a bounded time for /ai-invoke/start. When that wait ends without an
 answer (timeout, dropped connection) the server may still be admitting -- or may already
@@ -19,7 +19,7 @@ registry answers a resend with what the first request did:
 
 A new press mints a new id, so a deliberate second call is never folded into the first.
 
-flowgate.v02gui.0011 B: the press can be stopped before the browser knows its run id
+B: the press can be stopped before the browser knows its run id
 (``cancel``). Whatever the press has reached, the stop is kept here under the same key:
 
 * nothing yet (the /start is still on its way, or never came) -- a ``cancelled`` entry is
@@ -69,7 +69,7 @@ class _Entry:
     expires: float
     owner: object
     run_id: Optional[str] = None
-    # flowgate.v02gui.0011 B: the user stopped this press while it was pending or started.
+    # B: the user stopped this press while it was pending or started.
     cancel_requested: bool = False
 
 
@@ -120,7 +120,7 @@ def complete(user_id: str, doc_ref: str, request_id: str, token: object, run_id:
     """The reserving request admitted ``run_id``.
 
     Returns True when the press was stopped while it was being admitted: the caller must
-    cancel ``run_id`` now (flowgate.v02gui.0011 B)."""
+    cancel ``run_id`` now."""
     key = _key(user_id, doc_ref, request_id)
     with _lock:
         entry = _entries.get(key)
@@ -147,7 +147,7 @@ def release(user_id: str, doc_ref: str, request_id: str, token: object) -> None:
 
 
 def cancel(user_id: str, doc_ref: str, request_id: str) -> CancelOutcome:
-    """flowgate.v02gui.0011 B: the user stopped this press before (or without) knowing its run id.
+    """B: the user stopped this press before (or without) knowing its run id.
 
     Idempotent: stopping the same press again answers the same way."""
     now = time.monotonic()

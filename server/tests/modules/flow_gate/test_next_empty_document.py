@@ -91,7 +91,7 @@ def test_next_empty_non_m_stays_pending_review(monkeypatch, tmp_path):
 
 
 def test_next_empty_resolves_sequence_from_produced_child(monkeypatch, tmp_path):
-    """0048 TR0009: after the FE navigates to a just-created child (openAfter), a
+    """after the FE navigates to a just-created child (openAfter), a
     follow-up "create empty" sends that child as prev_doc_id. The child is not the
     sequence root, so get_sequence_by_doc_id returns None — the handler must fall
     back to the produced-result reverse lookup instead of raising 422.

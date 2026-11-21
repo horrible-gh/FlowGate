@@ -2,10 +2,10 @@
  * flowgate.v02.0051 — the v7 header line on every card (InspectorHeader): the 읽기 전용 tag from the
  * target, the ✎ 메모 button shown but disabled (no memo API yet), the ● state pill, and the ⋯ menu
  * with ID 복사 — enabled with a document and the clipboard, copying the bound document's id.
- * flowgate.v02.0052 묶음 A — the single status pill: one user-facing label (the Canvas state first),
+ * batch A — the single status pill: one user-facing label (the Canvas state first),
  * a `· sub` only for a server state that says something else, never an internal value as text, the
  * server values in the tooltip and the data attributes.
- * flowgate.v02.0070 T#4 (B4) — one kind display (flowNodeKindView) for the Canvas card head and the header: a requirement
+ * (B4) — one kind display (flowNodeKindView) for the Canvas card head and the header: a requirement
  * Node with a B document is 버그 (bug glyph, red accent) in both, an R one 요구사항; a title that only repeats it hides.
  */
 import { readFileSync } from 'node:fs'
@@ -103,7 +103,7 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(writeText).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0052 묶음 A — the v7 single status pill.
+  // batch A — the v7 single status pill.
   describe('the status pill', () => {
     const pill = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill')
     const label = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill-label').text()
@@ -155,7 +155,7 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
       expect(pill(w).attributes('title')).toBe('문서 상태: 완료 (wf_done) / 실행 상태: odd')
     })
 
-    // flowgate.v02.0052 T#3: Canvas `blocked` is the server's word for a rejection (canvas_mapping.py).
+    // Canvas `blocked` is the server's word for a rejection (canvas_mapping.py).
     it('a rejected document on a blocked Canvas state reads 반려됨, never 보류; the raw values stay', () => {
       const base = targetOf(SELECTIONS.v01)
       const w = mount(InspectorHeader, {
@@ -245,7 +245,7 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(mountHeader(SELECTIONS.v01).find('[data-test="designer-inspector-meta"]').exists()).toBe(false)
   })
 
-  // flowgate.v02.0052 T#4 rev1 (R §2.2): below a 560px Inspector the header is two lines — the title
+  // (R): below a 560px Inspector the header is two lines — the title
   // line and the state line (읽기 전용, pill, actions) — laid out by the frame around it. jsdom has no
   // layout (the px were measured in the real Designer), so the DOM shape and the rule are checked here.
   it('sits in its size frame; the state-line parts are header items the narrow rule can move', () => {
@@ -276,7 +276,7 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(rule).toMatch(/\.inspector-header \{[^}]*flex-wrap: wrap;[^}]*height: auto;/)
     expect(rule).toMatch(/\.inspector-header::after \{[^}]*flex: 0 0 100%;[^}]*order: 1;/)
     expect(rule).toMatch(/\.inspector-header-read-only,\s*\.inspector-header-pill,\s*\.inspector-header-actions \{\s*order: 2;/)
-    // flowgate.v02.0070 T#1 rev1: the item keeping that room is the title area (the title, or its input, with the note
+    // the item keeping that room is the title area (the title, or its input, with the note
     // right of it) — editing asks the line for no more than the title, so the ✎ 메모 and ⋯ stay on the title line.
     expect(rule).toMatch(/\.inspector-header-title-area\.is-editing,\s*\.inspector-header-title-area \{[^}]*flex: 4 1 0;[^}]*min-width: 48px;/)
     expect(rule).not.toMatch(/min-width: 96px/)

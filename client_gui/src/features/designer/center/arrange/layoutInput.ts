@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#2 (0005-L §2.1 / §2.2) — 가로·세로 자동정렬의 입력: the cards of the shown Graph and the ones
+// horizontal/vertical auto-layout input: the cards of the shown Graph and the ones
 // the read left out (a collapsed card keeps its place in the order and in the collision check, it never moves),
 // each with its size fixed at the command (the Canvas's measured size of a shown card, else the card size), its
 // real rectangle (`rect0`) and its order id `ord`; the layout edges (execution edges and, for the `sequence`

@@ -1,4 +1,4 @@
-"""Pre-run validation of a Graph draft — flowgate.v02.0061 (0002-CH turn 13, rules 1-5).
+"""Pre-run validation of a Graph draft — the earlier change (CH, rules 1-5).
 
 ``validate_graph(graph, policies)`` is what ``graph_validation_ports.validate`` runs in place of the Graph
 workflow's ``graph_validator.validate_graph``: the same issue shape and order, the same well-formedness checks

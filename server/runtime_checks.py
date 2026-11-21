@@ -1,22 +1,12 @@
-"""Boot-time runtime checks (flowgate.v02.0137 T0004 §4-2/§4-3).
+"""Read-only startup checks for dependencies and database connection capacity.
 
-NR0003 B found both deployed server venvs on sqloader 0.2.15 while requirements.txt pins
-0.2.17. 0.2.15 builds its pool with a hard-coded minconn=1 and silently ignores the
-DB_POOL_MIN/DB_POOL_MAX the config hands it, so every concurrent query above the first
-opened and closed a TCP connection to PostgreSQL — the TIME_WAIT churn behind the
-ephemeral-port exhaustion. Nothing at boot said so. These checks make the three facts
-visible on every start:
+Report installed versions against requirement pins, the actual pool against its
+configured limits, and aggregate process demand against PostgreSQL's connection
+budget. Older drivers may silently ignore pool settings and reconnect per query.
 
-1. installed package versions vs the `==` pins in requirements.txt;
-2. the pool the installed sqloader ACTUALLY built vs the configured DB_POOL_MIN/MAX;
-3. the configured pool against PostgreSQL's connection budget, across all FlowGate
-   server processes that share the database.
-
-Policy (`FLOWGATE_DEPENDENCY_PIN_POLICY`): `warn` (default) logs a mismatch at ERROR and
-starts; `fail` refuses to start when a critical package (sqloader, psycopg2-binary) is
-off-pin; `off` skips the pin check. The default is `warn` on purpose: the stg deploy
-script does not reinstall requirements, so a refusing default would turn the next code
-deploy into an outage instead of a loud log line. Every check is read-only.
+FLOWGATE_DEPENDENCY_PIN_POLICY defaults to warn because deployment does not always
+reinstall dependencies. fail refuses startup for critical package mismatches;
+off skips version checks. Pool diagnostics never prevent startup.
 """
 
 from __future__ import annotations
@@ -184,7 +174,7 @@ def _show(db_instance, name: str) -> Optional[int]:
 
 
 def check_database_pool(settings, db_instance, *, logger=None) -> dict:
-    """Log the built pool and the connection budget; never raises (T0004 §4-2/§4-3)."""
+    """Log the built pool and the connection budget; never raises."""
     logger = logger or _default_logger
     report: dict = {}
     try:

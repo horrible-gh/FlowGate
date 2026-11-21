@@ -92,6 +92,6 @@ def require_editable(flow_id, node_key, docs, *, recovery_operation=None):
 
 
 def require_rejection_safe(flow_id, node_key, docs):
-    """Assess the exact dependency scope before a badge can change (0126 T#3)."""
+    """Assess the exact dependency scope before a badge can change."""
     from flowgate.graph_time_machine import document_rejection
     return document_rejection.assess(flow_id, node_key, docs)

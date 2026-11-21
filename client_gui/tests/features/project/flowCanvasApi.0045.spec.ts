@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0011 (S1+S2) — Flow Canvas transport in features/project: GET canvas
+ * (S1+S2) — Flow Canvas transport in features/project: GET canvas
  * normalization (P0008 §2.6 / §2.7 / §3), PUT layout request / response shape (P0008 §4), the
  * store loaders, and the public surface staying runtime-free (types only).
  */
@@ -73,7 +73,7 @@ describe('fetchFlowCanvas', () => {
       slot: null,
       graphNode: null,
     })
-    // flowgate.v02.0045 S3: no Graph definition shown on a v0.1 Flow.
+    // S3: no Graph definition shown on a v0.1 Flow.
     expect(canvas.view).toBeNull()
     expect(canvas.graph).toEqual({ draft: null, latestRevisionNo: null, rootBinding: null })
     expect(canvas.nodes[1].slot).toEqual({

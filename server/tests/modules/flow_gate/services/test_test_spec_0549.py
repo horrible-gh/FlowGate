@@ -1,6 +1,6 @@
-"""flowgate.default.0549 T0008 — TS test specification / TSR test report / gate / resume.
+"""TS test specification / TSR test report / gate / resume.
 
-The contract under test (0549 D0006, approved NR0005):
+The contract under test:
 
 * TS → TSR stays a two-document set; no TSC type.
 * A TS that declares ``test_contract_version: 2`` is a human-approved structured test
@@ -338,7 +338,7 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
         "doc_review_status": "approved", "revision_no": 2, "seq": 10, "file_path": "ts.md",
     }
     e.contents[TS_ID] = SPEC
-    # 0684 T#2: this suite has no Group worktree, so results are recorded without a Basis
+    # this suite has no Group worktree, so results are recorded without a Basis
     # (the compat rule). Suites that judge a Basis stub ``test_basis_service.resolve``.
     from modules.flow_gate.services import source_fingerprint
 
@@ -440,7 +440,7 @@ def _submit(env, results=None, **kw):
 def _automated_results_stand_for_server_records(request, monkeypatch):
     """In this suite, a submitted automated result stands for the record a server run leaves.
 
-    0684 T#3 (D#1 §3-8, CH S6): no person or worker may record an automated Case's result --
+    (CH S6): no person or worker may record an automated Case's result --
     test_spec_entry_points_0684 holds that intake rule. The gate, report and chain contracts
     here predate the server run and feed TC-001 (automated) through ``_submit``/the inbox, so
     for this module only the intake filter lets them pass as the server run's record.
@@ -455,7 +455,7 @@ def _automated_results_stand_for_server_records(request, monkeypatch):
 def _seed_server_result(env, monkeypatch, results):
     """An earlier record that holds an automated Case's result, as a server run leaves it.
 
-    0684 T#3: an automated Case the server runs can no longer be entered, so a fixture that
+    an automated Case the server runs can no longer be entered, so a fixture that
     needs such a record seeds it past the intake rule instead of through it.
     """
     with monkeypatch.context() as patched:
@@ -1026,7 +1026,7 @@ def test_structured_editor_route_saves_through_the_content_path(env, monkeypatch
                         or {"data": {"doc_id": doc_id}, "content": body.content})
     env.contents[TS_ID] = "---\nproject: flowgate\ntype: TS\n---\n"
     unrunnable = spec.parse_spec(SPEC)["cases"]
-    # 0094 B0005: an automated case the editor adds must be runnable; nothing is written otherwise.
+    # an automated case the editor adds must be runnable; nothing is written otherwise.
     with pytest.raises(HTTPException) as exc:
         documents_router.save_test_spec(TS_ID, documents_router.TestSpecSaveBody(cases=unrunnable, title="t"),
                                         current_user={"user_id": "usr_admin"})
@@ -1060,10 +1060,10 @@ def test_work_plan_keeps_ts_tsr_two_document_set_without_tsc():
                        for k, v in vars(constants).items() if k.isupper()}, default=str)
     assert "TSC" not in flat
 
-# ── 0632 T#1: basis and contract-2 execution ──────────────────────────────────
+# ── the earlier implementation: basis and contract-2 execution ──────────────────────────────────
 
 def _basis_for_test(tag="a"):
-    # 0684 T#2: Basis v3 shape (a run's copy fingerprint + binding); v1/v2 are outdated.
+    # Basis v3 shape (a run's copy fingerprint + binding); v1/v2 are outdated.
     return {"basis_id": tag * 64, "basis_version": 3, "ts_document_id": TS_ID,
             "ts_revision_no": 2,
             "source": {"kind": "run_source", "exclusion_policy_version": "source-fingerprint-v1",
@@ -1092,7 +1092,7 @@ def test_0632_locator_is_a_restricted_pytest_locator():
 
 
 def test_0632_exact_basis_carry(env, monkeypatch):
-    # 0684 T#1: there is no initialization run any more; carry-over is per exact Basis.
+    # there is no initialization run any more; carry-over is per exact Basis.
     from modules.flow_gate.services import test_basis_service as basis
     current = _basis_for_test()
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
@@ -1176,7 +1176,7 @@ def test_0632_existing_worker_executes_a_selected_case(env, monkeypatch, tmp_pat
 
 
 def test_0684_source_change_during_the_run_records_a_stale_result(env, monkeypatch, tmp_path):
-    # D#1 §3-3 finalizing: the result is recorded under the Basis the run executed, even
+    # finalizing: the result is recorded under the Basis the run executed, even
     # when the source moved meanwhile; it is marked not valid for the current source, the
     # gate stays closed and nothing resumes.
     from modules.flow_gate.services import test_basis_service as basis
@@ -1302,7 +1302,7 @@ def test_0632_source_identity_change_invalidates_current_gate(env, monkeypatch):
     gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
     assert gate["passed"] is False and gate["overall"] == "NOT_RUN" and gate["stale"]
     assert gate["basis_state"] == "stale" and "source_changed" in gate["basis_reasons"]
-    # 0684 T#2 (D#1 §3-5): a new manual result measures the changed source and is recorded
+    # a new manual result measures the changed source and is recorded
     # under it; nothing carries over from the other Basis.
     recorded = env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
                                            results=[{"case_id": "TC-001", "status": "PASS"}])
@@ -1339,7 +1339,7 @@ def test_0632_chain_token_starts_spec_execution_without_results(env, monkeypatch
     assert marks[-1] == (GROUP, "test_run_pending")
 
 
-# ── 0682 T#1: one Basis Verdict for every caller ───────────────────────────────
+# ── the earlier implementation: one Basis Verdict for every caller ───────────────────────────────
 
 def _changed_source_basis():
     changed = _basis_for_test()
@@ -1355,7 +1355,7 @@ def _automated_spec(env):
 
 
 def _measured(env, monkeypatch, measured, root):
-    """The run's preparing phase (0684 T#2): its copy is ``root``, its Basis ``measured``."""
+    """The run's preparing phase: its copy is ``root``, its Basis ``measured``."""
     from modules.flow_gate.services import spec_execution_service as execution
     calls = []
 
@@ -1387,7 +1387,7 @@ def test_0682_product_change_is_the_same_stale_for_every_caller(env, monkeypatch
     reasons = [basis.REASON_SOURCE]
     with pytest.raises(HTTPException) as refused:
         execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")
-    # 0684 T#1 (D#1 §3-2): admission does not measure; only the run in progress keeps it out.
+    # admission does not measure; only the run in progress keeps it out.
     assert refused.value.detail["error"] == "run_in_progress"
     with pytest.raises(HTTPException) as refused:
         env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
@@ -1441,7 +1441,7 @@ def test_0682_unmeasurable_source_is_unavailable_and_ends_runs_unverifiable(env,
         env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
                                     results=[{"case_id": "TC-002", "status": "PASS"}])
     assert refused.value.detail["error"] == "basis_unavailable"
-    # 0684 T#1: admission does not measure -- the next run measures (or refuses) itself.
+    # admission does not measure -- the next run measures (or refuses) itself.
     again = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     assert again["basis_id"] is None and again["selected_case_ids"] == ["TC-001"]
     view = env.svc.describe_test_document(env.docs[TS_ID])
@@ -1449,7 +1449,7 @@ def test_0682_unmeasurable_source_is_unavailable_and_ends_runs_unverifiable(env,
 
 
 def test_0682_prepare_refusal_ends_the_run_without_execution(env, monkeypatch, tmp_path):
-    # 0684 T#1: the run's own measurement refuses (the capture saw the source change);
+    # the run's own measurement refuses (the capture saw the source change);
     # nothing runs, it is not a FAIL, and the report the run opened says why.
     from modules.flow_gate.services import spec_execution_service as execution
     _automated_spec(env)
@@ -1549,7 +1549,7 @@ def test_0684_t2_worker_copies_measures_and_executes_through_the_shared_layer(
     assert view["basis_valid"] is False and view["basis_verdict"]["state"] == "stale"
 
 
-# ── 0684 T#1: approval queues the run, the run opens and fills the report ─────────
+# ── the earlier implementation: approval queues the run, the run opens and fills the report ─────────
 
 CASE_TC1_AUTOMATED = CASE_TC1.replace(
     "- check_points: 권한 검사 / 응답 코드\n",
@@ -1855,7 +1855,7 @@ def test_0684_partial_rerun_report_keeps_the_earlier_record_of_unselected_cases(
 
 
 def test_0684_t2_restart_removes_the_run_copy_and_settles_the_report(env, monkeypatch, tmp_path):
-    # D#1 §3-3: a run copy a server restart left behind is removed at startup.
+    # a run copy a server restart left behind is removed at startup.
     from modules.flow_gate.services import spec_execution_service as execution
     _automated_spec(env)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
@@ -1875,7 +1875,7 @@ def test_0684_t2_restart_removes_the_run_copy_and_settles_the_report(env, monkey
     assert started == [1]
 
 
-# 0071 T1 / D0008 r2: structured edits preserve the current server document's suffix.
+# r2: structured edits preserve the current server document's suffix.
 @pytest.mark.parametrize("source_locale", ["ko", "en", "ja"])
 @pytest.mark.parametrize("save_locale", [None, "ko", "en", "ja"])
 def test_structured_editor_preserves_trailing_sections(env, monkeypatch, source_locale, save_locale):

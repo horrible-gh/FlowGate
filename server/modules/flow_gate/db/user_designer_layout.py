@@ -1,4 +1,4 @@
-"""CRUD for the user_designer_layout table (flowgate.v02test.0056, migration 206).
+"""CRUD for the user_designer_layout table (migration 206).
 
 One row per user: the Designer's left panel width, right panel width and bottom panel height.
 The row is separate from ``user_ui_settings`` so that saving a size never creates that table's

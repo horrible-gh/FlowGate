@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 
-// T0006 §5/§12: Teleport, backdrop, ESC, backdrop-close opt-in, focus trap, focus
+// Teleport, backdrop, ESC, backdrop-close opt-in, focus trap, focus
 // return, role/aria-modal, title/description accessibility connection. Rendered content
 // is teleported to <body>, so it is looked up on document rather than inside the
-// mounted wrapper (same pattern as Dropdown/Tooltip in T0004).
+// mounted wrapper (same pattern as Dropdown/Tooltip in the earlier implementation).
 describe('components/ui/ModalShell (T0006)', () => {
   afterEach(() => {
     document.body.querySelectorAll('.ui-modal-overlay').forEach((el) => el.remove())

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02test.0029 T0005 — the composer's attached message images: a thumbnail per image above the input, each
+  <!-- the composer's attached message images: a thumbnail per image above the input, each
        with its own state (uploading / checking a restored one / failed with 다시 시도 / gone) and a ✕ to take it out, then the notes that apply
        (what was refused and images that hold the send). -->
   <div v-if="images.length || notice" class="conv-imgs" data-test="conv-images">

@@ -1,5 +1,5 @@
-"""Node title — the AI's first naming of a card (0062 D0005 set 3, L0006 2.3~2.6 / 4.1 / 4.2, 0064 L0005 2.17,
-P0006 §4.2.5 / §4.2.6, DB0007 Q5 / Q6, question #441 o1).
+"""Node title — the AI's first naming of a card (the design set 3, the earlier implementation 2.3~2.6 / 4.1 / 4.2, the earlier implementation 2.17,
+,  Q5 / Q6, question #441 o1).
 
 - ``claim_on_ai_start``: inside the mapping guard of an AI start (``ai_node_starter._map_if_open``), after its
   refusals and before its token is mapped, in its own savepoint. The first AI start of a card the naming is for
@@ -11,7 +11,7 @@ P0006 §4.2.5 / §4.2.6, DB0007 Q5 / Q6, question #441 o1).
   A refused mapping rolls back the guard and the claim with it.
 - ``after_registration_title``: the inbox hook (``node_title_hooks.after_registration``), after the document is
   registered and the token consumed, outside any transaction. The claiming token's candidate is applied once, after
-  the checks of L0006 2.6 in the Flow guard; whatever the candidate or a failure, the inbox answer, the document,
+  the checks of the earlier implementation 2.6 in the Flow guard; whatever the candidate or a failure, the inbox answer, the document,
   the token, its binding, approval and review are what they were. Only an applied title is told (SSE ``title``).
   No AI is ever called for a title.
 """
@@ -39,14 +39,14 @@ _log = logging.getLogger(__name__)
 
 CLAIM_SAVEPOINT = "node_title_claim"
 CANDIDATE_SCOPES = ("new", "edit")
-# L0006 2.3: the rules that find an earlier AI start. L6 (no mark, an AI node's later mapping, no token row, no AI
+# 2.3: the rules that find an earlier AI start. L6 (no mark, an AI node's later mapping, no token row, no AI
 # run record) cannot be told from a re-dispatch; question #441 o1 counts it, closed as its own reason.
 EVIDENCE_RULES = ("E1", "L2", "L3", "L6")
 REASON_OF_RULE = {"E1": "prior_evidence", "L2": "prior_evidence", "L3": "prior_evidence",
                   "L6": "prior_evidence_legacy"}
 
 
-# ── persistent evidence of an earlier AI start (L0006 2.3, DB0007 Q5 / Q6) ──
+# ── persistent evidence of an earlier AI start ──
 
 def _mappings(flow_id: str, node_key: str) -> list[dict]:
     return get_store()._fetch_all(
@@ -104,7 +104,7 @@ def prior_ai_start(flow_id: str, node_key: str, exclude_token_id: Optional[str])
     return found
 
 
-# ── the card's shown title (L0006 2.5) ────────────────────────────────────
+# ── the card's shown title ────────────────────────────────────
 
 def display_is_default(flow_id: str, node_key: str, fallback_row: Optional[dict], exempt_doc_ids=frozenset()) -> bool:
     """True when every view drawing the card shows a default name from its label (a document's title, whatever it
@@ -127,7 +127,7 @@ def display_is_default(flow_id: str, node_key: str, fallback_row: Optional[dict]
 
 
 def naming_target(row: dict) -> bool:
-    """L0006 2.4 step 6 with 0064 L0005 2.17-1: a document card of a default palette item (by id, else by its type)
+    """2.4 step 6 with the earlier implementation 2.17-1: a document card of a default palette item (by id, else by its type)
     or an R / B card; never Custom, a gate or a type with no palette name."""
     item = row.get("palette_item_id")
     if row.get("node_type") != "document" or str(item or "").startswith("custom."):
@@ -136,7 +136,7 @@ def naming_target(row: dict) -> bool:
     return item in names.PALETTE_NAMES or doc_type in names.PALETTE_KEY_OF_DOC_TYPE or doc_type in ROOT_NAMES
 
 
-# ── the claim at an AI start (L0006 2.4 / 4.1) ──────────────────────────────
+# ── the claim at an AI start ──────────────────────────────
 
 def _decide(job: dict, token_id: str, st: Optional[dict]) -> tuple[bool, Optional[str]]:
     """(requested, close reason). Neither: nothing is written."""
@@ -181,13 +181,13 @@ def claim_on_ai_start(job: dict, token_id: str, ai_run_id: Optional[str]) -> boo
                   "claimed" if requested else "claim_closed", flow_id, job.get("run_id"), node_key, job.get("stage"),
                   token_id, ai_run_id, reason)
         return requested
-    except Exception:  # noqa: BLE001 — the title never stops an AI start (L0006 5)
+    except Exception:  # noqa: BLE001 — the title never stops an AI start
         _log.warning("node_title_claim_failed flow=%s run=%s node=%s stage=%s token=%s", flow_id, job.get("run_id"),
                      node_key, job.get("stage"), token_id, exc_info=True)
         return False
 
 
-# ── the candidate a registration brings (L0006 2.6 / 4.2) ───────────────────
+# ── the candidate a registration brings ───────────────────
 
 def candidate_of(raw, action_scope: Optional[str]) -> tuple[str, Optional[str]]:
     """``("none", None)`` (no candidate: absent, null, or not a new / edit registration), ``("invalid", reason)`` or
@@ -254,7 +254,7 @@ def _apply_body(flow_id: str, node_key: str, doc_id: Optional[str], token_id: st
 
 def after_registration_title(flow_id: Optional[str], doc_id: Optional[str], token_id: Optional[str], raw_candidate,
                              action_scope: Optional[str]) -> None:
-    """L0006 2.6 ``after_registration_title``: the inbox registration committed and its token is consumed. Never
+    """2.6 ``after_registration_title``: the inbox registration committed and its token is consumed. Never
     raises; never retried (``APPLY_RETRY_MAX = 0``): a failure leaves the opportunity claimed, i.e. used."""
     try:
         if not flow_id or not token_id:

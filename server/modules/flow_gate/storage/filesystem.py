@@ -2,7 +2,7 @@
 
 Utilities that handle Windows file locks (PermissionError) and path
 collisions.  Also the managed recursive delete and its persistent delete
-journal (flowgate.v02.0090 T#1, NR0003 §5.1/§5.2) shared by the Token, AI-run
+journal shared by the Token, AI-run
 and snapshot scratch owners.
 """
 from __future__ import annotations
@@ -155,11 +155,11 @@ def move_subtree(
             pass  # ignore if not empty
 
 
-# ── Managed recursive delete (flowgate.v02.0090 T#1, NR0003 §5.1) ───────────
+# ── Managed recursive delete ───────────
 #
 # Only for service-managed scratch paths whose owner already proved ownership.
 # The single repair is a Windows ReadOnly regular file (Git loose objects,
-# B0001): its write bit is added and the same unlink retried exactly once.
+# ): its write bit is added and the same unlink retried exactly once.
 # Sharing violations, ACL denials, scandir failures and every non-Windows
 # permission error propagate untouched.
 
@@ -306,14 +306,14 @@ def remove_managed_tree(target, allowed_root, *, missing_ok: bool = False) -> No
         raise OSError(errno.ENOTEMPTY, "delete target is still present")
 
 
-# ── Delete journal (flowgate.v02.0090 T#1, NR0003 §5.2) ─────────────────────
+# ── Delete journal ─────────────────────
 #
 # A delete starts only after its owner evidence is persisted *outside* the
 # deleted tree, so a partial delete or a crash that already removed the
 # original manifest is resumed by the owner's existing sweep.
 #   G = <S0>/.flowgate-gc,  record = G/<owner>/<sha256(project_id)>/<id>.json
 # where S0 = storage_paths.get_storage_root() without a project override.
-# Owners: token (wired here), ai-run and snapshot (T#2/T#3).  A snapshot
+# Owners: token (wired here), ai-run and snapshot. A snapshot
 # record must name its token in ``parent`` ({"owner": "token", "id": ...}) so
 # the token row purge can wait for it; one that does not is a damaged record.
 
@@ -383,7 +383,7 @@ def _ancestry(directory: Path) -> Iterator[Path]:
 
 def _check_outside_repository(directory: Path) -> None:
     # A link/junction above S0 must not hide a repository: the resolved chain
-    # is checked too.  Hiding G with .gitignore is not an option (NR0003 §5.2).
+    # is checked too. Hiding G with .gitignore is not an option.
     try:
         inside = any(path_present(current / ".git") for current in _ancestry(directory))
     except PresenceUnknown:
@@ -491,7 +491,7 @@ def _record_problem(data, owner: str, project_id: str, record_id: str) -> Option
         return "journal_mismatch"
     if not isinstance(data["storage_root"], str) or _norm(data["storage_root"]) != _norm(
             journal_storage_root()):
-        # A record never authorizes a delete under another storage root (NR0003 §5.2).
+        # A record never authorizes a delete under another storage root.
         return "journal_storage_root_changed"
     if (data["kind"] not in JOURNAL_KINDS
             or not all(isinstance(data[key], str) and os.path.isabs(data[key])

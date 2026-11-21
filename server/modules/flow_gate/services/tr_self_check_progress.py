@@ -1,4 +1,4 @@
-"""0146: server-owned hop bindings; no bearer values or test output in telemetry.
+"""server-owned hop bindings; no bearer values or test output in telemetry.
 
 Bindings live only while a provider attempt is active. Durable child ownership and
 progress live in tr_self_check_run_progress. A different server without the binding

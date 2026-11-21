@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0010 rev6 — the three things the 2026-09-08 19:xx rejection hit.
+"""the three things the 2026-09-08 19:xx rejection hit.
 
 1. [AI에게 맡기기] answered "기준 브랜치 AI 정리를 시작하지 못했습니다." and then, for the next
    two minutes, "이 프로젝트의 AI 정리가 진행 중입니다.". Reproduced against a copy of the
@@ -65,7 +65,7 @@ def _newest_token_scope_allowlist() -> set[str]:
 def test_every_startable_scope_is_accepted_by_the_tokens_check_constraint():
     """The bug behind rejection 1, as an invariant.
 
-    0482 T0011 added `resolve_base_dirty` to `_ALLOWED_SCOPES` and gave it the identity
+    added `resolve_base_dirty` to `_ALLOWED_SCOPES` and gave it the identity
     fallthrough in `_TOKEN_SCOPE`, so `token_service.issue` stored that literal string —
     while the tokens CHECK constraint still listed eight other values. Every press ended in
     `sqlite3.IntegrityError: CHECK constraint failed`. Nothing compared the two lists, so

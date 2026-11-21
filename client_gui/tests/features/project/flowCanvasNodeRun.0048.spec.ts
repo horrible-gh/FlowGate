@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — the Canvas read keeps a Graph node's `node_run` for the Inspector
+ * the Canvas read keeps a Graph node's `node_run` for the Inspector
  * (D#1 §4.2). flowCanvasApi.0045.spec stays untouched: a node without a run carries no field.
  */
 import { describe, expect, it, vi } from 'vitest'

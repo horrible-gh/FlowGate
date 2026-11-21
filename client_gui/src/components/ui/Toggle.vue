@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free boolean switch (T0004 §5.5). It only reports true/false — it never knows
+// Domain-free boolean switch. It only reports true/false — it never knows
 // whether that boolean means "AI provider enabled" or anything else; the caller owns that
 // meaning and any persistence.
 const props = withDefaults(

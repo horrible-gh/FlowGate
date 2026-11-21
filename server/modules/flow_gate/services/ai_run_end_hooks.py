@@ -1,4 +1,4 @@
-"""AI run end hook port (flowgate.v02.0053 T#2, D0006 §2.3).
+"""AI run end hook port.
 
 The AI invoke engine lives in ``modules.flow_gate``; the Designer card's review stage that reacts
 to a finished run (``flowgate.card_settings``) lives in the v0.2 application package ``flowgate``.
@@ -9,11 +9,11 @@ handler. Nothing here imports ``flowgate``.
     on_run_ended   finalization, after the run's group lease is released: the run record as it
                    finished (``run_id``, ``group_id``, ``doc_ref``, ``action_scope``, ``mode``,
                    ``outcome``, ``stop_code``, ``document_review_loop`` ...)
-    on_run_ending  finalization, right before that release (flowgate.v02.0061 T#2): the same run
+    on_run_ending finalization, right before that release: the same run
                    record, its stop code and review checkpoint already final. A handler marks what
                    ``on_run_ended`` will follow, so the gap between the release and that hook is not
                    taken for "nothing works any more"; it must stay short (no new run here)
-    on_question_answered  flowgate.v02.0063: an answer to a question was committed (``q_service.register_answer``):
+    on_question_answered the earlier change: an answer to a question was committed (``q_service.register_answer``):
                    ``group_id``, ``doc_id``, ``item_id``, ``asker_kind``, ``asker_ai_run_id``, ``author_kind``. A Graph
                    card whose AI asked it goes on once all its questions are answered
 
@@ -75,7 +75,7 @@ def _call(name: str, run: dict) -> None:
 
 
 def run_ending(run: dict) -> None:
-    """The run is about to release its group lease (flowgate.v02.0061 T#2). Never raises."""
+    """The run is about to release its group lease. Never raises."""
     _call(ON_RUN_ENDING, run)
 
 
@@ -85,5 +85,5 @@ def run_ended(run: dict) -> None:
 
 
 def question_answered(answer: dict) -> None:
-    """flowgate.v02.0063: an answer to a question was committed. Never raises."""
+    """an answer to a question was committed. Never raises."""
     _call(ON_QUESTION_ANSWERED, answer)

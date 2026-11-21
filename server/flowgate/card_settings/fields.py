@@ -1,29 +1,29 @@
-"""Card run settings: the settings of each card kind and the values they take (flowgate.v02.0053 T#2).
+"""Card run settings: the settings of each card kind and the values they take.
 
 Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks name the items:
 
 - run cards (research N, work T / T2, design D / P / L / DB, custom): instruction use / omit, instruction AI
-  (flowgate.v02.0056 T#2), run AI, restart, review AI, review count, and the advanced time limit and review
+  , run AI, restart, review AI, review count, and the advanced time limit and review
   basis;
 - test cards (TS): instruction and the scenario writing block (writer AI, review AI, review count). The run block shows each case's mode, which lives on the case inside the TS
   document (0549 contract 2), so the card stores nothing for it;
 - requirement cards (R / B): AI delegation off / on, its scope, AI Team and the safety limits —
   values only, no delegation engine (0053 CH: out of this scope);
-- check cards (gate, flowgate.v02.0085 T#1, D0007 §7.1): the archive flag, Git apply mode, the merge target remote
+- check cards (gate, the earlier change the earlier implementation, the design): the archive flag, Git apply mode, the merge target remote
   (null | origin), push and keep branch. ``usage`` is no setting any more (no UI, no new write; a stored value is
   kept as history only) and an old ``merge_target`` branch name lives on as ``legacy_merge_target`` (migration 158).
-  flowgate.v02.0098 T#1 (D0004 §3.1): ``merge_target_branch`` is the local branch the card merges into (null: the
+  ``merge_target_branch`` is the local branch the card merges into (null: the
   group's work base is inherited). Its kind ``LOCAL_BRANCH`` checks the value alone (a string, no surrounding blanks,
   no control character, never rewritten); whether that branch may be the target is the save's repository check
   (``settings.write`` -> ``merge_target.judge_check_target``). ``merge_target`` keeps its remote meaning;
-- work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
+- work plan cards (WP, the earlier change the earlier implementation): the AI pre-instruction writing switch, and the run block the
   v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis).
-  flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): the run block is no longer values only. A plan card whose writer is
+  (revised): the run block is no longer values only. A plan card whose writer is
   an AI (``settings.uses_ai``: an explicit person assignee -> a person; else the card's work AI ``run_ai`` -> AI; else
   an explicit AI assignee -> AI; else a person, the default) runs as one AI run of its own: ``run_plan`` hands on its
   work AI, time limit and restarts (no instruction stage, no result type: the AI writes the WP itself, the type the
   result binder binds), and ``after_result`` gives it the run cards' review / approval. A plan card a person writes is
-  unchanged: its result waits for a person's approval of the card. flowgate.v02.0083 WP-4 (a new path): a plan card a
+  unchanged: its result waits for a person's approval of the card. the earlier change WP-4 (a new path): a plan card a
   person writes takes the same ``after_result`` once its result is bound (``review_stage.person_result``) — every
   submission (the result, a new revision, a ``mark_revised``) gets one AI review with no AI rework (count 1 or more and
   until it passes run the same), or with review 'none' the automatic approval under the run issuer's authority; any
@@ -40,7 +40,7 @@ approval dialog that asks the Git choice.
 How a run applies them (``run_plan``, ``instruction_stage``, ``result_doc_type``, ``after_result``,
 ``review_loop``):
 
-- instruction use (the default; flowgate.v02.0056 T#2, 0002-CH turn 5 / 6 §3 / 10 O2): a run card runs in two
+- instruction use (the default; the earlier change the earlier implementation, the discussion / 6 / 10 O2): a run card runs in two
   stages. The instruction stage writes the card's instruction (N, T, T2, DS, a Custom card's T) with the
   instruction AI — ``instruction_ai``, else ``run_ai``, else the node's assignee AI — once, with no review,
   and approves it; an instruction that already has a body is not written again, only approved. The result
@@ -51,7 +51,7 @@ How a run applies them (``run_plan``, ``instruction_stage``, ``result_doc_type``
   writes as before (the TS series is reorganized later);
 - instruction omit: the AI writes the card's report instead of the instruction-led node's own type
   (N -> NR, T -> TR, v0.1 AUTO_REPORT_MAP) and that report is the node's result. A Custom card runs as a
-  work instruction (flowgate.v02.0053 T#8), so it folds like a work card: T -> TR. A design card
+  work instruction, so it folds like a work card: T -> TR. A design card
   (D / P / L / DB) already writes its own document after the DS instruction, a test card's TS never
   folds (its TSR is server-assembled, as in v0.1), and an apply card's report (TR2) names the T2 it
   applies (``source_t2_doc_id``) while omit leaves the card no instruction document (the v7 settings
@@ -81,25 +81,25 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
-# flowgate.v02test.0053 0003-T (1-A): the two 검증 (self-check) options of a run card. They are managed per card only
-# (0002-CH turn 68: no system setting): a card with no stored value runs with the fixed defaults below (3 runs,
+# (1-A): the two verification (self-check) options of a run card. They are managed per card only
+# (no system setting): a card with no stored value runs with the fixed defaults below (3 runs,
 # 2 minutes); the field's ``choices`` are the combo's presets, and any whole number inside the range below is also a
-# value (the combo's 사용자 정의).
+# value (the combo's custom entry).
 VERIFY_RUNS, VERIFY_MINUTES = "verify_runs", "verify_minutes"
-# flowgate.v02.0098 T#1: an exact local branch name with no repository context (no BRANCH pattern, no choices).
+# an exact local branch name with no repository context (no BRANCH pattern, no choices).
 LOCAL_BRANCH = "local_branch"
 
 # The run time limit choices (minutes): the AI invoke dialogs' list, inside the engine's
 # STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC (checked by the tests against the engine).
 TIME_LIMIT_MINUTES = (30, 45, 60, 90, 120, 180, 240)
-# flowgate.v02.0144 T0013: card execution defaults, shared by display and dispatch.
+# card execution defaults, shared by display and dispatch.
 DEFAULT_TIME_LIMIT_MINUTES = 240
 DEFAULT_RESTART_COUNT = 3
 LIMIT_MIN, LIMIT_MAX = 1, 999
 # flowgate.v02test.0053 0003-T (1-A): 검증 최대 횟수 (a whole number of 1 or more) and 검증 1회 최대 시간 (minutes, 1..30: the
 # self-check run's own ceiling of 1800 seconds, ``tr_self_check_service``).
 VERIFY_RUN_CHOICES = (3, 5, 10)
-VERIFY_RUNS_MIN = 1                     # no upper bound: 0003-T 'a whole number of 1 or more'
+VERIFY_RUNS_MIN = 1                     # no upper bound: the earlier implementation 'a whole number of 1 or more'
 VERIFY_MINUTE_CHOICES = (2, 3, 5, 10, 20, 30)
 DEFAULT_VERIFY_MAX_RUNS, DEFAULT_VERIFY_RUN_MINUTES = 3, 2
 VERIFY_MINUTES_MIN, VERIFY_MINUTES_MAX = 1, 30
@@ -120,10 +120,10 @@ REVIEW, APPROVE = "review", "approve"
 LOOP_REWORK_TIMEOUTS_SEC = (1800, 3600, 7200)
 LOOP_TOTAL_TIMEOUT_SEC = 14400
 LOOP_FAILURE_RESTARTS = (-1, 0, 1, 2)
-# D0007 §7.1: ``merge_target`` is the remote the merge goes to (null = local only), never a branch name. The branch
+# ``merge_target`` is the remote the merge goes to (null = local only), never a branch name. The branch
 # to merge into is the group's own work base branch. Only origin is supported.
 MERGE_TARGET_REMOTES = ("origin",)
-# Stored values of a check card that are history only: no field reads or writes them (D0007 §7.1). ``usage`` is the
+# Stored values of a check card that are history only: no field reads or writes them. ``usage`` is the
 # removed mid / end switch; ``legacy_merge_target`` holds the old branch-name ``merge_target`` (migration 158).
 LEGACY_CHECK_FIELDS = ("usage", "legacy_merge_target")
 _ROOT_TYPES = frozenset({"R", "B"})
@@ -139,7 +139,7 @@ class Field:
     choices: tuple = ()
 
 
-# flowgate.v02.0098 T#1 (D0004 §3.1): the check card's local merge branch (null: the group's work base).
+# the check card's local merge branch (null: the group's work base).
 MERGE_TARGET_BRANCH = Field("merge_target_branch", LOCAL_BRANCH)
 _INSTRUCTION = Field("instruction", CHOICE, "use", ("use", "omit"))
 _INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the node's assignee AI
@@ -150,11 +150,11 @@ _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
-# flowgate.v02test.0053 0003-T (1-A): a run card's 검증 options (the 실행 AI's advanced ⚙). No stored value = the card
+# (1-A): a run card's verification options (the run AI's advanced ⚙). No stored value = the card
 # default 3 runs / 2 minutes (``verify_limits.resolve_verify_limits`` reads the same constants).
 VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, DEFAULT_VERIFY_MAX_RUNS, VERIFY_RUN_CHOICES)
 VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, DEFAULT_VERIFY_RUN_MINUTES, VERIFY_MINUTE_CHOICES)
-# flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
+# the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
 # pre-instruction by itself today, so storing nothing and storing off mean the same.
 PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
@@ -184,7 +184,7 @@ _FIELDS = {
 }
 
 
-# 0061 T#11: Hold (the node is not opened by a Graph run while on). Every card has it, whatever its kind (also a card
+# Hold (the node is not opened by a Graph run while on). Every card has it, whatever its kind (also a card
 # kind with no run settings), so it is not one of a kind's fields: no run plan hands it on, and its write rules are the
 # Graph run's (``settings.write`` -> ``flowgate.graph_run.hold``), not the card settings lock.
 HOLD = Field("hold", FLAG, False)
@@ -199,8 +199,8 @@ class InvalidValue(ValueError):
 
 
 def card_kind(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str]:
-    """The settings kind of a card, or None (an unknown type has no settings). flowgate.v02.0072 T#3: a work plan
-    card keeps the plan settings (flowgate.v02.0083 T#1, 0072 T#3 개정: its run block runs an AI writer, see the head
+    """The settings kind of a card, or None (an unknown type has no settings). the earlier change the earlier implementation: a work plan
+    card keeps the plan settings (the earlier change the earlier implementation, the earlier implementation revision: its run block runs an AI writer, see the head
     of this module)."""
     if node_type == "custom":
         return RUN                               # a palette [+] card works like research / work
@@ -224,7 +224,7 @@ def fields_of(kind: Optional[str]) -> tuple:
 
 def field_of(kind: Optional[str], name: str) -> Optional[Field]:
     if name == HOLD.name:
-        return HOLD                                # 0061 T#11: every card
+        return HOLD                                # every card
     return next((f for f in fields_of(kind) if f.name == name), None)
 
 
@@ -284,7 +284,7 @@ def _text(value: Any) -> str:
 
 
 def _local_branch(value: Any) -> str:
-    """flowgate.v02.0098 T#1: the exact name, unchanged — a non-empty string with no surrounding whitespace and no
+    """the exact name, unchanged — a non-empty string with no surrounding whitespace and no
     control character. Git's own name rules and the branch's existence are the save's repository check."""
     if not isinstance(value, str) or not value:
         raise InvalidValue("not_a_text")
@@ -308,7 +308,7 @@ def choices_of(field: Field, repeat_choices: Iterable[int]) -> Optional[list]:
 
 def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> dict:
     """``field -> {value, stored, default, choices}`` in display order (shown value = stored, else default); 0061
-    T#11: the card's Hold last, for every card."""
+    the card's Hold last, for every card."""
     choices = tuple(repeat_choices)
     out = {}
     for f in fields_of(kind) + (HOLD,):
@@ -332,7 +332,7 @@ def _shown(kind: Optional[str], field: Field, value: Any) -> Any:
 
 
 def legacy_view(kind: Optional[str], stored: dict) -> dict:
-    """``{name: stored value}`` of the history-only values a card keeps (D0007 §7.1): read-only, never a setting,
+    """``{name: stored value}`` of the history-only values a card keeps: read-only, never a setting,
     never handed to a run. Empty for any kind but a check card, and for a check card that stored none."""
     if kind != CHECK:
         return {}
@@ -363,7 +363,7 @@ def result_doc_type(node_type: Optional[str], doc_type: Optional[str], stored: d
     else None (the node's own type).
 
     - instruction use: a run card's result is its report (NR / TR / TR2 / the design document, a Custom
-      card's TR), written after the instruction stage (flowgate.v02.0056 T#2) — except for a card run
+      card's TR), written after the instruction stage — except for a card run
       opened before that (``one_stage``: its node run has no stage, migration 148), whose AI was told to
       write the node's own type and still does;
     - instruction omitted: an instruction-led card whose report stands alone (N / T, and a Custom card,
@@ -387,7 +387,7 @@ def _count(value: Any) -> Optional[int]:
 def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
     """What follows a node's AI result: the card's AI review (``REVIEW``: review count not 0), else an
     approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides).
-    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card's AI result too; requirement and check cards stay None."""
+    a work plan card's AI result too; requirement and check cards stay None."""
     if kind not in (RUN, TEST, PLAN):
         return None
     if _count(stored.get("review_count")) not in (None, 0):
@@ -400,7 +400,7 @@ def review_loop(stored: dict, *, reviewer: str, reworker: Optional[str]) -> dict
 
     Review count and basis are the card's; the reviewer is its review AI (resolved by the caller,
     the project default when the card names none) and the rework goes to the AI that runs the node.
-    flowgate.v02.0083 WP-4: a work plan a person writes has no rework AI (``reworker`` None): its author revises, and
+    WP-4: a work plan a person writes has no rework AI (``reworker`` None): its author revises, and
     each submission is reviewed once (its caller asks ``review_count`` 1, whatever the card's count of 1 or more, or
     until it passes: the same for a person's WP). The count of an AI card's loop (review + rework pairs) is unchanged.
     The rework hop gets the longest loop budget within the card's time limit, failure restarts follow
@@ -448,9 +448,9 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
     """What a node's AI start takes from its card (``card_settings_ports.run_settings``).
 
     Stored values are handed on, with the run/plan execution defaults when those fields are absent.
-    The two stages of instruction use (flowgate.v02.0056 T#2) are also the default: ``instruction``
+    The two stages of instruction use are also the default: ``instruction``
     (the instruction stage's type and AI) and the report as ``result_doc_type``.
-    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card hands on its work AI, time limit and restarts as a run card
+    a work plan card hands on its work AI, time limit and restarts as a run card
     does; it has no instruction stage and no result type of its own (``instruction_stage`` / ``result_doc_type`` are
     None for WP), so its AI runs the result stage alone and writes the WP the result binder binds.
     """

@@ -79,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — Designer File Explorer container (0024-D §2). Receives the
+// Designer File Explorer container. Receives the
 // Project / Group / active-Flow context, owns filter / search / expansion / selection
 // state, and forwards select / open / open-diff / context intents to the Designer. It does
 // not open editors, resolve conflicts, merge, or switch Dock tabs.
@@ -93,7 +93,7 @@
 // live-worktree flag and the Flow's AI activity, and is false whenever any of them could
 // not be confirmed for the current scope (fail closed).
 //
-// flowgate.v02.0060 T#2: inside the Designer a right click on a folder / file row, or on the blank tree area (the
+// inside the Designer a right click on a folder / file row, or on the blank tree area (the
 // root folder), also goes to the Designer context menu with that node's real path and type and what this explorer
 // knows of it now (expansion, canMutate, read permission, a virtual deleted node). Its 열기 unfolds the folder through
 // the same expansion a click uses — open only, never closing. The rows keep the browser menu blocked as before.
@@ -240,7 +240,7 @@ function onContext(node: FlowFileNode, event: MouseEvent) {
   openContextMenu(event, node)
 }
 
-// ── flowgate.v02.0060 T#2: the Designer context menu ───────────────────────────────────────────
+// ── the earlier change the earlier implementation: the Designer context menu ───────────────────────────────────────────
 
 /** The Designer context menu's File Explorer side, provided by the Designer Shell; null elsewhere. */
 interface FileContextMenu {

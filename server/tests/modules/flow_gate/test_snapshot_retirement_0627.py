@@ -1,4 +1,4 @@
-"""T#3: legacy Snapshot retirement (0684 T#4 removed the read-only Bundle visibility)."""
+"""legacy Snapshot retirement (removed the read-only Bundle visibility)."""
 import sqlite3
 from contextlib import nullcontext
 

@@ -106,7 +106,7 @@ def test_group_only_source_paths_refuse_bound_tokens(repo, operation):
     assert refused.value.code == "graph_attempt_source_unsupported"
     assert refused.value.details["operation"] == operation
 def test_api_group_source_tool_still_refuses_bound_tokens(repo):
-    """0110 T#3 replaced the Self-check half of the former
+    """replaced the Self-check half of the former
     test_selfcheck_service_and_api_tool_do_not_reach_group_lookup; the API tool's group root keeps refusing.
     ``ToolError`` carries the code as ``reason`` (the former test read a ``code`` attribute it does not have)."""
     item = repo.new()
@@ -118,9 +118,9 @@ def test_api_group_source_tool_still_refuses_bound_tokens(repo):
 @pytest.mark.parametrize("layout", [workspace.REF_LAYOUT, workspace.BRANCH_LAYOUT])
 @pytest.mark.parametrize("entry", ["edit", "draft"])
 def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypatch, entry, layout):
-    """0110 T#3 (NR0003 §3 T-B): a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
+    """a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
     with its attempt root as worktree and cwd, holds the Group's G and the attempt's W, and records attempt_id /
-    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved. 0111 T#8: the same
+    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved. the earlier implementation: the same
     in both layouts; a ref-layout tree's HEAD is detached (no branch), the W key is the attempt's either way."""
     sc = tr_self_check_service
     monkeypatch.setattr(workspace, "NEW_LAYOUT", layout)
@@ -163,7 +163,7 @@ def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypat
 @pytest.mark.parametrize("entry", ["edit", "draft"])
 def test_mapped_token_self_check_refuses_unready_or_inactive_attempt_with_409(
         repo, selfcheck, monkeypatch, entry, broken, code, reason):
-    """0110 T#3: an attempt that is not prepared, lost its tree, was invalidated or whose run is stopping is 409 --
+    """an attempt that is not prepared, lost its tree, was invalidated or whose run is stopping is 409 --
     no run row, no lock, no group worktree in its place."""
     sc = tr_self_check_service
     item = repo.new()

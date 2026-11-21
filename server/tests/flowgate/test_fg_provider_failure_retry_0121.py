@@ -1,9 +1,9 @@
-"""flowgate.v02.0121 T#5 — a card's result writer whose provider failed (``provider_failed``: "Selected model is at
+"""a card's result writer whose provider failed (``provider_failed``: "Selected model is at
 capacity", a dropped stream) and registered no result.
 
-B flowgate.v02.0121.0001-B / NR 0003-NR: the failed AI run's end was cleaned up (its execution ended, no hand-off, the
+B the earlier change / the earlier implementation-NR: the failed AI run's end was cleaned up (its execution ended, no hand-off, the
 run idle ``error``) but its result assignment stayed ``ai/active`` and an explicit [다음 단계] / [전체 실행] judged the
-node ``none``: the command was accepted and no execution was requested. Now (T#2) that end is written again once, on the
+node ``none``: the command was accepted and no execution was requested. Now that end is written again once, on the
 same attempt by the same assigned AI (``RETRY_SAME_ATTEMPT``), only by an explicit command; every other failed end keeps
 its own policy.
 
@@ -345,7 +345,7 @@ def _ledger_view(env):
             for e in _executions(env)]
 
 
-# ── 1: the failure's whole end through the product path (T#1) ────────────────
+# ── 1: the failure's whole end through the product path ────────────────
 
 def test_a_provider_failure_ends_through_the_real_finalize_and_releases_what_its_execution_held(env, decided,
                                                                                                  monkeypatch, questions):
@@ -375,7 +375,7 @@ def test_a_provider_failure_ends_through_the_real_finalize_and_releases_what_its
     assert seen["working"] is True and seen["status"] == "running" and seen["node_running"] is True
     assert [s["run_id"] for s in provider.spawned] == [FAILED_AI_RUN]
 
-    # the end, classified from the provider's own words and recorded (T#1.1)
+    # the end, classified from the provider's own words and recorded
     assert (run["end_reason"], run["outcome"], run["exit_code"]) == ("exited", "none", 1)
     assert run["stop_code"] == "provider_failed" and "at capacity" in run["stop_reason"]
     assert run["status"] == "finished"
@@ -391,7 +391,7 @@ def test_a_provider_failure_ends_through_the_real_finalize_and_releases_what_its
     assert (ended["status"], ended["lease_token"], ended["ai_run_id"]) == ("ended", run["graph_lease_token"],
                                                                            FAILED_AI_RUN)
     assert ended["ended_at"]
-    # what it held is released (T#1.2): no execution works, no hand-off, no group AI lease, the run settled idle/error
+    # what it held is released: no execution works, no hand-off, no group AI lease, the run settled idle/error
     graph_run = _run_id(env)
     assert not ledger.working(graph_run) and not ledger.handing_off(graph_run)
     assert group_ai_leases.get(FA) is None
@@ -400,11 +400,11 @@ def test_a_provider_failure_ends_through_the_real_finalize_and_releases_what_its
     assert wire["node_running"] is False                                                   # the card is not locked
     assert wire["status"] == "open" and wire["result_doc_id"] is None                       # not completed, not skipped
     assert wire["dispatch"]["error_code"] == "ai_invoke_failed"
-    assert wire["dispatch"]["error_detail"] == "provider_capacity"                          # T#4: the short cause
+    assert wire["dispatch"]["error_detail"] == "provider_capacity"                          # the short cause
     assert CAPACITY not in json.dumps(wire)                                                  # never the provider's output
     assert _row(env, second)["status"] == "pending"
     a = _assignment(env, first)
-    assert (a["actor"], a["stage_state"], a["fail_cause"]) == ("ai", "active", None)        # T#1.5: no state rewritten
+    assert (a["actor"], a["stage_state"], a["fail_cause"]) == ("ai", "active", None)        # no state rewritten
     assert _hooks("provider_failure_retry_due", _row(env, first)) is True
     assert _verdict(env, first) == "retry_same_attempt"                                     # was ``none`` (NR §4.2)
     assert env["jobs"] == [] and questions["responders"] == []                              # nothing started by itself
@@ -463,7 +463,7 @@ def test_the_retry_admitted_through_the_product_path_completes_the_card_and_the_
     assert not ledger.handing_off(_run_id(env))
 
 
-# ── 3 / 6: the attempt workspace is the retry's (T#3) ────────────────────────
+# ── 3 / 6: the attempt workspace is the retry's ────────────────────────
 
 def _git_on(monkeypatch, request):
     """An isolated Git repository as the Flow's group worktree (the project's Git on): attempt worktrees are prepared by the
@@ -553,7 +553,7 @@ def _token_tree(token_id):
 
 
 
-# ── 4: concurrency and late ends, overlapped for real (T#1.4, T#3) ───────────
+# ── 4: concurrency and late ends, overlapped for real ───────────
 
 
 
@@ -563,7 +563,7 @@ def _token_tree(token_id):
 
 
 
-# ── 5: the retry's protections (T#2.6) ───────────────────────────────────────
+# ── 5: the retry's protections ───────────────────────────────────────
 
 
 

@@ -9,15 +9,15 @@ import { PLACEHOLDER_NAV_KEYS } from '../navigation'
 import ComingSoonView from '../views/ComingSoonView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
 
-// T0011 §8/§12: /app is the Dashboard; /app/projects and /git are honest
+// app is the Dashboard; /app/projects and /git are honest
 // "준비 중" placeholders. Each placeholder also owns everything below it (`/projects/...`),
 // so a deep link keeps its section highlighted in the Sidebar.
 // /app/ai is implemented by AiSettingsView (T0003), including 시스템 AI / 내 AI
-// (flowgate.v02.0017 T0004 §1). /app/designer (and everything below it) is the Designer
-// Shell (flowgate.v02.0025); sub-paths are not interpreted yet, they keep the same Shell.
-// `meta.fullscreen` makes App.vue drop its Topbar / Sidebar for the Designer (0025 T0006 §1).
+//. /app/designer (and everything below it) is the Designer
+// Shell; sub-paths are not interpreted yet, they keep the same Shell.
+// `meta.fullscreen` makes App.vue drop its Topbar / Sidebar for the Designer.
 //
-// Nothing outside /settings redirects: a `redirect` rewrites the URL bar, and the T#1 contract
+// Nothing outside /settings redirects: a `redirect` rewrites the URL bar, and the the earlier implementation contract
 // is that an authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep
 // exactly the URL that was requested. Unknown paths render NotFoundView in place for the same
 // reason.
@@ -32,7 +32,7 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
 // a system administrator is shown (the access guard also treats every /settings/project… and
 // /settings/system… path that way). 내 설정's me/account and me/security (T#2) are open to every
-// signed-in person. 시스템 › 일반 (system/general, T#3), 시스템 Agent (system/agents, T#4), 사용자 and
+// signed-in person. 시스템 › 일반 (system/general, T#3), System Agent (system/agents, T#4), 사용자 and
 // 전체 프로젝트 (system/projects, T#5) are administrator screens, and so is 프로젝트 (T#5): the
 // selection area `project` (ProjectSettingsLayout, which reads the project list once) with its
 // read-only sections project/:projectId/{general,paths,git} as children. The retired
@@ -52,6 +52,11 @@ const settingsRoute: RouteRecordRaw = {
       path: 'me/account',
       name: 'settings-me-account',
       component: () => import('@/features/settings/views/MeAccountSettingsView.vue'),
+    },
+    {
+      path: 'me/theme',
+      name: 'settings-me-theme',
+      component: () => import('@/features/settings/views/MeThemeSettingsView.vue'),
     },
     {
       path: 'me/agents',

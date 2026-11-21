@@ -1,4 +1,4 @@
-"""flowgate.v02.0156 T1 W7 — the REAL built GUI on an insecure LAN origin: Designer buttons -> POST /runs 201.
+"""W7 — the REAL built GUI on an insecure LAN origin: Designer buttons -> POST /runs 201.
 
 Run directly (not a pytest module: the server test conftest would put the app in test mode):
 

@@ -1,4 +1,4 @@
-"""Run state ports (flowgate.v02.0061 T#2, D0006 §2.1 / §2.3).
+"""Run state ports.
 
 Whether a Graph run goes on after a step — running, idle with its reason, or the candidates its command may still
 open — and what a step / full command records are v0.2 rules: they live in the application package
@@ -15,8 +15,8 @@ engine calls and the composition root (``startup.py``) registers the handlers.
                          with its own command (``run, mode`` -> ``"step" | "full" | None``)
     record_command       the running run's new command, before its run status event (``ctx, mode`` -> None)
     record_step_targets  a command's decision: a step's targets are the nodes it opens (``ctx, mode, decision``) and
-                         (flowgate.v02.0124 T#1) the cards whose review the command requested again (``rerequested``)
-    stop                 0061 T#7 Stop (``group, run_id, reason, user_id`` -> the response): stopping, the AI
+                         the cards whose review the command requested again (``rerequested``)
+    stop the earlier implementation Stop (``group, run_id, reason, user_id`` -> the response): stopping, the AI
                          processes ended, the attempts invalidated, the open / review nodes pending, idle (stopped)
 
 * No handler registered: the port raises (fails closed, as ``run_scope_ports``) — a run step rolls back instead of

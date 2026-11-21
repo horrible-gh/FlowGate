@@ -1,4 +1,4 @@
-"""Initial AI source-access worktree sync — git mechanics (flowgate.default.0511 T0004).
+"""Initial AI source-access worktree sync — git mechanics.
 
 git_service.ensure_initial_group_source_sync() is the ONE forced reset+clean of a
 group worktree to its durable work-base fork point, performed exactly once per
@@ -51,14 +51,14 @@ def _base_repo(tmp_path: Path) -> Path:
 
 class _Fixture:
     """A base repo + a REAL linked worktree (git worktree add), forked before the
-    base advances — the exact stale-worktree shape T0004 exists to fix."""
+    base advances — the exact stale-worktree shape the earlier implementation exists to fix."""
 
     def __init__(self, tmp_path: Path):
         self.base = _base_repo(tmp_path)
         _git(self.base, "branch", "group/test")
         self.wt = tmp_path / "wt"
         _git(self.base, "worktree", "add", str(self.wt), "group/test")
-        # Base advances AFTER the worktree forked — the staleness T0004 closes.
+        # Base advances AFTER the worktree forked — the staleness the earlier implementation closes.
         (self.base / "advance.txt").write_text("advance\n", encoding="utf-8")
         _git(self.base, "add", ".")
         _git(self.base, "commit", "-m", "base advances")
@@ -108,7 +108,7 @@ def test_first_sync_resets_and_cleans_to_frozen_fork_point(monkeypatch, tmp_path
     fx = _Fixture(tmp_path)
     _wire(monkeypatch, fx)
     # Simulate pre-sync AI/TR debris in the stale worktree: a local tracked commit
-    # and an untracked file — both must be discarded (T0004 §24, §35.7/§35.8).
+    # and an untracked file — both must be discarded.
     (fx.wt / "seed.txt").write_text("tracked edit\n", encoding="utf-8")
     _git(fx.wt, "commit", "-am", "local tracked edit")
     (fx.wt / "untracked.txt").write_text("debris\n", encoding="utf-8")
@@ -147,7 +147,7 @@ def test_configured_base_branch_is_honored_not_hardcoded_main(monkeypatch, tmp_p
 
 
 def test_ignored_files_are_not_forced_out(monkeypatch, tmp_path):
-    """T0004 §25: `clean -fd`, never `-x` — ignored files are out of scope."""
+    """`clean -fd`, never `-x` — ignored files are out of scope."""
     fx = _Fixture(tmp_path)
     (fx.wt / ".gitignore").write_text("*.ignored\n", encoding="utf-8")
     (fx.wt / "keep.ignored").write_text("do not touch\n", encoding="utf-8")
@@ -180,7 +180,7 @@ def test_exactly_once_marker_precheck_skips_a_second_sync(monkeypatch, tmp_path)
 def test_retry_after_transient_marker_failure_does_not_double_reset_in_a_way_that_breaks(
     monkeypatch, tmp_path,
 ):
-    """T0004 §29/§35.11: sync+marker succeed, so a later retry sees the marker and
+    """sync+marker succeed, so a later retry sees the marker and
     skips. This proves the OTHER shape too — a first attempt whose marker write
     failed leaves the marker absent, so a retry legitimately redoes the (harmless,
     same-sha) reset and this time persists successfully."""
@@ -221,7 +221,7 @@ def test_git_busy_does_not_reset(monkeypatch, tmp_path):
 
 
 def test_marker_persist_failure_still_reports_the_reset(monkeypatch, tmp_path):
-    """T0004 §28: a marker write failure must be visible to the caller (which then
+    """a marker write failure must be visible to the caller (which then
     blocks the run) even though the destructive reset itself already happened —
     the caller, not this function, decides whether that is safe to retry."""
     fx = _Fixture(tmp_path)
@@ -240,7 +240,7 @@ def test_marker_persist_failure_still_reports_the_reset(monkeypatch, tmp_path):
 
 
 def test_head_mismatch_blocks_the_marker(monkeypatch, tmp_path):
-    """T0004 §26: if HEAD verification cannot confirm the reset landed, the
+    """if HEAD verification cannot confirm the reset landed, the
     marker must never be written."""
     fx = _Fixture(tmp_path)
     _wire(monkeypatch, fx)
@@ -266,7 +266,7 @@ def test_head_mismatch_blocks_the_marker(monkeypatch, tmp_path):
 
 
 def test_legacy_source_history_skips_destructive_reset_and_backfills(monkeypatch, tmp_path):
-    """T0004 §16-19/§24-25: a tr_commit_ledger row is trustworthy evidence of prior
+    """a tr_commit_ledger row is trustworthy evidence of prior
     real source work — the reset must be skipped and the marker backfilled from
     the worktree's OWN current HEAD, never the base's."""
     fx = _Fixture(tmp_path)
@@ -292,7 +292,7 @@ def test_legacy_source_history_skips_destructive_reset_and_backfills(monkeypatch
 
 
 def test_legacy_history_lookup_failure_is_read_as_ambiguous_and_skips_reset(monkeypatch, tmp_path):
-    """T0004 §19: an unclear signal must never be treated as license to reset."""
+    """an unclear signal must never be treated as license to reset."""
     fx = _Fixture(tmp_path)
     _wire(monkeypatch, fx)
 
@@ -311,7 +311,7 @@ def test_legacy_history_lookup_failure_is_read_as_ambiguous_and_skips_reset(monk
 
 def test_config_lookup_failure_never_raises_and_never_resets(monkeypatch, tmp_path):
     """Same contract as ai_invoke_service._require_group_worktree's own get_config
-    try/except: an unreadable config must never block a run (T0004 introduces no
+    try/except: an unreadable config must never block a run (the earlier implementation introduces no
     new fragility here)."""
     fx = _Fixture(tmp_path)
 

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02test.0025 — a message's ⋯ menu, right of its copy button. Shown while the context setting is
+  <!-- a message's ⋯ menu, right of its copy button. Shown while the context setting is
        체크포인트 사용: ⤒ send from this message (included) / ⤓ from the next message (excluded) / ✕ clear the checkpoint.
        Same popover behaviour as the composer's ⋯ menu (a press outside or Esc closes it). -->
   <div ref="rootEl" class="tlm">

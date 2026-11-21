@@ -14,9 +14,9 @@ describe('complete project question snapshot and actionable counts', () => {
     expect(counts).toEqual({ runs: 0, questions: count, bell: count })
     expect(countLabel(counts.bell)).toBe(count === 0 ? '' : count > 99 ? '99+' : String(count))
   })
-  it('adds live/paused runs only and omits unknown question counts', () => {
-    const runs = [{ key: 'running' }, { key: 'paused' }] as never
-    expect(notificationCounts(runs, null)).toEqual({ runs: 2, questions: null, bell: 2 })
+  it('counts execution only while keeping waiting items in the bell', () => {
+    const runs = ['running', 'queued_capacity', 'retrieving', 'paused', 'starting'].map(phase => ({ key: phase, phase })) as never
+    expect(notificationCounts(runs, null)).toEqual({ runs: 1, questions: null, bell: 5 })
     expect(countLabel(null)).toBe('')
     expect(countLabel(99)).toBe('99')
     expect(countLabel(100)).toBe('99+')

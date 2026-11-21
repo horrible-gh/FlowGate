@@ -1,4 +1,4 @@
-"""Workspace service (flowgate.v02.0020, 시안 11 워크스페이스 / 12 워크스페이스 상세).
+"""Workspace service (flowgate.v02.0020, draft 11 워크스페이스 / 12 워크스페이스 상세).
 
 A workspace is the membership / project-access / policy boundary above projects:
 
@@ -417,7 +417,7 @@ def change_member_role(user: dict, workspace_id: str, target_user_id: str, role:
 
 
 def remove_member(user: dict, workspace_id: str, target_user_id: str) -> dict:
-    """Leaving a workspace also leaves every project of it (R0001 §3.1)."""
+    """Leaving a workspace also leaves every project of it."""
     ws = _require(workspace_id)
     _check(can_manage(user, ws))
     current = _db.get_member(workspace_id, target_user_id)
@@ -486,7 +486,7 @@ def record_direct_assignment(user_id: str, project_id: str, role_id: Optional[st
     role APIs, so the next sync does not undo it. Runs inside the caller's transaction.
 
     A grant to someone outside the workspace makes them a Member (a project member is a workspace
-    member, R0001 §3.1) with 'none' on every other project of it, so the grant opens exactly that
+    member, the requirement) with 'none' on every other project of it, so the grant opens exactly that
     one project. A disabled workspace takes no grant, and a role that is not one of the fixed
     project roles cannot be expressed as workspace access."""
     if project_id == _db.SYSTEM_PROJECT:
@@ -606,7 +606,7 @@ def _resource_names() -> dict[tuple[str, str], dict]:
         names[("provider", row["provider_id"])] = {"name": row["name"], "kind": row.get("kind"),
                                                   "enabled": bool(row.get("enabled"))}
     try:
-        # flowgate.v02test.0019: a deleted Agent (deleted_at set) is no longer offered, like a deleted provider.
+        # a deleted Agent (deleted_at set) is no longer offered, like a deleted provider.
         agents = _store()._fetch_all("SELECT agent_id, name, enabled FROM agents WHERE owner_user_id IS NULL "
                                      "AND deleted_at IS NULL ORDER BY name")
     except Exception:  # noqa: BLE001 — an install without the agent registry lists no agents
@@ -639,7 +639,7 @@ def allow_resource(user: dict, workspace_id: str, resource_type: str, resource_i
 
 def revoke_resource(user: dict, workspace_id: str, resource_type: str, resource_id: str) -> dict:
     """Removing a chip revokes the approval (the row stays as history): a new run is refused at
-    once; a run already started is not stopped (R0001 §4.6)."""
+    once; a run already started is not stopped."""
     ws = _require(workspace_id)
     _check(can_manage(user, ws))
     if not _db.get_allow_entry(workspace_id, resource_type, resource_id):

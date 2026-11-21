@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-// Icon-only control (T0004 §5.2). `label` is mandatory — it is the only accessible name an
+// Icon-only control. `label` is mandatory — it is the only accessible name an
 // icon-only button has. `title` is opt-in (native tooltip); leave it unset when a caller
 // wraps this in the Tooltip primitive instead, so the two affordances never stack.
 withDefaults(

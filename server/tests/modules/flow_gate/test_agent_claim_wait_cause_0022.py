@@ -1,4 +1,4 @@
-"""flowgate.v02test.0022 CH0002 -- an unclaimed AI-run Job says why it was never claimed.
+"""an unclaimed AI-run Job says why it was never claimed.
 
 Before this, slot saturation, an offline Agent, a refused claim (403) and an Agent whose
 claim loop had stopped all ended as the same ``remote_agent_no_response: not_claimed``.

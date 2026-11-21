@@ -5,7 +5,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { DesignerGitPanel } from '@/features/git'
 import { G, P, conflicts, createFakeGitSource, gitError, resolvingRun, review, row, status, trConflicts } from './fakeGitSource'
 
-// flowgate.v02.0033 — DesignerGitPanel mounted with an in-memory source: cards per state,
+// DesignerGitPanel mounted with an in-memory source: cards per state,
 // the public events / expose (0033-D §5.1) and the two modeless windows (§6.2, §6.3).
 registerAppMessages(i18n)
 
@@ -87,16 +87,16 @@ describe('DesignerGitPanel — header and nothing to do', () => {
 describe('DesignerGitPanel — cards', () => {
   it('conflict card: count, three files, more, buttons; badge !', async () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
-    // flowgate.v02gui.0004: the title says where the apply stopped; the count splits open / resolved.
+    // the title says where the apply stopped; the count splits open / resolved.
     expect(text('git-conflict-card')).toContain('충돌 · main 반영 중단')
-    // flowgate.v02test.0052 0008 할 일 7: counted from the server's record — "해결 N · 남음 M"
+    // flowgate.v02test.0052 0008 task 7: counted from the server's record — "해결 N · 남음 M"
     expect(text('git-conflict-count')).toBe('해결 0 · 남음 5 (서버 기록 기준)')
     expect(qa('[data-test="git-conflict-card"] .gx-file')).toHaveLength(3)
     expect(text('git-conflict-more')).toBe('외 2개 보기')
     expect(w.emitted('badge-change')?.at(-1)).toEqual([{ tone: 'danger', text: '!' }])
   })
 
-  // flowgate.v02gui.0004 (0001-B §A-3): a conflict file opens the direct resolver on it — no dead open-diff intent.
+  // a conflict file opens the direct resolver on it — no dead open-diff intent.
   it('a conflict file opens the direct resolver on that file', async () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
     qa('[data-test="git-conflict-card"] .gx-file')[1].click()
@@ -351,7 +351,7 @@ describe('DesignerGitPanel — remote apply failure and windows', () => {
     const w = await mountPanel(fake)
     await click('git-conflict-manual')
     expect(q('git-conflict-window')).not.toBeNull()
-    // flowgate.v02gui.0004: the window is the direct resolver — every file as a tab, the first open one shown.
+    // the window is the direct resolver — every file as a tab, the first open one shown.
     expect(qa('[data-test="git-resolver-files"] .gx-resolver-file')).toHaveLength(5)
     expect(qa('.gx-chunk')).toHaveLength(1)
     expect(document.body.querySelector('.gx-chunk-side.ours')?.textContent).toContain('ours 0')
@@ -373,7 +373,7 @@ describe('DesignerGitPanel — remote apply failure and windows', () => {
     expect(w.emitted('windows-change')?.at(-1)).toEqual([[]])
   })
 
-  // flowgate.v02gui.0004 (0001-B §A-3): pick a side per chunk, save → POST resolve with that chunk.
+  // pick a side per chunk, save → POST resolve with that chunk.
   it('the resolver saves the chosen chunk text and reads the conflict again', async () => {
     const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
     await mountPanel(fake)

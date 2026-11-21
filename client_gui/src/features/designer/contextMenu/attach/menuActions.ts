@@ -1,10 +1,10 @@
-// flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B) — what the Designer context menu's 11 existing server
+// what the Designer context menu's 11 existing server
 // commands need besides the menu: the request a chosen item becomes (its target as the menu saw it), the server paths
 // the Designer Shell lends (each the existing contract through features/project — no new API, no store here), the
 // answer shape the dialogs read, and two pure helpers (the name rule the server applies, the line diff of the
-// 수정 확인 window). Flow 삭제 is the existing dispose (DC); nothing here deletes a Flow, a document or a branch.
+// Review changes window). Flow Delete is the existing dispose (DC); nothing here deletes a Flow, a document or a branch.
 
-/** The 2-B commands and the dialog each opens (파일 다운로드 runs at once: no dialog). */
+/** The 2-B commands and the dialog each opens (Download file runs at once: no dialog). */
 export type MenuActionKind =
   | 'group.rename' | 'group.archive' | 'group.delete' | 'flow.rename' | 'flow.delete'
   | 'folder.newFolder' | 'folder.newFile' | 'folder.download' | 'folder.upload' | 'folder.delete'
@@ -81,14 +81,14 @@ export interface DesignerMenuServerDeps {
   /** `identifier` (v02gui.0012) is sent only when it changed; it renames the module key, so the Group's Flow ids change. */
   readonly renameGroup: (projectId: string, groupId: string, title: string, identifier?: string) => Promise<MenuActionResult>
   /**
-   * v02gui.0027: a Group's display-only archive (the 그룹 아카이브 window) and restore (그룹 복원 runs at once). Its
+   * v02gui.0027: a Group's display-only archive (the Archive Group window) and restore (Restore Group runs at once). Its
    * Flows, documents, runs and Git stay as they are. Absent: the Group menu shows neither item.
    */
   readonly archiveGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
   readonly restoreGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
   /**
    * v02gui.0027 (0008-T): deletes an empty Group (only its module record). A Group with Flows is refused with 409
-   * `module_not_empty` and the count in the refusal. Absent: the Group menu has no 그룹 삭제.
+   * `module_not_empty` and the count in the refusal. Absent: the Group menu has no Delete Group.
    */
   readonly deleteGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
   readonly renameFlow: (projectId: string, groupId: string, flowId: string, title: string) => Promise<MenuActionResult>
@@ -106,7 +106,7 @@ export interface DesignerMenuServerDeps {
   /** One file of the Flow's worktree against the project Base (read from the project's Git status, named in the diff). */
   readonly fileDiff: (projectId: string, flowId: string, path: string) => Promise<MenuActionResult<MenuActionDiff>>
   /**
-   * A short note outside a window (파일 다운로드 runs without one). flowgate.v02.0088 F16: a function is called each time
+   * A short note outside a window (Download file runs without one). the earlier change F16: a function is called each time
    * the note renders, so its words follow a language switch; a string is shown as given.
    */
   readonly notify?: (message: string | (() => string), tone: 'success' | 'warning' | 'danger') => void
@@ -241,7 +241,7 @@ export function lineDiff(oldText: string | null, newText: string | null): DiffLi
   return out
 }
 
-/** A run of unchanged lines the 수정 확인 window folds away (its size is shown). */
+/** A run of unchanged lines the Review changes window folds away (its size is shown). */
 export interface DiffGap {
   readonly kind: 'gap'
   readonly count: number

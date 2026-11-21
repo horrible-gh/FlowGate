@@ -1,4 +1,4 @@
-"""flowgate.v02.0053 T#8 — a Custom card (palette [+], Graph ``custom`` node) is a plain document card.
+"""a Custom card (palette [+], Graph ``custom`` node) is a plain document card.
 
 Whatever Palette category it was added to, a Custom card works like 조사 · 작업: the Graph validator does
 not report it as ``rule_undecided/custom_node``, a run needs for it what a work card needs (``report_pair``,

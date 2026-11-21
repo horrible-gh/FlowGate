@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0135 T#4 (review rework) — cards shown again after SEVERAL Canvas writes lost their answer, whatever
+ * (review rework) — cards shown again after SEVERAL Canvas writes lost their answer, whatever
  * order this tab's own change events then arrive in. The real path: the project store's Canvas / Graph loaders ->
  * the server Graph source -> the Center session (what the Designer shows); only `@shared/api` is an in-memory server
  * here, and its change events go through the real event filter (`changedFlowOf`, flowCanvasEvents.ts) before they

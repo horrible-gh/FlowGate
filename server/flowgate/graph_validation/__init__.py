@@ -1,14 +1,14 @@
-"""Graph pre-run validation (flowgate.v02.0061, 0002-CH turn 13): the decided rules of what a draft must look
+"""Graph pre-run validation: the decided rules of what a draft must look
 like before it is confirmed and run.
 
-v0.2 feature package (D0006 §2.1). The Graph workflow (``modules.flow_gate.graph_workflow``) is existing code:
+v0.2 feature package. The Graph workflow (``modules.flow_gate.graph_workflow``) is existing code:
 its validator (``domain.graph_validator``) reports every problem of a draft at once and, through
 ``services.graph_validation_ports``, lets a registered handler validate in its place. This package is that
 handler. The validator's pieces (the issue shape and order, the well-formedness checks, the graph walks, the
 structures put to the policy slots) are reused, not copied, and the engine itself is not moved here. Nothing
 is registered on import.
 
-The rules (R §2.4 / §2.5, 0002-CH turns 7 / 13):
+The rules (R /, the discussion turns 7 / 13):
 
     1  an isolated node (no edge at all) is left out of a run — no issue
     2  a path not starting from a requirement / bug node (R / B) is left out of a run as a whole — no issue

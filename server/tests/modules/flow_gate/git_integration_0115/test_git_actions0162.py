@@ -94,7 +94,7 @@ class TestGitActions0162(_Scenario):
         pend_ids = {p["group_id"] for p in out["pending"]}
         assert {g_wait, g_conf} <= slot_ids
         assert g_done not in slot_ids            # terminal excluded from slots
-        # 0327 T0004 (B0001): every slot reports whether its worktree is really there,
+        # Every slot reports whether its worktree is really there,
         # so the file explorer can offer create/upload on a working group instead of
         # treating every selected group as read-only. These were provisioned above.
         assert all(s["writable"] is True for s in out["slots"])
@@ -107,9 +107,9 @@ class TestGitActions0162(_Scenario):
 
 
     def test_manual_fetch_fast_forwards_clean_base(self, act_origin):
-        # 0320 B0001/TR0005: manual_fetch used to only move the tracking ref and
-        # *report* behind — the clean base checkout never advanced ("영원히 안
-        # 가져올건가?"). It now fast-forwards a clean base to origin/{base}, so a
+        # manual_fetch used to only move the tracking ref and
+        # *report* behind — the clean base checkout never advanced (a user asked whether it
+        # would ever fetch). It now fast-forwards a clean base to origin/{base}, so a
         # single Fetch catches the base up (behind -> 0, advanced=True).
         from modules.flow_gate.services import git_service as svc
 

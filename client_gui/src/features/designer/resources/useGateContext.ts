@@ -1,4 +1,4 @@
-// D0007 §6: settings, run and gate form one read context, shared across Inspector tabs.
+// settings, run and gate form one read context, shared across Inspector tabs.
 import { normalizeApiError } from '@shared/apiErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, effectScope, hasInjectionContext, inject, nextTick, onScopeDispose, ref, shallowRef, watch, type EffectScope } from 'vue'
@@ -13,12 +13,12 @@ export const gateOf = (target: InspectorTarget | null) => target?.nodeType === '
 
 type Request = { runId: string; decision: RunGateDecision; comment?: string; intent: RunGateIntent }
 
-// flowgate.v02test.0002 T-b (0006-T §2): the last merge target list the server confirmed (lookup ok / empty), kept in
+// T-b: the last merge target list the server confirmed (lookup ok / empty), kept in
 // memory only (F5 drops it) so a later lookup timeout / failure does not take away a valid choice. It never changes a
 // server answer: the live lookup status stays as read, PATCH and the confirm preflight still judge the branch.
 export const MERGE_TARGET_CACHE_MS = 5 * 60 * 1000
 const CONFIRMED_LOOKUPS = ['ok', 'empty']
-// flowgate.v02test.0020: after a lookup timeout / failure the card reads its settings again by itself, a few times with
+// after a lookup timeout / failure the card reads its settings again by itself, a few times with
 // growing waits, until a confirmed list arrives (the refresh button stays for more). These are plain reads: on the
 // server they pick up / join the candidate computation still running in the background instead of restarting it, and
 // they never lock or change anything. Only while the Inspector shows the card.
@@ -39,7 +39,7 @@ export interface MergeTargetCache {
   /** Date.now() when the confirming answer arrived. */
   readonly at: number
 }
-/** flowgate.v02.0148 T#2: the settings a card lets the Inspector change one value at a time. */
+/** the settings a card lets the Inspector change one value at a time. */
 const CHANGEABLE_FIELDS = ['archive', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch']
 /** How long a field shows `saved` after the server's answer carried its requested value. */
 export const FIELD_SAVED_MS = 2000
@@ -89,13 +89,13 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   let replaying: Promise<boolean> | null = null
   // A read started while a write / decision was answered is dropped; the writer reads once more afterwards.
   let dropped = false
-  // The recovery read after the queue (flowgate.v02.0148 T#2 rework): it runs beside the queue, never inside `draining`, so a
+  // The recovery read after the queue: it runs beside the queue, never inside `draining`, so a
   // change typed while a slow GET is still on its way is written at once.
   let recovering: Promise<void> | null = null
   let recoverAgain = false
   let recoverKeeps = NO_RIGHTS
   let cacheTimer: ReturnType<typeof setTimeout> | null = null
-  /** flowgate.v02test.0020: the pending automatic re-read after a timeout / failure, and how many were scheduled. */
+  /** the pending automatic re-read after a timeout / failure, and how many were scheduled. */
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let retries = 0
   // 0006-T §2 / §3.6: bumped when the Inspector leaves this card. An answer to a GET / PATCH sent before that may still
@@ -117,7 +117,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   function release(selected: (() => InspectorTarget | null) | null = null) {
     consumers = Math.max(0, consumers - 1)
     // A tab change unmounts the part and mounts the next tab's parts in one render. After that render the card is kept
-    // while a part shows it or the Frame still selects it (설정 -> Q&A / 첨부 / 문서); otherwise it was left.
+    // while a part shows it or the Frame still selects it (설정 -> Q&A / Attachments / 문서); otherwise it was left.
     if (consumers === 0) void nextTick(() => {
       if (consumers > 0 || selectedHold) return
       if (selected && gateOf(selected()) === key) holdWhileSelected(selected)
@@ -148,7 +148,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
     retries = 0
   }
   /**
-   * flowgate.v02test.0020: one answer that carries the lookup state (a GET, or a PATCH answered in full) schedules the
+   * one answer that carries the lookup state (a GET, or a PATCH answered in full) schedules the
    * next automatic re-read after a timeout / failure (TARGET_RETRY_DELAYS_MS, then none) or ends them once the lookup
    * is confirmed or Git itself refused.
    */
@@ -203,7 +203,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
     }
     const at = epoch
     const before = status.value
-    // flowgate.v02.0148 T#2: stale-while-revalidate - only the first read (nothing confirmed yet) puts the context in 'loading';
+    // stale-while-revalidate - only the first read (nothing confirmed yet) puts the context in 'loading';
     // a later read keeps the controls usable while it is on its way.
     if (status.value !== 'ready') status.value = 'loading'
     if (refreshMergeTargets) refreshing.value = true
@@ -224,7 +224,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
           settings.value = saved.value
           if (saved.value.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }
           if (keeps === targetEpoch) noteTargets(saved.value)
-          // A pressed refresh starts the automatic re-reads over (flowgate.v02test.0020).
+          // A pressed refresh starts the automatic re-reads over.
           if (refreshMergeTargets && retryTimer === null) retries = 0
           noteLookup(saved.value)
         }
@@ -295,7 +295,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
       return false
     } finally { busy.value = null }
   }
-  /** The earlier merge target views can stand in for a PATCH answer that leaves them out (flowgate.v02.0148 T#2). */
+  /** The earlier merge target views can stand in for a PATCH answer that leaves them out. */
   function canKeepViews(prev: SettingsNode | null, keeps: number): prev is SettingsNode {
     return !!prev && keeps === targetEpoch && viewEpoch === targetEpoch && prev.mergeTargetOptions !== undefined && prev.defaultTargetBranch !== undefined && !!prev.mergeTargetState
       && Date.now() - viewAt < MERGE_TARGET_CACHE_MS

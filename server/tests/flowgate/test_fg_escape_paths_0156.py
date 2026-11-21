@@ -1,4 +1,4 @@
-"""flowgate.v02.0156 T#4 (0011-T): D1 / D6 / D7 / D8 escape paths of an idle or stopping run.
+"""D1 / D6 / D7 / D8 escape paths of an idle or stopping run.
 
 Light checks only: the real SQLite DB and Graph routes of ``test_fg_card_settings`` with a stubbed AI starter (no provider,
 no Git, no wait). D8's GUI half is ``client_gui/tests/features/designer/stopRetry.0156.spec.ts``."""

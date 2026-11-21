@@ -342,7 +342,7 @@ def test_r_workflow_in_progress_slot_guarded(monkeypatch):
 def test_m_single_slot_complete_final_approval_gate(monkeypatch):
     """[M-1 / M042] Single M slot complete -> document steps done, but final approval (AC)
     not yet performed -> head = AC/pending so the action bar shows [final approval]
-    (group 0104 restore; was 'done' under b39f6b8 which auto-finalized memo workflows).
+    (restore; was 'done' under b39f6b8 which auto-finalized memo workflows).
     """
     parsed = _parse_r_workflow(
         monkeypatch,
@@ -515,7 +515,7 @@ def test_sequence_complete_final_approval_gate_never_null(monkeypatch):
 
     feedback_actionbar_always_shows: head_status=None risks a null actionbar — here it is
     'pending' with head_type='AC'. (Was 'done'/None under b39f6b8's auto-finalize; the
-    mandatory-AC gate of M042 supersedes the T602 "no synthetic AC" coupling — group 0104.)
+    mandatory-AC gate of M042 supersedes the T602 "no synthetic AC" coupling — the earlier change.)
     """
     parsed = _parse_r_workflow(
         monkeypatch,

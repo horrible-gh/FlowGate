@@ -60,8 +60,8 @@ def test_an_ai_run_that_timed_out_needs_intervention_and_tells_why(env, decided,
     _reads(env)
     assert _review_status(result) == "pending_review" and _waits(env) == [(result, "run_not_clean:timeout")]
 def test_a_refused_completion_is_a_system_error_retried_up_to_the_limit(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#2 (T-1): the automatic completion takes no v0.1 review transition; its refusal is recorded
-    (``approval_refused``). T#3 (T-2): a system error — each run read tries the path again, recorded each time, until the
+    """(T-1): the automatic completion takes no v0.1 review transition; its refusal is recorded
+    (``approval_refused``). the earlier implementation (T-2): a system error — each run read tries the path again, recorded each time, until the
     limit; never a person's approval."""
     key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
     _refused(monkeypatch)
@@ -70,7 +70,7 @@ def test_a_refused_completion_is_a_system_error_retried_up_to_the_limit(env, dec
                                        "approval_refused")
     _reads(env, LIMIT + 2)                                               # past the limit: nothing more is tried
     assert _waits(env) == [(result, "approval_refused")] * LIMIT and _authorities(env) == []
-    _approval_route_gone(env, key)                                       # 0119 T-3: the route is gone
+    _approval_route_gone(env, key)                                       # T-3: the route is gone
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
 def test_a_system_error_whose_retry_succeeds_completes_the_card(env, decided, monkeypatch):
     from flowgate.card_settings import legacy_adapter

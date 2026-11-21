@@ -1,4 +1,4 @@
-"""0127 T#4: legacy gates, physical aliases, CREATE authority and current author evidence."""
+"""legacy gates, physical aliases, CREATE authority and current author evidence."""
 import ast
 import json
 import os

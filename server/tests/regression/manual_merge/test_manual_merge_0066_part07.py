@@ -72,7 +72,7 @@ def test_push_rejection_rewinds_the_fresh_merge_keeps_the_slot_and_heals_to_none
     assert state(gid)["status"] == "waiting" and state(gid)["worktree_registered"]
     assert _ctx(merge_sessions(gid)[0]["merge_id"])["attempt_state"] == "failed"
     assert results(gid)["results"] == []
-    svc.project_git_status(proj.pid)                        # T0009 self-heal (root not wf_done)
+    svc.project_git_status(proj.pid)                        # self-heal (root not wf_done)
     assert state(gid)["status"] == "none"
     assert manual(gid, push=True)["pushed"] is True         # the next try just works
     assert held_locks(proj.pid) == []

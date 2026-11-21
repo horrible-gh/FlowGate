@@ -60,7 +60,7 @@ from tests.modules.flow_gate.test_workflow_duplicate_slot_repair_0457 import (
 
 @pytest.mark.parametrize("difference", sorted(GUARDS))
 def test_the_repair_is_a_no_op_when_any_identifying_fact_differs(incident_db, difference):
-    """Change one fact from NR0003 §2 and the repair declines to act.
+    """Change one fact from the review and the repair declines to act.
 
     Only 090's UPDATE runs here. These cases deliberately leave the duplicate in place, so
     the file's CREATE UNIQUE INDEX would refuse to build — which would tell us nothing

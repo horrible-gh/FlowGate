@@ -40,15 +40,15 @@ def insert(
     """answers INSERT (DB0006 §4.2 — author_kind/author_id; author_id NULL for AI).
 
     ``selected_options`` is the serialized JSON array of chosen option ids (DB0007 §2);
-    the caller validates it against the item's options (L0008 §2.4).
+    the caller validates it against the item's options.
 
     The three ``author_*`` columns are the AI run/provider snapshot for an AI answer
-    (0582 T0005 §4/§D) — always None for a human answer, and None for an AI answer
+    — always None for a human answer, and None for an AI answer
     whose token carried no bound run (the [Copy Mention] hand-off starts no run by
     design, so it is legitimately unknown rather than dropped).
 
     ``author_requested_provider_id`` / ``author_provider_source`` /
-    ``author_fallback_used`` (0661 T0004 F6, migration 142) are the requested half of
+    ``author_fallback_used`` (F6, migration 142) are the requested half of
     the same snapshot: together with the actual provider they let a row prove on its
     own whether the assigned reviewer answered or a fallback did. None = no evidence.
     """

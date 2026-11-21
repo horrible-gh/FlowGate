@@ -1,6 +1,6 @@
-"""Standalone CH creation -- POST /api/v1/conversations (flowgate.v02.0032 T#1).
+"""Standalone CH creation -- POST /api/v1/conversations.
 
-D0006 §3.10.2 (decision order), §3.10.3 (no workflow/lease coupling), §3.10.4 (no
+(decision order), (no workflow/lease coupling), (no
 lineage), §5.4 (input/output/errors) and completion conditions 17 and 19.
 """
 from __future__ import annotations

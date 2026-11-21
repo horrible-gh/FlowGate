@@ -1,16 +1,16 @@
-"""flowgate.default.0501 T0006 (T2), retargeted by T6: ai_invoke/oracle.py boundary.
+""", retargeted by T6: ai_invoke/oracle.py boundary.
 
 T2 first extracted the engine's stateless helpers as a flat `ai_invoke_helpers.py`
-sibling. T6 moved them into `ai_invoke/oracle.py`, which is where NR0003 §12 puts the
+sibling. T6 moved them into `ai_invoke/oracle.py`, which is where the review puts the
 package's stateless layer and which §21 Phase 1 names as the first thing to extract for
 exactly the reason T2 gave: it owns no run state, so it carries no risk.
 
-What T0006 §9/§7 asked for is unchanged and still checked here:
+What the earlier implementation asked for is unchanged and still checked here:
 
   * the module imports standalone, with no dependency on the engine's assembled globals()
   * it never reverse-imports ai_invoke_service and never uses exec()/globals().update()
   * its pure functions produce results identical to the `svc` surface that still exposes
-    the same names (compatibility principle 3 of T0006 §4)
+    the same names (compatibility principle 3 of the earlier implementation)
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class TestModuleIsImportOnly:
         assert callable(oracle.map_lookup)
 
     def test_source_never_imports_ai_invoke_service_or_uses_exec_globals_update(self):
-        """AST guard for T0006 §4 principles 1/2: no reverse import, no exec/globals().update().
+        """AST guard for the earlier implementation principles 1/2: no reverse import, no exec/globals.update.
 
         T6 makes this stronger than a guard on one file: oracle.py is the ONE module of
         the package that reaches nothing through the compatibility shim at all (it has no
@@ -168,7 +168,7 @@ class TestPureHelpersMatchAssembledSurface:
 
 
 class TestScopeOraclesLiveHereToo:
-    """T6 put NR0003 §16's actual subject in this module: the completion probes, one per
+    """T6 put the review's actual subject in this module: the completion probes, one per
     thing a run's token is allowed to write. They are the reason the file is named
     oracle.py, so their inventory is pinned here rather than left implicit."""
 
@@ -177,7 +177,7 @@ class TestScopeOraclesLiveHereToo:
 
         assert set(oracle._SCOPE_PROBES) == {
             "chat", "edit", "review", "test_run", "workflow_sequence_edit",
-            # flowgate.default.0482 T0011's scope, merged in by 0501 T0019: judged by
+            # 's scope, merged in by the earlier implementation: judged by
             # tracked base-dirty file count and keyed by project_id rather than a
             # document id, but a row-it-may-write probe exactly like the other five.
             "resolve_base_dirty",

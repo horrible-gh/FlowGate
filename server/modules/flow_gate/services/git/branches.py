@@ -55,7 +55,7 @@ def internal_slot_owner(project_id: str, branch_name: str) -> Optional[dict]:
 
 
 def _attempt_branch_names(project_id: str) -> set[str]:
-    """0111 D-1b: ownership evidence, never a name-prefix heuristic.
+    """D-1b: ownership evidence, never a name-prefix heuristic.
 
     The ledger also covers missing/broken markers and detached attempt branches;
     valid owner markers cover a Git preparation not yet journaled. No cleanup here.
@@ -556,7 +556,7 @@ def merge_branches(
 ) -> dict:
     """Merge one ordinary local branch into another, optionally publishing it.
 
-    flowgate.default.0630 T0005 (D0004): every merge that passes the preconditions first
+    every merge that passes the preconditions first
     writes a persistent ``branch_merge`` attempt (``git_merge_session``, owner
     ``branch_merge``, no group) and runs in a managed target workspace — a detached one for
     the project base, which Git refuses to check out twice.
@@ -573,9 +573,9 @@ def merge_branches(
     checkout, remote divergence, workspace ownership, git failure) keep their errors; an
     attempt row already written for them is closed ``failed``.
 
-    T0006 (kept): ``push=False`` never contacts origin. For the project base target the
+    (kept): ``push=False`` never contacts origin. For the project base target the
     merge commit is applied to the shared base checkout by fast-forward, so the local ref
-    and the checked-out tree land together. T0007 rev1 (kept): that base-checkout write is
+    and the checked-out tree land together. the earlier implementation (kept): that base-checkout write is
     blocked while an unresolved merge session holds the base checkout, and git's untracked
     collision refusal is the named, non-destructive 409 — never an abort failure.
     """
@@ -593,9 +593,9 @@ def merge_branches(
 
     is_base_target = (target_resolved.kind == "branch" and target_branch == base_branch)
     if is_base_target and not push:
-        _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+        _gs.guard_base_free(project_id)   # — 1st gate (before lock)
 
-    # 0669 unit 8a: no project mutex any more — a branch_merge_publish job runs the merge
+    # unit 8a: no project mutex any more — a branch_merge_publish job runs the merge
     # below (run_merge) under its own G/W/B + R, once right here and otherwise later.
     from . import branch_merge_publish
     return branch_merge_publish.request(
@@ -610,7 +610,7 @@ def merge_no_ff(merge_root: Path, source_head: str, message: str,
     """``git merge --no-ff`` of ``source_head`` into the checkout at ``merge_root``: the conflicted paths (the merge
     left in flight, MERGE_HEAD / index / markers kept), or [] when it committed. A merge git never started (an
     untracked collision, any other refusal) is aborted and raised. Shared by ``run_merge`` and the Graph attempt
-    integration (flowgate.v02.0061 T#9); the caller holds the target's lock."""
+    integration; the caller holds the target's lock."""
     from modules.flow_gate.services import git_service as _gs
     merged = _gs._run_session_git(
         merge_id, None, "merge", "branch_merge",
@@ -680,7 +680,7 @@ def run_merge(
             )
         else:
             if apply_to_base_checkout:
-                _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+                _gs.guard_base_free(project_id)   # — 2nd gate (race close, after lock)
                 if _gs._dirty(base_root, include_untracked=False):
                     raise GitServiceError(
                         409, "branch_merge_target_dirty",
@@ -736,7 +736,7 @@ def run_merge(
         merge_root = ctx.root
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
-        # flowgate.default.0361 NR0003 §5.4/§8.1: a cross-branch merge fetches and
+        # a cross-branch merge fetches and
         # later pushes through this same repository's `origin` — sync it first so
         # a repo_url change is not silently ignored by this entry point either.
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
@@ -771,7 +771,7 @@ def run_merge(
         source_before = source_resolved.head_sha
         target_before = _gs._rev_parse(merge_root, "HEAD")
         expected_remote_head = _gs._rev_parse(merge_root, f"refs/remotes/origin/{target_branch}")
-        # T0012 §6.3: pinned BEFORE `git merge`, so recovery can tell "never merged" from
+        # pinned BEFORE `git merge`, so recovery can tell "never merged" from
         # "the merge commit landed" after a crash in between.
         merge_target.record_merge_inputs(
             ctx, pre_head=target_before, source_head=source_before,
@@ -780,7 +780,7 @@ def run_merge(
         files = merge_no_ff(merge_root, source_before, f"Merge branch '{source_branch}' into {target_branch}",
                             source_branch, target_branch, merge_id=ctx.merge_id)
         if files:
-            # 0630 T0005: the conflict is KEPT — no `merge --abort`, no workspace cleanup.
+            # the conflict is KEPT — no `merge --abort`, no workspace cleanup.
             branch_merge.mark_conflict(
                 ctx, files, source_head=source_before, target_head=target_before,
                 merge_head=_gs._rev_parse(merge_root, "MERGE_HEAD"),
@@ -807,7 +807,7 @@ def run_merge(
         target_after = _gs._rev_parse(merge_root, "HEAD")
         if apply_to_base_checkout:
             # The local base ref and the shared checkout's tree advance together, exactly
-            # as when this combination merged in the base checkout itself (T0006 T5).
+            # as when this combination merged in the base checkout itself.
             applied = _gs._run_session_git(ctx.merge_id, None, "merge", "branch_apply_local_target",
                                            ["merge", "--ff-only", target_after], cwd=base_root)
             if applied.returncode != 0:
@@ -981,13 +981,13 @@ def _delete_guard(
     from .merge_target import GRAPH_ATTEMPT_BRANCH_PREFIX
     if name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX) and name in _attempt_branch_names(project_id):
         return "branch_is_internal_attempt", {}
-    # T0016 §6.1: the branch currently pinned as this project's merge-target
+    # the branch currently pinned as this project's merge-target
     # suggestion cannot be deleted out from under it — it must be retargeted
     # or cleared (mt.set_project_default_target) first, same as base/internal
     # slot above.
     if (cfg or {}).get("default_merge_target") == name:
         return "branch_is_default_merge_target", {}
-    # flowgate.default.0613 T0013: a group's durable work base is re-read for the
+    # a group's durable work base is re-read for the
     # whole group lifecycle (provisioning, retry, reprovision, reopen); deleting it
     # would strand that group, so it is protected until the group is terminal.
     from .group_work_base import groups_pinning_work_base
@@ -995,7 +995,7 @@ def _delete_guard(
     if pinning:
         return "branch_is_group_work_base", {"connected_group_ids": pinning}
 
-    # 0594 T0012: every open finalize attempt pins its target (base or not), and a
+    # every open finalize attempt pins its target (base or not), and a
     # non-base attempt no longer shows up as the base checkout's blocking session —
     # scan all of them, plus the one session that holds the base checkout.
     from .merge_target import open_merge_attempts
@@ -1010,7 +1010,7 @@ def _delete_guard(
         state = _gs.db_git.get_state(group_id) if group_id else None
         context = _gs.db_git.session_context(session)
         target = context.get("target_branch")
-        # 0630 T0005 (D0004 §22): an open ordinary branch merge pins BOTH its branches —
+        # an open ordinary branch merge pins BOTH its branches —
         # the target it will land on and the source it merges from.
         source = (context.get("branch_merge") or {}).get("source_branch")
         if (state or {}).get("branch") == name or target == name or source == name:
@@ -1140,7 +1140,7 @@ def _ahead_behind(base_root: Path, base_branch: str, name: str) -> tuple[Optiona
 
 
 def resolve_local_branch_ref(project_id: str, branch: str) -> tuple[Path, str]:
-    """(base_root, commit) for an ordinary local branch (T0004 §3). Pure read: no
+    """(base_root, commit) for an ordinary local branch. Pure read: no
     lock, no worktree, no DB write. Rejects anything that is not a real
     ``refs/heads/<branch>`` -- a remote-only ref is a distinct 409, everything else
     (including a typo) is 404."""
@@ -1162,7 +1162,7 @@ def resolve_local_branch_ref(project_id: str, branch: str) -> tuple[Path, str]:
 
 def read_local_branch_tree(project_id: str, branch: str) -> dict:
     """Checkout-free recursive tree of an ordinary local branch's HEAD commit
-    (T0004 §3.1). Same hidden-path rule as the group explorer's committed view
+. Same hidden-path rule as the group explorer's committed view
     (dotfiles / *.db). Unlike a group branch this has no live worktree behind it, so
     there is no untracked channel to merge in -- the tree is exactly what the branch
     has committed, and base checkout HEAD/index/worktree are never touched."""
@@ -1195,10 +1195,10 @@ def read_local_branch_tree(project_id: str, branch: str) -> dict:
 def read_local_branch_blob(
     project_id: str, branch: str, path: str, ref: Optional[str] = None
 ) -> dict:
-    """Checkout-free single-file read from an ordinary local branch (T0004 §3.2).
+    """Checkout-free single-file read from an ordinary local branch.
     No working-tree fallback: unlike a group branch a local branch has no live
     worktree, so an untracked (never-committed) file is never exposed here -- it is
-    committed-tree read-only, exactly as T0004 requires."""
+    committed-tree read-only, exactly as the earlier implementation requires."""
     from modules.flow_gate.services import git_service as _gs
     _gs._validate_blob_path(path)
     base_root, head_commit = resolve_local_branch_ref(project_id, branch)
@@ -1315,7 +1315,7 @@ def list_branches(project_id: str) -> dict:
             "create_source_blocked_reason": "remote_only",
             "has_remote_counterpart": True,
         })
-    # T0016 §2.2 — the last non-base target a finalize actually merged into,
+    # the last non-base target a finalize actually merged into,
     # surfaced only while it still names a real local branch (never a dangling
     # suggestion for a branch that was since deleted).
     suggested_target = (cfg or {}).get("default_merge_target")
@@ -1326,7 +1326,7 @@ def list_branches(project_id: str) -> dict:
         "base_branch": base_branch,
         "default_merge_target": default_merge_target,
         "branches": branches,
-        # 0630 T0005 §12: open ordinary branch-merge attempts, so the Branch Manager can
+        # open ordinary branch-merge attempts, so the Branch Manager can
         # re-enter a conflict after a reload without a second request.
         "open_branch_merges": _open_branch_merge_summaries(project_id),
     }

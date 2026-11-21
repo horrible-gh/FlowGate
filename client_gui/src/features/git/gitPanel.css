@@ -183,7 +183,7 @@
   cursor: default;
 }
 
-/* flowgate.v02gui.0004 (0001-B 관찰 5): a blocked button reads as blocked — grey, whatever its tone — so it is never
+/* flowgate.v02gui.0004 (0001-B observation 5): a blocked button reads as blocked — grey, whatever its tone — so it is never
    taken for an active one; the reason is the line under it. */
 .gx-btn:disabled,
 .gx-btn.primary:disabled,

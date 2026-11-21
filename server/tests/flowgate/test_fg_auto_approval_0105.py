@@ -1,5 +1,5 @@
-"""flowgate.v02.0105 T#2 — an AI card's automatic approval: its authority, why it was not made, and a lost run end
-(NR flowgate.v02.0101.0003 §3.9 B-1 ~ B-4 / B-6, §3.9.1, §3.9.2 rev4; regression cases §3.10).
+"""an AI card's automatic approval: its authority, why it was not made, and a lost run end
+(NR the earlier change B-1 ~ B-4 / B-6,; regression cases).
 
 On the real SQLite DB, routes and fixtures of ``test_fg_card_settings_review`` (the AI invoke admission replaced by
 recorders): the run-end stage approves an AI card's result under the server's automatic approval authority (a non-admin
@@ -9,7 +9,7 @@ own passed review, a review loop started once and never an approval for a card t
 reason otherwise — and every existing record is kept. The durable row of the lost AI run (``ai_run_record``) and, where a
 case names it, the verdict of the current revision (``submission_passed``) are mocks.
 
-flowgate.v02.0119 T#3 (T-2) — the new contract: no card waits for a person's approval (``awaiting_approval`` is always
+(T-2) — the new contract: no card waits for a person's approval (``awaiting_approval`` is always
 false; the cases that assumed the person's approval fallback — the card approval of a card left by its review — are
 gone). A card whose review did not pass after its automatic rework, or whose AI run did not end on its own, is
 ``needs_intervention`` with its reason (the node run's ``intervention``) and is never tried again; the card approval route
@@ -34,7 +34,7 @@ from test_fg_card_settings_review import (
 
 @pytest.fixture(autouse=True)
 def card_outputs_port():
-    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    """(T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
     registered as ``startup`` registers it — it replaced the removed card approval port."""
     from flowgate.card_completion import outputs
     from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
@@ -209,7 +209,7 @@ def test_a_review_that_did_not_pass_after_its_rework_needs_intervention_and_tell
     assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
     _reads(env)                                                          # never tried again
     assert _waits(env) == [(result, reason)] and _authorities(env) == []
-    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
+    _approval_route_gone(env, key)                                       # T-3: no person's approval
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
 
 
@@ -232,46 +232,46 @@ def _refused(monkeypatch):
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the AI run's empty issued_to as the approval actor; an assigned attempt's actor is the node token recipient fixed at its opening (L-2 §2.6/§2.7.4) — the assigned path: test_fg_ai_roles_l2_*
+# (T) pre-feature contract: the AI run's empty issued_to as the approval actor; an assigned attempt's actor is the node token recipient fixed at its opening (L-2) — the assigned path: test_fg_ai_roles_l2_*
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_count without review_ai asks the project default reviewer; an assigned attempt waits for setup instead (G-9, R-6) — test_fg_ai_roles_l2_review.py::test_g9_*
+# (T) pre-feature contract: review_count without review_ai asks the project default reviewer; an assigned attempt waits for setup instead (G-9, R-6) — test_fg_ai_roles_l2_review.py::test_g9_*
 
 
 # ── B-3: a lost run end, reconciled once ─────────────────────────────────────
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference; an assigned attempt's loop is found by its assignment (RC-1) — test_fg_ai_roles_l2_fixes.py::test_t46_a_loop_end_*, test_fg_ai_roles_l2_reconcile.py::test_k4_*
+# (T) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference; an assigned attempt's loop is found by its assignment (RC-1) — test_fg_ai_roles_l2_fixes.py::test_t46_a_loop_end_*, test_fg_ai_roles_l2_reconcile.py::test_k4_*
 
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature review start (G-9) — test_fg_ai_roles_l2_review.py::test_g9_*
+# (T) pre-feature contract: the project default reviewer of the pre-feature review start (G-9) — test_fg_ai_roles_l2_review.py::test_g9_*
 
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference (RC-1 finds an assigned loop by its assignment) — test_fg_ai_roles_l2_fixes.py::test_rc1_a_lost_end_of_a_review_that_did_not_pass_*
+# (T) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference (RC-1 finds an assigned loop by its assignment) — test_fg_ai_roles_l2_fixes.py::test_rc1_a_lost_end_of_a_review_that_did_not_pass_*
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt resolves an unreadable count as wait_setup(store_error) at the stage start (L-2 §2.3/E-05)
+# (T) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt resolves an unreadable count as wait_setup(store_error) at the stage start (L-2 /E-05)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation (loop rows with no assignment); an assigned attempt: K-6 — test_fg_ai_roles_l2_fixes.py::test_k6_*
+# (T) pre-feature contract: review_result_unknown of the pre-feature reconciliation (loop rows with no assignment); an assigned attempt: K-6 — test_fg_ai_roles_l2_fixes.py::test_k6_*
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt's NO_REVIEW assignment decides (K-10)
+# (T) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt's NO_REVIEW assignment decides (K-10)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt: T §4.6 — test_fg_ai_roles_l2_fixes.py::test_t46_*
-
-
-
+# (T) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt: T — test_fg_ai_roles_l2_fixes.py::test_t46_*
 
 
 
-# ── B-3: a lost instruction stage end on an idle run (0006-TR rev0 review) ──
+
+
+
+# ── B-3: a lost instruction stage end on an idle run (TR review) ──
 
 def _run_status(env):
     row = _sql(env["db"], "SELECT status, idle_reason FROM graph_runs WHERE group_id = ? ORDER BY rowid DESC",
@@ -362,15 +362,15 @@ def _takes_its_result_stage_once(env, key, instruction):
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer and a loop row with no assignment reference; assigned: K-4 — test_fg_ai_roles_l2_reconcile.py::test_k4_*
+# (T) pre-feature contract: the project default reviewer and a loop row with no assignment reference; assigned: K-4 — test_fg_ai_roles_l2_reconcile.py::test_k4_*
 
 
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: instruction_review_count without instruction_review_ai asks the project default reviewer; an assigned attempt waits for setup (L-2 §2.8.2, G-9)
+# (T) pre-feature contract: instruction_review_count without instruction_review_ai asks the project default reviewer; an assigned attempt waits for setup (L-2, G-9)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature instruction review (L-2 §2.8.2); assigned: E-42 / E-13 — test_fg_ai_roles_l2_fixes.py::test_e13_*
+# (T) pre-feature contract: the project default reviewer of the pre-feature instruction review (L-2); assigned: E-42 / E-13 — test_fg_ai_roles_l2_fixes.py::test_e13_*
 
 
 
@@ -381,13 +381,13 @@ def _takes_its_result_stage_once(env, key, instruction):
 
 # ── B-6 removed by 0119 T-2: no person approves a card left by its review ────
 
-# 0113 T#3 (T §6.4) pre-feature contract: its passed-loop scene is a loop row with no assignment reference (pre-feature reconciliation)
+# (T) pre-feature contract: its passed-loop scene is a loop row with no assignment reference (pre-feature reconciliation)
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting, legacy_cards, pre_feature_attempts  # noqa: F401
 
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.

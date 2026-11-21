@@ -4,9 +4,9 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 
-// T0006 §6/§12: open/close, no backdrop, no focus trap, drag, resize, minimize/restore,
+// open/close, no backdrop, no focus trap, drag, resize, minimize/restore,
 // viewport boundary, background interaction stays live, bring-to-front. Teleported to
-// <body> (T0006 §6 decided this the same way Tooltip/Dropdown already do, to avoid
+// <body> (the earlier implementation decided this the same way Tooltip/Dropdown already do, to avoid
 // ancestor overflow/z-index fights — see the TR for the recorded reasoning).
 describe('components/ui/ModelessShell (T0006)', () => {
   afterEach(() => {
@@ -154,7 +154,7 @@ describe('components/ui/ModelessShell (T0006)', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0033 C1: an optional controlled `minimized` (v-model:minimized).
+  // C1: an optional controlled `minimized` (v-model:minimized).
   it('follows a controlled minimized prop and reports every toggle', async () => {
     const wrapper = mountPanel({ minimized: true })
     const panel = document.querySelector('.ui-modeless-panel') as HTMLElement
@@ -231,7 +231,7 @@ describe('components/ui/ModelessShell (T0006)', () => {
     second.unmount()
   })
 
-  // flowgate.v02.0088 F06: the shell's own controls are named in the app's current language (gui.common.*), follow a
+  // the shell's own controls are named in the app's current language (gui.common.*), follow a
   // switch while the window stays open, and an explicit label given by the caller wins over that default.
   describe('accessible names of the shell controls (F06)', () => {
     const setLocale = (locale: string) => {

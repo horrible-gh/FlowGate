@@ -1,4 +1,4 @@
-"""What one chat AI run changed: start/end tree snapshots, diff, file detail (D0006 §3.8).
+"""What one chat AI run changed: start/end tree snapshots, diff, file detail.
 
 Run changes are not Group changes. Group changes compare the group's scope floor with
 the current worktree; a run change compares the worktree content when ONE chat run
@@ -13,7 +13,7 @@ started with the content when it ended:
   next run's start tree, never to this run;
 * a group without a managed worktree, or a snapshot that fails, never fails the chat
   run: the run change is simply not recorded, a warning is logged and the run record
-  carries ``source_change_capture = unavailable`` with the reason (D0006 §3.8.1).
+  carries ``source_change_capture = unavailable`` with the reason.
 """
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ def public(row: dict) -> dict:
 
 
 def file_diff(doc_id: str, run_id: str, path: str) -> dict:
-    """Run-start / run-end content of one listed path, from the STORED trees (D0006 §3.8.3).
+    """Run-start / run-end content of one listed path, from the STORED trees.
 
     Same payload shape as the Group changes file diff so the existing viewer renders it.
     Only paths in the stored summary are readable; the current worktree is never used to

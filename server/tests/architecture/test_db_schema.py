@@ -91,7 +91,9 @@ def test_seed_permissions_count(db):
 
 
 def test_seed_document_types_count(db):
-    # The 22 legacy types include WP; migration 113 adds T2 and TR2.
+    # 21 seeded types + WP (work plan), added as a global system type by migration 078, are the
+    # 22 legacy types; migration 113 adds T2 and TR2
+    # (the type count assertion moves with the type).
     count = db.execute(
         "SELECT COUNT(*) FROM document_types WHERE project_id IS NULL AND is_system=1"
     ).fetchone()[0]
@@ -216,7 +218,7 @@ def test_v_tv_progress_view(db):
     ],
 )
 def test_work_plan_seed_contract_is_equivalent_in_all_dialects(dialect, idempotent_marker):
-    """Keep 078 semantically aligned; live engines are exercised by T0017 regression."""
+    """Keep 078 semantically aligned; live engines are exercised by the earlier implementation regression."""
     migration = (
         Path(__file__).resolve().parents[2]
         / "sql" / "migrations" / dialect / "078b_seed_work_plan_doctype.sql"

@@ -135,7 +135,7 @@ class TestSupersedeTransport0604(_Scenario):
         from modules.flow_gate.services.ai_invoke.runtime import _RESOLVE_TOOL_SCHEMA
 
         item = _RESOLVE_TOOL_SCHEMA["properties"]["files"]["items"]
-        # 0608 T0007: content OR chunks (resolve_conflicts 422s unless exactly one is sent)
+        # content OR chunks (resolve_conflicts 422s unless exactly one is sent)
         assert item["required"] == ["path"]
         assert item["properties"]["chunks"]["items"]["required"] == ["chunk", "content"]
         supersede = item["properties"]["supersede"]

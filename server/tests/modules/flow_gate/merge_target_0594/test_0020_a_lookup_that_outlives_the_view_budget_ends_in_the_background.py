@@ -52,7 +52,7 @@ from test_git_merge_target_0594 import (
 
 @needs_git
 def test_0020_a_lookup_that_outlives_the_view_budget_ends_in_the_background(proj, monkeypatch):
-    """flowgate.v02test.0020: a slow lookup used to be dropped at the 3 s budget and computed again from nothing by
+    """A slow lookup used to be dropped at the 3 s budget and computed again from nothing by
     every retry and refresh, so on a slow host the list never came. Now the view still answers ``timeout`` in its own
     budget, but the computation (real Git) ends in the background; the next plain read gets the list without
     computing again, and a save never waited for any of it."""

@@ -1,6 +1,6 @@
-"""0293 T0005 — one chat mention builder, and the provider slot's fill rule.
+"""one chat mention builder, and the provider slot's fill rule.
 
-R0001 asked to show WHICH AI answered a CH turn. NR0004 found the chat mention existed
+The review asked to show WHICH AI answered a CH turn. the review found the chat mention existed
 twice (Python + TypeScript) and that the invoke path builds its mention BEFORE the run
 picks a provider. These tests pin the two invariants that came out of that:
 
@@ -50,7 +50,7 @@ class TestChatWireScope:
         assert "chat" in token_routes._WIRE_SCOPES
 
     def test_chat_now_mints_its_own_append_only_grant(self):
-        # 0351: the conversation turn endpoints authorise on action_scope="chat", so the
+        # the conversation turn endpoints authorise on action_scope="chat", so the
         # token issued for a chat mention must carry that scope rather than borrowing an
         # edit grant. Minting "edit" here would 403 every worker that follows the mention.
         assert token_routes._WIRE_TOKEN_SCOPE["chat"] == "chat"

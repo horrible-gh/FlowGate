@@ -1,10 +1,10 @@
 """Run store: runs, policy snapshot entries, node runs, token map, run events, propagations.
 
 DB0010 T15~T20 (migration 144_graph_runs.sql), queries §4.4 / §4.5 Q-R8~Q-R15 and Q-W10~Q-W17.
-Every write here runs inside a Flow guard (L0009 §2.1). Conditional updates return the affected
+Every write here runs inside a Flow guard. Conditional updates return the affected
 row count; the caller asserts it (a mismatch is a rollback, DB0010 §5.2).
 
-flowgate.v02.0056 T#2 (migration 148_graph_node_run_stage.sql): an AI node run records the stage of its card
+(migration 148_graph_node_run_stage.sql): an AI node run records the stage of its card
 run (``stage``: ``instruction`` while its instruction AI writes the card's instruction, ``result`` while its
 run AI writes the node's result; NULL for a node no AI starts) and the instruction its result stage was
 given (``instruction_doc_id``). When the instruction stage ends (the move to the result stage, or the stage's
@@ -15,7 +15,7 @@ the dispatch token (NULL when mapped) the instruction stage once a registration 
 that stage (``mark_token_stage``). What an instruction token registered is never the node's result, whenever the
 registration is consumed (the inbox contacts the Graph before it consumes the token) or committed.
 
-flowgate.v02.0061 T#2 (migration 151_graph_run_state_attempts.sql): a run is ``running``, ``paused`` or ``idle``
+(migration 151_graph_run_state_attempts.sql): a run is ``running``, ``paused`` or ``idle``
 (``idle_reason``) and keeps its Flow (``active_group_id``) when it goes idle; it goes on with the next step / full
 command (``run_mode``, a step's targets in ``step_node_keys``). Rows written before are read as their new state
 (``_normalize``: completed -> idle (completed), stopped -> paused) and a conditional status update matches the old
@@ -45,7 +45,7 @@ IDLE_COMPLETED = "completed"
 _STORED_STATUS = {RUNNING: (RUNNING,), PAUSED: (PAUSED, "stopped"), IDLE: (IDLE, "completed")}
 _LEGACY_STATUS = {"stopped": (PAUSED, None), "completed": (IDLE, IDLE_COMPLETED)}
 ATTEMPT_ACTIVE, ATTEMPT_ENDED = "active", "ended"
-# 0064 T-B4d (DB0007 §2.2, 0062 L0006 1.1 MAP_KIND): the token map kinds; NULL is a mapping made before migration 154.
+# T-B4d (, the earlier implementation 1.1 MAP_KIND): the token map kinds; NULL is a mapping made before migration 154.
 MAP_DISPATCH, MAP_AI_START, MAP_ATTEMPT = "dispatch", "ai_start", "attempt"
 MAP_KINDS = (MAP_DISPATCH, MAP_AI_START, MAP_ATTEMPT)
 ATTEMPT_ID_PREFIX = "att_"
@@ -80,7 +80,7 @@ def _affected(sql: str, params: list) -> int:
 
 
 def _normalize(row: Optional[dict]) -> Optional[dict]:
-    """0061 T#2: a run row as its state now reads — a legacy status as its new one, no mode as ``full`` and the step
+    """a run row as its state now reads — a legacy status as its new one, no mode as ``full`` and the step
     targets as a list (None for a full command)."""
     if row is None:
         return None
@@ -102,7 +102,7 @@ def completed(run: Optional[dict]) -> bool:
 # ── Runs (T15) / policy snapshot (T16) ───────────────────────────────────────
 
 def active_run(flow_id: str) -> Optional[dict]:
-    """Q-R8: the run of the Flow — running, paused or idle (0061 T#2: an idle run keeps its Flow)."""
+    """Q-R8: the run of the Flow — running, paused or idle (an idle run keeps its Flow)."""
     if not available():
         return None
     return _normalize(_one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE active_group_id = ?", [flow_id]))
@@ -162,7 +162,7 @@ def create_run(run_id: str, flow_id: str, revision_no: int, by: Optional[str], s
 
     Excluded cards remain in the revision/projection without a node_run. Existing
     runs are not rewritten; completion independently ignores their excluded rows.
-    0061 T#2: the run starts running with the command ``mode``; a step's targets are set by its command.
+    the run starts running with the command ``mode``; a step's targets are set by its command.
     """
     targets = run_scope(revision).targets
     node_keys = [key for key in revision.node_keys() if key in targets]
@@ -194,7 +194,7 @@ def _expected(expected: str) -> tuple[str, list]:
 
 
 def set_run_status(run_id: str, expected: str, status: str, idle_reason: Optional[str] = None) -> int:
-    """Q-W17 (0061 T#2): pause (running -> paused), go on (paused / idle -> running), go idle (running -> idle with
+    """Q-W17: pause (running -> paused), go on (paused / idle -> running), go idle (running -> idle with
     ``idle_reason``). An idle run keeps its Flow (``active_group_id``); ``finished_at`` is when it went idle."""
     now = utc_now_ms()
     cond, stored = _expected(expected)
@@ -213,13 +213,13 @@ def set_run_status(run_id: str, expected: str, status: str, idle_reason: Optiona
 
 
 def set_idle_reason(run_id: str, idle_reason: str) -> int:
-    """0061 T#2: an idle run's reason after a node event while idle (an approval, a gate decision)."""
+    """an idle run's reason after a node event while idle (an approval, a gate decision)."""
     return _affected("UPDATE graph_runs SET idle_reason = ?, updated_at = ? WHERE run_id = ? AND status = 'idle'",
                      [idle_reason, utc_now_ms(), run_id])
 
 
 def set_run_command(run_id: str, mode: str, step_node_keys: Optional[list[str]]) -> int:
-    """0061 T#2: the command a running run goes on with — ``mode`` and a step's targets (None: no step targets
+    """the command a running run goes on with — ``mode`` and a step's targets (None: no step targets
     yet / a full command)."""
     keys = json.dumps(list(step_node_keys)) if step_node_keys is not None else None
     return _affected("UPDATE graph_runs SET run_mode = ?, step_node_keys = ?, updated_at = ? "
@@ -227,7 +227,7 @@ def set_run_command(run_id: str, mode: str, step_node_keys: Optional[list[str]])
 
 
 def claim_flow(run_id: str, flow_id: str) -> int:
-    """0061 T#2: a run written before migration 151 that completed gave its Flow up (``active_group_id`` NULL); going
+    """a run written before migration 151 that completed gave its Flow up (``active_group_id`` NULL); going
     on, it takes the Flow back — this run only; the unique ``idx_graph_runs_active`` keeps one run per Flow."""
     return _affected("UPDATE graph_runs SET active_group_id = ?, updated_at = ? "
                      "WHERE run_id = ? AND group_id = ? AND active_group_id IS NULL",
@@ -248,7 +248,7 @@ def node_run_by_result(run_id: str, doc_id: str) -> Optional[dict]:
 
 
 def set_root_bound(run_id: str, node_key: str, status: str, doc_id: str) -> int:
-    """L0009 §2.6.5 step 2: pending -> done | review with the bound root document, no dispatch."""
+    """step 2: pending -> done | review with the bound root document, no dispatch."""
     now = utc_now_ms()
     return _affected(
         "UPDATE graph_node_runs SET status = ?, result_doc_id = ?, root_bound = 1, opened_at = NULL, "
@@ -288,7 +288,7 @@ def open_node_run(run_id: str, node_key: str, dispatch: Optional[dict]) -> int:
 
 
 def set_dispatch(run_id: str, node_key: str, dispatch: Optional[dict]) -> int:
-    """Re-dispatch / AI start failure on an open node (L0009 §2.6.6 / §2.6.7 step 3)."""
+    """Re-dispatch / AI start failure on an open node (step 3)."""
     d = dispatch or {}
     return _affected(
         "UPDATE graph_node_runs SET dispatch_token_issued = ?, dispatch_issued_to = ?, dispatch_mention_id = ?, "
@@ -298,7 +298,7 @@ def set_dispatch(run_id: str, node_key: str, dispatch: Optional[dict]) -> int:
 
 
 def set_stage(run_id: str, node_key: str, stage: Optional[str], instruction_doc_id: Optional[str] = None) -> int:
-    """flowgate.v02.0056 T#2: the card run stage of a node run (dispatch, the instruction stage's target, the
+    """the card run stage of a node run (dispatch, the instruction stage's target, the
     move to the result stage). ``instruction_doc_id`` None keeps the recorded one."""
     doc_sql = "instruction_doc_id = ?, " if instruction_doc_id is not None else ""
     doc_params = [instruction_doc_id] if instruction_doc_id is not None else []
@@ -308,7 +308,7 @@ def set_stage(run_id: str, node_key: str, stage: Optional[str], instruction_doc_
 
 
 def mark_result_floor(run_id: str, node_key: str) -> int:
-    """flowgate.v02.0056 T#2: the end of the node's instruction stage, as a registration boundary — the last
+    """the end of the node's instruction stage, as a registration boundary — the last
     ``workflow_events`` id now (the inbox's ``token_consumed`` events are among them). A document the node's tokens
     registered at or before it was registered during the instruction stage and is never the node's result. The first
     boundary stays (a repeated end does not move it). It only sees registrations consumed by then: one still on its way
@@ -324,7 +324,7 @@ def _flag(dispatch: Optional[dict]) -> Optional[int]:
     return None if dispatch is None else (1 if dispatch.get("token_issued") else 0)
 
 
-# ── Node attempts (0061 T#2) ─────────────────────────────────────────────────
+# ── Node attempts ─────────────────────────────────────────────────
 
 def open_attempt(run_id: str, node_key: str, revision_no: int) -> str:
     """A node is opened: its new active attempt. A second active attempt of the node breaks the unique
@@ -403,7 +403,7 @@ def current_attempts(run_id: str) -> dict[str, str]:
 
 def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None, *, map_kind: str) -> None:
     """Q-W13 — after a successful issue, outside the dispatch savepoint. ``stage``: the card run stage an AI start's
-    token is minted for (flowgate.v02.0056 T#2); None for the node's dispatch token. 0061 T#2: the token is mapped
+    token is minted for; None for the node's dispatch token. the earlier implementation: the token is mapped
     to the node's active attempt (NULL for a node opened before migration 151). 0064 T-B4d (DB0007 §2.2.1, migration
     154): ``map_kind`` (required, no default) is written by the same INSERT and never changes; outside ``MAP_KINDS``
     it is refused before the INSERT, so a missed caller fails instead of writing a legacy NULL row."""
@@ -419,15 +419,15 @@ def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = 
 
 
 def mark_token_stage(token_id: str, stage: str) -> int:
-    """flowgate.v02.0056 T#2: a token mapped with no stage (the node's dispatch token) was spent in ``stage``. A
+    """a token mapped with no stage (the node's dispatch token) was spent in ``stage``. A
     token's stage, once recorded, stays."""
     return _affected("UPDATE graph_run_token_map SET stage = ? WHERE token_id = ? AND stage IS NULL", [stage, token_id])
 
 
 def authoring_token_map(group_id: str) -> dict[str, dict]:
-    """``{token_id: mapping}`` of the Flow's attempt-mapped new/edit tokens (0061 T#8 authorship).
+    """``{token_id: mapping}`` of the Flow's attempt-mapped new/edit tokens (authorship).
 
-    0061 #15: the scope is read from the tokens row while it exists, else from the
+    #15: the scope is read from the tokens row while it exists, else from the
     token's ``token_issued`` event (written in the same transaction as the row), so a
     token purged after expiry (``tokens.delete_expired``) still attributes its document.
     """
@@ -452,7 +452,7 @@ def authoring_token_map(group_id: str) -> dict[str, dict]:
 
 
 def registered_document_attempt(group_id: str, doc_id: str) -> Optional[dict]:
-    """0061 T#8: durable authorship, never inferred from the current node/run.
+    """durable authorship, never inferred from the current node/run.
 
     Keep ended/invalidated token mappings: approving history must not commit the
     group's unrelated work. Parse metadata in Python for all three SQL dialects.
@@ -482,7 +482,7 @@ def node_run_by_token(token_id: str) -> Optional[dict]:
 
 
 def token_ids(run_id: str, node_key: str, skip_stage: Optional[str] = None) -> list[str]:
-    """Q-R13, mapping order — without the tokens of ``skip_stage`` when it is given. 0061 T#7: never the tokens of
+    """Q-R13, mapping order — without the tokens of ``skip_stage`` when it is given. the earlier implementation: never the tokens of
     an invalidated attempt (a Stop, a lost lease, a failed worktree): a node opened again takes nothing of them."""
     stage_sql = " AND (stage IS NULL OR stage <> ?)" if skip_stage is not None else ""
     params = [run_id, node_key, *([skip_stage] if skip_stage is not None else [])]
@@ -494,7 +494,7 @@ def token_ids(run_id: str, node_key: str, skip_stage: Optional[str] = None) -> l
 
 
 def nodes_of_ai_runs(run_id: str, ai_run_ids: list[str]) -> set[str]:
-    """flowgate.v02.0063: the nodes of the run whose mapped tokens carry one of ``ai_run_ids`` (the AI runs that worked
+    """the nodes of the run whose mapped tokens carry one of ``ai_run_ids`` (the AI runs that worked
     for them)."""
     wanted = sorted({r for r in ai_run_ids if r})
     if not wanted or not available():
@@ -506,7 +506,7 @@ def nodes_of_ai_runs(run_id: str, ai_run_ids: list[str]) -> set[str]:
 
 
 def ai_runs_of_node(run_id: str, node_key: str) -> list[str]:
-    """flowgate.v02.0113 T#3 rework: the AI runs that worked for the node's live attempt, oldest first - the runs its
+    """the AI runs that worked for the node's live attempt, oldest first - the runs its
     mapped tokens carry (never an invalidated attempt's, as ``token_ids``) and its active attempt's executions."""
     if not available():
         return []
@@ -522,15 +522,15 @@ def ai_runs_of_node(run_id: str, node_key: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-# flowgate.v02.0113 0038-T T#3 B-6: the invalidation reason of an attempt replaced because its waiting stage's role
+# B-6: the invalidation reason of an attempt replaced because its waiting stage's role
 # changed. Its tokens are revoked, but what it registered (an instruction written and approved before the wait) is no
 # stale document: the new attempt and the card approval take it as the card's.
 REINTERPRET_REASON = "stage_reinterpret"
 
 
 def invalidated_token_ids(run_id: str, node_key: str) -> list[str]:
-    """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with.
-    0038-T T#3 B-6: not those of an attempt replaced by a reinterpretation (``REINTERPRET_REASON``)."""
+    """the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with.
+    B-6: not those of an attempt replaced by a reinterpretation (``REINTERPRET_REASON``)."""
     rows = _all("SELECT m.token_id FROM graph_run_token_map m JOIN graph_node_attempts a ON a.attempt_id = m.attempt_id "
                 "WHERE m.run_id = ? AND m.node_key = ? AND a.status = 'invalidated' "
                 "AND COALESCE(a.invalidated_reason, '') <> ? ORDER BY m.mapped_at, m.token_id",
@@ -563,7 +563,7 @@ def events(run_id: str) -> list[dict]:
 
 
 def last_node_event(run_id: str, node_key: str) -> Optional[dict]:
-    """flowgate.v02.0140 T#1-3: the latest event of one node (a node state event; run events carry no node key)."""
+    """the latest event of one node (a node state event; run events carry no node key)."""
     return _one("SELECT * FROM graph_run_events WHERE run_id = ? AND node_key = ? ORDER BY event_seq DESC LIMIT 1",
                 [run_id, node_key])
 
@@ -590,6 +590,6 @@ def propagations(run_id: str) -> list[dict]:
 
 
 def mark_propagation_done(run_id: str, seq: int) -> int:
-    """Q-W16: pending -> done once (L0009 E-35)."""
+    """Q-W16: pending -> done once."""
     return _affected("UPDATE graph_propagations SET status = 'done', done_at = ? "
                      "WHERE run_id = ? AND source_event_seq = ? AND status = 'pending'", [utc_now_ms(), run_id, seq])

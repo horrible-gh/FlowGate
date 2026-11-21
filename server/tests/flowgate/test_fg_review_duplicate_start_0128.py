@@ -1,4 +1,4 @@
-"""flowgate.v02.0128 T#1: duplicate review-loop starts preserve their assignment.
+"""duplicate review-loop starts preserve their assignment.
 
 Real SQLite assignments, ledger admission, replay and run-end contacts; only the AI
 launcher and the current revision's pass evidence are stand-ins. No AI is invoked.

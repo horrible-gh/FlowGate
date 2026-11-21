@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#1 — the document upload / download rules without a screen (0068 L §1.3, §2.12, §2.15, §4.3,
+ * the document upload / download rules without a screen (0068 L,,,,
  * §4.4): the parameters as L fixes them, the picked file check, the saved text (only a leading BOM dropped), the
  * error → notice keys, the download file name, and each button's availability with its tooltip (the L §2.15 table).
  */

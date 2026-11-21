@@ -1,16 +1,16 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Menu Bar (0001-R §3): 파일 | 편집 | 실행 | 보기 | 창 | 도움말,
+  <!-- flowgate.v02.0038 — Designer Menu Bar (0001-R §3): 파일 | 편집 | 실행 | View | Window | 도움말,
        no AI menu and no Save. A menu opens on click; while one is open, hovering another title
        switches to it. A choice, Escape or a press outside closes it. Arrow keys move between
        menus and items. Items emit commands (or the panel / tab / density / recent events) — the
        Shell connects what already has a target, the rest is the boundary for later Features.
-       No shortcut is shown next to any item (0007-T §7). flowgate.v02.0039 T#3 / v02.0043: item
+       No shortcut is shown next to any item. the earlier change the earlier implementation / v02.0043: item
        availability follows the `targets` the Shell reports (Project context, chosen Group, open
        Flow — designerTop.ts isMenuCommandEnabled / isSubmenuEnabled); the Window menu, Help and
        the menu titles themselves always open. flowgate.v02.0059 T#2: 편집 › 정렬 / 배치 is a submenu of the
        six 정렬 and two 균등 분배 commands (the Toolbar's 정렬 / 배치 ▾ lists the same); each needs enough
        selected cards (`targets.selectedCount`) and is shown unavailable otherwise.
-       flowgate.v02.0061 T#14: the Run menu follows the open Flow's run phase (`runPhase`) as the Toolbar does. -->
+       the Run menu follows the open Flow's run phase (`runPhase`) as the Toolbar does. -->
   <nav
     ref="root"
     class="designer-menubar"
@@ -203,13 +203,13 @@ import {
 
 withDefaults(
   defineProps<{
-    /** flowgate.v02.0061 T#14: the open Flow's run phase (the Run menu's availability). */
+    /** the open Flow's run phase (the Run menu's availability). */
     runPhase: DesignerRunPhase
     density: DesignerDensity
     windowState: DesignerWindowState
     /** Recent Project / Group / Flow entries, fed by the Shell (0043). */
     recent?: DesignerRecentLists
-    /** Project context / chosen Group / open Flow (0039 T#3, 0042, 0043). All true by default. */
+    /** Project context / chosen Group / open Flow. All true by default. */
     targets?: DesignerMenuTargets
   }>(),
   { recent: () => EMPTY_RECENT_LISTS, targets: () => ALL_MENU_TARGETS },

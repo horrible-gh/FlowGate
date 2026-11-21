@@ -1,7 +1,7 @@
 -- 074_test_run_cancel_status.sql
 -- flowgate.default.0358 T0004: add 'cancelling'/'cancelled' to test_runs.status so a
 -- user-initiated cancel is tracked distinctly from passed/failed and never mistaken for
--- an INFRA failure by the auto-recovery loop (NR0003 상태 어휘와 스키마 결정, option A).
+-- an INFRA failure by the auto-recovery loop (NR0003 status vocabulary and schema decision, option A).
 --
 -- SQLite CHECK constraints cannot be altered in place, so the table is rebuilt: every
 -- existing column (including 069's source_root/source_root_kind), the doc_id/tsr_doc_id

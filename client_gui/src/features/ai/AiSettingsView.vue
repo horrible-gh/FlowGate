@@ -95,7 +95,7 @@ const { t } = composer
 const route = useRoute()
 const router = useRouter()
 
-// AI 관리 (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
+// "AI 관리" (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
 // evaluations and the groups all belong to the system, not to a project.
 type TabKey = 'ai' | 'evaluation' | 'groups' | 'question-policy'
 const activeTab = ref<TabKey>('ai')
@@ -123,7 +123,7 @@ const activeProviders = computed<ProviderItem[]>(() =>
   systemProviders.value.filter((p) => p.enabled !== false)
 )
 
-// Links from before AI 관리 (overview / system-ai / my-ai / policy / providers) open the AI list.
+// Links from before "AI 관리" (overview / system-ai / my-ai / policy / providers) open the AI list.
 function parseTab(tabParam: unknown): TabKey {
   if (tabParam === 'evaluation' || tabParam === 'groups' || tabParam === 'question-policy') return tabParam
   return 'ai'

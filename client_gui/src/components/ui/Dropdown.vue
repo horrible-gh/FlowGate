@@ -10,9 +10,9 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free menu shell (T0004 §5.9): trigger + open/close + outside click + ESC +
+// Domain-free menu shell: trigger + open/close + outside click + ESC +
 // keyboard focus + a slot for menu item data. It never carries Project/Git/AI menu content
-// itself (T0004 §11) — the caller supplies that through the default slot. The menu is
+// itself — the caller supplies that through the default slot. The menu is
 // teleported to <body> and positioned from the trigger's measured rect for the same
 // clipping/z-index reasons as Tooltip.vue; Vue keeps this component's scope attribute on
 // teleported nodes, so `<style scoped>` still applies after the menu moves under <body>.

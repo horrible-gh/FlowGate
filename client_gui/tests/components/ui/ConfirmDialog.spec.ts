@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
-// T0006 §7/§12: confirm/cancel result, ESC, danger/normal tone, focus order, reuse of
+// confirm/cancel result, ESC, danger/normal tone, focus order, reuse of
 // the shared Button primitive. Rendered content is teleported (via ModalShell) to
 // <body>, so DOM assertions look there.
 describe('components/ui/ConfirmDialog (T0006)', () => {

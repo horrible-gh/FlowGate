@@ -1,4 +1,4 @@
-"""CORS default-value hardening (flowgate.default.0371 NR0007 §2 / T0008).
+"""CORS default-value hardening.
 
 ALLOWED_ORIGIN used to default to '*' across every deploy/setup path
 (docker-compose.yml, deploy/docker-entrypoint.sh, server/.env.sample,

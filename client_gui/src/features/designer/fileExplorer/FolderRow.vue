@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — folder row (0024-D §7.1): caret, folder icon, name and a
+// folder row: caret, folder icon, name and a
 // changed-descendant count. Expansion itself is owned by the container; this row only
 // reports the intent, so a collapsed folder still shows that something changed inside.
 import { useI18n } from 'vue-i18n'

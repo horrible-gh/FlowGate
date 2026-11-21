@@ -1,4 +1,4 @@
-"""Run admission (0501 NR0003 §12/§14 `admission.py`).
+"""Run admission (`admission.py`).
 
 One question: **may this AI run start, and with what?** Provider resolution and
 capability/pin checks, the group worktree guard, the group AI lease (acquire at start,
@@ -7,7 +7,7 @@ initialization, and `start_run` itself -- plus the per-hop policy `start_run` ne
 answer that question for a continuation hop: which provider this hop gets, which
 override/note applies to it, how long it may run, how many restarts it may spend.
 
-`start_run` knew all of this before too; NR0003 §14's point is that it knew it *mixed
+`start_run` knew all of this before too; the review's point is that it knew it *mixed
 into* the registry, the oracles and the worker. Those are now separate modules this one
 calls, so the file reads as one policy instead of a service prologue.
 """
@@ -86,7 +86,7 @@ from .runtime import (
 )
 
 
-# 2026-09-23 incident (flowgate.default.0594 / merge_id=100): a resolve_conflict mention
+# 2026-09-23 incident (merge_id=100): a resolve_conflict mention
 # duplicated every conflicted file's full content (chunks + raw_content) with no size cap,
 # reaching ~3.94M chars and getting fast_fail'd by every provider ("Prompt is too long" /
 # Codex's own 1,048,576-char input ceiling) only AFTER a token was spent launching each one.
@@ -96,7 +96,7 @@ from .runtime import (
 # limit, leaving headroom for the task/instruction sections built around the chunks.
 CONFLICT_MENTION_MAX_CHARS = 500_000
 
-# T0004 work item 6 / NR0003 finding 6: the worktree_unavailable 409 always went out in
+# work item 6 / the review: the worktree_unavailable 409 always went out in
 # Korean with no locale branch. It reuses the same locale-dictionary pattern as
 # remote_tool_service._ERROR_MESSAGES / _CUSTOM_ERROR_MESSAGES.
 _WORKTREE_UNAVAILABLE_COPY = {
@@ -118,7 +118,7 @@ _WORKTREE_UNAVAILABLE_COPY = {
     ),
 }
 
-# Found while reviewing T0004 (flagged by the generalised static guard): the
+# Found while reviewing the earlier implementation (flagged by the generalised static guard): the
 # run_id_collision 409 using the same _http_error helper was un-branched Korean too.
 # It reuses the continuation_locale already received in the same function (start_run).
 _RUN_ID_COLLISION_COPY = {
@@ -127,7 +127,7 @@ _RUN_ID_COLLISION_COPY = {
     "ja": "実行番号の発行が競合しました。もう一度お試しください。",
 }
 
-# 0515 T0009 §10.1: the invoke path unifies every handoff-gate loss (claim-less open()
+# the invoke path unifies every handoff-gate loss (claim-less open
 # failure, seal() failure, post-commit open() failure, and a commit that raises or comes
 # back ALREADY_CLEARED) behind this one code -- unlike the copy path (§9), which has three
 # distinct codes for its own three outcomes.
@@ -138,13 +138,13 @@ _GATE_LOST_MESSAGE = (
 
 
 def _abort_handoff(run: dict, reason: str) -> None:
-    """T0009 §10.2 cleanup: gate abort, ``_runs`` removal, lease release, CH token revoke.
+    """cleanup: gate abort, ``_runs`` removal, lease release, CH token revoke.
 
     Called ONLY by whichever side's ``HandoffGate.abort()`` call actually won the CAS
-    (T0009 §10.1) -- never speculatively by the loser of a race, so this does not need
+    -- never speculatively by the loser of a race, so this does not need
     to defend against being invoked twice by the SAME lost handoff. It is still written
-    defensively idempotent (§10.2 "watchdog/admission이 둘 다 호출할 수 있으므로
-    멱등이어야 한다"): every step here already tolerates being re-run (``dict.pop`` with
+    defensively idempotent (§10.2 "must be idempotent because both watchdog
+    and admission can call it"): every step here already tolerates being re-run (``dict.pop`` with
     a default, ``token_service.revoke`` is its own idempotent no-op on an already-revoked
     token, and ``HandoffGate.abort()`` itself is a harmless no-op once the state is
     already ABORT).
@@ -169,8 +169,8 @@ def _abort_handoff(run: dict, reason: str) -> None:
             logger.warning(
                 "lease release failed during gate-lost abort for run %s", run_id, exc_info=True
             )
-    # T0009 §10.2: "CH token revoke는 issue.source_access is not None 기준이다. edit
-    # token도 포함한다." -- re-read the token row rather than trust a stashed value, so
+    # "CH token revocation depends on issue.source_access is not None, including edit
+    # tokens." -- re-read the token row rather than trust a stashed value, so
     # this stays correct even if the run dict never carried source_access explicitly.
     token_id = run.get("token_id")
     if token_id:
@@ -210,7 +210,7 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
         return False
 
 
-# flowgate.default.0481 T0010 #1 — the ONE action_scope that has no group of its own.
+# #1 — the ONE action_scope that has no group of its own.
 # `resolve_base_dirty` works in the project's BASE checkout by design; `start_ai_invoke`
 # synthesizes `<project>.none.0000` purely so the run and lease rows have a key. Running the
 # two group-worktree gates below against that phantom group was never right: outside a merge
@@ -223,7 +223,7 @@ PROJECT_SCOPED_ACTION_SCOPES = frozenset({"resolve_base_dirty"})
 
 
 def _is_project_scoped_run(action_scope: Optional[str], merge_id: Optional[int] = None) -> bool:
-    """flowgate.default.0630 T0005: besides resolve_base_dirty, a resolve_conflict run for
+    """besides resolve_base_dirty, a resolve_conflict run for
     an ordinary Branch Manager merge (owner branch_merge) has no group either. It takes no
     group lease, demands no group worktree, and its token is minted group-less and bound
     to project + merge_id; the run keeps the synthetic `<project>.none.0000` key only as
@@ -241,14 +241,14 @@ def _require_group_worktree(
     action_scope: Optional[str] = None, merge_id: Optional[int] = None,
     graph_exec_id: Optional[str] = None,
 ):
-    """Refuse to launch a run that would execute in the base tree (0299 R0001).
+    """Refuse to launch a run that would execute in the base tree.
 
-    This is the root cause R0001 describes: AI workers sometimes work on the main branch
+    This is the root cause the requirement describes: AI workers sometimes work on the main branch
     instead of the one assigned to them. The remote CRUD endpoints have been gated since
-    0205 (remote_tool_service._resolve_root_for_mutation), but the invoked worker's
+    (remote_tool_service._resolve_root_for_mutation), but the invoked worker's
     *cwd* was not — it came from the fallback-first resolver, so a group whose
     worktree was missing got a CLI agent pointed straight at the base checkout, free
-    to edit files there with its own tools. The TR work-scope check (0299 D0004) catches
+    to edit files there with its own tools. The TR work-scope check catches
     afterwards, at report time; this closes it at the front, before any work happens.
 
     Same shape as the remote-write gate on purpose: one synchronous ensure_worktree
@@ -262,7 +262,7 @@ def _require_group_worktree(
         return
     # A project-scoped run works in the base checkout on purpose — there is no group
     # worktree to demand, and demanding one either invents a junk group or blocks the
-    # press outright (0481 T0010 #1).
+    # press outright.
     if _is_project_scoped_run(action_scope, merge_id):
         return
     try:
@@ -286,7 +286,7 @@ def _require_group_worktree(
         logger.warning("ensure_worktree retry failed for group %s", group_id, exc_info=True)
 
     # Still not there. Report WHY — "worktree unavailable" with no cause is what makes
-    # this class of incident unfixable after the fact (0280 NR0003 §4-B).
+    # this class of incident unfixable after the fact.
     try:
         state = db_git.get_state(group_id) or {}
         provision_error = state.get("provision_error")
@@ -310,7 +310,7 @@ def _require_group_worktree(
         group_id=group_id, cause=cause, provision_error=provision_error,
     )
 
-# flowgate.default.0511 T0004: the group worktree is synced to the current base
+# the group worktree is synced to the current base
 # HEAD exactly once, right before the group's FIRST raw source-capable AI
 # invocation ever uses it. "safe skip" reasons need no action from the caller;
 # anything else means the sync could not be trusted and the run must not launch.
@@ -341,7 +341,7 @@ _INITIAL_SOURCE_SYNC_FAILED_COPY = {
 def _worker_source_kind(token_rec: dict) -> str:
     """The raw tool_registry kind a worker token of this shape would receive.
 
-    T0004 §4/§7: this must be the RAW kind_for_token()/kind_for_step() result,
+    this must be the RAW kind_for_token/kind_for_step result,
     never resolve_registry()'s source_mode-adjusted advertising value — source
     mode gates advertising only and never gates permission, so a project on
     source_mode=local can still hand a worker real read/read_write source
@@ -361,21 +361,21 @@ def _ensure_initial_source_sync(
 ) -> None:
     """Force the group worktree to the current base HEAD exactly once, before
     the group's FIRST raw source-capable (read/read_write) AI invocation
-    (flowgate.default.0511 T0004). Same shape as _require_group_worktree above
+. Same shape as _require_group_worktree above
     on purpose: judge, delegate the actual git work, and block the run on any
     outcome that could not be trusted — nothing has been created yet (token,
     lease, scratch) when this raises, so the rollback stays trivial.
 
     A "none"-kind invocation (review/workflow_decide/chat/resolve_conflict/any
     other non new/edit scope) never consumes the sync — this call becomes a
-    cheap no-op for it (T0004 §5/§6/§31).
+    cheap no-op for it.
     """
     kind = _worker_source_kind({"action_scope": action_scope, "doc_ref": doc_ref})
     if kind not in {"read", "read_write"}:
         return
     # Same reason as _require_group_worktree above: there is no group worktree to sync for a
     # project-scoped run, and `resolve_base_dirty` is read_write so it would otherwise fall
-    # straight into this gate (0481 T0010 #1).
+    # straight into this gate.
     if _is_project_scoped_run(action_scope, merge_id):
         return
     result = git_service.ensure_initial_group_source_sync(project_id, module, group_id)
@@ -396,7 +396,7 @@ def _ensure_initial_source_sync(
 
 def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     """Give a dead lease's run a durable end record, if it doesn't already have one
-    (0401 NR0003 / T0004 items 1-2). A lease row alone (group/run/token/timestamps) has
+    (items 1-2). A lease row alone (group/run/token/timestamps) has
     no doc_ref or mode — both live on the token it was issued with — so this looks
     the token up. Best-effort: a run this cannot explain still gets its lease
     cleared by the caller either way, it just won't carry the extra explanation.
@@ -465,7 +465,7 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
 
 
 def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
-    """Best-effort revoke of a dead lease's still-active token (0447 T0007).
+    """Best-effort revoke of a dead lease's still-active token.
 
     A lease alone only blocks re-entry into the group; the `token_id` it was issued
     with is a separate credential that otherwise survives a restart until its own
@@ -480,7 +480,7 @@ def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     db/tokens.py directly) so the existing workflow_events.token_revoked audit
     contract is preserved, and that call is itself idempotent under a race --
     including a race against a sibling process, decided by the atomic claim
-    marker in db_tokens.revoke() rather than any in-process lock (0447 T0007
+    marker in db_tokens.revoke rather than any in-process lock (the earlier implementation
     review rev1).
     """
     token_id = lease_row.get("token_id")
@@ -521,7 +521,7 @@ def _startup_recover_graph_leases(held: frozenset = frozenset()) -> None:
     Stop) can fence/reset them without waiting for the heartbeat TTL. A run in
     this process's registry is never treated as a restart orphan.
 
-    flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a run whose remote Job is not settled
+    (step 2): a run whose remote Job is not settled
     (``held``) gets neither the end record nor the lease expiry; the remote supervisor
     resumes both once the Job is settled.
     """
@@ -533,7 +533,7 @@ def _startup_recover_graph_leases(held: frozenset = frozenset()) -> None:
         "WHERE e.status IN ('requested', 'running') AND e.ai_run_id IS NOT NULL", [])
     for row in rows:
         if ai_run_identity.foreign_run_id(row["ai_run_id"]):
-            continue  # 0139: a v0.1 run on the shared DB is never this process's orphan
+            continue  # a v0.1 run on the shared DB is never this process's orphan
         if _svc().get_run_record(row["ai_run_id"]) is not None:
             continue
         if row["ai_run_id"] in held:
@@ -552,7 +552,7 @@ def _recover_orphan_group_lease_row(row: dict) -> None:
         logger.warning(
             "orphaned-lease end record failed for run %s", row.get("run_id"), exc_info=True
         )
-    # Independent of the end-record write above (0447 T0007 item 2): a victim
+    # Independent of the end-record write above: a victim
     # whose run already has a normal end record -- e.g. the process died after
     # persisting ai_invoke_runs but before releasing the lease -- still carries
     # an active orphan token that must be reclaimed here.
@@ -620,7 +620,7 @@ def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
     if _svc().is_run_live(run_id):
         return "live_run"
     try:
-        # flowgate.v02test.0051 T0005: a loop parked at its hop boundary for its questions has no live run, lease or
+        # a loop parked at its hop boundary for its questions has no live run, lease or
         # hand-off by design; its open wait (attempt still active) owns it until the answers resume it.
         from flowgate.card_settings import question_loop_wait
         if question_loop_wait.owns(run_id):
@@ -786,7 +786,7 @@ def _startup_recover_orphan_review_loops(held, before, *, run_id=None,
 
 
 def resume_remote_held_recovery(run_id: str) -> list[dict]:
-    """flowgate.v02.0129 T#2 (D0005 §3-4 step 4): the restart recovery that was held for
+    """(step 4): the restart recovery that was held for
     ``run_id`` while its remote Job was alive, done now that the Job is settled.
 
     Group lease: released with the same restart end record and orphan token revoke the
@@ -814,7 +814,7 @@ def resume_remote_held_recovery(run_id: str) -> list[dict]:
 
 
 def startup_recover_leases() -> int:
-    """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 item 1).
+    """Reclaim AI-run leases orphaned by a server restart.
 
     Called once from ``server/startup.py``, before the app accepts traffic. Every
     lease still on the table at that instant is dead: this process's own ``_runs``
@@ -825,14 +825,14 @@ def startup_recover_leases() -> int:
     global _startup_recovery_before
     before = now_iso()
     _startup_recovery_before = before
-    # flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a run whose remote Job is not settled
+    # (step 2): a run whose remote Job is not settled
     # keeps its leases (held); unknown holds keep every lease rather than free a live one.
     held = _restart_held_run_ids()
     if held is None:
         logger.warning("[ai_invoke] startup lease reclaim skipped: remote Job holds unknown")
         victims = []
     else:
-        # 0139: v0.1 (aiv_) leases on the shared table are live v0.1 runs, not our orphans.
+        # v0.1 (aiv_) leases on the shared table are live v0.1 runs, not our orphans.
         victims = db_group_ai_leases.reclaim_orphaned(
             before, keep_run_ids=held,
             owns_run_id=lambda run_id: not ai_run_identity.foreign_run_id(run_id))
@@ -840,13 +840,13 @@ def startup_recover_leases() -> int:
         _recover_orphan_group_lease_row(row)
     if victims:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
-    # 0406 T0022 work item 4: the same startup also recovers hop handoffs that were cut
+    # work item 4: the same startup also recovers hop handoffs that were cut
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
     if held is not None:
         _startup_recover_graph_leases(held)
         _startup_recover_orphan_review_loops(held, before)
     _svc().startup_recover_handoffs()
-    # 0661 T0004 F3: question items whose AI responder died with the previous process
+    # question items whose AI responder died with the previous process
     # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a
     # 'dispatched' claim that would refuse the next dispatch forever.
     try:
@@ -859,7 +859,7 @@ def startup_recover_leases() -> int:
 
 
 def force_release_group_lease(group_id: str) -> dict:
-    """Manually release a group's lease from the blocked screen (0401 T0004 item 2).
+    """Manually release a group's lease from the blocked screen.
 
     Refuses (and leaves the lease untouched) when the lease's run is still live —
     the same :func:`is_run_live` gate everything else uses, so this can never cut
@@ -890,14 +890,14 @@ def _continuation_docs_target(
     *,
     pending_only: bool = True,
     continuation_instruction_mode: Optional[str] = None,
-    # 0352 T0004 §3.5: only the N/T item_seqs the ai_direct chain selected for server
+    # only the N/T item_seqs the ai_direct chain selected for server
     # auto-handling are excluded from the worker's document count — an unselected ai_direct
     # N/T is still a real worker document and must stay counted.
     continuation_auto_approve_item_seqs: Optional[list] = None,
     _sequence: Optional[dict] = None,
     _items: Optional[list[dict]] = None,
 ) -> Optional[int]:
-    """docs_target in the workflow item_seq coordinate system (0226 B0001 / NR0003 §5-1).
+    """docs_target in the workflow item_seq coordinate system.
 
     ``continuation_target_seq`` lives in the workflow-sequence item_seq space, which is
     unrelated to the group document seq space (item_seq turns sparse after
@@ -907,7 +907,7 @@ def _continuation_docs_target(
     to the target that will land as worker-visible documents. In ``auto_approved``, N/T
     instruction heads are server-created drafts and remain excluded; in ``ai_direct``
     they are independent worker documents and are counted UNLESS the chain selected that
-    exact item_seq for server auto-handling (0353 B0001 / NR0003 §8; 0352 T0004 §2).
+    exact item_seq for server auto-handling.
 
     ``pending_only=True`` counts only unrealized slots (start-of-run admission).
     The to-end resolution paths pass False: the whole freshly-decided sequence is the
@@ -951,14 +951,14 @@ def _continuation_docs_target(
     return count
 
 
-# ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
+# ── Start ───────────────────────────────────────────────────────
 
 def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> dict:
     """Safe effective-provider view for ordinary document readers. The default is the
-    caller's own default AI when this project can run it (flowgate.v02.0017 CH0006 (3))."""
+    caller's own default AI when this project can run it (the earlier change the discussion )."""
     effective = (ai_settings_service.resolve_effective(project_id, user_id) if user_id
                  else ai_settings_service.resolve_effective(project_id))
-    # flowgate.v02.0129 CH0012: the caller's own runnable (remote CLI, Agent-assigned) AI are
+    # the caller's own runnable (remote CLI, Agent-assigned) AI are
     # offered after the system AI -- the chat composer, card settings and start dialogs all
     # read this list. The caller's default may be one of them.
     personal = ai_settings_service.personal_selectable(user_id)
@@ -971,7 +971,7 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
         "providers": [oracle._provider_brief(provider) for provider in providers],
         "default_provider_id": (ai_settings_service.personal_default_id(user_id, personal)
                                 or effective.get("default_provider_id")),
-        # flowgate.default.0490 T0005 §3.5: the only metadata endpoint every execution
+        # the only metadata endpoint every execution
         # dialog already calls, so this is the SSOT for the client-side max/min instead of
         # a screen fetching /system/settings (system.settings.manage-gated, out of reach
         # for an ordinary document reader).
@@ -982,7 +982,7 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
 def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) -> Optional[str]:
     """The provider name a mention may claim, or None when it must not claim one.
 
-    0293 NR0004 finding 5: the worker mention is built BEFORE the run picks a provider, and
+    the worker mention is built BEFORE the run picks a provider, and
     `_worker` may fall through the whole chain. Naming chain[0] in the mention would
     therefore be a guess that reads like a server-confirmed fact. A name is only
     returned when the effective chain collapses to exactly ONE provider — an explicit
@@ -1014,13 +1014,13 @@ def _record_lease_admission_rejected(
     active: dict, handoff_allowed: bool, admission_stage: str,
     requested_run_id: Optional[str] = None,
 ) -> None:
-    """Durable snapshot of a 409 `run_in_progress` rejection (flowgate.default.0502
-    T0004 §5/§18) -- the requested/blocking identity a future forensic reconstruction
+    """Durable snapshot of a 409 `run_in_progress` rejection (the earlier change
+    ) -- the requested/blocking identity a future forensic reconstruction
     needs, taken from data `start_run` already holds so this adds no new lookups.
-    Best-effort (T0004 §10): a write failure here must never turn this 409 into
+    Best-effort: a write failure here must never turn this 409 into
     anything else, so this only logs a warning and lets the caller's raise proceed.
 
-    ``requested_run_id`` (T0004 §5/§23(1)-(2)): the acquire_race stage already minted a
+    ``requested_run_id`` (the earlier implementation-): the acquire_race stage already minted a
     run_id (db_group_ai_leases.acquire()'s losing candidate) before this rejection fires,
     so it is known and must be reconstructible from the durable event. pre_acquire fires
     before any run_id is minted, so it always passes None here -- that stays NULL by design,
@@ -1028,24 +1028,24 @@ def _record_lease_admission_rejected(
 
     ``requested_token_id`` is always NULL: `start_run` mints its token AFTER a lease is
     successfully acquired (never before), so no requesting token exists yet at either
-    rejection stage. The key is still present (T0004 §5 lists it as a minimum field) so a
+    rejection stage. The key is still present (lists it as a minimum field) so a
     reader never has to guess whether it was omitted or genuinely absent.
 
-    Provider identity (T0004 §5 "있다면", §15 allows provider_id/provider_name): the
+    Provider identity ("if available", allows provider_id/provider_name): the
     requesting side already has its resolved provider_id in the ``provider_id`` argument,
     so its name is resolved the same way `resolve_pinned_provider_name` names a mention
     (chain lookup by id). The blocking side has no provider_id on the lease row itself --
     only `token_id` -- so it is looked up one hop further via the blocking token's stored
     provider_id (0164 DB0005 `tokens.provider_id`). Either lookup failing (deleted token,
     provider no longer in the effective chain) leaves the *_provider_name NULL rather than
-    guessing -- T0004 §6 forbids inventing values that no longer exist.
+    guessing -- the earlier implementation forbids inventing values that no longer exist.
 
     Both call sites fire outside any DB transaction (`acquire()`'s transaction has
     already closed by then), but the append is still routed through
     `db_connection.after_commit` for the same reason `group_ai_leases._append_event`
     is: inside a PostgreSQL transaction a failed forensic INSERT aborts the whole
     transaction, so catching its exception would not be enough to keep the caller's
-    own outcome intact (T0004 §10).
+    own outcome intact.
     """
     def _write() -> None:
         _write_lease_admission_rejected(
@@ -1077,7 +1077,7 @@ def _write_lease_admission_rejected(
         if blocking_token_id:
             # Best-effort, like resolve_pinned_provider_name above: this is enrichment on
             # top of the required event, so a token-store lookup failure must not cost the
-            # durable rejection event itself (T0004 SS10).
+            # durable rejection event itself.
             try:
                 blocking_token_row = db_tokens.get_by_id(blocking_token_id)
             except Exception:  # noqa: BLE001
@@ -1126,7 +1126,7 @@ def _write_lease_admission_rejected(
 
 
 def _refuse_frozen_group(group_id: str) -> None:
-    """0669 unit 6b (0666 D 3.7, L 2.10 ai_run_start): a Group frozen for a final
+    """unit 6b (D 3.7, L 2.10 ai_run_start): a Group frozen for a final
     approval (freeze claim from F1 until the approval commits or is released) starts
     no AI run. Judged on the durable claim; a claim that cannot be read refuses too."""
     from modules.flow_gate.db import operation_job as db_jobs
@@ -1156,7 +1156,7 @@ def _register_run(run: dict, chain: list[dict]) -> None:
         required.update(pid for pid in (loop.get("reviewer_provider_id"),
                                        loop.get("rework_provider_id")) if pid)
         for pid in sorted(required):
-            # flowgate.v02.0129 CH0012: a system row, or the requester's own row -- never
+            # a system row, or the requester's own row -- never
             # another user's AI (approved (B): refused, not replaced).
             row = ai_providers.get_runnable_row(pid, run.get("issued_to"))
             if row is None or not row.get("enabled"):
@@ -1188,7 +1188,7 @@ def _register_run(run: dict, chain: list[dict]) -> None:
 def _bind_review_loop_first_hop(run: dict, *, holds_group_lease: bool) -> None:
     """Bind a document review loop's FIRST token to the run's register context.
 
-    flowgate.v02.0136 T0004 T#1 (NR0003 rev2 §6.2-1). A review loop keeps
+    A review loop keeps
     run["action_scope"] at the loop's start scope ("review") -- the scope oracle, the
     completion oracle and the retry gates read it -- while its first token is whatever the
     stage-aware issue_builder minted for the starting stage: review, or edit when the loop
@@ -1200,7 +1200,7 @@ def _bind_review_loop_first_hop(run: dict, *, holds_group_lease: bool) -> None:
     its only initialization point: register_context and current_token_id move to the first
     token here, run["action_scope"] stays untouched.
 
-    The loop's target document is pinned (T0004 §2-4): a first token naming another document
+    The loop's target document is pinned: a first token naming another document
     of the same project/group is refused like one outside the group, never adopted.
 
     The group lease moves with the token (rejection rej_01M6Q2T0KPHYGK8M finding 1). start_run
@@ -1308,31 +1308,31 @@ def start_run(
     # Internal Q-answer policy only: bounded independent startup candidates and an
     # item-owner CAS probe. Ordinary explicit provider choices stay single-provider.
     responder_startup_policy: Optional[dict] = None,
-    # 0317 T0010 rev4: item_seq (as str, JSON-body keys) -> provider_id, chosen in
+    # item_seq (as str, JSON-body keys) -> provider_id, chosen in
     # ContinuousWorkDialog's per-step override table. Session-scoped — this run's start
-    # request is the only place it lives; never persisted (T0010 Q&A: session-scoped o1).
+    # request is the only place it lives; never persisted (Q&A: session-scoped o1).
     continuation_provider_overrides: Optional[dict] = None,
-    # 0346 T0005: handoff-note tab values — a common note for every hop and/or item_seq -> note
-    # overrides for individual hops. Never persisted (D0004 §4: session-scoped, like the
+    # handoff-note tab values — a common note for every hop and/or item_seq -> note
+    # overrides for individual hops. Never persisted (the design: session-scoped, like the
     # provider overrides above).
     continuation_default_note: Optional[str] = None,
     continuation_note_overrides: Optional[dict] = None,
-    # 0357 T0004: an unmanned continuous chain is made of a fresh run per hop.
+    # an unmanned continuous chain is made of a fresh run per hop.
     # These internal handoff values keep display progress at chain lifetime while
     # docs_target/docs_reached retain their existing per-run judging semantics.
     chain_id: Optional[str] = None,
     chain_docs_target: Optional[int] = None,
     chain_docs_reached: Optional[int] = None,
-    # 0352 T0004 §3.5: the ai_direct chain's per-item_seq N/T auto-approve selection. Rides
+    # the ai_direct chain's per-item_seq N/T auto-approve selection. Rides
     # the run (session-scoped, like the provider/note overrides above) so every hop's
     # provider resolution / docs_target counting / worker item_seq folding agrees with the
     # SAME selection the user made once at the start of the chain.
     continuation_auto_approve_item_seqs: Optional[list] = None,
-    # flowgate.default.0400 M0005 + 0446 T0010 §3-1: THIS RUN's wall-clock budget in seconds,
+    # + the earlier implementation: THIS RUN's wall-clock budget in seconds,
     # picked either in ContinuousWorkDialog's duration section (a continuous hop) or in
     # AiInvokeDialog's time section (a single rejection rework). The `continuation_` prefix is
     # a misnomer kept on purpose — renaming it would move a route field, this argument, an
-    # ai_invoke_paused_chains column and a client prop at once, which T0010 §3-1 rules out of
+    # ai_invoke_paused_chains column and a client prop at once, which the earlier implementation rules out of
     # scope. Read it as "the run's budget pick", not as "continuous only".
     # Session-scoped like the provider/note overrides above — never persisted outside the
     # paused-chain row a continuous pause snapshots it into. None (or a value outside
@@ -1344,14 +1344,14 @@ def start_run(
     # Session-scoped like the fields above; None or an unrecognized value falls back to
     # RESTART_MAX_ATTEMPTS_DEFAULT.
     continuation_restart_max_attempts: Optional[int] = None,
-    # flowgate.v02.0053 T#2: a Graph node's card setting (restarts) for its single 'new' run --
+    # a Graph node's card setting (restarts) for its single 'new' run --
     # the no-output restarts on the SAME provider, resolved exactly like the continuous pick
     # above. None (every other caller) keeps a single run one-shot, as before.
     node_restart_max_attempts: Optional[int] = None,
     graph_exec_id: Optional[str] = None,
     graph_attempt_id: Optional[str] = None,
-    # flowgate.v02.0113 T#3 (P-1 §7.2): a card call's origin (purpose, role, assignment target) kept on the run memory
-    # for the role invocation record (T#4). Internal only; no route passes it.
+    # (P-1): a card call's origin (purpose, role, assignment target) kept on the run memory
+    # for the role invocation record. Internal only; no route passes it.
     invocation_origin: Optional[dict] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
@@ -1365,22 +1365,22 @@ def start_run(
     review_intent: Optional[str] = None,
     # A single-request acknowledgement. It is intentionally never persisted or forwarded.
     capability_warning_ack: Optional[bool] = None,
-    # flowgate.v02test.0030: a chat call's own account of how the browser picked provider_id
+    # a chat call's own account of how the browser picked provider_id
     # (user_pick / stored / last_answered / default_fallback; validated by the route). Recorded
     # on the run only -- provider selection never reads it.
     client_provider_origin: Optional[str] = None,
-    # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful for
+    # only meaningful for
     # action_scope="resolve_conflict" — whether THIS hop is the merge review's
     # explicit [수정 적용] conversation turn (vs. the ordinary resolve/[반려] retry/
     # propose-only question runs that share the same action_scope), and whether
     # the human additionally chose [테스트 편집 포함 재지시]. Both ride the run the
     # same way merge_id already does (never persisted outside this row), and are
-    # the run-start half of the bound write-plan contract (Q&A on 0009-TR) — the
+    # the run-start half of the bound write-plan contract (Q&A on the earlier implementation) — the
     # other half, `write_plan` itself, arrives later via `record_run_write_plan`
     # once the worker's write-plan submission endpoint is called.
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
-    # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
+    # work / review / rework. A review or rework hop makes no document, so
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
     hop_kind: str = WORK_HOP_KIND,
@@ -1425,7 +1425,7 @@ def start_run(
                 claim=claim,
             )
     requested_continuation_instruction_mode = continuation_instruction_mode
-    # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
+    # stage selection precedes provider-chain selection. In particular,
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
     graph_loop_state = None
     author_revision = False
@@ -1440,7 +1440,7 @@ def start_run(
             initial_stage = (
                 REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
             )
-        # flowgate.v02.0083 WP-4: a loop with no rework AI (its author revises) is refused in rework and stores its
+        # WP-4: a loop with no rework AI (its author revises) is refused in rework and stores its
         # reviewer in the row's rework column; the run carries the fact for its checkpoints (``review_loop_author_revision``).
         author_revision = review.admit_author_revision_loop(document_review_loop, initial_stage)
         provider_id = review.resolve_loop_provider(document_review_loop, initial_stage)
@@ -1452,7 +1452,7 @@ def start_run(
         continuation_auto_approve_item_seqs
     )
     effective = ai_settings_service.resolve_effective(project_id)
-    # flowgate.v02.0129 CH0012: explicit choices may name the requester's own runnable AI;
+    # explicit choices may name the requester's own runnable AI;
     # the unpinned fallback chain below is narrowed back to system AI.
     try:
         personal = ai_settings_service.personal_selectable(issued_to)
@@ -1465,7 +1465,7 @@ def start_run(
     selected_provider_source = (
         "review_loop" if document_review_loop is not None else "project_default"
     )
-    # A per-step override names this exact hop and remains the highest tier. 0435 T0004
+    # A per-step override names this exact hop and remains the highest tier. the earlier implementation
     # deliberately removes every startup fallback tail from an explicit choice: a provider
     # that cannot start fails visibly instead of silently switching to a more expensive one.
     step_override_provider = None
@@ -1527,7 +1527,7 @@ def start_run(
                 stored_provider_id, doc_ref, stored_provider_item_seq,
                 invocation_origin, graph_exec_id,
             )
-        # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
+        # An unpinned run still follows the persisted sequence assignment.
         selected = next(
             (provider for provider in chain if provider.get("id") == stored_provider_id),
             None,
@@ -1565,7 +1565,7 @@ def start_run(
         # No tier named a provider: this is the fallback chain, which stays system AI only.
         chain = [p for p in chain if p.get("owner_scope") != "user"]
     if not chain:
-        # 0292 T0003: "no provider was ever registered" used to be indistinguishable
+        # "no provider was ever registered" used to be indistinguishable
         # from "the registered ones are all switched off" — both read as
         # no_enabled_provider, and the operator of a fresh install was sent to a
         # settings screen to toggle rows that do not exist. An install that skipped
@@ -1611,7 +1611,7 @@ def start_run(
         if mode == "continuous" or capability_warning_ack is not True:
             raise HTTPException(status_code=422, detail=detail)
 
-    # 0481 T0010 rev6 (rejection 1-2) - a PROJECT-scoped run has no group of its own, so it
+    # (rejection 1-2) - a PROJECT-scoped run has no group of its own, so it
     # must not take a GROUP lease. `group_ai_leases.group_id` is a foreign key into `groups`
     # and the synthetic `<project>.none.0000` key has no row there, so the INSERT below died
     # with `FOREIGN KEY constraint failed` on every live press. `start_ai_invoke` does not
@@ -1665,7 +1665,7 @@ def start_run(
         run_id = _svc()._next_run_id()
         claim_identity()
         graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
-    # 0299 R0001: refuse before minting a token / creating scratch — a run that would
+    # refuse before minting a token / creating scratch — a run that would
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
     # fallback-branch hint; the guard itself is about the group worktree.
@@ -1677,7 +1677,7 @@ def start_run(
         **({"graph_exec_id": graph_exec_id} if graph_exec_id else {}),
         **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
-    # flowgate.default.0511 T0004: force the group worktree to the current
+    # force the group worktree to the current
     # configured base HEAD exactly once, before the group's FIRST raw
     # source-capable (read/read_write) AI invocation ever uses it. Placed here
     # — after the worktree is confirmed to exist, before any token/lease is
@@ -1702,7 +1702,7 @@ def start_run(
     elif action_scope in ("workflow_decide", "resolve_conflict"):
         docs_target = 0
     elif mode == "continuous" and continuation_review_mode:
-        # NR0003 follow-up proposal 2: review mode is the pre-flight Q-registration phase —
+        # follow-up proposal 2: review mode is the pre-flight Q-registration phase —
         # mention_service._CONTINUOUS_REVIEW_TEXT tells the worker NOT to create the next
         # document, so a review-mode hop that only registers a Q (or the "no blockers" ack
         # Q) always reaches this doc_ref with docs_reached=0. Targeting >=1 document made
@@ -1712,13 +1712,13 @@ def start_run(
         # scopes above, judges it "complete" on 0 reached and never opens a retry.
         docs_target = 0
     elif scope_oracle_run:
-        # 0259 B0001: this scope's token cannot register a document, so targeting one made
+        # this scope's token cannot register a document, so targeting one made
         # success unreachable. Its default scope oracle is built below (it needs the token).
         docs_target = 0
     elif mode == "single":
         docs_target = 1
     else:
-        # 0226 B0001 / NR0003 §5-1: the target is a workflow item_seq, never a group
+        # the target is a workflow item_seq, never a group
         # document seq — derive docs_target from the sequence's pending worker items.
         target = int(continuation_target_seq or 0)
         resolved_target = _continuation_docs_target(
@@ -1761,7 +1761,7 @@ def start_run(
                 worker_identity=issued_to,
             )
         except db_group_ai_leases.RunIdCollision:
-            # 0401 NR0003 §4 / T0004 work item 7: two runs minted the same today-serial in the
+            # work item 7: two runs minted the same today-serial in the
             # instant -- genuinely rare even without the floor in _next_run_id, and that floor
             # makes it rarer still. One retry with a freshly minted id is enough for something
             # this rare; a second hit is a real systemic problem, so it surfaces as a clean
@@ -1785,7 +1785,7 @@ def start_run(
                     _RUN_ID_COLLISION_COPY[template_provision.normalize_locale(continuation_locale)],
                 )
         if lease is None or lease.get("run_id") != run_id:
-            # T0004 rev2: acquire() itself already captured the blocking row at the exact
+            # acquire itself already captured the blocking row at the exact
             # instant it decided to conflict -- reuse THAT snapshot instead of calling
             # get_active() here, which runs its own recover_expired() sweep and can reclaim
             # (and null out) the very blocker lease in the window between acquire()'s
@@ -1841,20 +1841,20 @@ def start_run(
                 )
 
         if document_review_loop is not None and issue_builder is not None:
-            # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
+            # tell the (possibly stage-aware) issue_builder which stage this hop is —
             # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
             # not a review-scoped one. See the matching comment on ai_invoke_routes._issue_review.
             issue_builder.loop_stage = initial_stage
         if issue_builder is not None:
-            # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
-            # ai_run_id. NR0003 §4 measured 1,346 continuous tokens with an EMPTY ai_run_id — every
+            # hand the run identity to the builder so the token it mints carries
+            # ai_run_id. the review measured 1,346 continuous tokens with an EMPTY ai_run_id — every
             # one of them was issued through this branch, which never passed it, so there was no
             # bridge from a dead hop's token back to the run that died. Builders that do not accept
             # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
             try:
                 issue = _call_issue_builder(issue_builder, run_id)
             except work_plan_attachment_service.PreInstructionAttachmentError as exc:
-                # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
+                # a rework issue_builder (issue_rework_request) already revoked
                 # the token it minted before re-raising — this only has the group lease left to
                 # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
                 if not project_scoped and not graph_exec_id:
@@ -1867,7 +1867,7 @@ def start_run(
                     source_doc_id=exc.source_doc_id,
                 )
             except HTTPException:
-                # 0661 T0004 (review rej_01M4HRWSVP3M0BSH finding 3): a builder may refuse the
+                # (review rej_01M4HRWSVP3M0BSH finding 3): a builder may refuse the
                 # run before minting anything — the Q responder builder does when its durable
                 # item claim fails (a person answered first). Nothing was issued, so only the
                 # group lease acquired above has to be given back before the refusal surfaces.
@@ -1892,7 +1892,7 @@ def start_run(
                 continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
                 continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
                 continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
-                # 0578 T0006 §3 work item 3-4: a merge-review conversation run is `single`, so this
+                # work item 3-4: a merge-review conversation run is `single`, so this
                 # dropped the language the reviewer started the turn in and the worker's help /
                 # tool prose came back in the server default. Only the LOCALE widens -- the other
                 # continuation_* fields stay continuous-only, because they describe a chain hop
@@ -1982,14 +1982,14 @@ def start_run(
                     logger.warning("admission lease rollback failed run_id=%s group_id=%s",
                                    run_id, group_id, exc_info=True)
         raise
-    # 0346 T0005 §2-5 / D0004 §3-3: the handoff-note tab's common note and/or this hop's
+    # the handoff-note tab's common note and/or this hop's
     # individual note are prepended here, at the single point every hop's prompt (built by
     # whichever of the three builders ran above) has already converged into one string — see
-    # D0004 §3-4 for why the builders themselves are never touched. Unlike the provider
-    # override, an individual note does NOT replace the common one: D0004 §3-3 treats them as
+    # for why the builders themselves are never touched. Unlike the provider
+    # override, an individual note does NOT replace the common one: the design treats them as
     # stackable ("what this is for" + "what you take on"), so both are adopted when present.
     # A resolution failure must not stall the hop (same contract as the provider override).
-    # 0406 T0022 work item 5: where this hop's user message came from, and what the final
+    # work item 5: where this hop's user message came from, and what the final
     # prompt became, ride on the run. The text is not kept — only kind, length and hash.
     message_image_context = getattr(mention, "image_context", None)
     prompt_audit: dict = {
@@ -2012,7 +2012,7 @@ def start_run(
                 audit=prompt_audit,
             )
         except work_plan_attachment_service.PreInstructionAttachmentError as exc:
-            # 0554 T0014 §5: a stored pre-instruction attachment that no longer validates
+            # a stored pre-instruction attachment that no longer validates
             # must stop the hop before the AI is invoked — same fail-closed shape as
             # mention_unavailable above, reusing its exact token+lease cleanup.
             try:
@@ -2032,7 +2032,7 @@ def start_run(
                 "WorkPlan pre-instruction attachment is not valid for this step.",
                 source_doc_id=exc.source_doc_id,
             )
-    # flowgate.v02.0137 T0004 §3-4 (R3): a follow-up run on the same document after a run
+    # (R3): a follow-up run on the same document after a run
     # that left a retained scratch gets that run's drafts COPIED into its own token scratch
     # (and a prompt note), after every ownership / time cross-check in carryover.py. Before
     # the digest below, so the audit hash matches what the worker actually reads.
@@ -2049,17 +2049,17 @@ def start_run(
     if scope_oracle_run:
         # After issue() (the judge target comes from the token) but before the worker is
         # launched below, so the baseline cannot include the work this run is about to do.
-        # flowgate.v02.0137 T0004 §2-4: a review loop's first hop is judged by ITS stage's
+        # a review loop's first hop is judged by ITS stage's
         # scope (review rows / document revision), which is the admission scope for every
         # loop the UI starts today; the worker re-makes the judge at each later hop.
         if document_review_loop is not None:
             oracle_scope = oracle.loop_stage_oracle_scope(initial_stage, action_scope)
         completion_oracle = oracle._scope_oracle(oracle_scope, issue.get("token_id"), doc_ref)
 
-    # 0090 T0015 (NR0014 2.6): the retained-scratch sweep runs on its own thread; a
+    # the retained-scratch sweep runs on its own thread; a
     # request -- or the bootstrap's Graph recovery replay -- never waits for a backlog.
     _svc().request_run_scratch_sweep(project_id)
-    # 0357 T0004: the chain identity/counters this hop inherits. `run_id` is allocated
+    # the chain identity/counters this hop inherits. `run_id` is allocated
     # once, above, and stays the hop's own id — the CHAIN id is what travels hop to hop.
     if mode == "continuous":
         chain_id = chain_id or run_id
@@ -2071,7 +2071,7 @@ def start_run(
         # A single run is a degenerate one-hop chain. Returning the same payload
         # shape keeps clients simple without changing the run counters' meaning.
         #
-        # 0414 L0008 §5 체인 카운터: unless the CALLER named a chain. A review/rework hop is
+        # chain counter: unless the CALLER named a chain. A review/rework hop is
         # mode="single" but belongs to a running chain, and overwriting chain_id with its own
         # run_id would break the lease handoff (which requires a matching chain_id) and reset
         # the miniplayer's progress to 0. An ordinary single run passes none of these three
@@ -2086,23 +2086,23 @@ def start_run(
     admission_identity.get()["scratch_dir"] = str(scratch)
 
     doc = db_docs.get_by_id(doc_ref) or {}
-    # flowgate.v02.0137 TR0005 rev1 (0138 guard): bind this directory to its run's
+    # (guard): bind this directory to its run's
     # DB-unique token, document, group and requester, so a later run can prove a retained
     # scratch is the one its row names before carrying anything out of it (carryover.py).
     carryover.bind_run_scratch(
         project_id, run_id, scratch, group_id=group_id, doc_ref=doc_ref, issued_to=issued_to,
         token_id=(issue or {}).get("token_id"),
     )
-    # 0187 rev2: same group-worktree routing as the test runner — the invoked AI's
+    # : same group-worktree routing as the test runner — the invoked AI's
     # cwd and the pollution diff must watch the tree the group's CRUD writes to.
     source_root = graph_source_root if graph_exec_id else storage_paths.resolve_project_src_root(
         project_id, doc.get("branch") or "main", group_id=group_id
     )
 
     # started_at is part of the immutable pre-admission identity.
-    # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
+    # what THIS hop's review selection resolves to, answered in the start
     # response rather than after the fact — "I picked a reviewer, did it take?" has to be
-    # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
+    # answerable while the run is going, not once it is over (the earlier implementation task 3's reasoning
     # for the instruction mode, applied to the same class of question).
     review_count_overrides = (
         continuation_review_count_overrides if mode == "continuous" else None
@@ -2136,12 +2136,12 @@ def start_run(
                 "started_at": started_at,
                 "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
             })
-        # T0011 §4 / 0486 NR0010 Finding 3: the loop's own per-stage budget (rework's
+        # the loop's own per-stage budget (rework's
         # user-picked `rework_timeout_sec`, clamped to the loop's total deadline) replaces
         # the generic per-hop formula for this run's FIRST hop. The in-process stage
         # switch inside worker._worker applies the same formula on every later hop of this
         # single audited chain.
-        # flowgate.v02test.0051 T0007 (A2): a loop resumed after its questions (Graph replay) carries its
+        # (A2): a loop resumed after its questions (Graph replay) carries its
         # deadline; the time it spent parked is moved out of it, so its first hop is not cut short by the wait.
         loop_now = datetime.fromisoformat(started_at)
         timeout_sec = review.loop_stage_timeout_sec(
@@ -2159,7 +2159,7 @@ def start_run(
         minutes = chat_doc_settings_service.get_settings(issued_to, doc_ref)["timeout_minutes"]
         chat_timeout_sec = minutes * 60 if minutes is not None else None
         timeout_sec = chat_timeout_sec
-    # flowgate.v02.0053 T#2: only a Graph node's own single 'new' run opens the no-output retry
+    # only a Graph node's own single 'new' run opens the no-output retry
     # path with its card's restart pick; every other single run stays one-shot.
     node_restart_open = (
         mode == "single" and action_scope == "new" and node_restart_max_attempts is not None
@@ -2180,7 +2180,7 @@ def start_run(
         "group_id": group_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
-        # 0357 T0004: chain-lifetime progress, carried across the per-hop runs an
+        # chain-lifetime progress, carried across the per-hop runs an
         # unmanned continuous chain is made of (docs_* stay per-hop judging values).
         "chain_id": chain_id,
         "chain_docs_target": int(chain_docs_target or 0),
@@ -2190,17 +2190,17 @@ def start_run(
         "timeout_sec": timeout_sec,
         "chat_timeout_policy": action_scope == "chat",
         "chat_timeout_sec": chat_timeout_sec,
-        # 0359 P0006 [hop budget]: the wall-clock the budget actually lands on. Until now the
+        # [hop budget]: the wall-clock the budget actually lands on. Until now the
         # limit appeared in NO response at all, so "did it die on the clock?" could only be
-        # answered by re-deriving the formula from logs — which is exactly the work NR0003 had
+        # answered by re-deriving the formula from logs — which is exactly the work the review had
         # to do (and got wrong on its first pass).
         "deadline_at": _deadline_iso(started_at, timeout_sec) if timeout_sec else None,
-        # ── 0446 T0014 §2: two clocks, kept apart by name ───────────────────────
+        # ── the earlier implementation: two clocks, kept apart by name ───────────────────────
         # `timeout_sec` / `deadline_at` above keep their exact stored meaning and are
         # read from here on as the NO-PROGRESS threshold: the EARLIEST this run may be
         # stopped, and only if it shows nothing new for that long. The ceiling below is
         # the latest it can possibly run, progress or not. Both live in memory on
-        # purpose — the column and the migration belong to T#2 (§2-5).
+        # purpose — the column and the migration belong to the earlier implementation.
         "absolute_cap_sec": chat_timeout_sec if action_scope == "chat" else _absolute_cap_sec(),
         "absolute_deadline_at": (_deadline_iso(started_at, chat_timeout_sec) if chat_timeout_sec else None) if action_scope == "chat" else _deadline_iso(started_at, _absolute_cap_sec()),
         "stall_anchor_mono": None,     # start of the current no-progress window
@@ -2208,14 +2208,14 @@ def start_run(
         "last_progress_at": None,
         "last_progress_signal": None,
         "progress_observations": 0,
-        # T0004 §6: a separate, weaker liveness watermark -- document/source progress
+        # a separate, weaker liveness watermark -- document/source progress
         # AND subprocess churn both write here, but only document/source resets
         # `stall_anchor_mono` above. Diagnostics/UI read this, never the watchdog gate.
         "last_activity_at": None,
         "last_activity_signal": None,
         "activity_observations": 0,
-        "watchdog_kill": None,         # raw, monotonic, process-local (0446 T0014)
-        # 0446 T0016 3-1: the durable reading of the above, resolved once at finalize.
+        "watchdog_kill": None,         # raw, monotonic, process-local
+        # 3-1: the durable reading of the above, resolved once at finalize.
         # These two are what the row, the detail response and the next rework prompt read.
         "timeout_kind": None,
         "timeout_diagnosis": None,
@@ -2247,7 +2247,7 @@ def start_run(
         "source_dirty": None,
         "source_dirty_files": [],
         "scratch_dir": str(scratch),
-        # T0004 (0581 NR0003): the token-owned scratch this hop's own token issue was
+        # the token-owned scratch this hop's own token issue was
         # minted with -- the SSOT the CLI worker's FLOWGATE_SCRATCH env and any /inbox
         # doc_path submission must agree on. Distinct from "scratch_dir" above (the
         # run-internal scratch: TMP/TEMP/TMPDIR, provider output, retained diagnostics),
@@ -2259,27 +2259,27 @@ def start_run(
         "finished_at": None,
         "dirty_baseline": _svc()._git_status_paths(source_root),
         "source_root": str(source_root) if source_root else None,
-        # 0670 T0004 (NR0003 §11.3): a chat run's start content as an isolated-index Git
+        # a chat run's start content as an isolated-index Git
         # tree. finalize diffs it against the end tree, so the run's change summary is
         # measured by FlowGate -- never reported by the model. None for every other scope.
-        # flowgate.v02.0152: no longer taken here. Hashing the whole worktree inside this
+        # no longer taken here. Hashing the whole worktree inside this
         # request (twice: here and again in the chat start hook) kept /ai-invoke/start from
         # answering within the browser's 30s on a cold file cache; the browser reported
         # "could not call the AI" and the run went on unseen. The worker takes it after the
         # gate opens and before any provider starts (worker._prepare_chat_start_tree).
         "source_start_tree": None,
-        # 0675 T0004 §2-3: the conversation head this chat run started from. Its command
+        # the conversation head this chat run started from. Its command
         # and change rows are anchored after it until the run's reply turn lands, and
         # stay there when the run ends without one. None for every other scope.
         "chat_start_seq": _chat_start_seq(action_scope, doc_ref),
         "api_base_url": api_base_url,
-        # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
+        # ( 2/3.3): operator_api_base is a one-time sanitized snapshot
         # of this same value, taken here at run start. transport_api_base starts empty
         # -- it is filled once, by whichever of the six mediated self-HTTP calls opens
         # first inside THIS hop (ai_invoke/provider_api.py's _sanitize_diagnostic_base).
         "operator_api_base": provider_api._sanitize_diagnostic_base(api_base_url),
         "transport_api_base": None,
-        # 0496 T0006 §3.2: which _resolve_transport_api_base branch produced
+        # which _resolve_transport_api_base branch produced
         # transport_api_base above -- set together with it, at the same hop-first-wins
         # call sites in worker.py.
         "transport_fallback_kind": None,
@@ -2300,12 +2300,12 @@ def start_run(
         # remains append-only in document_reviews via review_run_id and row ordering.
         "review_intent": review_intent,
         "review_admission_superseded_review_id": review_admission_superseded_review_id,
-        # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
+        # did the ENGINE plant this run's completion oracle, or did the
         # caller hand one in? Computed at the top of start_run and, until now, discarded —
         # which left `completion_oracle is not None` an unconditional retry block for every
-        # scoped run. That is the fourth gate NR0003 §6-2 did not name.
+        # scoped run. That is the fourth gate the review did not name.
         "scope_oracle_run": scope_oracle_run,
-        # flowgate.v02.0137 T0004 §2-4/§2-5: which judge the CURRENT hop is measured by and
+        # which judge the CURRENT hop is measured by and
         # for which token it took its baseline. The worker re-makes the judge at each loop
         # hop (oracle.refresh_hop_oracle) and finalize reads these to tell a hop-fresh
         # verdict from a stale one before it lets a run scratch be deleted.
@@ -2314,20 +2314,20 @@ def start_run(
             initial_stage if document_review_loop is not None else hop_kind
         ) if scope_oracle_run else None,
         "oracle_token_id": issue.get("token_id") if scope_oracle_run else None,
-        # flowgate.v02.0137 T0004 §3-6: what was (or was not, and why) carried into this
+        # what was (or was not, and why) carried into this
         # run's token scratch — counts and reasons only, never file contents.
         "carryovers": [carryover_record] if carryover_record else [],
         "target_to_end": target_to_end,
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
         ),
-        # 0352 T0004 §3.5: the per-item_seq N/T auto-approve selection rides the run the same
+        # the per-item_seq N/T auto-approve selection rides the run the same
         # way instruction_mode does, so every hop's provider/note/docs-target logic re-reads
         # the SAME selection the user made once at the start of the chain.
         "continuation_auto_approve_item_seqs": (
             continuation_auto_approve_item_seqs if mode == "continuous" else None
         ),
-        # ── 0406 T0022 items 2/3/5: values for judging this hop after the fact ───────
+        # ── the earlier implementation items 2/3/5: values for judging this hop after the fact ───────
         # The mode as the request sent it / as the server read it / whether normalisation
         # actually fired. Keeping the three apart is what separates "the user picked
         # auto_approved" from "the entry point omitted it and the server chose instead".
@@ -2349,25 +2349,25 @@ def start_run(
         **prompt_audit,
         "prompt_final_length": _prompt_final_length,
         "prompt_final_sha256": _prompt_final_sha256,
-        # 0359 L0007 §2.5: the retry rebuilds this hop's prompt from scratch when the token
+        # the retry rebuilds this hop's prompt from scratch when the token
         # has to be reissued, and a prompt is only correct in the locale the chain chose.
         "continuation_locale": (
             continuation_locale
             if (mode == "continuous" or action_scope == "resolve_conflict")
             else None
         ),
-        # 0317 TR0011 (Q153 opt-1): the per-step override map rides on the run so each
+        # (Q153 opt-1): the per-step override map rides on the run so each
         # re-spawned hop can re-apply it (it never touches a token; it is session-scoped).
         "continuation_provider_overrides": (
             continuation_provider_overrides if mode == "continuous" else None
         ),
-        # 0435 T0004: retry code never replays the priority tiers. The finalized chain head is
+        # retry code never replays the priority tiers. The finalized chain head is
         # the single source of truth for this hop, regardless of whether it came from a step
         # override, a human pin, a stored row, a header default, or a doc-type assignment.
-        # 0446 T0008 §3-5: a scope-oracle rework run needs the same head on the record, or
+        # a scope-oracle rework run needs the same head on the record, or
         # `_retry_provider_chain` returns [] and the loop ends as
         # "providers_exhausted_for_retry" with every gate above it already open. The 0435
-        # T0004 contract is untouched: attempt 1 retries exactly once on THIS provider and
+        # contract is untouched: attempt 1 retries exactly once on THIS provider and
         # never switches to another. `_stop_reason_text` reads the name back for the human
         # sentence.
         "continuation_selected_provider_id": (
@@ -2390,7 +2390,7 @@ def start_run(
             )
             else None
         ),
-        # 0346 T0005: the handoff-note bundle rides the run forward the same way the
+        # the handoff-note bundle rides the run forward the same way the
         # provider override map does, so a re-spawned hop (_maybe_auto_resume_hop ->
         # _spawn_auto_resume) can re-apply it. Session-scoped — never persisted on a token.
         "continuation_note_overrides": (
@@ -2399,12 +2399,12 @@ def start_run(
         "continuation_default_note": (
             continuation_default_note if mode == "continuous" else None
         ),
-        # flowgate.default.0400 M0005: the budget PICK rides the run forward the same way the
+        # the budget PICK rides the run forward the same way the
         # provider/note selections do, so a re-spawned hop (auto-resume, or a resume after a
         # user pause) re-applies the same choice instead of silently falling back to
         # HOP_TIMEOUT_SEC. Session-scoped — never persisted outside a paused-chain snapshot.
         #
-        # 0446 T0010 §3-3: no longer blanked on a single run. This read
+        # no longer blanked on a single run. This read
         # `continuation_step_timeout_sec if mode == "continuous" else None`, so a single run
         # forgot the ORIGIN of its own budget the instant it started — get_run_record showed
         # a 4-hour timeout_sec with nothing to say where it came from. The value only ever
@@ -2420,7 +2420,7 @@ def start_run(
         "continuation_restart_max_attempts": (
             continuation_restart_max_attempts if mode == "continuous" else None
         ),
-        # 0317 T0013 defect ③: the header default provider pin rides the run too. Without it a
+        # defect ③: the header default provider pin rides the run too. Without it a
         # re-spawned hop that has NO per-step override lost the user's chosen default and fell
         # back to the doc-type assignment / project default chain — contradicting the
         # "default: <name>" tag every ContinuousWorkDialog row promises. Session-scoped like the
@@ -2429,7 +2429,7 @@ def start_run(
         "continuation_provider_pinned": (
             bool(provider_pinned and provider_id) if mode == "continuous" else False
         ),
-        # 0252 L0009 §2.8: keep the requester on the record so the global active list
+        # keep the requester on the record so the global active list
         # (active_all) can filter runs per user, and §2.1: the continuation target for
         # the paused-row snapshot (None = to-end, resolved again at resume time).
         "issued_to": issued_to,
@@ -2449,7 +2449,7 @@ def start_run(
         "write_plan": None,
         "completion_oracle": completion_oracle,
         "responder_startup_policy": responder_startup_policy,
-        # ── 0359 L0007 §2.9 / §2.6: what the no-output retry loop needs to open attempt 2 ──
+        # ── the earlier implementation /: what the no-output retry loop needs to open attempt 2 ──
         # The token ID (was: only the raw token, so the retry could not ask whether the token
         # was still usable), the mention it was handed, and the builder that can mint a fresh
         # one for the SAME head when the old token is spent.
@@ -2461,28 +2461,28 @@ def start_run(
         "hop_item_seq": hop_item_seq,
         # 0414 P0007 / L0008 §2.9: the two [검수] maps ride the run hop to hop, exactly like
         # the provider/note maps above. Dropped at ANY carrier, the chain reviews its first
-        # step and then silently stops reviewing — the failure shape L0008 §2.9 names.
+        # step and then silently stops reviewing — the failure shape the earlier implementation names.
         "continuation_review_count_overrides": review_count_overrides,
         "continuation_reviewer_overrides": reviewer_overrides,
         "document_review_loop": document_review_loop,
-        "review_loop_author_revision": author_revision,      # 0083 WP-4: read by the loop's checkpoint
+        "review_loop_author_revision": author_revision,      # WP-4: read by the loop's checkpoint
         "hop_kind": hop_kind,
         "hop_review_count": hop_review_count,
         "hop_reviewer_provider_id": hop_reviewer_provider_id,
         "hop_reviewer_provider_name": review._provider_name_of(project_id, hop_reviewer_provider_id),
         "attempts_used": 0,
-        # flowgate.default.0443 T0002 (R0001): a continuous hop resolves the user's
+        # a continuous hop resolves the user's
         # "재시작 횟수" pick via _resolve_restart_max_attempts instead of the fixed
         # NO_OUTPUT_MAX_ATTEMPTS constant.
-        # 0446 T0008 §3-3: a record/display value — the real ceiling is the
+        # a record/display value — the real ceiling is the
         # `attempts_used >= NO_OUTPUT_MAX_ATTEMPTS` comparison in `_retry_eligible`. Leaving
         # this at 1 for a scope-oracle rework run would make `ai_invoke_runs` and the screen
         # say one thing while the engine does another. continuation_restart_max_attempts is
         # None outside continuous mode, so _resolve_restart_max_attempts falls back to
         # reproducing the previous fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior for it.
-        # flowgate.default.0476 T0012 / CH0011: an engine-spawned review hop follows the
+        # an engine-spawned review hop follows the
         # same restart pick as work and rework. With no pick, the resolver still returns 2,
-        # preserving 0466 T0007's first-attempt-plus-one-retry default. A pick of -1 remains
+        # preserving the earlier implementation's first-attempt-plus-one-retry default. A pick of -1 remains
         # bounded by the retry budget/recheck guards; a pick of 0 makes the hop one-shot.
         "attempts_max": (
             _resolve_restart_max_attempts(node_restart_max_attempts) if node_restart_open
@@ -2493,7 +2493,7 @@ def start_run(
             else 1
         ),
         "retry_block_reason": None,
-        # flowgate.v02.0053 T#2: read by worker._retry_eligible (a Graph node's restart pick).
+        # read by worker._retry_eligible (a Graph node's restart pick).
         "node_restart_open": node_restart_open,
         "last_message_seen": None,
         "stop_code": None,
@@ -2503,25 +2503,25 @@ def start_run(
         # the chain; the engine's own classification still wins for cancel/timeout/pause.
         "inbox_stop_code": None,
         "failure_signal_sent": False,
-        # flowgate.v02test.0023: the chat commit point. The AI's reply turn records the
+        # the chat commit point. The AI's reply turn records the
         # message (chat_commit_service.record_message); the run end writes the outcome.
         "chat_commit_message": None,
         "chat_commit": None,
     }
-    # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.1): the chat run start port -- command
+    # the chat run start port -- command
     # capability and the conversation head the run starts from. Chat-only and never
-    # refuses the run. No-op when nothing is registered. flowgate.v02.0152: the start-tree
+    # refuses the run. No-op when nothing is registered. the earlier change: the start-tree
     # snapshot moved to the worker (chat_run_hooks.chat_run_prepare), off this request.
     chat_run_hooks.chat_run_start(run)
-    # 0515 T0009 §10: every run gets a handoff gate. The worker thread must not run its
-    # real body (in particular the ai_invoke_started broadcast, T0009 §11) until this
+    # every run gets a handoff gate. The worker thread must not run its
+    # real body (in particular the ai_invoke_started broadcast, the earlier implementation) until this
     # opens -- see worker._worker()'s own gate wait at its very top.
     gate = HandoffGate()
     run["handoff_gate"] = gate
     _note_issued_raw_token(run, run.get("raw_token"))
     _note_issued_prompt(run, mention)
     if document_review_loop is not None:
-        # flowgate.v02.0136 T0004 T#1: the loop's first token is bound to the run before the
+        # the loop's first token is bound to the run before the
         # run is registered or its worker exists (see _bind_review_loop_first_hop).
         _bind_review_loop_first_hop(
             run, holds_group_lease=bool(not project_scoped and not graph_exec_id),
@@ -2536,15 +2536,15 @@ def start_run(
     )
     thread.start()
 
-    # 0515 T0009 §10: claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를
-    # 두 벌 만들지 않는다. Every non-chat and every chat read_only/edit run has
+    # branch on claim presence only through issue.one_shot_claimed; do not create
+    # two worker implementations. Every non-chat and every chat read_only/edit run has
     # one_shot_claimed falsy and takes the direct-open branch below; only a chat
     # edit_once run that actually won the claim CAS carries seal/commit/open.
     if issue.get("one_shot_claimed"):
         if not gate.seal():
-            # T0009 §10.1 (b): the worker's own PENDING wait already won CAS
+            # (b): the worker's own PENDING wait already won CAS
             # PENDING -> ABORT and already ran abort_handoff itself -- do not repeat it
-            # (§10.1 "CAS 승자만 admission 대신 cleanup한다").
+            # (§10.1 "only the CAS winner cleans up instead of admitting").
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
         try:
             commit_outcome = db_source_access.commit(issued_to, run["project_id"], run["group_id"], issue["token_id"], now_iso())
@@ -2568,14 +2568,14 @@ def start_run(
                 "one_shot_consumed_without_handoff run_id=%s token_id=%s",
                 run_id, issue["token_id"],
             )
-            # T0009 §10.1 (c): the SEALED watchdog inside the worker thread already won
+            # (c): the SEALED watchdog inside the worker thread already won
             # CAS SEALED -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
     else:
         if not terminal.open_successor_gate(gate):
             if gate.abort():
                 _abort_handoff(run, "predecessor_terminalized")
-            # T0009 §10.1 (a): the worker's own PENDING wait already won CAS
+            # (a): the worker's own PENDING wait already won CAS
             # PENDING -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
 
@@ -2585,7 +2585,7 @@ def start_run(
         "status": "running",
         "mode": mode,
         "group_id": group_id,
-        # 0481 T0010 rev5 (rejection 1) - the run identity keys the browser gates on, on
+        # (rejection 1) - the run identity keys the browser gates on, on
         # the ONE payload that still omitted them. The `ai_invoke_started` SSE frame ships
         # them (worker._worker) and so does GET /ai-invoke/{run_id} (diagnostics.get_status),
         # so a caller that adopts its OWN start response - the only way to show a run before
@@ -2608,7 +2608,7 @@ def start_run(
         "continuation_auto_approve_item_seqs": (
             continuation_auto_approve_item_seqs if mode == "continuous" else None
         ),
-        # 0406 T0022 work item 3: the start response already answers it — the requested and
+        # work item 3: the start response already answers it — the requested and
         # normalised mode (and whether normalisation fired), this hop's real worker slot and
         # document type, and the N/T the server handled with no worker. If these were only
         # known after the run, "the N/T vanished" could never be checked while it runs.
@@ -2622,7 +2622,7 @@ def start_run(
             "continuation_instruction_mode_fallback_applied"
         ],
         "hop_item_seq": run["hop_item_seq"],
-        # 0414 P0007 시작 응답: the selection as stored, plus what it resolved to for THIS
+        # start response: the selection as stored, plus what it resolved to for THIS
         # hop. docs_target above is deliberately untouched — review rounds are not documents,
         # so a reviewed chain and an unreviewed one report the same target.
         "continuation_review_count_overrides": run["continuation_review_count_overrides"],
@@ -2639,7 +2639,7 @@ def start_run(
         "warnings": [capability_warning] if capability_warning is not None else [],
         "attempt_no": 1,
         "started_at": run["started_at"],
-        # 0359 P0006 [hop budget]: the budget and its wall-clock deadline travel with every
+        # [hop budget]: the budget and its wall-clock deadline travel with every
         # start / status / finish payload, so nobody has to reconstruct them from logs again.
         "timeout_sec": run["timeout_sec"],
         "deadline_at": run["deadline_at"],
@@ -2663,7 +2663,7 @@ def _instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
     return instruction_mode_fallback_applied(mode)
 
 
-# ── 0359 L0007: hop budget, run identity, prompt reuse ───────────────────────
+# ── the earlier implementation: hop budget, run identity, prompt reuse ───────────────────────
 
 def _resolve_timeout_sec(
     mode: str,
@@ -2672,18 +2672,18 @@ def _resolve_timeout_sec(
     continuation_step_timeout_sec: Optional[int] = None,
     hop_kind: str = WORK_HOP_KIND,
 ) -> int:
-    """The run's time budget (L0007 §2.13 / P0006 [hop budget]).
+    """The run's time budget ([hop budget]).
 
-    A continuous run IS one hop (0317 TR0011 re-spawns a worker per step), so scaling its
+    A continuous run IS one hop (re-spawns a worker per step), so scaling its
     budget by how many slots are still ahead — the old min(3600 × slots_left, 14400) — handed
-    the LAST hop the SMALLEST budget, which is backwards. NR0003 §7 cleared this of causing
+    the LAST hop the SMALLEST budget, which is backwards. the review cleared this of causing
     the reported incident (that hop had 2h and used 2m25s) but kept it as a live hazard: TR
     hops of 74 minutes were measured. Fixed per hop now.
 
-    flowgate.default.0400 M0005: that fixed per-hop budget became a user pick (30-240 minutes,
+    that fixed per-hop budget became a user pick (30-240 minutes,
     ContinuousWorkDialog duration section) instead of always HOP_TIMEOUT_SEC.
 
-    0446 NR0003 §3-5 (R5) / T0010 §3-2: the pick is no longer continuous-only. The single-run
+    (R5) / the earlier implementation: the pick is no longer continuous-only. The single-run
     formula min(RUN_TIMEOUT_BASE_SEC × max(1, docs_target), RUN_TIMEOUT_CAP_SEC) bottoms out
     at exactly 3600 for a rejection rework — its docs_target is 1 and the max(1, …) floor
     pins it there — so every rework got precisely one hour and no screen could ask for more
@@ -2700,15 +2700,15 @@ def _resolve_timeout_sec(
     screen, the route and the engine cannot drift apart. The no-pick default is deliberately
     untouched: 3600 was never the defect, "cannot choose" was.
     """
-    # 0446 T0010 §3-1: an explicit in-range pick outranks the mode branch below,
+    # an explicit in-range pick outranks the mode branch below,
     # whatever the mode — a single rejection rework otherwise bottoms out at exactly
-    # 3600 and no screen can ask for more (NR0003 R5).
+    # 3600 and no screen can ask for more.
     if (
         continuation_step_timeout_sec is not None
         and STEP_TIMEOUT_MIN_SEC <= continuation_step_timeout_sec <= STEP_TIMEOUT_MAX_SEC
     ):
         return int(continuation_step_timeout_sec)
-    # 0414 L0008 §5: a review/rework hop is mode="single" but belongs to the chain, so it
+    # a review/rework hop is mode="single" but belongs to the chain, so it
     # takes the chain's per-hop budget rather than the single-run formula.
     if mode == "continuous" or hop_kind in CHAIN_MEMBER_HOP_KINDS:
         return HOP_TIMEOUT_SEC
@@ -2726,7 +2726,7 @@ def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[in
     unrecognized value falls back to RESTART_MAX_ATTEMPTS_DEFAULT, which reproduces the
     fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior this feature replaces. The bound is read from
     ai_execution_policy_service (SSOT) instead of a frozen literal, so raising the setting
-    also widens what a read accepts — flowgate.default.0490 T0005 §4-4.
+    also widens what a read accepts — the earlier change the earlier implementation
     """
     restart_count = continuation_restart_max_attempts
     choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
@@ -2748,7 +2748,7 @@ def _deadline_iso(started_at: str, timeout_sec: int) -> Optional[str]:
 
 
 def _call_issue_builder(issue_builder: Callable, run_id: str) -> dict:
-    """Call a token issuer, handing it the run identity when it can take one (L0007 §2.9).
+    """Call a token issuer, handing it the run identity when it can take one.
 
     The contract gained `ai_run_id`, but four of the five builders in the codebase mint a
     single-shot token that has no run worth pointing at, and existing tests call them bare.
@@ -2768,7 +2768,7 @@ def _call_issue_builder(issue_builder: Callable, run_id: str) -> dict:
 
 
 def _hop_item_seq_or_none(doc_ref: str) -> Optional[int]:
-    """Which workflow slot this hop is filling — best effort (L0007 §2.9 / §5).
+    """Which workflow slot this hop is filling — best effort.
 
     None when the sequence is not decided yet (a workflow_decide run). The null rides through
     to the record, the event and the notification rather than suppressing any of them."""
@@ -2794,7 +2794,7 @@ def _inject_hop_notes(
     """Prepend the common note plus the effective step note for continuous and single runs.
 
     The note is read from the row the AI worker actually fills, and from that row ONLY.
-    0408 M0019 re-rejection ("why is the TR/NR mention using T/N's?"): a pair fallback made an
+    re-rejection ("why is the TR/NR mention using T/N's?"): a pair fallback made an
     auto-approved NR hop speak the sentence written for N. Each row carries its own note now
     (work_plan_sequence_service.attach_auto_rows), so the fold picks the row and the row picks
     the note. A present override key wins even when its value normalizes to empty: that empty
@@ -2802,10 +2802,10 @@ def _inject_hop_notes(
     back to the note stored on the row. Continuous hops use the mode-aware N/T -> NR/TR fold;
     a single new hop writes the current head directly and therefore does not fold.
 
-    0406 T0022 item 5 — pass ``audit`` and it reports whether this hop's user message
+    pass ``audit`` and it reports whether this hop's user message
     resolved from (a) a step override, (b) the common default, (c) the stored sequence
     note fallback, or (d) nothing — plus that string's length and sha256. This is exactly
-    the structural gap NR0021 §8 pinned down: a session-scoped handoff note is persisted
+    the structural gap the review pinned down: a session-scoped handoff note is persisted
     nowhere, so what the user remembers typing could be neither proved nor disproved.
     """
     if not mention:
@@ -2881,10 +2881,10 @@ def _inject_hop_notes(
             mention = invoke_mention_service.prepend_messages_section(mention, notes, locale)
     except Exception:  # noqa: BLE001 — a note failure must not stall the hop
         logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
-    # 0554 T0014 §2/§5: pre-instruction is resolved from the SAME row the note came from
+    # pre-instruction is resolved from the SAME row the note came from
     # (item_seq above), but — unlike the note — a stored attachment reference that fails
     # validation is not swallowed here: PreInstructionAttachmentError propagates out of this
-    # function so the hop stops before the AI is invoked (T0014 §5's fail-closed contract).
+    # function so the hop stops before the AI is invoked ('s fail-closed contract).
     if item_seq_lookup_failed:
         # rej_01M338WJ83A3JTZJ finding 1: we could not determine which sequence row this hop
         # fills, so we cannot tell "this row has no pre-instruction" from "it might have one
@@ -2977,8 +2977,8 @@ def _resolve_continuation_hop_provider(
 
     A head only folds to its paired report type when it is server auto-handled — either
     every N/T under ``auto_approved``, or the specific item_seqs selected under ``ai_direct``
-    (0352 T0004 §2). Every other N/T, and TS in either mode, is worker-authored and resolves
-    its own head type (flowgate.default.0353 B0001 / NR0003). Never raises: lookup gaps fall
+. Every other N/T, and TS in either mode, is worker-authored and resolves
+    its own head type. Never raises: lookup gaps fall
     through.
     """
     try:
@@ -3049,9 +3049,9 @@ def _hop_worker_item_seq(
     """Return the item_seq of the slot this worker fills.
 
     A server auto-handled N/T head — every one under ``auto_approved``, or the specific
-    item_seqs selected under ``ai_direct`` (0352 T0004 §2) — folds to the paired NR/TR slot.
+    item_seqs selected under ``ai_direct`` — folds to the paired NR/TR slot.
     Every other N/T head, and TS in both modes, is an independent worker hop and retains its
-    own item_seq (flowgate.default.0353 B0001 / NR0003). Missing or unknown modes normalize
+    own item_seq. Missing or unknown modes normalize
     to the legacy ``auto_approved`` behavior.
     """
     head_item_seq = head.get("item_seq")
@@ -3215,7 +3215,7 @@ def _resolve_continuation_hop_note(
 ) -> Optional[str]:
     """Return the individual note for the same mode-aware item_seq as the provider override.
 
-    Keeping both resolvers on `_hop_worker_item_seq` preserves the D0004 constraint that a
+    Keeping both resolvers on `_hop_worker_item_seq` preserves the the design constraint that a
     visible row's provider and note always address the same hop. Failures degrade to no note.
     """
     try:
@@ -3243,7 +3243,7 @@ def _resolve_continuation_hop_note(
 
 
 def _chat_start_seq(action_scope: Optional[str], doc_ref: Optional[str]) -> Optional[int]:
-    """0675 T0004: conversation head seq at chat run admission; never raises."""
+    """conversation head seq at chat run admission; never raises."""
     if action_scope != "chat":
         return None
     from modules.flow_gate.services import chat_activity_anchor_service
@@ -3252,9 +3252,9 @@ def _chat_start_seq(action_scope: Optional[str], doc_ref: Optional[str]) -> Opti
 
 
 def _chat_start_tree(action_scope: Optional[str], source_root) -> Optional[str]:
-    """0670 T0004: start-tree snapshot for chat runs only; never raises.
+    """start-tree snapshot for chat runs only; never raises.
 
-    flowgate.v02.0152: called from the worker (worker._prepare_chat_start_tree) when no
+    called from the worker (worker._prepare_chat_start_tree) when no
     chat prepare port is registered -- never from admission any more."""
     if action_scope != "chat":
         return None

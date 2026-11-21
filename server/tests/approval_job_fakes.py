@@ -1,4 +1,4 @@
-"""Final-approval orchestration on the real job layer (flowgate.default.0669).
+"""Final-approval orchestration on the real job layer.
 
 The approval is a ``final_approval_publish`` job (units 6a/6b). The suites that used to mock the
 project mutex around ``_orchestrate_final_approval`` now run the real route function, the real

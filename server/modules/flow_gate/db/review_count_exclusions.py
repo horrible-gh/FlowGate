@@ -1,6 +1,6 @@
-"""Review verdicts a document review loop leaves out of its review_count (flowgate.v02test.0051 T0007 A2, migration 201).
+"""Review verdicts a document review loop leaves out of its review_count (A2, migration 201).
 
-R 0051.0001 A-3: "답을 기다린 시간과 질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다". A row here is the explicit cause
+A-3: "waiting time and rejections caused by questions do not count toward the review budget". A row here is the explicit cause
 marker of one review verdict (``review_id``): it was caused by a question wait (``wait_id``, ``question_loop_waits``)
 and is therefore not counted against the loop's review_count. The review row itself is never changed or deleted -- it
 stays the verdict of its round for the rejection, the rework, the stall check and the history; the exclusion is read

@@ -102,7 +102,7 @@ def test_9_sequence_mutation_archives_approved_ac_and_reopens_atomically(auto_st
     assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"
     assert git_service._group_ac_doc_id(ids["group_id"]) is None
     parsed = doc_routes._parse_doc_workflow(db_docs.get_by_id(ids["R"]))
-    # 0649 T#1 (NR0003 O1): the pending TSR right after the started TS is protected — it
+    # the pending TSR right after the started TS is protected — it
     # stays in place ahead of the new M row instead of being deleted, so it is the head.
     assert parsed["workflow_head_type"] == "TSR"
     assert parsed["workflow_head_status"] == "pending"
@@ -116,7 +116,7 @@ def test_10_empty_pending_tail_mutation_archives_approved_ac(auto_store):
     # Without TSR, the seeded sequence has locked realised rows plus one pending TSR tail.
     ids = _seed_group(auto_store, "seqempty", root_done=True, with_ac=True)
     sequence = db_wfseq.get_sequence_by_doc_id(ids["R"])
-    # 0649 T#1 (NR0003 O1): that pending TSR follows a started TS, so it is protected and no
+    # that pending TSR follows a started TS, so it is protected and no
     # edit removes it. The removable pending tail is an ordinary row after it.
     db_wfseq.insert_sequence_item(sequence["id"], 9, "M", "Tail", "doc", 9)
     pending = [
@@ -236,7 +236,7 @@ def test_10_full_worker_pipeline_real_code_red_reopens_ts_end_to_end(auto_store,
     assert emitted[-1][1]["doc_id"] == ids["TS"]
 def test_12_production_group_shape_red_sends_the_ts_back(auto_store, monkeypatch, tmp_path):
     """A live group's real shape — B root at wf_done, an approved TSR behind the TS, and a
-    file-less AC — must still put the 테스트시나리오지시 back to 승인이전.
+    file-less AC — must still put the test-scenario instruction back to its pre-approval state.
     """
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_return_points as db_rp

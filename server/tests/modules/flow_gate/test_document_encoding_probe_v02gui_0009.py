@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0009 (chat 0002-CH) -- question marks in documents, language-neutral.
+"""(chat the discussion) -- question marks in documents, language-neutral.
 
 Requirement A: a document whose text contains ordinary question marks ("??", "?? ??? ?")
 failed to register. The question-mark heuristic (``_text_is_corrupted``) ran on every
@@ -269,7 +269,8 @@ def test_api_run_attaches_the_probe_and_the_server_splits_it_back():
 
 def test_submit_help_names_this_tokens_probe(monkeypatch):
     from modules.flow_gate.services import help_catalog
-    monkeypatch.setattr(help_catalog, "_prev_doc_id", lambda _ctx: "flowgate.v02gui.0009.0001-R")
+    from modules.flow_gate.services.help import content as help_content
+    monkeypatch.setattr(help_content, "_prev_doc_id", lambda _ctx: "flowgate.v02gui.0009.0001-R")
     ctx = {"principal_kind": "worker", "base_url": "https://fg/api/v1", "locale": "ko",
            "action_scope": "new", "doc_type": "NR", "group_id": "flowgate.v02gui.0009",
            "project": "flowgate", "doc_id": "flowgate.v02gui.0009.0001-R",

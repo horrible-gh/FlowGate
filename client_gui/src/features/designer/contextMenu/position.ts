@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — menu placement (0006-D rev2 §6.2): keep the whole menu inside the viewport and
+// menu placement: keep the whole menu inside the viewport and
 // open a submenu on the right of its parent, or on the left when the right side is short.
 
 import type { Point } from './types'

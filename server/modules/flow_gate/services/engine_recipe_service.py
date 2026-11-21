@@ -1,6 +1,6 @@
-"""Global engine test-recipe registry + test-run auto-recovery (flowgate.default.0157).
+"""Global engine test-recipe registry + test-run auto-recovery.
 
-Design chain: R0001 → D0002 → P0003 → L0004 → DB0005 → T0006. Implements the L logic:
+Design chain: the requirement → the design → the plan → the earlier implementation →  → the earlier implementation. Implements the L logic:
   - engine normalization / identity, manual+system CRUD with the suppressed-tombstone model
   - the command help API surface (list / single-engine) workers read to author TS setup steps
   - auto-learning: a PASSED remote run's setup/run command is reflected into its engine's recipe
@@ -274,7 +274,7 @@ def classify_failure(run: dict, items: list[dict]) -> str:
     error = (run or {}).get("error")
     if error in _INFRA_ERROR_CODES:
         return INFRA
-    # R0001 group 0381: these patterns mean "the harness could not run the test", so they only
+    # these patterns mean "the harness could not run the test", so they only
     # carry that meaning from a stage that builds the environment. A test case that RAN and
     # printed "No module named 'x'" is the product's own missing import — a real RED. Scanning
     # case logs for them mislabelled 3 of the 27 genuine REDs in production history as INFRA,
@@ -439,11 +439,11 @@ def _emit_repair(doc: dict, run: dict, items: list[dict], token_rec: dict, attem
         continuation_target_seq=token_rec.get("continuation_target_seq"),
         continuation_review_mode=bool(token_rec.get("continuation_review_mode")),
         continuation_locale=token_rec.get("continuation_locale"),
-        # N/T authoring mode (group 0230 R0001 / T0005 WI-5): carry the instruction-mode choice
+        # N/T authoring mode: carry the instruction-mode choice
         # onto the repair token too, so a test auto-recovery retry keeps the run's N/T handling
         # policy on every subsequent hop instead of silently reverting to auto_approved.
         continuation_instruction_mode=token_rec.get("continuation_instruction_mode"),
-        # 0352 T0004 §3.4: same reasoning — the ai_direct per-item_seq auto-approve selection
+        # same reasoning — the ai_direct per-item_seq auto-approve selection
         # must ride the repair token too, or a chain that selected specific N/T steps loses
         # that selection the moment a TS auto-recovery retry fires.
         continuation_auto_approve_item_seqs=token_rec.get("continuation_auto_approve_item_seqs"),

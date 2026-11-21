@@ -84,7 +84,7 @@ def first_turns(doc_id: str, limit: int) -> list[dict]:
 
 
 def latest_user_locale(doc_id: str) -> Optional[str]:
-    """The locale of the newest person turn (flowgate.v02test.0023: a FlowGate turn speaks it)."""
+    """The locale of the newest person turn (a FlowGate turn speaks it)."""
     row = get_store()._fetch_one(
         "SELECT locale FROM conversation_turns WHERE doc_id = ? AND speaker = 'user' "
         "ORDER BY seq DESC LIMIT 1",
@@ -295,7 +295,7 @@ def record_backward_page_audit(
 
 
 def list_ch_docs_needing_migration(limit: Optional[int] = None) -> list[dict]:
-    """CH documents whose migration is not yet ``migrated`` (L0004 §2-14, bulk driver).
+    """CH documents whose migration is not yet ``migrated`` (bulk driver).
 
     A CH with no ``conversation_docs`` row has never been touched (pending); the LEFT
     JOIN is what makes that "no row" case visible without a separate existence check.

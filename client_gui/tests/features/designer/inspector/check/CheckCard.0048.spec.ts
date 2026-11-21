@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#12 — the check card with `@/features/document` mocked as a small server (D#1 §12.1):
+ * the check card with `@/features/document` mocked as a small server:
  * the section (AC check state, the Flow's Git reflection state, the final approval job, the Git panel
  * and ↗ 열기) and the header action (the final approval with the Git choice the server offers). The
  * server keeps the AC status, the Git slot and the AI activity, changes them on a final approval and
@@ -217,7 +217,7 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-git').attributes('data-tone')).toBe('warning')
     expect(el(w, 'check-git-branch').text()).toBe('브랜치 test2_default_0034')
     expect(w.findAll('[data-test="check-git-note"]').map((note) => note.text())).toEqual(['본 브랜치보다 2커밋 앞서고 0커밋 뒤처져 있습니다'])
-    // flowgate.v02.0051 stage 2: both are the 확인 결과 slot line's buttons. flowgate.v02.0053 T#5: the Git panel
+    // stage 2: both are the check result slot line's buttons. the earlier change the earlier implementation: the Git panel
     // (another screen) keeps its ↗; the open button is the document icon (tooltip 열기) and the check state
     // is the line's dot (its wording the tooltip).
     expect(el(w, 'check-open-git').text()).toBe('Git 패널 열기 ↗')
@@ -278,7 +278,7 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-review').attributes('title')).toBe(text)
   })
 
-  // flowgate.v02.0056 F1: a state that asks nothing of the operator (a draft AC, neutral) draws no badge.
+  // a state that asks nothing of the operator (a draft AC, neutral) draws no badge.
   it('AC draft -> no state badge on the line', async () => {
     acs.get(AC_DOC)!.status = 'draft'
     const w = await mountPart(CheckTab)
@@ -757,11 +757,11 @@ describe('check card in the Frame (real registry)', () => {
     const w = await mountFrame(acSelection({ ownership, viewMode: ownership === 'v01' ? null : 'draft' }))
     const section = el(w, 'inspector-check')
     expect(section.exists()).toBe(true)
-    // flowgate.v02.0052: the common documents list is not repeated beneath the card.
+    // the common documents list is not repeated beneath the card.
     expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     const actions = w.get('[data-test="designer-inspector-actions"]')
     expect(actions.find('[data-test="check-approve"]').text()).toBe('최종 확인')
-    // The review header actions (T#6) are not on an AC.
+    // The review header actions are not on an AC.
     expect(actions.find('[data-test="inspector-actions"]').exists()).toBe(false)
   })
 
@@ -814,7 +814,7 @@ describe('check card in the Frame (real registry)', () => {
     acs.get(AC_DOC)!.status = status
     const w = await mountFrame(acSelection({}, { ...AC_NODE, document: { ...AC_NODE.document!, docReviewStatus: status } }))
     const text = w.text()
-    // flowgate.v02.0051: the undecided wording stays out of the check card itself. flowgate.v02.0053 T#9: the
+    // the undecided wording stays out of the check card itself. the earlier change the earlier implementation: the
     // v7 header's ✎ 메모 works on every card with a document (features/memo), so it is usable here.
     for (const word of ['게이트', 'gate', '위임', '전개', 'AI 전달', '재시도', '마지막 확인', '연동 전']) expect(text).not.toContain(word)
     expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeUndefined()

@@ -1,4 +1,4 @@
-"""Stage assignments (flowgate.v02.0113 T#1, DB-1 §2.4-§2.5, §4).
+"""Stage assignments.
 
 Migration 164: ``graph_stage_assignments`` (one row per ``(attempt_id, stage, seq)``, L-2 ``StageAssignment``) and
 the ``assignment_stage`` / ``assignment_seq`` columns of the execution ledger ``graph_attempt_runs``.
@@ -95,7 +95,7 @@ def for_node(run_id: str, node_key: str, attempt_id: str) -> list[dict]:
 
 
 def asked_for_revision(stage: str, doc_id: str, revision_no: int) -> bool:
-    """flowgate.v02.0125 T#1: some assignment of ``stage`` (any attempt, any ``seq``) was already asked with the basis
+    """some assignment of ``stage`` (any attempt, any ``seq``) was already asked with the basis
     ``(doc_id, revision_no)`` — whatever its ``basis_rejection_count``: a revision rejected and put back in review
     (``rejected`` + submit -> ``revised``) keeps its number and is still the same revision."""
     return get_store()._fetch_one(

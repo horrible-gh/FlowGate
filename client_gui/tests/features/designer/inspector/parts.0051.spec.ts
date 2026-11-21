@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0051 — Inspector common display parts added or extended for the v7 screen (0051-R
+ * Inspector common display parts added or extended for the v7 screen (the earlier implementation
  * §2.2): the seven-tone status chip, the `disabled` pane state, the slot line, the 🛡 review badge,
  * the origin badge, the block / control row / segment / lock line, and the run settings block.
  * Display only: each test checks what is shown for the given values and what leaves as an event.
@@ -56,9 +56,9 @@ describe('InspectorPaneState — disabled', () => {
   })
 })
 
-// flowgate.v02.0053 T#5 (0053 CH): the line is `name · state · [document icon] · ✎` — the name opens the
+// (CH): the line is `name · state · [document icon] · ✎` — the name opens the
 // document (underlined on hover), no "not yet" text, no icon box.
-// flowgate.v02.0056 F1 (0056 CH §5): the state is a short text badge drawn only when it says something (a
+// (CH): the state is a short text badge drawn only when it says something (a
 // decision waits, something runs, settled — dim); a neutral state draws nothing; a line without a document
 // says why in the line (slotStateView).
 describe('InspectorSlotRow', () => {
@@ -145,7 +145,7 @@ describe('InspectorSlotRow', () => {
     expect(failed.get('[data-test="inspector-slot"]').classes()).toContain('is-danger')
   })
 
-  // flowgate.v02.0070 T#2 (B2): the unreadable mark is a small icon, its words only in the tooltip and the aria-label.
+  // (B2): the unreadable mark is a small icon, its words only in the tooltip and the aria-label.
   // 0015-T T4: `name · [state badge] ⚠ · summary · 이력 · 열기` — the ⚠ sits with the document's state (right after the
   // badge, or right after the name when there is none); the buttons column holds only the buttons.
   it('an unreadable body: a small ⚠ beside the state, named by aria-label and tooltip; the buttons are only buttons', () => {
@@ -206,9 +206,9 @@ describe('InspectorSlotRow', () => {
   })
 })
 
-// flowgate.v02.0052 T#4: on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
-// open button after it stays in the line (the 확인 card's Git 패널 열기 ↗ used to push it out).
-// flowgate.v02.0053 T#5: the nav button keeps its ↗ (it goes to another screen); the open button is the
+// on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
+// open button after it stays in the line (the 확인 card's Git Open panel ↗ used to push it out).
+// the nav button keeps its ↗ (it goes to another screen); the open button is the
 // document icon.
 describe('InspectorSlotList — nav before the document icon', () => {
   it('the nav button carries the shrinking class and comes before the document icon; both still emit', async () => {
@@ -227,8 +227,8 @@ describe('InspectorSlotList — nav before the document icon', () => {
   })
 })
 
-// flowgate.v02.0056 F1 (0056 CH §2): a line that opens also has the history button (a clock, before the
-// document icon) — the document's 검수·반려 이력 window; a line may leave it out or hand the entry count.
+// (CH): a line that opens also has the history button (a clock, before the
+// document icon) — the document's review·rejection history window; a line may leave it out or hand the entry count.
 describe('InspectorSlotList — the history button (flowgate.v02.0056 F1)', () => {
   it('comes before the document icon on a line that opens, named 검수·반려 이력, and emits history with the line', async () => {
     const line = { name: '레포트', id: 'doc-tr', open: 'enabled' as const }

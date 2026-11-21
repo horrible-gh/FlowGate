@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_accepts_synthesized_single_line_merge(self, origin_repo):
-        # 0602 T0004 C4/C8 (NR0003) — a chunk where both sides changed the SAME base
+        # A chunk where both sides changed the SAME base
         # line, resolved into a brand-new line that carries both sides' intent, is
         # neither an exact ours nor an exact theirs selection. The old whole-file
         # membership check rejected this as conflict_side_dropped even though nothing

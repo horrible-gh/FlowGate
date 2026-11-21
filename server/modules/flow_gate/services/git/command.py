@@ -1,7 +1,7 @@
 """Raw git subprocess execution: prompt-free auth injection, secret scrubbing,
 and the one-shot ASKPASS helper.
 
-Extracted from git_service.py (flowgate.default.0550 T0009, D0006 §3.2/부록 A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class GitBudget:
         return left
 
     def cancel(self) -> None:
-        """Spend what is left now (flowgate.v02test.0020): no further git process starts under this budget; a call
+        """Spend what is left now: no further git process starts under this budget; a call
         already running keeps the timeout it started with."""
         self.deadline = time.monotonic()
         self.expired = True
@@ -64,7 +64,7 @@ def git_budget(seconds: float) -> Iterator[GitBudget]:
     with bind_git_budget(GitBudget(seconds)) as budget:
         yield budget
 
-# flowgate.default.0607 T0004 §3.1 (NR0003 §5/§9.6): git commands that write objects
+# git commands that write objects
 # (merge, commit, fetch) end by running auto maintenance. Git for Windows cannot
 # detach it, so a `git gc --auto` repack of the whole object store ran INSIDE the
 # approval's `git merge --no-ff`, held the process ~35s after the merge commit
@@ -102,7 +102,7 @@ def _write_askpass() -> tuple[Path, Path]:
 
     The secret itself is NEVER written to disk — the helper echoes the
     FLOWGATE_GIT_ASK_USER / FLOWGATE_GIT_ASK_PASS env vars of the git child
-    process. Both files are deleted right after the git call (L0006 §2.3).
+    process. Both files are deleted right after the git call.
     """
     tmpdir = Path(tempfile.mkdtemp(prefix="fg-askpass-"))
     helper = tmpdir / "askpass.py"
@@ -129,7 +129,7 @@ def _write_askpass() -> tuple[Path, Path]:
 
 
 def git_failure_cause(proc: subprocess.CompletedProcess) -> str:
-    """Conservative stderr classification (0134 T#1).
+    """Conservative stderr classification.
 
     Network/auth phrases come from status.py's existing probes; bare HTTP status
     numbers and generic 'unable to access' are ambiguous and stay unknown.

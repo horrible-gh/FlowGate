@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#a78bfa"
     :open="!!data"
     :title="t('gui.aiRoles.setup')"
     :initial-x="initialX"
@@ -21,7 +21,7 @@
   </ModelessShell>
 </template>
 <script setup lang="ts">
-// flowgate.v02.0117 T#3 — the AI role setup window is a ModelessShell like the run result window: the shell owns the frame
+// the AI role setup window is a ModelessShell like the run result window: the shell owns the frame
 // (drag, minimize, close ×, Esc, overlay z-index, focus return). Body, footer, props and emits are unchanged.
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

@@ -1,6 +1,6 @@
 /**
  * flowgate.v02test.0001 B0001 §2 / T0004 T#2 — 다음 단계 / 전체 실행 on a v0.1 Flow (center/run/v01RunControl.ts): the menu
- * commands take over what the header's ▶ 실행 / ↻ 재작업 did — the first unapproved work document runs once (edit, or
+ * commands take over what the header's ▶ 실행 / ↻ rework did — the first unapproved work document runs once (edit, or
  * rework after a rejection); 전체 실행 goes on in document order after each run ended; nothing is approved or repeated
  * from here, and a run, a refusal or a rejection that stops it leaves the menu to run it again.
  */

@@ -30,7 +30,7 @@ _REPO_ROOT = _SERVER_DIR.parent
 # Some suites import `modules.*` without adding server/ themselves; make single-file runs work.
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
-# flowgate.v02.0146 T#2: the tests/test_fg_gate_*_0085-style suites import the shared harness of tests/flowgate/
+# the tests/test_fg_gate_*_0085-style suites import the shared harness of tests/flowgate/
 # (``from test_fg_card_settings import ...``) by module name. That only resolved once pytest had already collected a
 # file of tests/flowgate, so the same selection errored at collection ("No module named 'test_fg_card_settings'")
 # or not depending on the order of its arguments. Appended, never prepended: nothing that resolves today changes.
@@ -45,18 +45,18 @@ for _harness_dir in ("modules/flow_gate", "modules/flow_gate/services", "regress
         sys.path.append(_harness_path)
 
 
-# ── 저장소 오염 감시자 (0382 B0001 / NR0003 제안 2-b) ─────────────────────────
+# ── Repository pollution guard (proposal 2-b) ──────────
 #
-# 사고의 1단계는 "테스트가 저장소 안에 폴더를 만든다"였고, 그 폴더는 화면에 안 뜨는
-# 종류라 아무도 못 봤다. 지침을 늘리는 대신 기계가 잡는다: 세션이 끝날 때 저장소에
-# 새로 생긴 흔적이 있으면 **실패**시키고 무엇이 어디에 남았는지 이름을 찍는다.
-# 경고로 두면 아무도 안 본다(NR §8-2 권고).
+# The incident began when a test created a directory inside the repository.
+# Its hidden type made it invisible in the UI. Detect this mechanically: fail
+# the session if new artifacts remain and print their names and locations.
+# Warnings alone go unnoticed (NR §8-2).
 
-# 스크래치 디렉터리 이름 규칙. .gitignore 에 걸리면 git 은 안 보여주므로, 이름으로도
-# 본다 — 저장소 안에 썼다는 사실 자체가 잡아야 할 일이다.
+# Match scratch directory names too: .gitignore can hide them from git,
+# but writing inside the repository is itself what this guard must detect.
 _SCRATCH_GLOB = ".test-tmp*"
-# 전수 탐색(rglob)은 node_modules 때문에 세션마다 수 초를 먹는다. 실제로 흔적이
-# 생겼던 자리만 본다: 저장소 루트, server/, server/tests/, client_gui/.
+# A full rglob scan takes seconds per session because of node_modules.
+# Scan the known locations: repository root, server/, server/tests/, client_gui/.
 _SCRATCH_SCAN_DIRS = (
     _REPO_ROOT, _SERVER_DIR, _SERVER_DIR / "tests", _REPO_ROOT / "client_gui",
 )
@@ -64,7 +64,7 @@ _POLLUTION_LIST_MAX = 20
 
 
 def _repo_pollution_snapshot():
-    """저장소에 남아 있는 흔적의 스냅샷. git 을 못 쓰면 None(감시 생략)."""
+    """Snapshot repository artifacts; return None (skip monitoring) if git is unavailable."""
     if shutil.which("git") is None:
         return None
     proc = subprocess.run(
@@ -84,7 +84,7 @@ def _repo_pollution_snapshot():
 
 @pytest.fixture(scope="session", autouse=True)
 def repo_pollution_guard():
-    """테스트가 저장소 안에 남긴 것이 있으면 세션을 실패시킨다."""
+    """Fail the session if tests leave new artifacts inside the repository."""
     before = _repo_pollution_snapshot()
     yield
     after = _repo_pollution_snapshot()
@@ -106,13 +106,12 @@ def repo_pollution_guard():
 
 # ── Host capabilities and what they silently take with them ──────────────────
 #
-# flowgate.default.0394 T0004 (NR0003 §5.2 / §13-10).
 #
 # Nine places in this suite skip when the host cannot do something — no git binary, no
 # symlinks, no run.bat, an unimportable module. Skipping is the right behaviour; being
 # quiet about it is not. `test_git_integration_0115.py` alone is 107 cases, and on a host
 # without git all 107 vanish and the run still ends "failed 0" — the same words a full
-# green run prints. R0001 §8 calls for a green suite AND for intentional skips to be
+# green run prints. the requirement calls for a green suite AND for intentional skips to be
 # explicit, and a bare skip count cannot tell "we meant to skip this" from "this host
 # could not run it".
 #
@@ -176,9 +175,9 @@ _skips_by_capability: dict[str, int] = {}
 
 def _classify_skip(reason: str) -> str:
     lowered = (reason or "").lower()
-    # 계층 유예는 호스트 능력 부족이 아니다. 'other' 로 세면 --tier=fast 한 번에
-    # 1,800 건이 그 줄로 들어가, 정작 아무도 계획하지 않은 skip 을 드러내려고 만든
-    # 자리가 계층 유예에 파묻힌다 (0394 T0014).
+    # Tier deferrals are not missing host capabilities. Counting them as 'other'
+    # would bury unexpected skips under 1,800 planned deferrals in one
+    # --tier=fast run.
     if _TIER_SKIP_MARK in lowered:
         return "tier"
     for needle, capability in _REASON_TO_CAPABILITY:
@@ -187,21 +186,18 @@ def _classify_skip(reason: str) -> str:
     return "other"
 
 
-# ── 실행 계층 veryfast / fast / standard / heavy / slow ──────────────────────
+# ── Execution tiers: veryfast / fast / standard / heavy / slow ─────────────
 #
-# flowgate.default.0394 T0004 (R0001 §6, NR0003 §10.4 / §13-12), 다시 나눈 것은
-# flowgate.v02test.0053.
+# Tiers stack from the cheapest up: `--tier=standard` runs veryfast, fast and standard.
+# Without `--tier` the tier is standard. No tier means "everything": a full run is a
+# one-time check after installation, so it lives separately under `--install-check`.
 #
-# 계층은 싼 것부터 쌓인다. `--tier=standard` 는 veryfast·fast·standard 를 모두 돌린다.
-# `--tier` 를 주지 않으면 standard 다. "전부" 를 뜻하는 계층은 없다 — 전체 실행은 처음
-# 설치한 사람이 한 번 확인하는 용도라서 `--install-check` 로 따로 뺐다.
-#
-#   veryfast  파일당 1초 이하    코드를 고치는 중에 수시로
-#   fast      파일당 5초 이하    한 덩어리를 고친 직후
-#   standard  파일당 15초 이하   카드를 끝낼 때 (기본값)
-#   heavy     파일당 30초 이하   그 영역을 크게 고쳤을 때
-#   slow      파일당 120초 이하  DB 마이그레이션·git 통합 같은 위험한 변경을 했을 때만
-#   (install) 120초 초과 · e2e   어느 계층에도 없다. `--install-check` 에서만 돈다
+#   veryfast  1 s or less per file     frequently while editing code
+#   fast      5 s or less per file     right after finishing a chunk
+#   standard  15 s or less per file    when finishing a card (default)
+#   heavy     30 s or less per file    after a large change to that area
+#   slow      120 s or less per file   only after risky changes such as DB migrations or git integration
+#   (install) over 120 s, e2e          in no tier; runs only under `--install-check`
 #
 # A test's tier is decided in three steps (tests/timing_support.py holds the numbers):
 #
@@ -213,7 +209,7 @@ def _classify_skip(reason: str) -> str:
 #      at heavy, e2e files at install, and a file that was seen running long while failing
 #      (no baseline, only a hint) is moved up to where that time puts it.
 #
-# Deriving rather than keeping a list is the point. NR0003 §10.4 warned that a list of
+# Deriving rather than keeping a list is the point. the review warned that a list of
 # files leaves new files in no tier at all; here a new file is classified the moment it
 # is written, and re-classified by its own measurement the next time it is timed.
 
@@ -225,16 +221,16 @@ _tier_cache: dict[str, str] = {}
 _measured_timings = {}
 _slow_hints = {}
 
-# 유예된 테스트가 달고 가는 skip 사유의 꼬리표. 요약이 이 문자열로 유예 건수를 세므로
-# 아래 marker 문구와 반드시 같이 움직여야 한다.
+# Skip-reason tag for deferred tests. The summary counts this exact string,
+# so keep it synchronized with the marker text below.
 _TIER_SKIP_MARK = "(--tier)"
 
-# 계층 요약은 수집 훅이 아니라 **실제로 나온 리포트**에서 센다.
-# pytest-xdist 를 쓰면 수집 훅은 워커 프로세스 안에서 돌기 때문에, 거기서 모듈 전역에
-# 담아 둔 값은 요약을 찍는 컨트롤러에게 보이지 않는다. 실제로 그랬다 —
-# `--tier=fast -n auto` 는 117 건을 건너뛰고도 "이 실행은 전체가 아닙니다" 를 한 줄도
-# 찍지 않았다. NR0003 §5.2 가 말하는 조용한 skip 이 병렬 문으로 되돌아온 것이다.
-# 리포트는 워커에서 컨트롤러로 전달되므로, 여기서 세면 두 방식 모두에서 남는다.
+# Count tier totals from actual reports, not collection hooks.
+# With pytest-xdist, collection hooks run in workers; their module globals
+# are invisible to the controller printing the summary. In practice,
+# `--tier=fast -n auto` skipped 117 cases without printing "이 실행은 전체가 아닙니다".
+# Parallel execution had reintroduced the silent skips described in the review
+# Reports reach the controller, so counting here works in both execution modes.
 _items_started = 0
 _tier_deferred = 0
 
@@ -292,28 +288,27 @@ def _requested_tier(config) -> str:
     return config.getoption("--tier", default=_DEFAULT_TIER) or _DEFAULT_TIER
 
 
-# ── 병렬 실행은 파일을 쪼개지 않는 방식으로만 ────────────────────────────────
+# ── Parallel execution must keep each file intact ────────────────────────
 #
-# flowgate.default.0394 T0014 (NR0003 §10.3 / §13-13).
 #
-# pytest-xdist 의 기본 분배(`--dist load`)는 **테스트 한 건씩** 워커에 흩뿌린다.
-# 이 저장소는 그렇게 나눌 수 없다. 모듈 스코프 픽스처(임시 DB, FLOWGATE_* 환경변수
-# 되돌리기)와 import 시점에 저장소 루트를 심는 스위트가 있어서, 한 파일이 두 프로세스로
-# 찢어지면 절반은 픽스처가 세워지지 않은 자리에서 돈다. 그 실패는 워커 배분에 따라
-# 모습이 바뀌므로 "가끔 빨간불" 로 보이고, 결국 병렬 실행 자체가 못 믿을 것으로
-# 취급된다 — 도입을 검증하러 온 자리에서 가장 피해야 할 결말이다.
+# pytest-xdist's default (`--dist load`) distributes individual tests to workers.
+# This repository shares module fixtures (temporary DBs and FLOWGATE_* restoration)
+# and storage roots established at import time. Splitting a file across processes
+# can run tests without their fixtures. Failures then vary with worker allocation,
+# look intermittent, and undermine confidence in parallel execution itself:
+# exactly the outcome this validation must prevent.
 #
-# 그래서 안전하지 않은 분배로 들어온 병렬 실행은 시작 자체를 거절한다. 문서에 적어 두는
-# 것만으로는 부족하다. 옵션 하나를 빠뜨린 사람은 문서를 다시 읽지 않고, 대신 이상한
-# 실패를 보게 된다.
+# Reject unsafe distribution before execution starts. Documentation alone
+# cannot protect someone who omits an option and sees unexpected failures
+# instead of rereading the instructions.
 #
-# 안전: loadfile(파일 단위) · loadscope(모듈/클래스 단위) — 둘 다 한 파일을 한 워커에 둔다.
-# 거절: load(기본) · worksteal · loadgroup · each.
+# Safe: loadfile (file) and loadscope (module/class), keeping a file on one worker.
+# Rejected: load (default), worksteal, loadgroup, each.
 _SAFE_DIST_MODES = ("no", "loadfile", "loadscope")
 
 
 def _dist_mode_problem(numprocesses, dist) -> "str | None":
-    """병렬 설정이 이 저장소에서 안전하면 None, 아니면 거절 사유."""
+    """Return None for a safe parallel configuration, otherwise the rejection reason."""
     if not numprocesses:
         return None
     if dist in _SAFE_DIST_MODES:
@@ -326,20 +321,20 @@ def _dist_mode_problem(numprocesses, dist) -> "str | None":
     )
 
 
-# ── 실행 하나의 worker 슬롯 풀 (flowgate.v02.0114 T#4, D 0006 3.5 (3)) ─────────
+# ── Per-run worker slot pool (the earlier change the earlier implementation, the earlier implementation 3.5 ) ───────
 #
-# Self-check 는 실행마다 처리기 R개를 예약하고 프로세스 트리 전체를 그 R개에 묶는다(운영체제가
-# 강제한다). 여기 가드는 그 위의 협조 계층이다. R보다 많은 xdist worker 를 만들어 처리기를
-# 나눠 쓰는 낭비를 막는다.
+# Self-check reserves R processors per run and binds the entire process tree
+# to them through OS enforcement. This cooperative guard prevents creating
+# more than R xdist workers and wasting time sharing those processors.
 #
-# Self-check 가 실행 환경으로 슬롯 풀(실행 임시 폴더 안의 slot-0..slot-<R-1>)을 알려 주면:
-# - 테스트를 실행하는 pytest 프로세스(직렬 세션 또는 xdist worker)는 빈 슬롯 하나를 운영체제
-#   파일 잠금으로 잡고 끝날 때까지 쥔다. 비정상 종료하면 운영체제가 놓는다.
-# - 적용 worker 수 = min(요청 수(-n auto 결정 값 포함), 빈 슬롯 수). 조정 프로세스는 테스트를
-#   돌리지 않으므로 슬롯을 쥐지 않고, 센 슬롯을 worker 가 뜰 때 하나씩 넘긴다.
-# - 빈 슬롯이 없으면(중첩 pytest) xdist worker 를 만들지 않고 슬롯 없이 직렬로 돈다. 기다리거나
-#   실패하지 않는다. 넘겨받을 슬롯을 경쟁에서 놓친 worker 는 테스트를 돌리지 않고 실패로 드러난다.
-# 풀 정보가 없으면(Self-check 밖의 로컬 실행) 아무것도 하지 않는다.
+# When Self-check supplies slot-0..slot-<R-1> in the run's temporary directory:
+# - Each pytest process running tests (serial session or xdist worker) acquires
+#   an OS file lock on one free slot until exit; the OS releases it after a crash.
+# - Applied workers = min(requested count, including -n auto, free slots). The
+#   controller runs no tests; it hands its reserved slots to workers as they start.
+# - With no free slots (nested pytest), run serially without a slot or xdist worker;
+#   do not wait or fail. A worker losing its slot handoff race fails without tests.
+# With no pool information (local execution outside Self-check), do nothing.
 _SLOT_DIR_ENV = "FLOWGATE_SELFCHECK_SLOT_DIR"
 _SLOTS_ENV = "FLOWGATE_SELFCHECK_SLOTS"
 _slot_handles: list = []      # slot files whose lock this process holds for its whole life
@@ -536,7 +531,7 @@ def pytest_configure(config):
     for name, (_label, probe, _required) in CAPABILITIES.items():
         _capability_state[name] = _safe_probe(probe)
 
-    # flowgate.v02.0114 T#3 (D 0006 7.1): the Self-check result block. Composed at
+    # the Self-check result block. Composed at
     # pytest_terminal_summary like the reports below and printed as the very last output,
     # with the capability judgement above as its host evidence and the test definition
     # fingerprints taken when collection finishes (tests/selfcheck_evidence.py). A copy of
@@ -548,11 +543,11 @@ def pytest_configure(config):
         selfcheck_evidence = None
     if selfcheck_evidence is not None:
         selfcheck_evidence.register(config, capabilities=lambda: dict(_capability_state))
-        # 0114 T#4: the slot pool's requested / applied / source and the run tree's processor
+        # the slot pool's requested / applied / source and the run tree's processor
         # limit go into the result block as well (read when the block is composed).
         selfcheck_evidence.register(config, parallel=lambda: dict(_slot_state) or None)
 
-    # 컨트롤러에서만 본다. 워커는 자기 몫을 순차 실행하므로 dist 설정이 없다.
+    # Check only the controller; workers run their allocation serially and have no dist setting.
     if getattr(config, "workerinput", None) is None:
         problem = _dist_mode_problem(
             getattr(config.option, "numprocesses", None),
@@ -561,11 +556,11 @@ def pytest_configure(config):
         if problem:
             raise pytest.UsageError(problem)
 
-    # 0114 T#4: the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
+    # the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
     # lowered worker count is what xdist starts.
     _apply_slot_pool(config)
 
-    # flowgate.v02.0146 T#2: a per-test hang limit (tests/hang_guard.py), so one hanging test fails by name
+    # a per-test hang limit (tests/hang_guard.py), so one hanging test fails by name
     # instead of consuming the whole Self-check ceiling. Missing in a synthetic tree (test_repo_scratch_guard_0382).
     try:
         import hang_guard
@@ -602,8 +597,8 @@ def pytest_report_header(config):
 def pytest_runtest_logreport(report):
     global _items_started, _tier_deferred
 
-    # setup 리포트는 테스트 한 건에 정확히 하나씩 나온다 — 건너뛴 것까지 포함해서.
-    # 그래서 이것이 "이 실행이 손에 쥔 전체 건수" 다.
+    # Exactly one setup report appears per test, including skipped tests.
+    # This is therefore the total number of tests handled by this run.
     if report.when == "setup":
         _items_started += 1
 
@@ -616,7 +611,7 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """워커라면 자기가 모은 환경변수 누출을 컨트롤러 몫으로 실어 보낸다."""
+    """Send environment leaks collected by this worker to the controller."""
     workeroutput = getattr(session.config, "workeroutput", None)
     if workeroutput is not None:
         workeroutput["flowgate_env_leaks"] = list(_env_leaks)
@@ -624,9 +619,9 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node, error):
-    """워커가 내려갈 때 그 워커의 누출 보고를 컨트롤러 목록에 합친다.
+    """Merge a terminating worker's leak report into the controller list.
 
-    optionalhook 이라 pytest-xdist 가 없는 환경에서도 conftest 는 그대로 읽힌다.
+    optionalhook allows conftest to load even when pytest-xdist is unavailable.
     """
     for line in (getattr(node, "workeroutput", None) or {}).get("flowgate_env_leaks", []):
         if line not in _env_leaks:
@@ -647,14 +642,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     requested = _requested_tier(config)
     workers = getattr(config.option, "numprocesses", None)
     if _tier_deferred:
-        # 소리 내어 말한다. 계층 실행의 "실패 0" 은 전부 통과가 아니고,
-        # NR0003 §5.2 는 통째로 그 차이에 관한 이야기다.
+        # State explicitly that zero failures in a tier run do not mean all tests passed.
+        # explains this distinction.
         #
-        # 실행 건수에서는 **건너뛴 것을 전부** 뺀다. 계층 유예만 빼면 호스트 능력 때문에
-        # 빠진 건이 실행 건수에 섞인다 — `--tier=fast` 가 "1614건 실행" 이라고 찍는데
-        # pytest 는 1613 passed / 1654 skipped 를 찍고, 그 한 건이 바로 run.bat 이 없어
-        # 빠진 건이었다. 조용한 skip 을 드러내려고 만든 줄이 스스로 조용한 skip 을
-        # 하나 감추고 있었던 셈이라, 여기서는 그 한 건이 가장 틀린 한 건이다 (0394 T0014).
+        # Subtract ALL skips from the executed count, including missing host capabilities.
+        # Previously --tier=fast printed "1614건 실행" while pytest reported
+        # 1613 passed / 1654 skipped: the extra case lacked run.bat.
+        # The line intended to expose silent skips was itself hiding one,
+        # making that single counting error especially significant.
         other_skipped = sum(_skips_by_capability.values()) - _tier_deferred
         ran = _items_started - _tier_deferred - other_skipped
         extra = f" 그 밖의 사유로 {other_skipped}건 더 건너뜀." if other_skipped else ""
@@ -729,31 +724,31 @@ def _safe_probe(probe) -> bool:
         return False
 
 
-# ── FLOWGATE_* 환경변수는 빌린 것이다 — 모듈 경계에서 되돌린다 ────────────────
+# ── FLOWGATE_* variables are borrowed: restore them at module boundaries ──
 #
-# flowgate.default.0394 T0004 (R0001 §5.1 — 순서·환경에 따라 결과가 달라지는 테스트).
+# (order/environment-dependent tests).
 #
-# 많은 스위트가 **import 시점에** 자기 저장소 루트를 발행한다
-# (`os.environ["FLOWGATE_STORAGE_DIR"] = tempfile.mkdtemp(...)`). pytest 는 아무것도
-# 실행하기 전에 모든 모듈을 import 하므로, 그 값들은 실행이 시작될 때 이미 다 올라와
-# 있다. 그래서 어떤 테스트가 자기 값을 심었다가 끝나면서 `del` 이나 `pop` 으로 **지우면**
-# 자기 것만 지우는 게 아니라 남의 것까지 지우고, 프로세스에는 저장소 루트가 아예 없는
-# 상태가 남는다.
+# Many suites publish their storage roots at import time using
+# `os.environ["FLOWGATE_STORAGE_DIR"] = tempfile.mkdtemp(...)`. Pytest imports
+# all modules before running tests, so these values already exist at execution.
+# If a test overwrites a value and then removes it with `del` or `pop`,
+# it erases another suite's value as well as its own and leaves the process
+# without any storage root.
 #
-# 실제로 그 일이 일어나고 있었다. `test_numbering.py` 와 `test_outbound_single.py` 가
-# 각각 정리 단계에서 FLOWGATE_STORAGE_DIR 을 지웠고, 그 뒤에 오는
-# `test_worktree_resolution_e2e_0280.py` 는 자기 임시 루트를 잃은 채
-# `ensure_worktree` 가 엉뚱한 자리에 만들어 "failed" 를 돌려주면서 **7 건이 setup 에서
-# error** 로 죽었다. 그 파일만 따로 돌리면 8 건 전부 통과한다 — NR0003 §4.1 이
-# "순서 의존은 없다" 고 결론 낸 자리에서, 실패가 아니라 error 로 잡히는 바람에
-# `-rf` 요약에 이름이 안 찍혀 눈에 띄지 않았던 종류다.
+# This happened when test_numbering.py and test_outbound_single.py each
+# deleted FLOWGATE_STORAGE_DIR during cleanup. The later
+# test_worktree_resolution_e2e_0280.py lost its temporary root, and
+# ensure_worktree created files in the wrong location and returned "failed":
+# seven setup errors, although all eight tests passed in isolation. the review
+# missed this order dependency because errors, unlike failures, did not appear
+# in the -rf summary.
 #
-# 두 파일은 각자 고쳤다. 이건 그 다음을 위한 것이다 — NR0003 §5.3 의 요지 그대로,
-# 규칙이 전역이면(모듈은 환경을 빌려 쓰고 그대로 돌려준다) 검사도 전역이어야 한다.
+# Those two files were fixed separately. the review calls for a global check
+# of the global rule: modules borrow the environment and return it unchanged.
 #
-# 실패시키지 않고 **되돌린 뒤 보고**한다. 되돌리는 쪽이 그 자체로 사고를 막고, 이미
-# 있는 다른 누출을 새 빨간불로 바꾸지 않는다. 대신 어느 모듈이 무엇을 흘렸는지 실행
-# 끝에 이름이 찍히므로, 근원에서 고칠 수 있다.
+# Restore and report instead of failing. Restoration prevents the incident
+# without turning existing leaks into new failures. The end-of-run report names
+# each leaking module and variable so the cause can be fixed at its source.
 
 _env_leaks: list[str] = []
 
@@ -764,7 +759,7 @@ def _flowgate_env() -> dict:
 
 @pytest.fixture(scope="module", autouse=True)
 def flowgate_env_returned_as_found(request):
-    """모듈이 바꾼 FLOWGATE_* 환경변수를 모듈이 끝날 때 원래대로 돌려놓는다."""
+    """Restore FLOWGATE_* variables changed by a module when the module finishes."""
     before = _flowgate_env()
     yield
     after = _flowgate_env()
@@ -835,7 +830,7 @@ def migrated_sqlite_db(tmp_path_factory, pytestconfig):
     Each execution uses a fresh basetemp, so templates are never reused across
     runs or sessions; pytest may retain recent temporary directories on disk.
 
-    flowgate.default.0394 T0004: test_auth.py once replayed only migrations
+    test_auth.py once replayed only migrations
     001/002/005 and missed auth_sessions when 067a arrived. Keep one full-chain
     builder: never freeze a per-suite subset or swallow migration errors, which
     would hide the schema drift this fixture exists to detect.
@@ -935,28 +930,28 @@ def all_migrations_db():
 
 @pytest.fixture
 def test_db(all_migrations_db):
-    """공용 연결을 한 테스트에 빌려준다 — 열린 트랜잭션 없이 주고, 쓴 것은 되돌려 받는다.
+    """Lend the shared connection to one test, with no open transaction; roll back its writes.
 
-    flowgate.default.0394 T0014 (NR0003 §13-13 — 병렬 안전성 검증).
+    (parallel safety validation).
 
-    `all_migrations_db` 는 세션 스코프 연결 하나다. 네 개 파일이 그것을 공유하는데,
-    그 중 `test_tokens_resolve_conflict_scope_0233.py` 는 tokens 에 INSERT 만 하고
-    commit 도 정리도 하지 않는다. python 의 sqlite3 는 그 시점에 쓰기 트랜잭션을 열고
-    닫지 않으므로, **다음 파일은 트랜잭션이 열린 연결을 물려받는다.**
+    Four files share the session-scoped `all_migrations_db` connection.
+    `test_tokens_resolve_conflict_scope_0233.py` inserts into tokens without
+    committing or cleaning up. Python's sqlite3 opens a write transaction and
+    leaves it open, so the next file inherits that transaction.
 
-    sqlite 의 `PRAGMA foreign_keys` 는 트랜잭션 안에서는 조용히 무시된다. 그래서
-    `test_auto_approved_locale_0099.py` 가 FK 를 끄고 하는 round-trip INSERT 는 FK 가
-    켜진 채로 실행돼 IntegrityError 로 죽는다 — 자기 잘못이 아니라 앞 파일 때문에.
+    SQLite silently ignores `PRAGMA foreign_keys` inside a transaction. Thus
+    the round-trip INSERT in `test_auto_approved_locale_0099.py`, intended to run
+    with FKs disabled, instead raises IntegrityError because of the earlier file.
 
-    순차 실행에서는 이 조합이 알파벳 순서 덕분에 반대로 놓여 한 번도 드러나지 않았다
-    (NR0003 §4.1 이 "순서 의존은 없다" 고 결론 낸 근거가 그 순서였다). 파일을 워커에
-    나눠 주는 순간 순서가 바뀌고, 실제로 `--tier=standard -n auto --dist loadfile` 에서
-    이 한 건이 빨간불이 됐다. 병렬 자체의 결함이 아니라, **병렬이 드러낸 원래 있던
-    파일 간 상태 공유**다.
+    Alphabetical serial execution placed these files in the opposite order,
+    hiding the issue and supporting the review's conclusion of no order dependency.
+    Distributing files to workers changes the order: this case failed under
+    `--tier=standard -n auto --dist loadfile`. Parallel execution exposed existing
+    cross-file shared state rather than introducing the defect.
 
-    그래서 연결을 넘겨줄 때와 돌려받을 때 양쪽에서 트랜잭션을 닫는다. 되돌리는 쪽이라
-    세션 시작 때 commit 된 시드 데이터는 그대로 남고, 테스트가 쓴 행만 사라진다 —
-    남의 테이블에 행을 남기는 것 또한 같은 뿌리의 사고다.
+    Close transactions both when lending and when reclaiming the connection.
+    Rollback preserves seed data committed at session start and removes only
+    test writes; leaving rows in another test's tables has the same root cause.
     """
     all_migrations_db.rollback()
     try:
@@ -966,7 +961,7 @@ def test_db(all_migrations_db):
 
 
 
-# ── flowgate.v02.0119 T#2 (T-1): the completion stand-in of the Graph engine suites ──────────────────────────────────
+# ── the earlier change the earlier implementation (T-1): the completion stand-in of the Graph engine suites ──────────────────────────────────
 #
 # Production has no completion fallback any more: with no handler registered the Graph's ``card_completion_ports``
 # answers "no completion" whatever the document's review status, and the server's start fails when it cannot register

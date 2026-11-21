@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#2 (0005-L §2.2 / §2.3) — per connected group: its stages (the existing layeredDepths called
+// per connected group: its stages (the existing layeredDepths called
 // with surrogate keys in K′ order, so a cycle's fallback order never follows a node id), forward / back edges (a
 // back edge — target stage ≤ source stage — is a cycle's way back: no stage, lane, spacing or pierce rule
 // applies to it), the downstream hash and the full key K, the group order (the group with a root start first)

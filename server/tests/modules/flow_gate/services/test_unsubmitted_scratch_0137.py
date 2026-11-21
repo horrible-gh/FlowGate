@@ -1,4 +1,4 @@
-"""flowgate.v02.0137 T0004 §2/§3/§5-A: unsubmitted AI drafts survive and reach the next token.
+"""A: unsubmitted AI drafts survive and reach the next token.
 
 Isolated: every directory lives under pytest's tmp_path (the storage root is patched), run
 ids are synthetic (`aiv_29990101_*`), token rows / run rows are in-memory stubs. Nothing
@@ -29,7 +29,7 @@ from modules.flow_gate.services.ai_invoke import carryover, finalize, oracle, ru
 from modules.flow_gate.services.ai_invoke import submission_ledger  # noqa: E402
 from modules.flow_gate.settings import scratch_retention  # noqa: E402
 
-try:  # flowgate.v02.0138 (merged into feature/v0.2.0 after this group's base): a run
+try:  # (merged into feature/v0.2.0 after this group's base): a run
     # scratch then needs a DB-registered owner and execution_nonce. Use 0138's own isolated
     # ownership fixture when it exists; on this group's base the import fails and nothing
     # changes. The fixtures are imported by name so pytest applies them to this module.
@@ -109,7 +109,7 @@ def _finished_run(run_id: str, scratch: Path, **extra) -> dict:
            "scratch_retained": None, "token_id": "tok_29990101_000099",
            "execution_nonce": NONCES.get(run_id)}
     if NONCES.get(run_id):
-        # 0138 identity fields exactly as scratch_contract_fixture.owned_nonce claimed them.
+        # identity fields exactly as scratch_contract_fixture.owned_nonce claimed them.
         run.update(group_id="", started_at="2026-08-28T01:00:00+00:00")
     run.update(extra)
     return run
@@ -182,7 +182,7 @@ class TestSubmissionSettlement:
         assert not scratch.exists()
 
     def test_clean_complete_run_is_retained_until_the_system_ttl_c3(self, storage, monkeypatch):
-        """flowgate.v02.0157: a complete, settled run no longer loses its scratch at
+        """a complete, settled run no longer loses its scratch at
         finalize. It is kept (not offered for carry-over) until the system retention
         measured from `completed_at` has passed, then the retained sweep removes it."""
         run_id, scratch = _run_scratch(2)
@@ -272,7 +272,7 @@ class TestSubmissionSettlement:
 
     def test_failure_then_verified_success_is_settled(self, storage, docs):
         """§2-3: an earlier error is not a permanent failure once a later submission landed.
-        0157: settled means "nothing to carry over"; the directory still waits for the TTL."""
+        settled means "nothing to carry over"; the directory still waits for the TTL."""
         run_id, scratch = _run_scratch(13)
         run = _finished_run(run_id, scratch, register_errors=[{"status": 422}])
         _fail(run, 422)
@@ -626,7 +626,7 @@ class TestReissueCarryOver:
         run_id, run_dir = _run_scratch(run_serial)
         (run_dir / "draft.md").write_text("cwd draft", encoding="utf-8")
         monkeypatch.setattr(worker.db_group_ai_leases, "update_token", lambda *a, **k: None)
-        # 0136 (merged after this base) re-verifies a review loop's reissued RAW token; the
+        # (merged after this base) re-verifies a review loop's reissued RAW token; the
         # stub tokens here are rows only, so that adoption is taken as given (the real-token
         # path is test_unsubmitted_resubmit_e2e_0137). Harmless on this group's base.
         monkeypatch.setattr(worker, "_adopt_continuation_token", lambda *a, **k: True)
@@ -725,7 +725,7 @@ class TestNewRunCarryOver:
         tok_id, tok_dir = _token(storage, token_serial, consumed=True, run_id=run_id,
                                  created_at=created + timedelta(seconds=1))
         (tok_dir / "submit_body.json").write_text("{}", encoding="utf-8")
-        # TR0005 rev1: the run scratch names its run's token / document / requester.
+        # the run scratch names its run's token / document / requester.
         assert carryover.bind_run_scratch(PROJECT, run_id, run_dir, group_id=GROUP, doc_ref=DOC,
                                           issued_to=USER, token_id=tok_id)
         row = {"run_id": run_id, "status": "finished", "project_id": PROJECT, "group_id": GROUP,
@@ -776,7 +776,7 @@ class TestNewRunCarryOver:
 
     def test_unreadable_retention_fails_closed_without_a_private_default(
             self, storage, monkeypatch):
-        """0157: a settings error no longer means "7 days" (which would have copied this
+        """a settings error no longer means "7 days" (which would have copied this
         30-minute-old run); it means no copy, like the sweep that stops on the same error.
         The source itself stays untouched."""
         row, run_dir, _tok = self._retained(storage)
@@ -791,7 +791,7 @@ class TestNewRunCarryOver:
         assert (run_dir / "nr_rev1.md").is_file()
 
     def test_run_id_collision_is_never_carried(self, storage, monkeypatch):
-        """0138: this run's own id already names a finished row — that row is someone else's."""
+        """this run's own id already names a finished row — that row is someone else's."""
         row, *_ = self._retained(storage)
         _m, record, new_dir = self._start(storage, monkeypatch, row, run_id=row["run_id"])
         assert record["reason"] == "run_id_collision"
@@ -803,7 +803,7 @@ class TestNewRunCarryOver:
         assert record["reason"] == "previous_id_live"
 
     def test_scratch_that_does_not_match_its_row_in_time_is_not_used(self, storage, monkeypatch):
-        """0138: same id, different run — the directory's manifest disagrees with the row."""
+        """same id, different run — the directory's manifest disagrees with the row."""
         row, run_dir, _tok = self._retained(storage, skew=timedelta(hours=3))
         _m, record, new_dir = self._start(storage, monkeypatch, row)
         # the run scratch is refused; the token minted inside the row's window is out too
@@ -822,7 +822,7 @@ class TestNewRunCarryOver:
         assert carryover.NOTICE_HEADING not in mention
 
 
-# ── TR0005 rev1: owner binding, chained relay, content secrets ───────────────
+# ── the earlier implementation: owner binding, chained relay, content secrets ───────────────
 
 class TestRunOwnerBinding:
     """Review finding 2: same run id, seconds apart, other document / requester."""

@@ -8,9 +8,9 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free "nothing to show yet" state (T0008 §7). Knows nothing about which list or
+// Domain-free "nothing to show yet" state. Knows nothing about which list or
 // panel is empty -- title/description/action all come from the caller. Never hardcodes a
-// domain sentence like "프로젝트가 없습니다" / "브랜치가 없습니다" (T0008 §7 금지).
+// domain sentence like "프로젝트가 없습니다" / "브랜치가 없습니다" (T0008 §7 prohibition).
 withDefaults(
   defineProps<{
     title: string

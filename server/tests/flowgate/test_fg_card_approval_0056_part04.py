@@ -65,7 +65,7 @@ from test_fg_card_approval_0056 import (
 )
 
 def test_the_card_approval_package_port_and_route_are_removed():
-    """0119 T-3 ③ / ④: nothing imports ``flowgate.card_approval`` or ``card_approval_ports`` (the server's sources and
+    """T-3 ③ / ④: nothing imports ``flowgate.card_approval`` or ``card_approval_ports`` (the server's sources and
     its tests); the package, the port and the route mount are gone, and ``startup`` no longer registers it."""
     removed = ("flowgate.card_approval", "modules.flow_gate.graph_workflow.services.card_approval_ports")
     offenders = []
@@ -187,7 +187,7 @@ def test_the_required_instruction_judgement_names_a_missing_empty_or_stale_instr
     from flowgate.card_completion import legacy_adapter, outputs
     from flowgate.card_documents import decision_repository
 
-    # 0126 T#2: the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
+    # the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
     # projection sees no decisions and the document's own review status decides (the ledger: test_fg_human_*_0126).
     monkeypatch.setattr(decision_repository, "available", lambda: False)
     lines, used, row, result_type = [], {"type": "T"}, {"stage": "result"}, {"type": "TR"}

@@ -1,10 +1,10 @@
-"""TR work-scope check (flowgate.default.0299 — R0001 → D0004 → NR0006 → T0007).
+"""TR work-scope check.
 
 Catches, at TR submission time, the accident of an AI worker working somewhere other than
 its assigned worktree (usually the origin repo, main). It reads the self-declared changed-
 files section of the TR body and compares it with what the server actually observed inside
 
-the worktree assigned to that group. Two design principles (D0004):
+the worktree assigned to that group. Two design principles:
 
 * **It never infers a culprit.** The check runs only inside this task's worktree, so
   another worker polluting the origin repo cannot affect this task's verdict.
@@ -37,14 +37,14 @@ from typing import Iterable, Optional
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import git_service
-# 0382 NR0003 proposal 3: the exclusion-rule logic lives in path_exclusion_rules alone.
+# proposal 3: the exclusion-rule logic lives in path_exclusion_rules alone.
 # This module stays canonical by name — the two names below are re-exports.
 from modules.flow_gate.services.path_exclusion_rules import (  # noqa: F401
     exclusion_reason,
     is_excluded_path,
 )
 
-# ── Reason codes (D0004 §3.5) ────────────────────────────────────────────────
+# ── Reason codes ────────────────────────────────────────────────
 TRV_MISSING_SECTION = "TRV-001"   # section missing
 TRV_OUT_OF_SCOPE = "TRV-002"      # declared path outside scope
 TRV_UNCONFIRMED = "TRV-003"       # declared but unconfirmed
@@ -52,7 +52,7 @@ TRV_UNREPORTED = "TRV-004"        # changed but undeclared
 TRV_FORMAT = "TRV-005"            # format error
 TRV_NO_SCOPE = "TRV-006"          # scope could not be determined
 
-# T2/TR2 (0355 NR0003 §1-4): the rejection and authoring notices were 966 characters of
+# T2/TR2: the rejection and authoring notices were 966 characters of
 # Korean with no way to change language. Reason-code labels are now per language, with ko
 # left as the default so existing callers (logging, etc.) stay compatible.
 _CODE_LABELS_BY_LOCALE: dict[str, dict[str, str]] = {
@@ -90,7 +90,7 @@ def _code_label(code: str, locale: str) -> str:
     return table.get(code, CODE_LABELS.get(code, code))
 
 
-# ── Enforcement stages (D0004 §3.6) ──────────────────────────────────────────
+# ── Enforcement stages ──────────────────────────────────────────
 STAGE_OBSERVE = "observe"
 STAGE_WARN = "warn"
 STAGE_ENFORCE = "enforce"
@@ -102,23 +102,23 @@ VERDICT_REJECT = "reject"
 VERDICT_SKIPPED = "skipped"
 
 SECTION_HEADING = "## 변경 파일"
-SECTION_HEADING_EN = "## Changed Files"  # T0009: English alias the parser accepts (the canonical display name stays Korean)
+SECTION_HEADING_EN = "## Changed Files"  # English alias the parser accepts (the canonical display name stays Korean)
 NONE_MARKER = "없음"
 MAX_ITEMS = 200
-_MAX_LISTED = 40  # max lines actually listed in the rejection notice (D0004 §3.8-3)
+_MAX_LISTED = 40  # max lines actually listed in the rejection notice
 FINALIZE_UNREPORTED_LIST_MAX = _MAX_LISTED
 
-# ── Exclusion rules (D0004 §3.3 → merged with the screen rules in 0382 NR0003) ──
+# ── Exclusion rules (→ merged with the screen rules in the review) ──
 #
-# The rule bodies moved to path_exclusion_rules. The 0382 B0001 incident came from exactly
+# The rule bodies moved to path_exclusion_rules. The the regression incident came from exactly
 # two sets of rules where the screen hid a file the check still flagged — the worker was
 # blocked by a file they could not even see. `is_excluded_path` here is a re-export of that
 # shared module (see the import above), and git_service's screen filter calls the same one.
 
 
-# ── Declared-list parser (D0004 §3.2) ────────────────────────────────────────
+# ── Declared-list parser ────────────────────────────────────────
 
-# T0009: both the Korean heading and the English alias "Changed Files" are accepted — only
+# both the Korean heading and the English alias "Changed Files" are accepted — only
 # the spellings grow; the canonical name (SECTION_HEADING, used in resubmit guidance) stays Korean.
 _HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s*(변경\s*파일|Changed\s+Files)\s*$", re.IGNORECASE)
 _NEXT_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
@@ -167,9 +167,9 @@ _FORMAT_ERROR_STRINGS = {
 
 
 def _format_error(key: str, locale: str, **kwargs) -> str:
-    """T0009 task 4: locale branch for the five format_errors strings.
+    """task 4: locale branch for the five format_errors strings.
 
-    The ko wording is byte-identical to the pre-T0009 hardcode — existing suites
+    The ko wording is byte-identical to the pre-the earlier implementation hardcode — existing suites
     (test_tr_scope_0299.py) assert those exact strings.
     """
     strings = _FORMAT_ERROR_STRINGS.get(locale) or _FORMAT_ERROR_STRINGS["ko"]
@@ -275,7 +275,7 @@ def resolve_stage(project_id: str) -> Optional[str]:
     return stage if stage in db_git.TR_SCOPE_STAGE_VALUES else STAGE_OBSERVE
 
 
-# ── Measurement basis: group worktree or Graph attempt (0110 T#2, NR0003 §2 T-A) ──
+# ── Measurement basis: group worktree or Graph attempt ──
 #
 # A Graph (v0.2) attempt token's remote CRUD writes into the attempt's own worktree, which
 # reaches the group branch only after the card is approved. Measuring the group worktree
@@ -343,7 +343,7 @@ def _measure(project_id: str, group_id: str, attempt_scope: Optional[dict]) -> t
     return actual, fields
 
 
-# ── Comparison verdict (D0004 §3.4 / §3.7) ───────────────────────────────────
+# ── Comparison verdict ───────────────────────────────────
 
 def evaluate(
     project_id: str,
@@ -359,7 +359,7 @@ def evaluate(
     metadata. ``locale`` only picks the language of the ``notice`` attached on rejection
     (T2/TR2); the verdict itself is language-independent. ``prior_declared`` holds paths
     already declared by earlier TRs in the same group and is merged only into the undeclared
-    verdict — it does not affect this body's unconfirmed verdict. ``attempt_scope`` (0110 T#2)
+    verdict — it does not affect this body's unconfirmed verdict. ``attempt_scope``
     is ``resolve_attempt_scope``'s value: None measures the group worktree as before; an
     attempt measures its root from its ``input_commit``; an unresolved attempt is TRV-006.
     ``scope_source``/``attempt_id``/``input_commit`` in the result say which basis was used.
@@ -419,7 +419,7 @@ def evaluate(
             codes.append(TRV_UNCONFIRMED)
         if unreported:
             codes.append(TRV_UNREPORTED)
-        # 7) file-level manifest (0493 T0005): one row per ACTUAL changed path, built from
+        # 7) file-level manifest: one row per ACTUAL changed path, built from
         #    the same detected/declared/prior_declared sets above so it can never drift
         #    from unconfirmed/unreported. reporting_state is mutually exclusive and a
         #    current-TR declaration always wins over a prior one — prior-reported must
@@ -457,11 +457,11 @@ def evaluate(
         "worktree": actual.get("worktree"),
         "scope_reason": actual.get("reason"),
         "file_manifest": file_manifest,
-        # 0665 T0004: the floor the manifest was measured against (None when unavailable).
+        # the floor the manifest was measured against (None when unavailable).
         "work_base_ref": actual.get("work_base_ref"),
         "scope_base_sha": actual.get("scope_base_sha"),
         "work_base_error": actual.get("work_base_error"),
-        # 0110 T#2: which tree the manifest was measured on (graph_attempt | group).
+        # which tree the manifest was measured on (graph_attempt | group).
         **scope_fields,
     }
     if verdict == VERDICT_REJECT:
@@ -470,7 +470,7 @@ def evaluate(
 
 
 def _verdict_for(codes: list[str], stage: str) -> str:
-    """Reason codes + enforcement stage → final disposition (D0004 §3.7 verdict matrix).
+    """Reason codes + enforcement stage → final disposition (verdict matrix).
 
     When several reasons fire at once the heaviest disposition wins — one reject means reject.
     """
@@ -492,11 +492,11 @@ def _verdict_for(codes: list[str], stage: str) -> str:
     return VERDICT_PASS  # observe — recorded only, nothing surfaces to the worker
 
 
-# ── Rejection notice (D0004 §3.8, language plumbing T2/TR2 — NR0003 §1-4) ────
+# ── Rejection notice (language plumbing T2/TR2 — the review) ────
 #
-# The problem NR0003 §1-4 measured: the TR rejection notice was 966 characters of Korean
+# The problem the review measured: the TR rejection notice was 966 characters of Korean
 # with no way to change the language. The caller (inbox_routes._handle_new) had already
-# resolved a locale from the token/header (L0007 §2-2, "the channel already exists"), so
+# resolved a locale from the token/header ("the channel already exists"), so
 # all that is needed here is to take that value and compose the notice in that language.
 
 _SUPPORTED_NOTICE_LOCALES = ("ko", "en", "ja")
@@ -508,7 +508,7 @@ def _normalize_notice_locale(locale: str) -> str:
 
 def _spelling_changed_files(locale: str) -> str:
     """Per-language section titles. A Japanese request still gets the English canonical form:
-    no Japanese alias was created for this grammar token (0355 T0009), so English is shown."""
+    no Japanese alias was created for this grammar token, so English is shown."""
     return SECTION_HEADING if _normalize_notice_locale(locale) == "ko" else SECTION_HEADING_EN
 
 
@@ -771,7 +771,7 @@ def evaluate_group_unreported(project_id: str, group_id: str) -> dict:
         }
         work_base_error = actual.get("work_base_error")
         if work_base_error is not None:
-            # flowgate.default.0665 T0004: an unverified/diverged work-base floor is
+            # an unverified/diverged work-base floor is
             # not "nothing to check" -- final approval must stop on it instead of
             # passing a group whose change set could not be measured.
             skipped["blocking"] = True
@@ -804,7 +804,7 @@ def evaluate_group_unreported(project_id: str, group_id: str) -> dict:
     }
 
 
-# ── Document-detail lookup (D0004 §6) ───────────────────────────────────────
+# ── Document-detail lookup ───────────────────────────────────────
 
 def verdict_from_meta(meta) -> Optional[dict]:
     """``documents.meta`` → the stored work-scope verdict, or None when absent.
@@ -824,7 +824,7 @@ def verdict_from_meta(meta) -> Optional[dict]:
 
 
 def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
-    """A display-only verdict for documents with no stored one (0390 TR0005 rev2).
+    """A display-only verdict for documents with no stored one.
 
     ``meta['tr_scope']`` is computed once at submission time and frozen, so a document
     submitted while its type was not yet checked (a TS from before TS became a target) has
@@ -842,7 +842,7 @@ def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
     a target was never told to write that section, so **its absence is normal**, and the
     screen ended up as empty as in rev1. Now the card is drawn even without the section, and
     ``scope_reason`` separates "there is no section" from "the section exists but was not compared".
-    R0001's requirement to "offer the work-scope check in the sidebar too" does not mean
+    's requirement to "offer the work-scope check in the sidebar too" does not mean
     offering it only when a declared list exists.
 
     The same holds when ``body`` is None (the body file is unreadable) — it draws zero declarations.
@@ -864,7 +864,7 @@ def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
     }
 
 
-# ── Guidance carried in the work instruction (D0004 §3.9, language plumbing T2/TR2) ──
+# ── Guidance carried in the work instruction (language plumbing T2/TR2) ──
 
 _TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {
     "ko": (
@@ -916,9 +916,9 @@ _TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {
 
 
 def tr_section_guide(locale: str = "ko") -> str:
-    """The TR authoring guidance carried in a work instruction (D0004 §3.9, T2/TR2).
+    """The TR authoring guidance carried in a work instruction.
 
-    NR0003 §1-4: this notice, like the 966-character rejection notice, used to be all Korean.
+    this notice, like the 966-character rejection notice, used to be all Korean.
     """
     loc = _normalize_notice_locale(locale)
     return _TR_SECTION_GUIDE_TEMPLATES[loc].format(

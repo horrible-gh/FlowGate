@@ -1,13 +1,13 @@
-"""Shared path-safety helpers for source-root sandboxing (L0006 §4).
+"""Shared path-safety helpers for source-root sandboxing.
 
 A small, single-responsibility module for "is this relative path/pattern safe,
 and where does it resolve inside the project root?". Modeled on the path jail
 already used by file_transfer_routes (_is_valid_relative_path / _under_root /
-os.path.realpath) and on Hivework `http_tools._resolve` (NR0009 §4.3, NR0011 §2):
+os.path.realpath) and on Hivework `http_tools._resolve`:
 lexical traversal rejection + realpath root-containment that also defeats
 symlink escape.
 
-Two checks (L0006 §4.2):
+Two checks:
   • is_safe_relative(value)   — shape and normalisation: rejects empty strings, absolute paths,
                                 drive letters and `..` segments; wildcards (`*`/`**`/`?`) are allowed.
   • resolve_in_root(root, rel) — realpath then jail to the root (symlink escapes included) → an absolute Path or None.

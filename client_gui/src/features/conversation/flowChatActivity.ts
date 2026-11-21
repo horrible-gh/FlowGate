@@ -11,7 +11,7 @@ export function beginChatActivity(groupId: string): () => void {
 }
 
 /**
- * flowgate.v02test.0035: `onFinish` hears every chat (CH) run of an open Flow that the server reports finished, and
+ * `onFinish` hears every chat (CH) run of an open Flow that the server reports finished, and
  * whether it failed (finishedRunFailed), before the activity it ends is read again.
  */
 export function useFlowChatActivity(project: () => string | null, flows: () => readonly string[],

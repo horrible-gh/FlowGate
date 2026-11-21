@@ -1,4 +1,4 @@
-"""Worker ment Q&A block rendering with query options (group 0243 L0008 §2.5).
+"""Worker ment Q&A block rendering with query options.
 
 The ment is what tells a worker which options were offered and what came back. An
 unanswered query lists its options WITH their ids, because a worker answering through the
@@ -51,7 +51,7 @@ def test_answered_query_has_no_options_line():
     assert "- [답변완료] Q1 배포 방식" in lines
     assert "    답: 점검창 배포" in lines
     assert not any("보기:" in ln for ln in lines)
-    # 기계 판독 값은 멘트에 노출하지 않는다 — 사람 판독 형식을 유지한다
+    # Keep the mention human-readable without exposing machine-readable values.
     assert not any("o2" in ln for ln in lines)
 
 
@@ -66,7 +66,7 @@ def test_query_without_options_renders_pre_extension_format():
 
 
 def test_malformed_options_fall_back_to_plain_line():
-    """파싱 실패(정상 경로에선 발생 불가)가 멘트 조립을 죽여서는 안 된다 (L0008 §5)."""
+    """Parsing failure, unreachable on the normal path, must not break mention assembly."""
     lines = _render([{
         "seq": 1, "title": "범위", "body": "scope?", "asker_kind": "ai",
         "options": "{ not json", "author_kind": None, "answer_body": None,

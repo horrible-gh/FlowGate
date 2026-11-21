@@ -1,7 +1,7 @@
-"""T#7: real revise/read integration through API call contexts and CLI HTTP.
+"""real revise/read integration through API call contexts and CLI HTTP.
 
 SQLite, files, CAS, revision/event rows, rollback, guards and contacts run for real.
-The T#1 fixture supplies card definitions, RBAC and notification sinks; token verification
+The the earlier implementation fixture supplies card definitions, RBAC and notification sinks; token verification
 is replaced with a live-row lookup while authz/recheck still read actual token/claim rows.
 """
 import hashlib
@@ -378,14 +378,14 @@ def test_projection_failure_still_notifies_after_commit_and_reports_500(chat, mo
 def test_cli_mention_and_descriptors_cover_contract_without_command_capability():
     from flowgate.conversation import integration
     offered = integration.provide_chat_tools({"action_scope": "chat"})
-    # flowgate.v02test.0023: the Graph reads (0145), the control tower tools and the attachment request
+    # the Graph reads , the control tower tools and the attachment request
     # (chat.0017) come first; the card document contract is the last five.
     assert [t["name"] for t in offered] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
                                             "start_flow_run",
-                                            "get_card_roles", "set_card_roles",              # flowgate.v02gui.0028
-                                            "get_ai_options",                                # flowgate.v02gui.0032
+                                            "get_card_roles", "set_card_roles",              # 
+                                            "get_ai_options",                                # 
                                             "request_attachment_upload",
-                                            "list_card_questions", "answer_card_question",   # flowgate.v02gui.0010
+                                            "list_card_questions", "answer_card_question",   # 
                                             chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
                                             chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
     tools = offered[-5:]
@@ -551,7 +551,7 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
     if case == "revision":
         body["expected_revision"] = 7
     elif case == "content":
-        # 0002-CH turn 48: a body without front matter keeps the current one; a changed identity is still refused
+        # : a body without front matter keeps the current one; a changed identity is still refused
         body["content"] = "---\nproject: flowgate\nmodule: v02\ngroup: 0127\ntype: T\ndoc_number: 0002-N\n---\nchanged"
     else:
         def deny(group_id, principal, operation):
@@ -572,7 +572,7 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
 
 @pytest.mark.parametrize("via", ["api", "cli"])
 def test_a_body_without_front_matter_keeps_the_current_front_matter(chat, monkeypatch, via):
-    """0002-CH turn 48: the chat's line edit, like its doc_id edit, keeps the document's front matter when the body has
+    """: the chat's line edit, like its doc_id edit, keeps the document's front matter when the body has
     none (the test server chat failed once with 422 document_identity_changed before sending it again)."""
     monkeypatch.setattr(guards.mutation_policy, "assert_group_mutation_allowed", lambda *a: None)
     body = request_body(chat, content="## body only\n")

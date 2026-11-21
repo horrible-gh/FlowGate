@@ -1,9 +1,9 @@
-"""Lock Manager (flowgate.default.0669 unit 1b; 0666 0009-L §2.1~2.9, §4.1, §4.2).
+"""Lock Manager (unit 1b; the earlier implementation~2.9).
 
 ``acquire`` / ``release`` — the domain locks (P/G/W/B/R/M) on ``resource_lock``, owned
 by an ``ExecutionContext``. Re-entry, order checks, stale reclaim and long-lock
 heartbeats follow L 2.3~2.9. Unit 2 moved ordinary source mutation (tr2_file_policy)
-and Source Bundle ensure onto G (0684 T#4 removed Source Bundle; a spec run's preparing
+and Source Bundle ensure onto G (the earlier implementation removed Source Bundle; a spec run's preparing
 copy now holds G as ``run_prepare``); unit 3 moved TR2 approval, TR commit, Time Machine
 cancel, the TR conflict commit and the TR2 document delete guard; unit 4 moved
 self-check and narrowed its recovery check to the Group.
@@ -78,13 +78,13 @@ _WAIT_PARAMS = {
     "interactive": ("FLOWGATE_INTERACTIVE_WAIT_SEC", 5, 0, 15),
     "freeze_interactive": ("FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC", 2, 0, 5),
     "selfcheck_start": ("FLOWGATE_SELFCHECK_START_WAIT_SEC", 5, 0, 15),
-    # 0684 T#2: a spec run's preparing copy waits for a source write of its Group in the
+    # a spec run's preparing copy waits for a source write of its Group in the
     # background (no request is held), so it may wait longer than an interactive caller.
     "run_prepare": ("FLOWGATE_RUN_PREPARE_WAIT_SEC", 30, 0, 120),
     "job": ("FLOWGATE_JOB_LOCK_WAIT_SEC", 0, 0, 2),
 }
 
-# One attempt, no wait: TR commit (L0007 §1 tr_commit_lock_wait_sec = 0).
+# One attempt, no wait: TR commit (tr_commit_lock_wait_sec = 0).
 NO_WAIT = "no_wait"
 
 
@@ -365,10 +365,10 @@ def reclaim_stale_row(row: dict) -> bool:
     A row that nevertheless carries an exec record is protected rather than deleted:
     without the gated-spawn contract nothing proves its child process is gone.
 
-    0080 T#2: the one delete both stale-reclaim callers (``job_sweeper.step_stale_locks``,
+    the one delete both stale-reclaim callers (``job_sweeper.step_stale_locks``,
     ``_try_acquire_once``) pass. A Self-check-owned G is deleted only when
     ``selfcheck_reclaim_gate`` says RECLAIM; every other holder kind keeps this path as it was.
-    0110 T#3: a Graph attempt run's W is stored as ``holder_kind='selfcheck'`` too, so it
+    a Graph attempt run's W is stored as ``holder_kind='selfcheck'`` too, so it
     passes the same gate (owner and process tree proved) -- an instance judged DEAD alone
     never frees the attempt's tree while the run's processes may still be in it.
     """
@@ -419,7 +419,7 @@ SELFCHECK_RECLAIM = "reclaim"
 
 
 def selfcheck_reclaim_gate(row: dict) -> str:
-    """0080 T#2 (NR0007 §5-0 ⑤): RECLAIM / KEEP / PROTECT for a Self-check-owned G row.
+    """(⑤): RECLAIM / KEEP / PROTECT for a Self-check-owned G row.
 
     ``is_stale`` (owner DEAD, heartbeat expired) only nominates the row; the gate proves the
     run's owner dead and its process tree empty first. Any failure is KEEP."""
@@ -432,7 +432,7 @@ def selfcheck_reclaim_gate(row: dict) -> str:
 
 
 def _selfcheck_w_rows(project_id: str, run_id: str) -> list:
-    """0110 T#3: the W rows a Self-check run holds (a Graph attempt run's attempt W)."""
+    """the W rows a Self-check run holds (a Graph attempt run's attempt W)."""
     holder = selfcheck_ctx_id(run_id)
     _request_cache.invalidate()
     return [row for row in db.list_locks_in_scope(project_id)
@@ -440,7 +440,7 @@ def _selfcheck_w_rows(project_id: str, run_id: str) -> list:
 
 
 def selfcheck_release_recovered(project_id: str, group_id: str, run_id: str) -> None:
-    """unprotect_and_release: the run's process is proved gone. 0110 T#3: its attempt W
+    """unprotect_and_release: the run's process is proved gone. the earlier implementation: its attempt W
     goes with its G (before it: a failure here leaves G, which the reaper retries)."""
     holder = selfcheck_ctx_id(run_id)
     for row in _selfcheck_w_rows(project_id, run_id):
@@ -449,7 +449,7 @@ def selfcheck_release_recovered(project_id: str, group_id: str, run_id: str) -> 
 
 
 def _selfcheck_protect_w(project_id: str, run_id: str, now: str) -> bool:
-    """0110 T#3: mark the run's attempt W rows protected (an attempt's source writes take
+    """mark the run's attempt W rows protected (an attempt's source writes take
     that W alone, so G's protection does not keep them out). False = a row was not marked."""
     ok = True
     for row in _selfcheck_w_rows(project_id, run_id):
@@ -462,7 +462,7 @@ def _selfcheck_protect_w(project_id: str, run_id: str, now: str) -> bool:
 
 
 def selfcheck_ensure_protected(project_id: str, group_id: str, run_id: str) -> bool:
-    """ensure_protected_g: keep (or create) this Group's G as a protected row. 0110 T#3:
+    """ensure_protected_g: keep (or create) this Group's G as a protected row. the earlier implementation:
     the run's attempt W rows, where it holds one, are marked protected first.
 
     False = the Group (or the run's W) could not be protected here (store error, or G held
@@ -515,7 +515,7 @@ SELFCHECK_RENEWED, SELFCHECK_PROTECTED, SELFCHECK_GONE = "renewed", "protected",
 
 
 def selfcheck_regain(ctx: ExecutionContext, key: str) -> Optional[str]:
-    """0080 T#3 (NR0007 §5 item 7): a Self-check holder after its heartbeat was declared lost.
+    """a Self-check holder after its heartbeat was declared lost.
 
     RENEWED: the row of this epoch and holder is still there, unprotected, and its heartbeat
     renewed -- the hold beats again (a). PROTECTED: the row is ours but the renewal failed,
@@ -556,9 +556,9 @@ SELFCHECK_PROTECTED_PAGE = 100
 
 
 def selfcheck_protected_locks() -> list:
-    """Every protected Self-check G row (the T#3 reaper re-proves those of ended runs), read
+    """Every protected Self-check G row (the the earlier implementation reaper re-proves those of ended runs), read
     page by page: rows that stay unprovable at the head never hide the ones after them.
-    There is at most one G row per Group. 0110 T#3: a Graph attempt run's protected W rows
+    There is at most one G row per Group. the earlier implementation: a Graph attempt run's protected W rows
     (holder_kind selfcheck) are listed too; the reaper frees them with their run's G."""
     rows, after = [], None
     while True:
@@ -762,7 +762,7 @@ def _notify_released(h: Held, skip: tuple = ()) -> None:
 
 
 def notify_reclaimed(row: dict, skip: tuple = ()) -> None:
-    """0156 T#2 (D3 ⓒ-5): a stale row ``reclaim_stale_row`` deleted for the Sweeper — the release notice
+    """(D3 ⓒ-5): a stale row ``reclaim_stale_row`` deleted for the Sweeper — the release notice
     ``_db_release`` gives a committed delete, so its listeners (a Graph integration waiting for that G/W/M) run.
     ``skip``: listeners the caller already woke. Never raises."""
     try:

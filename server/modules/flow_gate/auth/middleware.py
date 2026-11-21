@@ -14,7 +14,7 @@ def verify_token(token:str=Depends(oauth2_scheme)):
     except jwt.InvalidTokenError:raise credentials
     if payload.get("type")!="access":raise credentials
     if payload.get("totp_pending"):raise HTTPException(401,"2FA verification required")
-    # 0291 T1: the two checks below and get_current_user's user lookup are three independent
+    # the two checks below and get_current_user's user lookup are three independent
     # single-row lookups. With an empty cache they go three separate times, so one merged read
     # fills all three caches first. The checks themselves are unchanged, so no invalidation path moves.
     # A failure passes silently and the previous path runs as before (see auth_preamble's docstring).
@@ -56,7 +56,7 @@ def get_current_user(payload:dict=Depends(verify_token)):
     if not user_id:raise HTTPException(401,"Invalid token subject")
     from modules.flow_gate.db import users as db_users
     from . import auth_cache as _auth_cache
-    # 0276 NR0003 finding 2: one of the five fixed per-request auth queries.
+    # one of the five fixed per-request auth queries.
     # db.users.create/update/delete invalidate this entry, so is_active/is_admin
     # changes take effect immediately in-process.
     try:

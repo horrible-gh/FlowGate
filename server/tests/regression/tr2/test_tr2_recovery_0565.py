@@ -1,4 +1,4 @@
-"""TR2 lifecycle, proposal recovery, DB CAS and readiness (0565 T0030), connected.
+"""TR2 lifecycle, proposal recovery, DB CAS and readiness, connected.
 
 Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration and a
 connection per statement, a real Git worktree in scratch, the real HTTP routes. The
@@ -105,7 +105,7 @@ def test_human_next_empty_creates_the_canonical_proposal(env):
 
 
 def test_legacy_markdown_tr2_is_reported_then_converted_explicitly(env):
-    """A TR2 registered as a Markdown skeleton (pre-T0030 next-empty) is not guessed at."""
+    """A TR2 registered as a Markdown skeleton (pre-the earlier implementation next-empty) is not guessed at."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db.connection import now_iso
     from modules.flow_gate.storage import paths as storage_paths

@@ -1,6 +1,6 @@
-"""flowgate.default.0399 T0014 set 1 — 저장 구조 · 변환기 · 두 갈래 리스트.
+"""set 1 — storage, converter, and two list paths.
 
-The scenarios below are the ones P0013 wrote out by hand, replayed against the code: the
+The scenarios below are the ones the plan wrote out by hand, replayed against the code: the
 same example group, the same plan, the same expected rows, counts and notifications. If the
 converter ever drifts from that document, these fail with the number that drifted.
 """
@@ -35,7 +35,7 @@ def test_migration_079_adds_the_three_columns_it_claims():
             row[1]: row for row in conn.execute("PRAGMA table_info(workflow_sequence_items)")
         }
         assert set(columns) >= {"note", "source_doc_id", "source_revision_no"}
-        # note is NOT NULL with an empty default: L0011 §2.2 keeps "no value" and "empty
+        # note is NOT NULL with an empty default: the earlier implementation keeps "no value" and "empty
         # text" as one state, so a row can never come back as None.
         assert columns["note"][3] == 1
         assert columns["note"][4] == "''"
@@ -74,7 +74,7 @@ def test_the_registered_queries_carry_the_three_columns_both_ways():
     for column in ("note", "source_doc_id", "source_revision_no"):
         assert column in queries["insert_sequence_item"]
         assert f"wsi.{column}" in queries["get_sequence_items"]
-    # 0649 T#1 (NR0003 §5.4): source_wp_card_id is the 17th bound value.
+    # source_wp_card_id is the 17th bound value.
     assert queries["insert_sequence_item"].count("?") == 17
     assert "source_wp_card_id" in queries["insert_sequence_item"]
     assert "wsi.source_wp_card_id" in queries["get_sequence_items"]
@@ -84,7 +84,7 @@ from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.services import workflow_decision_service as wds
 
 
-# ── P0013 §0 — the example group every scenario shares ───────────────────────
+# ── the plan — the example group every scenario shares ───────────────────────
 
 WP_DOC_ID = "flowgate.default.0450.0002-WP"
 OWNER_DOC_ID = "flowgate.default.0450.0001-R"
@@ -150,7 +150,7 @@ def notification(result, code):
     return next(n for n in result["notifications"] if n["code"] == code)
 
 
-# ── P0013 ① [정상 · 뒤에 이어 붙이기] ────────────────────────────────────────
+# ── the plan 1: normal append ──
 
 def test_append_reproduces_the_protocol_scenario(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
@@ -158,7 +158,7 @@ def test_append_reproduces_the_protocol_scenario(wired):
     assert out["wp_doc_id"] == WP_DOC_ID
     assert out["workflow_doc_id"] == OWNER_DOC_ID
     # TR#1 makes no row of its own — the dialog attaches the report itself, so counting the
-    # plan's result step would produce two of them (L0011 §2.3).
+    # plan's result step would produce two of them.
     assert out["plan_step_count"] == 3
     assert [(r["type"], r["poured"]) for r in out["rows"]] == [
         ("R", False), ("WP", False), ("DS", False), ("D", False),
@@ -180,7 +180,7 @@ def test_append_carries_plan_notes_and_their_origin(wired):
     ]
     assert {r["source_doc_id"] for r in poured if r["origin"] == "plan"} == {WP_DOC_ID}
     assert {r["source_revision_no"] for r in poured if r["origin"] == "plan"} == {1}
-    # 0434 T0004 F1/F2: the automatic report keeps its own planned note and also inherits
+    # the automatic report keeps its own planned note and also inherits
     # the plan revision provenance, so it can be marked stale together with its instruction.
     assert poured[-1] == {
         "type": "TR", "label": poured[-1]["label"], "status": "pending", "locked": False,
@@ -191,7 +191,7 @@ def test_append_carries_plan_notes_and_their_origin(wired):
         "review_count": 0, "reviewer_provider_id": None,
         "reviewer_provider_display_name": None, "pre_instruction_text": None,
         "pre_instruction_attachment": None,
-        # 0649 T#1 (NR0003 O0/O1): a new report row carries its instruction's card id and is
+        # a new report row carries its instruction's card id and is
         # not stored yet. PLAN is a hand-built dict without card ids (a loaded plan always has
         # them), so the inherited value is None here.
         "source_wp_card_id": None, "item_id": None, "protected": False,
@@ -201,13 +201,13 @@ def test_append_carries_plan_notes_and_their_origin(wired):
 def test_append_notifications_match_the_protocol(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
 
-    # 0408 M0019 재반려 2: nothing is dropped any more — TR#1's note reached TR#1's row.
-    # 0649 T#2 (NR0003 O5): this plan has no pending rows of its own, so append is allowed
+    # second rejection, item 2: preserve TR#1's note on its own row.
+    # this plan has no pending rows of its own, so append is allowed
     # and says that the rows already there run first.
     assert codes(out) == ["type_overlap", "note_missing", "foreign_rows_before"]
     assert out["blockers"] == []
     # A P row survived from before and a P#1 row came in — that is the overlap. TR is an
-    # automatic row and never counts (L0011 §2.9).
+    # automatic row and never counts.
     assert notification(out, "type_overlap")["types"] == ["P"]
     assert notification(out, "note_missing")["row_indexes"] == [4, 7]
 
@@ -216,14 +216,14 @@ def test_locked_rows_are_not_counted_as_missing_a_note(wired):
     """Row 3 (DS, done) has a note and row 1/2/4 have none — none of them may be reported.
 
     Telling somebody a finished step has no note asks them to do something there is nothing
-    to do about (P0013 ① 주석).
+    to do about (note).
     """
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
     for index in notification(out, "note_missing")["row_indexes"]:
         assert out["rows"][index]["locked"] is False
 
 
-# ── P0013 ① [정상 · 이후 단계 교체] ──────────────────────────────────────────
+# ── the plan 1: normal replacement of later steps ──
 
 def test_replace_after_cuts_the_whole_editable_list(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="replace_after")
@@ -263,15 +263,15 @@ def test_both_modes_report_the_same_pre_pour_fingerprint(wired):
     assert append["workflow_tag"] == wpa.build_workflow_tag(SEQUENCE, ITEMS)
 
 
-# ── P0013 ① [실패 · mode 값이 둘 중 하나가 아님] ─────────────────────────────
+# ── the plan 1: reject mode values outside the two choices ──
 
 def test_an_unknown_mode_is_refused_rather_than_defaulted(wired):
-    """L0011 §4.2: defaulting would let a mode nobody chose rewrite the sequence."""
+    """defaulting would let a mode nobody chose rewrite the sequence."""
     with pytest.raises(wpseq.InvalidMode):
         wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="replace")
 
 
-# ── P0013 ① [엣지] ──────────────────────────────────────────────────────────
+# ── the plan 1: edge cases ──
 
 def test_a_plan_attached_to_no_row_still_pours(monkeypatch, wired):
     monkeypatch.setattr(wpseq.db_wfseq, "get_item_by_result_doc_id", lambda doc_id: None)
@@ -280,11 +280,10 @@ def test_a_plan_attached_to_no_row_still_pours(monkeypatch, wired):
 
 
 def test_an_unapproved_plan_pours_exactly_like_an_approved_one(wired):
-    """0399 M0020 "승인체크같은거 안해도 되니까".
+    """removes the requirement to check approval.
 
-    예전에는 승인 전이면 plan_not_approved 알림을 붙였고, 화면은 그걸 보고 단추를
-    잠그고 "승인된 작업계획만 적용할 수 있습니다"를 적었다. 이젠 검토 상태를 아예
-    보지 않는다 — 결과가 승인된 계획과 한 글자도 다르지 않은지를 단언한다.
+    Previously plan_not_approved made the UI disable applying an unapproved plan.
+    Review status now has no effect: require byte-identical results to an approved plan.
     """
     approved = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
     pending = wpseq.build_candidates(
@@ -307,14 +306,14 @@ def test_an_undecided_workflow_makes_the_two_modes_agree(monkeypatch):
     assert append["rows"] == replace["rows"]
 
 
-# ── L0011 §2.2 · §2.3 · §2.4 — the conversion rules on their own ─────────────
+# ── the earlier implementation · · — the conversion rules on their own ─────────────
 
 def test_normalize_note_strips_control_characters_and_never_truncates():
     assert wpseq.normalize_note("  a\tb\n  ") == "ab"
     assert wpseq.normalize_note(None) == ""
     assert wpseq.normalize_note(1234) == ""
-    # 0406 T0022 작업 6 / M0019: 옛 계약은 상한 뒤를 조용히 잘랐다. 이제 자르지 않는다 —
-    # 표시 경로는 있는 그대로 돌려주고, 저장 경로(strict)는 거절한다.
+    # task 6 / the earlier implementation: the old contract silently truncated at the limit; no longer.
+    # Display preserves the original path; the strict save path rejects it.
     long_note = "가" * (wpseq.NOTE_MAX_CHARS + 200)
     assert wpseq.normalize_note(long_note) == long_note
     with pytest.raises(wpseq.NoteTooLong) as excinfo:
@@ -327,11 +326,11 @@ def test_normalize_note_strips_control_characters_and_never_truncates():
 
 
 def test_a_result_step_note_lands_on_its_own_row_and_never_touches_the_instruction():
-    """0408 M0019 재반려 2 — 두 줄은 서로 다른 말을 갖는다.
+    """second rejection, item 2: the two rows carry different notes.
 
-    앞선 규칙은 결과 단계의 멘트를 지시 줄로 옮기고, 지시 줄에 이미 말이 있으면 그것을
-    버렸다. [자동 승인]에서 AI 워커가 도는 줄은 결과 줄(NR/TR)이므로, 그 규칙 아래에서는
-    사람이 결과 단계에 적은 말이 한 글자도 전달되지 않거나 남의 말로 바뀌었다.
+    The old rule moved result notes to instruction rows and discarded them if those
+    rows already had notes. Under [자동 승인], workers execute NR/TR result rows,
+    so the user's result note was lost or replaced with another row's note.
     """
     plan = {"steps": [
         {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": ""},
@@ -390,11 +389,11 @@ def test_the_cut_lands_after_the_plan_row_when_that_row_is_editable():
 
 
 def test_the_pairing_table_is_read_from_the_decision_service_not_copied():
-    """L0011 §1.2: two tables that can drift would pour rows the save path rewrites."""
+    """two tables that can drift would pour rows the save path rewrites."""
     assert wpseq.AUTO_ROW_MAP == wds.AUTO_REPORT_MAP
 
 
-# ── P0013 ② — 멘트·출처를 실어 저장 ──────────────────────────────────────────
+# ── the plan 2: save notes and provenance ──
 
 class _FakeStore:
     @contextmanager
@@ -443,7 +442,7 @@ def test_saving_stores_the_note_and_where_the_row_came_from(save_wired):
             for row in inserted] == [
         ("P", "레거시 API 호환 확인", WP_DOC_ID, 1),
         ("T", "테스트 포함 구현", WP_DOC_ID, 1),
-        # 0434 T0004 F1: worker-shaped edits omit reports; the rebuilt row keeps the handoff.
+        # worker-shaped edits omit reports; the rebuilt row keeps the handoff.
         ("TR", "테스트 포함 구현", WP_DOC_ID, 1),
     ]
 
@@ -480,16 +479,16 @@ def test_saving_retrims_the_note_it_is_handed(save_wired):
     ])
     note = inserted[0]["note"]
     assert note.startswith("긴 말") is False and note.startswith("긴말")
-    # 0406 T0022 작업 6: 400 자는 새 상한(1,000) 안이므로 손실 없이 그대로 저장된다.
-    # 옛 계약에서는 여기서 200 자로 잘려 나갔다.
+    # task 6: 400 characters fit the new 1,000-character limit and remain intact.
+    # The old contract truncated this at 200 characters.
     assert note == "긴말  " + body
 
 
 def test_saving_rejects_a_note_over_the_limit_instead_of_cutting_it(save_wired):
-    """0406 T0022 작업 6 / M0019 — "작업 계획도 존나 끊겨서 들어가네".
+    """task 6 / the earlier implementation: prevent silently truncated work-plan input.
 
-    저장 경로가 사용자 입력을 말없이 줄이면 화면은 성공했다고 말하고 값은 사라진다.
-    자르지 않고 거절하며, 거절은 아무 줄도 쓰지 않는다.
+    Silent truncation reports success while losing content. Reject instead of truncating,
+    and write no rows when rejecting.
     """
     inserted, _ = save_wired
     with pytest.raises(wpseq.NoteTooLong) as excinfo:
@@ -551,7 +550,7 @@ def test_a_save_with_no_fingerprint_is_not_compared(save_wired):
     assert [row["type_"] for row in inserted] == ["P"]
 
 
-# ── flowgate.default.0554 T0008 — execution setting persistence ──────────────
+# ── the earlier change the earlier implementation — execution setting persistence ──────────────
 
 _EXECUTION_COLUMNS = {
     "review_count",

@@ -1,4 +1,4 @@
-"""Flow engine router (D0004 §3.1, L0009 §2.2) — the one place that says which engine owns a Flow.
+"""Flow engine router — the one place that says which engine owns a Flow.
 
 Two facts decide it: a Graph assignment record (DB0010 T13) and a v0.1 sequence
 (``find_sequence_by_group_root``, the v0.1 lookup itself — not re-implemented). Before migration

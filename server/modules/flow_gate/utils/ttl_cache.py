@@ -1,6 +1,6 @@
 """Tiny thread-safe TTL map, shared by the per-request caches.
 
-Extracted from auth/auth_cache.py (0276 T0009) so db/meta_cache.py (0282 NR0003
+Extracted from auth/auth_cache.py so db/meta_cache.py (the review
 finding 2) can reuse it without importing the auth package — auth's __init__ pulls
 in middleware/auth_api, which import db modules, and db importing auth back
 would be a circular import at package-init time.
@@ -10,13 +10,13 @@ policy (env var, disable switch) while sharing the mechanics: monotonic clock
 (system time changes cannot extend an entry's life), expired-entry eviction on
 read, and a loader helper that runs outside the lock.
 
-Single-flight (0291 T1, NR0003)
+Single-flight
 -------------------------------
 
 ``get_or_load`` originally let concurrent misses on the same key each run the
 loader ("a concurrent duplicate load is harmless — both compute the same
 value"). That is true of the *value* and false of the *cost*, and the cost is
-the whole point of this module. The 0291 CH0016 query dump shows the failure
+the whole point of this module. The the discussion query dump shows the failure
 directly: ``token_blacklist`` ×4, then ``auth_sessions`` ×4, then ``users`` ×4,
 in lockstep — the UI fires a burst of requests at once, all of them miss the
 same cold key at the same instant, and every one of them goes to the DB. A TTL

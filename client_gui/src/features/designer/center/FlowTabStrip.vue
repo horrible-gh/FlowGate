@@ -1,19 +1,19 @@
 <template>
-  <!-- flowgate.v02.0026 — Flow Tabs strip (0003-D §3.1.3). Stateless: shows the open tabs and
+  <!-- Flow Tabs strip. Stateless: shows the open tabs and
        raises activate / close requests. ui/Tabs cannot hold a close button per tab, so this
        follows the same tab pattern (tablist, aria-selected, roving tabindex, arrow keys with
        wrap-around and focus following) with [tab button][close button] side by side — never a
        button inside a button. Overflowing tabs scroll sideways inside the strip only.
-       flowgate.v02.0060 T#2: inside the Designer a right click on a tab (that tab's id — it is not activated) or on the
+       inside the Designer a right click on a tab (that tab's id — it is not activated) or on the
        strip's blank part goes to the Designer context menu (닫기 / 다른 탭 닫기 / 전체 닫기).
-       flowgate.v02gui.0001: a tab dragged sideways (primary pointer, past a few px — a shorter press stays a click; the
+       a tab dragged sideways (primary pointer, past a few px — a shorter press stays a click; the
        close button never starts a drag) or moved with Alt+←/→ raises `reorder` (its final index); a drop line shows
        where it lands; held near the strip's ends it keeps scrolling the strip (a requestAnimationFrame loop) until
        moved away. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name.
-       flowgate.v02gui.0023: the strip never shows a scrollbar (it used to take its height out of the 36px and squash the
+       the strip never shows a scrollbar (it used to take its height out of the 36px and squash the
        tabs). The wheel scrolls it sideways, and only while the tabs overflow a list button (VS Code style) sits at the
        right end, outside the tablist: it opens every open Flow in tab order (ui/Dropdown); picking one activates it.
-       flowgate.v02test.0035: an archived Flow's tab is dimmed like its Explorer row (0.5; 0.75 while active) with the
+       an archived Flow's tab is dimmed like its Explorer row (0.5; 0.75 while active) with the
        archive icon before its name. A run that ended while its tab was not active leaves its result mark where the run
        mark was (the run band's tone: success ✓ / warning ! / danger ! / neutral ✓); a chat answer that ended so keeps the
        bubble with a blue dot (orange: failed). The parent clears those marks when the tab is activated; a tab hidden by
@@ -194,21 +194,21 @@ export interface FlowTabStripItem {
   readonly name: string
 }
 
-/** flowgate.v02gui.0001: the run states a tab marks (the run lock's statuses, each with its own mark). */
+/** the run states a tab marks (the run lock's statuses, each with its own mark). */
 export type FlowTabRunState = 'running' | 'paused' | 'stopping'
 
 const props = withDefaults(
   defineProps<{
     tabs: readonly FlowTabStripItem[]
     activeFlowId: string | null
-    /** flowgate.v02gui.0001: a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
+    /** a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
     chatStates?: Readonly<Record<string, boolean>>
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
-    /** flowgate.v02test.0035: Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
+    /** Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
     archived?: Readonly<Record<string, boolean | undefined>>
-    /** flowgate.v02test.0035: a run that ended while its tab was not active (shown while no run mark is). */
+    /** a run that ended while its tab was not active (shown while no run mark is). */
     runEnds?: Readonly<Record<string, FlowTabRunEnd | undefined>>
-    /** flowgate.v02test.0035: a chat answer that ended while its tab was not active (shown while it is not answering). */
+    /** a chat answer that ended while its tab was not active (shown while it is not answering). */
     chatEnds?: Readonly<Record<string, FlowTabChatEnd | undefined>>
   }>(),
   { runStates: () => ({}), archived: () => ({}), runEnds: () => ({}), chatEnds: () => ({}) },
@@ -217,13 +217,13 @@ const props = withDefaults(
 const emit = defineEmits<{
   activate: [flowId: string]
   close: [flowId: string]
-  /** flowgate.v02gui.0001: move the tab so that it ends at `toIndex` in screen order. */
+  /** move the tab so that it ends at `toIndex` in screen order. */
   reorder: [flowId: string, toIndex: number]
 }>()
 
 const { t, te } = useI18n()
 
-/** flowgate.v02.0060 T#2: the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
+/** the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
 interface TabContextMenu {
   tab(event: MouseEvent, flowId: string | null, fallback?: HTMLElement | null): boolean
 }
@@ -247,7 +247,7 @@ function runStateOf(flowId: string): FlowTabRunState | null {
   return props.runStates[flowId] ?? null
 }
 
-/* ───────────── flowgate.v02test.0035: archived tabs, ended run / chat marks ───────────── */
+/* ───────────── the earlier change: archived tabs, ended run / chat marks ───────────── */
 
 function isArchived(flowId: string): boolean {
   return props.archived[flowId] === true
@@ -266,7 +266,7 @@ function isCheckTone(tone: FlowTabRunEndTone): boolean {
   return tone === 'success' || tone === 'neutral'
 }
 
-/** The result's name: 실행 완료, else the run band's idle reason words (개입 필요, 오류로 멈춤 …), else 실행 끝남. */
+/** The result's name: Execution complete, else the run band's idle reason words (개입 필요, 오류로 멈춤 …), else Execution ended. */
 function runEndLabel(flowId: string): string {
   const reason = runEndOf(flowId)?.reason ?? ''
   if (reason === 'completed') return t('gui.designer.center.tab_run_end.completed')
@@ -290,7 +290,7 @@ function onKeydown(event: KeyboardEvent, flowId: string) {
   const index = props.tabs.findIndex((tab) => tab.flowId === flowId)
   if (index === -1 || count === 0) return
   const step = event.key === 'ArrowRight' ? 1 : -1
-  // flowgate.v02gui.0001: Alt+←/→ moves the tab itself one place (no wrap-around); focus stays on it.
+  // Alt+←/→ moves the tab itself one place (no wrap-around); focus stays on it.
   if (event.altKey) {
     const to = index + step
     if (to < 0 || to >= count) return
@@ -303,7 +303,7 @@ function onKeydown(event: KeyboardEvent, flowId: string) {
   focusTab(next.flowId)
 }
 
-/* ─────────────────────── flowgate.v02gui.0001: drag to reorder ─────────────────────── */
+/* ─────────────────────── the earlier change: drag to reorder ─────────────────────── */
 
 /** A press moving less than this stays a click. */
 const DRAG_THRESHOLD = 4
@@ -484,7 +484,7 @@ function revealTab(flowId: string | null) {
 // A newly active tab is scrolled into view inside the strip.
 watch(() => props.activeFlowId, revealTab)
 
-/* ─────────────── flowgate.v02gui.0023: hidden scrollbar, wheel, list button ─────────────── */
+/* ─────────────── the earlier change: hidden scrollbar, wheel, list button ─────────────── */
 
 const barRef = ref<HTMLElement | null>(null)
 const listRef = ref<{ close: () => void; isOpen: boolean } | null>(null)
@@ -492,7 +492,7 @@ const listItemsRef = ref<HTMLElement | null>(null)
 /** The tabs do not fit: the list button shows. Measured against the whole bar (not the strip, which the button itself
  *  narrows), so the button never keeps itself shown once the tabs would fit without it. */
 const overflowing = ref(false)
-/** flowgate.v02test.0035: a tab scrolled out of the strip's view holds an ended run / chat mark. */
+/** a tab scrolled out of the strip's view holds an ended run / chat mark. */
 const hiddenMark = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
@@ -590,7 +590,7 @@ function pickFromList(flowId: string, close: () => void) {
 </script>
 
 <style scoped>
-/* flowgate.v02gui.0023: the bar holds the height; the strip scrolls without a scrollbar, so the tabs keep it. */
+/* the bar holds the height; the strip scrolls without a scrollbar, so the tabs keep it. */
 .flow-tab-bar {
   display: flex;
   flex: none;
@@ -636,7 +636,7 @@ function pickFromList(flowId: string, close: () => void) {
   position: relative;
 }
 
-/* flowgate.v02test.0035: a hidden tab holds an ended run / chat mark. */
+/* a hidden tab holds an ended run / chat mark. */
 .flow-tab-list-button.has-mark::after {
   content: '';
   position: absolute;
@@ -808,7 +808,7 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-text);
 }
 
-/* flowgate.v02test.0035: an archived Flow's tab is dimmed like its Explorer row; the active one stays readable. */
+/* an archived Flow's tab is dimmed like its Explorer row; the active one stays readable. */
 .flow-tab.is-archived {
   opacity: 0.5;
 }
@@ -817,7 +817,7 @@ function pickFromList(flowId: string, close: () => void) {
   opacity: 0.75;
 }
 
-/* flowgate.v02gui.0001: the dragged tab is dimmed; a line marks where it lands. */
+/* the dragged tab is dimmed; a line marks where it lands. */
 .flow-tab.is-dragging {
   opacity: 0.55;
 }
@@ -863,11 +863,11 @@ function pickFromList(flowId: string, close: () => void) {
   outline-offset: -2px;
 }
 
-/* flowgate.v02gui.0001: the run mark — running spins, stopping spins dimmed, paused shows two bars. */
+/* the run mark — running spins, stopping spins dimmed, paused shows two bars. */
 .flow-tab-chat { position: relative; display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
 .flow-tab-chat :deep(svg) { display: block; }
 
-/* flowgate.v02test.0035: an answer that ended while the tab was not active — blue dot (done), orange dot (failed). */
+/* an answer that ended while the tab was not active — blue dot (done), orange dot (failed). */
 .flow-tab-chat.is-done::after,
 .flow-tab-chat.is-failed::after {
   content: '';
@@ -901,7 +901,7 @@ function pickFromList(flowId: string, close: () => void) {
   height: 12px;
 }
 
-/* flowgate.v02test.0035: the ended run's result in the run mark's place and size, coloured like the run band. */
+/* the ended run's result in the run mark's place and size, coloured like the run band. */
 .flow-tab-end {
   display: inline-flex;
   flex: none;

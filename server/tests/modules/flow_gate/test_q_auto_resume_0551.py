@@ -1,4 +1,4 @@
-"""flowgate.default.0551 T#2: last Q answer resumes the parked requester chain.
+"""last Q answer resumes the parked requester chain.
 
 The production resume engine is exercised rather than reimplemented. Unit cases pin the
 answer-side group gate and best-effort race policy; engine cases reuse 0359's real
@@ -285,7 +285,7 @@ def test_restart_resume_preserves_chain_trace_and_requestions(env, monkeypatch):
         "get_container_by_doc",
         lambda doc_id: {"id": 9, "status": "pending"} if q_state["open"] else None,
     )
-    # 0661 T0004: the question_pending probe is keyed on the hop's OWN open item
+    # the question_pending probe is keyed on the hop's OWN open item
     # (asker_ai_run_id == the run), so each requester hop of this timeline owns one.
     monkeypatch.setattr(
         base.db_question_items,
@@ -300,7 +300,7 @@ def test_restart_resume_preserves_chain_trace_and_requestions(env, monkeypatch):
         "list_open_doc_ids_by_group",
         lambda group_id: [base.DOC_REF] if q_state["open"] else [],
     )
-    # T#1 is independently tested. This timeline controls the answer/resume edge only.
+    # is independently tested. This timeline controls the answer/resume edge only.
     monkeypatch.setattr(finalize, "_dispatch_question_responder", lambda run: None)
 
     base._scripted_worker(env, monkeypatch, [("need an answer", False)])

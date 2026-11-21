@@ -1,4 +1,4 @@
-"""Group 0515 T0009 — chat source-access DB, capability, handoff gate (D0006, L0007, DB0008).
+"""Group the earlier implementation — chat source-access DB, capability, handoff gate.
 
 Runs the CAS/state-machine contracts against a REAL SQLite database built from this
 repo's migrations (the same LiveSqliteDB pattern test_review_atomicity_0535.py uses):
@@ -518,7 +518,7 @@ class TestChatTokenIssueCapability:
         assert second["one_shot_claimed"] is False
 
     def test_execute_mode_issues_read_with_its_own_command_capability(self, db_env):
-        """flowgate.v02test.0026: execute is a separate capability, never read_write."""
+        """execute is a separate capability, never read_write."""
         db_source_access.upsert(USER, PROJECT, GROUP, "execute", "T1")
         result = token_service.issue(
             project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
@@ -553,7 +553,7 @@ class TestChatTokenIssueCapability:
         assert db_tokens.get_by_id(result["token_id"])["source_access"] is None
 
     def test_legacy_source_access_falls_back_to_read_via_kind_for_token(self, db_env):
-        # T0009 §7 / §12.6: None/legacy is a `kind_for_step` fallback, never a widen.
+        # : None/legacy is a `kind_for_step` fallback, never a widen.
         result = token_service.issue(
             project=PROJECT, group_id=None, action_scope="new", doc_ref=None, issued_to=USER,
         )

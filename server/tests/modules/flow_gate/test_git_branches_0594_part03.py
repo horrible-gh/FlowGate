@@ -33,7 +33,7 @@ from tests.modules.flow_gate.test_git_branches_0594 import (
 def test_branch_merge_push_false_base_target_updates_local_ref_without_push(repo):
     # T5 — merging into the project base branch itself with push=False must
     # land the ref and the shared base checkout's working tree together.
-    # 0630 T0005: the merge now runs in a detached managed workspace (so a
+    # the merge now runs in a detached managed workspace (so a
     # conflict never sits in the shared checkout) and a clean result is applied
     # to the base checkout by fast-forward before that workspace is cleaned up —
     # the merge commit is never left unreachable.
@@ -65,7 +65,7 @@ def test_branch_merge_push_false_base_target_updates_local_ref_without_push(repo
         (storage / "git_merge_targets").rglob("tree")
     )
 def test_branch_merge_push_false_base_target_conflict_leaves_base_clean(repo):
-    # T7, 0630 T0005 — a base-target conflict is kept as a persistent attempt, but
+    # T7, the earlier implementation — a base-target conflict is kept as a persistent attempt, but
     # never in the shared base checkout: it lives in a detached managed workspace,
     # and the base checkout stays exactly as it was (clean, same ref, same branch).
     (repo / "same.txt").write_text("main\n", encoding="utf-8")
@@ -102,7 +102,7 @@ def test_branch_merge_push_false_base_target_rejects_dirty_checkout(repo):
     assert caught.value.code == "branch_merge_target_dirty"
     assert _git(repo, "status", "--porcelain").stdout.strip() != ""
 def test_branch_merge_push_false_base_target_rejects_open_merge_session(repo, monkeypatch):
-    # TR0007 rev1 fix #2: a direct base-checkout merge (push=False, target=base)
+    # fix #2: a direct base-checkout merge (push=False, target=base)
     # mutates base like any other base-mutating op — guard_base_free() must
     # reject it while an unresolved merge session elsewhere still holds the
     # base checkout, exactly like the existing base-mutating entry points.
@@ -121,7 +121,7 @@ def test_branch_merge_push_false_base_target_rejects_open_merge_session(repo, mo
     assert _git(repo, "rev-parse", "main").stdout.strip() == main_before
     assert _git(repo, "status", "--porcelain").stdout.strip() == ""
 def test_branch_merge_push_false_base_target_untracked_collision_is_409_not_abort_failure(repo):
-    # TR0007 rev1 fix #1: the pre-merge dirty guard is include_untracked=False
+    # fix #1: the pre-merge dirty guard is include_untracked=False
     # by design, so an untracked file at a path the source branch also adds
     # sails through it. Git then refuses the merge itself with "untracked
     # working tree files would be overwritten" BEFORE creating MERGE_HEAD —
@@ -146,7 +146,7 @@ def test_branch_merge_push_false_base_target_untracked_collision_is_409_not_abor
     assert (repo / "new.txt").read_text(encoding="utf-8") == "untracked local copy\n"
     assert _git(repo, "status", "--porcelain").stdout == "?? new.txt\n"
 def test_branch_merge_push_false_base_target_untracked_ff_only_is_409_not_diverged(repo):
-    # TR0007 rev1 fix #1 (second stage): the same untracked collision can hit
+    # fix #1 (second stage): the same untracked collision can hit
     # the earlier `merge --ff-only origin/{target}` sync — a fast-forward that
     # really could land, just blocked by a local untracked file — and must not
     # be misclassified as branch_merge_target_diverged.
@@ -197,7 +197,7 @@ def test_branch_routes_rbac_delegation_and_error_envelope(monkeypatch):
     assert _client(is_admin=False).post("/api/v1/projects/flowgate/git/branches", json={"name": "x", "source_branch": "main"}).status_code == 403
     assert _client(is_admin=False).delete("/api/v1/projects/flowgate/git/branches/x").status_code == 403
 def test_branch_merge_route_forwards_push_and_defaults_to_true(monkeypatch):
-    # T0006 §4/§8 — BranchMergeBody.push must reach merge_branches() verbatim,
+    # BranchMergeBody.push must reach merge_branches verbatim,
     # and an omitted field must keep the pre-existing always-push behavior.
     calls = []
 

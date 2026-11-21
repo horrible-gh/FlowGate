@@ -1,22 +1,22 @@
 <template>
-  <!-- flowgate.v02.0025 — Designer Shell (0003-D §2.1): the Designer route screen.
+  <!-- Designer Shell: the Designer route screen.
        DesignerShell > Top + Body, Body > Left + Center + Right, Center > Workspace + Bottom.
        The Left Dock (0023/0024 Explorers) and the Workspace (0026 Designer Center: Flow Tabs +
        read-only Canvas) are real; Top was the final container with a placeholder inside.
-       flowgate.v02.0036: the Bottom Dock holds the real Inspector Frame (0035 v7) next to a
-       Minimap placeholder. flowgate.v02.0037: the Right Dock is the Tool Panel holding the
+       the Bottom Dock holds the real Inspector Frame (v7) next to a
+       Minimap placeholder. the earlier change: the Right Dock is the Tool Panel holding the
        real Palette / Conversation / Git parts, fed the same Project and active Flow as the
-       left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar.
-       flowgate.v02.0039 T#3 / v02.0042: until a Flow is open the Designer shows its initial
+       left Dock. the earlier change: the Top holds the real Header / Menu Bar / Toolbar.
+       v02.0042: until a Flow is open the Designer shows its initial
        unselected state — every area keeps its frame, the work controls are unavailable and
        nothing is unfolded. A plain selection in the Project Explorer does not change that.
        flowgate.v02.0043: the File menu is connected — its dialogs (Group / Flow 열기, 새 Group /
        Flow) are mounted here and act on the same Project context, Explorer and Center.
-       flowgate.v02.0046: the left / right Dock widths and the bottom Dock height follow the
+       the left / right Dock widths and the bottom Dock height follow the
        Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds.
-       flowgate.v02.0060 T#2: the one Designer context menu (contextMenu/) is installed here — its host and view, and the
+       the one Designer context menu (contextMenu/) is installed here — its host and view, and the
        connectors the five areas reach through inject; a chosen command runs through the paths below.
-       flowgate.v02.0060 T#2 (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
+       (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <FlowAttachmentHost ref="attachmentHost" :key="projectStore.designerSessionOwner ?? ''"
       :flow-id="center.state.activeFlowId" :project-id="projectId"
@@ -53,7 +53,7 @@
       <button v-if="center.activeRun.value?.commandRecovery?.voidPrevious" type="button" :disabled="!!center.activeRun.value?.action" @click="center.activeRun.value?.commandRecovery?.voidPrevious?.()">{{ t('gui.designer.top.run_command_recovery.void') }}</button>
       <button v-if="center.activeRun.value?.commandRecovery?.discardCorrupt" type="button" :disabled="!!center.activeRun.value?.action" @click="discardCorruptRunCommand">{{ t('gui.designer.top.run_command_recovery.discard') }}</button>
     </aside>
-    <!-- flowgate.v02test.0056 (R 0056.0001 §2.3): the Body stays mounted but unseen until the saved Dock sizes
+    <!-- The Body stays mounted but unseen until the saved Dock sizes
          are read (or the read failed / took too long), so it is never drawn at the default sizes first. -->
     <DesignerBody
       :class="{ 'is-awaiting-sizes': !sizesReady }"
@@ -114,6 +114,7 @@
         />
       </template>
     </DesignerBody>
+    <DesignerTaskbar />
 
     <DesignerOpenDialog
       :open="dialog === 'group-open'"
@@ -140,8 +141,8 @@
     <FlowBaseBranchDialog :open="flowBaseTarget !== null" :project-id="projectId"
       :group-id="flowBaseTarget?.flowId ?? null" @close="flowBaseTarget = null" @saved="explorerRefreshToken += 1" />
     <AiRoleSetupModeless :data="aiSetup.state.data" :saving="aiSetup.state.saving" :error="aiSetup.state.error" @close="aiSetup.cancel" @save="aiSetup.save" />
-    <!-- flowgate.v02.0113 T#5: the run result windows — the 1st only for a command that ended completed or failed. -->
-    <!-- flowgate.v02gui.0001: both name the result's own Flow (runResultFlowName), not the active tab's. -->
+    <!-- the run result windows — the 1st only for a command that ended completed or failed. -->
+    <!-- both name the result's own Flow (runResultFlowName), not the active tab's. -->
     <RunResultWindow :key="`result-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.resultOpen" :flow-name="runResultFlowName" @close="runResult.closeResult" @detail="runResult.openDetail" />
     <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" :flow-name="runResultFlowName" @close="runResult.closeDetail" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
@@ -152,7 +153,7 @@
 
 <script setup lang="ts">
 // State owned here (0003-D §3.8): the layout state (designerLayout.ts) and the Designer Center
-// session (flowgate.v02.0026 — center/designerCenterSession.ts), which this Shell only creates
+// session (center/designerCenterSession.ts), which this Shell only creates
 // and keeps for its own lifetime. Open Flow tabs, the active Flow, Graphs, Selection and
 // Viewport all live in that session; the Shell feeds it the current Project and the Project
 // Explorer's Flow activation, and hands its active FlowRef to the left Dock and the right Tool
@@ -165,20 +166,20 @@
 // File Explorer intents (select / open / open-diff / context) are intentionally not handled
 // yet — their targets (Viewer, Modeless Window) do not exist (0003-D DEFERRED).
 //
-// flowgate.v02.0038 — the top band's state (top/designerTop.ts: run button state, layout
+// the top band's state (top/designerTop.ts: run button state, layout
 // density) is owned here next to the layout. Of the top commands the Shell handles those whose
 // target already exists: the Window menu shows / hides the left and right Docks and moves to
 // their tabs through the same layout fields the Docks use, and the run buttons switch to
 // ■ 중지 and back. Edit, run execution, Canvas zoom, search, Inspector / Minimap display,
 // help, notifications, AI, settings, user are left to later Feature groups (0001-R §8).
 //
-// flowgate.v02.0039 T#3 — work target. The Project context (the current Project id) is not a
+// work target. The Project context (the current Project id) is not a
 // selection (0039 0001-R §4), so entering the Designer leaves it without a work target: the
 // Project Explorer shows the tree with nothing chosen, and every other area shows the confirmed
 // initial-state design (15-designer-shell-initial-state-v7) — Toolbar and target-bound menu
 // items unavailable, an empty Center frame, the Inspector frame only, the Minimap, the right
 // Tool Panel and the left navigation chrome dimmed.
-// flowgate.v02.0042 — only an open Flow is the work target. A plain click in the Explorer is a
+// only an open Flow is the work target. A plain click in the Explorer is a
 // selection, not an opening (click = select, Flow double-click / Enter = select + open), so it
 // leaves the Designer unselected. Closing the last tab or changing the Project (which clears the
 // Center) returns the Designer to the unselected state.
@@ -187,19 +188,19 @@
 // store. The Project Explorer takes it on entry; whatever it did not take is dropped once this
 // Shell is mounted, so the signal never outlives the entry it was raised for.
 //
-// flowgate.v02.0043 — the File menu (0043 0001-R). Every item reaches the product function that
+// the File menu. Every item reaches the product function that
 // already exists, nothing is a separate behaviour of the menu:
-//   · 새 Project / Project 열기… / 최근 Project — the Project Dialog and its "열기" (0040): the store
-//     opens the Dialog (with the create child for 새 Project) or opens the recent Project the way
+//   · New Project / Project Open… / Recent Project — the Project Dialog and its "열기" (0040): the store
+//     opens the Dialog (with the create child for New Project) or opens the recent Project the way
 //     "열기" does; the Explorer selects the opened Project through the same explicit-open signal.
-//   · Project 닫기 — the store clears the current Project; Explorers and Center follow (0042).
-//   · 새 Group / Group 열기… / 최근 Group — the Group is selected and opened (its Flow list unfolded)
+//   · Project Close — the store clears the current Project; Explorers and Center follow (0042).
+//   · New Group / Group Open… / Recent Group — the Group is selected and opened (its Flow list unfolded)
 //     in the Project Explorer; a new Group is created through the store and the tree re-read.
-//   · Group 닫기 — the Group chosen in the Explorer is folded and the selection cleared. The
+//   · Group Close — the Group chosen in the Explorer is folded and the selection cleared. The
 //     Explorer selection is listened to for this alone; it still does not activate anything.
-//   · 새 Flow / Flow 열기… / 최근 Flow — the same opening as the Explorer's double click (select +
+//   · New Flow / Flow Open… / Recent Flow — the same opening as the Explorer's double click (select +
 //     open in the Center); a new Flow is created through the store and the tree re-read.
-//   · Flow 닫기 — closes the active Flow tab, as the tab's own close does.
+//   · Flow Close — closes the active Flow tab, as the tab's own close does.
 //   · Designer 닫기 — this Shell is router-free; it emits `close-designer` and the App Shell
 //     moves to the Dashboard.
 // Availability follows each command's precondition (designerTop.ts DesignerMenuTargets). Recent
@@ -211,53 +212,53 @@
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
 //
-// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 acts on the open Flow's cards through the
-// Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards and 자동 배치 lays every
+// (CH contracts C / D) — alignment / layout acts on the open Flow's cards through the
+// Center session: the six alignment / two equal distribution commands arrange its selected cards and auto-layout lays every
 // movable card out by the server's auto placement rules, only when that command is chosen. Each is one entry
 // of the Flow's undo / redo, as a card drag is.
-// 0068 T0011: direction commands and a notice when candidate validation rejects a layout.
+// direction commands and a notice when candidate validation rejects a layout.
 //
-// flowgate.v02.0059 0017-T — the density (넓게 / 보통 / 좁게 / 자율형) is how finely a card drag moves: the
+// the density (wide / normal / narrow / freeform) is how finely a card drag moves: the
 // Toolbar radios and the View menu set the one value (`top.density`, screen state only), and its move step
 // (DENSITY_MOVE_STEP) goes to the Canvas, which applies it to the drags that follow — one card or the dragged
 // selection alike. Choosing a density moves no card, saves nothing, adds no undo entry, changes no zoom and
-// neither starts nor stops 자동 배치.
+// neither starts nor stops auto-layout.
 //
 // flowgate.v02.0056 F2-1: a refused Canvas [승인] is a toast as well (its code's sentence and the server's message;
 // a refused document is named with why and the documents approved before it, and that toast stays until closed);
 // a stopped run with cards approved meanwhile shows "멈춤 · 다음 카드 N개 대기" in the band.
 //
-// flowgate.v02.0061 T#14: the run buttons follow the open Flow's run phase (idle / running / paused / stopping) and
+// the run buttons follow the open Flow's run phase (idle / running / paused / stopping) and
 // each sends one command to the Center session — 다음 단계 / 전체 실행 (step / full), 일시정지, 재개, 중지; 재실행 is never
 // available. The band shows the run's status, command, idle reason and executions. The 0061 refusals whose wording is
 // the server's (graph_run_locked, graph_git_required, …) show the server's message in the same toast. While the Flow's
 // run locks it, the Conversation's AI source access mode cannot change (`sourceLocked`, WP answer 2) — its messages
 // and read use stay as they are; the Canvas / Inspector lock is the Center session's, a separate rule.
 //
-// flowgate.v02.0061 T#15: a card's Hold is written through the card settings (features/document) the Center source is
+// a card's Hold is written through the card settings (features/document) the Center source is
 // given (it is read with the Graph); a refused Hold 설정 / 해제 is a toast as well (with the server's message: graph_run_locked,
 // graph_hold_done_node, …).
 //
-// flowgate.v02.0066 T#6 — the Center Diff (0066 D#2 §2-4, §3-10) the Shell owned and the Workspace drew over the Flow
-// tabs and Canvas. flowgate.v02.0067 T#4 moved it into the Git part's own modeless (`Diff` tab, 0067-R §6): the Shell
+// the Center Diff the Shell owned and the Workspace drew over the Flow
+// tabs and Canvas. the earlier change the earlier implementation moved it into the Git part's own modeless (`Diff` tab, the earlier implementation): the Shell
 // no longer receives a Git diff intent and the Center never shows one.
 //
-// flowgate.v02.0060 T#2 (0006-D rev2 2단계-A) — the Designer context menu: one host for the whole Designer and the
+// (D 2 step-A) — the Designer context menu: one host for the whole Designer and the
 // connectors of the project tree, File Explorer, Flow tabs, Canvas and Palette cards (contextMenu/attach). A right
 // click only reads state; a chosen command is checked again and runs through the path that already exists here —
-// 새 Group = File › 새 Group, 새 플로우 = the 새 Flow dialog with the right-clicked Group given explicitly (the Explorer
+// New Group = File › New Group, 새 플로우 = the New Flow dialog with the right-clicked Group given explicitly (the Explorer
 // selection and the menu's default Group stay as they are), 전체 선택 = Edit › 전체 선택, 카드 추가 (Palette card) = the
 // Palette selection the next Canvas click places. The Center session's commands are the connectors' own.
 //
-// flowgate.v02.0060 T#2 (0006-D rev2 §4.3 2-B) — the context menu's 11 existing server commands run through the
-// features/project store (the v0.1 contracts; no new API): Group / Flow 이름 변경, Flow 삭제 = the existing dispose (DC),
-// and the open Flow worktree's 새 폴더 / 새 파일 / 다운로드 / 업로드 / 삭제 / 수정 확인 (with the project Base read from the
+// the context menu's 11 existing server commands run through the
+// features/project store (the v0.1 contracts; no new API): Group / Flow Rename, Flow Delete = the existing dispose (DC),
+// and the open Flow worktree's New folder / 새 파일 / 다운로드 / 업로드 / 삭제 / Review changes (with the project Base read from the
 // project's Git status). After a success the existing refresh paths show it: the Project Explorer re-reads its tree
 // (refreshToken), the recent lists keep the new name (a disposed Flow leaves them), an open tab takes the new name
 // through the Center's open path (the active tab stays), a disposed Flow's tab closes through the Center's close, and
 // the File Explorer re-reads (its refreshToken). A refusal changes nothing; the window shows it.
 //
-// flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
+// (NR the earlier change, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
 import { createRunFailurePublisher, resolveSessionStorage, runErrorText as requestErrorText } from './runFailureToast'
 import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
@@ -266,6 +267,7 @@ import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import DesignerTaskbar from './DesignerTaskbar.vue'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
@@ -349,9 +351,9 @@ const { t, te } = useI18n()
 
 const layout = reactive(createDesignerLayout())
 
-// --- Dock sizes: saved per person (flowgate.v02test.0056, R 0056.0001 §2) -------------------------------------------
+// --- Dock sizes: saved per person -----------------------------------------------------------------------------------
 // `layout.leftWidth / rightWidth / bottomHeight` are the sizes the person chose. They are read from the server when
-// the Designer opens, and saved when a resize handle is let go and on 창 › 창 배치 초기화. A window too small for them
+// the Designer opens, and saved when a resize handle is let go and on Window › Reset window layout. A window too small for them
 // only draws them smaller (DesignerBody / DesignerCenterColumn) — nothing here changes, so nothing is saved.
 const SIZES_WAIT_MS = 1500
 /** False only while the first read is on its way: the Body is kept unseen so the default sizes never flash. */
@@ -423,7 +425,7 @@ function onResizeBottom(height: number, columnHeight: number): void {
   layout.bottomHeight = clampBottomHeight({ ...layout, bottomHeight: fitBottomHeight(layout.bottomHeight, columnHeight) }, height, columnHeight)
 }
 
-// 창 › 창 배치 초기화 (R §3): the three sizes, both Docks expanded, the 프로젝트 / 팔레트 tabs — at once, with no
+// Window › Reset window layout: the three sizes, both Docks expanded, the Project / Palette tabs — at once, with no
 // confirmation. The default sizes are saved too. Nothing else (Canvas view, Flow tabs, windows) is touched; already
 // at the defaults, nothing happens.
 function resetWindowLayout(): void {
@@ -455,7 +457,7 @@ const notificationsOpen = ref(false)
 const notificationProject = computed(() => projectId.value ? explorerProject(projectId.value) : null)
 watch([projectId, () => projectStore.designerSessionOwner], () => { notificationsOpen.value = false }, { flush: 'sync' })
 
-// flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
+// S1: real Flow Graphs through the project store's Canvas loaders (the sample
 // source stays the session default for tests and previews only).
 // flowgate.v02.0045 S3 (D0004 §2.3 "Palette 연결"): a Palette card dropped on the Canvas becomes a
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
@@ -466,7 +468,7 @@ const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup(
 })
 const center = createDesignerCenterSession({
   readArchive: (flowId) => projectStore.readFlowArchive(flowId),
-  // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
+  // the first AI setup is applied to the Flow whose command waits for it.
   beforeRunPrepare: (flowId) => aiSetup.request(flowId),
   runSetupCurrent: () => aiSetup.current(),
   // flowgate.v02test.0001 B0001 §2: a v0.1 Flow's 다음 단계 / 전체 실행 are its work documents' existing v0.1 single run.
@@ -486,10 +488,10 @@ const center = createDesignerCenterSession({
       return { active: activity.active, status: activity.status }
     },
   },
-  // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
-  // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
+  // the document read lets auto-layout follow a v0.1 sequence root's supersede chain.
+  // the card Hold of the card context menu goes through the card settings.
   source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
-  // flowgate.v02.0088 F13: every placement (click, drag, context menu) passes here, so a default
+  // every placement (click, drag, context menu) passes here, so a default
   // card's label is made in the language of the placing moment, not of the selection.
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
@@ -500,7 +502,7 @@ const center = createDesignerCenterSession({
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.
 const activeFlowRef = center.activeFlowRef
-// flowgate.v02gui.0030: the Flow attachment windows; the host also owns the full-screen file drop.
+// the Flow attachment windows; the host also owns the full-screen file drop.
 const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
@@ -520,16 +522,16 @@ watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
 // each time its Flow's run is idle again; only a completed or failed command opens the 1st window, once (a step boundary,
 // a manual write wait or a branch waiting shows on the Canvas only, and a waiting command that may still go on with a
 // person's save stays watched until its real end). Another Project or session drops the watches and the windows.
-// flowgate.v02.0117 T#4: a command that ended waiting for a person (T#1 TR §5: 사람 작성·승인 대기, also the manual write
+// flowgate.v02.0117 T#4: a command that ended waiting for a person (T#1 TR §5: Human writing·승인 대기, also the manual write
 // wait of a role set to 사용하지 않음) is told once per run and reason in the existing toast below (`tellRunWait`).
 const runResult = createRunResultWatch({
   load: (runId, commandSeq) => projectStore.loadFlowCommandResult(runId, commandSeq),
   tell: (result) => tellRunWait(result),
 })
-// flowgate.v02.0143 T#1: every run observation of a watched Flow goes to its watch (running too: the watch keeps the
+// every run observation of a watched Flow goes to its watch (running too: the watch keeps the
 // latest), and a Flow whose tab closed drops its watch (`forget`).
 const isOpenTab = (flowId: string) => center.state.tabs.some((tab) => tab.flowId === flowId)
-// flowgate.v02gui.0001: the name of the Flow the shown result is of, for the windows' titles. A result is only watched
+// the name of the Flow the shown result is of, for the windows' titles. A result is only watched
 // while its Flow's tab is open, so the name is taken from that tab when the result shows (seq) and kept: the window
 // still names it after the tab is closed. While the tab stays open its current name (a rename) wins; the flow id is
 // the last resort.
@@ -571,7 +573,7 @@ watch(
     }
   },
 )
-// flowgate.v02.0143 T#1: a watch whose reads ran out of retries (`stalled`) reads again when its run is read again — a
+// a watch whose reads ran out of retries (`stalled`) reads again when its run is read again — a
 // reconnect's resync reads every open Canvas and run (projectEvents → flowCanvasEvents), even when nothing changed — and
 // when this browser tab is shown again.
 function recheckRunResults() {
@@ -592,9 +594,9 @@ watch([projectId, () => projectStore.designerSessionOwner], () => runResult.clea
 watch([() => center.state.activeFlowId, projectId, () => projectStore.designerSessionOwner], () => aiSetup.cancel(), { flush: 'sync' })
 onBeforeUnmount(() => aiSetup.cancel())
 
-// flowgate.v02.0053 T#9 / flowgate.v02.0061 T#14: the run buttons follow the server run of the open Flow (the Center
+// the run buttons follow the server run of the open Flow (the Center
 // session's): its phase decides which two show; while a command is answered every run button waits (`runBusy`).
-// TR0031 rev1: the phase and the band follow the session's confirmed run status (the run read, else the Canvas read's);
+// the phase and the band follow the session's confirmed run status (the run read, else the Canvas read's);
 // until it is confirmed no run command is available (`runUnknown`).
 const runPhase = computed(() => {
   if (!center.canRun) return top.runPhase
@@ -604,11 +606,11 @@ const runPhase = computed(() => {
 })
 // The band: status, command, idle reason, executions and the cards waiting for the next command (O1 §4-2's place).
 const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeRunStatus.value.run) : null))
-// WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — TR0031 rev1: and while
+// WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — the earlier implementation: and while
 // its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
 const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
 
-// flowgate.v02.0088 F16: a toast keeps what it says as meaning — the refusal, the notice, the menu's own words —
+// a toast keeps what it says as meaning — the refusal, the notice, the menu's own words —
 // and its sentence is built in the current language each time it renders, so a toast still on screen (a refused
 // document's stays until it is closed) follows a language switch. The server's message and the document ids it
 // names stay as they were sent.
@@ -629,7 +631,7 @@ function dismissToast(id: string | number) {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
-/** flowgate.v02test.0001 B0001 §2: the one short sentence of a v0.1 command that did not go (null: nothing to tell). */
+/** the one short sentence of a v0.1 command that did not go (null: nothing to tell). */
 function v01RunErrorKey(outcome: V01RunOutcome): string | null {
   if (outcome.kind === 'busy') return 'gui.designer.top.run_errors.run_already_active'
   if (outcome.kind !== 'failed') return null
@@ -695,7 +697,7 @@ watch(
 )
 
 /**
- * flowgate.v02.0117 T#4 (CH0004 turn 3 (5)): a run left waiting for a person says why once, in the same toasts — the
+ * (the discussion ): a run left waiting for a person says why once, in the same toasts — the
  * run's idle reason and the waiting card's state in their existing words (runWaitText). No band, panel or new display.
  */
 function tellRunWait(result: Parameters<typeof runWaitText>[0]) {
@@ -704,7 +706,7 @@ function tellRunWait(result: Parameters<typeof runWaitText>[0]) {
     ...toasts.value.slice(-2),
     {
       id: `wait-${toastSeq}`,
-      // flowgate.chat.0017 CH0002: a command that ended waiting for a person opens no result window, so the toast also
+      // a command that ended waiting for a person opens no result window, so the toast also
       // tells the AI attachment requests still waiting for a decision.
       text: () => {
         const translate = (key: string, values?: Record<string, unknown>) => (values ? t(key, values) : t(key))
@@ -758,7 +760,7 @@ watch(
 
 onMounted(() => {
   projectStore.takeExplicitOpen()
-  // flowgate.v02.0105 T#1: the F5 restore, else the screen is saved from here on.
+  // the F5 restore, else the screen is saved from here on.
   startRestore()
   if (!restoring) {
     saving = true
@@ -766,8 +768,8 @@ onMounted(() => {
   }
 })
 
-// flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
-// flowgate.v02.0105 T#1: a waiting restore ends with the Shell; the snapshot stays for the next entry.
+// send pending Canvas saves and close the Canvas change stream with the Shell.
+// a waiting restore ends with the Shell; the snapshot stays for the next entry.
 onBeforeUnmount(() => {
   endRestore()
   center.dispose()
@@ -798,7 +800,7 @@ function onShowTab(tab: DesignerWindowTab) {
   }
 }
 
-// --- File menu (flowgate.v02.0043) ---------------------------------------------------------------
+// --- File menu ---------------------------------------------------------------
 
 type FileMenuDialog = 'group-open' | 'flow-open' | 'group-new' | 'flow-new' | null
 
@@ -806,8 +808,8 @@ const dialog = ref<FileMenuDialog>(null)
 const flowBaseTarget = ref<{ projectId: string; flowId: string } | null>(null)
 watch(projectId, () => { flowBaseTarget.value = null }, { flush: 'sync' })
 
-// The Project Explorer's current selection, kept for Group 닫기 (which Group to fold) and for the
-// default Group of 새 Flow. It is not a work target (0042): nothing here activates on it.
+// The Project Explorer's current selection, kept for Group Close (which Group to fold) and for the
+// default Group of New Flow. It is not a work target (0042): nothing here activates on it.
 const explorerSelection = ref<ExplorerSelection>(null)
 
 const menuTargets = computed<DesignerMenuTargets>(() => ({
@@ -815,21 +817,21 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   group: explorerSelection.value?.kind === 'group',
   flow: hasWorkTarget.value,
   readOnly: !!center.state.activeFlowId && center.isFlowReadOnly(center.state.activeFlowId),
-  // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu); flowgate.v02.0061
-  // T#14: it waits while the Flow's run locks the structure.
+  // the open Flow's structure edit history (Toolbar buttons and Edit menu); the earlier change
+  // it waits while the Flow's run locks the structure.
   canUndo: center.activeEdit.value?.canUndo === true && center.activeRunMarks.value.lock === null,
   canRedo: center.activeEdit.value?.canRedo === true && center.activeRunMarks.value.lock === null,
-  // flowgate.v02.0061 T#14: a run command of the open Flow is being answered.
+  // a run command of the open Flow is being answered.
   runBusy: !!center.activeRun.value?.action,
   runStopping: center.activeRun.value?.action === 'stop',
   runStopRetry: center.activeRun.value?.error?.action === 'stop'
     && center.activeRun.value.error.targetRunId === center.activeRun.value.run?.runId
     && (center.activeRun.value.error.status === null || center.activeRun.value.error.status >= 500),
-  // flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (being read, or the read failed).
+  // the open Flow's run status is not confirmed yet (being read, or the read failed).
   runUnknown: center.canRun && !center.activeRunStatus.value.known,
   // flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run — 다음 단계 / 전체 실행 wait.
   runHold: center.canRun && runCommandHold(center.activeRunStatus.value.run),
-  // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
+  // alignment (2+) / equal distribution (3+) need that many selected cards.
   selectedCount: center.activeView.value?.selectedNodeIds.length ?? 0,
 }))
 
@@ -856,7 +858,7 @@ function requestExplorer(request: Omit<ExplorerStateRequest, 'seq'>) {
 
 // Bumped after a Group / Flow was created so the Explorer re-reads the tree it shows.
 const explorerRefreshToken = ref(0)
-// flowgate.v02.0060 T#2: bumped after a context menu command changed the open Flow's worktree (the File Explorer re-reads).
+// bumped after a context menu command changed the open Flow's worktree (the File Explorer re-reads).
 const fileRefreshToken = ref(0)
 
 // The display tree of the current Project as the Explorer derives it, from the store's cache
@@ -879,7 +881,7 @@ function groupNameOf(pid: string, groupId: string, known?: string): string {
   )
 }
 
-// Default Group for 새 Flow: the Group chosen in the Explorer, else the active Flow's Group.
+// Default Group for New Flow: the Group chosen in the Explorer, else the active Flow's Group.
 const flowCreateGroupId = computed<string | null>(() => {
   const pid = projectId.value
   if (!pid) return null
@@ -891,7 +893,7 @@ const flowCreateGroupId = computed<string | null>(() => {
 })
 
 // Every way of opening a Flow ends here — the Explorer's double click / Enter (`reveal` false:
-// the Explorer already shows that selection), Flow 열기…, 최근 Flow and a new Flow (`groupName`:
+// the Explorer already shows that selection), Flow Open…, Recent Flow and a new Flow (`groupName`:
 // the name the create dialog showed, since the tree cache is being re-read at that moment). The
 // Center session ignores an activation for another Project.
 function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string, seedNode?: CanvasNodeSpec) {
@@ -986,13 +988,13 @@ function onZoomSelect(percent: number) {
   center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
 }
 
-// flowgate.v02.0059 0017-T: the Toolbar radios and the View menu choose the one density. It only sets the step
+// the Toolbar radios and the View menu choose the one density. It only sets the step
 // later card drags move in; nothing on the Canvas changes when it is chosen.
 function onDensity(level: DesignerDensity) {
   top.density = level
 }
 
-/** flowgate.v02.0059 0017-T: the step a card drag moves in at the chosen density (null = 자율형, none). */
+/** the step a card drag moves in at the chosen density (null = freeform, none). */
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
@@ -1003,7 +1005,7 @@ function onTopCommand(command: DesignerTopCommand) {
   }
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, runPhase.value, menuTargets.value)) return
-  // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
+  // alignment / equal distribution of the open Flow's selected cards (the command names the kind).
   if (arrangeSelectionMinimum(command) !== null) {
     const flowId = center.state.activeFlowId
     if (flowId !== null) center.arrangeNodes(flowId, command.slice('edit.'.length) as ArrangeKind)
@@ -1046,7 +1048,7 @@ function onTopCommand(command: DesignerTopCommand) {
       resetWindowLayout()
       return
     case 'designer.close':
-      // flowgate.v02.0105 T#1: an explicit close is not an F5 — the snapshot goes, and neither a waiting restore nor
+      // an explicit close is not an F5 — the snapshot goes, and neither a waiting restore nor
       // a later change of this Shell writes it again.
       endRestore()
       closing = true
@@ -1076,8 +1078,8 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.selectAll(flowId)
       return
     }
-    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow (one undo entry). 0017-T: the density has no part in it.
-    // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 — the direction goes with the command only (spacing scale 1).
+    // auto-layout of the open Flow (one undo entry). the earlier implementation: the density has no part in it.
+    // flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 — the direction goes with the command only (spacing scale 1).
     case 'edit.auto-layout-horizontal':
     case 'edit.auto-layout-vertical': {
       const flowId = center.state.activeFlowId
@@ -1085,7 +1087,7 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null && direction !== null) center.autoLayout(flowId, direction)
       return
     }
-    // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
+    // the Toolbar and the View menu emit the same command; the Canvas of the
     // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
     case 'view.fit':
     case 'view.zoom-in':
@@ -1108,7 +1110,7 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'run.all': {
       const flowId = center.state.activeFlowId
       if (flowId === null) return
-      // flowgate.v02test.0001 B0001 §2: a v0.1 Flow runs its work documents through the same two commands.
+      // a v0.1 Flow runs its work documents through the same two commands.
       if (center.isV01Flow(flowId)) {
         void center.runV01(flowId, command === 'run.next' ? 'next' : 'all').then((outcome) => {
           const key = v01RunErrorKey(outcome)
@@ -1116,14 +1118,14 @@ function onTopCommand(command: DesignerTopCommand) {
         })
         return
       }
-      // flowgate.v02.0061 T#14: one step / full command on the server (the session confirms an idle Flow's draft first).
+      // one step / full command on the server (the session confirms an idle Flow's draft first).
       if (center.canRun) {
-        // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).
+        // a command the server took is watched for its result (the run as known before it).
         const known = center.runStatus(flowId).run
         const before = known ? { runId: known.runId, status: known.status, lastEventSeq: known.lastEventSeq } : null
         const beforeAck: AckRun | null = known ? { runId: known.runId, status: known.status, idleReason: known.idleReason ?? null, revisionNo: known.revisionNo ?? null } : null
         void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all').then((taken) => {
-          // flowgate.v02.0156 T#4 (D7): a command a completed run only acknowledged says so, once, in this command's answer.
+          // (D7): a command a completed run only acknowledged says so, once, in this command's answer.
           const after = center.runStatus(flowId).run
           if (isCompletedNoop(beforeAck, after ? { runId: after.runId, status: after.status, idleReason: after.idleReason ?? null, revisionNo: after.revisionNo ?? null } : null, taken)) {
             toastSeq += 1
@@ -1160,7 +1162,7 @@ function onTopCommand(command: DesignerTopCommand) {
   }
 }
 
-// --- F5 restore (flowgate.v02.0105 T#1, NR flowgate.v02.0101.0003 §5.4) -------------------------------------------
+// --- F5 restore (NR the earlier change) -------------------------------------------
 // The working screen of this browser tab — the Project, its Explorer Group context (the selected row and the open
 // Groups), the Flow tabs in order, the active Flow and the left / right panel tabs — is the store's Designer snapshot.
 // The next entry of this tab (an F5, or the Dashboard and back) brings it back while no other Project is current.
@@ -1175,7 +1177,7 @@ function onTopCommand(command: DesignerTopCommand) {
 //     whose Graph read is refused with 403 / 404 closes (and so leaves the snapshot); a passing failure stays as an
 //     error tab with its retry. The saved selection is set without unfolding its Group: the open Groups are as saved.
 //   · Every step after an await checks that the restore is still the current one (`restoreSeq`, its Project, its
-//     user): Project 닫기, Designer 닫기, another Project, a logout and leaving the Designer end it, so a late answer
+//     user): Project Close, Designer 닫기, another Project, a logout and leaving the Designer end it, so a late answer
 //     neither changes the screen nor writes or drops a snapshot.
 //   · What the user changed while it waited stays, even when changed back: an item the user touched (the tabs, the
 //     active Flow, the Explorer selection / open Groups, a panel tab) is the user's until the restore ends, a Flow the
@@ -1217,7 +1219,7 @@ interface RestoreTarget {
   readonly expandedGroupIds: string[]
   readonly leftMode: string
   readonly rightTool: string
-  /** flowgate.v02.0143 T#1: the run result watches and the results shown, armed again for the Flows it restores. */
+  /** the run result watches and the results shown, armed again for the Flows it restores. */
   readonly runWatches: NonNullable<DesignerSessionSnapshot['runWatches']>
   readonly runSeen: NonNullable<DesignerSessionSnapshot['runSeen']>
 }
@@ -1405,7 +1407,7 @@ function applyRestore(run: RestoreRun, nodes: GroupTreeNode[]) {
   layout.activeLeftMode = touched.has('left') ? userLeft : (savedLeft ?? userLeft)
   if (!touched.has('right') && savedRight) layout.activeRightTool = savedRight
 
-  // flowgate.v02.0143 T#1: the run result watches of the Flows restored here (the same Project's tree only; a Flow whose
+  // the run result watches of the Flows restored here (the same Project's tree only; a Flow whose
   // Graph read is refused closes, and its watch goes with the tab) — a result shown before the F5 is not shown again.
   const restored = new Set(tabs.map((tab) => tab.flowId))
   runResult.restore(target.runWatches.filter((entry) => restored.has(entry.flowId)),
@@ -1433,7 +1435,7 @@ watch(
   },
 )
 
-// Another Project, or none (Project 닫기): a waiting restore ends there, and what is shown from then on is saved.
+// Another Project, or none (Project Close): a waiting restore ends there, and what is shown from then on is saved.
 watch(projectId, (id) => {
   graphChecks.value = graphChecks.value.filter((check) => check.pid === id)
   if (!restoring || restoring.pid === id) return
@@ -1480,7 +1482,7 @@ function save() {
     leftMode: layout.activeLeftMode,
     rightTool: layout.activeRightTool,
   }
-  // flowgate.v02.0143 T#1: the run result watches of the open Flows and the results shown in them (only when any); a
+  // the run result watches of the open Flows and the results shown in them (only when any); a
   // restore still waiting keeps the saved ones of the Flows it has not brought back yet.
   const open = new Set(snapshot.tabs.map((tab) => tab.flowId))
   const results = runResult.persisted()
@@ -1607,9 +1609,9 @@ watch(projectId, (pid) => {
 }, { immediate: true })
 onBeforeUnmount(() => { archiveEvents?.(); archiveReadSeq += 1; archiveTreeSeq += 1 })
 
-// flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
-// flowgate.v02.0060 T#1 (WP 0012): its 정렬 · 배치 / 정렬 are this Edit menu's 정렬 / 배치 — the same commands, rule and path.
-// flowgate.v02.0060 T#2: the 2-B server paths (see the head comment). Each answers a result; a refusal is the store's.
+// the Designer context menu and what its commands run through (see the head comment).
+// its alignment · layout / alignment are this Edit menu's alignment / layout — the same commands, rule and path.
+// the 2-B server paths (see the head comment). Each answers a result; a refusal is the store's.
 async function attempt<T>(work: () => Promise<T>): Promise<MenuActionResult<T>> {
   try {
     return { ok: true, value: await work() }
@@ -1681,7 +1683,7 @@ async function changeGroupArchive(pid: string, groupId: string, archived: boolea
 const menuServer: DesignerMenuServerDeps = {
   group: (pid, groupId) => {
     const group = explorerGroup(pid, groupId)
-    // v02gui.0027: its archive state and the server's count of all its Flows (the 그룹 삭제 window reads both).
+    // v02gui.0027: its archive state and the server's count of all its Flows (the Delete Group window reads both).
     return group ? {
       name: group.name, moduleName: group.moduleName, archived: !!group.archived,
       ...(typeof group.flowTotal === 'number' ? { flowTotal: group.flowTotal } : {}),
@@ -1709,7 +1711,7 @@ const menuServer: DesignerMenuServerDeps = {
     return result.ok ? { ok: true, value: undefined } : result
   },
   archiveGroup: (pid, groupId) => changeGroupArchive(pid, groupId, true),
-  // 그룹 복원 has no window: a refusal is said in a note.
+  // Restore Group has no window: a refusal is said in a note.
   restoreGroup: async (pid, groupId) => {
     const result = await changeGroupArchive(pid, groupId, false)
     if (!result.ok) menuToast(() => t('gui.designer.archive.group_restore_failed'), 'warning')
@@ -1842,7 +1844,7 @@ const contextMenu = useDesignerContextMenu({
   font-family: var(--fg2-font);
 }
 
-/* flowgate.v02test.0056: mounted and laid out, only not drawn, until the saved Dock sizes are read. */
+/* Mounted and laid out, only not drawn, until the saved Dock sizes are read. */
 .designer-shell > .is-awaiting-sizes {
   visibility: hidden;
 }

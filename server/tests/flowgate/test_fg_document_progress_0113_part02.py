@@ -80,7 +80,7 @@ def test_an_ai_s_card_goes_by_its_documents(env, decided, starts, monkeypatch, r
                 "4_ins_none": [("result", X)], "5_ins_report": [], "6_none_report": [("instruction", X)]}[row]
     assert jobs == expected
     assert loops(starts) == []
-    if not expected:                                                     # 충족: no writer, reviewed (not used) → done
+    if not expected:                                                     # Satisfied: no writer, reviewed (not used) → done
         assert status(env, key) == "done" and _review_status(docs["report"]) == "approved"
         ra = one(env, key, "result")
         assert (ra["actor"], ra["provider_id"], ra["stage_state"], ra["intent_kind"]) == ("ai", X, "done", None)

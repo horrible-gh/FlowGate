@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#3 — the document body read and save of features/document, on the v0.1 endpoints the
+ * the document body read and save of features/document, on the v0.1 endpoints the
  * v0.1 main screen uses: GET /api/v1/documents/content?doc_id= and PATCH /api/v1/documents/content
  * { doc_id, content }. A file that is not written yet (404) reads as an empty body; other errors are
  * thrown as they are.

@@ -1,30 +1,30 @@
 <template>
-  <!-- flowgate.v02.0026 — Canvas of one Flow (0003-D §3.3.3). The only screen part that uses
+  <!-- Canvas of one Flow. The only screen part that uses
        Vue Flow: it draws the FlowGate Graph through vueFlowMapping and turns library events into
-       FlowGate meaning — "select this Node / none", "the Viewport is now ..." and (flowgate.v02.0045)
-       "this Node was moved to ..." / "the user finished a pan / zoom". flowgate.v02.0045 S3: on an
+       FlowGate meaning — "select this Node / none", "the Viewport is now ..." and
+       "this Node was moved to ..." / "the user finished a pan / zoom". the earlier change S3: on an
        editable draft (`editable`) also "something was dropped here", "connect these two nodes",
        "remove this node / edge" and "undo" — the Canvas never changes the Graph itself.
        DesignerCenter keys it by Flow id, so every Flow gets its own Vue Flow instance.
-       flowgate.v02.0045 T0019: no empty-Graph text and no ownership badge; an Edge can be selected
+       no empty-Graph text and no ownership badge; an Edge can be selected
        (click) and, when deletable, removed (its remove button or Delete / Backspace).
-       flowgate.v02.0045 TR0020 rev2: while a connection is dragged (`is-connecting`) every
-       connectable card is a drop area as a whole (FlowNodeCard). TR0020 rev4: nothing is laid
+       while a connection is dragged (`is-connecting`) every
+       connectable card is a drop area as a whole (FlowNodeCard). the earlier implementation: nothing is laid
        over the Canvas (no edit note); an Edge gets its two Nodes so it attaches to the facing
        sides (FlowEdgePath); the last validation's problems only mark their cards / lines.
        flowgate.v02.0059 T#1 (0011-CH contract A / B): in the Toolbar's [선택] mode (`select-mode`) a
        drag on the empty Canvas selects the cards in its rectangle, a card click adds / removes it,
        the wheel (and the MiniMap) pans, and dragging a selected card moves the selection together.
        Out of the mode every Vue Flow setting is the one it had before.
-       flowgate.v02.0059 0017-T: a dragged card (or the dragged selection) moves in whole steps of
+       a dragged card (or the dragged selection) moves in whole steps of
        `move-step` (the density's) while it is dragged and where it is dropped; none = 자율형.
        0018-TR rework: the dot grid is that step's lattice (a dot on every whole-step Graph point, following
        pan / zoom), and a dragged card lands on one of its dots; 자율형 has no lattice and shows no grid.
-       flowgate.v02.0061 T#15: a right click on a card opens its context menu (the shared ContextMenu, `card-menu` gives
+       a right click on a card opens its context menu (the shared ContextMenu, `card-menu` gives
        the items) — Hold 설정 / 해제 and, on a done card, 되돌리기; the chosen item goes up as `node-menu`.
-       flowgate.v02.0064 T#4: with `save-title` a card's title opens for inline editing (FlowNodeCard) — never while a
+       with `save-title` a card's title opens for inline editing (FlowNodeCard) — never while a
        connection is dragged; keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
-       flowgate.v02.0060 T#2: inside the Designer (its context menu injected) a right click on a card, a line or the blank
+       inside the Designer (its context menu injected) a right click on a card, a line or the blank
        Canvas goes to the Designer context menu, which also carries the card's menu above; the right button's press and
        its held move / release never reach Vue Flow (the menu's gesture guard on this root). -->
        flowgate.v02.0064 T#4: keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
@@ -146,27 +146,27 @@
     <Badge v-if="sample" class="flow-canvas-sample" size="sm" tone="info" data-test="designer-canvas-sample">
       {{ t('gui.designer.center.sample_data') }}
     </Badge>
-    <!-- flowgate.v02.0061 T#15: one card menu for the Canvas, opened at the pointer (nothing wrapped). -->
+    <!-- one card menu for the Canvas, opened at the pointer (nothing wrapped). -->
     <ContextMenu ref="cardMenuEl" :items="cardMenuItems" @select="onCardMenuSelect" @close="menuNodeId = null" />
   </div>
 </template>
 
 <script setup lang="ts">
 // Input: Flow id / name, FlowGraph, stored Viewport (may be none), selected Node id, sample
-// flag. Output: `select-node` (Node id or null), `viewport-change`, and (flowgate.v02.0045)
+// flag. Output: `select-node` (Node id or null), `viewport-change`, and
 // `viewport-commit` (a user pan / zoom ended — Vue Flow reports no end for a programmatic fit)
-// and `nodes-move` (movable Nodes were dropped — flowgate.v02.0059 T#2: one event per drop). Never calls an API, changes the session, edits
-// the Graph or handles tabs. flowgate.v02.0049: `canvas-resize` — the Canvas area size Vue Flow
+// and `nodes-move` (movable Nodes were dropped — the earlier change the earlier implementation: one event per drop). Never calls an API, changes the session, edits
+// the Graph or handles tabs. the earlier change: `canvas-resize` — the Canvas area size Vue Flow
 // measured (it watches the resize itself), when shown and on every change, for the MiniMap.
-// flowgate.v02.0068 T#2: `node-sizes` — the size Vue Flow measured for each card (the size nodeRect gives the
-// Edges), when measured and on every change, for 자동정렬 and the MiniMap's lines.
+// `node-sizes` — the size Vue Flow measured for each card (the size nodeRect gives the
+// Edges), when measured and on every change, for auto-layout and the MiniMap's lines.
 //
-// flowgate.v02.0045 S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
+// S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
 // Graph coordinates — what was dropped is for the session to tell), `node-connect` (a connection
 // dragged between two draft nodes the `canConnect` pre-check accepts), `node-remove` (Delete /
 // Backspace on the selected draft node), `edge-remove` (double click on a draft edge) and `undo`
 // (Ctrl / Cmd + Z). `issues`: what the last validation reported — its nodes / edges are marked
-// and name the problem on hover; nothing else is shown for it (TR0020 rev4).
+// and name the problem on hover; nothing else is shown for it.
 //
 // Viewport: a stored one is restored; without one, all Nodes are fitted once they are
 // measured (never above 1x) and the result is reported like any pan / zoom. A Viewport the
@@ -176,27 +176,27 @@
 // Pan bound: the view never goes further up or left than CANVAS_EDGE_MARGIN past the top-most /
 // left-most Node; right and down stay open. Vue Flow applies it to pan, zoom, fit and restore.
 //
-// flowgate.v02.0045 T0019 — Edge selection is the Canvas's own (one Edge or none, never together
+// Edge selection is the Canvas's own (one Edge or none, never together
 // with a selected Node): a click on an Edge selects it, a click on a Node or the pane clears it.
 // Selecting is allowed for every Edge; removing (`edge-remove`) only for a deletable one — an
 // editable draft Edge the work has not gone through (vueFlowMapping `deletable`).
 //
-// flowgate.v02.0059 T#1 — Selection: `selectedNodeIds` (or the single `selectedNodeId` alone) is
+// Selection: `selectedNodeIds` (or the single `selectedNodeId` alone) is
 // what is drawn selected. In [선택] mode (`selectMode`) Vue Flow's own area selection and click
 // toggle run; every selection change it reports is applied to the shown Selection and sent up as
 // `select-nodes` (all selected Node ids) — Vue Flow never decides the Selection by itself. A drop
 // reports each dragged Node's position once, the group clamped to the Canvas origin as a whole.
 //
-// flowgate.v02.0059 T#2 (0011-CH contract C): a drop is one `nodes-move` (every dragged Node's position) —
+// (CH contract C): a drop is one `nodes-move` (every dragged Node's position) —
 // one move of the Flow's undo / redo, whether one card or the selection was dragged. Ctrl / Cmd + Z (`undo`)
 // works on every Flow, not only an editable draft: card moves are undone too.
 //
-// flowgate.v02.0059 0017-T — move step: `moveStep` (the Toolbar / View menu density's,
+// move step: `moveStep` (the Toolbar / View menu density's,
 // top/designerTop.ts DENSITY_MOVE_STEP) is how far apart the places a drag can leave cards are. While
 // cards are dragged they are shown in whole steps from where the drag started, the same offset for each
 // (canvasView.ts stepGroupMove), so the Edges follow the stepped cards and a selection keeps its layout; the
 // drop reports the stepped positions.
-// No step (자율형) leaves the drag as Vue Flow makes it. A new step moves no card.
+// No step (freeform) leaves the drag as Vue Flow makes it. A new step moves no card.
 //
 // 0018-TR rework — the step is a lattice: the card under the pointer lands on the whole-step Graph point nearest
 // to the pointer (the others keep their offset to it), a drop pushed back inside the origin moves in whole steps,
@@ -248,32 +248,32 @@ const props = withDefaults(
     viewport: CanvasViewport | null
     selectedNodeId: string | null
     sample: boolean
-    /** flowgate.v02.0059 T#1: every selected Node (empty = `selectedNodeId` alone is shown selected). */
+    /** every selected Node (empty = `selectedNodeId` alone is shown selected). */
     selectedNodeIds?: readonly string[]
     /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode — area / click multi-selection. */
     selectMode?: boolean
-    /** flowgate.v02.0059 T#1: the latest fit / zoom asked of this Canvas (Toolbar, View menu). */
+    /** the latest fit / zoom asked of this Canvas (Toolbar, View menu). */
     viewRequest?: CanvasViewRequest | null
-    /** flowgate.v02.0045 S3: the shown Graph is an editable draft. */
+    /** S3: the shown Graph is an editable draft. */
     editable?: boolean
     placing?: boolean
     /** Connection pre-check (edit/connectionRules.ts through the session). */
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
-    /** flowgate.v02.0059 0017-T: the step a card drag moves in (Graph units); null = 자율형 (none). */
+    /** the step a card drag moves in (Graph units); null = freeform (none). */
     moveStep?: number | null
     /** flowgate.v02.0056 F2-1: a card waiting for its approval offers [승인] (a `node-approve` event). */
     canApprove?: boolean
     /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered, or null. */
     approvingNodeId?: string | null
     /**
-     * flowgate.v02.0061 T#14: the Flow's run marks (run/flowRunLock.ts) — the edit lock and its note, the protected
+     * the Flow's run marks (run/flowRunLock.ts) — the edit lock and its note, the protected
      * lines and the running lines. `editable` already leaves the lock out (DesignerCenter).
      */
     marks?: FlowRunMarks
-    /** flowgate.v02.0061 T#15: a card's context menu items now (run/flowCardMenu.ts); null = no card menu. */
+    /** a card's context menu items now (run/flowCardMenu.ts); null = no card menu. */
     cardMenu?: ((nodeId: string) => readonly FlowCardMenuItem[]) | null
-    /** flowgate.v02.0061 T#15: each card's Hold as the session judges it (by node id); absent = from the node runs. */
+    /** each card's Hold as the session judges it (by node id); absent = from the node runs. */
     holds?: ReadonlyMap<string, boolean>
   }>(),
   { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS, cardMenu: null },
@@ -286,9 +286,9 @@ const emit = defineEmits<{
   'viewport-change': [viewport: CanvasViewport]
   'viewport-commit': [viewport: CanvasViewport]
   'canvas-resize': [size: CanvasSize]
-  /** flowgate.v02.0068 T#2: every measured card's size, by node id. */
+  /** every measured card's size, by node id. */
   'node-sizes': [sizes: Record<string, { width: number; height: number }>]
-  /** flowgate.v02.0059 T#2: one drop — the position of every dropped Node (one undo entry). */
+  /** one drop — the position of every dropped Node (one undo entry). */
   'nodes-move': [moves: { nodeId: string; x: number; y: number }[]]
   'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
   'canvas-place': [point: { x: number; y: number }]
@@ -302,7 +302,7 @@ const emit = defineEmits<{
   'node-approve': [nodeId: string]
   /** flowgate.v02.0061 T#14: a card's 병합 충돌 (its result's merge conflict) was pressed. */
   'node-conflict': [nodeId: string]
-  /** flowgate.v02.0061 T#15: an item of a card's context menu was chosen. */
+  /** an item of a card's context menu was chosen. */
   'node-menu': [nodeId: string, key: FlowCardMenuKey]
 }>()
 
@@ -311,12 +311,12 @@ const { t } = useI18n()
 /** The first display and 화면 맞춤 fit the same way: never above 1x. */
 const FIT_OPTIONS = { padding: 0.12, minZoom: CANVAS_MIN_ZOOM, maxZoom: CANVAS_FIT_MAX_ZOOM }
 // The Graph origin bounds direct Canvas pan on the top/left; right and bottom stay open.
-/** flowgate.v02.0045 T0019: how near a handle a dragged connection snaps to it (Vue Flow: 20). */
+/** how near a handle a dragged connection snaps to it (Vue Flow: 20). */
 const CONNECTION_RADIUS = 36
 
 const canvasEl = ref<HTMLElement | null>(null)
 const selectedEdgeId = ref<string | null>(null)
-/** flowgate.v02.0045 TR0020 rev2: a connection is being dragged (cards become drop areas). */
+/** a connection is being dragged (cards become drop areas). */
 const connecting = ref(false)
 
 // Node / Edge id -> the problems reported on it, one per line.
@@ -332,7 +332,7 @@ const issueMap = computed(() => {
 const selection = computed<readonly string[]>(() =>
   props.selectedNodeIds.length > 0 ? props.selectedNodeIds : props.selectedNodeId === null ? [] : [props.selectedNodeId],
 )
-// ── flowgate.v02gui.0020: a card held in a drag stays under the pointer ──────────────────────────────────────
+// ── the earlier change: a card held in a drag stays under the pointer ──────────────────────────────────────
 // Vue Flow is handed the whole Graph again whenever it changes — a placed card's draft save answering its key (the
 // `tmp_` card is renamed), another edit, a validation or run mark — and puts every card where the Graph has it. A
 // card the person holds is not put back: it stays where the drag shows it, and a held card the Graph renamed keeps
@@ -408,7 +408,7 @@ let nodesMeasured = false
 
 /**
  * 0018-TR rework: the move step's dot grid on the Viewport Vue Flow draws the cards with (its own transform, which
- * also holds a first view it constrained without reporting it); none for 자율형.
+ * also holds a first view it constrained without reporting it); none for freeform.
  */
 const grid = computed(() => canvasDotGrid(flow.value?.viewport.value ?? liveViewport.value, props.moveStep))
 // Each dot is drawn in the middle of its background tile, so the tiles start half a tile before the Graph origin:
@@ -446,7 +446,7 @@ function fitOnFirstDisplay() {
   void flow.value.fitView(FIT_OPTIONS)
 }
 
-// flowgate.v02.0059 T#1: fit / zoom asked from the Toolbar or the View menu. They run on the Vue
+// fit / zoom asked from the Toolbar or the View menu. They run on the Vue
 // Flow instance, so zoom stays inside CANVAS_MIN_ZOOM..MAX_ZOOM, steps and presets zoom about the
 // Canvas centre and the pan bound (translateExtent) applies as for any other change. Vue Flow
 // reports no "end" for a programmatic change, so the result is committed here (stored per Flow).
@@ -476,7 +476,7 @@ function onNodeClick({ node }: NodeMouseEvent) {
   emit('select-node', node.id)
 }
 
-// flowgate.v02.0059 T#1: the Selection as last sent up — Vue Flow may report several changes before
+// the Selection as last sent up — Vue Flow may report several changes before
 // the session's answer comes back as props, and each builds on the one before.
 let reportedSelection: readonly string[] | null = null
 watch(selection, () => {
@@ -512,7 +512,7 @@ function onPaneClick(event: MouseEvent) {
   emit('select-node', null)
 }
 
-// ── flowgate.v02.0061 T#15: a card's context menu ───────────────────────────────────────────────
+// ── the earlier change the earlier implementation: a card's context menu ───────────────────────────────────────────────
 
 const cardMenuEl = ref<InstanceType<typeof ContextMenu> | null>(null)
 /** The card whose menu is open, or null. */
@@ -550,7 +550,7 @@ function onCardMenuSelect(entry: ContextMenuItem) {
   if (nodeId !== null) emit('node-menu', nodeId, entry.key as FlowCardMenuKey)
 }
 
-// ── flowgate.v02.0060 T#2: the Designer context menu ─────────────────────────────────────────────
+// ── the earlier change the earlier implementation: the Designer context menu ─────────────────────────────────────────────
 
 /** The Designer context menu's Canvas side (contextMenu/attach), provided by the Designer Shell; null elsewhere. */
 interface CanvasContextMenu {
@@ -583,7 +583,7 @@ function onCanvasContextMenu(event: MouseEvent) {
   contextMenu.canvas(event, { flowId: props.flowId, kind: 'canvas', canvas, fallback: canvasEl.value })
 }
 
-// ── flowgate.v02.0045 T0019: Edge selection and removal ───────────────────────────────────────
+// ── the earlier change the earlier implementation: Edge selection and removal ───────────────────────────────────────
 
 function onEdgeClick({ edge }: EdgeMouseEvent) {
   selectedEdgeId.value = edge.id
@@ -615,12 +615,12 @@ function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
   emit('viewport-commit', { x, y, zoom })
 }
 
-// flowgate.v02.0059 T#1 (contract B): one drop of one Node or of the dragged selection — the group
+// (contract B): one drop of one Node or of the dragged selection — the group
 // is kept inside the Canvas origin as a whole, so the Nodes keep their relative layout. Vue Flow
 // already shows each dragged card where the pointer left it; the clamped position is put back on
 // the card itself, because a group clamped back onto the place it started from leaves the Graph
 // unchanged (moveNode keeps it) and then no redraw from the Graph would follow.
-// flowgate.v02gui.0020: the drop goes up under the Graph's names; a held card the Graph renamed is drawn under its
+// the drop goes up under the Graph's names; a held card the Graph renamed is drawn under its
 // Graph name again right after (at the dropped place: the move is on the Graph by then).
 function onNodeDragStop({ node, nodes: dragged }: NodeDragEvent) {
   const drops = clampGroupToCanvas(steppedPositions(dragged, node?.id), props.moveStep)
@@ -637,7 +637,7 @@ function onNodeDragStop({ node, nodes: dragged }: NodeDragEvent) {
   if (renamed) heldRedraw.value += 1
 }
 
-// flowgate.v02.0059 0017-T: where each dragged card was shown when its drag started. A drop seen without
+// where each dragged card was shown when its drag started. A drop seen without
 // its start takes the card's Graph position, which is where it was shown (the Graph changes on a drop only).
 let dragStarts = new Map<string, { x: number; y: number }>()
 
@@ -647,7 +647,7 @@ function onNodeDragStart({ nodes: dragged }: NodeDragEvent) {
   holdShown(dragged)
 }
 
-/** flowgate.v02gui.0020: where the drag shows each held card now (a redraw of the Graph keeps it there). */
+/** where the drag shows each held card now (a redraw of the Graph keeps it there). */
 function holdShown(dragged: readonly GraphNode[]) {
   heldAt = new Map(dragged.map((node) => [node.id, { x: node.position.x, y: node.position.y }]))
 }
@@ -675,7 +675,7 @@ function onNodeDrag({ node, nodes: dragged }: NodeDragEvent) {
   holdShown(dragged)
 }
 
-// ── flowgate.v02.0045 S3: structure edits of an editable draft ─────────────────────────────
+// ── the earlier change S3: structure edits of an editable draft ─────────────────────────────
 
 function onDragOver(event: DragEvent) {
   if (!props.editable || !event.dataTransfer) return
@@ -690,7 +690,7 @@ function onDrop(event: DragEvent) {
   emit('canvas-drop', { transfer: event.dataTransfer, x: Math.max(0, Math.round(point.x)), y: Math.max(0, Math.round(point.y)) })
 }
 
-// flowgate.v02.0045 T0019: Vue Flow also runs this on every Edge it is handed (its setEdges), not
+// Vue Flow also runs this on every Edge it is handed (its setEdges), not
 // only on a dragged connection — an Edge already in the Graph is drawn as it is, or a redraw of the
 // Edges (a selection, a validation mark) would drop them all.
 function isValidConnection(connection: Connection): boolean {
@@ -707,7 +707,7 @@ function onEdgeDoubleClick({ edge }: EdgeMouseEvent) {
   removeEdge(edge.id)
 }
 
-/** flowgate.v02.0064 T#4: a key typed into a text field is that field's, never the Canvas's. */
+/** a key typed into a text field is that field's, never the Canvas's. */
 function fromTextEntry(event: KeyboardEvent): boolean {
   const target = event.target as HTMLElement | null
   if (!target) return false
@@ -732,7 +732,7 @@ function onKeydown(event: KeyboardEvent) {
     removeEdge(edge.id)
     return
   }
-  // flowgate.v02.0059 T#2: card moves share the undo, so it is not bound to an editable draft any more.
+  // card moves share the undo, so it is not bound to an editable draft any more.
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
     event.preventDefault()
     emit('undo')
@@ -749,7 +749,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 // A Node selected from anywhere (Canvas, Inspector, 전체 선택, ...) ends the Edge selection — one
-// Node or several (flowgate.v02.0059 T#1: Vue Flow never clears it, its Edges are not selectable).
+// Node or several (Vue Flow never clears it, its Edges are not selectable).
 watch(selection, (nodeIds) => {
   if (nodeIds.length > 0) selectedEdgeId.value = null
 })
@@ -765,7 +765,7 @@ watch(
   },
 )
 
-// flowgate.v02.0068 T#2: the measured card sizes go up whenever one changes.
+// the measured card sizes go up whenever one changes.
 const measuredNodes = () => (flow.value?.getNodes?.value ?? []).filter((node) => node.dimensions.width > 0 && node.dimensions.height > 0)
 watch(
   () => measuredNodes().map((node) => `${node.id}:${node.dimensions.width}x${node.dimensions.height}`).join('|'),
@@ -851,7 +851,7 @@ watch(
   display: none;
 }
 
-/* flowgate.v02.0045 TR0020 rev2: while a connection is dragged, a connectable card takes the
+/* while a connection is dragged, a connectable card takes the
    drop anywhere on it (its whole-card target handle) and lights up under the pointer; the start
    strips step aside so they never catch the drop. */
 .flow-canvas.is-connecting :deep(.flow-node-drop) {
@@ -876,5 +876,5 @@ watch(
   pointer-events: none;
 }
 
-/* flowgate.v02.0061 T#14: the run lock's note, top left (the sample badge keeps the top right). */
+/* the run lock's note, top left (the sample badge keeps the top right). */
 </style>

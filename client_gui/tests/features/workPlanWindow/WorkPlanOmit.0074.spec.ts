@@ -2,8 +2,8 @@
  * flowgate.v02.0074 T#5 — 「지시 생략」 in the work plan edit window (D#1 §3.7 · §6.2), mounted by DocumentWindows with
  * `@shared/api` mocked as the server (the plan read and its PUT, the AI run, the deploy status / preview / execution):
  * - the rows that offer it (an N / T instruction, a D / P / L / DB Step; not TS, a result, a locked or hidden Step) and when
- *   it is off: text or only an attachment (내용 있음), the window's lock, unsaved edits (먼저 저장), the row's Step window open,
- *   a plan that cannot deploy or whose status read failed (전개 불가); its tooltip (「설계 지시 생략」 / 「지시 생략」);
+ *   it is off: text or only an attachment (Has content), the window's lock, unsaved edits (Save first), the row's Step window open,
+ *   a plan that cannot deploy or whose status read failed (Cannot deploy); its tooltip (「설계 지시 생략」 / 「지시 생략」);
  * - the order of one click: the text on the parent draft (origin human, no attachment), one PUT with base_revision_no, a
  *   preview of first (no deployed card) / add at the saved revision, the execution with that preview's baseline;
  * - a refused save puts the row and the window back (no text, not dirty) and shows the save's failure; no deploy call;

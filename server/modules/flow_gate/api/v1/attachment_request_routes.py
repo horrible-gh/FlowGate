@@ -1,4 +1,4 @@
-"""User side of AI attachment upload requests (flowgate.chat.0017 CH0002). Mounted under ``/api/v1``.
+"""User side of AI attachment upload requests. Mounted under ``/api/v1``.
 
 Session (Console user) routes::
 

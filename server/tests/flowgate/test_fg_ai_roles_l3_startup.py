@@ -20,7 +20,7 @@ def test_n_new_single_candidate_has_no_startup_tail(env, question, monkeypatch, 
     assert len(r["responder_startup_policy"]["provider_ids"]) == 1
 
 
-# flowgate.v02test.0051 T0005 (A1): a new card's pick is its review AI with the independent default tail (default_tail
+# (A1): a new card's pick is its review AI with the independent default tail (default_tail
 # True, as a legacy card's). The dispatch still judges the candidates again after the adapter: a review AI disabled in
 # between is skipped for the next independent enabled default, and with none left (only the asker's provider) the
 # question is refused and marked failed before any claim or launch. (Before: the designated role only —

@@ -1,6 +1,6 @@
 """Canonical Test Basis for approved contract-2 specifications.
 
-Basis v3 (0684 T#2, D#1 §3-3, §3-5): the Basis is what a run executed. A spec run copies
+Basis v3: the Basis is what a run executed. A spec run copies
 the Group worktree into its disposable root and fingerprints the bytes it copied
 (``measure_run``); uncommitted and untracked Group work is part of it, and so are the
 POSIX execute bits the copy keeps (a helper the Case runs). The Basis is kept
@@ -10,18 +10,18 @@ TS revision change makes earlier results stale without any invalidation step.
 
 The scan, exclusion and hash rules are the source fingerprint module's. Decision paths
 (run finalize, manual result submission, TSR gate) measure; display paths only reuse a
-memo of the last measurement and say "unchecked" when it no longer fits (D#1 §3-6).
+memo of the last measurement and say "unchecked" when it no longer fits.
 
 The binding (git revision, dirty flag, measured time, run) is display information kept
 beside the identity, never part of basis_id. v1/v2 Basis values (a HEAD tree or a Source
-Bundle) are outdated: never valid again, never re-measured (D#1 §7).
+Bundle) are outdated: never valid again, never re-measured.
 
-Test Asset Policy (0682 D#1 §3.8): ``asset_kind`` is the one rule the run's manifest, the
+Test Asset Policy: ``asset_kind`` is the one rule the run's manifest, the
 asset API and the locator share. Git tracking is not part of it: an asset must be in the
 measured source with a hash and pass the path safety checks, so untracked test files a TR
 created are assets too.
 
-Execution contract (0094 B0001, B0005): no language or test framework is assumed. An
+Execution contract: no language or test framework is assumed. An
 automated Case says how it runs in one ``run_command`` (one program and its arguments); the
 test files its arguments name are its targets. The command goes through the TR Self-check
 command policy -- no shell, no operators, no inline code, the same deny list -- and the
@@ -68,11 +68,11 @@ REASON_IDENTITY = "identity_changed"
 # Unverifiable reasons are "source_unmeasurable:<source fingerprint failure code>".
 REASON_UNMEASURABLE = "source_unmeasurable"
 REASON_NOT_MEASURED = "source_not_measured"
-# A TS whose Group has no worktree has no source to measure (D#1 §3-5 compat): its results
+# A TS whose Group has no worktree has no source to measure (compat): its results
 # are recorded without a Basis and judged by the record alone.
 NO_WORKTREE = "group_worktree_unavailable"
 
-# ── Test Asset Policy (D#1 §3.8) ──────────────────────────────────────────────
+# ── Test Asset Policy ──────────────────────────────────────────────
 # Roots match case-sensitively: ``tests``/``test`` at the top or under one module directory
 # (server/tests, client_gui/tests ...) and the ``src/test`` layout (Maven/Gradle) at the top
 # or under one module directory. Co-located roots only hold assets under ``__tests__``.
@@ -248,7 +248,7 @@ def command_tests(command: dict) -> list[dict]:
 
 
 def locator(case: dict) -> dict:
-    """Automation Locator: binds a Case to what runs it (0094 B0001, B0005).
+    """Automation Locator: binds a Case to what runs it.
 
     A Case without ``automation_ref`` is judged by its ``run_command`` alone: missing is
     ``command_missing``, refused by the policy ``command_invalid`` with the policy's reason,
@@ -373,7 +373,7 @@ def worktree(doc: dict) -> Path:
 
 
 def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | None = None) -> dict:
-    """Run Basis (D#1 §3-3 preparing): copy the worktree to ``target`` and fingerprint it.
+    """Run Basis (preparing): copy the worktree to ``target`` and fingerprint it.
 
     The caller holds the Group's source lock around this call. A measurement failure is
     ``basis_capture_failed:<code>``; an asset the copy does not hold is refused with the
@@ -541,7 +541,7 @@ def source_identity(basis: dict | None) -> dict:
 
 
 def source_summary(basis: dict | None) -> dict:
-    """Display fields of an execution Basis: what the run executed (D#1 §3-4, §5)."""
+    """Display fields of an execution Basis: what the run executed."""
     basis = basis or {}
     source, binding = basis.get("source") or {}, basis.get("binding") or {}
     fingerprint = source.get("content_fingerprint") or ""
@@ -553,7 +553,7 @@ def source_summary(basis: dict | None) -> dict:
 
 
 def asset_manifest(doc: dict, cases: list[dict]) -> list[dict]:
-    """The TS's test assets with their current on-disk hashes (asset API, D#1 §3-7).
+    """The TS's test assets with their current on-disk hashes (asset API, the earlier implementation).
 
     Authority is the approved specification (automation_ref / test_assets), checked with
     the Test Asset Policy; only those few files are read, never the whole source.
@@ -573,10 +573,10 @@ def asset_manifest(doc: dict, cases: list[dict]) -> list[dict]:
 
 
 def metadata_without_basis(doc: dict) -> str:
-    """0684 T#1: TS approval leaves no Basis -- the next run measures one.
+    """TS approval leaves no Basis -- the next run measures one.
 
     A Basis an earlier approval or run stored moves to ``superseded_test_basis`` (kept
-    for audit, D#1 §7) and is never judged again.
+    for audit, the earlier implementation) and is never judged again.
     """
     try:
         meta = json.loads(doc.get("meta") or "{}")

@@ -1,4 +1,4 @@
-"""0127 T#5: structured TS command identity (L#2 §2.15.2) and its build/judge contract (§2.15.1).
+"""structured TS command identity (L#2) and its build/judge contract.
 
 Pure checks: the request fingerprint, the strict request whitelist, the build over the fresh body
 and the idempotency decision where raw and structured requests never share a fingerprint.

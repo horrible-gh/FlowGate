@@ -1,8 +1,8 @@
-"""flowgate.v02gui.0011 B -- stop a chat AI call right after the send, before its run id is known.
+"""B -- stop a chat AI call right after the send, before its run id is known.
 
 Measured on stage (seq 6 of the 0011 chat): /ai-invoke/start answered after 17-50s, and during that
 whole wait the browser had no run id while the server cancels by run id only, so nothing could be
-stopped. The press already names itself (``client_request_id``, flowgate.v02.0152); a stop now
+stopped. The press already names itself (``client_request_id``, the earlier change); a stop now
 uses that name:
 
 * before admission sees the press -- a ``cancelled`` entry; a /start that arrives later is refused

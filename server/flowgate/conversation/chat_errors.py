@@ -1,5 +1,5 @@
 """Chat error history: failures of a chat's own requests, kept in its conversation history
-(flowgate.v02test.0024 B, decision 1).
+(B, decision 1).
 
 A failed send, AI call or command decision used to show only as the notice line above the
 composer: gone on F5, on reopening the chat and on the next notice. The browser now places
@@ -48,7 +48,7 @@ _CLIENT_ID = re.compile(r"^[A-Za-z0-9.:-]{8,200}$")
 # and this stored text after F5, so both must read the same (``***``). It covers what the
 # self-check redaction (tr_self_check_service._redact) masks -- formerly applied here first, which
 # stored ``[REDACTED]`` -- plus the chat's own words. Applying it twice changes nothing.
-# flowgate.v02test.0050 T0005: the patterns moved unchanged to util/credential_redaction.py so the
+# the patterns moved unchanged to util/credential_redaction.py so the
 # server log table (services/server_logs.py) masks exactly the same way; the names below stay for existing callers.
 _SECRETS = SECRET_PATTERNS
 

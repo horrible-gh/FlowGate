@@ -1,6 +1,6 @@
 <template>
-  <!-- flowgate.v02.0031 — top of the Conversation (R0001 §2): chat list, editable current
-       title, new chat. Nothing of this lives in the composer below. flowgate.v02.0047: with
+  <!-- top of the Conversation: chat list, editable current
+       title, new chat. Nothing of this lives in the composer below. the earlier change: with
        no chat open the title is the draft's — the one its first send creates the chat with. -->
   <div ref="rootEl" class="conv-head" data-test="conv-head">
     <button

@@ -1,30 +1,30 @@
-// flowgate.v02.0045 S1+S2 — server Graph source (D0004 §2.3 "서버 Graph 공급원"): implements the
+// S1+S2 — server Graph source ("Server Graph source"): implements the
 // FlowGraphSource boundary over the Canvas read / layout save API of P0008 §3 / §4. It replaces
 // the sample source in the Designer (isSample = false, no sample badge). The transport model
 // comes from the features/project store loaders, so this file holds no API, store or axios of
 // its own; it only translates FlowCanvas <-> FlowGate Graph Model.
 //
-// flowgate.v02.0045 S3+S4: the Graph definition fields (node definition, editable draft, view) and
+// S3+S4: the Graph definition fields (node definition, editable draft, view) and
 // the draft operations (save, validate, confirm, start from the latest revision) of P0008 §5 / §6.
 //
-// flowgate.v02.0048 T#1: each Node also keeps its bound document, v0.1 slot and Graph node run.
+// each Node also keeps its bound document, v0.1 slot and Graph node run.
 //
-// flowgate.v02.0053 T#9: the Flow's Graph run (P0008 §7 S5) — read the current one, start, stop, resume.
+// the Flow's Graph run — read the current one, start, stop, resume.
 //
-// flowgate.v02.0059 T#2: 자동 배치's input when the shown Graph is not the server's whole one — the same
+// auto-layout's input when the shown Graph is not the server's whole one — the same
 // Canvas read with nothing left out (no collapse) and, given the v0.1 document read, a document's
 // supersede link (the sequence root's chain).
 //
-// flowgate.v02.0056 F2-1: approve a card of it (O1 0005-TR §4-1); a run carries its pending propagation.
+// approve a card of it; a run carries its pending propagation.
 //
-// flowgate.v02.0061 T#14: the run is the server's one run per Flow — the step / full command, Pause, Stop, Resume —
+// the run is the server's one run per Flow — the step / full command, Pause, Stop, Resume —
 // and carries its command, idle reason, execution counts and its nodes' integration / Hold.
 //
-// flowgate.v02.0061 T#15: a card's Hold is read with the Graph — each Canvas read goes with the Graph read, whose nodes
+// a card's Hold is read with the Graph — each Canvas read goes with the Graph read, whose nodes
 // tell their cards' Hold (`holds`, also of cards the run has no node run of) — and written through the card settings
 // call the Shell hands in (`cardHold`, features/document); a done card's Graph Time Machine goes through the run transport.
 //
-// flowgate.v02.0064 T#4: each node keeps its card title state; a card's title is saved through the store loader.
+// each node keeps its card title state; a card's title is saved through the store loader.
 import type { FlowRunAnswer, RunCommandLookup } from '@/features/project/flowRunApi'
 import type {
   FlowCanvas,
@@ -65,7 +65,7 @@ export interface FlowCanvasLoaders {
   saveFlowGraphDraft?(flowId: string, input: FlowGraphDraftInput): Promise<FlowGraphDraftSaveResult>
   validateFlowGraphDraft?(flowId: string, draftVersion: number): Promise<FlowGraphValidation>
   confirmFlowGraphRevision?(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult>
-  /** flowgate.v02.0053 T#9: the Graph run (P0008 §7 S5); absent = the Designer runs nothing. */
+  /** the Graph run; absent = the Designer runs nothing. */
   loadFlowRun?(flowId: string): Promise<FlowRun | null>
   checkFlowRevisionAdoption?(flowId: string): Promise<FlowRunError | null>
   startFlowRun?(flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunAnswer>
@@ -73,21 +73,21 @@ export interface FlowCanvasLoaders {
   voidFlowRunCommand?(flowId: string, cid: string): Promise<RunCommandLookup>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
-  /** flowgate.v02.0061 T#14: Pause; absent = the Designer cannot pause. */
+  /** Pause; absent = the Designer cannot pause. */
   pauseFlowRun?(runId: string): Promise<FlowRun>
   /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
-  /** flowgate.v02.0061 T#15: a done card's Graph Time Machine (T#13); absent = none. */
+  /** a done card's Graph Time Machine; absent = none. */
   timeMachineFlowRunNode?(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }>
-  /** flowgate.v02.0064 T#4: a card's title save (P0006 §4.2.2); absent = no inline title edit. */
+  /** a card's title save; absent = no inline title edit. */
   saveFlowNodeTitle?(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState>
 }
 
-/** flowgate.v02.0061 T#15: a card's Hold write through the card settings (features/document settingsNodeHoldWrite). */
+/** a card's Hold write through the card settings (features/document settingsNodeHoldWrite). */
 export interface FlowCardHoldLoaders {
   write(flowId: string, nodeKey: string, on: boolean): Promise<boolean>
 }
 
-/** flowgate.v02.0061 T#15: the card Holds a Graph read tells (draft and latest revision nodes, by node key). */
+/** the card Holds a Graph read tells (draft and latest revision nodes, by node key). */
 export function toCardHolds(definition: FlowGraphDefinition): Record<string, boolean> {
   const holds: Record<string, boolean> = {}
   for (const node of [...(definition.latestRevision?.nodes ?? []), ...(definition.draft?.nodes ?? [])]) {
@@ -104,24 +104,24 @@ const toRunInfo = (run: FlowRunAnswer): FlowRunInfo => ({
   // flowgate.v02.0056 F2-1: the run band's "멈춤 · 다음 카드 N개 대기".
   pendingPropagationCount: run.pendingPropagationCount ?? 0,
   pendingNodeKeys: run.pendingNodeKeys ?? [],
-  // flowgate.v02.0061 T#14: the band's status line and the Canvas lock / running lines.
+  // the band's status line and the Canvas lock / running lines.
   mode: run.mode ?? null,
   idleReason: run.idleReason ?? null,
   runningExecutionCount: run.runningExecutionCount ?? 0,
   requestedExecutionCount: run.requestedExecutionCount ?? 0,
   executionLimit: run.executionLimit ?? null,
   ...(run.nodeRuns ? { nodeRuns: run.nodeRuns } : {}),
-  // flowgate.v02.0061 T#15: the run's history as the Time Machine confirmation compares it.
+  // the run's history as the Time Machine confirmation compares it.
   revisionNo: run.revisionNo ?? null,
   lastEventSeq: run.lastEventSeq ?? 0,
   // flowgate.v02.0105 T#2 (B-6): only what the server said; absent = not told (no [승인]).
   ...(typeof run.viewerCanApprove === 'boolean' ? { viewerCanApprove: run.viewerCanApprove } : {}),
-  // flowgate.v02.0143 T#1 (W1): only what the server said; absent = not told (never held).
+  // (W1): only what the server said; absent = not told (never held).
   ...(typeof run.qaResponding === 'boolean' ? { qaResponding: run.qaResponding } : {}),
 })
 
 /**
- * flowgate.v02.0045 TR0020 rev5: conversations (CH, and the Q / A of the same server collapse group,
+ * conversations (CH, and the Q / A of the same server collapse group,
  * P0008 §2.5) are not part of the work flow; every Canvas read asks the server to leave them out,
  * so a new conversation never shows up as a memo card.
  */
@@ -172,7 +172,7 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       slot: node.slot,
       nodeRun: node.nodeRun ?? null,
       ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
-      // flowgate.v02.0064 T#4: the card title state, as sent (absent from an older server).
+      // the card title state, as sent (absent from an older server).
       ...(node.titleState !== undefined ? { titleState: node.titleState } : {}),
     })),
     edges: canvas.edges.map((edge) => ({
@@ -191,9 +191,9 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     projection: canvas.projection || null,
     sequenceRootDocId: canvas.ownership.sequenceRootDocId ?? null,
     hiddenNodeCount: Object.values(canvas.collapsed?.hiddenCounts ?? {}).reduce((sum, count) => sum + (Number(count) || 0), 0),
-    // flowgate.v02.0061 TR0031 rev1: the run block's status (the run lock while the run read is pending or failed).
-    // T#15: with the revision it runs and its event sequence (the Time Machine confirmation's basis).
-    // flowgate.v02.0083 T#4 rev1: and the band's facts it sent (toRun keeps only those).
+    // the run block's status (the run lock while the run read is pending or failed).
+    // with the revision it runs and its event sequence (the Time Machine confirmation's basis).
+    // and the band's facts it sent (toRun keeps only those).
     ...(canvas.run !== undefined ? { run: canvas.run ? toGraphRun(canvas.run) : null } : {}),
   }
 }
@@ -245,8 +245,8 @@ function asDraftError(error: unknown): unknown {
 
 /**
  * `readDocument`: the v0.1 document read (`documentRead` of features/document fits); absent = no supersede
- * link is read, so 자동 배치 cannot tell a v0.1 root that replaced an older root document.
- * `cardHold` (flowgate.v02.0061 T#15): a card's Hold write; absent = the Canvas holds nothing.
+ * link is read, so auto-layout cannot tell a v0.1 root that replaced an older root document.
+ * `cardHold`: a card's Hold write; absent = the Canvas holds nothing.
  */
 export function createServerFlowGraphSource(
   loaders: FlowCanvasLoaders,
@@ -255,7 +255,7 @@ export function createServerFlowGraphSource(
 ): FlowGraphSource {
   const graphLoaders = loaders.saveFlowGraphDraft && loaders.validateFlowGraphDraft && loaders.confirmFlowGraphRevision
   const runLoaders = loaders.loadFlowRun && loaders.startFlowRun && loaders.stopFlowRun && loaders.resumeFlowRun
-  // flowgate.v02.0061 T#15: the card Holds of a Canvas read, read beside it; a failed Graph read leaves them unknown.
+  // the card Holds of a Canvas read, read beside it; a failed Graph read leaves them unknown.
   const readHolds = (flowId: string): Promise<Record<string, boolean> | null> =>
     cardHold && loaders.loadFlowGraph ? loaders.loadFlowGraph(flowId).then(toCardHolds, () => null) : Promise.resolve(null)
   return {

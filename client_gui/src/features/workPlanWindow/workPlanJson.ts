@@ -1,4 +1,4 @@
-// flowgate.v02.0073 T#4 — the work plan as JSON, on the client only (no server API: NR §2 — the server has no import,
+// the work plan as JSON, on the client only (no server API: NR — the server has no import,
 // export or raw route). What goes out is the edit window's draft as `PUT …/work-plan` would send it (bodyOf): the
 // canonical body with its wp_version as it is, DS / T2 Steps, quantities, counted_types and every x_* field included.
 // What comes in is checked here only as far as the client can (the fields of the body, quantities ⇔ counted_types,
@@ -34,7 +34,7 @@ export function workPlanJsonText(draft: WorkPlanDraft): string {
 }
 
 /**
- * flowgate.v02.0074 T#2 — a plan body as JSON text, in the export's format (two-space indent, one trailing newline). The
+ * a plan body as JSON text, in the export's format (two-space indent, one trailing newline). The
  * Inspector's WP download (documentIo) writes the server's stored body with it as it came, never through a draft.
  */
 export function workPlanBodyJsonText(body: unknown): string {

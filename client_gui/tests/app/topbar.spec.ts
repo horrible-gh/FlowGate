@@ -8,7 +8,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 
 registerAppMessages(i18n)
 
-// The brand is a RouterLink home (T0011), so the Topbar needs a router to render.
+// The brand is a RouterLink home, so the Topbar needs a router to render.
 function mountTopbar() {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
   return mount(Topbar, {
@@ -24,7 +24,7 @@ afterEach(() => {
   setCurrentUser(null)
 })
 
-// flowgate.v02gui.0024: v0.1 is gone, so the Topbar no longer offers a switch back to it.
+// v0.1 is gone, so the Topbar no longer offers a switch back to it.
 describe('client_gui Topbar without the v0.1 switch (0024)', () => {
   it('renders no GUI-generation switch', () => {
     const wrapper = mountTopbar()
@@ -36,7 +36,7 @@ describe('client_gui Topbar without the v0.1 switch (0024)', () => {
   })
 })
 
-// T0011 §7/§14: brand, search shell, notification control and user area from 01-dashboard.html.
+// brand, search shell, notification control and user area from 01-dashboard.html.
 describe('client_gui Topbar mockup elements (T0011)', () => {
   it('shows the FlowGate brand as a link home with its tagline', () => {
     const wrapper = mountTopbar()

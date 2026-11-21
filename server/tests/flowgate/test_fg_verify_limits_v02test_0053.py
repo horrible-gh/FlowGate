@@ -173,7 +173,7 @@ def test_a_value_that_is_not_valid_is_not_set(env):
 
 def test_a_count_above_999_is_a_value_not_a_fallback(env):
     key = placed(env, FB, "T")
-    assert setting(env, FB, key, RUNS, 1000)["fields"][RUNS]["value"] == 1000   # 0003-T: 'a whole number of 1 or more'
+    assert setting(env, FB, key, RUNS, 1000)["fields"][RUNS]["value"] == 1000   # 'a whole number of 1 or more'
     assert _limits(FB, key) == (1000, 120)                                      # and the resolver answers it as it is
     _put(FB, key, RUNS, 100000)
     assert _limits(FB, key) == (100000, 120)

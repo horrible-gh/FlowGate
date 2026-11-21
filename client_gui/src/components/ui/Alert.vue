@@ -12,9 +12,9 @@
 
 <script setup lang="ts">
 // Inline/banner status message that stays on screen until the caller removes it or the
-// person dismisses it (T0008 §6) -- distinct from AlertDialog's blocking confirmation
-// (T0006) and from Toast's auto-expiring pop-up (T0008 §5). Never runs API/retry logic
-// itself: `action` is whatever Button the caller wires up (T0008 §6 example), this
+// person dismisses it -- distinct from AlertDialog's blocking confirmation
+// and from Toast's auto-expiring pop-up. Never runs API/retry logic
+// itself: `action` is whatever Button the caller wires up (example), this
 // component only renders the slot.
 import IconButton from './IconButton.vue'
 

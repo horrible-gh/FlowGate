@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0048 — a card placed in another tab moves the draft version of the Flow this tab shows; the
+ * a card placed in another tab moves the draft version of the Flow this tab shows; the
  * selected card's settings context moves with it. The AI tab keeps its rows (지시 AI · 실행 AI · 검수 AI · 검수 횟수)
  * drawn while the card is read again under the new context, and a change made meanwhile is sent with the context
  * the new read answers (not refused as gate_context_changed). Another card still starts from nothing.

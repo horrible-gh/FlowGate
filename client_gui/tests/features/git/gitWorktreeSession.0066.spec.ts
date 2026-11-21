@@ -9,7 +9,7 @@ import type { ManualMergeView, WorktreeStatus } from '@/features/git/types'
 import { G, P, createFakeGitSource, gitError, manualSleep, networkError, status } from './fakeGitSource'
 import { createFakeWorktreeSource, manualMergeView, noDetails, worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#6 — the Group worktree session (0066 D#2 §3-1, §3-2): gate, generations,
+// the Group worktree session: gate, generations,
 // the shared E1 sequence, reads held during a write, and what a new fingerprint reads again;
 // late write answers of an older context and confirm tickets bound to their context.
 

@@ -61,7 +61,7 @@ def test_I_legacy_session_without_target_falls_back_to_base(proj):
     ctx = _ctx(merge_id)
     for key in ("merge_target", "target_branch", "attempt_state"):
         ctx.pop(key, None)
-    db_git.set_session_context(merge_id, ctx)          # = a row written before T0012
+    db_git.set_session_context(merge_id, ctx)          # = a row written before session targets existed
 
     resolved = mt.resolve_session_target(_session(merge_id))
     assert resolved.legacy and resolved.is_project_base and resolved.target_branch == "main"

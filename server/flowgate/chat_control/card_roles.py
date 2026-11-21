@@ -1,4 +1,4 @@
-"""Card AI roles of the cards a chat placed: view and change (flowgate.v02gui.0028).
+"""Card AI roles of the cards a chat placed: view and change.
 
 The v1 card settings routes are a person's (user JWT only); a chat reaches only the three AI roles of the work cards it
 placed itself, through its own routes (``routes``: ``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles``)
@@ -26,11 +26,11 @@ and API tools (``tools``: ``get_card_roles`` / ``set_card_roles``).
   role, before / after, changed, version).
 - Only the three roles (and the three run settings below): nothing else of the card (hold, merge, assignee, other
   settings) and never the account defaults (``/api/v1/me/ai-roles``) are written here.
-- flowgate.v02gui.0032 (decision 6): ``from_group`` (an AI group id with role profiles, ``ai-options``
+- the earlier change (decision 6): ``from_group`` (an AI group id with role profiles, ``ai-options``
   ``role_groups``) fills the roles from that group's profile for the card's document type (typed cell, else common;
   ``placement_roles.group_values``), only when the user named the group. Roles the card does not have are skipped;
   ``roles`` sent with it win over the group's. The same checks, write, audit and version move as above.
-- flowgate.v02gui.0032 (0002-CH seq 15-17): ``settings`` changes the card's run settings the AI tab shows next to the
+- the earlier change (CH seq 15-17): ``settings`` changes the card's run settings the AI tab shows next to the
   roles — review count, restarts, time limit (``run_settings``; the card's kind decides which: a test card has only the
   review count) — and nothing else. Same request as the roles: the same checks and locks, all or nothing, the version
   moves once, one ``chat_card_setting_audit`` row per requested setting. The read answers their value, default and
@@ -141,7 +141,7 @@ def parse_change(body: Any) -> tuple[dict, int, Optional[dict]]:
 
 def parse_request(body: Any) -> tuple[dict, dict, int, Optional[dict]]:
     """``(roles, settings, expected_settings_version, expected_context)`` of a PATCH body, else 422 naming every fault.
-    ``roles`` may be left out when ``from_group`` or ``settings`` is there (flowgate.v02gui.0032)."""
+    ``roles`` may be left out when ``from_group`` or ``settings`` is there."""
     if not isinstance(body, dict):
         raise _invalid([{"field": "body", "reason": "not_an_object"}])
     errors = [{"field": key, "reason": "unknown_field"} for key in sorted(set(body) - BODY_KEYS)]
@@ -157,7 +157,7 @@ def parse_request(body: Any) -> tuple[dict, dict, int, Optional[dict]]:
         errors.append({"field": "settings", "reason": "required_non_empty_object"})
     roles = body.get("roles")
     if (group or settings_req) and roles is None:
-        roles = {}                                       # flowgate.v02gui.0032: the group / the settings alone
+        roles = {}                                       # the group / the settings alone
     elif not isinstance(roles, dict) or (not roles and not group and not settings_req):
         errors.append({"field": "roles", "reason": "required_non_empty_object"})
         roles = {}

@@ -1,11 +1,11 @@
-"""The review gate (0501 NR0003 §12/§19 `review.py`).
+"""The review gate (`review.py`).
 
 Its own subsystem, as §19 says: reviewer/executor selection, the review and rework hop
 launch, verdict handling, automatic rejection with the findings text, the loop breakers
 that make an unbounded `-1` round budget safe, and the document-scoped review loop's
 checkpoint/restore.
 
-Nothing about a review round is stored (L0008 §2.3): rounds used, which stage is
+Nothing about a review round is stored: rounds used, which stage is
 running, whether a rejection already happened are all re-derived from `document_reviews`
 plus the document's `revision_no` / `doc_review_status` on every read, which is what
 makes a restart, a cold resume and an in-flight hop boundary agree for free.
@@ -59,7 +59,7 @@ from .oracle import map_lookup as _map_lookup, normalize_ws as _normalize_ws, re
 
 
 def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
-    """T0007 §3.2.2/A10-3: the excerpt a human uses to judge WHY a review hop recorded no
+    """A10-3: the excerpt a human uses to judge WHY a review hop recorded no
     verdict, and it must show both the provider/attempt/exit context AND the actual failure
     core (a usage-limit message, stderr, stdout or a timeout diagnosis) together — neither
     alone is enough to act on.
@@ -111,13 +111,13 @@ def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
         if history:
             core = excerpt(_redact_secrets((history[-1] or {}).get("detail"),
                                            known_tokens, known_prompts))
-    # T0007 rev2: `continuation_selected_provider_name` is the CHAIN HEAD picked before this
-    # attempt ran (0435 T0004) and is never updated afterward. When an override-less review
+    # `continuation_selected_provider_name` is the CHAIN HEAD picked before this
+    # attempt ran and is never updated afterward. When an override-less review
     # hop's startup fell back past that head, `_execute_provider_chain` moved
     # `run["provider"]`/`run["provider_id"]` to whichever provider actually started
-    # (L2620-2626) — that is the provider whose exit_code/attempts_used this sentence
+    # — that is the provider whose exit_code/attempts_used this sentence
     # describes, so it must win. The two only diverge on a startup fallback; with no
-    # fallback `run["provider"]` is chain[0] too (L2512-2513), so this reorder is a no-op
+    # fallback `run["provider"]` is chain[0] too, so this reorder is a no-op
     # for every other shape.
     provider_name = (
         (run.get("provider") or {}).get("name")
@@ -126,7 +126,7 @@ def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
         or "the reviewer"
     )
     # Never empty: even with no message, tail or diagnosis anywhere, the provider/attempt/
-    # exit-code sentence T0007 §3.2.3 requires is always constructible.
+    # exit-code sentence the earlier implementation requires is always constructible.
     head = (
         f'"{provider_name}" exited {run.get("exit_code")} on attempt '
         f'{int(run.get("attempts_used") or 0)} without recording a review verdict.'
@@ -144,13 +144,13 @@ def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
 #   2. the engine hop settlement (_maybe_auto_resume_hop) — "review / rework / approve / stop?"
 #   3. the human resume (resume_chain) — the same question after a restart, with no memory
 #
-# invariant R1 (0414 M0020 / CH0019): a step whose review count is not 0 never advances with
+# invariant R1: a step whose review count is not 0 never advances with
 # a reviewer's complaint left unanswered. It passed, or every round it was given was reviewed
 # AND reworked, or the chain stopped. There is no fourth path.
 # The earlier form of R1 — "never advances without a `pass`" — ended a spent budget by parking
 # the chain, which left the LAST round's findings recorded and never fixed. That is exactly
-# what M0020 refused ("지적을 두번했으면 당연히 수정도 두번해야지"), so a finite count is now a
-# budget of review+rework PAIRS: N 검수 · 지적마다 수정 · 마지막 수정 뒤 다음 단계.
+# what the earlier implementation refused ("two reviews with findings must naturally yield two reworks"), so a finite count is now a
+# budget of review+rework PAIRS: N reviews, rework after each finding, then the next step after the final rework.
 
 def _enabled_provider_chain(project_id: Optional[str]) -> list[dict]:
     """The project's effective provider chain, or [] when it cannot be read."""
@@ -165,7 +165,7 @@ def _enabled_provider_chain(project_id: Optional[str]) -> list[dict]:
 
 
 def _provider_enabled(project_id: Optional[str], provider_id: Optional[str]) -> bool:
-    """An explicit pick that can still run. flowgate.v02.0129 CH0012: a user's own runnable AI
+    """An explicit pick that can still run. the earlier change the discussion: a user's own runnable AI
     counts too -- the hop's start_run (requester = issued_to) refuses it unless the requester
     owns it, so it is never silently replaced by the project default here."""
     if not provider_id or not project_id:
@@ -178,7 +178,7 @@ def _provider_enabled(project_id: Optional[str], provider_id: Optional[str]) -> 
 
 
 def _first_enabled_provider_id(project_id: Optional[str]) -> Optional[str]:
-    """The project default — first entry of the effective chain (L0008 §2.2)."""
+    """The project default — first entry of the effective chain."""
     chain = _enabled_provider_chain(project_id)
     return chain[0].get("id") if chain else None
 
@@ -204,7 +204,7 @@ def normalize_review_count(raw) -> int:
     """Normalize a raw stored ``review_count`` value into a valid budget.
 
     The single source of truth for "is this step reviewed at all" — used by the sequence
-    baseline lookup below AND by the WP pre-gate materializer (0600 TR0010 rev5 human
+    baseline lookup below AND by the WP pre-gate materializer (the earlier implementation human
     rejection): review necessity is this normalized count being non-zero, never
     ``reviewer_provider_id`` presence. A row can validly carry ``review_count > 0`` with
     ``reviewer_provider_id = null`` — "use the project default reviewer" — which
@@ -261,7 +261,7 @@ def resolve_review_count(
 def resolve_round_limit(count: int) -> int:
     """How many review+rework rounds this step gets; REVIEW_ROUNDS_NO_LIMIT = no ceiling.
 
-    -1 is the user asking for "until it passes", and it is taken literally (0414 0022-TR
+    -1 is the user asking for "until it passes", and it is taken literally (the earlier implementation
     rejection): there is no round number at which the chain gives up and calls a human.
     Only a `pass`, a `hold`, or a loop breaker ends it.
     """
@@ -317,7 +317,7 @@ def _stored_provider_for_item_seq(doc_ref: Optional[str], item_seq: Optional[int
 def resolve_step_executor(
     bundle: dict, item_seq: Optional[int], project_id: Optional[str], doc_ref: Optional[str]
 ) -> Optional[str]:
-    """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
+    """Who REWORKS this step — the step's executor, not its reviewer.
 
     Priority order: step override → actual work-hop executor → header/base selection →
     stored sequence assignment → project default. The rework hop is mode="single", so
@@ -328,11 +328,11 @@ def resolve_step_executor(
     of `provider_pinned`: that flag only distinguishes an explicit user pick from an
     unpinned default elsewhere, but for rework the provider that just produced the work
     being reworked must not be quietly swapped out for whatever a sequence row happens to
-    hold (0508 T0004 — this is the same regression fixed once before in 0389f567 and
+    hold (the earlier implementation — this is the same regression fixed once before in 0389f567 and
     877da308 and lost again in a later merge; do not reintroduce the `provider_pinned`
     gate here).
 
-    flowgate.default.0596 T0004 (NR0003 rev3): `base_provider_id` is the run's header/
+    `base_provider_id` is the run's header/
     default selection (`continuation_base_provider_id`), NOT necessarily the provider
     that actually executed the hop being reworked — a step override or a stored sequence
     provider can win the per-hop resolution in admission.start_run while the header stays
@@ -373,7 +373,7 @@ def resolve_step_executor(
     return _first_enabled_provider_id(project_id)
 
 
-# Provenance labels for the responder pick (0661 T0004 F1/F6): stored on the item row at
+# Provenance labels for the responder pick: stored on the item row at
 # dispatch (question_items.responder_provider_source) so an answer can later be matched
 # against WHY that provider was asked, not just WHICH one actually ran.
 QUESTION_RESPONDER_SOURCE_REVIEWER_OVERRIDE = "reviewer_override"
@@ -387,7 +387,7 @@ def question_responder_candidates(
     asker_provider_id: Optional[str],
     candidates: list[tuple[Optional[str], str]],
 ) -> list[tuple[str, str]]:
-    """0111 T-A3: the 0110 independent picks in order, each enabled provider once.
+    """T-A3: the 0110 independent picks in order, each enabled provider once.
 
     This is also the bounded startup fallback chain; unknown asker provenance yields
     no candidates. Reviewer/header precedence and the enabled default order are unchanged.
@@ -477,7 +477,7 @@ REVIEW_PENDING_DOC_STATUSES = frozenset({"pending_review", "revised", "rejected"
 
 
 def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
-    """The slot waiting on the gate — at most one per group (L0008 §2.3).
+    """The slot waiting on the gate — at most one per group.
 
     One running chain has one hop, which fills one document, so the search is simply "the
     most recently FILLED slot": if its document is still unapproved it is the waiting slot,
@@ -509,7 +509,7 @@ def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
             "doc_type": (doc.get("type_code") or item.get("type") or "").upper(),
             "revision_no": int(doc.get("revision_no") or 0),
             "review_status": status,
-            # T0005 2.1.1: the accumulated FACT of which review rows were already turned
+            # 2.1.1: the accumulated FACT of which review rows were already turned
             # into an automatic rejection. `review_status` above is a momentary value a
             # landed rework overwrites (`rejected + submit -> revised`); this one only
             # grows, so it survives that transition and lets the gate tell "already
@@ -520,7 +520,7 @@ def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
 
 
 def _parse_rejection_history(raw) -> list:
-    """documents.rejection_history as a list of dict items (T0005 2.1.1).
+    """documents.rejection_history as a list of dict items.
 
     The column is free-form JSON text. Absent, unparseable, or not-a-list all mean the
     SAME thing here: an empty history. A malformed column degrades the review_id guard
@@ -541,7 +541,7 @@ def _parse_rejection_history(raw) -> list:
 def _check_expected_progress(
     bundle: dict, slot: dict, reviews: list[dict]
 ) -> Optional[str]:
-    """Did the hop that just ran leave what it was supposed to leave? (L0008 §2.3)
+    """Did the hop that just ran leave what it was supposed to leave?
 
     Without this the gate re-reads `rounds_used == 0` after a review hop that recorded
     nothing and launches another review hop — forever. This is the only thing standing
@@ -589,9 +589,9 @@ def _log_review_annotation_failure(kind: str, slot: dict, bundle: dict, error) -
 
 
 def resolve_review_gate(bundle: dict) -> dict:
-    """What happens next for the slot this chain is standing on (L0008 §2.3).
+    """What happens next for the slot this chain is standing on.
 
-    `_derive_review_gate` is the gate as it always was. 0688 T#2: every approval it decides
+    `_derive_review_gate` is the gate as it always was. the earlier implementation: every approval it decides
     -- a step that is not reviewed, a `pass`, a finite budget whose last rework landed --
     goes through `_answer_check_gate` first, so a document is never approved while an answer
     to a question about it is newer than every review it has had.
@@ -607,7 +607,7 @@ def resolve_review_gate(bundle: dict) -> dict:
 
 
 def _derive_review_gate(bundle: dict) -> dict:
-    """The review gate's own derivation (L0008 §2.3), before the 0688 T#2 answer check.
+    """The review gate's own derivation, before the the earlier implementation answer check.
 
     Returns {stage: work|review|rework|stop, ...}. Every fact it reads is re-derived here
     and now — rounds used is `len(document_reviews)`, "a rework landed" is
@@ -652,7 +652,7 @@ def _derive_review_gate(bundle: dict) -> dict:
         return {"stage": "stop", "stop_code": REVIEW_VERDICT_HOLD_STOP_CODE, **common}
 
     # verdict == "issues" from here, and THREE facts gate the rejection. Two of them ask
-    # the same idempotency question at different resolutions (0458 NR0003 I1):
+    # the same idempotency question at different resolutions:
     #
     #   * the document is in `rejected` right now — by a human, or by an earlier pass of
     #     this gate — so there is nothing left to reject;
@@ -660,7 +660,7 @@ def _derive_review_gate(bundle: dict) -> dict:
     #     not enough (I3): `rejected` still means "not again", but `revised` does NOT mean
     #     "not yet", because that is precisely the value a landed rework leaves behind.
     #
-    # The third is revision match — 0459 NR0003's second defect. The complaint has to be
+    # The third is revision match — the review's second defect. The complaint has to be
     # about the revision standing there NOW. `reject_first` used to read the status alone,
     # so a rework that had already landed (revision_no past the review's, status `revised`)
     # was pushed back to `rejected` just before the NEXT review round started. That round
@@ -671,7 +671,7 @@ def _derive_review_gate(bundle: dict) -> dict:
     # stays absent from the transition table.
     latest_revision = int(latest.get("revision_no") or 0)
     slot_revision = int(slot["revision_no"])
-    # T0005 2.1.4: a THIRD condition joins status and revision-match by AND — this exact
+    # 2.1.4: a THIRD condition joins status and revision-match by AND — this exact
     # review row must not already have produced a rejection. Status alone is not enough
     # (I3: `rejected` still means "not again", but a landed rework leaves `revised` behind,
     # which does NOT mean "not yet" — that value is precisely what a fixed complaint looks
@@ -687,7 +687,7 @@ def _derive_review_gate(bundle: dict) -> dict:
     if slot_revision > latest_revision:
         # The rework for this complaint already landed (I2). Reaching here IS the proof that
         # the complaint was rejected and then fixed, so this branch decides the NEXT round
-        # only and carries no reject_first at all (0458 NR0003 §8 방향 A). Carrying it was
+        # only and carries no reject_first at all (option A). Carrying it was
         # what re-rejected the already-fixed review, drove `revised -> rejected`, and made
         # the following `pass` fail its own approval: the fresh revision keeps its `revised`
         # status into the next round, which is what lets a later `pass` settle through the
@@ -696,7 +696,7 @@ def _derive_review_gate(bundle: dict) -> dict:
             # -1 never leaves this branch: "until it passes" reviews the fresh revision
             # too, round after round, for as long as the reviewer keeps finding issues.
             return {"stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1, **common}
-        # 0414 M0020 / CH0019: a finite count is a budget of review+rework PAIRS, and the
+        # a finite count is a budget of review+rework PAIRS, and the
         # last pair has just closed — every complaint this step produced was reworked, so
         # the step is done. The reworked revision is approved and the chain moves on.
         logger.info(
@@ -707,20 +707,20 @@ def _derive_review_gate(bundle: dict) -> dict:
         return {"stage": WORK_HOP_KIND, "approve_first": True, **common}
 
     # No rework has landed for this complaint yet. EVERY `issues` verdict earns its rework
-    # hop, the LAST round's included — 0414 M0020 "지적을 두번했으면 수정도 두번": a complaint
+    # hop, the LAST round's included — the earlier implementation "two reviews with findings require two reworks": a complaint
     # that is only recorded and never fixed is not a review. So count=1 runs
     # review → rework → advance, and count=2 runs review → rework → review → rework → advance.
     return {"stage": REWORK_HOP_KIND, "round_no": rounds_used,
             "reject_first": reject_first, **common}
 
 
-# ── 0688 T#2: an answer that landed after the document it was asked about ────────────────
+# ── the earlier implementation: an answer that landed after the document it was asked about ────────────────
 #
-# 0688 T#1 holds a hop that submitted its document while a question of its own was open, and
+# holds a hop that submitted its document while a question of its own was open, and
 # the answer resumes the gate that hand-off held. The document, though, was written on the
 # assumption the question stated, and whether the answer contradicts it is a judgement. The
 # chain already has exactly one judge of a document -- the review hop: its `issues` becomes
-# the automatic rejection and the author's rework (L0008 §2.6), its `pass` approves and lets
+# the automatic rejection and the author's rework, its `pass` approves and lets
 # the chain move on, its `hold` stops the chain for a human. So no new verdict is invented
 # here. The gate only refuses to APPROVE a slot while a question about it is open or its
 # answer has not been put in front of a review that then judged the slot
@@ -813,7 +813,7 @@ def _asked_before_the_sequence(row: dict, sequence: Optional[dict]) -> bool:
 
 
 def questions_on_slot(doc_ref: Optional[str], slot: dict) -> list[dict]:
-    """Every AI question a hop of ``slot`` raised, answered or not, oldest first (0688 T#2).
+    """Every AI question a hop of ``slot`` raised, answered or not, oldest first.
 
     The asking hop is read off its durable run record (`_asked_about_slot`). The question
     itself sits on whichever container `q_service.resolve_question_anchor` chose when it was
@@ -900,7 +900,7 @@ def answered_questions_on_slot(doc_ref: Optional[str], slot: dict) -> list[dict]
 
 
 def _questions_on_assumption(bundle: dict, slot: dict) -> list[dict]:
-    """The questions ``slot``'s document may rest on the wrong side of (0688 T#2).
+    """The questions ``slot``'s document may rest on the wrong side of.
 
     Only a question whose asking hop COMPLETED counts: that hop submitted the document (or
     its verdict) on the assumption the question stated. A Q-only hop stopped without
@@ -964,7 +964,7 @@ def _answer_check_gate(gate: dict, bundle: dict) -> dict:
     slot raised before submitting (`_questions_on_assumption`):
 
       * one is still unanswered: the document rests on an assumption nobody answered --
-        held on ``question_answer_unverified``. T#1 parks the hop that asked; this is the
+        held on ``question_answer_unverified``. the earlier implementation parks the hop that asked; this is the
         approval-side guard for every other way of reaching the gate (a hand-off probe that
         could not read the questions, a person's [이어서 진행] over an escalated item);
       * an answer no review round was given to check (`_answers_checked_by_reviews`) and the
@@ -1052,9 +1052,9 @@ def _clip_answered_text(value) -> str:
 
 
 def _answered_questions_clause(items: list[dict], stage: str) -> str:
-    """The questions and answers a review hop checks / a rework hop applies (0688 T#2).
+    """The questions and answers a review hop checks / a rework hop applies.
 
-    English, like the engine's other clauses (T0010 task 4). The review hop is told how its
+    English, like the engine's other clauses (task 4). The review hop is told how its
     verdict expresses the comparison; the rework hop is told to follow an answer over the
     assumption it replaces. Each question names its item id so a finding -- and the automatic
     rejection built from it -- traces back to the question it is about.
@@ -1101,7 +1101,7 @@ def _answered_questions_clause(items: list[dict], stage: str) -> str:
 
 def _record_answer_delivery(group_id: Optional[str], bundle: dict, slot: dict, stage: str,
                             run_id: Optional[str], items: list[dict]) -> None:
-    """Write which answers ``run_id``'s mention carries to the durable ledger (0688 T#2).
+    """Write which answers ``run_id``'s mention carries to the durable ledger.
 
     The gate reads it back (`_answers_checked_by_reviews`): a review round checked an answer
     only when its own run's entry names it. A rework hop's entry is the trace of what that
@@ -1168,7 +1168,7 @@ def _append_answered_questions(mention: str, bundle: dict, slot: dict, stage: st
     return mention
 
 
-# The automatic rejection text. English on purpose: T0010 작업 4 forbids new Korean literals
+# The automatic rejection text. English on purpose: the earlier implementation task 4 forbids new Korean literals
 # in server modules, and build_review_mention's own review instructions are English in every
 # locale, so the rejection the same reviewer's findings produce matches what it reads.
 REVIEW_REJECT_HEADING = "## Automated review rejection"
@@ -1177,7 +1177,7 @@ REVIEW_LOCUS_UNSPECIFIED = "(locus unspecified)"
 
 
 def build_auto_reject_reason(review: Optional[dict], slot: dict, api_base_url: Optional[str]) -> str:
-    """The rejection text, which IS the rework instruction (L0008 §2.6).
+    """The rejection text, which IS the rework instruction.
 
     transition_document_review refuses an empty reason, and an `issues` verdict is allowed to
     carry neither a comment nor findings — so the heading is unconditional and the reason can
@@ -1211,7 +1211,7 @@ def build_auto_reject_reason(review: Optional[dict], slot: dict, api_base_url: O
 def _review_already_rejected(
     review: Optional[dict], slot: dict, api_base_url: Optional[str]
 ) -> bool:
-    """Has THIS review row already been turned into a rejection? (T0005 2.1.3)
+    """Has THIS review row already been turned into a rejection?
 
     The unit of a rejection is one `document_reviews` row, not the document's momentary
     status. `('rejected', 'submit') -> 'revised'` erases the status the old guard read
@@ -1224,7 +1224,7 @@ def _review_already_rejected(
       as they should be (A8). A `review_id` key present but null/blank/whitespace/invalid
       names no row: it must not fall through to the legacy reason match below (A9), or a
       LATER review row that happens to render the same text would be swallowed by it.
-    * items with NO `review_id` key at all are the pre-T0005 shape, matched by their exact
+    * items with NO `review_id` key at all are the pre-the earlier implementation shape, matched by their exact
       `reason` against the text this review would produce. `build_auto_reject_reason` is
       pure, so the same row always renders the same string, and a human-written reason
       never equals one (every automatic reason opens with REVIEW_REJECT_HEADING).
@@ -1245,7 +1245,7 @@ def _review_already_rejected(
 
 
 def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
-    """Turn an `issues` verdict into a real rejection (L0008 §2.6).
+    """Turn an `issues` verdict into a real rejection.
 
     Goes through pipeline_service.transition_document_review — the SINGLE writer of
     doc_review_status — with the chain issuer's real permissions, resolved by the same
@@ -1281,7 +1281,7 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
                 actor_user_id=actor_user_id,
                 user_permissions=permissions,
                 comment=reason,
-                # T0005 2.1.5: the review row this rejection is FOR, so the stored history item
+                # 2.1.5: the review row this rejection is FOR, so the stored history item
                 # carries a `review_id` key the next gate pass can match against
                 # (_review_already_rejected above). A missing review, or a row without an id,
                 # passes None -- the pre-existing behaviour: the item is written without the
@@ -1290,7 +1290,7 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
             )
 
         if (review or {}).get("actual_provider_id"):
-            # flowgate.v02.0119 T#2 (T-1): the rejection and its attribution to the reviewing AI, one transaction.
+            # (T-1): the rejection and its attribution to the reviewing AI, one transaction.
             from modules.flow_gate.db.connection import get_store
 
             with get_store().transaction():
@@ -1306,7 +1306,7 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
 
 
 def _attribute_rejection(doc_id: str, review: Optional[dict], issuer: Optional[str]) -> None:
-    """flowgate.v02.0119 T#2 (T-1): the automatic rejection just written names the AI provider whose review rejected it
+    """(T-1): the automatic rejection just written names the AI provider whose review rejected it
     as ``rejected_by`` (``rejected_by_kind`` ``ai``), the chain issuer only as ``requested_by``. In the rejection's own
     transaction; a review with no provider evidence leaves the item as the transition wrote it (the issuer)."""
     provider = (review or {}).get("actual_provider_id")
@@ -1362,7 +1362,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
     A second implementation of "approve → target reached? → user pause? → continue" would
     drift from the first, so the reviewed path and the unreviewed path share one.
 
-    Two things bring a gated step here: a `pass` verdict, and (0414 M0020) a finite budget
+    Two things bring a gated step here: a `pass` verdict, and a finite budget
     whose last review+rework pair has closed. Both mean "this step is done", so both settle
     identically — the document the second one approves is the reworked revision.
     """
@@ -1376,7 +1376,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
         actor_user_id=bundle.get("issued_to"),
         completed_seq=slot.get("item_seq"),
         target_seq=bundle.get("target_seq"),
-        # 0415 T0007: a review round can span multiple hops, so the target this gated
+        # a review round can span multiple hops, so the target this gated
         # step settles against is re-checked against the current sequence right here too
         # — the same lazy re-check settle_completed_step's inbox caller does, not a second
         # implementation of it.
@@ -1395,7 +1395,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
             db_group_ai_leases.release(group_id, run["run_id"], reason="chain_completed")
         except Exception:  # noqa: BLE001
             logger.warning("review gate lease release failed for %s", group_id, exc_info=True)
-        # 0504 F4: nothing is left to hand off or park. Without this mark the worker's
+        # nothing is left to hand off or park. Without this mark the worker's
         # terminal abandon_handoff re-parked the run as hop_handoff_failed (a system row on a
         # finished chain, and a failure on its record); chain._maybe_auto_resume_hop records
         # it as chain_completed instead.
@@ -1404,7 +1404,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
     # user_paused keeps the human's own row (_write_handoff_row refuses to overwrite it);
     # approve_denied / approve_failed get a system row so the chain is pickable again.
     #
-    # 0458 T0007 §2.1-3: ONE storage contract for every stopped outcome this gate can
+    # ONE storage contract for every stopped outcome this gate can
     # reach — the exception string when settle_completed_step names one (`detail`), and
     # otherwise the sentence it does carry (`reason`), so a stop is never parked with the
     # reason it knows thrown away. `_stop_reason_text` reads this key back for
@@ -1417,7 +1417,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
 
 
 def _queue_gate_bundle(group_id: str, bundle: dict) -> None:
-    """Record the next hop's intent BEFORE launching it (L0008 §2.4).
+    """Record the next hop's intent BEFORE launching it.
 
     _finalize_run reads this queue to decide between begin_handoff and releasing the group
     lease. Launch first and the lease is gone by the time the successor asks for it, so the
@@ -1445,7 +1445,7 @@ def _start_graph_hop(*, graph_exec_id=None, **kwargs):
 
 
 def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
-    """Launch the review hop (L0008 §2.5).
+    """Launch the review hop.
 
     mode="single" + action_scope="review" is not cosmetic: it is the combination that gives
     the run _probe_doc_reviews as its judge ("did a review row appear?"). Anything else falls
@@ -1470,7 +1470,7 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     )
     executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
     if reviewer_id and reviewer_id == executor_id:
-        # Allowed — a person may deliberately pick it — but never silent (L0008 §2.2).
+        # Allowed — a person may deliberately pick it — but never silent.
         logger.warning(
             "review gate: item_seq %s is being self-reviewed (reviewer and executor are both %s)",
             slot["item_seq"], reviewer_id,
@@ -1491,7 +1491,7 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
             "raw_token": issued["token"],
             "token_id": issued["token_id"],
             "scratch_dir": issued["scratch_dir"],
-            # 0688 T#2: the answers this round must check the document against, recorded
+            # the answers this round must check the document against, recorded
             # under this run before it is launched (a failure raises: no hop).
             "mention": _append_answered_questions(
                 _append_engine_review_clause(mention, gate), bundle, slot, REVIEW_HOP_KIND,
@@ -1535,20 +1535,20 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
 
 
 def _append_engine_review_clause(mention: str, gate: dict) -> str:
-    """The one clause an ENGINE-driven review hop adds to build_review_mention (L0008 §2.5).
+    """The one clause an ENGINE-driven review hop adds to build_review_mention.
 
     build_review_mention itself is never touched — the human [멘트복사] path shares it, and
     its body correctly tells that reader "a human decides afterward". On an unmanned chain
     that premise is false, so the reviewer has to be told the verdict wires straight into an
     automatic rejection and how many rounds are left. English, like the review instructions
-    it extends (T0010 작업 4: no new Korean literals in server modules).
+    it extends (task 4: no new Korean literals in server modules).
     """
     if not mention:
         return mention
     count = gate.get("count")
     round_no = gate.get("round_no")
     limit = gate.get("limit")
-    # 0688 T#2: the answer-check round past a finite budget (_answer_check_gate).
+    # the answer-check round past a finite budget (_answer_check_gate).
     extra_round = (
         count != -1 and isinstance(round_no, int) and isinstance(limit, int) and round_no > limit
     )
@@ -1559,7 +1559,7 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
         if extra_round
         else f"round {round_no} of {limit}"
     )
-    # 0414 M0020: every round's findings are reworked, the last round's included, so the
+    # every round's findings are reworked, the last round's included, so the
     # clause no longer says "when a round remains". What the LAST reviewer of a finite budget
     # does need to know is that nobody reviews the fix its findings produce — the chain moves
     # on with it — so that round is told to name everything that still has to change.
@@ -1598,7 +1598,7 @@ def _reworker_unavailable_reason(project_id: Optional[str], provider_id: str) ->
 
 
 def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
-    """Launch the rework hop (L0008 §2.6).
+    """Launch the rework hop.
 
     A concrete reworker selection captured at Start takes this hop, and only it: if that
     Provider was deleted, disabled or is no longer effective the hop is refused with
@@ -1638,7 +1638,7 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         )
         from modules.flow_gate.services import graph_execution_hooks
         graph_execution_hooks.call("map_token", graph_exec_id, issued["token_id"])
-        # 0688 T#2: the answers about this document the fix has to follow, recorded under
+        # the answers about this document the fix has to follow, recorded under
         # this run before it is launched (a failure raises: no hop).
         return {**issued, "mention": _append_answered_questions(
             issued.get("mention") or "", bundle, slot, REWORK_HOP_KIND,
@@ -1672,7 +1672,7 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         chain_docs_target=bundle.get("chain_docs_target"),
         chain_docs_reached=bundle.get("chain_docs_reached"),
         continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
-        # flowgate.default.0476 NR0003 defect1 / T0005: sibling hops (_spawn_auto_resume,
+        # defect1 / the earlier implementation: sibling hops (_spawn_auto_resume,
         # _write_handoff_row) already forward this; without it here every rework hop
         # silently fell back to RESTART_MAX_ATTEMPTS_DEFAULT regardless of the user's pick.
         continuation_restart_max_attempts=bundle.get("restart_max_attempts"),
@@ -1718,7 +1718,7 @@ def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
     # whose effective review_count != 0 can strand the gate on "work" the way this helper
     # exists to prevent.
     #
-    # reviewer_provider_id presence is NOT that signal (0600 TR0010 rev5 human rejection):
+    # reviewer_provider_id presence is NOT that signal (human rejection):
     # a WP row can validly carry review_count > 0 with reviewer_provider_id = null — "use
     # the project default reviewer" — which resolve_reviewer() already honours downstream
     # when the review hop is actually spawned. Gating this pre-materialize step on
@@ -1739,14 +1739,14 @@ def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
 
 
 # The hop-scoped progress markers the queue carries for the slot the LAST hop worked on
-# (L0008 §2.3 `_check_expected_progress`). They describe that slot only: judging a slot that
+# (`_check_expected_progress`). They describe that slot only: judging a slot that
 # appeared after it with them would read "the previous review left nothing" as this slot's
 # own "review_no_verdict".
 _SLOT_PROGRESS_KEYS = ("last_stage", "rounds_before", "revision_before", "last_stop_code")
 
 
 def _gate_after_settled_step(bundle: dict, settled_slot: dict) -> Optional[tuple[dict, dict]]:
-    """The gate for the slot the approval of ``settled_slot`` exposes (0504 NR0003 §8 F1).
+    """The gate for the slot the approval of ``settled_slot`` exposes.
 
     `_materialize_work_plan_instruction_before_gate` runs before the gate, so it only sees an
     N/T head that is ALREADY the head -- a step the inbox auto-approved (review_count 0). A
@@ -1778,12 +1778,12 @@ def _gate_after_settled_step(bundle: dict, settled_slot: dict) -> Optional[tuple
 
 
 def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
-    """Derive the gate and act on it (L0008 §2.4). True when a next hop actually started.
+    """Derive the gate and act on it. True when a next hop actually started.
 
     False means the chain was parked (a durable row + a released lease), so the caller must
     NOT clear the handoff row it wrote — that row is now the [이어서 진행] card.
 
-    0504 F1: a settle that continues derives the gate once more (`_gate_after_settled_step`),
+    a settle that continues derives the gate once more (`_gate_after_settled_step`),
     so a reviewed WorkPlan N/T the approval made the head gets its own review hop instead of
     stranding the plain path on head_in_progress. At most two passes: the second pass never
     re-derives again.
@@ -1820,7 +1820,7 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
         break
 
     if stage == WORK_HOP_KIND:
-        # 0684 T#3 (D#1 §3-9): a TSR head waits on its TS's server run -- no hop, no token.
+        # a TSR head waits on its TS's server run -- no hop, no token.
         from .chain import park_for_server_test_run
         if park_for_server_test_run(group_id, bundle, run):
             return False
@@ -1835,7 +1835,7 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
 
     if stage in (REVIEW_HOP_KIND, REWORK_HOP_KIND):
         # last_stage / rounds_before / revision_before live ONLY in the memory queue, never
-        # in the paused row (L0008 §2.9): a cold start after a restart must reach the DB
+        # in the paused row: a cold start after a restart must reach the DB
         # derivation path, where the absence of these is exactly the right answer.
         queued = {**bundle, "last_stage": stage}
         if stage == REVIEW_HOP_KIND:
@@ -1849,7 +1849,7 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
             else:
                 _svc()._spawn_rework_hop(group_id, queued, gate)
         except AnswerRecordsUnreadable as exc:
-            # 0688 T#2: the hop could not be given the answers it exists to check / apply
+            # the hop could not be given the answers it exists to check / apply
             # (or the delivery could not be recorded). Launching it anyway would hand the
             # gate a verdict or a fix that proves nothing about them: held, like the gate's
             # own unreadable history, and nothing was launched.
@@ -1887,7 +1887,7 @@ def active_review_selection(group_id: Optional[str]) -> tuple[Optional[dict], Op
 def _resumable_reviewer_overrides(
     project_id: str, reviewer_overrides: Optional[dict]
 ) -> Optional[dict]:
-    """Drop reviewers the project no longer has, keep the rest (P0007 [엣지] 재개).
+    """Drop reviewers the project no longer has, keep the rest ([edge] resume).
 
     The counterpart of _resumable_base_provider, and the opposite of the fresh-request rule:
     a NEW request naming a disabled reviewer is a visible 422, because the person is still
@@ -1912,7 +1912,7 @@ def _resumable_reviewer_overrides(
     return kept or None
 
 
-# Document-scoped review loop (0417 L0009). Kept parallel to resolve_review_gate:
+# Document-scoped review loop. Kept parallel to resolve_review_gate:
 # the continuous workflow gate has deliberately not been changed.
 DOCUMENT_NOT_SUBMITTED_CODE = "document_not_submitted"
 
@@ -1941,7 +1941,7 @@ def compute_review_baseline(doc_id: str) -> dict:
     return {"review_baseline_id": latest_id, "starts_with_rework": starts_with_rework, "baseline_revision_no": int(doc.get("revision_no") or 0)}
 
 
-# flowgate.v02.0083 WP-4 (a person's work plan reviewed by AI, 0004-CH seq 8): a document review loop asked for with no
+# WP-4 (a person's work plan reviewed by AI, the discussion seq 8): a document review loop asked for with no
 # rework AI (``rework_provider_id`` None — the Graph card stage of a work plan a person writes) is the author's to
 # revise: its review never hands the document to a rework hop. Each submission of the author is its own loop with one
 # review (``review_count`` 1), so the loop's own rounds are those of that submission alone. No migration (the schema is
@@ -1956,12 +1956,12 @@ AUTHOR_REVISION_REWORK_START_CODE = "review_loop_rework_without_reworker"
 
 
 def author_revision_loop(loop: Optional[dict]) -> bool:
-    """0083 WP-4: a loop asked for with no rework AI — its author revises."""
+    """WP-4: a loop asked for with no rework AI — its author revises."""
     return loop is not None and not loop.get("rework_provider_id")
 
 
 def admit_author_revision_loop(loop: dict, initial_stage: str) -> bool:
-    """0083 WP-4, at admission: True for a loop with no rework AI, whose stored row then takes its reviewer in the
+    """WP-4, at admission: True for a loop with no rework AI, whose stored row then takes its reviewer in the
     rework column (``loop`` is admission's own copy). Its start in rework — the document is rejected
     (``compute_review_baseline`` ``starts_with_rework``) — is refused (409): with no rework AI that first hop would be
     an AI rework of the author's document."""
@@ -1990,7 +1990,7 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
     new it is. The baseline-only branch stays limited to cold restores of legacy loop
     rows/bundles that predate review provenance.
 
-    The ROUND key is `revision_no`, never `attempt_no` (0486 NR0028 F1). `attempt_no` cannot
+    The ROUND key is `revision_no`, never `attempt_no`. `attempt_no` cannot
     be a round key: `_execute_provider_chain` recomputes it as `len(fallback_history) + 1` on
     every provider launch, so a run whose provider starts normally snapshots the SAME
     `attempt_no = 1` onto every review row it ever writes. Collapsing by it folded every
@@ -2000,7 +2000,7 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
     review rows share a revision exactly when they belong to the same round (a duplicate
     delivery, or a retried hop) and differ whenever a real round boundary was crossed.
 
-    That same-revision collapse is READ-SIDE TOLERANCE, not a licence (0583 T0004 section
+    That same-revision collapse is READ-SIDE TOLERANCE, not a licence (the earlier implementation section
     6). Writing two verdicts into one round is not normal and is no longer possible: the
     registration barrier (`db/document_review_rounds.py`) refuses the second INSERT for a
     given (review_run_id, doc_id, revision_no). What survives here is the ability to read
@@ -2051,7 +2051,7 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
 def _document_loop_counted_rounds(current: list[dict], excluded_review_ids) -> int:
     """How many of the loop's review ROUNDS (``_document_loop_review_view``) count against its review_count.
 
-    flowgate.v02test.0051 T0007 (A2, R A-3 "질문 때문에 생긴 반려는 검수 횟수에 넣지 않는다"): a round whose verdict
+    (A2, R A-3 "rejections caused by questions do not count toward the review budget"): a round whose verdict
     carries an explicit question-wait cause marker (``db.review_count_exclusions``, written when that verdict's hop
     ended -- ``question_loop_wait.classify_parked_review`` / ``classify_answer_check_review``) is left out of the COUNT
     only. It stays in ``current``: it is still its round's verdict for the rejection and the rework, the stall check,
@@ -2065,7 +2065,7 @@ def _document_loop_counted_rounds(current: list[dict], excluded_review_ids) -> i
 
 def loop_question_wait_sec(loop_run_ids, now: datetime) -> int:
     """Seconds the loop carried by ``loop_run_ids`` (the run's Graph predecessors) waited for its questions -- moved out
-    of its total deadline and stage timeouts (flowgate.v02test.0051 T0007 A2). 0 when unknown (counted as before)."""
+    of its total deadline and stage timeouts. 0 when unknown (counted as before)."""
     if not loop_run_ids:
         return 0
     try:
@@ -2100,7 +2100,7 @@ def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> boo
     if kind == REVIEW_HOP_KIND:
         # This round's verdict must EXIST, and the rounds are counted rather than guessed.
         # `latest is not None` was satisfied by ANY earlier round's leftover row, so a review
-        # hop that produced nothing at all still read as progress (0486 NR0028 F1, side
+        # hop that produced nothing at all still read as progress (the review F1, side
         # effect 1). One owned round per completed review round is the whole invariant.
         return len(current) >= max(1, int(bundle.get("round_no") or 1))
     if kind == REWORK_HOP_KIND:
@@ -2116,7 +2116,7 @@ AUTO_REJECT_FAILED_STOP_DETAIL = "automatic rejection failed"
 
 
 def resolve_document_review_loop_gate(bundle: dict) -> dict:
-    """Return the next persisted stage, or a terminal stopped state (L0009 §2/§4)."""
+    """Return the next persisted stage, or a terminal stopped state."""
     now = bundle.get("now")
     reviews = list(bundle.get("reviews") or [])
     current, owned_latest = _document_loop_review_view(bundle, reviews)
@@ -2125,9 +2125,9 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     common = {"round_no": max(1, int(bundle.get("round_no") or 1)), "stop_reason": None, "stop_detail": None}
     if latest.get("verdict") == "pass":
         return {**common, "current_stage": "stopped", "stop_reason": "review_passed"}
-    # T0011 §3: hold is a durable human stop, never an automatic rejection/rework, and it
+    # hold is a durable human stop, never an automatic rejection/rework, and it
     # must be read before every branch below that could otherwise walk a rework hop past
-    # it (0486 NR0010 Finding 2). _checkpoint_document_review_loop_tx never rejects a hold
+    # it. _checkpoint_document_review_loop_tx never rejects a hold
     # verdict, so `doc.revision_no` cannot have moved because of it either.
     if latest.get("verdict") == "hold":
         return {**common, "current_stage": "stopped", "stop_reason": REVIEW_VERDICT_HOLD_STOP_CODE, "stop_detail": "reviewer returned hold"}
@@ -2171,7 +2171,7 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     if now is not None and bundle.get("deadline_at") is not None and now >= bundle["deadline_at"]:
         return {**common, "current_stage": "stopped", "stop_reason": "total_timeout", "stop_detail": "document review loop deadline reached"}
     rounds_used = len(current)
-    # flowgate.v02test.0051 T0007 (A2): only the limit reads the counted rounds; ``rounds_used`` stays the progress
+    # (A2): only the limit reads the counted rounds; ``rounds_used`` stays the progress
     # coordinate (round_no) below.
     rounds_counted = _document_loop_counted_rounds(current, bundle.get("count_excluded_review_ids"))
     limit = resolve_round_limit(int(bundle["review_count"]))
@@ -2181,7 +2181,7 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     # completed rework -- checked BEFORE the rounds_used==0 branch below so a rejected-start
     # loop's first hop (rework, with no review row posted yet) reaches review round 1
     # exactly once instead of being read as "nothing has happened" and repeating the same
-    # rework forever (0486 NR0010 Finding 1).
+    # rework forever.
     if (
         bundle.get("last_hop_kind") == REWORK_HOP_KIND
         and bundle.get("last_hop_outcome") == "succeeded"
@@ -2200,7 +2200,7 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     # and 'hold' returned just below it.
     if latest.get("verdict") == "issues":
         if bundle.get("author_revision"):
-            # 0083 WP-4: no rework AI — the rejection above (``_auto_reject``) stands and the loop ends; its author
+            # WP-4: no rework AI — the rejection above (``_auto_reject``) stands and the loop ends; its author
             # revises and submits again, which starts a loop of its own.
             return {**common, "current_stage": "stopped", "stop_reason": AUTHOR_REVISION_STOP_REASON,
                     "stop_detail": AUTHOR_REVISION_STOP_DETAIL}
@@ -2219,7 +2219,7 @@ def _loop_deadline(value):
 
 
 def loop_stage_timeout_sec(loop: dict, stage: str, now: datetime, *, question_wait_sec: int = 0) -> int:
-    """This hop's real execution budget (T0011 §4 / 0486 NR0010 Finding 3).
+    """This hop's real execution budget.
 
     `rework_timeout_sec` was stored on every document review loop row and offered on the
     UI's duration picker, but nothing downstream ever read it back: the run's actual
@@ -2236,7 +2236,7 @@ def loop_stage_timeout_sec(loop: dict, stage: str, now: datetime, *, question_wa
     the loop itself once remaining reaches zero) from ever receiving a non-positive
     budget from a `now` a few milliseconds later than the gate's own read.
 
-    ``question_wait_sec`` (flowgate.v02test.0051 T0007 A2, ``loop_question_wait_sec``): the time the loop
+    ``question_wait_sec`` (A2, ``loop_question_wait_sec``): the time the loop
     spent parked for its questions moves the deadline by that much -- waiting is not execution time.
     """
     base = int(loop["rework_timeout_sec"]) if stage == REWORK_HOP_KIND else HOP_TIMEOUT_SEC
@@ -2260,7 +2260,7 @@ def _insert_document_review_loop(run: dict) -> None:
         "doc_ref": run["doc_ref"],
     })
     if run.get("graph_exec_id") and run.get("graph_review_run_ids"):
-        # flowgate.v02test.0051 T0005: the run of a loop resumed after its questions takes the loop over; the parked
+        # the run of a loop resumed after its questions takes the loop over; the parked
         # run's wait is resumed and its loop row closed as handed on (never raises).
         from flowgate.card_settings import question_loop_wait
         question_loop_wait.on_successor_admitted(run)
@@ -2293,7 +2293,7 @@ def _checkpoint_document_review_loop(run: dict) -> dict | None:
 
 
 def _classify_question_caused_review(run: dict, loop: dict | None) -> None:
-    """flowgate.v02test.0051 T0007 (A2): after the checkpoint committed, the first review of a run resumed from its
+    """(A2): after the checkpoint committed, the first review of a run resumed from its
     rework's questions may be question-caused (``question_loop_wait.classify_answer_check_review``). Outside the
     checkpoint transaction on purpose: a marker that cannot be written leaves the verdict counted, never a failed
     checkpoint. Only Graph runs resumed from a wait have predecessors to look at; never raises."""
@@ -2310,7 +2310,7 @@ def _classify_question_caused_review(run: dict, loop: dict | None) -> None:
 def recheck_review_hop_before_retry(run: dict) -> dict | None:
     """Last look for this round's verdict before a second reviewer is launched.
 
-    0583 T0004 section 5. The checkpoint reserves another REVIEW stage when the hop it
+    The checkpoint reserves another REVIEW stage when the hop it
     just judged left no durable verdict it owns. Between that judgement and the relaunch
     a verdict can still land -- the provider's own POST /inbox commits on a different
     connection, and the checkpoint read its snapshot before that commit. Launching
@@ -2340,15 +2340,15 @@ CHECKPOINT_FAILURE_STOP_DETAIL = "loop checkpoint could not be written"
 
 
 def force_stop_loop_after_checkpoint_failure(run: dict, error: BaseException | None = None) -> bool:
-    """Close an active loop whose checkpoint refuses to be written (0486 T0029 item 3).
+    """Close an active loop whose checkpoint refuses to be written.
 
     The worker calls the checkpoint without exception protection and `_finalize_run` retries
     it once; when BOTH fail, the loop row keeps `current_stage='review'` with no stop_reason
     while the group lease is released a few lines later. After that release the restart
     recovery path (`startup_recover_leases` -> `_record_orphaned_lease_run` ->
     `stop_for_restart_orphan`) has no lease to find, so the row is unreachable forever and
-    only a human dismissing the card hides it -- the exact zombie NR0014 §1 called a FAIL,
-    reappearing where the T0019 recovery cannot reach it (0486 NR0028 F3).
+    only a human dismissing the card hides it -- the exact zombie the review called a FAIL,
+    reappearing where the the earlier implementation recovery cannot reach it.
 
     So the loop is brought to a terminal state HERE, before the release, with the existing
     `retry_exhausted` reason and a stop_detail naming the cause. Whatever unexpected value a
@@ -2433,7 +2433,7 @@ def force_stop_loop_after_abandon(run: dict, *, stop_code: str | None = None) ->
 
 
 def _hop_left_open_questions(run: dict) -> bool:
-    """flowgate.v02test.0051 T0005: a Graph loop's run that still has questions it asked open (the hop that just ended
+    """a Graph loop's run that still has questions it asked open (the hop that just ended
     will park, ``question_loop_wait.park``). Only Graph loops park; a failed read answers False (counted as before)."""
     if not run.get("graph_exec_id") or not run.get("group_id") or not run.get("run_id"):
         return False
@@ -2452,7 +2452,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
     """Transaction body for one completed document-review-loop hop.
 
     ``late_recheck`` re-resolves the PREVIOUS review hop instead of a new one (0583
-    T0004 section 5, entered through :func:`recheck_review_hop_before_retry`). It is not
+    entered through:func:`recheck_review_hop_before_retry`). It is not
     a hop of its own: nothing about the run changed, so no attempt is counted, and the
     only question asked is whether the verdict that hop was judged not to have produced
     has since become durable. When it still has not, the row is left exactly as the
@@ -2497,16 +2497,16 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         "attempts_used": attempts,
         "failure_detail": run.get("last_message") or run.get("end_reason"),
         "now": now,
-        # flowgate.v02test.0051 T0007 (A2): the time the loop spent parked for its questions is not loop time.
+        # (A2): the time the loop spent parked for its questions is not loop time.
         "deadline_at": (deadline + timedelta(seconds=question_wait_sec)) if deadline is not None else None,
         "question_wait_sec": question_wait_sec,
         # The review registration snapshots this exact run id into document_reviews, so
         # carrying it here makes "the rows this loop owns" the same set on both sides.
         # `attempt_no` is deliberately NOT carried any more: it never changes inside a run,
-        # so it can neither name a round nor a hop (0486 NR0028 F1).
+        # so it can neither name a round nor a hop.
         "review_run_id": run["run_id"],
         "graph_review_run_ids": run.get("graph_review_run_ids") or [],
-        "author_revision": bool(run.get("review_loop_author_revision")),     # 0083 WP-4
+        "author_revision": bool(run.get("review_loop_author_revision")),     # WP-4
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
         if late_recheck:
@@ -2516,7 +2516,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         bundle["last_hop_outcome"] = "failed"
         bundle["failure_detail"] = f"{stage} hop produced no expected durable progress"
     if not late_recheck and bundle["last_hop_outcome"] == "failed" and _hop_left_open_questions(run):
-        # flowgate.v02test.0051 T0005 (A1, NR 0003 §2.1): a Graph hop that ended with questions it asked still open
+        # a Graph hop that ended with questions it asked still open
         # and nothing else to show is a question wait, not a failed attempt: the same stage is reserved without
         # spending the stage retry budget, and the worker parks the loop before that stage starts
         # (question_loop_wait.park).
@@ -2531,16 +2531,16 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         "doc_id": persisted["doc_ref"],
         "revision_no": int((doc or {}).get("revision_no") or 0),
         "review_status": (doc or {}).get("doc_review_status") or "",
-        # 0486 NR0028 F5 / NR0014 §8-5: the sibling gate `resolve_review_gate` has always
+        # the sibling gate `resolve_review_gate` has always
         # ANDed the document's momentary status with THIS review row's identity, because
         # `('rejected','submit') -> 'revised'` erases the status a landed rework leaves
         # behind. The document-review loop read the status alone, so once the status had
         # moved on, the same review row was a rejection candidate all over again.
         "rejection_history": _parse_rejection_history((doc or {}).get("rejection_history")),
     }
-    # T0011 §3: only 'issues' is a real rejection. 'hold' must never reach _auto_reject --
+    # only 'issues' is a real rejection. 'hold' must never reach _auto_reject --
     # it is a durable human stop, and rejecting the document out from under it would make
-    # the next hop a rework nobody asked for (0486 NR0010 Finding 2).
+    # the next hop a rework nobody asked for.
     if (
         stage == REVIEW_HOP_KIND
         and bundle["last_hop_outcome"] == "succeeded"
@@ -2560,20 +2560,20 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         else:
             doc = db_docs.get_by_id(persisted["doc_ref"])
             bundle["doc"] = doc or {}
-            # flowgate.default.0561 T0004: the continuous-review auto-reject above writes
+            # the continuous-review auto-reject above writes
             # straight into documents.rejection_history via transition_document_review,
             # the SAME canonical writer the human [반려] button uses, but (unlike that
             # button's own route handler) never told any open tab. DocHeader's
             # fg:doc_review_status_changed listener is what applies a fresh
             # rejection_history onto the open document reactively (MainPanel/DocInfoPanel
             # read off that same doc object), so without this broadcast the sidebar's
-            # AI 검수·반려 feed stayed exactly as it was until a manual refresh/reopen.
+            # AI review/rejection feed stayed exactly as it was until a manual refresh/reopen.
             # Queued through after_commit — this whole function runs inside the caller's
             # transaction() frame, and broadcasting before it actually commits would tell
             # an open tab about a rejection that a later failure in this same transaction
             # could still roll back.
             from modules.flow_gate.db import connection as db_connection
-            # 0582 TR0006 rev1: this payload reaches DocHeader's fg:doc_review_status_changed
+            # this payload reaches DocHeader's fg:doc_review_status_changed
             # listener, which REPLACES the open tab's whole (already-enriched, from GET
             # /document) rejection_history array with whatever this carries -- the raw
             # parse below used to null out the just-recorded automatic rejection's own
@@ -2598,7 +2598,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
             if not db_connection.after_commit(_broadcast_reject):
                 _broadcast_reject()
 
-    # flowgate.v02test.0051 T0007 (A2): the verdicts marked question-caused are left out of the review count only.
+    # (A2): the verdicts marked question-caused are left out of the review count only.
     bundle["count_excluded_review_ids"] = _loop_count_exclusions(persisted["doc_ref"])
     resolved = resolve_document_review_loop_gate(bundle)
     updates = {
@@ -2685,7 +2685,7 @@ def _loop_rework_ledger(doc: dict, baseline_revision_no: int, started_at) -> lis
 def build_document_review_loop_history(loop: dict, doc_ref: str | None = None) -> list[dict]:
     """Rebuild this run's round table from canonical rows (deck u3digra2 v6 screen 6).
 
-    0417 T0013 item 8 wants screen 6's accumulated round table, and item 7 wants the
+    wants screen 6's accumulated round table, and item 7 wants the
     same card back after bootstrap/reconnect. Rows may therefore never come from state
     transitions one browser happened to watch: a refresh, a second tab or a dropped
     poll/SSE event would each produce a different table. Every row here is rebuilt from
@@ -2694,7 +2694,7 @@ def build_document_review_loop_history(loop: dict, doc_ref: str | None = None) -
 
       * document_reviews rows newer than review_baseline_id -- this run's review rounds,
         carrying the server-counted finding count screen 6 prints beside the stage name
-        (T0010 item 4: no new Korean literals in server modules, so the words themselves
+        (the earlier implementation: no new Korean literals in server modules, so the words themselves
         live in the client i18n bundles);
       * answered documents.rejection_history entries past baseline_revision_no -- its
         rework rounds, with document_revisions as the backstop for an edit that recorded
@@ -2781,12 +2781,12 @@ def document_review_loop_payload(run: dict) -> dict | None:
     if not loop:
         return None
     payload = {key: loop.get(key) for key in ("round_no", "current_stage", "stop_reason", "stop_detail")}
-    # 0569 T0006: loop-scope same-stage retry count, distinct from the run-wide
+    # loop-scope same-stage retry count, distinct from the run-wide
     # attempts_used the diagnostics payload exposes, which counts every hop regardless of
-    # stage (NR0005 §10).
+    # stage.
     payload["attempts_used"] = int(loop.get("attempts_used") or 0)
     payload["failure_restart_max_attempts"] = int(loop.get("failure_restart_max_attempts") or 0)
-    # 0417 T0013 items 7-8: the round table travels with EVERY start / status / finish
+    # items 7-8: the round table travels with EVERY start / status / finish
     # payload, rebuilt from canonical rows, so a card restored after F5, a reconnect or a
     # server restart shows the same rounds instead of only what this browser observed.
     payload["history"] = build_document_review_loop_history(loop, run.get("doc_ref"))

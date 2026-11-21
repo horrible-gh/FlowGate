@@ -1,4 +1,4 @@
-"""The one boundary between the Conversation contract and ``modules.flow_gate`` (D0006 §2.2).
+"""The one boundary between the Conversation contract and ``modules.flow_gate``.
 
 Everything this package reuses from the existing tree -- AI invoke run records and
 clocks, the group worktree and Git helpers, the self-check process executor, chat
@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-# The API worker's tool-result cap. Read, never copied (D0006 §3.5).
+# The API worker's tool-result cap. Read, never copied.
 from modules.flow_gate.services.ai_invoke.runtime import API_TOOL_RESULT_MAX_CHARS  # noqa: F401
 
 
@@ -46,7 +46,7 @@ def absolute_remaining_sec(run: dict) -> float:
     """Seconds left before the run's hard ceiling (``runtime._absolute_remaining_sec``).
 
     The hop's ``_remaining_sec`` is deliberately NOT offered here: it turns negative for
-    a run that keeps working past ``timeout_sec`` (D0006 §3.5.1).
+    a run that keeps working past ``timeout_sec``.
     """
     from modules.flow_gate.services.ai_invoke import runtime
 
@@ -172,7 +172,7 @@ def get_document(doc_id: Optional[str]) -> Optional[dict]:
 
 
 def owned_chats(project_id: str, group_id: str, owner_id: str) -> list[dict]:
-    """The CH rows ``owner_id`` made in a group (0135 T#3: a create intent's earlier result)."""
+    """The CH rows ``owner_id`` made in a group (a create intent's earlier result)."""
     from modules.flow_gate.db.connection import get_store
 
     return get_store()._fetch_all(

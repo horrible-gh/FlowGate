@@ -1,4 +1,4 @@
-"""Card document ports (flowgate.v02.0053 T#1, D0006 §2.1 / §2.3 / §4.1).
+"""Card document ports.
 
 The documents every Designer card owns are a v0.2 feature: they live in the application package
 ``flowgate.card_documents``. The Graph workflow calls them at a few points of its existing flow,
@@ -105,7 +105,7 @@ def document_write_released():
 def draft_saved(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],
                 registered_types: set[str], previous_nodes: Iterable[dict], locale: Optional[str] = None) -> dict:
     """``previous_nodes``: the nodes of the draft (or, for a new draft, the revision) the save replaces.
-    ``locale``: the saving request's, handed on as is (flowgate.v02.0088: the documents made are titled in it)."""
+    ``locale``: the saving request's, handed on as is (the documents made are titled in it)."""
     handler = _handler(ON_DRAFT_SAVED)
     if handler is None:
         return {}

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — the single AI call window of a document (O3 0009-TR §4-3), mounted by DocumentWindows with
+ * the single AI call window of a document, mounted by DocumentWindows with
  * `@shared/api` mocked:
  * - opening reads the project's AIs (the default first) and the group's live run — the AI is called only by [실행];
  * - [실행] sends action_scope edit · mode single · the pinned AI · the opinion as `messages`, never a review loop;
@@ -245,7 +245,7 @@ describe('the AI call window (flowgate.v02.0056 F2-2)', () => {
   })
 })
 
-// flowgate.v02.0088 F15 (D0004 §3.2): the AI window's kind follows the language from the line's nameKey; the document
+// the AI window's kind follows the language from the line's nameKey; the document
 // title, the AI choices and the opinion stay as they are. Without a key, or with one the catalog does not have, the
 // name as it came. The window stays keyed by docId: opening it again with a key is the same window.
 describe('the kind name of the AI call window (0088 F15)', () => {

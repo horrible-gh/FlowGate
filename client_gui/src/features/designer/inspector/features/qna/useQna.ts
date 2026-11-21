@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#7 — the Q&A tab's state and its tab number (D#1 §7.2 / §7.3, §10.3, §10.4).
+// the Q&A tab's state and its tab number.
 // The questions are those of the selected Node's document (`target.docId`): a task instruction Node
 // shows the instruction's questions, its report Node the report's (D#1 §10.3). They are read through
 // useInspectorResource and read again when the server registers a question or an answer on that
@@ -6,21 +6,21 @@
 // Answering calls the existing v0.1 API, then reads its own resources again — success or refusal
 // (D#1 §7.3, §8.1). Whether answering is possible also reads the Flow's AI activity and the group's
 // disposal (`group_disposed` of the document read), the facts the server refuses on.
-// flowgate.v02.0053 T#6 (0053 CH §2) — asking: the question line registers a person's question on the
+// (CH) — asking: the question line registers a person's question on the
 // document (v0.1 POST /q/{doc_id}/questions, asker 'human'), then reads its own resources again.
-// flowgate.v02.0056 F1 (0056 CH §3) — registering and asking an AI are two steps: `ask` registers only;
+// (CH) — registering and asking an AI are two steps: `ask` registers only;
 // `requestAi` asks the chosen AI to answer one open question (v0.1 POST /q/{doc_id}/items/{id}/answers/
 // ai-request with `provider_id`), then reads again. The AI run posts its answer on that question; it
 // arrives with `qna_answer_registered` and shows under the question like any answer. Until it does the
 // question is `awaiting` (the run the request started is still live); a refusal is kept per question.
 // The AI choices are the project's providers (settingsChoicesRead — the same read the settings tab uses).
-// flowgate.v02.0070 T#5 (B5) — answering and asking an AI also need the body of the document to be checked
+// (B5) — answering and asking an AI also need the body of the document to be checked
 // (qnaBodyContext): the target card's line of the document (the Canvas read the slot rows show; its body state judged by
 // cardLineWarns, the slot rows' rule), whether the questions are read as history, and `superseded_by` of the guard's
 // document read. No other read is added. The guard's AI activity and its document are read apart: until the document
 // read is back (or while its last read failed) the document is not confirmed current and nothing is answered, and a
 // failed activity read does not drop a `superseded_by` the document read gave.
-// flowgate.v02.0150 — one Q&A state per document at a time, shared by all its consumers: the Q&A tab and the ↗ windows the
+// one Q&A state per document at a time, shared by all its consumers: the Q&A tab and the ↗ windows the
 // Frame draws apart from it (QnaWindowHost). The questions are read once for them, and what a window sends (an answer, an
 // AI request) is the list's too — who is awaited, what was sent. The last consumer to leave a document ends its state.
 import {
@@ -88,12 +88,12 @@ interface QnaActivityGuard {
 
 interface QnaDocumentGuard {
   readonly groupDisposed: boolean
-  /** flowgate.v02.0070 T#5: a later document supersedes the target document. */
+  /** a later document supersedes the target document. */
   readonly superseded: boolean
 }
 
 export interface QnaOptions {
-  /** flowgate.v02.0070 T#4/T#5: the questions are read as history — nothing is answered or asked of an AI. */
+  /** the questions are read as history — nothing is answered or asked of an AI. */
   readonly history?: () => boolean
 }
 
@@ -208,7 +208,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
 
   const items = computed(() => (readThread.value ? qnaView(readThread.value.items, readThread.value.docId) : null))
 
-  // flowgate.v02.0070 T#5: superseded, or not (false), or not known (null) — the document read is not back, or its last
+  // superseded, or not (false), or not known (null) — the document read is not back, or its last
   // read failed. A superseded document once read stays so.
   const superseded = computed<boolean | null>(() => {
     const read = documentGuard.data.value
@@ -216,7 +216,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
     return read !== null && documentGuard.status.value !== 'error' ? false : null
   })
 
-  // flowgate.v02.0070 T#5: whether the body can be checked — the card line's state as the slot rows judge it.
+  // whether the body can be checked — the card line's state as the slot rows judge it.
   const bodyContext = computed(() => {
     const current = target()
     return qnaBodyContext({
@@ -235,7 +235,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
   const availability = computed(() =>
     qnaAvailability({
       readOnly: target()?.readOnly ?? null,
-      // An unanswered guard read does not block here: the server refuses on the same facts (0070 T#5: the document
+      // An unanswered guard read does not block here: the server refuses on the same facts (the earlier implementation: the document
       // read not back closes answering through the body context).
       groupDisposed: documentGuard.data.value?.groupDisposed === true,
       aiRunning: activityGuard.data.value?.aiRunning === true,

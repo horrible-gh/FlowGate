@@ -1,8 +1,8 @@
-"""Reuse boundary of the Graph pre-run validation (D0006 §2.2 / §4.1).
+"""Reuse boundary of the Graph pre-run validation.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never changed: the
 Graph model and its root document types; the pieces of the Graph workflow's validator this package composes —
-``issue`` / ``order`` (the issue shape and the L0009 §2.5.2 order), ``well_formed_issues`` (dangling and
+``issue`` / ``order`` (the issue shape and the the earlier implementation order), ``well_formed_issues`` (dangling and
 duplicate edges), ``reachable`` / ``strongly_connected`` (graph walks), ``structural_issues`` (the structures
 put to the policy slots, with the start nodes given and the cycle occurrence left out); and the validation
 port ``services.graph_validation_ports`` the handler is registered at.

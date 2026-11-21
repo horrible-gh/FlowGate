@@ -41,7 +41,7 @@ from tests.regression.graph_workflow.test_graph_attempt_workspaces_0061 import (
 )
 
 def test_attempt_tree_lost_after_admission_is_selfcheck_worktree_unavailable(repo, selfcheck):
-    """0110 T#3: ``_worktree(target)`` of an admitted attempt target re-resolves the attempt; a lost tree is
+    """``_worktree(target)`` of an admitted attempt target re-resolves the attempt; a lost tree is
     selfcheck_worktree_unavailable with its reason, never the group worktree. ``_start`` with that target judges the
     attempt again with its token (rework: no attempt target runs unjudged) and refuses it the same way."""
     sc = tr_self_check_service
@@ -67,7 +67,7 @@ def test_attempt_tree_lost_after_admission_is_selfcheck_worktree_unavailable(rep
 @pytest.mark.parametrize("commit", ["stop", "invalidation"])
 def test_a_stop_or_invalidation_committed_before_the_judgement_spawns_nothing(repo, fenced_selfcheck, monkeypatch,
                                                                              commit):
-    """0110 T#3 rework: the start is held at a barrier before its judgement (``_document``); meanwhile a Stop commits
+    """the start is held at a barrier before its judgement (``_document``); meanwhile a Stop commits
     ``stopping`` under the gate's exclusive hold, or the runtime's invalidation (``workspace._failed``, its exclusive
     hold) commits. Released, the start is refused 409 graph_attempt_inactive -- no G/W, no run row, no spawn."""
     sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
@@ -115,7 +115,7 @@ def test_a_stop_or_invalidation_committed_before_the_judgement_spawns_nothing(re
     assert fencing._gate(GROUP).readers == 0
     state.group_lookup.assert_not_called()
 def test_a_stop_waits_for_an_admitted_self_check_until_its_spawn(repo, fenced_selfcheck, monkeypatch):
-    """0110 T#3 rework: the start's worker is held at a barrier right before its spawn -- G, W and the run row taken.
+    """the start's worker is held at a barrier right before its spawn -- G, W and the run row taken.
     The request still holds the gate's shared hold, so a Stop cannot commit ``stopping`` in that window: it commits
     after the spawn. A start after the Stop is judged under the gate and refused; nothing more spawns."""
     sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
@@ -162,7 +162,7 @@ def test_a_stop_waits_for_an_admitted_self_check_until_its_spawn(repo, fenced_se
     assert state.order == ["spawned", "stopping_committed"]
     assert fencing._gate(GROUP).readers == 0
 def test_self_check_route_admits_attempt_token_and_passes_it_on(repo, monkeypatch):
-    """0110 T#3: the TR-bound route no longer answers 409 graph_attempt_source_unsupported for a mapped token; the
+    """the TR-bound route no longer answers 409 graph_attempt_source_unsupported for a mapped token; the
     token reaches the service, which picks the attempt root."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -180,7 +180,7 @@ def test_self_check_route_admits_attempt_token_and_passes_it_on(repo, monkeypatc
     assert response.status_code == 202, response.json()
     assert seen == [("tr-doc", {"program": "pytest"}, "worker", token)]
 def test_help_describes_attempt_execution_only_for_mapped_tokens(repo, monkeypatch):
-    """0110 T#3: help_catalog's tr_self_check item matches the service -- a mapped token is told its run executes in
+    """help_catalog's tr_self_check item matches the service -- a mapped token is told its run executes in
     its attempt tree (and the 409 codes it may get); an unmapped token's content is unchanged."""
     from modules.flow_gate.services import help_catalog
     item = repo.new()
@@ -191,8 +191,8 @@ def test_help_describes_attempt_execution_only_for_mapped_tokens(repo, monkeypat
         ctx = {"principal_kind": "worker", "action_scope": "edit", "doc_type": "TR", "locale": locale,
                "base_url": "/flowgate/api/v1", "source_mode": "remote", "tool_kind": "read_write",
                "registry": None, "token_rec": token}
-        assert help_catalog.decide_visibility("tr_self_check", ctx).visible
-        return help_catalog.build_item("tr_self_check", ctx)["content"]
+        assert help_catalog.decide_visibility("submit/self_check", ctx).visible
+        return help_catalog._CONTENT_SUPPLIERS["tr_self_check"](ctx)
 
     for locale in ("ko", "en", "ja"):
         block = content(item.token, locale)["graph_attempt"]
@@ -209,12 +209,12 @@ def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
     monkeypatch.setattr(workspace.git, "effective_src_root_ex", lambda *_: (repo.group, "worktree"))
     assert port.source_root(token) is None
     assert port.reject_group_source(token, "self_check") is None
-    # 0110 T#3: an unmapped token's Self-check keeps the group worktree and adds no attempt fields.
+    # an unmapped token's Self-check keeps the group worktree and adds no attempt fields.
     assert tr_self_check_service._attempt_target(token, PROJECT, GROUP) == {}
     assert tr_self_check_service._worktree({"project_id": PROJECT, "group_id": GROUP}) == repo.group.resolve()
     assert remote._resolve_src_root(grant) == repo.group
     assert chat.worktree_root(PROJECT, GROUP, str(repo.group), token_id="ordinary") == repo.group
-    # 0110 T#2: the TR scope check keeps the group basis for an unmapped token.
+    # the TR scope check keeps the group basis for an unmapped token.
     from modules.flow_gate.services import tr_scope_service as trs
     assert port.attempt_scope(token) is None
     assert trs.resolve_attempt_scope(token, PROJECT, GROUP) is None
@@ -230,7 +230,7 @@ def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
     assert result["scope_source"] == "group" and result["attempt_id"] is None
     assert result["detected"] == ["value.txt"] and result["codes"] == []
 def test_mapped_token_tr_scope_measures_attempt_tree_from_input_commit(repo, monkeypatch):
-    """0110 T#2 (NR0003 §2 T-A): a mapped token's TR scope is measured on its attempt tree from its
+    """a mapped token's TR scope is measured on its attempt tree from its
     input_commit, so changes that have not reached the group branch are detected (no TRV-003)."""
     from modules.flow_gate.services import tr_scope_service as trs
     item = repo.new()

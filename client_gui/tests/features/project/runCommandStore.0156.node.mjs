@@ -1,4 +1,4 @@
-// flowgate.v02.0156 T1 — the run command store's DEFAULT identity path (no uuid injected) on an insecure context, its
+// the run command store's DEFAULT identity path (no uuid injected) on an insecure context, its
 // coded refusals, the R4 compare-and-set / per-identity journal, and the cross-tab lease that replaces navigator.locks.
 // Dependency-free: Node type stripping loads the real TypeScript modules (no alias resolution — relative imports only).
 //   node --test client_gui/tests/features/project/runCommandStore.0156.node.mjs  (not *.test.mjs: vitest would collect it)

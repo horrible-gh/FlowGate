@@ -88,7 +88,7 @@ def test_s2_1_positions_are_shared_and_viewport_is_per_user(env):
     other = _get(env, F51, user="u_lee").json()
     assert other["viewport"] is None
     assert _by_key(other)[f"doc:{F51}.0006-D"]["position"] == {"x": 600.0, "y": 60.0, "source": "saved"}
-    # Viewport only: saved, but no event (a personal value, P0008 §8.3).
+    # Viewport only: saved, but no event (a personal value, the plan).
     count = len(env["events"])
     assert _put(env, F51, {"viewport": {"x": 1, "y": 2, "zoom": 1.5}}).json()["viewport_saved"] is True
     assert len(env["events"]) == count

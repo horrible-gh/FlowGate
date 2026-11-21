@@ -70,7 +70,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 class TestGitEndToEnd(_Scenario):
     @needs_node_syntax
     def test_review_gate_real_typescript_parser_blocks_approval(self, origin_repo):
-        # 0481 TR0009 rev1 (AI review finding 2): L0007 §2.7 requires the project
+        # AI review finding: the review gate requires the project
         # TypeScript compiler's no-emit syntactic check for `*.ts`, not a
         # dependency-free delimiter-balance heuristic. `const x: number = ;` has
         # every bracket/quote/comment balanced — the old `_check_balanced_source`

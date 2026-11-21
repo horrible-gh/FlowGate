@@ -2,12 +2,12 @@ import { readonly, ref } from 'vue'
 import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
 import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core/auth/currentUser'
 
-// flowgate.v02.0076 T#1 (D §1.2/§3.2): which /app/settings URL may be shown, decided before any
+// (D): which /app/settings URL may be shown, decided before any
 // settings view mounts. The router guard applies it to every move and SettingsLayout applies
 // it again when the /auth/me answer arrives, so both follow one rule:
 //
-// - 폐지된 화면 (/settings/workspaces[/…], /settings/system/security[/…]) → the overview.
-// - 프로젝트 / 시스템 (/settings/project[/…], /settings/system[/…]): wait while /auth/me is still
+// - Retired screens (/settings/workspaces[/…], /settings/system/security[/…]) → the overview.
+// - "프로젝트" / "시스템" (/settings/project[/…], /settings/system[/…]): wait while /auth/me is still
 //   out; anyone who is not a system administrator goes to the overview with an "관리자 전용"
 //   notice; an administrator gets the page if its view is registered, else the overview.
 // - any other /settings/* path without a registered view → the overview.

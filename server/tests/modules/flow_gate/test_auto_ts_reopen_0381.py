@@ -269,7 +269,7 @@ def test_1_unmanned_code_red_reopens_preserves_run_and_notifies_once(auto_store,
 
 
 def test_1b_rework_instruction_lands_only_on_the_reopened_ts(auto_store, monkeypatch):
-    """T3 rework handoff (NR0003 §10-12): the classification-specific instruction and
+    """T3 rework handoff: the classification-specific instruction and
     evidence must be readable off the reopened TS document itself (rejection_reason /
     rejection_history), not just implied by a bare reason string, and must not leak onto
     sibling documents (e.g. the TR at a later seq) swept into the same rewind."""
@@ -306,7 +306,7 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="cod
 
     ``recovery`` mirrors what the real ``engine_recipe_service.handle_run_failure`` returns:
     "skip" for a manual/UI run (no consumed chain token) and "code" for an unmanned/continuous
-    one (T3, NR0003 §14.1) — the classification-pending branch that "code" now takes needs its
+    one — the classification-pending branch that "code" now takes needs its
     own DB writes stubbed out since these tests never touch a real store.
     """
     from modules.flow_gate.db import test_runs as db_test_runs
@@ -340,8 +340,8 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="cod
 def test_2_manual_code_red_emits_post_rework_refresh(monkeypatch):
     # A manual/UI run carries no consumed chain token, so the real
     # engine_recipe_service.handle_run_failure returns "skip" here — CODE reds outside an
-    # unmanned chain still reopen immediately (T0009 §6, "manual/UI 실행은 기존 동작을 그대로
-    # 보존한다"), unlike the continuous "code" path covered by test_11 below.
+    # Unmanned chains still reopen immediately (preserves manual/UI behavior),
+    # unlike the continuous code path covered by test_11 below.
     emitted = _drive_code_red_broadcasts(monkeypatch, continuation_token=None, recovery="skip")
     assert [kind for kind, _ in emitted] == [
         "test_run_finished", "group_view_refresh", "group_view_refresh"
@@ -366,7 +366,7 @@ def test_11_unmanned_code_red_defers_reopen_then_refreshes_once_classified(monke
     post-rewind refresh on "manual runs only" made the unmanned chain — the main automation
     path — silently keep the stale, pre-rewind screen until a hand reload.
 
-    T3 (NR0003 §14.1) inserted failure-origin classification between a continuous CODE red and
+    T3 inserted failure-origin classification between a continuous CODE red and
     its reopen, so the second refresh no longer fires inside _handle_terminal_case_failure
     itself (it only dispatches the classifier and parks the run) — it fires once
     resume_failure_origin_branch performs the now-classified reopen. Both halves are checked
@@ -502,21 +502,21 @@ def test_6_duplicate_and_stale_completion_are_noops(auto_store, monkeypatch):
 
 
 
-# ── production-shape replay (R0001 0381 — the rewind must fire on REAL runs) ──
+# ── production-shape replay (the rewind must fire on REAL runs) ──
 #
 # Tests 1-11 build a synthetic group. The rejections said the opposite of what those
-# tests assert: "실제로 테스트를 돌려보면 여전히 승인 완료로 남는다". The three tests
+# The reported symptom was that actual test runs still left the instruction approved.
 # below are seeded from rows read out of the live database instead, so a shape that
 # only exists in production cannot pass here and fail there.
 
 _PROD_DOCS = [
     # (seq, type_code, review_status, status, has_file) — timeweaver.agent.0003, read live.
-    (1, "B", "wf_done", "open", True),          # the root is a B(버그), not an R
+    (1, "B", "wf_done", "open", True),          # The root is a B (bug), not an R.
     (2, "N", "approved", "open", True),
     (3, "NR", "approved", "open", True),
     (4, "T", "approved", "open", True),
     (5, "TR", "approved", "open", True),
-    (6, "TS", "approved", "open", True),        # <- the failing 테스트시나리오지시
+    (6, "TS", "approved", "open", True),        # <- the failing test-scenario instruction
     (7, "TSR", "approved", "open", True),
     (8, "AC", "approved", "draft", False),      # file-less, status 'draft'
 ]
@@ -653,11 +653,11 @@ def _run_production_red(monkeypatch, tmp_path, ids, cases, setup=None):
 # ── the workflow SEQUENCE itself, not just the document row ───────────────────
 #
 # Everything above proves documents.doc_review_status flips. The rejection is about the
-# other half: "워크플로 시퀀스가 [테스트레포트]에서 가만히 있는 게 아니라 [테스트시나리지시]가
-# 승인되기 전으로 되돌리라고". The strip's current step is derived, never stored — it is
+# The other half of the requirement: rewind from the test report to before the
+# test-scenario instruction was approved. The current step is derived, never stored — it is
 # workflow_sequences.get_effective_head (linked-but-unapproved slot wins over the first
 # unlinked slot) and the workflow_head_index that DocHeader renders. A RED assembles no
-# 테스트레포트, so before the rewind the head sits on the empty TSR slot; that is the state
+# test report, so before the rewind the head sits on the empty TSR slot; that is the state
 # being reported. These two tests pin the head MOVING OFF it, through the real worker.
 
 
@@ -716,10 +716,10 @@ def _run_red_on_seeded_group(monkeypatch, tmp_path, ids):
 # Everything above proves the DATABASE moved. None of it proves the SCREEN moved:
 # the workflow strip's colour and the action bar's buttons are computed in the
 # browser from the document-detail payload, so a server assertion can be green while
-# the strip still paints [테스트시나리오지시] 녹색(완료) and the action bar still shows
-# no 승인/반려. This test pins the exact payload the browser receives. (The v0.1 client
+# The strip still paints [테스트시나리오지시] green (complete), and the action bar shows
+# no 승인/반려. Pin the exact payload the browser receives. (The v0.1 client
 # spec that rendered the real components from the same fixture went away with client/ in
-# flowgate.v02gui.0024; the fixture now lives with the server tests.)
+# the fixture now lives with the server tests.)
 
 _UI_CONTRACT_FIXTURE = (
     Path(__file__).resolve().parents[2] / "fixtures" / "autoReopenWorkflowHead.0381.json"
@@ -748,15 +748,15 @@ def _ui_contract_payload(doc_id: str) -> dict:
 
 
 
-# ── the failure the reporter actually ran: the 준비(setup) 단계 aborts ──────────
+# ── The reported failure: the setup phase aborts ──
 #
 # Read out of the preview server's own database (flowgate_test): 15 consecutive runs of
 # test.test.0042.0006-TS between 06:54 and 09:38 on 2026-08-03, every one of them
 #   status=failed, error='setup_failed', triggered_via='ui', case_passed=0, case_failed=0
 # with SETUP-1 exiting 1 on "The system cannot find the path specified." Not one test case
 # ever ran, so nothing above this line could fire: error='setup_failed' is in
-# _INFRA_ERROR_CODES, and the setup branch never called the rewind at all. The 테스트시나리오
-# 지시 stayed 승인 완료 through all 15 attempts — precisely what was reported.
+# _INFRA_ERROR_CODES, and the setup branch never called rewind. The test-scenario
+# instruction stayed approved through all 15 attempts, exactly as reported.
 
 _LIVE_SETUP_CMD = (
     r"cd server && python -m venv .venv && .venv\Scripts\python -m pip install -q -r "
@@ -767,7 +767,7 @@ _LIVE_SETUP_TAIL = "The system cannot find the path specified.\r\n"
 
 
 def _run_setup_abort(monkeypatch, tmp_path, ids, *, triggered_via="ui"):
-    """Real `_execute_run_inner` whose 준비 단계 aborts, exactly like the live rows."""
+    """Real `_execute_run_inner` whose setup phase aborts, exactly like the live rows."""
     from modules.flow_gate.db import test_runs as db_runs
     from modules.flow_gate.services import test_run_service
     from modules.flow_gate.services import workflow_rework_service as rework
@@ -817,7 +817,7 @@ _LIVE_0042_DOCS = [
     (3, "NR", "approved", "open"),
     (4, "T", "approved", "open"),
     (5, "TR", "approved", "open"),
-    (6, "TS", "approved", "draft"),          # 승인 완료인데 status 는 draft
+    (6, "TS", "approved", "draft"),          # Approved review state, but lifecycle status is draft.
 ]
 _LIVE_0042_SEQUENCE = [
     (1, "N", "調査指示"), (2, "NR", "調査レポート"), (3, "T", "タスク指示"),

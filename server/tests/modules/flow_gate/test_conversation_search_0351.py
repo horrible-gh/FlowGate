@@ -1,4 +1,4 @@
-"""Conversation-turn search + merge into document search (group 0351, T4, L0004 §2-15).
+"""Conversation-turn search + merge into document search (the earlier change, T4, the earlier implementation).
 
 Full-schema harness (mirrors test_content_search_0123.py): all sqlite migrations
 applied to a real temp DB, so both `documents` (title/status/project_id/…) and
@@ -274,12 +274,12 @@ def _get(client, path, raw):
     return client.get(path, headers={"Authorization": f"Bearer {raw}"})
 
 
-# ── content_search_service.search_conversation_turns() 단위 ──────────────────
+# ── Unit tests ──
 
 def test_turn_search_finds_matches_across_turns(seed_data):
     from modules.flow_gate.services import content_search_service
 
-    # Override the production per-doc cap so all four are visible; L0004 §2-15 orders
+    # Override the production per-doc cap so all four are visible; the earlier implementation orders
     # newest turns first, with descending seq as the deterministic tie-breaker.
     items = content_search_service.search_conversation_turns(
         q=_TURN_MARKER, project="testprj", per_doc=10,
@@ -370,7 +370,7 @@ def test_turn_search_hides_partial_rows_while_migration_is_in_progress(seed_data
         )
 
 
-# ── 문서 본문 검색과의 중복 제거 (T4 §5) ───────────────────────────────────────
+# ── Deduplicate against body-search results ──
 
 def test_migrated_ch_stale_file_body_is_excluded_from_document_body_search(seed_data):
     from modules.flow_gate.services import content_search_service
@@ -390,7 +390,7 @@ def test_failed_ch_file_body_is_still_searchable(seed_data):
     assert page[0]["matched_in"] == "body"
 
 
-# ── 병합 HTTP 엔드포인트 ───────────────────────────────────────────────────────
+# ── Combined HTTP endpoint ──
 
 def test_merged_endpoint_carries_both_match_kinds(seed_data, tmp_path):
     client = _build_client()

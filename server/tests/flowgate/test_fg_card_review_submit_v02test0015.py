@@ -1,6 +1,6 @@
-"""flowgate.v02test.0015: a v0.2 card moves on by its own stage results, never by the v0.1 submit step.
+"""a v0.2 card moves on by its own stage results, never by the v0.1 submit step.
 
-Reported on flowgate.v02test.0012: an AI's result (0006-TR) with r1 and ``doc_review_status`` NULL. Its review loop
+Reported on the earlier change: an AI's result (TR) with r1 and ``doc_review_status`` NULL. Its review loop
 answered ``issues`` but no rejection could be written (no ``('', 'reject')``), and every later start of the card's
 review was refused by the v0.1 loop admission (``review.compute_review_baseline``: ``document_not_submitted``) -- the card
 stood still as ``review_not_started`` on every run, retry and command.

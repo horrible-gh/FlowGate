@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_conversation_cancelled_run_shows_cancelled_not_failed(self, origin_repo, monkeypatch):
-        # T0004 §2.2 (flowgate.default.0570): a review-conversation run the human
+        # A review-conversation run the human
         # stopped with the STOP button must not fold into the conversation looking
         # like an ordinary run failure -- the server tells the two apart using the
         # underlying ai-invoke run's end_reason (§4.1 of 0187's cancel branch stamps
@@ -120,14 +120,14 @@ class TestGitEndToEnd(_Scenario):
         assert review["review_fingerprint"] == fingerprint  # unchanged: nothing was applied
         cancelled_turn = next(t for t in review["conversation"] if t["role"] == "ai")
         assert cancelled_turn["status"] == "cancelled"
-        # 0578 T0006 §2.2: "not the word 실패" was a proxy for "this reads as a cancellation,
+        # "Not the word for failed" was a proxy for "this reads as a cancellation,
         # not a failure". The stored turn now says that outright, in a code, and carries no
         # server-authored sentence at all for any surface to mistake.
         assert cancelled_turn["message_code"] == "review_cancelled"
         assert cancelled_turn["message"] == ""
 
         # the slot is cleared -- a new message can start another run right away
-        # (T0004 §2.2's "취소 후 다음 대화/수정 적용 요청을 다시 시작할 수 있어야 한다").
+        # (after a cancel, the next conversation or apply request must be able to start again).
         sent2 = svc.send_review_message(
             group, merge_id, message="다시 요청할게",
             provider_id="prov_test", provider_pinned=True, apply_requested=False,

@@ -1,4 +1,4 @@
-"""Gate decision store (flowgate.v02.0085 T#1; migration 158_gate_decision_persistence.sql; D0007 §7.2).
+"""Gate decision store (migration 158_gate_decision_persistence.sql; the design).
 
 Tables: ``gate_decisions``, ``gate_decision_effects``, ``gate_archive_checkpoints``, ``gate_cleanup_records``.
 Every write here runs inside the caller's Flow guard or the decision's own short DB transaction; this module takes
@@ -34,7 +34,7 @@ CONFIRM, REJECT = "confirm", "reject"
 (ACCEPTED, FAILED, RECOVERY_REQUIRED, SUCCEEDED, REJECTED, CANCELED, ABANDONED) = (
     "accepted", "failed", "recovery_required", "succeeded", "rejected", "canceled", "abandoned")
 STATUSES = (ACCEPTED, FAILED, RECOVERY_REQUIRED, SUCCEEDED, REJECTED, CANCELED, ABANDONED)
-# The decision holds its gate: no other decision, no settings change, no follow-up opening (D0007 §3.3, §7.3).
+# The decision holds its gate: no other decision, no settings change, no follow-up opening.
 RESERVING = (ACCEPTED, FAILED, RECOVERY_REQUIRED)
 TERMINAL = (SUCCEEDED, REJECTED, CANCELED, ABANDONED)
 # A decision is born accepted (its job is queued), or already finished when no Git / archive work is needed
@@ -141,7 +141,7 @@ def get(decision_id: str) -> Optional[dict]:
 
 
 def by_request(run_id: str, node_key: str, actor_user_id: str, request_id: str) -> Optional[dict]:
-    """The decision a request key made (D0007 §7.2: the key is bound to the actor, run, node and request id)."""
+    """The decision a request key made (the key is bound to the actor, run, node and request id)."""
     if not available():
         return None
     return _decision(_one("SELECT * FROM gate_decisions WHERE run_id = ? AND node_key = ? AND actor_user_id = ? "
@@ -166,8 +166,8 @@ def reservation(run_id: str, node_key: str) -> Optional[dict]:
 
 
 def reservations_of_run(run_id: str) -> dict[str, dict]:
-    """flowgate.v02.0085 T#2: ``{node key: decision}`` of every gate of the run held by a decision right now (accepted,
-    failed or recovery_required). A reservation retains card ownership and prevents completion. 0132 T#3 separates
+    """``{node key: decision}`` of every gate of the run held by a decision right now (accepted,
+    failed or recovery_required). A reservation retains card ownership and prevents completion. the earlier implementation separates
     its LIVE/PARKED activity in run_hold: parked reservations permit run idle (NR §4.4)."""
     if not available():
         return {}
@@ -178,7 +178,7 @@ def reservations_of_run(run_id: str) -> dict[str, dict]:
 
 
 def reservations_of_group(group_id: str) -> list[dict]:
-    """T#3 rework: every decision of the group's gates and runs that holds its gate right now (accepted, failed or
+    """every decision of the group's gates and runs that holds its gate right now (accepted, failed or
     recovery_required), in acceptance order - unfinished publish work a group writer or the end cleanup must respect."""
     if not available():
         return []
@@ -188,7 +188,7 @@ def reservations_of_group(group_id: str) -> list[dict]:
 
 
 def snapshot_reservations(group_id: str) -> list[dict]:
-    """T#3 rework (D0007 §7.3): the group's accepted publish work whose snapshot is not pinned yet - a confirm holding
+    """the group's accepted publish work whose snapshot is not pinned yet - a confirm holding
     its gate with a job and no ``frozen_sha``. Until the job pins it, the group result writers (the attempt
     integration, the end cleanup) leave the group branch alone, so nothing integrated after the acceptance enters an
     earlier decision's snapshot."""
@@ -232,8 +232,8 @@ def decisions_of_run(group_id: str, run_id: str) -> list[dict]:
 
 
 def decisions_of_group(group_id: str) -> list[dict]:
-    """flowgate.v02.0085 T#3: every decision of every gate and round of a group, in decision order (the end cleanup
-    reads the keep-branch requests of all of them, D0007 §7.1)."""
+    """every decision of every gate and round of a group, in decision order (the end cleanup
+    reads the keep-branch requests of all of them, the design)."""
     if not available():
         return []
     return [_decision(r) for r in _all("SELECT * FROM gate_decisions WHERE group_id = ? "
@@ -406,7 +406,7 @@ def checkpoints_of_group(group_id: str) -> list[dict]:
 
 
 def checkpoints_of_project(project_id: str) -> list[dict]:
-    """T#3 rework (D0007 §7.1): every gate checkpoint of the project's groups, newest first - one row per round, the
+    """every gate checkpoint of the project's groups, newest first - one row per round, the
     rows the existing archive list shows beside the v0.1 group archives."""
     if not available():
         return []
@@ -416,7 +416,7 @@ def checkpoints_of_project(project_id: str) -> list[dict]:
 
 
 def mark_restored(archive_id: str) -> bool:
-    """A gate checkpoint restore does not consume the checkpoint (D0007 §7.1): it only notes when."""
+    """A gate checkpoint restore does not consume the checkpoint: it only notes when."""
     return get_store()._execute_affected(
         "UPDATE gate_archive_checkpoints SET last_restored_at = ? WHERE archive_id = ?",
         [utc_now_ms(), archive_id]) == 1
@@ -455,17 +455,17 @@ def cleanups_of_group(group_id: str) -> list[dict]:
 
 
 def cleanup_of_job(job_id: str) -> Optional[dict]:
-    """T#3 rework: the record a ``gate_cleanup`` job wrote (one per job; a resumed job writes it once)."""
+    """the record a ``gate_cleanup`` job wrote (one per job; a resumed job writes it once)."""
     if not available():
         return None
     return _decoded(_one("SELECT * FROM gate_cleanup_records WHERE job_id = ? ORDER BY created_at, cleanup_id",
                          [job_id]), "evidence_json")
 
 
-# ── flowgate.v02.0085 T#3: what the effects say, and the recovery requests ────
+# ── the earlier change the earlier implementation: what the effects say, and the recovery requests ────
 
-# The phases whose effect is outside the Flow's own records (D0007 §7.3): a target branch merge, a remote push, an
-# archive ref. The snapshot pin is the job's own internal ref and is no external effect. 0132 T#2 (NR §4.3): the push
+# The phases whose effect is outside the Flow's own records: a target branch merge, a remote push, an
+# archive ref. The snapshot pin is the job's own internal ref and is no external effect. the earlier implementation (NR): the push
 # phase's remote sync (``remote_sync``: a merge of the remote tip into the target, its own row) is one too.
 EXTERNAL_PHASES = ("merge", "remote_sync", "push", "archive")
 EFFECTS_NONE, EFFECTS_PRESENT, EFFECTS_UNKNOWN = "none", "present", "unknown"
@@ -477,7 +477,7 @@ def _changed(row: dict) -> bool:
 
 
 def _sync_rounds_landed(row: dict) -> bool:
-    """0132 T#2 rework: a ``remote_sync`` row keeps every done round in ``evidence.rounds``; a later round that is
+    """a ``remote_sync`` row keeps every done round in ``evidence.rounds``; a later round that is
     pending (conflict), failed (aborted, interrupted, refused) or rewritten never takes back an earlier round's sync
     commit - the local target moved to it."""
     if row.get("phase") != "remote_sync":
@@ -489,7 +489,7 @@ def _sync_rounds_landed(row: dict) -> bool:
 def effects_state(decision_id: str) -> str:
     """``unknown`` when a phase's outcome outside is not known (in flight, timed out, unprovable), else ``present``
     when a phase changed something outside (a merge commit, a pushed ref, an archive ref, a sync commit of any done
-    remote sync round), else ``none`` - the evidence a cancel with no effect needs (D0007 §7.3.1). A phase that found
+    remote sync round), else ``none`` - the evidence a cancel with no effect needs. A phase that found
     its result already there changed nothing. The decision's effects are cumulative: the ``remote_sync`` row's current
     round and every round it recorded done are both judged (``_sync_rounds_landed``)."""
     state = EFFECTS_NONE
@@ -505,19 +505,19 @@ def effects_state(decision_id: str) -> str:
 
 def evidence_version(decision_id: str) -> int:
     """One number for the whole evidence of a decision: it moves whenever any phase's evidence moves (each row's
-    version only grows), so a closer can say which evidence it reviewed (D0007 §7.2 resolve)."""
+    version only grows), so a closer can say which evidence it reviewed (resolve)."""
     return sum(int(r.get("evidence_version") or 0) for r in effects_of(decision_id))
 
 
 def evidence_refs(decision_id: str) -> list[str]:
-    """T#3 rework (D0007 §7.2 resolve: the evidence version and references the person reviewed): one reference per
+    """(resolve: the evidence version and references the person reviewed): one reference per
     phase evidence row, ``<decision id>/<phase>@<that row's evidence version>``, in phase order. A reference names
     exactly one state of one row of this decision, so a moved row or another decision's row is told apart."""
     return sorted(f"{decision_id}/{r['phase']}@{int(r.get('evidence_version') or 0)}"
                   for r in effects_of(decision_id))
 
 
-# T#3 rework (D0007 §7.3.2): what an abandon could not keep under a recovery ref stays an obligation in the phase's
+# what an abandon could not keep under a recovery ref stays an obligation in the phase's
 # evidence (``retention``: the SHA, the ref it should have, kept or not). Nothing may delete what holds such a SHA:
 # the end cleanup keeps the slot until the ref is written (it tries again itself, under M).
 RETENTION_KEY = "retention"

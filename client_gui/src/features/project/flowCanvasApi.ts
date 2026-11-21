@@ -1,5 +1,5 @@
 import { toRunGateState } from '@/features/document/api/run'
-// flowgate.v02.0045 S1+S2 — Graph loader / Graph saver transport (D0004 §2.3 features/project):
+// S1+S2 — Graph loader / Graph saver transport (features/project):
 // the Canvas read API and the layout save API of P0008 §3 / §4. Reuses the `@shared/api`
 // transport like api.ts; snake_case stays inside this file's normalizers. The Designer reaches
 // these only through the project store loaders (loadFlowCanvas / saveFlowCanvasLayout).
@@ -8,7 +8,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // tab (this module instance), so the SSE events this tab caused are told apart by tab, not by
 // user (P0008 §8.1 / §8.3, flowCanvasEvents.ts).
 //
-// flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
+// a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
 import { canvasHeaders } from '@shared/canvasClient'
@@ -92,12 +92,12 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
   }
 }
 
-// flowgate.v02.0048 T#1: kept for the Inspector; the edge `condition` stays dropped (the top-level `run`: toRun).
-// flowgate.v02.0056 F2-1: `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
-// flowgate.v02.0061 T#14: the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
-// requested execution counts, kept only when sent. T#15: the node's current `attempt_id` too (the Time Machine
-// confirmation's basis), kept only when sent. flowgate.v02.0064 T#4: `node_running` (the card's running lock), kept only when sent.
-// flowgate.v02.0105 T#2 (B-2): `approval_wait_reason`, kept only when sent.
+// kept for the Inspector; the edge `condition` stays dropped (the top-level `run`: toRun).
+// `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
+// the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
+// requested execution counts, kept only when sent. the earlier implementation: the node's current `attempt_id` too (the Time Machine
+// confirmation's basis), kept only when sent. the earlier change the earlier implementation: `node_running` (the card's running lock), kept only when sent.
+// (B-2): `approval_wait_reason`, kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
   const running = count(raw.running_execution_count)
@@ -108,14 +108,14 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     finishedAt: str(raw.finished_at),
     resultDocId: str(raw.result_doc_id),
     dispatchErrorCode: str(raw.dispatch?.error_code),
-    // flowgate.v02.0121 T#4: the failed AI call's short cause (`provider_capacity`, `provider_failed`, ...), kept only when sent.
+    // the failed AI call's short cause (`provider_capacity`, `provider_failed`, ...), kept only when sent.
     ...(str(raw.dispatch?.error_detail) ? { dispatchErrorDetail: str(raw.dispatch?.error_detail) } : {}),
     ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
     ...('stage' in raw ? { stage: str(raw.stage) } : {}),
     ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
-    // flowgate.v02test.0042: the card whose merge this one waits for (its node key), kept only when sent.
+    // the card whose merge this one waits for (its node key), kept only when sent.
     ...('integration_blocked_by' in raw ? { integrationBlockedBy: str(raw.integration_blocked_by) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
@@ -145,8 +145,8 @@ export function toUncarriedChanges(raw: unknown): UncarriedChanges | null {
   return { attempts, files: count(value.files) ?? 0, unknown: value.unknown === true }
 }
 
-// flowgate.v02.0053 T#5: the card's document lines (T#1 `card_documents`), in the server's order.
-// flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): `has_body` and the history counts (`review_count`, `rejection_count`,
+// the card's document lines (`card_documents`), in the server's order.
+// `has_body` and the history counts (`review_count`, `rejection_count`,
 // `history_count`), kept only when sent — a line from an older server says nothing about them.
 export function toCardDocument(line: Raw): FlowCanvasCardDocument {
   const reviewCount = count(line.review_count)
@@ -175,9 +175,9 @@ export function toCardDocuments(raw: unknown): FlowCanvasCardDocument[] {
     .map(toCardDocument)
 }
 
-// flowgate.v02.0061 TR0031 rev1: the top-level `run` block — its status keeps the run lock while the run read is
-// pending or failed. A block without a run id and status is no run. T#15: its `last_event_seq`, kept only when sent.
-// flowgate.v02.0083 T#4 rev1: and the run band's facts of the same read, each kept only when sent.
+// the top-level `run` block — its status keeps the run lock while the run read is
+// pending or failed. A block without a run id and status is no run. the earlier implementation: its `last_event_seq`, kept only when sent.
+// and the run band's facts of the same read, each kept only when sent.
 function toRun(raw: Raw | null | undefined): FlowCanvasRun | null {
   if (!raw || typeof raw.run_id !== 'string' || typeof raw.status !== 'string') return null
   const lastEventSeq = count(raw.last_event_seq)
@@ -204,7 +204,7 @@ function toRunBand(raw: Raw): Partial<FlowCanvasRun> {
     ...(Array.isArray(raw.pending_node_keys)
       ? { pendingNodeKeys: raw.pending_node_keys.filter((key: unknown): key is string => typeof key === 'string') }
       : {}),
-    // flowgate.v02.0143 T#1 (W1): the same read's automatic Q&A responder fact, kept only when sent.
+    // (W1): the same read's automatic Q&A responder fact, kept only when sent.
     ...(typeof raw.qa_responding === 'boolean' ? { qaResponding: raw.qa_responding } : {}),
   }
 }
@@ -255,12 +255,12 @@ function toNode(raw: Raw): FlowCanvasNode {
     ...(nodeRun ? { nodeRun } : {}),
     // Only a Graph / draft node carries its card lines (absent on document and sequence nodes).
     ...(Array.isArray(raw.card_documents) ? { cardDocuments: toCardDocuments(raw.card_documents) } : {}),
-    // flowgate.v02.0064 T#4: kept only when sent (an older server sends none: no title edit, no version compare).
+    // kept only when sent (an older server sends none: no title edit, no version compare).
     ...('title_state' in raw ? { titleState: toTitleState(raw.title_state) } : {}),
   }
 }
 
-/** flowgate.v02.0064 T#4 (P0006 §4.2.1): `title_state` -> one bundle, or null (not a title node, or malformed). */
+/** `title_state` -> one bundle, or null (not a title node, or malformed). */
 export function toTitleState(raw: unknown): FlowCanvasTitleState | null {
   const value = raw as Raw | null
   const version = count(value?.version)
@@ -330,7 +330,7 @@ export function toFlowCanvas(raw: Raw): FlowCanvas {
 }
 
 // Same shape as api.ts: a displayable message, with the transport error kept as `cause`.
-// flowgate.v02.0105 T#1: and its HTTP status / network failure (`status` / `network`), so the Designer tells a
+// and its HTTP status / network failure (`status` / `network`), so the Designer tells a
 // refused Flow (403 / 404) apart from a passing failure.
 export function wrapError(error: unknown, fallback: string): Error {
   const { status, network } = normalizeApiError(error)
@@ -345,7 +345,7 @@ const canvasPath = (flowId: string) => `/api/v1/flows/${encodeURIComponent(flowI
 
 export { CANVAS_CLIENT_ID, canvasHeaders } from '@shared/canvasClient'
 
-// flowgate.v02.0135 T#4: a Canvas write of this tab that got no answer (timeout, dropped connection) may still be
+// a Canvas write of this tab that got no answer (timeout, dropped connection) may still be
 // stored by the server later. Its change event then carries this tab's id and would be dropped as already applied
 // (flowCanvasEvents), so the Flow stayed as the re-read after the failure showed it — without the card that write
 // stored — until a reload. Each such write is kept by what it stores — a draft save by the draft version it makes,
@@ -416,7 +416,7 @@ export async function fetchFlowCanvas(flowId: string, view?: string, collapse: r
   }
 }
 
-/** flowgate.v02.0064 T#4: a refused title save — the server's `error.code` / `params` (P0006 §4.2.3), its sentence. */
+/** a refused title save — the server's `error.code` / `params`, its sentence. */
 export class FlowNodeTitleError extends Error {
   readonly code: string | null
   readonly params: Record<string, unknown>
@@ -432,7 +432,7 @@ export class FlowNodeTitleError extends Error {
 }
 
 /**
- * flowgate.v02.0064 T#4 (P0006 §4.2.2): PUT /api/v1/flows/{flowId}/graph/nodes/{nodeKey}/title — the title only (no
+ * PUT /api/v1/flows/{flowId}/graph/nodes/{nodeKey}/title — the title only (no
  * version: the server never refuses on one). Resolves the saved `title_state`; a refusal rejects with FlowNodeTitleError.
  */
 export async function nodeTitleSave(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState> {

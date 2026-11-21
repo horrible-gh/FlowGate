@@ -1,6 +1,6 @@
-"""flowgate.default.0280 T0005 — test-run execution-location observability.
+"""test-run execution-location observability.
 
-B0001 kept reporting "the tests run in main, not on the work branch". NR0003 found
+kept reporting "the tests run in main, not on the work branch". the review found
 the runner already resolves the group worktree correctly, and that two separate
 defects made that impossible to see:
 
@@ -123,7 +123,7 @@ def test_effective_src_root_ex_returns_the_worktree_when_it_exists(monkeypatch, 
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     worktree = tmp_path / "src" / "FlowGate Live" / "fg-0280"
     worktree.mkdir(parents=True)
-    # 0287 NR0004: a worktree is a directory WITH its `.git` link; a bare directory
+    # a worktree is a directory WITH its `.git` link; a bare directory
     # is the corpse an interrupted teardown leaves, and no resolver accepts it now.
     (worktree / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
     git_service = _install_git(
@@ -141,7 +141,7 @@ def test_effective_src_root_ex_returns_the_worktree_when_it_exists(monkeypatch, 
 
 
 def test_unregistered_worktree_is_logged_not_swallowed(monkeypatch, tmp_path, caplog):
-    """The post-merge re-run case (NR0003 §4-B) must leave a trace in the log."""
+    """The post-merge re-run case must leave a trace in the log."""
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     git_service = _install_git(
         monkeypatch,
@@ -161,7 +161,7 @@ def test_classify_src_root_reports_worktree_and_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     worktree = tmp_path / "src" / "FlowGate Live" / "fg-0280"
     worktree.mkdir(parents=True)
-    # 0287 NR0004: a worktree is a directory WITH its `.git` link; a bare directory
+    # a worktree is a directory WITH its `.git` link; a bare directory
     # is the corpse an interrupted teardown leaves, and no resolver accepts it now.
     (worktree / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
     _install_git(
@@ -235,7 +235,7 @@ def test_execute_run_records_the_root_it_used(monkeypatch, tmp_path):
 
     assert recorded["run_id"] == "trun_0280"
     assert recorded["kind"] == "worktree"
-    # Stored storage-root-relative (B0054), so the value survives a host move.
+    # Stored storage-root-relative, so the value survives a host move.
     assert not Path(recorded["source_root"]).is_absolute()
     assert recorded["source_root"] == "src/FlowGate Live/fg-0280"
 

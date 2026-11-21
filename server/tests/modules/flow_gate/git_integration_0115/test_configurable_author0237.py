@@ -96,7 +96,7 @@ class TestConfigurableAuthor0237(_Scenario):
 
 
     def test_configured_author_on_finalize_merge_commit(self, author_origin):
-        """The `--author` flag does not exist for `git merge` (NR0003 §4), so the
+        """The `--author` flag does not exist for `git merge`, so the
         merge commit is the regression-prone one: pin it explicitly."""
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc

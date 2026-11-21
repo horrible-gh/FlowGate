@@ -1,4 +1,4 @@
-"""0126 T#4: settings-only current Graph context, independent of structure editability."""
+"""settings-only current Graph context, independent of structure editability."""
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.graph_workflow.services import engine_router
 from . import legacy_adapter as legacy
@@ -34,7 +34,7 @@ def require_owner(flow_id):
 
 def require_current(flow_id, node_key, expected):
     """A PATCH's ``expected_context`` against now (409 ``gate_context_changed`` / ``settings_context``).
-    flowgate.v02.0130: only the context decides — a card only in the draft (placed after the run's revision) is
+    only the context decides — a card only in the draft (placed after the run's revision) is
     still a card of the Flow (``settings._card``), its settings writable like any other waiting card."""
     context, node = current(flow_id, node_key)
     if expected is not None and context != expected:

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0042 — the card merge wire (features/document/api/cardMerge.ts): state, action body and the
+ * the card merge wire (features/document/api/cardMerge.ts): state, action body and the
  * notification items.
  */
 import { describe, expect, it, vi } from 'vitest'

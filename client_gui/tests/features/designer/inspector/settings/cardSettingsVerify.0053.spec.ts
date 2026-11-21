@@ -1,6 +1,6 @@
 /**
  * flowgate.v02test.0053 0003-T (1-A) — the two 검증 options of a work card (실행 AI's advanced ⚙): their place, the value a
- * combo entry stands for (a preset, a custom whole number inside the range; managed per card only, default 3회 / 2분 —
+ * combo entry stands for (a preset, a custom whole number inside the range; managed per card only, default 3 runs / 2 minutes —
  * 0002-CH turn 68), the combo's options and the strings of the three locales.
  */
 import { describe, expect, it } from 'vitest'

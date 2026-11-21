@@ -1,13 +1,13 @@
 <template>
-  <!-- flowgate.v02.0048 T#5 — documents tab (D#1 §10.2): the selected Node's document as the v0.1
+  <!-- documents tab: the selected Node's document as the v0.1
        API gives it — type · seq · title, review status, rejection reason and history, AI review
        existence, the documents it superseded — with the v0.1 sequence slot or the Graph node run
        of the Node. ↗ 열기 opens a document in its document window, where ✎ edits it.
        A thin container: useDocuments reads, documentsModel decides what is shown.
        flowgate.v02.0052 묶음 A — no prose line in the body: where writing and editing happen is the
        ↗ 열기 button's hover text (v7 keeps explanations in tooltips).
-       flowgate.v02.0053 T#5 (0053 CH) — every open button is the document icon (tooltip: open_hint).
-       flowgate.v02.0068 T#1 — a line of a document (the current one, a superseded one that reads) has the
+       (CH) — every open button is the document icon (tooltip: open_hint).
+       a line of a document (the current one, a superseded one that reads) has the
        document's [업로드][다운로드] before its open button. -->
   <div v-if="view" class="inspector-documents" data-test="inspector-documents" :data-status="status">
     <section class="inspector-documents-current" data-test="documents-current" :data-doc="view.current.docId">

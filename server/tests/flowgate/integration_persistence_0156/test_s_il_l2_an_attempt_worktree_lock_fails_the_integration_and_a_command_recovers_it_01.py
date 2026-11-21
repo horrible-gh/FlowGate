@@ -87,7 +87,7 @@ from test_fg_integration_persistence_0156 import (
 @pytest.mark.parametrize('hold', ['h1'])
 def test_s_il_l2_an_attempt_worktree_lock_fails_the_integration_and_a_command_recovers_it(env, decided, repo, tap,
                                                                                            record, monkeypatch, hold):
-    """S-IL-2 (L2) on the real stack: t1's result is not committed yet, so the integration's T#8 step
+    """S-IL-2 (L2) on the real stack: t1's result is not committed yet, so the integration's result-commit step
     (``commit_result`` -> ``create_attempt_commit``, under the real W lock) meets an ``index.lock`` left in the attempt
     worktree. Under the lock: ``failed`` (``result_commit:commit_failed``), no hold, idle (``merge_conflict``), no
     result commit recorded, no merge, no MERGE_HEAD, the card's change kept in its tree. An unrelated G release does

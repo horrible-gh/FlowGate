@@ -1,4 +1,4 @@
-"""flowgate.v02test.0027 (0007-T, TR0008 rev1 rejection): a review count the policy allows above 3 runs as stored.
+"""a review count the policy allows above 3 runs as stored.
 
 Real migrated SQLite, the real draft route (the creation copy) and the real run: with the policy max raised to 5, the
 group's default count 5 is accepted by the review-count write, copied once into a new card at creation, and the card's

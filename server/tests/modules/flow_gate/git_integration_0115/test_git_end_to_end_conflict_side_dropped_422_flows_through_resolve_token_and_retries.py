@@ -71,7 +71,7 @@ class TestGitEndToEnd(_Scenario):
     def test_conflict_side_dropped_422_flows_through_resolve_token_and_retries(
         self, origin_repo, monkeypatch,
     ):
-        # 0478 T0012 작업 항목 3 (TR0013 rev0 반려 대응): the review demanded proof that
+        # In response to a rejected review: the review demanded proof that
         # `conflict_side_dropped` isn't just raised in-process — it must survive the real
         # POST /groups/{g}/git/merge/{m}/resolve-token route (git_routes.py:490) and be
         # handled by ai_invoke_service._api_execute's conflict_pending branch exactly like
@@ -121,7 +121,7 @@ class TestGitEndToEnd(_Scenario):
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
-        # 0481 T0008: this test is about the HTTP retry mechanic (422 → corrected
+        # This test is about the HTTP retry mechanic (422 → corrected
         # resubmission → merged), not the review gate — record_auto_authority is
         # the officially supported bypass a human's [AI 호출] would have set before
         # this same worker token was minted (see test_conflict_resolve_flow above).
@@ -180,7 +180,7 @@ class TestGitEndToEnd(_Scenario):
         # turn 1: the worker drops the mainline side entirely (same payload as (i) above,
         # this time submitted through the real HTTP tool the worker actually calls).
         # turn 2: the worker retries with both sides kept, exactly the (ii) shape.
-        # 0608 T0007: the model is offered the read tools plus resolve_git_conflict (a
+        # The model is offered the read tools plus resolve_git_conflict (a
         # list of specs, not one forced name) and picks resolve_git_conflict itself.
         attempts: list[str] = []
         offered: list[list[str]] = []

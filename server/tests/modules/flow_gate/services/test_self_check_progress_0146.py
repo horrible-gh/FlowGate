@@ -1,4 +1,4 @@
-"""0146: effective events, exact ownership and streaming before target exit."""
+"""effective events, exact ownership and streaming before target exit."""
 from __future__ import annotations
 
 import io

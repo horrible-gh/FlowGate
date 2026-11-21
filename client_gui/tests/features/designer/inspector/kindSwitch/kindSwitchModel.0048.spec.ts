@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#10 — the kind switch's availability as one table (D#1 §8.5, D#2 §3.4): card kind ×
+ * the kind switch's availability as one table: card kind ×
  * document type × ownership (4 + none) × read only (the §8.5 required rows) × AI running × disposed ×
  * a switch in flight -> visible / enabled / reason, the reason order of D#1 §8.3 rule 6-1, the kind a
  * root switches to, the refusal keys and which refusals read the Canvas again. Every key the rules

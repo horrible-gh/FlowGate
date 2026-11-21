@@ -1,6 +1,6 @@
-"""flowgate.default.0242 T0004 — /ai-invoke/start must reject a bogus continuation target.
+"""ai-invoke/start must reject a bogus continuation target.
 
-NR0003 발견 4: the only continuation_target_seq checks were "not null" and "-1 for a
+the only continuation_target_seq checks were "not null" and "-1 for a
 pre-decision run". Every other number was accepted, and the mistake surfaced only as
 *behaviour* at chain-termination time (inbox_routes: ``completed_seq >= target_seq``):
 

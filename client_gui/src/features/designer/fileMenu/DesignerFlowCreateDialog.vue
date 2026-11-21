@@ -175,7 +175,7 @@ function pickGroup(value: string) {
 }
 const title = ref('')
 const submitting = ref(false)
-// flowgate.v02.0088 F10: the server's own words raw, otherwise the localized fallback key —
+// the server's own words raw, otherwise the localized fallback key —
 // rendered in the current locale while it stays on screen. (The adapter leaves only the server's
 // words in Error.message; an empty one means there were none.)
 type SubmitError = { readonly key: string } | { readonly raw: string }
@@ -437,7 +437,7 @@ watch(
 )
 
 // Shell assigns open before groupId, so observe the calling Group separately.
-// flowgate.v02test.0006 T / 0004-NR §2.1: keep sync timing without restarting loads.
+// T / the earlier implementation: keep sync timing without restarting loads.
 watch(() => props.groupId, next => {
   if (!props.open || groupPicked.value) return
   groupId.value = next ?? ''

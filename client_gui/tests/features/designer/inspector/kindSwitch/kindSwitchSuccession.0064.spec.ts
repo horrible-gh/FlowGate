@@ -1,14 +1,14 @@
 /**
- * flowgate.v02.0064 T#4 — the kind switch with the server's judgement (P0006 §3.1 / §3.3 / §3.5 / §6.1):
+ * the kind switch with the server's judgement:
  * the document state is read with `include=root_conversion` (kindSwitchPreviewRead, mocked as a small
  * server here); a refused judgement disables the badge with its reason while a judgement not read yet blocks nothing; the new refusals are shown with
  * their reason (a superseded root also reads the Canvas again); a succeeded document links the document it
  * came from — a header part of its own (features/kindSwitchOrigin) read without the judgement, kept on every
  * ownership: the new document's workflow decision turns its Flow v01 and the link stays (rework).
- * flowgate.v02.0070 T#4 (B4) — the link opens that exact id as history (openDocument `exact`, not the document it is
+ * (B4) — the link opens that exact id as history (openDocument `exact`, not the document it is
  * succeeded by), read only, with the old id's questions under the body: the Q&A tab's list read as history (no question
  * line, answer form or AI line; its ↗ window says 읽기 전용).
- * flowgate.v02.0070 (0015-T T2) — picking the other kind runs the switch at once (R -> B and B -> R), without a
+ * picking the other kind runs the switch at once (R -> B and B -> R), without a
  * confirmation, whether the server judged a number swap, a succession (also a chained one) or nothing yet; the pick
  * awaits no read before the call, so a pick never runs after the part is gone or the Node changed.
  */
@@ -46,7 +46,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     kindSwitchOriginRead: (...args: unknown[]) => originRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     qaRead: (...args: unknown[]) => qaRead(...args),
-    // flowgate.v02.0070 T#5: the document read answering waits for (a current document: superseded by none).
+    // the document read answering waits for (a current document: superseded by none).
     reviewDocumentRead: async () => ({ groupDisposed: false, record: { supersededBy: null } }),
     settingsChoicesRead: async () => ({ providers: [], defaultProviderId: null }),
   }
@@ -65,7 +65,7 @@ const { openDocument: realOpenDocument } =
 const i18n = prepareInspectorI18n()
 
 const FLOW = UNASSIGNED_GRAPH.flowId
-/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+/** each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
 const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
 const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = UNASSIGNED_REQ_NODE.document!.docId
@@ -173,7 +173,7 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     expect(convertCall).toHaveBeenCalledTimes(1)
     expect(convertCall).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R, back ? 'R' : 'B', SWITCH_ID)
     expect(intents).toEqual([SWITCHED])
-    // flowgate.v02gui.0012: a finished switch shows no line beside the badge.
+    // a finished switch shows no line beside the badge.
     expect(find('kind-switch-line').exists()).toBe(false)
   })
 
@@ -328,7 +328,7 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('inspector-kind-switch').exists()).toBe(switchShown)
     expect(originRead).toHaveBeenCalledWith(ROOT_B)
     await links()[0].trigger('click')
-    // flowgate.v02.0070 T#4: that exact id, as history, with the target it was pressed on (for its Q&A).
+    // that exact id, as history, with the target it was pressed on (for its Q&A).
     expect(opened).toHaveBeenCalledWith(ROOT_R, 'view', { exact: true, target: expect.objectContaining({ docId: ROOT_B, flowId: FLOW }) })
   })
 
@@ -358,7 +358,7 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('kind-switch-converted-from').exists()).toBe(false)
   })
 
-  // --- flowgate.v02.0070 T#4 (B4): the old id as history, with its Q&A ---------------------------------------
+  // --- the earlier change the earlier implementation (B4): the old id as history, with its Q&A ---------------------------------------
 
   const thread = (docId: string) =>
     toQaThread({
@@ -401,17 +401,17 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(document.body.querySelector('[data-test="qna-window-body"]')?.textContent).toBe('범위가 어디까지입니까?')
     expect(document.body.querySelector('[data-test="qna-window-form"]')).toBeNull()
     expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
-    // flowgate.v02.0070 T#5: the stored options stay readable; no body line in history (the badge says it).
+    // the stored options stay readable; no body line in history (the badge says it).
     expect(document.body.querySelector('[data-test="qna-window-options"]')?.textContent).toBe('선택지: 전체')
     expect(document.body.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
-    // flowgate.v02.0070 T#5: answers are read in the ↗ window (the list line keeps who asked only).
+    // answers are read in the ↗ window (the list line keeps who asked only).
     await wrapper.get('[data-test="qna-item"][data-item="12"] [data-test="qna-open"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-test="qna-window"][data-item="12"] [data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('로그인')
-    // The same tab of the live document keeps its forms — in the ↗ window, with its document's body there (0070 T#5).
+    // The same tab of the live document keeps its forms — in the ↗ window, with its document's body there.
     wrapper.unmount()
     const live = { ...target, cardDocuments: [{ slot: 'requirement', docType: 'R', author: 'human', docId: ROOT_R, title: ROOT_R, status: 'open', docReviewStatus: null, hasBody: true, bodyState: null }] }
-    // flowgate.v02.0150: a live tab's ↗ windows are drawn by the Frame's window host (mounted with it here).
+    // a live tab's ↗ windows are drawn by the Frame's window host (mounted with it here).
     wrapper = mount(QnaTabWithWindows, { attachTo: document.body, props: { target: live }, global: { plugins: [i18n, pinia] } })
     await flushPromises()
     expect(find('qna-ask').exists()).toBe(true)

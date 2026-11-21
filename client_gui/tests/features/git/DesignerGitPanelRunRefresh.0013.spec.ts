@@ -15,7 +15,7 @@ import { installProjectEventStream, removeProjectEventStream, type ProjectEventS
 import { G, P, createFakeGitSource } from './fakeGitSource'
 import { createFakeWorktreeSource, worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02test.0013 — the worktree area reads again when an AI run of the shown Flow ends. A card
+// the worktree area reads again when an AI run of the shown Flow ends. A card
 // worker or chat run changes working files with no Git action of the panel; before this the area kept
 // the E1 answer read before the run ("변경 파일 0" over 16 uncommitted files) until a manual refresh or
 // a tab switch. Frames of another Flow are ignored, a burst is one read, a reconnect reads again and

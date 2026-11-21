@@ -1,4 +1,4 @@
-"""Bulk CH migration driver (group 0351, T4, L0004 §2-14).
+"""Bulk CH migration driver (the earlier change, T4, the earlier implementation).
 
 A real in-memory SQLite carrying the 074 schema PLUS a `documents` stub wide enough
 for the LEFT JOIN judgment (`type_code`, `updated_at`) — the bulk driver's own SQL,
@@ -104,7 +104,7 @@ def _patch_docs(monkeypatch, docs: dict) -> None:
     monkeypatch.setattr(append_service.document_service, "get_document", lambda doc_id: docs.get(doc_id))
 
 
-# ── LEFT JOIN 판정 (L0004 §2-14) ──────────────────────────────────────────────
+# ── LEFT JOIN decision ─────────────────────────────────────────
 
 def test_pending_docs_have_no_conversation_docs_row_and_are_selected(store):
     _add_doc("flowgate.default.0351.0002-CH")
@@ -137,7 +137,7 @@ def test_limit_bounds_the_candidate_set(store):
     assert len(rows) == 2
 
 
-# ── bulk_migrate: 격리 + 집계 (완료 기준: 일괄 이관) ──────────────────────────
+# ── bulk_migrate: isolation + aggregation (acceptance criterion: bulk migration) ──
 
 def test_bulk_migrate_migrates_every_pending_doc_and_is_idempotent_on_rerun(store, monkeypatch):
     docs = {

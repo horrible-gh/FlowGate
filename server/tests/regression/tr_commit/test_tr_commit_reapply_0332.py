@@ -1,23 +1,24 @@
-"""앞으로 복원이 취소한 소스를 되살리는가 (0332 T0018 — R0001 의 남은 세 번째 절).
+"""Does forward restoration reapply canceled source? ('s remaining third part.)
 
-0012-TR 이 "승인 때 커밋"을, 0014-TR 이 "되감을 때 되돌리기"를 만들었고 이 스위트는
-"앞으로 갈 때 다시 얹기"(D0005 K11)를 본다. 셋이 한 세트라는 것이 R0001 의 요구였고,
-둘만 있는 상태는 "되감으면 코드가 따라오는데 앞으로 오면 안 따라오는 타임머신"이라
-일관되게 못 하는 것보다 나쁘다 — 사람은 "되감았다 다시 왔으니 원래대로겠지"라고 믿는데
-워크트리는 아니기 때문이다.
+implemented commits on approval; the earlier implementation implemented reverts on rewind. This
+suite checks reapplication when moving forward. the requirement required all three
+as one set. With only two, Time Machine moves code backward but not forward, worse
+than consistent unavailability: people assume returning forward restores the original
+state, but the worktree disagrees.
 
-앞 스위트와 같은 이유로 세 층을 진짜로 돌린다. 특히 되살리기는 **되돌림의 되돌림**이라
-대역으로는 "revert 를 한 번 더 불렀다"까지만 증명된다. 순서가 정말 역순인지, 사람이 손으로
-다시 한 단계를 정말로 건드리지 않는지, 충돌이 워크트리를 원상으로 되돌리는지는 진짜
-저장소에서만 나온다.
+Exercise three real layers for the same reason as earlier suites. Reapplication is a
+**revert of a revert**; substitutes prove only one more revert call. Real repositories
+are needed to establish reverse ordering, preservation of manually redone steps,
+and restoration of the worktree on conflicts.
 
-이 시험이 고정하는 계약 두 줄.
-  * **앞으로 복원은 문서와 소스를 같이 데려온다. 못 하면 왜 못 했는지 말한다** (D0005 K8·K11).
-  * **사람이 이미 다시 한 일은 두 번 얹지 않는다** — 되살리기의 유일한 파괴적 실패 모드다.
+Contracts:
+* **Forward restoration brings documents and source together, reporting why anything
+  cannot be restored**.
+* **Never reapply work a person already redid**, the sole destructive failure mode of reapplication.
 
-그리고 T0018 §3-4 의 구멍 하나: 되돌리기가 막힌 뒤 그 단계를 다시 승인하면, 취소하지
-못한 **옛 live 행**이 어떤 경로로도 다시 잡히지 않았다. 문서 단위로 거르던 필터를 행
-단위로 고쳤고, 그 계약이 §7 에 있다.
+Also cover the earlier implementation's gap: reapproving a step after blocked rewind left its
+**old live row** unreachable through every retry path. Filtering is now by row
+rather than document; §7 covers that contract.
 """
 from __future__ import annotations
 
@@ -89,8 +90,8 @@ INSERT OR IGNORE INTO group_git_state(
 
 
 class _SqliteStore:
-    """앞 두 스위트와 같은 최소 계약. ``_sql`` 은 일부러 두지 않는다 — 등록된 진짜 SQL
-    본문이 쓰이게 하려는 것이다(0393 의 교훈)."""
+    """The same minimal contract as the preceding two suites. Deliberately omit ``_sql``
+    so the registered real SQL body is used (the lesson from 0393)."""
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -152,7 +153,7 @@ def _commit(repo: Path, message: str) -> str:
 
 @pytest.fixture
 def repo():
-    """저장소 **밖**의 진짜 git 워크트리 (0382 재발 방지 규칙을 스스로 지킨다)."""
+    """A real Git worktree **outside** the repository, following the 0382 recurrence-prevention rule itself."""
     path = _SCRATCH / f"wt-{os.urandom(6).hex()}"
     path.mkdir(parents=True)
     _git(["init", "-b", "work"], path)
@@ -183,7 +184,7 @@ def _ledger_commit(doc_id, sha, subject="s"):
 
 
 def _two_committed_steps(repo):
-    """0009-TR 이 a.py 를, 0011-TR 이 b.py 를 남긴 상태."""
+    """State after the earlier implementation created a.py and the earlier implementation created b.py."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
     _ledger_commit(_TR_A, sha_a, "0009-TR: a")
@@ -193,11 +194,11 @@ def _two_committed_steps(repo):
     return sha_a, sha_b
 
 
-# ── 1. 원장의 되살리기 열 (086) ───────────────────────────────────────────────
+# ── 1. Ledger reapply columns (086) ────────────────────────────────────────
 
 def test_a_reapply_adds_a_new_live_row_and_leaves_the_canceled_one_alone(real_store):
-    """D0005 K5 — 되살림은 취소 행을 되돌려 놓는 것이 아니라 새 행이다. 취소를 지우면
-    되감았다는 사실 자체가 기록에서 사라진다."""
+    """K5: reapplication creates a new row, rather than restoring the canceled row.
+    Erasing cancellation would erase the fact of rewind from history."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
 
@@ -209,19 +210,19 @@ def test_a_reapply_adds_a_new_live_row_and_leaves_the_canceled_one_alone(real_st
     assert new_row["state"] == "live"
     assert new_row["commit_sha"] == "r" * 40
     assert new_row["restored_from_id"] == row["id"]
-    # 취소 행은 글자 하나 안 바뀐다.
+    # The canceled row remains byte-for-byte unchanged.
     old = db_ledger.get_by_id(row["id"])
     assert (old["state"], old["cancel_commit"]) == ("canceled", "c" * 40)
-    # 두 줄 다 남는다 — 지우개가 아니다.
+    # Both rows remain; this is not an eraser.
     assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live", "canceled"]
 
 
 def test_the_reappliable_query_orders_the_peel_the_inverse_of_the_cancel(real_store):
-    """취소는 ``id DESC`` 로 최신 커밋부터 얹었으므로, 마지막에 얹힌 취소 커밋(= 가장
-    작은 id 의 행)이 git 에서 가장 위에 있다. 되살리기는 그것부터 벗겨야 한다."""
+    """Cancellation applied newest commits first with ``id DESC``, so the last cancellation
+    commit (the smallest row ID) sits atop Git history. Reapplication must remove it first."""
     row_a = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     row_b = _ledger_commit(_TR_B, "b" * 40, "0011-TR: b")
-    # 취소가 실제로 도는 순서: B(최신) 먼저, A 나중.
+    # Actual cancellation order: B (newest) first, then A.
     db_ledger.mark_canceled(row_b["id"], cancel_commit="cb" + "0" * 38)
     db_ledger.mark_canceled(row_a["id"], cancel_commit="ca" + "0" * 38)
 
@@ -232,8 +233,8 @@ def test_the_reappliable_query_orders_the_peel_the_inverse_of_the_cancel(real_st
 
 
 def test_a_row_with_a_newer_live_row_is_flagged_not_dropped(real_store):
-    """사람이 손으로 다시 한 단계. 조용히 빼면 화면이 "왜 이 단계만 안 돌아왔지"에
-    답할 말을 잃는다 — 걸러 내되 이유를 달고 돌려준다(L0007 §5)."""
+    """A manually redone step. Silently excluding it leaves the UI unable to explain why it
+    did not return; filter it out but return the reason."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
     _ledger_commit(_TR_A, "n" * 40, "0009-TR: 다시 한 작업")
@@ -254,14 +255,14 @@ def test_newest_live_id_by_doc_names_only_the_freshest_row(real_store):
     assert newest[_TR_A] != stale["id"]
 
 
-# ── 2. 왕복 (T0018 §4 시나리오 A·B) ──────────────────────────────────────────
+# ── 2. Round trip (scenarios A/B) ──────────────────────────────────
 
 @needs_git
 def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
     real_store, git_active, repo,
 ):
-    """되감았다 앞으로 오면 소스가 그대로 돌아와 있어야 한다. 그리고 되돌림을 벗기는
-    순서는 취소가 얹은 순서의 정확한 역순이다."""
+    """Rewinding and then moving forward must restore the source unchanged. Remove reverts
+    in exactly the reverse order from their cancellation application."""
     sha_a, sha_b = _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
     assert not (repo / "a.py").exists() and not (repo / "b.py").exists()
@@ -272,10 +273,10 @@ def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
     assert result["blocked_reason"] is None and result["stopped_reason"] is None
     assert result["skipped"] == []
     assert [line["doc_code"] for line in result["reapplied"]] == ["0009-TR", "0011-TR"]
-    # 소스가 트리에 그대로 돌아왔다 — 이게 K11 이 없어서 안 되던 바로 그 일이다.
+    # Source is restored in the tree: precisely what failed without K11.
     assert (repo / "a.py").read_text(encoding="utf-8") == "a = 1\n"
     assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
-    # 시나리오 B: C1·C2·revert C2·revert C1·reapply C1·reapply C2 (오래된 것부터).
+    # Scenario B: C1·C2·revert C2·revert C1·reapply C1·reapply C2 (oldest first).
     subjects = _git(["log", "-6", "--pretty=%s"], repo).strip().split("\n")
     assert subjects == [
         'Reapply "0011-TR: b"',
@@ -285,13 +286,13 @@ def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
         "0011-TR: b",
         "0009-TR: a",
     ]
-    # 되살림 커밋 본문은 양쪽 끝을 다 지목한다 — 하나의 grep 으로 세 커밋이 꿰인다.
+    # The reapply commit body names both endpoints, linking all three commits with one grep.
     body = _git(["log", "-1", "--pretty=%b"], repo)
-    assert sha_b in body                      # 원본 TR 커밋
+    assert sha_b in body                      # Original TR commit.
     assert f"(group {_GROUP})" in body
     assert "reapply" in body.lower()
-    assert sha_a not in body                  # 남의 단계는 섞이지 않는다
-    # 원장은 취소 2행 + 되살림 live 2행. 아무 줄도 사라지지 않는다.
+    assert sha_a not in body                  # Other steps are not mixed in.
+    # Ledger: two canceled rows plus two live reapply rows. No row disappears.
     rows = db_ledger.list_by_group(_GROUP)
     assert sorted(r["state"] for r in rows) == ["canceled", "canceled", "live", "live"]
     restored = [r for r in rows if r["state"] == "live"]
@@ -302,8 +303,8 @@ def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
 def test_the_strip_marker_comes_back_to_committed_after_a_restore(
     real_store, git_active, repo,
 ):
-    """D0005 §6.1 의 "가장 새 행이 이긴다" 규칙 그대로 표식이 돌아온다. 되살리기용 표식
-    경로를 새로 만들지 않았다는 것을 여기서 고정한다."""
+    """Restore markers through the design's existing newest-row-wins rule.
+    This asserts that no separate reapplication marker path was introduced."""
     _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
     assert trc.slot_commit_states([_TR_A])[_TR_A]["state"] == "canceled"
@@ -312,19 +313,19 @@ def test_the_strip_marker_comes_back_to_committed_after_a_restore(
 
     mark = trc.slot_commit_states([_TR_A])[_TR_A]
     assert mark["state"] == "live"
-    # 처음 승인이 남긴 커밋과 되살린 커밋은 화면에서 구분돼야 한다.
+    # The UI must distinguish initial approval commits from reapplied commits.
     assert mark["restored"] is True
 
 
-# ── 3. 이중 적용 금지 (시나리오 C) ───────────────────────────────────────────
+# ── 3. No double application (scenario C) ──────────────────────────────────
 
 @needs_git
 def test_a_step_redone_by_hand_is_never_double_applied(real_store, git_active, repo):
-    """되돌린 뒤 사람이 그 단계를 다시 작업해 재승인했다. 앞으로 복원이 옛 커밋을 위에
-    다시 얹으면 같은 일이 두 번 적용된다 — 되살리기의 유일한 파괴적 실패 모드다."""
+    """After rewind, a person reworked and reapproved the step. Reapplying the old commit
+    during forward restoration would apply the same work twice, the destructive failure mode."""
     sha_a, _sha_b = _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
-    # 0009-TR 을 손으로 다시 작업해 재승인 — 새 커밋과 새 live 행이 생긴다.
+    # Manually rework and reapprove the earlier implementation, producing a new commit and live row.
     (repo / "a.py").write_text("a = 2   # 다시 한 작업\n", encoding="utf-8")
     redone = _commit(repo, "0009-TR: a (redone)")
     _ledger_commit(_TR_A, redone, "0009-TR: a (redone)")
@@ -336,12 +337,12 @@ def test_a_step_redone_by_hand_is_never_double_applied(real_store, git_active, r
         ("0009-TR", "superseded"),
     ]
     assert [line["doc_code"] for line in result["reapplied"]] == ["0011-TR"]
-    # 다시 한 작업이 그대로다 — 옛 내용이 위에 덮이지 않았다.
+    # Redone work remains unchanged; old content was not overlaid.
     assert (repo / "a.py").read_text(encoding="utf-8") == "a = 2   # 다시 한 작업\n"
     assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
-    # 0011-TR 하나만 새 커밋을 얹었다.
+    # Only the earlier implementation adds a new commit.
     assert _git(["rev-list", "--count", f"{head_before}..HEAD"], repo).strip() == "1"
-    # 재작업 행은 손대지 않았고, 옛 취소 행도 취소인 채다.
+    # The rework row is untouched, and the old canceled row remains canceled.
     assert db_ledger.get_by_id(
         [r for r in db_ledger.list_by_group(_GROUP) if r["commit_sha"] == redone][0]["id"]
     )["restored_from_id"] is None
@@ -349,8 +350,8 @@ def test_a_step_redone_by_hand_is_never_double_applied(real_store, git_active, r
 
 @needs_git
 def test_an_empty_cancel_has_no_commit_to_peel_back_off(real_store, git_active, repo):
-    """빈 되돌림으로 취소된 행에는 되돌릴 취소 커밋이 없다. 조용히 빠지지 않고 이유가
-    붙어 나온다 — ``superseded`` 와 다음 할 일이 다르기 때문이다."""
+    """A row canceled by an empty revert has no cancellation commit to revert. Return it
+    with a reason instead of silently omitting it: the next action differs from ``superseded``."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit=None, reason="empty_revert")
 
@@ -367,7 +368,7 @@ def test_an_empty_cancel_has_no_commit_to_peel_back_off(real_store, git_active, 
 def test_a_restore_run_twice_puts_nothing_back_a_second_time(
     real_store, git_active, repo,
 ):
-    """되살리기가 만든 live 행 자체가 두 번째 실행의 방어다(K6 와 같은 자리)."""
+    """The live row created by reapplication itself prevents a second application (the same role as K6)."""
     _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
     trc.restore_for_return(_GROUP, [_TR_A, _TR_B])
@@ -381,15 +382,15 @@ def test_a_restore_run_twice_puts_nothing_back_a_second_time(
     assert _git(["rev-parse", "HEAD"], repo).strip() == head_after_first
 
 
-# ── 4. 차단과 충돌 (시나리오 D·E) ────────────────────────────────────────────
+# ── 4. Blocking and conflicts (scenarios D/E) ──────────────────────────────
 
 @needs_git
 def test_a_blocked_reapply_leaves_the_rows_canceled_and_says_why(
     real_store, git_active, repo,
 ):
-    """워크트리가 더러우면 아무것도 하지 않는다 — 되살림을 사람의 미커밋 변경과 섞지
-    않으려는 것이고, 취소가 막히는 이유와 같은 자리(G10)다. 문서 복원은 그대로 서고
-    ``retryable=True`` 로 재시도 경로가 열린다."""
+    """Do nothing in a dirty worktree to avoid mixing reapplication with uncommitted human edits.
+    This is the same G10 condition that blocks cancellation. Document restoration stands,
+    and ``retryable=True`` keeps the retry path available."""
     _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
     (repo / "f.txt").write_text("hand edit\n", encoding="utf-8")
@@ -402,7 +403,7 @@ def test_a_blocked_reapply_leaves_the_rows_canceled_and_says_why(
     assert result["retryable"] is True
     assert result["reapplied"] == []
     assert _git(["rev-parse", "HEAD"], repo).strip() == head_before
-    # 원장은 취소인 채다 — 되살렸다고 말하지 않는다.
+    # The ledger remains canceled; it does not claim reapplication.
     assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["canceled", "canceled"]
     state = real_store._fetch_one(
         "SELECT * FROM group_git_state WHERE group_id = ?", [_GROUP]
@@ -414,17 +415,18 @@ def test_a_blocked_reapply_leaves_the_rows_canceled_and_says_why(
 def test_a_reapply_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
     real_store, git_active, repo,
 ):
-    """되살리기 충돌도 막다른 길이 아니다(TR0019).
+    """Reapplication conflicts are not a dead end either.
 
-    T0018 §2-2 는 이 자리를 다음 그룹으로 미뤘었다. 지금은 되돌리기와 **같은 함수**로
-    같은 표에 세션을 남기고, 방향만 ``tr_reapply`` 로 다르다. 멈추는 것, 나머지를
-    ``not_attempted`` 로 두는 것, 같은 요청을 다시 보내는 버튼을 주지 않는 것은 그대로다.
+    deferred this to a later group. Now the **same function** as cancellation
+    stores a session in the same table, with only the direction changed to ``tr_reapply``.
+    Preserve stopping, leaving remaining items ``not_attempted``, and offering no button
+    that merely repeats the same request.
     """
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     row_a = _ledger_commit(_TR_A, sha_a, "0009-TR: A")
     trc.cancel_tr_commits(_GROUP, [_TR_A])
-    # 취소 뒤 같은 줄을 사람이 다시 건드렸다 — 되살림이 여기서 충돌한다.
+    # A person edited the same line after cancellation; reapplication conflicts here.
     (repo / "f.txt").write_text("C\n", encoding="utf-8")
     _commit(repo, "manual fix")
     head_before = _git(["rev-parse", "HEAD"], repo).strip()
@@ -438,14 +440,14 @@ def test_a_reapply_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
         ("0009-TR", "conflict"),
     ]
     assert result["retryable"] is False
-    # 커밋은 없지만 충돌은 살아 있다 — 해결할 것이 남아 있어야 해결할 수 있다.
+    # No commit, but the conflict stays live; resolution requires something left to resolve.
     parked = result["conflict_session"]
     assert parked and parked["kind"] == "tr_reapply"
     assert parked["files"] == ["f.txt"]
     assert _git(["rev-parse", "HEAD"], repo).strip() == head_before
     assert "<<<<<<<" in (repo / "f.txt").read_text(encoding="utf-8")
     assert svc._revert_in_flight(repo) is True
-    # 행은 취소인 채로 남고, 무엇이 실패했는지는 원장에 남는다.
+    # The row remains canceled, and the ledger records what failed.
     after = db_ledger.get_by_id(row_a["id"])
     assert after["state"] == "canceled"
     assert json.loads(after["cancel_attempt_log"])[-1]["reason"] == "revert_conflict"
@@ -453,7 +455,7 @@ def test_a_reapply_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
 
 @needs_git
 def test_a_conflict_leaves_the_older_cancels_untouched(real_store, git_active, repo):
-    """순서 있는 작업이다. 충돌한 되살림 아래의 것을 계속 벗기면 더 세게 충돌한다."""
+    """This is ordered work. Removing items below a conflicting reapplication would worsen conflicts."""
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     _ledger_commit(_TR_A, sha_a, "0009-TR: A")
@@ -461,7 +463,7 @@ def test_a_conflict_leaves_the_older_cancels_untouched(real_store, git_active, r
     sha_b = _commit(repo, "0011-TR: b")
     _ledger_commit(_TR_B, sha_b, "0011-TR: b")
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
-    # 가장 먼저 벗겨질 것은 0009-TR 의 취소다. 그 자리를 사람이 막아 둔다.
+    # The cancellation of the earlier implementation is removed first; a person has obstructed that location.
     (repo / "f.txt").write_text("C\n", encoding="utf-8")
     _commit(repo, "manual fix")
 
@@ -474,8 +476,8 @@ def test_a_conflict_leaves_the_older_cancels_untouched(real_store, git_active, r
 
 
 def test_a_group_with_nothing_canceled_ends_quietly_not_on_an_error(real_store):
-    """되감은 적 없는 그룹을 앞으로 복원해도 git 오류 화면이 뜨면 안 된다 — 게이트보다
-    앞에서 조용히 끝나야 한다(L0007 §4.1 주 1과 같은 이유)."""
+    """Forward restoration of a group never rewound must not show a Git error screen:
+    finish quietly before the gates (same reason as the earlier implementation note 1)."""
     result = trc.restore_for_return(_GROUP, [_TR_A, _TR_B])
 
     assert result == {
@@ -499,8 +501,8 @@ def test_a_group_with_nothing_canceled_ends_quietly_not_on_an_error(real_store):
 def test_the_reapply_reuses_the_cancel_gate_ladder_verbatim(
     real_store, git_active, repo, monkeypatch, state, expect_reason, expect_retryable,
 ):
-    """게이트를 한 벌 더 만들지 않았다는 것이 이 시험의 내용이다. 병합된 그룹은 취소도
-    되살림도 fail-closed 이고(K7-①), 판정표는 ``CANCEL_BLOCK_RETRYABLE`` 하나뿐이다."""
+    """Verify that no duplicate gate set was introduced. Merged groups fail closed for both
+    cancellation and reapplication (K7-①), using the single ``CANCEL_BLOCK_RETRYABLE`` table."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
     monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: state)
@@ -511,12 +513,12 @@ def test_the_reapply_reuses_the_cancel_gate_ladder_verbatim(
     assert result["blocked_reason"] == expect_reason
     assert result["retryable"] is expect_retryable
     assert result["retryable"] is trc.CANCEL_BLOCK_RETRYABLE[expect_reason]
-    # 어떤 게이트도 원장 행을 건드리지 않는다.
+    # No gate modifies ledger rows.
     assert db_ledger.get_by_id(row["id"])["state"] == "canceled"
 
 
 def test_every_reapply_skip_reason_stays_inside_the_closed_set(real_store):
-    """화면이 그릴 문구를 갖고 있지 않은 코드를 만들어 보내면 사유가 빈칸으로 보인다."""
+    """Sending a code without corresponding UI text would display a blank reason."""
     assert set(trc.REAPPLY_SKIP_REASONS) == {
         "superseded", "no_cancel_commit", "empty_revert", "conflict", "not_attempted",
         "compensated",
@@ -527,8 +529,8 @@ def test_every_reapply_skip_reason_stays_inside_the_closed_set(real_store):
 def test_the_lock_is_released_even_when_the_reapply_conflicts(
     real_store, git_active, repo, monkeypatch,
 ):
-    """L0007 §2.1 ③ — 잠금은 재진입이 안 된다. 되살리기가 쥔 채 끝나면 다음 git 작업이
-    5초를 기다린 뒤 조용히 실패한다."""
+    """③: the lock is not reentrant. If reapplication returns holding it,
+    the next Git operation waits five seconds and then silently fails."""
     held: list[str] = []
     stub_group_lock(monkeypatch, held=held)
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
@@ -543,11 +545,10 @@ def test_the_lock_is_released_even_when_the_reapply_conflicts(
     assert held == []
 
 
-# ── 5. 커밋 메시지 (T0018 §3-3) ──────────────────────────────────────────────
+# ── 5. Commit messages ────────────────────────────────────────
 
 def test_the_reapply_subject_names_the_original_tr_not_the_cancel():
-    """``Revert "Revert "0009-TR: ...""`` 는 git 이 알아서 쓰는 문장이고 읽는 사람에게
-    아무것도 말하지 않는다."""
+    """``Revert "Revert "the earlier implementation: ...""`` is Git's automatic wording and tells readers nothing useful."""
     assert svc.reapply_subject("0009-TR: 제목") == 'Reapply "0009-TR: 제목"'
 
 
@@ -563,18 +564,18 @@ def test_a_very_long_subject_is_clipped_inside_the_quotes():
 def test_the_reapply_body_names_both_ends_of_the_round_trip():
     body = svc.reapply_body("c" * 40, "a" * 40, "0009-TR", _GROUP)
 
-    # 첫 줄은 git 자신의 도구가 찾는 형식이고, 실제로 되돌리는 것은 취소 커밋이다.
+    # The first line follows the format Git's own tools recognize; the cancellation commit is what gets reverted.
     assert body.splitlines()[0] == f"This reverts commit {'c' * 40}."
-    # 원본 TR 커밋은 그 아래에 따로 — 어느 해시로 grep 해도 세 커밋이 다 잡힌다.
+    # Name the original TR commit separately below, so grepping either hash finds all three commits.
     assert "a" * 40 in body
     assert f"(group {_GROUP})" in body
 
 
-# ── 6. 라우트와 재시도 (시나리오 D 후반) ─────────────────────────────────────
+# ── 6. Routes and retry (latter part of scenario D) ─────────────────────────
 
 def test_the_restore_route_adds_one_key_and_renames_nothing(real_store, monkeypatch):
-    """P0006 의 원칙 그대로 — 기존 응답 키는 이름도 뜻도 그대로이고 키가 하나 늘 뿐이다.
-    0142·0381 의 단언이 이 위에서 그대로 서야 한다."""
+    """Follow the plan: preserve existing response keys and meanings, adding only one key.
+    The assertions in 0142/0381 must continue to hold."""
     from modules.flow_gate.documents.routers import documents as doc_routes
 
     payload: dict = {"ok": True, "restored": [_TR_A]}
@@ -592,8 +593,8 @@ def test_the_restore_route_adds_one_key_and_renames_nothing(real_store, monkeypa
 def test_a_reapply_that_blows_up_drops_the_key_instead_of_half_filling_it(
     real_store, monkeypatch,
 ):
-    """L0007 §5 — 반쪽짜리 객체는 화면이 "소스가 돌아왔다"고 말하게 만든다. 키를 통째로
-    뺀다. 문서 복원은 그대로 200 이다(D0005 K8)."""
+    """a partial object would make the UI claim source was restored. Omit the key
+    entirely. Document restoration still returns HTTP 200."""
     from modules.flow_gate.documents.routers import documents as doc_routes
 
     def _boom(group_id, doc_ids):
@@ -654,12 +655,12 @@ def test_a_restore_with_nothing_to_put_back_writes_no_audit_row(real_store, monk
 def test_the_reapply_retry_works_after_the_return_point_is_gone(
     real_store, git_active, repo,
 ):
-    """완료된 앞으로 복원은 반환점을 지운다(``return_point_cleared``). 재시도를 반환점에
-    매달았다면 바로 그때 "할 일 없음"이라고 답했을 것이다 — 문서는 앞으로 왔는데 소스는
-    안 왔고 반환점은 사라진, 정확히 답이 필요한 상태에서."""
+    """Completed forward restoration clears the return point (``return_point_cleared``).
+    Tying retry to it would answer that nothing remains exactly when documents have
+    moved forward, source has not, and the return point is gone: the state needing an answer."""
     _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
-    # 반환점 표에는 이 그룹의 줄이 하나도 없다.
+    # The return-point table contains no row for this group.
     assert real_store._fetch_one(
         "SELECT id FROM workflow_return_points WHERE group_id = ?", [_GROUP]
     ) is None
@@ -673,8 +674,7 @@ def test_the_reapply_retry_works_after_the_return_point_is_gone(
 def test_the_reapply_retry_ignores_steps_whose_approval_is_still_revoked(
     real_store, monkeypatch,
 ):
-    """되감긴 채로 남아 있는 단계는 되살릴 대상이 아니다 — 사람이 아직 앞으로 오지
-    않았다는 뜻이다."""
+    """A step still rewound is not a reapplication target: the person has not moved it forward yet."""
     calls: list[list[str]] = []
     monkeypatch.setattr(
         trc, "reapply_tr_commits",
@@ -706,7 +706,7 @@ def test_the_reapply_retry_route_answers_with_the_restore_object(real_store, mon
 
     assert payload["ok"] is True
     assert payload["tr_commit_restore"]["attempted"] is True
-    # 되감기도 앞으로 복원도 아니다 — 문서 상태에는 손대지 않는다.
+    # Neither rewind nor forward restoration: leave document states untouched.
     assert "restored" not in payload
 
 
@@ -736,16 +736,16 @@ def test_a_reapply_retry_that_blows_up_reports_nothing_attempted_not_a_500(
     assert payload == {"ok": True, "tr_commit_restore": trc.empty_restore_result()}
 
 
-# ── 7. 재승인 뒤 남는 옛 live 행 (시나리오 F — T0018 §3-4) ────────────────────
+# ── 7. Old live rows surviving reapproval (scenario F / the earlier implementation) ─────────
 
 def test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval(
     real_store, monkeypatch,
 ):
-    """구멍 7. 되돌리기가 ``dirty_worktree`` 로 막힌 뒤 그 단계를 재승인하면 그 문서에는
-    live 행이 둘이 된다 — 취소하지 못한 옛 행과, 재승인이 방금 만든 새 행. 옛 규칙은
-    "재승인된 문서는 건드리지 마라"를 **문서**에 걸어 둘 다 대상에서 뺐고, 그래서 옛 행은
-    어떤 경로로도 다시 잡히지 않고 영원히 live 로 남았다(스트립은 가장 새 행만 보므로
-    화면에서도 사라지고, 패널 배지 숫자로만 드러난다). 규칙은 **행**에 걸려야 한다."""
+    """Gap 7: reapproving after a ``dirty_worktree`` block leaves two live rows for the document:
+    the old uncanceled row and the new reapproval row. Applying the exclusion rule to
+    the **document** removed both, leaving the old row permanently live and unreachable
+    (hidden from the newest-row strip, visible only in the panel badge count).
+    The rule must apply to individual **rows**."""
     captured: list[dict] = []
     monkeypatch.setattr(
         trc, "cancel_tr_commits",
@@ -772,7 +772,7 @@ def test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval(
             "VALUES(?, ?, ?, 'approved', 'fp')",
             [rp_id, doc_id, seq],
         )
-    # 0009-TR 은 그 사이 다시 승인됐고, 0011-TR 은 아직 되감긴 채다.
+    # has been reapproved, while the earlier implementation remains rewound.
     real_store._execute(
         "UPDATE documents SET doc_review_status = 'pending_review' WHERE doc_id = ?",
         [_TR_B],
@@ -780,30 +780,30 @@ def test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval(
 
     trc.cancel_retry(_GROUP)
 
-    # 문서는 둘 다 대상이다 — 재승인됐다고 문서째 빠지지 않는다.
+    # Both documents remain targets; reapproval does not exclude the entire document.
     assert captured[0]["docs"] == sorted([_TR_A, _TR_B])
-    # 빠지는 것은 재승인이 방금 만든 행 하나뿐이다.
+    # Exclude only the row just created by reapproval.
     assert captured[0]["exclude"] == [fresh["id"]]
     assert stale["id"] not in captured[0]["exclude"]
     assert other["id"] not in captured[0]["exclude"]
 
 
 def test_the_freshly_reapproved_commit_is_the_one_row_the_retry_leaves_alone(real_store):
-    """행 단위 제외가 실제로 목록에서 무엇을 빼는지 — 대역 없이 진짜 루프의 입구에서."""
+    """What row-level exclusion actually removes, at the real loop's entry without substitutes."""
     stale = _ledger_commit(_TR_A, "a" * 40, "옛 커밋")
     fresh = _ledger_commit(_TR_A, "n" * 40, "새 커밋")
 
     result = trc.cancel_tr_commits(_GROUP, [_TR_A], exclude_row_ids={fresh["id"]})
 
-    # 게이트까지 가지 못하고 막히든 어떻든, 남은 대상은 옛 행 하나다. git 을 켜지 않은
-    # 상태이므로 여기서는 게이트가 답하고, 그 자체가 "대상이 비지 않았다"는 증거다.
+    # Regardless of blocking before a gate, the old row remains a target. Git is disabled,
+    # so the gate answers here; that alone proves the target set is nonempty.
     assert result["blocked_reason"] is not None
     assert db_ledger.get_by_id(stale["id"])["state"] == "live"
     assert db_ledger.get_by_id(fresh["id"])["state"] == "live"
 
 
 def test_excluding_every_row_ends_quietly_instead_of_opening_a_session(real_store):
-    """재승인이 유일한 행이었다면 취소할 것이 남지 않는다 — 조용히 끝나야 한다."""
+    """If reapproval was the only row, nothing remains to cancel; finish quietly."""
     fresh = _ledger_commit(_TR_A, "n" * 40, "새 커밋")
 
     result = trc.cancel_tr_commits(_GROUP, [_TR_A], exclude_row_ids=[fresh["id"]])
@@ -813,7 +813,7 @@ def test_excluding_every_row_ends_quietly_instead_of_opening_a_session(real_stor
     assert result["canceled"] == [] and result["skipped"] == []
 
 
-# ── 8. 패널이 단추를 그릴 근거 (T0018 §3-5) ──────────────────────────────────
+# ── 8. Evidence for the panel's buttons ─────────────────────────
 
 def test_the_panel_summary_says_whether_anything_can_be_restored(real_store):
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
@@ -825,7 +825,7 @@ def test_the_panel_summary_says_whether_anything_can_be_restored(real_store):
 
 
 def test_a_step_redone_by_hand_stops_offering_the_restore(real_store):
-    """이미 사람이 다시 만든 단계에 "되살리기" 단추를 주면 이중 적용을 권하는 것이다."""
+    """Offering a reapply button for a step already redone by a person would encourage double application."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
     _ledger_commit(_TR_A, "n" * 40, "0009-TR: 다시 한 작업")
@@ -834,7 +834,7 @@ def test_a_step_redone_by_hand_stops_offering_the_restore(real_store):
 
 
 def test_the_summary_carries_the_last_gate_refusal_with_its_verdict(real_store):
-    """재시도 단추를 줄지는 화면이 다시 판단하지 않는다 — 서버의 한 표에서 온다."""
+    """The UI does not independently decide whether to offer retry; it uses one server-side table."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
     db_ledger.record_block(_GROUP, "dirty_worktree", "dirty_worktree")
@@ -856,8 +856,8 @@ def test_a_group_that_never_blocked_carries_no_block_object(real_store):
 
 
 def test_the_empty_summary_answers_the_new_questions_too(real_store):
-    """원장 행이 없는 그룹은 호출자가 EMPTY_SUMMARY 로 채운다. 새 키가 빠져 있으면
-    화면이 undefined 를 참으로 읽을 자리가 생긴다."""
+    """The caller fills groups without ledger rows with EMPTY_SUMMARY. Omitting the new key
+    would leave a place for the UI to interpret undefined as true."""
     assert trc.EMPTY_SUMMARY["reapply_pending"] is False
     assert trc.EMPTY_SUMMARY["last_block"] is None
     assert set(trc.EMPTY_SUMMARY) == set(trc.group_commit_summary("flowgate.default.9999"))

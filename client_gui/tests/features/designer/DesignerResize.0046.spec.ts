@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0046 — Designer Dock resize (0001-R §2). The left / right Dock widths and the
+ * Designer Dock resize. The left / right Dock widths and the
  * bottom Dock height follow a drag on their line with the Center; the Center takes the rest.
  *
  * The Shell is mounted as in DesignerShell.0025 (real Explorers, real project store, only the

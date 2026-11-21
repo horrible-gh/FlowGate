@@ -5,7 +5,7 @@ import contextlib
 import threading
 from contextvars import ContextVar
 
-# flowgate.v02.0061 T#7 (0017-TR question 439): the span of a person's explicit AI request (the AI invoke start and
+# (TR question 439): the span of a person's explicit AI request (the AI invoke start and
 # [이어서 진행] routes). A review / rework hop requested inside it is the person's explicit review request, which the
 # Graph also takes on an idle run; one requested anywhere else (an AI run's own chain, the card's review stage, a
 # replay) is not. Bound to the request's own thread: never taken by an AI run's worker thread, even one that would
@@ -36,7 +36,7 @@ def call(action, *args, **kwargs):
         # Ordinary v0.1 callers have no Graph execution and retain their behavior.
         if action in ("launch", "finish", "transition") and args and args[0].get("graph_exec_id"):
             raise RuntimeError("Graph execution lifecycle is not registered")
-        # 0066 D#1 §3-6(3): a manual merge fails closed when it cannot ask the Graph.
+        # : a manual merge fails closed when it cannot ask the Graph.
         if action in ("request_write", "working", "validate_write", "loop_state", "prepare_workspace", "admit", "admission", "opening", "can_open", "execution_wire", "manual_git_blocker"):
             raise RuntimeError("Graph execution lifecycle is not registered")
         return None

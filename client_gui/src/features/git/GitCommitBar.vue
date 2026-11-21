@@ -50,14 +50,14 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — the commit line outside the accordion (0066 D#2 §6-3): one-line message,
+// the commit line outside the accordion: one-line message,
 // AI 🤖 draft, `커밋 · M`. Always in the same place, folded list or not. Enter never commits; the
 // commit asks first with the E1 count and sends the index token that dialog showed (§3-3). Both
 // dialogs are bound to the context they were opened in (the snapshot / draft ticket).
 //
 // flowgate.v02.0067 T#2 — the bottom of the `파일 관리` tab (0067-R §4-5): with no Stage, or while the
-// commit cannot run for any reason but an empty message, the message, 🤖 and 커밋 are all disabled;
-// an empty message blocks 커밋 only. No Stage is not worth a line of its own (the button tooltip
+// commit cannot run for any reason but an empty message, the message, 🤖 and "커밋" are all disabled;
+// an empty message blocks "커밋" only. No Stage is not worth a line of its own (the button tooltip
 // still says it); other reasons keep their short line. The shared reasons stay as they are; this
 // area alone lets a commit block (empty message aside) close 🤖 too, with the commit's reason.
 import { computed } from 'vue'

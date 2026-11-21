@@ -75,7 +75,7 @@ router = APIRouter(prefix="/api/v1", tags=["Inbox"])
 
 _CONTENT_MAX_DEFAULT = 10 * 1024 * 1024  # 10 MB
 
-_DRYRUN_MAX_DEFAULT = 5  # max dry-run attempts per token (R0001 dry-run, group 0050)
+_DRYRUN_MAX_DEFAULT = 5  # max dry-run attempts per token (dry-run, the earlier change)
 
 
 def _content_max() -> int:
@@ -154,7 +154,7 @@ def _maybe_dry_run(
     copy = _DRY_RUN_COPY.get(locale) or _DRY_RUN_COPY["ko"]
     cnt = int(token_rec.get("dry_run_count") or 0)
     if cnt >= limit:
-        # P0006 §3.5: limit-exceeded body carries the counters alongside the _fail shape.
+        # limit-exceeded body carries the counters alongside the _fail shape.
         return JSONResponse(status_code=429, content={
             "ok": False,
             "http_status": 429,
@@ -164,7 +164,7 @@ def _maybe_dry_run(
             "dry_run_remaining": 0,
         })
 
-    # The only side effect a dry-run is allowed to have (L0007 §5.1 / DB0008 §3).
+    # The only side effect a dry-run is allowed to have.
     token_service.increment_dry_run(token_rec["token_id"])
     return JSONResponse(status_code=200, content={
         "ok": True,
@@ -529,7 +529,7 @@ def get_editable_group_blob(
         project_id, path, group_id
     )
     if not full_path.is_file():
-        # 0340 T0004 (B0001 / NR0003 §3): a deleted path still exists in the
+        # a deleted path still exists in the
         # branch HEAD tree, so a stale editor tab can ask for it even though the
         # group worktree no longer has bytes. Distinguish that intentional deletion
         # from an unknown path and never fall back to the committed blob.
@@ -568,7 +568,7 @@ def get_editable_group_blob(
         "worktree": True,
     }}
 
-# ── Reversible Git group archive (0339 R0001 / MirageGlass sqyjx6bt v4) ──────
+# ── Reversible Git group archive (MirageGlass sqyjx6bt v4) ──────
 #
 # This router is registered before the legacy Git router.  The compatibility
 # seam below adds the approved seventh finalize result without duplicating the
@@ -585,7 +585,7 @@ class GitArchiveBody(BaseModel):
 
 
 class GitArchiveRestoreBody(BaseModel):
-    # flowgate.v02.0085 T#3 rework: a gate checkpoint of the group (``kind`` gate_checkpoint in the archive list);
+    # a gate checkpoint of the group (``kind`` gate_checkpoint in the archive list);
     # without it the v0.1 group archive restore runs as before.
     archive_id: Optional[str] = None
 
@@ -650,7 +650,7 @@ def _project_git_archives(project_id: str) -> list[dict]:
         enriched.setdefault("kind", "group_archive")
         enriched.setdefault("consumable", True)
         items.append(enriched)
-    # flowgate.v02.0085 T#3 rework (D0007 §7.1): the gate checkpoints - one per confirm round, never consumed - are
+    # the gate checkpoints - one per confirm round, never consumed - are
     # listed beside the group archives and told apart by ``kind`` (``gate_checkpoint``).
     try:
         from flowgate.gate_decisions import checkpoints as gate_checkpoints
@@ -946,7 +946,7 @@ def _archive_preserve_locked(
 
         # ``base_branch`` stays the project base: restore/purge use it to locate
         # the shared base checkout.  The metadata base is the group's recorded
-        # scope floor (0665 T0004, W5) -- measuring against the project base
+        # scope floor -- measuring against the project base
         # counted a non-base work branch's whole history as this group's commits.
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         work_base_ref = None
@@ -1395,10 +1395,10 @@ def _git_finalize_with_archive(
         return outcome
     kwargs: dict = {"approval_context": approval_context}
     if target_branch is not None:
-        # 0594 T0012: the finalize target carrier must survive this seam.
+        # the finalize target carrier must survive this seam.
         kwargs["target_branch"] = target_branch
     if job_holder is not None:
-        # 0669 unit 9a: a manual finalize runs as a base_publish job whose id the attempt
+        # unit 9a: a manual finalize runs as a base_publish job whose id the attempt
         # records as its holder; this wrapper replaces git_service.finalize at startup, so
         # it has to pass the job through (the job calls finalize with ``job_holder``).
         kwargs["job_holder"] = job_holder
@@ -1551,7 +1551,7 @@ def _extract_title_from_content(content: Optional[str]) -> Optional[str]:
     return None
 
 
-# ── Duplicate-body guard (B0106 / NR0003) ──────────────────────────────────────
+# ── Duplicate-body guard ──────────────────────────────────────
 # The investigation proved the server faithfully writes whatever body the submitter
 # sends; the contamination it surfaced — four separate NR documents in different
 # groups all carrying 0082's 5 KB report body, each with its own correct title —
@@ -1660,7 +1660,7 @@ def _submission_text(doc_path: Optional[str], content: Optional[str]) -> Optiona
         # reach the normalizer, the fingerprints and the writer as the CRLF
         # bytes the caller actually sent. Translating them to LF here (and
         # back on write) is a silent rewrite of a submission nobody asked to
-        # change — T0004 2.1's "already-correct input stays byte-for-byte".
+        # change — the earlier implementation 2.1's "already-correct input stays byte-for-byte".
         with open(doc_path, "r", encoding="utf-8", newline="") as fh:
             return fh.read()
     return content
@@ -1782,8 +1782,8 @@ def _frontmatter_identity_mismatch(
 
     declared_target_id = _present(header.get("target_id"))
     if declared_target_id and expected_target_id and declared_target_id != expected_target_id:
-        # 0226 B0001 / NR0003 §3.1: the mention's §2 header instructs the SHORT form
-        # ("target_id: B0001") while expected_target_id is the canonical id, so an
+        # the mention's header instructs the SHORT form
+        # ("target_id: the regression") while expected_target_id is the canonical id, so an
         # unmanned worker that followed the instruction verbatim was structurally
         # 409'd. Accept the same alternate spellings doc_number already gets.
         expected_code = _doc_id_suffix(expected_target_id)
@@ -1793,7 +1793,7 @@ def _frontmatter_identity_mismatch(
     return "; ".join(mismatches) if mismatches else None
 
 
-# T0004 task 2.3: a partial/unclosed --- frontmatter parse must no longer
+# task 2.3: a partial/unclosed --- frontmatter parse must no longer
 # fail-open as "no identity declared". This runs before the existing
 # identity-mismatch comparison so an ambiguous parse is rejected explicitly.
 _FRONTMATTER_MALFORMED_COPY = {
@@ -1936,9 +1936,9 @@ def _fail(
     return JSONResponse(status_code=status, content=content)
 
 
-# ── Corrupted-body guard + body-fingerprint match (0391 B0001 proposal 3+4, T0005) ──
+# ── Corrupted-body guard + body-fingerprint match (proposal 3+4, the earlier implementation) ──
 # Runs at the real-registration sites (new/edit/review — always *before* the shared
-# dry-run short-circuit, same L0007 rule the other Step-5 guards already follow) so a
+# dry-run short-circuit, same the earlier implementation rule the other Step-5 guards already follow) so a
 # rejection never reserves a doc number, consumes a token, or writes to disk.
 #
 # Two layers over the same text, either can reject:
@@ -1954,7 +1954,7 @@ def _fail(
 # fingerprint mismatch is rejected regardless of force -- the fingerprint comparison
 # always runs first, so force is only ever consulted for text whose fingerprint (if
 # any was supplied) already matched.
-# T0004 task 1-3 / NR0003 finding 2-3: the two notices that used to always go out in
+# task 1-3 / the review: the two notices that used to always go out in
 # Korean regardless of locale branch, and the Korean field names (see
 # _ENCODING_FIELD_LABELS["ko"] below: body/title-line) inserted verbatim into the
 # response, are split into locale-neutral internal keys.
@@ -1974,7 +1974,7 @@ _ENCODING_GUARD_COPY = {
             "보내세요. 정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 "
             "10자 이상)를 적어 다시 보내세요."
         ),
-        # 0474 T0007 §1.1: review has no force bypass -- this variant drops the
+        # review has no force bypass -- this variant drops the
         # force_encoding_reason escape hatch entirely instead of describing one that
         # no longer works.
         "corrupted_no_force": (
@@ -2105,7 +2105,7 @@ def _encoding_guard(
 
     # Fingerprint mismatches are rejected above unconditionally -- force only ever
     # reaches a corruption signal on text whose fingerprint (if any) already matched.
-    # 0474 T0007 §1.1: allow_force_bypass=False (review) skips this escape hatch
+    # allow_force_bypass=False (review) skips this escape hatch
     # entirely -- corruption always falls through to the loop below regardless of
     # force_encoding_reason's length or content.
     reason = (force_encoding_reason or "").strip()
@@ -2228,7 +2228,7 @@ def _encoding_validation_result(
     }
 
 
-# T0004 task 4-5 / NR0003 finding 4-5: the unbranched-Korean workflow-head-type-mismatch
+# task 4-5 / the review: the unbranched-Korean workflow-head-type-mismatch
 # 409 and the TR scope rejection notice's empty-value fallback.
 _WORKFLOW_HEAD_MISMATCH_COPY = {
     "ko": (
@@ -2248,7 +2248,7 @@ _WORKFLOW_HEAD_MISMATCH_COPY = {
     ),
 }
 
-# 0441 T0004 item 3 (NR0003 §2): refusal copy for a manual action:new submission of a
+# refusal copy for a manual action:new submission of a
 # type the SERVER assembles. head==submitted passed the Step 5.8 guard unchallenged, so
 # this is its own check with its own sentence — the worker has to be told the run assembles
 # the report, not that it picked the wrong type.
@@ -2341,7 +2341,7 @@ def _design_template_submission_error(
 
 
 _TR_SCOPE_META_MAX_PATHS = 50
-# 0493 T0005: the file-level manifest is the reviewer's SSOT for actual-vs-reported
+# the file-level manifest is the reviewer's SSOT for actual-vs-reported
 # status, so it is NOT sliced to the 50-item UI limit above — that limit exists for
 # display honesty ("n items" with a true count), not for the data a reviewer/verifier
 # consumes. This is a safety ceiling against a pathological group, not a display cap.
@@ -2376,7 +2376,7 @@ def _tr_scope_meta(result: dict) -> dict:
         "codes": result.get("codes") or [],
         "branch": result.get("branch"),
         "scope_reason": result.get("scope_reason"),
-        # 0110 T#2: the measurement basis travels with the verdict to the reviewer prompt.
+        # the measurement basis travels with the verdict to the reviewer prompt.
         "scope_source": result.get("scope_source"),
         "attempt_id": result.get("attempt_id"),
         "input_commit": result.get("input_commit"),
@@ -2466,16 +2466,16 @@ def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONR
 def _conversation_full_body_edit_fail(doc: Optional[dict]) -> Optional[JSONResponse]:
     """Return a 409 _fail when doc is an already-migrated conversation (CH), else None.
 
-    0344 TR0008 후속. 대화의 정본은 ``conversation_turns`` 표로 옮겨졌는데(0432.0003-NR §3)
-    본문을 통째로 덮어쓰는 옛 인박스 edit 경로가 남아 있었다. 0344.0008-TR 이 그 마무리를
-    시도했다가 "신고한 파일과 실제 변경 파일 불일치"로 반려된 뒤 후속이 없어 방치돼 있었다
-    (NR §4·§7-1). 판정과 문구는 0344.0005-L §2-16 원문 그대로이고, 봉투는 이 계열의 현행
-    워커 봉투(``_fail``)다 — 0344.0004-P §0-5 가 계열별 현행 형식을 그대로 쓰라고 못박았다.
+    0344 TR0008 follow-up. Conversations moved to the authoritative ``conversation_turns`` table (0432.0003-NR §3),
+    but the obsolete inbox edit path could still replace the entire body. 0344.0008-TR attempted to finish this,
+    but was rejected because reported and actually changed files differed, with no subsequent follow-up
+    (NR §4·§7-1). The decision and wording follow 0344.0005-L §2-16 exactly, using this API family's existing
+    worker envelope (``_fail``), as explicitly required for each API family by 0344.0004-P §0-5.
 
-    이관되지 않은 대화(``pending`` / ``in_progress`` / ``failed``)에는 걸지 않는다: 아직
-    파일이 정본이다. 판정은 읽기만 하므로 ``dry_run`` 으로 물어도 같은 409 가 나온다.
+    Do not apply this to unmigrated conversations (``pending`` / ``in_progress`` / ``failed``): their
+    file remains authoritative. The check is read-only, so ``dry_run`` returns the same 409.
     """
-    # 3953행의 기존 지연 import 와 같은 방식 — 라우터 임포트 시점의 순환을 피한다.
+    # Like the existing deferred import at line 3953, avoid circular imports while loading the router.
     from modules.flow_gate.services import conversation_turn_service
 
     doc_id = str((doc or {}).get("doc_id") or "")
@@ -2687,7 +2687,7 @@ async def _inbox_dispatch(request: Request, seen: dict):
     action = body.get("action", "")
     # "test_run" was dispatched below but missing from this allowlist, so the inbox
     # rejected every action:test_run POST with 400 before reaching _handle_test_run
-    # (group 0150 NR0003 §4 — the chain entrance was dead code).
+    # (the chain entrance was dead code).
     if action not in ("new", "edit", "review", "test_run", "failure_origin_review"):
         return _fail(400, "action must be new, edit, review, test_run, or failure_origin_review")
 
@@ -2715,11 +2715,11 @@ def _in_write_session(handler, request: Request, raw: str, body: dict) -> JSONRe
         return handler(request, raw, body)
 
 
-# ── Step 3: the one context-binding check (0492 T0018 item 2 / L0010 §2.3) ──────────
+# ── Step 3: the one context-binding check ──────────
 #
 # The four handlers each carried their own two-or-three `token_rec[...] != ...` comparisons,
 # in three different orders, and NONE of them compared the group. So a rejection could only
-# ever be read as "some 403 happened here" — NR0013 had to reason from source order to say
+# ever be read as "some 403 happened here" — the review had to reason from source order to say
 # which axis fired. They all call this now: the same four axes in the same fixed order
 # (action, project, group, doc), the same 403 body with the axis named in it, and one row
 # per rejection in the run's telemetry.
@@ -2777,7 +2777,7 @@ def _check_context_binding(
         api_run_bound=bool((token_rec.get("ai_run_id") or "").strip()),
     )
 
-    # L0010 §5: a `new` whose predecessor belongs to a different group is a group fault, and
+    # a `new` whose predecessor belongs to a different group is a group fault, and
     # it has to be caught here — before Step 5 would happily number a document into the group
     # the request named.
     if action_handler == "new" and "group" not in axes:
@@ -2881,7 +2881,7 @@ def _handle_failure_origin_review(
     if run.get("failure_origin") is not None:
         return _fail(409, "failure_origin_already_classified")
 
-    # 0582 T0007: classifier provenance comes only from the verified token-bound run.
+    # classifier provenance comes only from the verified token-bound run.
     # Keep the actor in failure_origin_reviewer_id and persist this independent provider
     # snapshot in the same UPDATE as the classification.
     from modules.flow_gate.services.ai_invoke.provenance import (
@@ -2943,7 +2943,7 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
         return binding_failure
     # Same semantics as the UI routes (is_admin bypass OR RBAC): a raw has_permission
     # here re-created the 0086 trap — live RBAC tables are unpopulated, so the admin
-    # issuer's chain token 403'd at the very entrance it was minted for (group 0150).
+    # issuer's chain token 403'd at the very entrance it was minted for (the earlier change).
     if not test_run_service.token_can_run_tests(token_rec["issued_to"], project):
         return _permission_denied("Permission denied: perm_test_run required")
 
@@ -2951,7 +2951,6 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
-    # T0004 §10 (flowgate.default.0520 NR0003 rework, flowgate.default.0621 NR0003/T0004):
     # the worker-token test_run path is the continuous-chain hand-off itself (see the
     # continuation_target_seq branch below), so it must resolve locale with the same
     # priority as every other continuation-token consumer (test_run_routes.py's
@@ -3007,7 +3006,7 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     )
     if is_chain:
         _park_chain_on_test_gate(token_rec, str(doc_id), result.get("run_id"), chain_context)
-    # Unmanned-chain hand-off (group 0150): a continuation-carrying test_run token was
+    # Unmanned-chain hand-off (the earlier change): a continuation-carrying test_run token was
     # minted by advance_workflow's TSR-head wiring, not the manned test-run-request path.
     # The run is async, so no next token can ride on this 202 — the worker's part of the
     # chain ends at this POST. Server side takes over: all-green auto-assembles the TSR
@@ -3098,7 +3097,7 @@ def _handle_spec_test_results(
             result.update({"continuation": True, "continuation_async": True,
                            "continuation_target_seq": token_rec.get("continuation_target_seq")})
             if result.get("finished"):
-                # 0684 T#1: the approval's run already passed the gate before this chain
+                # the approval's run already passed the gate before this chain
                 # token existed; with the token consumed the chain moves on now.
                 outcome = test_run_service.continue_attached_chain(
                     db_docs.get_by_id(doc_id) or doc, result.get("tsr_doc_id"),
@@ -3409,14 +3408,14 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     findings = body.get("findings", [])
     comment = body.get("comment")
 
-    # 0393 T0005 §2-7: a verdict may now arrive as a FILE. The overall comment is long
+    # a verdict may now arrive as a FILE. The overall comment is long
     # Korean prose, and squeezing it through a command line is how it gets mangled into the
     # ???? the encoding guard then rejects. Document registration has had `doc_path` since
     # D020 §7-5; review is the last submission that did not.
     #
     # Deliberate scope note: only the doc_path × content pair is exclusive. Sending NEITHER
     # stays legal and keeps meaning "the verdict is inline in this request" — that is the
-    # shape the [Copy Mention] review path uses, and T0005 §1 puts it out of bounds
+    # shape the [Copy Mention] review path uses, and the earlier implementation puts it out of bounds
     # (it is still correct today, leave it alone).
     # A request with neither a source nor an inline verdict still fails, on the verdict
     # check below.
@@ -3446,11 +3445,11 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
 
     # ── Step 3: Context binding (action, project, group, doc — in that order) ──
     # The scope guard is what stops an "edit" token from being replayed as a review (and,
-    # conversely, a review token from editing) — B0057.0001/NR0057.0003. It is the `action`
+    # conversely, a review token from editing) — the regression.0001/the review.0003. It is the `action`
     # axis of the shared check now, so it reads the same here as in the other three.
     #
-    # The old third line let ANY token through on an empty doc_ref. 0492 T0018 item 2 /
-    # L0010 §2.3 narrows that waiver to a human legacy token — one whose row names no AI run
+    # The old third line let ANY token through on an empty doc_ref. the earlier implementation /
+    # narrows that waiver to a human legacy token — one whose row names no AI run
     # and no provider — and writes an audit line when it is used. A provider-run review
     # token must now match its document exactly.
     binding_failure = _check_context_binding(
@@ -3460,7 +3459,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if binding_failure is not None:
         return binding_failure
 
-    # ── Step 3.5: load the verdict from its file / inline blob (0393 T0005 §2-7) ──
+    # ── Step 3.5: load the verdict from its file / inline blob ──
     # Same three failure messages as _handle_new/_handle_edit, and the same two reusable
     # pieces (validate_doc_path + _submission_text) — a second implementation of "is this
     # path inside the scratch dir" is exactly how one of them drifts open.
@@ -3509,15 +3508,15 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if doc is None:
         return _fail(422, f"Referenced document {doc_id} does not exist")
 
-    # Disposed-group guard (TR0079.0003 rework): a review is a forward action on the
+    # Disposed-group guard: a review is a forward action on the
     # target document; reject it when the group has been discarded.
     disposed = _disposed_group_fail(doc.get("group_id"), "Review")
     if disposed is not None:
         return disposed
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
-    # (0391 B0001 proposal 3+4, T0005 §5-3/§6) ──
-    # T0004 task 2: unlike new/edit, the review path had no locale variable — normalize
+    # (proposal 3+4, the earlier implementation) ──
+    # task 2: unlike new/edit, the review path had no locale variable — normalize
     # it with the same rule after token verification (Step 2) and pass it through.
     _locale = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale")
@@ -3539,17 +3538,17 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         force_encoding_reason=body.get("force_encoding_reason"),
         locale=_locale,
         fingerprint_bypasses_corruption=False,
-        # 0474 T0007 §1.1 (NR0006 §2/§13.1): review is the one path where an AI-authored
+        # review is the one path where an AI-authored
         # force_encoding_reason can never bypass a real corruption signal.
         allow_force_bypass=False,
-        # flowgate.v02gui.0009: review fields are JSON values, not a body file, so they
+        # review fields are JSON values, not a body file, so they
         # carry no probe; with no escape hatch the legacy rule alone stays in force.
         hard_signals=False,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
 
-    # ── Step 5.95: provider provenance (0535 T0007 §2/§3.4) ──
+    # ── Step 5.95: provider provenance ──
     # The token binds this submission to a live run. Provider evidence is server-owned;
     # model payload and mutable project settings never participate. Computed BEFORE the
     # dry-run gate so a dry-run performs exactly the server-side resolution a real
@@ -3587,7 +3586,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
             force_encoding_reason=body.get("force_encoding_reason"),
             fingerprint_bypasses_corruption=False,
         )
-        # 0474 T0007 §1.3: second, independent fail-closed layer. Step 5.9 above
+        # second, independent fail-closed layer. Step 5.9 above
         # (§1.1, allow_force_bypass=False) already rejects a corrupted review before
         # this point is ever reached, but this refuses to mint a receipt on the same
         # corruption_detected fact too -- so a future caller of issue() outside this
@@ -3619,7 +3618,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if receipt_reason != "ok":
         return _review_receipt_failure(receipt_reason, _locale)
 
-    # ── Step 5.97: one durable verdict per AI review round (0583 T0004 §4) ──
+    # ── Step 5.97: one durable verdict per AI review round ──
     # The receipt/token CAS below guarantees "one review per TOKEN". That is a
     # different unit from a review ROUND: the document-review loop reissues a token
     # per stage retry, so a second token for the same (run, document, revision) is
@@ -3695,7 +3694,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
             db_reviews.insert_review(
                 doc_id=doc_id,
                 revision_no=revision_no,
-                # flowgate.v02.0119 T#2 (T-1): the reviewer is the AI provider that ran the review (its run's issuer
+                # (T-1): the reviewer is the AI provider that ran the review (its run's issuer
                 # stays the token's ``issued_to``); a review with no provider evidence keeps the issuer as before.
                 reviewer_id=review_provider.get("actual_provider_id") or actor_user_id,
                 verdict=verdict,
@@ -3766,7 +3765,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
                 group_id=group_id_val,
             ))
 
-        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
+        # _push is now synchronous and the *_threadsafe publishers
         # schedule onto the captured main loop themselves, so the old
         # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
         # also unsound from a worker thread: it would have built a NEW loop and
@@ -3842,14 +3841,14 @@ def _normalize_continuation_target(
         return target_seq
 
 
-# ── Continuous-chain stop signalling (0359 L0007 §2.11 / §2.12) ────────────────────────
+# ── Continuous-chain stop signalling ────────────────────────
 #
 # Every stop below used to say WHY in one place only: the HTTP response body, whose only reader
-# is a worker about to exit — which is how NR0003 §4's chains died with the explanation still
+# is a worker about to exit — which is how the review's chains died with the explanation still
 # inside them. The code, the tag on the live run and the human's notification are now stamped
 # by ai_invoke_service.stamp_chain_stop; what stays here is the sentence the worker reads.
 #
-# L0007 §2.12 — the fixed English sentences A~D. These OVERRIDE the mention:
+# the fixed English sentences A~D. These OVERRIDE the mention:
 # the mention still says "do not stop, continue with the enclosed token", and that instruction
 # is only valid when a token was in fact enclosed. When the response says the chain ends here,
 # the response wins — which is the contradiction these sentences exist to settle.
@@ -3928,14 +3927,14 @@ def settle_completed_step(
     flag; by the time the engine gets here the hop that carried it has already finished, so
     it reads the durable paused row instead. The ORDER — pause checked after approval and
     before the next hop — is identical either way, which is the part that matters
-    ("진행 중 단계는 끝까지" includes its approval, P0008 S4/S5).
+    ("finish the in-progress step" includes its approval, P0008 S4/S5).
 
     Returns {"outcome": "completed" | "paused" | "continue" | "stopped", "stop_code", ...}.
     Never raises: the submitted document is already saved, and only the CONTINUATION stops.
     """
     from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
 
-    # 0332: what the approval produced beyond the transition itself. Rides every non-stop
+    # what the approval produced beyond the transition itself. Rides every non-stop
     # return so the inbox can put it on the worker's envelope.
     settled_extra: dict = {}
 
@@ -3946,7 +3945,7 @@ def settle_completed_step(
         # unpopulated on the live system, so permission_service.get_user_permissions
         # returns ∅ for an is_admin approver → this auto-approve ALWAYS paused with "lacks
         # document.approve" even though the human IS an approver. That is the reported
-        # "continuous run stops at the work instruction" bug (group 0086 TR0004 rework).
+        # "continuous run stops at the work instruction" bug.
         # documents.py:create_next_approved warns both approval paths must move together;
         # this is the second path, previously left on the wrong (∅) resolver.
         from modules.flow_gate.db import users as _db_users
@@ -4001,7 +4000,7 @@ def settle_completed_step(
                     "reason": f"auto-approve failed: {exc}",
                     "detail": str(exc),
                 }
-        # 0332 D0005 §2.2 / P0006 §1-7 — the second approval entry point. An unmanned
+        # the second approval entry point. An unmanned
         # chain approves its TR here without ever touching the HTTP approve route, so
         # leaving this line out would mean TR commits exist only for hand-clicked
         # approvals — i.e. never, on the path this product actually runs. Same hook,
@@ -4009,7 +4008,7 @@ def settle_completed_step(
         tr_commit_result = tr_commit_service.on_document_approved(doc_id)
         if tr_commit_result is not None:
             settled_extra["tr_commit"] = tr_commit_result
-            # P0006 §1-7: an unmanned chain has no response a person reads — the screen
+            # an unmanned chain has no response a person reads — the screen
             # only learns through SSE. There was no approval event at this spot before,
             # so the new event is emitted **only for a TR approval** rather than for every
             # type: the SSE flow of a non-TR document is unchanged to the letter. A
@@ -4055,7 +4054,7 @@ def settle_completed_step(
                 "detail": history_state,
             }
 
-    # 0415 T0007 task 2: a run-to-end target is re-checked against the CURRENT sequence
+    # task 2: a run-to-end target is re-checked against the CURRENT sequence
     # right here, at the hop's own issuance/settlement point — not the number resolved
     # (possibly hops ago) when this call's target_seq argument was put together. Both
     # callers (the inbox's direct settle and review._settle_gate_pass's gated settle)
@@ -4077,10 +4076,10 @@ def settle_completed_step(
 
     # Target reached → stop the chain. Reached only AFTER the just-submitted document was
     # auto-approved above, so the last step ends approved (point 2), not left submitted.
-    # 0414 L0008 §2.7: and since a `pass` verdict is what brings the engine here, the LAST
+    # and since a `pass` verdict is what brings the engine here, the LAST
     # step of a reviewed chain is reviewed too — the order is review, approve, finish.
     if completed_seq is not None and target_seq is not None and completed_seq >= target_seq:
-        # 0252 L0009 §3: a pause that never got its boundary (the target landed first)
+        # a pause that never got its boundary (the target landed first)
         # must not survive chain termination — a leftover row would revive a ghost
         # "paused" card on the next miniplayer bootstrap. Best-effort, like the signal.
         try:
@@ -4090,8 +4089,8 @@ def settle_completed_step(
         except Exception:
             import LogAssist.log as logger
             logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
-        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
-        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
+        # R0001 group 0125 / NR0003 recommendation  1: record the explicit "연속작업 종료" signal that the
+        # system previously lacked entirely. State-board aggregation only —
         # never a notification-feed event. Best-effort: a logging failure must not turn the
         # already-saved continuous run's clean stop into an error.
         try:
@@ -4114,10 +4113,10 @@ def settle_completed_step(
             )
         return {"outcome": "completed", "stop_code": "chain_completed", **settled_extra}
 
-    # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
+    # Boundary pause check: evaluated once, right before the next
     # token would be minted, and BEFORE the advance-blocked pause so a user pause is never
     # mis-reported as a generic block. The row is NOT deleted here; the resume path consumes
-    # it (L0009 §2.4). Fail-open on a lookup error: a pause probe must never stall a healthy
+    # it. Fail-open on a lookup error: a pause probe must never stall a healthy
     # unmanned chain with a 500.
     try:
         _user_paused = bool(user_paused_probe())
@@ -4174,7 +4173,7 @@ def _continuation_self_chain(
 
     review_mode = bool(token_rec.get("continuation_review_mode"))
     instruction_mode = token_rec.get("continuation_instruction_mode")
-    # 0352 T0004 §3.4: db/tokens.py decodes this back to a list on every read, so the
+    # db/tokens.py decodes this back to a list on every read, so the
     # consumed token record already carries a plain list (possibly empty) here.
     auto_approve_item_seqs = token_rec.get("continuation_auto_approve_item_seqs") or []
     spine_doc_ref = token_rec.get("doc_ref")
@@ -4205,7 +4204,7 @@ def _continuation_self_chain(
             detail=detail,
         )
 
-    # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (group 0086 TR0004 rework
+    # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (the earlier implementation rework
     # rev4: review mode = not go yet, it is pre-flight question-registration time). It must
     # NOT auto-approve or advance:
     # the worker registers clarifying Qs (or a "no blockers, confirm to proceed" Q) and the run
@@ -4224,7 +4223,7 @@ def _continuation_self_chain(
     completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
     completed_seq = completed_item.get("item_seq") if completed_item else None
 
-    # 0415 T0007 task 1/4: a consumed token always stores a concrete resolved number —
+    # task 1/4: a consumed token always stores a concrete resolved number —
     # never a "this was run-to-end" fact — so that fact is asked from the still-live engine
     # run for this hop instead (a copy-mention chain has no such run and keeps the token's
     # own frozen target unchanged, exactly as before). Task 2's lazy re-check: re-resolve
@@ -4254,7 +4253,7 @@ def _continuation_self_chain(
     )
     envelope["continuation_target_seq"] = target_seq
 
-    # 0226 B0001 / NR0003 §1.2 (§5-3): a submission that did NOT fill the current head
+    # : a submission that did NOT fill the current head
     # slot (e.g. a doc_type differing from the head) proves no progress toward the
     # target — the old flow skipped the target-reached check below entirely and
     # advanced anyway, minting another token every hop past the target (the actual
@@ -4269,7 +4268,7 @@ def _continuation_self_chain(
         )
         return _stop("head_slot_mismatch")
 
-    # 0317 TR0011 (Q153 opt-1): HOW the chain continues depends on who drives it.
+    # (Q153 opt-1): HOW the chain continues depends on who drives it.
     #  • Engine-driven unmanned run (a live start_run worker exists for this group): do NOT
     #    hand the next token to the running worker — that single provider process would write
     #    every remaining hop, pinning the whole chain to hop-1's provider (the exact rejection:
@@ -4290,12 +4289,12 @@ def _continuation_self_chain(
         # Snapshot the current hop before queueing the next one. The worker will emit its
         # ordinary ai_invoke_finished event before the replacement worker can start, so the
         # browser needs this explicit handoff marker to keep the chain-level monitor live
-        # across that intentional run-id boundary (0345 B0001).
+        # across that intentional run-id boundary.
         _handoff_status = _ai_invoke.get_active_status(chain_group)
         _ai_invoke.request_auto_resume(chain_group, {
             "doc_ref": spine_doc_ref,
             "target_seq": target_seq,
-            # 0415 T0007 finding: the ORIGINAL gap. Without this key, _spawn_auto_resume's
+            # finding: the ORIGINAL gap. Without this key, _spawn_auto_resume's
             # `to_end = bool(pending.get("to_end") or pending.get("target_seq") is None)`
             # is always False on this — the ordinary, most common — hop-to-hop path, since
             # target_seq above is always a concrete number by this point. Carrying the flag
@@ -4305,7 +4304,7 @@ def _continuation_self_chain(
             "to_end": to_end,
             "review_mode": review_mode,
             "instruction_mode": instruction_mode,
-            # 0352 T0004 §3.4/§3.5: carry the selection forward the same way instruction_mode
+            # carry the selection forward the same way instruction_mode
             # already does, so a re-spawned hop (_spawn_auto_resume) re-applies it.
             "auto_approve_item_seqs": auto_approve_item_seqs,
             "locale": (
@@ -4320,7 +4319,7 @@ def _continuation_self_chain(
         # worker (re-resolving its provider) once this one settles.
         envelope["continuation_pending"] = True
         envelope["continuation_respawn"] = True
-        # L0007 §2.12: the next hop is BY DEFINITION the slot after the one just filled, so
+        # the next hop is BY DEFINITION the slot after the one just filled, so
         # this is stated rather than re-queried — the worker reads where the chain went from
         # the response alone instead of inferring it from the mention. Under the review gate
         # that is not true yet: the next hop reviews the slot just filled, and the chain only
@@ -4382,13 +4381,13 @@ def _continuation_self_chain(
     # immediately before the auto-approve. All four conditions must hold:
     #   1. review mode is off. It already returned review_hold above, and it WINS: review
     #      mode means "not go yet", and there is nothing to gate while the chain is not
-    #      allowed to advance at all (L0008 §4.3). The two maps still reach the paused row,
+    #      allowed to advance at all. The two maps still reach the paused row,
     #      so turning review mode off and resuming starts reviewing.
     #   2. the filled slot is known (head_slot_mismatch already returned above).
     #   3. an engine run drives this group — somebody has to launch the review hop. A
     #      copy-mention semi-manned chain has nobody, so it keeps today's behaviour instead
     #      of silently deciding to review and then never reviewing.
-    #   4. this slot's review count is not 0 -- or (0688 T#2) the hop submitting it still has
+    #   4. this slot's review count is not 0 -- or the hop submitting it still has
     #      a question of its own open: a document resting on an unanswered assumption is not
     #      approved on submission. The engine holds the chain on that question and, after
     #      the answer, its gate approves the document or holds it for a human.
@@ -4407,7 +4406,7 @@ def _continuation_self_chain(
         return _hand_off_to_engine(review_pending=True)
 
     # Auto-approve the just-submitted document so the head can advance, then the
-    # target-reached check, then the boundary pause — one extracted helper now (L0008 §2.7),
+    # target-reached check, then the boundary pause — one extracted helper now,
     # so a step that got here through a `pass` verdict and a step that was never reviewed at
     # all are settled by exactly the same code.
     settled = settle_completed_step(
@@ -4422,11 +4421,11 @@ def _continuation_self_chain(
         user_paused_probe=lambda: bool(
             chain_group and _ai_invoke.mark_user_paused(chain_group, token_rec.get("ai_run_id"))
         ),
-        # 0430 T0009 task 4: the chain's own language, for the approval-failure sentence
+        # task 4: the chain's own language, for the approval-failure sentence
         # this worker reads back in continuation_reason.
         locale=token_rec.get("continuation_locale"),
     )
-    # 0332 P0006 §1-7: a TR approved on the unmanned path reports its commit to the worker
+    # a TR approved on the unmanned path reports its commit to the worker
     # too, on every outcome that got as far as approving.
     if settled.get("tr_commit") is not None:
         envelope["tr_commit"] = settled["tr_commit"]
@@ -4447,10 +4446,10 @@ def _continuation_self_chain(
         return _hand_off_to_engine(review_pending=False)
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
-    # next step keeps its review latitude — R0001 [AI Review Mode] stays on for the whole run).
+    # next step keeps its review latitude — the requirement [AI Review Mode] stays on for the whole run).
     from modules.flow_gate.services import workflow_decision_service
     api_base_url = _inbox_api_base(request)
-    # Prefer the locale persisted on the continuation token (group 0099 B0001): the unmanned
+    # Prefer the locale persisted on the continuation token: the unmanned
     # AI worker's inbox POST carries no x-locale header, so relying on the header alone always
     # folded to 'ko' and discarded the dialog-chosen locale on every hop. Legacy tokens
     # (NULL continuation_locale) fall back to the header / 'ko' — prior behavior preserved.
@@ -4581,14 +4580,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     content: Optional[str] = body.get("content")
     related_doc_ids = body.get("related_doc_ids")
     title_override: Optional[str] = body.get("title")
-    # Commit-message draft (flowgate.default.0173 P0003 §1): only meaningful for TR;
+    # Commit-message draft: only meaningful for TR;
     # ignored for other doc types (forward-compat with old instructions). Normalized
     # here; length is validated in Step 5 (before the dry-run short-circuit).
     commit_message_draft: Optional[str] = None
     if doc_type.upper() == "TR":
         commit_message_draft = re.sub(r"\s+", " ", str(body.get("commit_message") or "")).strip() or None
 
-    # NOTE (group 0022 §7.4): the Q document path is retired. Q is an inactive doc type
+    # NOTE: the Q document path is retired. Q is an inactive doc type
     # (migration 040) so _is_valid_doc_type blocks new Q docs at Step 5; AI queries are now
     # registered as document-bound data (POST /q/{doc_id}/questions), not Q documents.
 
@@ -4608,7 +4607,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if binding_failure is not None:
         return binding_failure
 
-    # 0145 T#1: old mapped new tokens must be reissued, never silently converted to edits.
+    # old mapped new tokens must be reissued, never silently converted to edits.
     from modules.flow_gate.graph_workflow.services import result_slot_binding
     from flowgate.card_document_edit.errors import GraphApiError
     from flowgate.card_document_edit import agent_errors
@@ -4635,12 +4634,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if group is None:
         return _fail(422, f"Group not found: {group_name}")
 
-    # Disposed-group guard (TR0079.0003 rework): no new documents in a discarded group.
+    # Disposed-group guard: no new documents in a discarded group.
     disposed = _disposed_group_fail(group["group_id"], "Creation")
     if disposed is not None:
         return disposed
 
-    # v02gui.0012 (0001-B item B): from here on the module is the group row's module, not the
+    # v02gui.0012: from here on the module is the group row's module, not the
     # request's value — numbering, the storage path and documents.module must never split one
     # Flow across two module keys (a stale module from before a Group rename included).
     from modules.flow_gate.db import module_identifiers
@@ -4656,7 +4655,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             return _fail(422, f"doc_path file does not exist: {doc_path}")
 
     # ── Step 5.5: Header normalization + frontmatter identity guards ─────────────
-    # T0004 task 2.1/2.2: normalize the raw submission exactly once, right after
+    # task 2.1/2.2: normalize the raw submission exactly once, right after
     # it is read, and use ONLY this normalized string from here through storage —
     # the identity/dup-body/TR-scope/title-extraction checks below, and the save
     # itself, must never diverge from what change_summary later reports.
@@ -4667,7 +4666,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         _raw_submission_text = _submission_text(doc_path, content)
     except OSError as exc:
         return _fail(422, f"doc_path file could not be read: {exc}")
-    # flowgate.v02gui.0009: the body file may end with this token's encoding probe. It
+    # the body file may end with this token's encoding probe. It
     # is split off here, once, so every guard below and the stored document see the
     # body without it; _raw_submission_text (the file as sent) stays the fingerprint
     # basis, and a broken probe is refused at Step 5.9.
@@ -4678,7 +4677,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         body_for_guards, normalizations = _normalize_submission_body(
             _probed_submission_text, where="new"
         )
-    # 0672 T0004 stage 3: TR runs no longer reach Source Bundle (live source + Self-check),
+    # stage 3: TR runs no longer reach Source Bundle (live source + Self-check),
     # so a TR body is never stamped with Bundle provenance; legacy Snapshot provenance stays.
     snapshot_provenance: list[dict] = []
     if doc_type.upper() == "TR" and body_for_guards is not None:
@@ -4715,18 +4714,18 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if design_error is not None:
         return design_error
 
-    # ── Step 5.6: work-plan (WP) body interpretation (P0009 §5, D0007 §2.2) ───────
+    # ── Step 5.6: work-plan (WP) body interpretation ───────
     # When doc_type is WP, the body is not prose but the canonical JSON. It calls the
     # SAME validator as the human path (PUT /documents/{doc_id}/work-plan) — if the two
-    # paths each had their own check, the rules would immediately diverge (D0007 §2.2).
-    # Since inbox only changes the format and reuses the same path as-is (P0009 §5
+    # paths each had their own check, the rules would immediately diverge.
+    # Since inbox only changes the format and reuses the same path as-is (the plan
     # decision 8), token verification, number issuance, and workflow linking all ride
     # the flow below unchanged.
     #
     # Placement matters. It sits *before* the dry-run branch, so the preview and the
     # real registration receive the same verdict, and a rejection happens before
     # numbering/storage, so neither the document number nor the token is consumed
-    # (P0009 §5.2). The title and the linked target take the inbox metadata as
+    #. The title and the linked target take the inbox metadata as
     # canonical (decision 9); writing title or parent_doc_id into the body trips the
     # validator's unknown-field rule and gets rejected — silently ignoring it would let
     # the AI believe the title it wrote was applied.
@@ -4754,7 +4753,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
         try:
-            # 0649 T#1 (NR0003 §5.1): a new body has nothing to compare against, so sent card
+            # a new body has nothing to compare against, so sent card
             # ids are kept and only missing ones are assigned by the server.
             wp_plan = work_plan_service.validate(
                 work_plan_service.assign_card_ids(
@@ -4771,7 +4770,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
 
-    # 0549 T0008: a specification TS (test_contract_version: 2) is validated at submission,
+    # a specification TS (test_contract_version: 2) is validated at submission,
     # before dry-run and numbering, like the WP body above — a malformed spec never gets a
     # document number. A TS without the marker is a legacy executable TS and is untouched.
     if doc_type.upper() == "TS":
@@ -4800,14 +4799,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # *different* group — the submission-layer contamination signature (correct title,
     # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
     # returned before the dry-run short-circuit, exactly like the other Step 5 checks
-    # (L0007: failures never reach the dry-run path). fingerprint is reused at Step 7
+    # (failures never reach the dry-run path). fingerprint is reused at Step 7
     # to persist the body's hash into meta, making the guard effective going forward.
     # Fail-open on any read/lookup error — the guard must never 500 a real submission.
     fingerprints: dict = {}
     try:
         body_for_fp = body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
         fingerprints = _content_fingerprints(body_for_fp)
-        # Work plans are excluded from this guard. P0009 DEFERRED decided "we will not
+        # Work plans are excluded from this guard. the plan DEFERRED decided "we will not
         # build a path that copies a plan over from another group — the [Copy] on the
         # source view plus inbox creation stands in for it instead," so putting the same
         # plan into another group as-is is a **supported use**. Blocking it with the
@@ -4827,13 +4826,13 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real submission
         fingerprints = {}  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
 
-    # Commit-message draft length guard (flowgate.default.0173 P0003 §1-3): a
+    # Commit-message draft length guard: a
     # validation failure, so it returns before the dry-run short-circuit and before
     # any side effect (no document, no token consumed) — exactly like the checks above.
     if commit_message_draft is not None and len(commit_message_draft) > 200:
         return _fail(422, "commit_message must be a single line of at most 200 characters.")
 
-    # ── Step 5.7: TR scope validation (0299 D0004) ─────────────────────────────
+    # ── Step 5.7: TR scope validation ─────────────────────────────
     # TR-only. Cross-checks the body's Changed Files reported-list
     # against the changes the server actually observed in this group's worktree, so
     # work done outside the assigned scope is caught at submission time.
@@ -4841,7 +4840,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # Placement matters. It runs after the whole body has been read (the same material
     # as the Step 5.5 guards), and *before* the dry-run branch. Being before it means
     # dry-run and real registration get the same verdict, and the worker can preview
-    # with dry_run before the real submission (D0004 §3.1). A rejection happens before
+    # with dry_run before the real submission. A rejection happens before
     # numbering/storage/DB, so neither the document number nor the token is consumed.
     #
     # If validation itself fails (an unexpected exception), let the submission through
@@ -4849,10 +4848,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # than the original incident it guards against.
     tr_scope_result: Optional[dict] = None
     worktree_untracked: Optional[dict] = None
-    # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
+    # task 1-5 / the review,4,5: the normalized locale shared from this
     # point through Step 5.9. Priority: the token's continuation_locale (unmanned
-    # worker) > the request's x-locale header > ko (same order as 0355 L0007 §2-1,
-    # same reason as group 0099 B0001).
+    # worker) > the request's x-locale header > ko (same order as the earlier implementation,
+    # same reason as the regression).
     _locale = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale")
     )
@@ -4861,7 +4860,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             scope_body = body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
-            # 0110 T#2: a Graph attempt token is measured on its attempt tree (TRV-006 if
+            # a Graph attempt token is measured on its attempt tree (TRV-006 if
             # unresolvable — never the group worktree); a v0.1 token keeps the group.
             tr_scope_result = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
@@ -4918,13 +4917,13 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             project, group["group_id"]
         )
 
-    # ── Step 5.75: Server-assembled type guard (0441 T0004 item 3) ─────────
+    # ── Step 5.75: Server-assembled type guard ─────────
     # A TSR is built by test_run_service.assemble_tsr() out of a finished run and is
     # registered through document_service directly — it never arrives here. So an
     # action:new submission naming one is, by construction, somebody writing it by hand.
     # Step 5.8 below cannot catch it: it only compares head type against submitted type,
     # and in the reported case both were TSR, so the manual document sailed through and
-    # took the slot the run was going to fill (NR0003 §2). Placed before Step 5.8 and
+    # took the slot the run was going to fill. Placed before Step 5.8 and
     # before every side effect (numbering, storage, the document row), so a refusal —
     # dry-run or real — leaves the group exactly as it was.
     if is_server_assembled_type(doc_type):
@@ -4933,7 +4932,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             _SERVER_ASSEMBLED_NEW_COPY[_locale].format(doc_type=doc_type.upper()),
         )
 
-    # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
+    # ── Step 5.8: Workflow-head type guard ────────────────────
     # Compare before the shared dry-run branch and before numbering/storage so a
     # mismatched preview and real submission fail identically without an orphan doc.
     # Standalone auto-complete types (M/CH) intentionally bypass this workflow-slot
@@ -4941,8 +4940,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # Work plans (WP) are also excluded from this check. A workflow head is a value
     # that pins down "the step document that comes next," which fits a step document,
     # but a work plan is advisory — it can be used at any point in the group and a
-    # group can hold several of them (D0007 §3.1 decision 5). Tying it to the head type
-    # would make the AI-generation path the design chose (P0009 §5.1) 409 every time
+    # group can hold several of them (decision 5). Tying it to the head type
+    # would make the AI-generation path the design chose 409 every time
     # the group is in progress.
     workflow_head: Optional[dict] = None
     if doc_type.upper() not in HEAD_TYPE_GUARD_EXEMPT_TYPES:
@@ -4963,7 +4962,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         submitted_type=submitted_type,
                     ),
                 )
-    # flowgate.v02.0083 T#2: a Graph node's token (mapped to a node open in its Flow's active run) writes the
+    # a Graph node's token (mapped to a node open in its Flow's active run) writes the
     # type the server recorded for it (``worker_step_type_hooks.token_step_type``: the node's card, else the
     # node's own type, as the result binder binds it). A Graph Flow has no v0.1 sequence, so the head check
     # above never sees it; another type is refused the same way, before numbering / storage and for a
@@ -4987,7 +4986,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
-    # (0391 B0001 proposal 3+4, T0005 §5-1/§6) ──
+    # (proposal 3+4, the earlier implementation) ──
     # Before the side effect (document-number reservation), and before the dry-run
     # branch, so a rejection leaves no trace.
     _encoding_fields: dict[str, Optional[str]] = {"body": _probed_submission_text}
@@ -5017,10 +5016,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if _encoding_fail is not None:
         return _encoding_fail
 
-    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
+    # ── Dry-run short-circuit (dry-run, the earlier implementation) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
-    # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
-    # content_size is NOT a check here: _handle_new has no body-size validation (L0007 §1.1).
+    # new is not numbered yet, so doc_id is null and only group_name is echoed.
+    # content_size is NOT a check here: _handle_new has no body-size validation.
     new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
     if workflow_head is not None:
         new_checks.append("workflow_head")
@@ -5045,7 +5044,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "doc_type": doc_type,
         "checks_passed": new_checks,
     }
-    # 0299 D0004 §3.1: dry-run and real registration produce the same verdict. A
+    # dry-run and real registration produce the same verdict. A
     # rejection has already returned above, so what lands here is pass/warn/observe;
     # when there is a warning reason, the verdict content is returned as-is so the
     # worker can fix the list before the real submission.
@@ -5087,16 +5086,16 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             pass  # tr2_service.save writes after workflow slot registration.
         elif wp_plan is not None:
             # The canonical body is written from the standard form the validator
-            # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
+            # returned, not the characters that were sent (decision 3-4).
             # If key order and whitespace wobbled on every save, the diff between
             # revisions would grow bigger than the value that actually changed. Writes
             # to a temp file then swaps it in wholesale, so a half-written canonical
             # body is never left behind.
             work_plan_service.write_body_atomically(stored_path, wp_plan)
-            # flowgate.v02.0157: the `doc_path` source in the token scratch is left in
+            # the `doc_path` source in the token scratch is left in
             # place (see the plain-body branch below).
         else:
-            # T0004 task 2.2: the canonical body is the single normalized string
+            # task 2.2: the canonical body is the single normalized string
             # every guard above already checked — never the pre-normalization
             # bytes, whether they arrived as `content` or as a `doc_path` file.
             # Writing those directly (the previous shutil.move/write_text(content))
@@ -5111,7 +5110,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 stored_path,
                 body_for_guards if body_for_guards is not None else (_probed_submission_text or ""),
             )
-            # flowgate.v02.0157: the `doc_path` source (always inside the token scratch,
+            # the `doc_path` source (always inside the token scratch,
             # validate_doc_path) is no longer unlinked here. It used to go before the DB
             # registration below, so a failed db_docs.create / add_questions rolled back the
             # stored copy too and left neither file. The source now stays in the token
@@ -5133,7 +5132,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     # ── Step 7: DB registration ──────────────────────────────────────────────────────
     now = now_iso()
-    # D022 §2-3: related_doc_ids → meta JSON. B0106: also persist the body fingerprint
+    # D022: related_doc_ids → meta JSON. the regression: also persist the body fingerprint
     # ("content_sha256") so a later cross-group duplicate submission can be detected by
     # find_by_content_fingerprint. Insertion order keeps the value a stable substring
     # ('"content_sha256": "<hash>"') regardless of related_doc_ids, which the LIKE match
@@ -5143,7 +5142,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         meta_payload["related_doc_ids"] = related_doc_ids
     if fingerprints:
         meta_payload.update(fingerprints)
-    # 0299 D0004 §6: a pass/warn verdict is attached to the generated TR document and
+    # a pass/warn verdict is attached to the generated TR document and
     # looked up from the document detail view (a rejection has no document, so it goes
     # to events instead — see Step 5.7). Since this value is listed as-is on screen, the
     # list length is bounded here: putting the full reported/detected lists into meta
@@ -5153,12 +5152,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
     if snapshot_provenance:
         meta_payload["scratch_snapshot_provenance"] = snapshot_provenance
-    # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes
+    # record the corruption/fingerprint bypass reason for audit purposes
     # (no new column/migration).
     _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
     if _force_encoding_reason:
         meta_payload["force_encoding_reason"] = _force_encoding_reason
-    # Authorship-path display (D0007 §3.7 decision 7): the document info panel's
+    # Authorship-path display (decision 7): the document info panel's
     # "Authored via: Human / AI" line reads this value. Human-
     # made and AI-made documents get the same review, but a reviewer must be able to
     # tell them apart. Also records which run made it.
@@ -5169,10 +5168,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "title_locale": wp_title_locale,
         }
     meta_value = json.dumps(meta_payload) if meta_payload else None
-    # NR0003/081: freeze who authored this document at creation time. token_rec.ai_run_id
+    # 081: freeze who authored this document at creation time. token_rec.ai_run_id
     # is only ever set on tokens issued to an AI run (0075) — an unmanned/manual token
     # leaves it unset, so origin_ai_run_id/origin_provider_name stay null rather than
-    # guessing "human" or a provider (TS0010 TC-7).
+    # guessing "human" or a provider.
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
     from modules.flow_gate.storage.files import file_identity, remove_owned_file
@@ -5204,7 +5203,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 # so the row must name the branch directory its file is stored under.
                 **({"branch": branch} if tr2_body is not None else {}),
             })
-            # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
+            # / the design type ①: create document + query together. The AI
             # worker attaches low-confidence points as queries on that document
             # (asker_kind='ai'). On failure, roll back the document and file.
             new_questions = body.get("questions")
@@ -5220,7 +5219,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     document_accompanied=True,
                 )
             if wp_plan is not None:
-                # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+                # persist the exact canonical AI-created bytes as r0 only
                 # after the document row and any attached questions are registered.
                 work_plan_service.ensure_revision_snapshot(
                     created_doc,
@@ -5266,7 +5265,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
         # T823: head-slot registration is best-effort (inside try/except);
         #       doc_review_status transition is mandatory for non-M (outside try/except).
-        # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
+        # /: auto-complete types (M memo, CH conversation) are the
         # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
         # generalize to set membership so CH takes the same non-gate path as M.
         from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
@@ -5284,7 +5283,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
                     # left, head resolution surfaces AC/pending so the final-approval
                     # screen appears; wf_done is set only when AC is approved.
-                    # NR0003: the inbox path previously called mark_sequence_done +
+                    # the inbox path previously called mark_sequence_done +
                     # set the parent R to wf_done here, bypassing the AC gate and the
                     # "all steps approved" guard (a memo as the final slot finalized the
                     # whole workflow without review). Aligned with documents.py:819-827.
@@ -5301,11 +5300,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         except Exception:
             pass
 
-        # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
+        # (L-AUTO): auto-complete types are created already-approved
         # regardless of whether a matching pending head slot existed above. A standalone-
         # opened conversation (CH) has no pre-seeded head, so without this its
         # doc_review_status would leak NULL — violating "approved on creation"
-        # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
+        #. Idempotent for M (already approved above).
         if doc_type.upper() in AUTO_COMPLETE_TYPES:
             try:
                 from modules.flow_gate.db import documents as _db_docs_ac
@@ -5349,7 +5348,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         return registration
     created_doc, tr2_saved = registration
 
-    # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the document to the result binder.
+    # a Graph-owned Flow hands the document to the result binder.
     from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
     _graph_contact.after_inbox_registered(group["group_id"], canonical_doc_id, doc_type, token_rec.get("token_id"))
 
@@ -5360,7 +5359,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         doc_id=canonical_doc_id,
     )
 
-    # 0064 T-B4d (P0006 §4.2.5): the AI's card title candidate, read apart from the document, after the commit and
+    # T-B4d: the AI's card title candidate, read apart from the document, after the commit and
     # the consume. It never changes this response, the document, the token or a review (never raises).
     from modules.flow_gate.services import node_title_hooks
     node_title_hooks.after_registration(group["group_id"], canonical_doc_id, token_rec.get("token_id"), body.get("node_title"),
@@ -5394,7 +5393,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 **base,
             ))
             # M026 Fix-4: SSE broadcast on None → pending_review transition.
-            # L0044.0008 §3.2: auto-complete types (M/CH) never reach pending_review,
+            # : auto-complete types (M/CH) never reach pending_review,
             # so generalize the literal "M" guard to set membership.
             from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
             if (
@@ -5433,7 +5432,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     **base,
                 ))
 
-        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
+        # _push is now synchronous and the *_threadsafe publishers
         # schedule onto the captured main loop themselves, so the old
         # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
         # also unsound from a worker thread: it would have built a NEW loop and
@@ -5453,7 +5452,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     }
     if normalizations:
         resp_content["normalizations"] = normalizations
-    # 0370 set 4 (P0002 scenario 15): counts the just-created file and attaches a change
+    # set 4 (scenario 15): counts the just-created file and attaches a change
     # summary. There is no old version to compare against, so before is null and
     # everything lands as an addition. The summary is not stored anywhere — it only
     # goes out in the response — so no new table or column is needed. Line numbers are
@@ -5469,7 +5468,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         resp_content.update({"doc_type": "TR2", "revision_no": tr2_saved["new_revision"],
                              "body": tr2_saved["body"]})
     elif wp_plan is not None:
-        # A work plan has neither sections nor lines (P0009 §5 decision 10). What an
+        # A work plan has neither sections nor lines (decision 10). What an
         # unmanned worker needs to confirm is not "which section which line landed in"
         # but whether the quantities and assignments it sent were saved as-is, so it
         # distinguishes the format by kind and returns a dedicated summary.
@@ -5490,7 +5489,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if worktree_untracked is not None:
         resp_content["worktree_untracked"] = worktree_untracked
     _record_change_summary(canonical_doc_id, tr2_saved["new_revision"] if tr2_body is not None else 0, resp_content["change_summary"], token_rec.get("issued_to"))
-    # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
+    # Continuous work self-chain (the review option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
     # fails the (already-saved) submission — degrades to a paused envelope on any error.

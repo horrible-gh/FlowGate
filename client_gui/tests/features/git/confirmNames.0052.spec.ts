@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0052 0008 할 일 8 (0001-B 2절, #25): a confirm dialog of the Git panel never has two buttons with
+ * task 8: a confirm dialog of the Git panel never has two buttons with
  * the same name. The left button is the shared `gui.git.confirm.cancel` ([돌아가기]); the right one is named by the card
  * that opened the dialog ([병합 중단], [강제 정리], …). The first test reads every `confirmLabel` the Git part passes and
  * fails as soon as one equals the left button (or a new, unaudited way of passing a label appears).

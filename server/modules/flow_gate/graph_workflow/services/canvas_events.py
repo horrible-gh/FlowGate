@@ -1,7 +1,7 @@
-"""Graph SSE publication (P0008 §8): ``graph_canvas_changed`` and ``flow_ownership_changed``.
+"""Graph SSE publication: ``graph_canvas_changed`` and ``flow_ownership_changed``.
 
 Queued after commit; best-effort delivery (an event is a refresh signal, never the source of
-state). Sent through the existing publisher and stream — no new stream (P0008 §8.1).
+state). Sent through the existing publisher and stream — no new stream.
 """
 from __future__ import annotations
 
@@ -36,9 +36,9 @@ def publish_canvas_changed(
     draft_version: Optional[int] = None,
     revision_no: Optional[int] = None,
 ) -> None:
-    """``reason``: "layout" | "draft" | "revision" | "identity_rematch" (P0008 §8.3) | "hold" (0061 T#11: a card's
+    """``reason``: "layout" | "draft" | "revision" | "identity_rematch" | "hold" (the earlier implementation: a card's
     Hold was set / released, with or without a run; ``node_keys`` names the card),
-    or "documents" when document body facts changed without a draft change, or "title" (0064 T-B4b, P0006 §4.2.4:
+    or "documents" when document body facts changed without a draft change, or "title" (0064 T-B4b, the plan:
     a card's title was saved; ``node_keys`` names that one card)."""
     _queue(FlowEvent(
         event_type=EventType.GRAPH_CANVAS_CHANGED.value,
@@ -69,7 +69,7 @@ def publish_archive_changed(*, project_id: str, flow_id: str, archived: bool, ac
 
 
 def publish_module_archive_changed(*, project_id: str, module: str, archived: bool, actor_user_id: Optional[str]) -> None:
-    """flowgate.v02gui.0027: a Group (module) archive / restore refreshes every open tree of the project.
+    """a Group (module) archive / restore refreshes every open tree of the project.
 
     The same ``group_view_refresh`` stream as the Flow archive, project-wide: no Flow is named
     (``group_id`` None), so per-Flow listeners (inspector, document windows) ignore it."""
@@ -83,7 +83,7 @@ def publish_module_archive_changed(*, project_id: str, module: str, archived: bo
 
 
 def publish_module_deleted(*, project_id: str, module: str, actor_user_id: Optional[str]) -> None:
-    """flowgate.v02gui.0027 (0008-T): an empty Group (module) was deleted; refresh every open tree.
+    """an empty Group (module) was deleted; refresh every open tree.
 
     Same project-wide ``group_view_refresh`` as the Group archive (``group_id`` None)."""
     _queue(FlowEvent(

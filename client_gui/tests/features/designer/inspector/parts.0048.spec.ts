@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — Inspector common display parts (D#1 §2.2 parts): status chip,
+ * Inspector common display parts (parts): status chip,
  * empty / loading / error state with an optional retry, and the reason line.
  */
 import { mount } from '@vue/test-utils'

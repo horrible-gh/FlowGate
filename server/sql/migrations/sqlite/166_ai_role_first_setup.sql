@@ -1,4 +1,4 @@
--- 166_ai_role_first_setup.sql — flowgate.v02.0113 T#2 (0030-M §2, 0002-D 개정 §3.2-A: the first AI setup's bulk apply)
+-- 166_ai_role_first_setup.sql — flowgate.v02.0113 T#2 (0030-M §2, 0002-D revision §3.2-A: the first AI setup's bulk apply)
 -- Additive only. Two things:
 --   graph_node_role_slots.source  admits 'first_setup': a role marker written when the account's first AI setup was
 --                                 saved and applied to every AI-settings card of the Flow it was saved for.

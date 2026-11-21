@@ -1,4 +1,4 @@
-"""Hold (flowgate.v02.0061 T#11, R's Hold, 0002-CH turn 2·3 Q4·Q8, turn 22·28, turn 20).
+"""Hold (R's Hold, the discussion ·3 Q4·Q8, ·28).
 
 A held node is not opened by a Graph run. Hold is a card setting (``graph_node_settings`` field ``hold`` = true,
 ``card_settings``), so it is kept by node key whatever the revision, an idle run (Q4) or a Time Machine leaves it as it
@@ -15,7 +15,7 @@ is: only a person's release clears it.
   is pending again (Stop, Time Machine) it is not opened. Released, the next step / full command's run candidates open
   it (a propagation that opened nothing because of the Hold is done, the candidates need none).
 - ``require_settable`` (inside the Flow guard): a running / paused / stopping run refuses setting and releasing alike
-  (409 ``graph_run_locked``, the T#3 edit lock, WP answer 1); a node done in the Flow's run cannot be held (409
+  (409 ``graph_run_locked``, the the earlier implementation edit lock, WP answer 1); a node done in the Flow's run cannot be held (409
   ``graph_hold_done_node``, Q8). Releasing is never refused on an idle run, and it only changes the setting: nothing
   is opened before the next command (R).
   A root-bound start node is bounded too: held, it does not take its root document's state at the run start (it stays

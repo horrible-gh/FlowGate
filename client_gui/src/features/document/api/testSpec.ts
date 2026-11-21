@@ -1,12 +1,12 @@
-// flowgate.v02.0048 T#3 — skeleton of the testSpec document API (D#1 §6.3). Owned by T#11 (testSpec), which
+// skeleton of the testSpec document API. Owned by the earlier implementation (testSpec), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `testSpec`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   spec       PUT  /api/v1/documents/{doc_id}/test-spec · GET /api/v1/documents/{doc_id}/test-document
 //   run        POST /api/v1/documents/{ts_id}/test-spec/runs · …/cases/{case_id}/run
 //   result     POST /api/v1/documents/test-results · POST /api/v1/documents/test-run/{run_id}/cancel
 //
-// flowgate.v02.0048 T#11 — the Inspector test section's calls, all existing v0.1 endpoints (NR0003 §2.7,
+// the Inspector test section's calls, all existing v0.1 endpoints (the review,
 // `api/v1/test_run_routes.py`, `documents/routers/documents.py`; no new server API):
 //   runs + summary  GET  /api/v1/documents/{doc_id}/test-document -> { ok, kind: TS | TSR, doc_id,
 //                   contract_version, … } (test_run_service.describe_test_document). For a contract-2
@@ -337,7 +337,7 @@ export function testSpecMutationErrorOf(error: unknown, rawSave = false) {
   return { kind, status: parsed.status, code, message: text(body.message) ?? text(data.detail), fieldErrors }
 }
 
-// flowgate.v02.0053 T#4 — the document window's scenario / report views (the v0.1 TestDocumentBody's
+// the document window's scenario / report views (the v0.1 TestDocumentBody's
 // TestSpecPanel and TestReportPanel, read only) need the Cases' written fields and the report rows of the
 // same `/test-document` answer. Same endpoint, same read; TestSpecView is left as it is.
 
@@ -530,7 +530,7 @@ export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePaylo
     ...(item.fields.runCwd ? { run_cwd: item.fields.runCwd } : {}) }
 }
 
-// flowgate.v02.0127 T#5: the v1 TS editing calls (GET/PUT test-brief, PUT test-spec) are gone from the client. The
+// the v1 TS editing calls (GET/PUT test-brief, PUT test-spec) are gone from the client. The
 // structured read and revisions are the card document's /api/v2 test-spec / test-brief routes (cardDocument.ts).
 
 export async function testSpecCaseRun(tsDocId: string, caseId: string): Promise<TestSpecRunAck> {

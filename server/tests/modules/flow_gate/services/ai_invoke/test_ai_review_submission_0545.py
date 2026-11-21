@@ -40,7 +40,7 @@ def test_review_preflight_and_submit_preserve_semantic_payload_and_unicode(monke
         "comment": "검수 완료 日本語 😀",
         "body_sha256": "a" * 64,
         "body_chars": 12,
-        # 0474 T0007 §1.1: force_encoding_reason is no longer in the model's
+        # force_encoding_reason is no longer in the model's
         # allowlisted review fields (_REGISTER_MODEL_FIELDS["review"]) -- a
         # model-authored value here would be silently dropped, not forwarded.
     }
@@ -113,7 +113,7 @@ def test_review_payload_is_not_reassembled_between_requests(monkeypatch, bound):
 
     # `_inbox_register` calls `_svc()._register_envelope(...)`, and `_svc()` resolves
     # to the live `ai_invoke_service` module object (worker.runtime._svc(), 0545
-    # TR0011 review finding). `ai_invoke_service._register_envelope` is a name copied
+    # review finding). `ai_invoke_service._register_envelope` is a name copied
     # in from `facade` via `from .facade import *` at that module's first import, so
     # patching `worker._register_envelope` directly never reaches the call site once
     # any other test in the process has already imported `ai_invoke_service`. Patch

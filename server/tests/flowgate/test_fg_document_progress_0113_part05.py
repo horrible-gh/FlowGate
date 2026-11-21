@@ -152,7 +152,7 @@ def test_a_setup_or_unavailable_instruction_wait_keeps_its_attempt_until_its_rol
 @pytest.mark.parametrize("wait", ["wait_setup", "wait_unavailable"])
 def test_a_wait_reinterpreted_with_its_instruction_written_takes_only_a_report_saved_after_the_instruction(
         env, decided, starts, wait, order):
-    """0045-TR rework: the instruction stage waits for its setup / an unavailable AI (no person's stage takes a save);
+    """the instruction stage waits for its setup / an unavailable AI (no person's stage takes a save);
     the person saves the report and the instruction meanwhile, then the role changes and the next command opens a new
     attempt that finds the instruction written. A report saved before the instruction is carried as the baseline (the
     card waits for a report of after it); a report saved after the instruction is the result."""

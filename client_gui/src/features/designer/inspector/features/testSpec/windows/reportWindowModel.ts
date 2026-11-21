@@ -1,4 +1,4 @@
-// 0071 D0008 §3.6 · §3.7 · §6.8 · §6.9 — the report and follow-up windows' rules. Pure functions over the card
+// · · · — the report and follow-up windows' rules. Pure functions over the card
 // session's view, result rows and presentation; the windows draw them and call session commands only.
 import { testSpecCasePayload, type TestSpecCaseDetail, type TestSpecEvidence, type TestSpecRecordRow, type TestSpecView } from '@/features/document'
 import type { TestCardPresentation } from '../testSpecModel'
@@ -122,7 +122,7 @@ export function reportLegend(items: readonly ReportItem[]): ReportLegend {
   return out
 }
 
-/** Cases whose failure stops the next step (실패 시 = 다음 단계 중단). */
+/** Cases whose failure stops the next step (on failure = stop the next step). */
 export function reportGate(items: readonly ReportItem[]): ReportItem[] {
   return items.filter((item) => item.required && (item.state === 'fail' || item.state === 'blocked'))
 }
@@ -134,7 +134,7 @@ export function reportDefects(items: readonly ReportItem[]): { defects: ReportIt
 }
 
 export type ReportFilter = 'flagged' | 'all'
-/** ⑤ 확인 필요 n / 전체 N (default 확인 필요), ⑥ 확인 내역 n / 전체 N; the other modes list every case. */
+/** ⑤ 확인 필요 n / 전체 N (default 확인 필요), ⑥ check history n / 전체 N; the other modes list every case. */
 export function reportDefaultFilter(mode: ReportMode, items: readonly ReportItem[]): ReportFilter {
   if (mode === 'confirm') return 'flagged'
   return mode === 'complete' && items.some((item) => item.flagged || item.decision) ? 'flagged' : 'all'
@@ -189,7 +189,7 @@ export function reportPrimary(item: ReportItem | null, causeMode: ReportCauseMod
   return aiCause === 'env' ? 'rerun' : 'confirm'
 }
 
-/** 통과 처리 needs its reason (§3.7): the record button stays disabled while it is blank. */
+/** Mark as passed needs its reason (§3.7): the record button stays disabled while it is blank. */
 export const reportReasonReady = (reason: string) => reason.trim().length > 0
 
 export interface ReportKeyFacts {

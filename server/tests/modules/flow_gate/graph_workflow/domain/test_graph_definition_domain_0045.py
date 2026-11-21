@@ -1,7 +1,7 @@
-"""flowgate.v02.0045 T0013 (S3+S4) — pure Graph definition domain.
+"""(S3+S4) — pure Graph definition domain.
 
-P0008 §5.1 / S3-4 (draft request checks), S3-5 (issue table, structure table, order),
-L0009 §2.4 (root binding), §2.5 (validator, SCC, order), §2.7 (layered auto placement).
+S3-4 (draft request checks), S3-5 (issue table, structure table, order),
+(root binding), (validator, SCC, order), (layered auto placement).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def codes(issues):
     return [(i["code"], i["structure"]) for i in issues]
 
 
-# ── draft request (P0008 S3-4) ───────────────────────────────────────────────
+# ── draft request ───────────────────────────────────────────────
 
 def test_s3_4_example_reports_shape_errors_in_request_order():
     req = dr.parse_draft({
@@ -102,7 +102,7 @@ def test_version_and_doc_type_checks():
     assert dr.unknown_doc_types(req, ["D", "R"]) == [{"field": "nodes[0].doc_type", "reason": "invalid_doc_type"}]
 
 
-# ── validator (L0009 §2.5, P0008 S3-5) ───────────────────────────────────────
+# ── validator ───────────────────────────────────────
 
 def test_s3_5_example_order_branch_join_gate():
     g = Graph(
@@ -143,7 +143,7 @@ def test_empty_dangling_duplicate_and_unreachable():
 
 
 def test_cycle_without_start_is_unreachable_and_cycle():
-    """L0009 E-17: every node in a cycle -> unreachable_node each + one cycle issue."""
+    """E-17: every node in a cycle -> unreachable_node each + one cycle issue."""
     g = graph([doc_node("gn_1", "D"), doc_node("gn_2", "T")], [("ge_1", "gn_1", "gn_2"), ("ge_2", "gn_2", "gn_1")])
     issues = validate_graph(g, UNDECIDED)
     assert codes(issues) == [("unreachable_node", None), ("rule_undecided", "cycle"), ("unreachable_node", None)]
@@ -161,7 +161,7 @@ def test_self_loop_report_custom_condition_and_non_palette():
     found = codes(validate_graph(g, UNDECIDED))
     for structure in ("report_pair", "cycle", "edge_condition", "non_palette_doc_type", "branch"):
         assert ("rule_undecided", structure) in found, structure
-    # flowgate.v02.0053 T#8: a Custom card is a plain document card, not an undecided structure
+    # a Custom card is a plain document card, not an undecided structure
     assert ("rule_undecided", "custom_node") not in found
 
 
@@ -194,7 +194,7 @@ def test_policy_slots_are_all_undecided():
         "start_node", "edge_condition", "parallelism", "join", "report_pair", "rejection_path", "completion")}
 
 
-# ── root binding (L0009 §2.4) ────────────────────────────────────────────────
+# ── root binding ────────────────────────────────────────────────
 
 R1 = {"doc_id": "f.0001-R", "type_code": "R"}
 LINEAR = graph([doc_node("gn_r", "R"), doc_node("gn_d", "D")], [("ge_1", "gn_r", "gn_d")])
@@ -230,7 +230,7 @@ def test_binding_graph_cases():
     assert retyped.status == "blocked"
 
 
-# ── layered auto placement (L0009 §2.7) ──────────────────────────────────────
+# ── layered auto placement ──────────────────────────────────────
 
 def test_layered_depth_uses_longest_path_and_survives_cycles():
     assert layered_depths(["a", "b", "c"], [("a", "b"), ("b", "c"), ("a", "c")]) == {"a": 0, "b": 1, "c": 2}

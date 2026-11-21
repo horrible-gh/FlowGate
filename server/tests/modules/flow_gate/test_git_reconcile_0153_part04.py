@@ -201,7 +201,7 @@ def test_C4R_reject_after_the_clean_hand_off_returns_the_same_candidate_to_the_r
     snap = gs._freeze_commit_candidate(r.work, 'main')
     assert (snap['base_head'], snap['merge_head']) == (c, m)
 def test_C5_conflict_markers_arriving_from_the_remote_are_handed_back_not_pushed(env):
-    """Review finding (P1), T0009 §3.3 (c)-2-3: a clean integration whose remote side adds
+    """Review finding (P1), the earlier implementation (c)-2-3: a clean integration whose remote side adds
     a marker block is not integrated, pinned or pushed; origin stays F. The approval
     validator's own exemption (markers inherited from either parent) is unchanged and
     alone would have let it through — the separate check is what catches it."""

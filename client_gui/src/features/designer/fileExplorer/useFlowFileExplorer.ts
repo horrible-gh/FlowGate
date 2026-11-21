@@ -9,7 +9,7 @@ import {
 } from '@/features/project'
 import { toStatusMap, type ChangeState } from './fileExplorerModel'
 
-// flowgate.v02.0024 T0005 — data adapter between the Designer File Explorer and the
+// data adapter between the Designer File Explorer and the
 // features/project store. Nothing here talks to the server directly:
 //   tree      -> loadFlowFileTree     (Flow worktree, untracked included)
 //   Base/slot -> loadProjectGitStatus (project Base branch + writable slot)

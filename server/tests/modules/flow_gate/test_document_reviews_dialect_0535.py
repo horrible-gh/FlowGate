@@ -1,6 +1,6 @@
-"""fallback_used cross-dialect boolean write/read regression (flowgate.default.0535).
+"""fallback_used cross-dialect boolean write/read regression.
 
-T0005 root cause: document_reviews.insert_review() used to coerce its Optional[bool]
+root cause: document_reviews.insert_review used to coerce its Optional[bool]
 fallback_used parameter to a bare Python int before binding it —
 ``None if fallback_used is None else (1 if fallback_used else 0)`` — a conversion
 written for SQLite's ``fallback_used INTEGER CHECK(0,1)`` column. PostgreSQL's
@@ -24,7 +24,7 @@ staging database. An opt-in test against a real PostgreSQL server lives next doo
 test_review_postgres_integration_0535.py, and the atomicity/rollback half of the
 contract is in test_review_atomicity_0535.py.
 
-T0007 additions:
+additions:
   * the backends now open transactions and answer the dialect-translated
     ``last_insert_rowid()`` (PostgreSQL ``lastval()``, MySQL ``LAST_INSERT_ID()``)
     recovery insert_review() uses to identify the row it just wrote;
@@ -86,7 +86,7 @@ class _DialectDB:
 
     def __init__(self):
         self.rows: list[dict] = []
-        # 0583 T0004: the review round claims this backend has taken, keyed the way the
+        # the review round claims this backend has taken, keyed the way the
         # real PRIMARY KEY is. Modelled rather than ignored, so the barrier's INSERT is
         # a statement this backend really answers -- and really refuses twice.
         self.round_claims: set[tuple] = set()
@@ -148,7 +148,7 @@ class _DialectDB:
             self._result = [{"rid": self._last_id}]
             return self
         if "FROM document_reviews WHERE doc_id" in sql and "review_run_id" in sql:
-            # 0583 T0004: the barrier's second read. The claim table is born empty, so
+            # the barrier's second read. The claim table is born empty, so
             # "is this round already registered" is asked of document_reviews too, and
             # this backend has to answer it for the registration to get as far as its
             # INSERT. Insertion order is the ORDER BY (created_at ASC, id ASC).
@@ -222,9 +222,9 @@ class _PgBooleanColumnDB(_DialectDB):
 class _MysqlBooleanColumnDB(_DialectDB):
     """MySQL's BOOLEAN is a TINYINT(1) alias — 0/1 and True/False are both accepted.
 
-    T0005 §8: the same 3-state coverage without the application layer doing its own int
+    the same 3-state coverage without the application layer doing its own int
     coercion. Unlike PostgreSQL this backend never rejects an int, which is exactly the
-    point — MySQL was never broken by the old code; only PostgreSQL was. T0007 §4.1: it
+    point — MySQL was never broken by the old code; only PostgreSQL was. the earlier implementation: it
     also reads the column back the way the driver does, as TINYINT 0/1 rather than as
     the Python bool that went in, so the read side has to normalize a non-bool.
     """
@@ -258,7 +258,7 @@ def mysql_store(monkeypatch):
     return _install(monkeypatch, _MysqlBooleanColumnDB())
 
 
-# ── A. the historical bug, locked in as a regression guard (T0005 §2, §17-B) ────────
+# ── A. the historical bug, locked in as a regression guard ────────
 
 def test_the_old_int_coercion_shape_is_what_broke_postgresql(pg_store):
     """insert_review() itself must never produce this shape any more (tests below) —
@@ -274,7 +274,6 @@ def test_the_old_int_coercion_shape_is_what_broke_postgresql(pg_store):
 
 
 # ── B. document_reviews.insert_review() on PostgreSQL: True/False/None all succeed ──
-# (T0005 §7, §17-B)
 
 @pytest.mark.parametrize("value", [True, False, None])
 def test_insert_review_succeeds_on_postgresql_for_every_fallback_state(pg_store, value):
@@ -287,7 +286,7 @@ def test_insert_review_succeeds_on_postgresql_for_every_fallback_state(pg_store,
 
 
 def test_insert_review_postgresql_attempt_no_1_fallback_false_the_reported_failure_case(pg_store):
-    """T0005 §7: this exact combination (attempt_no=1, fallback_used=False) is the
+    """this exact combination (attempt_no=1, fallback_used=False) is the
     reproduction case quoted in the bug report."""
     row = db_reviews.insert_review(
         doc_id=DOC_ID, revision_no=0, reviewer_id="ai",
@@ -301,7 +300,7 @@ def test_insert_review_postgresql_attempt_no_1_fallback_false_the_reported_failu
 
 
 def test_insert_review_postgresql_fallback_true_also_succeeds(pg_store):
-    """T0005 §11: the actual-fallback case must also insert successfully."""
+    """the actual-fallback case must also insert successfully."""
     row = db_reviews.insert_review(
         doc_id=DOC_ID, revision_no=0, reviewer_id="ai",
         verdict="pass", findings_json="[]", comment="ok", reviewed_at="2026-09-06T22:00:00",
@@ -313,7 +312,7 @@ def test_insert_review_postgresql_fallback_true_also_succeeds(pg_store):
 
 
 def test_insert_review_returns_its_own_row_not_a_concurrent_writers_newer_one(pg_store):
-    """T0007 §3: the readback identifies the inserted row, so a review that lands
+    """the readback identifies the inserted row, so a review that lands
     between the INSERT and the read cannot be handed back instead.
 
     The old ``SELECT * FROM document_reviews ORDER BY id DESC LIMIT 1`` returned the
@@ -342,7 +341,7 @@ def test_insert_review_returns_its_own_row_not_a_concurrent_writers_newer_one(pg
 
 
 def test_insert_review_readback_normalizes_to_json_true_false_null_regardless_of_dialect(pg_store):
-    """T0005 §9: shaping normalizes the raw DB representation to true/false/null."""
+    """shaping normalizes the raw DB representation to true/false/null."""
     from modules.flow_gate.api.v1.document_routes import _shape_review
 
     for value in (True, False, None):
@@ -355,7 +354,7 @@ def test_insert_review_readback_normalizes_to_json_true_false_null_regardless_of
         assert shaped["review_provider"]["fallback_used"] is value
 
 
-# ── C. MySQL 3-state (T0005 §8 / T0007 §4.1) ────────────────────────────────────────
+# ── C. MySQL 3-state ────────────────────────────────────────
 
 @pytest.mark.parametrize("value, stored", [(True, 1), (False, 0), (None, None)])
 def test_insert_review_succeeds_on_mysql_for_every_fallback_state(mysql_store, value, stored):
@@ -382,7 +381,6 @@ def test_mysql_tinyint_readback_still_shapes_to_json_true_false_null(mysql_store
 
 
 # ── D. both read surfaces, on every raw representation a driver can produce ─────────
-# (T0007 §4.3)
 
 def _both_shapers():
     from modules.flow_gate.api.v1.document_routes import _shape_review as api_shape
@@ -435,7 +433,7 @@ def test_the_two_read_surfaces_expose_the_same_provider_keys_for_legacy_and_new_
 
 
 # ── E. real POST /inbox action=review through PostgreSQL, unmocked insert path ──────
-# (T0005 §10, §11, §12 — the previous review-doc-path test suite mocks insert_review
+# (the earlier implementation,, — the previous review-doc-path test suite mocks insert_review
 # out entirely and so never exercised a real dialect-shaped write.)
 
 def _review_token_rec(scratch, ai_run_id="air_review_0535"):
@@ -507,7 +505,7 @@ def test_real_review_registration_with_fallback_succeeds_on_postgresql(review_en
 
 
 def test_real_review_registration_without_ai_run_succeeds_with_null_provenance(review_env, monkeypatch):
-    """T0005 §12: legacy/non-AI review — provenance is absent, fallback_used stays NULL."""
+    """legacy/non-AI review — provenance is absent, fallback_used stays NULL."""
     token_rec = dict(_review_token_rec(""))
     token_rec.pop("ai_run_id")
     monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: token_rec)
@@ -536,7 +534,7 @@ def test_real_review_registration_binds_a_native_bool_not_an_int_on_postgresql(r
 
 
 # ── F. insert failure must not consume the token or leave a partial review ─────────
-# (T0005 §14, §17-H — the rollback semantics themselves are proven against a real
+# (the earlier implementation, — the rollback semantics themselves are proven against a real
 # database in test_review_atomicity_0535.py)
 
 def test_a_failed_insert_returns_500_and_leaves_no_partial_row(review_env, monkeypatch):

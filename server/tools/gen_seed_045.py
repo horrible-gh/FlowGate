@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Generator for 045_seed_global_design_templates.sql (TR0016 rev4).
+"""Generator for 045_seed_global_design_templates.sql.
 
-R0001 requirement: the program absorbs the 'long-used format' of the D/P/L/DB design
+requirement: the program absorbs the 'long-used format' of the D/P/L/DB design
 documents (the 3 legacy templates below) and provides it at authoring time, while
 ① reworking it to fit FlowGate, ② not reusing the original paths verbatim, and
 ③ providing the Korean-baseline original in each i18n language (ko/ja/en).

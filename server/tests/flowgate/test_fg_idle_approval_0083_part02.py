@@ -56,10 +56,10 @@ from test_fg_idle_approval_0083 import (
 
 @pytest.mark.parametrize("wait, before_resume", [("command_chain", "pending"), ("reported", "pending")])
 def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(pre_feature_attempts, env, decided, monkeypatch, wait, before_resume):
-    """What is revised: with the 0061 T#2 ``defers`` (every run not running waits) only a wait whose command its events
-    prove went on (``command.resume_approval``, 0083 T#2); the reported wait left the next card pending after the
+    """What is revised: with the the earlier implementation ``defers`` (every run not running waits) only a wait whose command its events
+    prove went on (``command.resume_approval``, the earlier implementation); the reported wait left the next card pending after the
     approval, and only the next resume opened it — the reported "a person approves, then resumes".
-    flowgate.v02.0119 T#3 (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
+    (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
     ``needs_intervention`` wait is never that command chain's either: under the old rule both waits need the resume; the
     revised ``defers`` (the cases above) moves both on at once."""
     from modules.flow_gate.graph_workflow.domain import frontier

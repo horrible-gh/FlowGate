@@ -1,7 +1,7 @@
-"""B0046 — Inbox Step 7.5: a rejected→revised transition must NOT depend on the
+"""Inbox Step 7.5: a rejected→revised transition must NOT depend on the
 in-progress workflow head matching the resubmitted doc's type.
 
-Root cause (NR0046.0003, candidate 2): the old Step 7.5 nested
+Root cause (.0003, candidate 2): the old Step 7.5 nested
 `transition_document_review(action="submit")` inside the head-match guard
 (`head_item.type == doc_type_code`). A time-machine reopen restores a doc's
 `doc_review_status` to 'rejected' but does NOT realign the sequence head, so the
@@ -14,9 +14,9 @@ never flipped back from the [Revision complete] rework toolbar to [Approve]/[Rej
 These tests pin the relocated transition: it runs on every rejected resubmit,
 independent of the head.
 
-0457 T0005 update: the registration is no longer head-gated either. B0046 left it
+update: the registration is no longer head-gated either. the regression left it
 behind on the head because "register_workflow_result still needs the head item id";
-0457 B0001 showed that was the wrong slot to hand it — see
+The review showed that was the wrong slot to hand it — see
 tests/test_reject_resubmit_own_slot_0457.py. The resubmit now re-registers into the
 slot the document itself is already in (get_item_by_result_doc_id), or into none. Both
 cases below still hold, and the second one is now true for a stronger reason: the N doc

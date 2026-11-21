@@ -1,17 +1,17 @@
-"""Chat commit point (flowgate.v02test.0023): a chat that changes source leaves a commit.
+"""Chat commit point: a chat that changes source leaves a commit.
 
 A card commits its work (``commit_result`` / the TR commit point). A chat used to change
 the group worktree and stop there: nothing committed the files, the next card merge
 refused the dirty worktree (``group_worktree_dirty``) and the work only reached Git
 through the confirm card's absorb commit under a generic subject.
 
-The rule (0023-CH0002), for a group whose project has Git. The person is never asked for
+The rule, for a group whose project has Git. The person is never asked for
 anything -- the chat stays a chat:
 
 1. The AI names the commit message. A chat AI that changed source sends
    ``commit_message`` with its reply turn (the worker turn route, or the API worker's
    ``send_chat_reply`` tool); :func:`record_message` keeps it on the live run.
-   flowgate.v02test.0033: this is enforced, not asked. An edit-mode chat reply that
+   this is enforced, not asked. An edit-mode chat reply that
    arrives without a message while the worktree holds changes the run end would commit
    is refused (422 ``commit_message_required``, :func:`message_required_paths`), dry runs
    included. The AI resends with a message; nothing is registered meanwhile.
@@ -26,7 +26,7 @@ anything -- the chat stays a chat:
    still uncommitted. A failed commit never blocks the next chat; the next edit-mode
    chat's end commits the leftover changes. New files the tool-debris rule keeps out of
    the commit are named in the same turn with their reason -- also when they were the
-   only change, so a file is never left behind without a word (flowgate.v02test.0033).
+   only change, so a file is never left behind without a word.
 
 A read-mode chat cannot change source, so its end commits nothing and says nothing. A
 run that left nothing at all says nothing either. A group without Git (project Git off,
@@ -244,7 +244,7 @@ def commit_on_finalize(run: dict) -> Optional[dict]:
             return None
         pending = pending_paths(root)
         if not pending:
-            # flowgate.v02test.0033: a run whose only new files are ones the debris rule
+            # a run whose only new files are ones the debris rule
             # keeps out used to end here without a word -- `.github/workflows/ci.yml` sat
             # uncommitted and nobody was told. Name them instead.
             return _finish(run, group_id, _excluded_only(excluded_paths(root)))

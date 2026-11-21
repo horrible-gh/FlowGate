@@ -1,4 +1,4 @@
-"""R0001 group 0045 — 🔔 notification center feed (NR0003 option A) + group 0118 noise reduction.
+"""🔔 notification center feed (option A) + the earlier change noise reduction.
 
 Group 0045 introduced the feed and its unread-count derivation against a per-user last-seen watermark.
 Group 0118 (R0001 "쓸모없는 알림기능") then decoupled the feed from the dashboard recent-activity card:
@@ -344,7 +344,7 @@ def test_feed_degraded_section_order_is_ai_then_open_questions(feed_store, monke
 
 
 def test_feed_degrades_only_open_questions_section(feed_store, monkeypatch):
-    """The single-section (not concurrent-with-AI) degraded case T0017 5-1/5-5 call for:
+    """The single-section (not concurrent-with-AI) degraded case the earlier implementation 5-1/5-5 call for:
     open_questions fails alone while the general and AI sections stay healthy."""
     monkeypatch.setattr(
         dashboard_service.db_ai_invoke_runs,
@@ -372,7 +372,7 @@ def test_feed_degrades_only_open_questions_section(feed_store, monkeypatch):
 
 
 def test_feed_badge_count_after_seen_still_includes_open_questions(feed_store, monkeypatch):
-    """badge_count formula + 'seen 불변': catching up on the general feed (unread_count -> 0)
+    """badge_count formula + 'seen unchanged': catching up on the general feed (unread_count -> 0)
     must not also clear the open_questions total baked into badge_count."""
     monkeypatch.setattr(
         dashboard_service.db_questions,
@@ -389,8 +389,8 @@ def test_feed_badge_count_after_seen_still_includes_open_questions(feed_store, m
 def test_feed_open_questions_real_sql_enforces_pending_status_and_group_exclusion(feed_store, monkeypatch):
     """Runs the actual `questions.list_open_items_by_project` SQL registered in queries.json
     (not a python stub) against the test sqlite store, proving the pending/answer_count WHERE
-    clause and the terminal-group exclusion are enforced by the query itself. Covers T0017 5-1's
-    'pending/answer_count 조건'과 '종료·폐기 그룹 제외' for the open_questions path specifically —
+    clause and the terminal-group exclusion are enforced by the query itself. Covers the earlier implementation 5-1's
+    'pending/answer_count conditions' and 'exclude closed/discarded groups' for the open_questions path specifically —
     the pre-existing exclusion tests at the top of this file only exercise the general activity feed."""
     store = feed_store
     monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", _REAL_LIST_OPEN_ITEMS)

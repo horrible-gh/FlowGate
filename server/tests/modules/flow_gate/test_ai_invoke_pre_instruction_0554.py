@@ -1,20 +1,20 @@
-"""flowgate.default.0554 T0014: WorkPlan pre-instruction reaches the real worker/review context.
+"""WorkPlan pre-instruction reaches the real worker/review context.
 
 Covers:
   • start_run prompt injection, end to end, verified against the LITERAL bytes a spawned
     worker receives on stdin (mirrors test_ai_invoke_continuation_note_0346.py's harness for
     the sibling `note` feature, since pre-instruction is injected at the exact same
-    admission._inject_hop_notes convergence point, D0007 §3.5/T0014 §2).
-  • 0611 TR0012 rev2 contract: a WorkPlan N/T with an instruction document is server-expanded
+    admission._inject_hop_notes convergence point, the designthe earlier implementation).
+  • the earlier implementation contract: a WorkPlan N/T with an instruction document is server-expanded
     ONLY under auto_approved, so the paired result worker gets the canonical T/N, not a
     second copy of the pre-instruction.  Under ai_direct the N/T stays an authoring hop and
     that worker receives the step's note / text / file as its input.  A WorkPlan single step
     (D) is written by its own worker, which receives its own text/file in either mode.
   • a stored-but-invalid attachment reference stops the hop before any worker spawns,
-    revoking the token it already minted (T0014 §5 fail-closed contract).
-  • note + pre-instruction coexist as two distinct sections (T0014 §14).
+    revoking the token it already minted (fail-closed contract).
+  • note + pre-instruction coexist as two distinct sections.
   • the rework mention (issue_rework_request / build_rework_mention) re-applies the same
-    slot's pre-instruction, and its own fail-closed contract (T0014 §9 / §5).
+    slot's pre-instruction, and its own fail-closed contract.
 """
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ class FakeWfseq:
     def get_item_by_result_doc_id(self, doc_id):
         return next((dict(i) for i in self.items if i.get("result_doc_id") == doc_id), None)
 
-    # ── work_plan_apply_service.apply()'s real write surface (T0014 §15 rework) ──────────
+    # ── work_plan_apply_service.apply's real write surface ──────────
     # A previous rejection ("project()만 호출한 뒤 값을 직접 복사") required the REAL apply()
     # to be the thing that lands values onto sequence rows, not a hand copy of project()'s
     # return value. apply() calls exactly these three db_wfseq functions inside
@@ -348,7 +348,7 @@ class TestPreInstructionEndToEnd:
     def test_valid_attachment_is_a_real_reserved_file_the_hops_own_token_can_actually_read(
         self, pre_env, monkeypatch, tmp_path,
     ):
-        """0554 T0014 §4/I2 rework (rej_01M33DPHG59E1H56 finding 4): the sibling test above
+        """I2 rework (rej_01M33DPHG59E1H56 finding 4): the sibling test above
         (and test_document_attachments_0060.py's older reserved-lifecycle tests) all
         monkeypatch validate_reference/resolve_registered_attachment wholesale, so none of
         them ever prove a worker can actually READ the attachment the prompt advertises.
@@ -378,7 +378,7 @@ class TestPreInstructionEndToEnd:
 
         # Canonical shape (project.module.NNNN.NNNN-TYPE) — the real HTTP read route's
         # own id_validators.DOC_ID regex requires this; GROUP_ID's synthetic
-        # "flowgate.default.0554.preinstr" shape (fine for every service-level fake in this
+        # "the earlier change.preinstr" shape (fine for every service-level fake in this
         # file) would 422 the real route before scope is even checked.
         wp_doc_id = "flowgate.default.0554.9000-WP"
         db_path = tmp_path / "reserved_attachment_real.db"
@@ -502,7 +502,7 @@ class TestPreInstructionEndToEnd:
     def test_auto_approved_wp_instruction_document_is_not_refolded_into_paired_worker(
         self, pre_env, monkeypatch,
     ):
-        # 0611 TR0012 rev2: under auto_approved a WorkPlan T that carries its instruction
+        # under auto_approved a WorkPlan T that carries its instruction
         # document is expanded by the server into the canonical T; the hop folds to TR@4,
         # which must not receive a hidden second copy of that document.
         pre_env["wfseq"].head_item_seq = 3
@@ -529,7 +529,7 @@ class TestPreInstructionEndToEnd:
         assert ATTACHMENT["original_filename"] not in got
 
     def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env, monkeypatch):
-        # 0611 TR0012 rev2: under ai_direct the server does NOT expand T@3 even though it
+        # under ai_direct the server does NOT expand T@3 even though it
         # carries its instruction document -- the worker authors T@3 itself (no fold), and the
         # step's note, written text and attached file reach that worker as its input.
         pre_env["wfseq"].head_item_seq = 3
@@ -580,7 +580,7 @@ class TestPreInstructionFailClosed:
     def test_invalid_source_attachment_stops_before_the_worker_is_spawned(
         self, pre_env, monkeypatch,
     ):
-        # 0611 TR0012 rev2: under ai_direct the T authoring worker consumes its own file, so
+        # under ai_direct the T authoring worker consumes its own file, so
         # a broken reference must stop that hop (auto_approved reads the file in the server
         # expansion instead, which fails closed on its own -- 0611 broken-file case).
         pre_env["wfseq"].head_item_seq = 3
@@ -645,7 +645,7 @@ class TestPreInstructionSequenceLookupFailsClosed:
             _start(pre_env, MENTION)
         assert caught.value.status_code == 409
         assert caught.value.detail["code"] == "pre_instruction_sequence_lookup_failed"
-        # T0014 §5: no subprocess ever ran — a lookup failure is exactly as fail-closed as a
+        # no subprocess ever ran — a lookup failure is exactly as fail-closed as a
         # validated-but-bad attachment reference.
         assert list(pre_env["tmp"].glob("captured_*.txt")) == []
         assert pre_env["revoked"] == [
@@ -715,7 +715,7 @@ class TestPreInstructionSequenceLookupFailsClosed:
 
 
 class TestPreInstructionMalformedJsonFailsClosed:
-    """0554 T0014 §5 rework (review rej_01M334Z5Y72GK6BW finding 1): decode_pre_instruction_
+    """(review rej_01M334Z5Y72GK6BW finding 1): decode_pre_instruction_
     attachment returns None for BOTH an empty column and a corrupted one — that ambiguity used
     to make resolve_pre_instruction treat a damaged reference as "no attachment" (falling
     through to text-only, or to no pre-instruction at all if there was no text either) instead
@@ -855,7 +855,7 @@ class TestPrependPreInstructionSection:
         ) == MENTION
 
     def test_never_merges_with_the_step_note_section(self):
-        # T0014 §14: both sections survive, each under its own distinct header.
+        # both sections survive, each under its own distinct header.
         with_note = invoke_mention_service.prepend_messages_section(MENTION, ["개별 멘트"], "ko")
         combined = invoke_mention_service.prepend_pre_instruction_section(
             with_note, text="지시문", attachment=None, locale="ko",
@@ -866,7 +866,7 @@ class TestPrependPreInstructionSection:
 
 
 class TestReworkPreInstruction:
-    """0554 T0014 §9/E3: rework re-applies the same slot's pre-instruction; the reviewer's
+    """E3: rework re-applies the same slot's pre-instruction; the reviewer's
     own prompt (a completely separate assembly) never sees it."""
 
     def test_rework_mention_reapplies_the_slots_pre_instruction(self, monkeypatch):
@@ -964,7 +964,7 @@ class TestReworkPreInstruction:
 
 
 class TestRetryRebuildsPreInstruction:
-    """0554 T0014 §10/E1/E2: a no-output retry and a provider-fallback retry both reissue
+    """E1/E2: a no-output retry and a provider-fallback retry both reissue
     through worker._prepare_retry_token, which calls the SAME admission._inject_hop_notes
     convergence point (worker.py:862) as the initial hop — so pre-instruction is not a
     separate thing retry code has to remember to carry, it is re-resolved fresh from the
@@ -995,7 +995,7 @@ class TestRetryRebuildsPreInstruction:
     def test_reissued_retry_reads_the_ai_direct_source_authoring_context(
         self, pre_env, monkeypatch, tmp_path,
     ):
-        # 0611 TR0012 rev2: under ai_direct the WP T is authored by the worker, so a reissued
+        # under ai_direct the WP T is authored by the worker, so a reissued
         # retry must re-read T@3's own context (auto_approved expands it on the server).
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
@@ -1055,7 +1055,7 @@ class TestRetryRebuildsPreInstruction:
     def test_invalid_attachment_mid_retry_propagates_instead_of_silently_dropping(
         self, pre_env, monkeypatch, tmp_path,
     ):
-        # T0014 §5 fail-closed applies just as much to a retry reissue as to the first
+        # fail-closed applies just as much to a retry reissue as to the first
         # attempt: worker.py:862's call to _inject_hop_notes is NOT wrapped in a try/except,
         # so PreInstructionAttachmentError propagates out of _prepare_retry_token itself
         # (the outer _worker try/except then ends the run as worker_error rather than
@@ -1080,7 +1080,7 @@ class TestRetryRebuildsPreInstruction:
     def test_orphaned_new_token_is_revoked_when_inject_hop_notes_fails_mid_retry(
         self, pre_env, monkeypatch, tmp_path,
     ):
-        # 0554 T0014 §5 rework (review rej_01M334Z5Y72GK6BW finding 2, first half): the
+        # (review rej_01M334Z5Y72GK6BW finding 2, first half): the
         # reissue above already minted a BRAND NEW token via issue_builder before
         # _inject_hop_notes ever runs, and run["token_id"]/run["raw_token"] are not updated to
         # it until AFTER _inject_hop_notes succeeds (worker.py, below the injection call).
@@ -1111,7 +1111,7 @@ class TestRetryRebuildsPreInstruction:
     def test_rework_issue_builder_error_propagates_with_its_own_code_intact(
         self, pre_env, monkeypatch, tmp_path,
     ):
-        # 0554 T0014 §5 rework (review finding 2, second half): a rework issue_builder
+        # (review finding 2, second half): a rework issue_builder
         # (invoke_mention_service.issue_rework_request) that raises PreInstructionAttachmentError
         # directly from _call_issue_builder used to be caught by the broad
         # `except Exception: ... return None` around that call, folding a specific,
@@ -1134,7 +1134,7 @@ class TestRetryRebuildsPreInstruction:
 
 
 class TestRunToEndTailExpansionAppliesOwnBaseline:
-    """0554 T0014 §12/E7 rework (rej_01M33DPHG59E1H56 finding 3): the pre-fix version of
+    """E7 rework (rej_01M33DPHG59E1H56 finding 3): the pre-fix version of
     this test pre-seeded item_seq=2 onto FakeWfseq and bumped head_item_seq BEFORE calling
     _start() — a basic item_seq lookup test with no hop ever in flight while the tail item
     appeared, and no real rebase call. This drives the REAL mid-run path instead:
@@ -1216,8 +1216,8 @@ class TestRunToEndTailExpansionAppliesOwnBaseline:
 
 
 class TestPauseResumeReReadsTheSameBaseline:
-    """0554 T0014 §11/E4: pre-instruction has no runtime-override map of its own (unlike
-    provider/note/review) — its only storage is the sequence row (D0007 §3.5), so a
+    """E4: pre-instruction has no runtime-override map of its own (unlike
+    provider/note/review) — its only storage is the sequence row, so a
     pause/resume round trip producing the same effective pre-instruction is not a separate
     code path to wire, it falls out of _inject_hop_notes reading the row fresh on every call
     (exactly like TestRunToEndTailExpansionAppliesOwnBaseline / TestRetryRebuildsPreInstruction
@@ -1304,7 +1304,7 @@ def paused_env(pre_env, monkeypatch):
 
 
 class TestPauseResumeThroughRealApis:
-    """0554 T0014 §11/E4 rework (review rej_01M334Z5Y72GK6BW finding 3): drives the SAME real
+    """E4 rework (review rej_01M334Z5Y72GK6BW finding 3): drives the SAME real
     functions test_ai_invoke_pause_resume_0252.py already pins — svc.pause_run,
     svc.mark_user_paused (the inbox boundary-hook simulation that class also uses),
     svc.resume_chain, and a dict-backed ai_invoke_paused_chains fake honouring the exact
@@ -1387,7 +1387,7 @@ class TestPauseResumeThroughRealApis:
         # but through resolve_review_gate -> _spawn_rework_hop -> issue_rework_request ->
         # build_rework_mention -> _resolve_rework_pre_instruction — a structurally different
         # code path (mode="single", action_scope="edit") that never touches
-        # admission._inject_hop_notes at all (T0014 §9's own separation of concerns). This
+        # admission._inject_hop_notes at all ('s own separation of concerns). This
         # proves the slot's pre-instruction still reaches the real spawned worker through
         # THAT path when resume_chain has to re-derive the gate cold.
         from modules.flow_gate.services.ai_invoke import review as review_module
@@ -1495,7 +1495,7 @@ class _DocWorld:
 
 
 class TestConnectedFlowFullEffectiveBundle:
-    """T0014 §15 rework (rej_01M33DPHG59E1H56 findings 1-2): the rev2 version of this test
+    """(rej_01M33DPHG59E1H56 findings 1-2): the version of this test
     called work_plan_apply_service.project() (a pure computation) and hand-copied its return
     value into FakeWfseq, called the file's own _start() helper directly, and jumped straight
     from a hand-set "issues" db_reviews row to resume_chain's COLD rework dispatch — so
@@ -1546,10 +1546,10 @@ class TestConnectedFlowFullEffectiveBundle:
         RESULT_DOC_ID = f"{GROUP_ID}.9001-T"
 
         # ---- 1. WP T step -> source T authoring row through the REAL apply() (steps 1-10).
-        # 0611 TR0012 rev2: under ai_direct a WorkPlan T that carries its instruction document
+        # under ai_direct a WorkPlan T that carries its instruction document
         # is NOT expanded by the server; the T authoring worker consumes it as input and its
         # T then goes through the ordinary review/approval flow pinned below. The canonical
-        # pre-instruction remains on T#1; the later TR row must not receive a snapshot of it.
+        # pre-instruction remains on the earlier implementation; the later TR row must not receive a snapshot of it.
         plan_step = {
             "key": "T#1", "type": "T", "ordinal": 1, "locked": False,
             "provider_id": WORKER_PROVIDER, "note": "계획 단계 개별 메모",
@@ -1795,7 +1795,7 @@ class TestConnectedFlowFullEffectiveBundle:
         rework_text = _read(rework_outfile).decode("utf-8")
         assert rework_text.count("## WorkPlan 사전지시") == 1
         assert PRE_TEXT in rework_text
-        # T0014 §9: rework re-applies the slot's pre-instruction, not `note` — that field is
+        # re-applies the slot's pre-instruction, not `note` — that field is
         # only ever injected on the "new"/continuous path (_inject_hop_notes), which the
         # rework hop structurally never reaches (see the companion rework test above).
         # R6: the reviewer's own provider was NEVER invoked for the rework worker spawn.
@@ -1809,7 +1809,7 @@ class TestConnectedFlowFullEffectiveBundle:
         assert mid_gate["stage"] == review_module.REVIEW_HOP_KIND
         assert mid_gate["round_no"] == 2
 
-        # ---- 7. final pass (최종 pass) — run the actual settlement rather than stopping
+        # ---- 7. final pass (final pass) — run the actual settlement rather than stopping
         # at resolve_review_gate(). The fake sequence view derives its next head from the
         # canonical T's real approval state, mirroring the production SQL effective-head join.
         review_rows.append({"id": 2, "verdict": "pass", "revision_no": 1,

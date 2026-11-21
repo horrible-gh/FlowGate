@@ -1,4 +1,4 @@
-"""Conversation anchors of chat activity (flowgate.default.0675 T0004 §2-3 / §2-5).
+"""Conversation anchors of chat activity.
 
 The rule itself lives in ``db.chat_activity_anchor``; each table's writer applies it
 to its own rows on insert. This module covers the two moments that are not a row

@@ -14,7 +14,7 @@
       </div>
 
       <div class="fgs-panel-body">
-        <!-- 비밀번호 변경: POST /auth/password/change. 변경을 누르면 입력이 열린다. -->
+        <!-- Password change: POST /auth/password/change. Clicking Change opens the inputs. -->
         <div class="fgs-sec">
           <form class="fgs-rows" data-card="password" novalidate @submit.prevent="submitPassword">
             <div class="fgs-row">
@@ -68,7 +68,7 @@
           </form>
         </div>
 
-        <!-- 로그인 세션: GET /auth/sessions, DELETE /auth/sessions/{sid}, POST revoke-others, 현재 세션은 logout -->
+        <!-- Sign-in sessions: GET /auth/sessions, DELETE /auth/sessions/{sid}, POST revoke-others, logout for the current session -->
         <div class="fgs-sec" data-card="sessions">
           <div class="fgs-sec-head">
             <h3>{{ t('gui.settings.self.security.sessions') }}</h3>
@@ -149,7 +149,7 @@
       </div>
     </section>
 
-    <!-- 다른 세션 모두 로그아웃 확인: 취소하면 요청 0건 -->
+    <!-- Confirm signing out all other sessions: cancel sends no requests -->
     <ModalShell :open="confirmOthers" size="sm" :aria-label="t('gui.settings.self.security.revoke_others_title')" @close="confirmOthers = false">
       <div class="confirm">
         <div class="conf-ico danger"><SettingsIcon name="logout" size="xl" /></div>
@@ -180,7 +180,7 @@
 //   Every action re-reads the list, so what is shown is what the server holds.
 // - POST /auth/password/change with the current password; the server checks it and, on success,
 //   ends every other session, which the re-read list then shows.
-// - 2단계 인증 is not on this screen: no self-service API reports the signed-in person's TOTP
+// - Two-factor authentication is not on this screen: no self-service API reports the signed-in person's TOTP
 //   state, and POST /auth/totp/setup would replace an existing secret. The administrator routes
 //   (/users/{uid}, /system/users/{id}/tfa-reset) are never used here.
 // A failure, a cancellation or a 401 is never shown as a success.

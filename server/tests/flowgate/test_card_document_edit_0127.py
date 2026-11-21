@@ -1,4 +1,4 @@
-"""0127 T#1: real SQLite/file transaction invariants and P#1 transport decisions.
+"""real SQLite/file transaction invariants and P#1 transport decisions.
 
 Only auth, display-card definition, and notifications are mocked; the Flow guard, CAS,
 revision history, events, file replacement and rollback callbacks execute for real.
@@ -48,7 +48,7 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
     db = connection.FlowGateStore.__new__(connection.FlowGateStore)
     db._db, db._sq = _SqliteDbAdapter(db_path), None
     monkeypatch.setattr(connection, "STORE", db)
-    # T#2 owns startup/legacy-port wiring. Exercise its registered/unregistered contract here.
+    # owns startup/legacy-port wiring. Exercise its registered/unregistered contract here.
     from modules.flow_gate.graph_workflow.services import card_document_ports
     monkeypatch.setattr(card_document_ports, "_handlers", {**card_document_ports._handlers, target.EDIT_PORT: service.revise})
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
@@ -853,7 +853,7 @@ def test_empty_readable_body_can_be_explicitly_replaced(env):
     assert paths.resolve_storage_path(rev["backup_path"], "flowgate").read_bytes() == b""
 
 
-# --- 0127 T#5 (L#2 §2.15): structured TS revisions through the real transport, boundary, CAS and idempotency -------
+# --- the earlier implementation (L#2): structured TS revisions through the real transport, boundary, CAS and idempotency -------
 
 TS_ID = F + ".0003-TS"
 TS_CASE = {"case_id": "TC-001", "title": "login", "category": "normal", "requirement": "R-1",

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0072 T#1 — the rules of the v0.2 work plan edit window (workPlanEditModel), checked against what the
+ * the rules of the v0.2 work plan edit window (workPlanEditModel), checked against what the
  * v0.1 WorkPlanEditor does and what the server's PUT …/work-plan takes (work_plan_service.validate):
  * - the body goes back whole: fields with no control (candidates, x_* extensions, review, pre-instruction) are kept;
  * - a quantity change edits that type's cards in place and renumbers keys / ordinals / pair keys by card order;
@@ -7,10 +7,10 @@
  *   a started card is never removed or moved, nothing goes in front of it;
  * - [apply to all] copies the default AI / note onto every unlocked Step, nothing else;
  * - the Step window boundary edits one row by identity, never another; a save trades temporary ids for the server's.
- * flowgate.v02.0073 T#1 — DS / T2 are not drawn (quantity boxes, cards, the shown totals), and that is all: the body
+ * DS / T2 are not drawn (quantity boxes, cards, the shown totals), and that is all: the body
  * keeps them whole, [apply to all] still reaches their unlocked Steps, a move among the shown cards (the screen's
  * positions) leaves every hidden card in its slot with its key; a type's icon is the Designer Palette's.
- * flowgate.v02.0073 T#2 — a row's review is set by the review popover only (setStepReview: that row, 0 clears the
+ * a row's review is set by the review popover only (setStepReview: that row, 0 clears the
  * reviewer, a locked Step takes none; the picker's counts are the server's); the Step window's draft is the
  * pre-instruction and attachment only, so its apply never touches a review; the popover's place stays on screen
  * (every path clamped — also for a button off the viewport's side).
@@ -113,7 +113,7 @@ describe('the body goes back whole', () => {
   it('totals and unassigned follow the draft', () => {
     const d = draft()
     expect(totalsOf(d)).toEqual({ designSheets: 1, workSets: 3, steps: 7 })
-    // T#1, TR#2 have no AI; TSR#1 is the server's
+    // TR#2 have no AI; TSR#1 is the server's
     expect(unassignedSteps(d)).toBe(2)
   })
 
@@ -424,7 +424,7 @@ describe('DS / T2 are not drawn; the body keeps them (0073 T#1)', () => {
   it('the shown totals leave DS / T2 out; unassigned (the server count) keeps them, split by what is shown', () => {
     const d = hiddenDraft()
     expect(totalsOf(d)).toEqual({ designSheets: 1, workSets: 3, steps: 7 })
-    // T#1, TR#2 shown; DS#1, TR2#1 hidden
+    // TR#2 shown; DS#1, TR2#1 hidden
     expect(unassignedSteps(d)).toBe(4)
     expect(unassignedByShown(d)).toEqual({ shown: 2, hidden: 2 })
   })

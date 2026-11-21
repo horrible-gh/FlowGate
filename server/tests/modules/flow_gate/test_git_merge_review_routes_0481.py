@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0008 — the four new review-gate HTTP routes.
+"""the four new review-gate HTTP routes.
 
 test_git_integration_0115.py's TestGitEndToEnd already drives the real state machine
 (git_service.get_merge_review/approve_merge_review/reject_merge_review/send_review_message)
@@ -197,7 +197,7 @@ def test_review_message_requires_provider_pinned_true(monkeypatch):
 
 def test_review_message_success(monkeypatch):
     client = _client(monkeypatch)
-    # 0578 T0006 §3 work item 3-1: the route now normalizes X-Locale ONCE and hands the same
+    # work item 3-1: the route now normalizes X-Locale ONCE and hands the same
     # value to the service (which pins it on the pending row) and to the run start (which puts
     # it on the run's token). Both halves are recorded here so they cannot drift apart again.
     seen: dict = {}
@@ -286,7 +286,7 @@ _WRITE_PLAN_BODY = {
 
 
 def test_write_plan_token_route_rejects_a_human_jwt(monkeypatch):
-    # 0481 TR0009 rev2 / T0008 item 1: this is the ONLY channel by which a
+    # this is the ONLY channel by which a
     # review-message write turn's AI run can change the source tree — it must
     # be exactly as worker-token-only as /resolve-token, never reachable with a
     # human's own session.
@@ -355,7 +355,7 @@ def test_write_plan_token_route_success(monkeypatch):
     assert captured["merge_id"] == MERGE_ID
     assert captured["plan"]["schema_version"] == "flowgate.write-plan.v1"
     assert captured["plan"]["operations"][0]["operation_id"] == "op1"
-    # 0009-TR rev3 (AI review finding 1): the route must forward the verified
+    # (AI review finding 1): the route must forward the verified
     # token's OWN ai_run_id claim to the service — never trust a value from the
     # request body (WritePlanBody has no such field at all) — so the service
     # can bind the plan to the pending write turn's run.

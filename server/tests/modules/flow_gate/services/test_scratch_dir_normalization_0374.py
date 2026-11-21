@@ -1,4 +1,4 @@
-"""Regression tests for normalized token scratch paths (flowgate.default.0374)."""
+"""Regression tests for normalized token scratch paths."""
 from __future__ import annotations
 
 import os

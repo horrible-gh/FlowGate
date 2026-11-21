@@ -1,4 +1,4 @@
-"""0061 T#6 execution capacity and deterministic refill.
+"""execution capacity and deterministic refill.
 
 Existing requests start by (created_at, exec_id). New nodes use Kahn topological
 order, choosing the smallest node_key at every tie. Only running executions
@@ -13,10 +13,10 @@ import threading
 from contextvars import ContextVar
 
 _admission_owner = ContextVar("graph_admission_owner", default=None)
-# flowgate.v02gui.0006 CH: the thread whose ``admission`` span is open. Only a claim made inside that span is marked
+# CH: the thread whose ``admission`` span is open. Only a claim made inside that span is marked
 # ``starting`` (below), because only that span's end clears the mark; a bare ``admit`` (tests, tools) marks nothing.
 _admission_thread = ContextVar("graph_admission_thread", default=None)
-# flowgate.v02gui.0006 CH: the launchers whose start is under way -- from ``admit``'s claim (``ai_run_id`` published)
+# CH: the launchers whose start is under way -- from ``admit``'s claim (``ai_run_id`` published)
 # until their ``admission`` returns (the run registered, ``_register_run``) or rolls back. In that span the execution
 # is ``requested`` with an ``ai_run_id`` but no registry run exists yet (the worktree is being prepared), so the
 # supervisor's refill took it for an ended launcher, cleared the id and closed the request as unowned.
@@ -25,7 +25,7 @@ _starting_lock = threading.Lock()
 
 
 def starting(exec_id, ai_run_id=None):
-    """flowgate.v02gui.0006 CH: ``exec_id``'s admission (by ``ai_run_id`` when given) is still starting its run."""
+    """CH: ``exec_id``'s admission (by ``ai_run_id`` when given) is still starting its run."""
     if not exec_id:
         return False
     with _starting_lock:
@@ -158,14 +158,14 @@ def busy(run_id=None):
                                      "run_id": run_id})
 
 
-# flowgate.v02test.0004 T#1: the ledger states of an execution that another launcher of it already owns — claimed by its
+# the ledger states of an execution that another launcher of it already owns — claimed by its
 # admission (``requested`` with ``ai_run_id``), acquired (``running``) or run to its end (``ended``). A cancelled or lost
 # execution is no such owner: a start refused against it keeps its refusal record.
 DUPLICATE_START_STATUSES = ("requested", "running", "ended")
 
 
 def duplicate_start(exec_id, ai_run_id=None):
-    """flowgate.v02test.0004 T#1: a refused start of ``exec_id`` was a harmless duplicate start of the same execution —
+    """a refused start of ``exec_id`` was a harmless duplicate start of the same execution —
     the request (``request_write``'s own start job and the same transaction's refill replay, ``queue_requests``) started
     twice and the other start already owns it. Read from the durable ledger after the refusal (the refused start's own
     claim is released by then, ``admission``), never from the refusal's message: the execution exists, it is in
@@ -208,7 +208,7 @@ def admit(exec_id, ai_run_id, flow_id, attempt_id=None):
             raise ledger.LeaseLost("execution identity mismatch")
         from flowgate.graph_time_machine.operation import busy as time_machine_busy
         if time_machine_busy(flow_id):
-            busy()                  # T#13: kept requested (``start_failed``) until the Time Machine operation ends
+            busy()                  # kept requested (``start_failed``) until the Time Machine operation ends
         active = group_ai_leases.get_active(flow_id)
         if active:
             busy(active.get("run_id"))

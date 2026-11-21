@@ -1,4 +1,4 @@
-// flowgate.v02gui.0031 T0005 §3 — isolated browser fixture for the connection recovery scenarios
+// isolated browser fixture for the connection recovery scenarios
 // (connection_recovery_v02gui0031.py). The product pieces run unchanged: ConversationPanel with its HTTP source, the
 // shared axios client (token, retries, refresh) and the project event hub (EventSource). Only the server is a fake the
 // scenario script runs. Two Flows (groups) with their own chats: the scenario switches chats and Flows like a user.

@@ -1,9 +1,9 @@
-"""flowgate.v02.0121 T#5 — a card's result writer whose provider failed (``provider_failed``: "Selected model is at
+"""a card's result writer whose provider failed (``provider_failed``: "Selected model is at
 capacity", a dropped stream) and registered no result.
 
-B flowgate.v02.0121.0001-B / NR 0003-NR: the failed AI run's end was cleaned up (its execution ended, no hand-off, the
+B the earlier change / the earlier implementation-NR: the failed AI run's end was cleaned up (its execution ended, no hand-off, the
 run idle ``error``) but its result assignment stayed ``ai/active`` and an explicit [다음 단계] / [전체 실행] judged the
-node ``none``: the command was accepted and no execution was requested. Now (T#2) that end is written again once, on the
+node ``none``: the command was accepted and no execution was requested. Now that end is written again once, on the
 same attempt by the same assigned AI (``RETRY_SAME_ATTEMPT``), only by an explicit command; every other failed end keeps
 its own policy.
 
@@ -345,13 +345,13 @@ def _ledger_view(env):
             for e in _executions(env)]
 
 
-# ── 1: the failure's whole end through the product path (T#1) ────────────────
+# ── 1: the failure's whole end through the product path ────────────────
 
 
 
 
 
-# ── 3 / 6: the attempt workspace is the retry's (T#3) ────────────────────────
+# ── 3 / 6: the attempt workspace is the retry's ────────────────────────
 
 def _git_on(monkeypatch, request):
     """An isolated Git repository as the Flow's group worktree (the project's Git on): attempt worktrees are prepared by the
@@ -441,7 +441,7 @@ def _token_tree(token_id):
 
 
 
-# ── 4: concurrency and late ends, overlapped for real (T#1.4, T#3) ───────────
+# ── 4: concurrency and late ends, overlapped for real ───────────
 
 
 
@@ -451,7 +451,7 @@ def _token_tree(token_id):
 
 
 
-# ── 5: the retry's protections (T#2.6) ───────────────────────────────────────
+# ── 5: the retry's protections ───────────────────────────────────────
 
 
 

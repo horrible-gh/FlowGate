@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#5 — the documents tab with `@/features/document` mocked (D#1 §12.1): the
+ * the documents tab with `@/features/document` mocked: the
  * v01 and graph fixtures show their real-shaped data (the server answers go through the real
  * normalizer), ↗ 열기 opens the document window in this tab (flowgate.v02.0053 T#3), failed reads (404 /
  * 403 / 409 / network) show their reason and a retry, a failed superseded document stays listed,
@@ -184,9 +184,9 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     expect(previous[0].text()).toContain('#9')
 
     expect(paneState(w).exists()).toBe(false)
-    // flowgate.v02.0052 묶음 A: no prose line; where editing happens is the ↗ 열기 hover text.
+    // flowgate.v02.0052 batch A: no prose line; where editing happens is the ↗ 열기 hover text.
     expect(find(w, 'documents-edit-hint').exists()).toBe(false)
-    // flowgate.v02.0053 T#3: the document opens in its window in this tab; the hover text says only that.
+    // the document opens in its window in this tab; the hover text says only that.
     expect(find(w, 'documents-open').attributes('title')).toBe('문서 열기')
   })
 
@@ -223,7 +223,7 @@ describe('documents tab — real-shaped data of the fixtures', () => {
   it('no pair slot, result slot or write line is drawn (D#1 §8.4)', async () => {
     const w = await mountTab(targetOf(SELECTIONS.v01))
     expect(w.text()).not.toMatch(/작성\s*$|결과 슬롯|지시서/)
-    // flowgate.v02.0053 T#5: every open button is the document icon (no ↗, its wording the tooltip).
+    // every open button is the document icon (no ↗, its wording the tooltip).
     // flowgate.v02.0068 T#1 (D §0-1 / §6.1): a document line has [업로드][다운로드] before its open button.
     const io = [
       ['', undefined, '파일 내용으로 문서 전체를 교체'],

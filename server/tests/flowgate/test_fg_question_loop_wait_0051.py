@@ -1,4 +1,4 @@
-"""flowgate.v02test.0051 T0005 (A1): a review loop waits for the questions its AI asked inside the loop.
+"""(A1): a review loop waits for the questions its AI asked inside the loop.
 
 R 0051.0001 A: "검수 반복 중 수정 AI가 질문을 남기면, 다음 검수나 수정을 시작하지 않는다 … 답이 달리면 그 답을 근거로
 이어서 수정한다". The v02test.0032 exception ("the loop does not wait") is gone.
@@ -12,7 +12,7 @@ recorders: dispatch to the card's responder, the answers (a person's, the respon
 resume (repeated events, a restart), pause/stop, a new-attempt answer, several questions, a responder that could not be
 assigned, a gone attempt, the successor's hand-off. Part 3: the guards (owner evidence, run end, verdict, card badge).
 
-TR0006 r2 (rework after review): Part 1 also covers the hold — a failed question read, a wait that cannot be stored or
+r2 (rework after review): Part 1 also covers the hold — a failed question read, a wait that cannot be stored or
 no wait store never let the next hop start (the loop stops with a ``question_wait_unconfirmed`` detail, the run carries
 the diagnosis); Part 2 the answer that comes while the parked run is still finishing (never a cancellation; resumed
 once after the run's end). Part 4 is the end-to-end path on the REAL Graph ledger (migrations 151/152/153a/154), the
@@ -137,7 +137,7 @@ def world(monkeypatch):
     conn.commit()
     store = Store(conn)
     from modules.flow_gate.db import review_count_exclusions as db_exclusions_store
-    # T0007 (A2): the exclusion store reads this connection too (no migration 201 here: nothing is marked)
+    # (A2): the exclusion store reads this connection too (no migration 201 here: nothing is marked)
     for module in (db_loops, service, service.db_docs, db_reviews, db_waits, db_exclusions_store):
         monkeypatch.setattr(module, "get_store", lambda: store)
 
@@ -1149,7 +1149,7 @@ def test_e2e_a_restart_resumes_the_answered_wait_once_and_a_lost_cas_rolls_its_r
     assert g["waits"]()[0]["status"] == "resumed" and len(state["hops"]) == 2
 
 
-# ── Part 5 (T0007, A2): question-caused verdicts and the question wait are left out of the loop's budget ─────────────
+# ── Part 5: question-caused verdicts and the question wait are left out of the loop's budget ─────────────
 #
 # R 0051.0001 A-3: "답이 달리면 그 답을 근거로 이어서 수정한다. 답을 기다린 시간과 질문 때문에 생긴 반려는 검수 횟수에
 # 넣지 않는다." The same real worker hop loop and checkpoint as Part 1, with the review rows' run provenance
@@ -1366,7 +1366,7 @@ def test_a_reviewer_that_asks_and_rejects_with_no_finding_is_counted(budget):
     assert budget["exclusions"]() == []
 
 
-# 0008-TR r1 rejection: citing the question is a reference, not the cause. A real defect that names the wait's question
+# r1 rejection: citing the question is a reference, not the cause. A real defect that names the wait's question
 # in the same finding -- or every defect finding naming it -- is counted.
 _DEFECT_NAMING_Q7 = {"locus": "server/api.py:42 (Q7, item 701)",
                      "note": "질문 답변과 무관한 실제 결함: 권한 검사가 없어 다른 사용자의 데이터를 반환한다. "
@@ -1548,7 +1548,7 @@ _ASKED = {"cause": "question"}
     ([{"locus": "s1", "note": "see item 701", **_ASKED}], [701]),
     ([{"locus": "Q 7", "note": "x", "cause": " Question "}], [701]),            # the declaration, loosely spelled
     ([{"locus": "Q7", **_ASKED}, {"locus": "item 701", "note": "y", **_ASKED}], [701]),
-    # citing is not enough: no declaration, no exclusion (0008-TR r1 rejection)
+    # citing is not enough: no declaration, no exclusion (TR r1 rejection)
     ([{"locus": "Q7", "note": "x"}], None),
     ([_DEFECT_NAMING_Q7], None),                                                # a defect naming the question
     ([{"locus": "Q7", "note": "defect A"}, {"locus": "item 701", "note": "defect B"}], None),  # every one cites

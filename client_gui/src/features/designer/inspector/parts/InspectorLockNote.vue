@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 lock line (0035 insp-v4 `.lock-note`): above locked settings,
+  <!-- the v7 lock line (insp-v4 `.lock-note`): above locked settings,
        "🔒 실행 중" (or the caller's text, e.g. "🔒 위임 진행 중"). -->
   <p class="inspector-lock-note" role="note" data-test="inspector-lock-note">🔒 <slot>{{ text ?? t('gui.designer.inspector.lock.running') }}</slot></p>
 </template>

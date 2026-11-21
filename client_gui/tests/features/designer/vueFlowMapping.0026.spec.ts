@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0026 — FlowGate Graph Model -> Vue Flow mapping (0003-D §3.2 / §7.1).
+ * FlowGate Graph Model -> Vue Flow mapping.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'

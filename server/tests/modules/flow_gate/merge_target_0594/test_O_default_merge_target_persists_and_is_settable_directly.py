@@ -68,7 +68,7 @@ def test_O_default_merge_target_persists_and_is_settable_directly(proj):
     assert db_git.get_config(proj.pid)["default_merge_target"] == "integration-v2"
     assert svc.list_branches(proj.pid)["default_merge_target"] == "integration-v2"
 
-    # T0016 §3.2's own action: set/clear the suggestion directly, no merge involved.
+    # Its own action: set/clear the suggestion directly, no merge involved.
     proj.local_branch("integration-v3")
     result = mt.set_project_default_target(proj.pid, "integration-v3")
     assert result == {"ok": True, "default_merge_target": "integration-v3"}
@@ -83,7 +83,7 @@ def test_O_default_merge_target_persists_and_is_settable_directly(proj):
     assert cleared == {"ok": True, "default_merge_target": None}
     assert db_git.get_config(proj.pid)["default_merge_target"] is None
 
-    # T0016 §6.1 — the branch currently pinned as the merge-target suggestion
+    # The branch currently pinned as the merge-target suggestion
     # is itself undeletable, both through the guard and the catalog's can_delete
     # flag, until it is retargeted or cleared.
     mt.set_project_default_target(proj.pid, "integration-v3")

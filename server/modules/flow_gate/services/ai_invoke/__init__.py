@@ -1,6 +1,6 @@
-"""The AI invoke engine, as real modules (flowgate.default.0501 T6 / NR0003 §12).
+"""The AI invoke engine, as real modules.
 
-Layout and responsibilities are NR0003 §12-§20:
+Layout and responsibilities are the review:
 
     runtime.py       parameters + the in-memory run registry + scratch (§13)
     oracle.py        completion probes + pure helpers (§16)
@@ -14,7 +14,7 @@ Layout and responsibilities are NR0003 §12-§20:
     diagnostics.py   run history/status read models
     facade.py        the `ai_invoke_service` surface, re-exported name by name (§20)
 
-Import direction (NR0003 §28), enforced by test_ai_invoke_package_graph_0501.py:
+Import direction, enforced by test_ai_invoke_package_graph_0501.py:
 
     runtime  <- everything          (runtime imports nothing from this package)
     oracle   <- everything but runtime

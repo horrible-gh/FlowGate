@@ -6,7 +6,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0076 T#1 (D §1.2/§3.1): the parent of every /app/settings route. It owns only
+// (D): the parent of every /app/settings route. It owns only
 // the loading state and the routed body; each page brings its own frame (SettingsShell:
 // navigation, header, body) and its own API calls — nothing here loads page data.
 //

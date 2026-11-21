@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 — L-2 §2.10 / §2.11 the run read's reconciliation (RC-1 ~ RC-8) and the explicit command's
+"""L-2 / the run read's reconciliation (RC-1 ~ RC-8) and the explicit command's
 retry of an assigned attempt: what was lost is done once, a wait or a failure is never restarted by a read, and only an
 explicit command opens a new attempt (``REOPEN_NEW_ATTEMPT``) or writes again on the same one (``RETRY_SAME_ATTEMPT``).
 
@@ -137,7 +137,7 @@ def test_k3_an_unavailable_instruction_reviewer_waits_and_only_an_explicit_comma
     old = _attempts(env, key)[0]["attempt_id"]
     command(env)
     attempts = _attempts(env, key)
-    # 0126 T#5: the explicit command resolves the review again as the NEXT seq of the same attempt — the attempt is
+    # the explicit command resolves the review again as the NEXT seq of the same attempt — the attempt is
     # not invalidated, the person's saved draft stays the instruction under review, the old seq 1 stays as history
     assert [a["status"] for a in attempts] == ["active"] and attempts[0]["attempt_id"] == old
     ir2 = one_of(env, old, "instruction_review", 2)
@@ -165,7 +165,7 @@ def test_k15_a_reused_instruction_s_unavailable_review_keeps_waiting_after_its_c
     assert one(env, key, "result") is None
     command(env)
     new = [a for a in _attempts(env, key) if a["status"] == "active"][0]["attempt_id"]
-    # 0126 T#5: the command's resolution is the next review seq (2) of the attempt; seq 1 keeps its wait as history
+    # the command's resolution is the next review seq  of the attempt; seq 1 keeps its wait as history
     assert one_of(env, new, "instruction_review", 1)["actor"] == "wait_unavailable"
     ir = one_of(env, new, "instruction_review", 2)
     assert (ir["actor"], ir["actor_reason"]) == ("no_review", "no_review_setting")
@@ -189,7 +189,7 @@ def test_an_explicit_command_retries_a_no_result_writer_on_the_same_attempt_with
     stored(key, "run_ai", Y)                                                    # a value change is not the assignment
     command(env)
     [again] = env["jobs"]
-    # 0126 keeps this contract while the write role still resolves to the recorded assignment (a changed role opens a
+    # keeps this contract while the write role still resolves to the recorded assignment (a changed role opens a
     # new attempt: test_fg_settings_retry_0126)
     assert (again["provider_id"], again["assignment_ref"]["attempt_id"]) == (X, attempt)
     assert again["invocation_origin"]["purpose"] == "result_write_retry"
@@ -217,7 +217,7 @@ def test_rc8_a_saved_plan_with_no_registration_is_registered_once_by_the_next_re
     assert one(env, key, "result_review", 1)["actor"] == "no_review"
 
 
-# ── 폴백 금지: a start failure fails the assignment; only an explicit command reopens it, with the same AI ──
+# ── No fallback: a start failure fails the assignment; only an explicit command reopens it, with the same AI ──
 
 def test_a_start_failure_fails_the_assignment_and_an_explicit_command_reopens_it_with_the_same_ai(env, decided,
                                                                                                    monkeypatch):

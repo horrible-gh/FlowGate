@@ -54,10 +54,10 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 T#7 — the `Diff` pane of the Base apply body (0066 D#2 §3-4(7)): the
+// the `Diff` pane of the Base apply body (the earlier implementation): the
 // `/changes?base=<target>` list of the target it was read for; a row opens the Center Diff with
 // that target as compareBase (⑦). It never decides a merge.
-// flowgate.v02.0067 T#4 — the list of the Git modeless `Diff` tab (0067-R §6-1, v27 `compareBase()`):
+// the list of the Git modeless `Diff` tab (the earlier implementation, v27 `compareBase()`):
 // the comparison files come first, with a path search and pages (`이전` / `다음`) instead of `더 보기`.
 // A row opens its diff as the tab's detail; the window keeps this list mounted meanwhile, so
 // `목록으로` comes back to the same search and page. Search and page are screen state only.

@@ -1,4 +1,4 @@
-"""Portable entry point for the flowgate.default.0347 TS test cases.
+"""Portable entry point for the the earlier change TS test cases.
 
 Run from ``server/`` as ``python tools/run_0347_tests.py <pytest args>``, or
 ``python tools/run_0347_tests.py --bootstrap`` to build the virtualenv first.
@@ -77,7 +77,7 @@ def _bootstrap() -> int:
     return install.returncode
 
 
-# ── 073 migration parity (DB0006 / TR0008) ────────────────────────────────────
+# ── 073 migration parity ────────────────────────────────────
 
 _DIALECTS = ("sqlite", "mysql", "postgres")
 _MIGRATION = "073_remote_tool_op_log_patch_stat.sql"

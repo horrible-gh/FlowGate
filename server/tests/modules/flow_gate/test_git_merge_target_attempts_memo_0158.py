@@ -1,4 +1,4 @@
-"""flowgate.v02.0158 — one check card candidate lookup reads the open merge attempts once.
+"""one check card candidate lookup reads the open merge attempts once.
 
 Before: every listed non-base name's ``inspect_workspace`` (and the base name's slot check) called
 ``open_merge_attempts``, which re-reads every open session of the server, so a project with many local branches and

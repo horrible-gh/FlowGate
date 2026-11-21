@@ -35,10 +35,10 @@ def payload_identity(*, doc_id: str, revision_no: int, verdict: Any, findings: A
 def encoding_provenance(validation: dict) -> str:
     """Serialize the same validation result the dry-run response carries.
 
-    0545 T0014: this is the durable audit side of the single validation result the
+    this is the durable audit side of the single validation result the
     route computes once (_encoding_validation_result) -- it must not recompute
     corruption/fingerprint/force facts from the raw body, only record the ones already
-    decided, so response and receipt audit cannot drift apart (T0014 AC-6).
+    decided, so response and receipt audit cannot drift apart.
     """
     data = {
         "validated_at": validation.get("validated_at"),
@@ -72,7 +72,7 @@ def issue(*, token_rec: dict, project_id: str, group_id: Optional[str], doc_id: 
     issued_at = now_iso()
     receipt_id = secrets.token_urlsafe(32)
     # A receipt can never outlive its bearer token. Normalized to now_iso()'s tz/format
-    # (0545 T0019, NR0017 Sec.2): token_service.issue() stores expires_at as UTC, and
+    # (Sec.2): token_service.issue stores expires_at as UTC, and
     # copying that string verbatim made classify()'s lexicographic comparison against
     # now_iso()'s JST string misjudge a still-live token's receipt as already expired.
     token_expires_at = token_rec.get("expires_at")

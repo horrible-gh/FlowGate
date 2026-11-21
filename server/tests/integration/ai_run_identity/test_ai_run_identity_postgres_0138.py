@@ -1,4 +1,4 @@
-"""0138 PostgreSQL: dedicated opt-in DB, or a new local cluster in pytest scratch.
+"""PostgreSQL: dedicated opt-in DB, or a new local cluster in pytest scratch.
 
 No production DSN fallback. An owned local postgres process is stopped before the
 fixture exits. Every migration and every write stays in the isolated database.

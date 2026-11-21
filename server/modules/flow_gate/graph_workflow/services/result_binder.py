@@ -1,4 +1,4 @@
-"""Result Binder (D0004 §2.2 결과 연결기, L0009 §2.6.8, P0008 §7.2).
+"""Result Binder (result binder, the earlier implementation, the plan).
 
 The v0.1 contacts hand every document event of a Graph-owned Flow here after v0.1 committed
 (inbox registration, review decision). Inside the Flow guard the event is located on a node run
@@ -7,35 +7,35 @@ of the active run and turned into a node event for the resolver:
 - a document that ends the supersede chain of a node's result -> ``revised`` (one hop) or a
   reconciliation of that node (a gap in the chain);
 - a document registered with a node's token, of the node's result type, node open without result ->
-  ``result_submitted``; a token-less document is not bound (Q-12, L0009 E-25). The result type is the
-  node's own type, or the card's report when the card omits its instruction (flowgate.v02.0053 T#2,
+  ``result_submitted``; a token-less document is not bound. The result type is the
+  node's own type, or the card's report when the card omits its instruction (the earlier change the earlier implementation,
   ``card_settings_ports.result_type``: the same port the dispatch asked, so the AI is told to write
   exactly the type that is bound);
-- a node's completion -> ``review_approved`` (flowgate.v02.0119 T#2, T-1): the node's completion record
+- a node's completion -> ``review_approved``: the node's completion record
   (``flowgate.card_completion``, asked through ``card_completion_ports.completion_of``) is the only source of its
   done — never the document's v0.1 review status. A review decision on the v0.1 review screen (``review_decided``,
   approve) is no node event of a Graph-owned Flow, so a person's v0.1 approval completes no node. The event is made
   by the reconciliation (``next_missing_event``) once the record exists and the card's other required outputs are
-  complete too (``card_completion_ports.pending_outputs``, flowgate.v02.0119 T#4, T-3: the instruction the card uses,
+  complete too (``card_completion_ports.pending_outputs``, the earlier change the earlier implementation, T-3: the instruction the card uses,
   approved — a line document beside the required outputs never holds the node; it replaced the card approval's every
-  approval line's document; flowgate.v02.0119 T#4 rework: a required instruction with no live document holds it too —
+  approval line's document; the earlier change the earlier implementation rework: a required instruction with no live document holds it too —
   ``completion_ready`` is that one condition, asked by a code node's merge end as well); a document approval that is no node's result re-reads the nodes in review
   (``_follow_card``), so a card waiting for its instruction follows the record once that instruction is approved.
   Existing runs (before the service) read an approved result as complete (the port's ``legacy`` answer).
 
-flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
+(CH ~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
 a rework or when its count is spent — is not a node event of the v0.2 contract: the node stays in review
-and waits for the card's approval (``node_approval``). 0056 T#1 개정: bound root input is already done
+and waits for the card's approval (``node_approval``). the earlier implementation revision: bound root input is already done
 at run start regardless of its document's review status (``run_service._root_bound_start``).
 A gate's confirm / reject is its own event and does not change.
 
-flowgate.v02.0056 T#2: an AI card with its instruction used runs an instruction stage before its result stage
+an AI card with its instruction used runs an instruction stage before its result stage
 (``node_dispatch``, the node run's ``stage``). Only the result stage's document is the node's result: while the
 node is in its instruction stage nothing it registers is ``result_submitted`` — the card's instruction,
 registered with the node's token, is recorded as the stage's instruction (``instruction_doc_id``) and fills
 the card's instruction line, with no node event; the node stays open. (Once that stage's AI failed —
-``ai_invoke_failed`` — the node's token is a person's again, L0009 E-23, and a result they register binds as
+``ai_invoke_failed`` — the node's token is a person's again, the earlier implementation E-23, and a result they register binds as
 before.) The instruction's automatic approval is no node event either: it is no node's result. The stage's end —
 the move to the result stage or its failure — records the node run's registration boundary
 (``result_event_floor``): what the node's tokens registered up to it (a report the instruction AI registered too
@@ -49,15 +49,15 @@ A node run with no stage — an AI card run opened before migration 148 — keep
 its result type is the card's of that time (``result_type`` hands the stage on as ``run_stage``).
 
 Anything else binds nothing and stays an unbound document node. A lost delegation (exception in
-the contact) is recovered by reconciliation from the v0.1 records (L0009 E-27): on resume, and
+the contact) is recovered by reconciliation from the v0.1 records: on resume, and
 before a run read when ``needs_reconcile`` says something is missing.
 
-flowgate.v02.0061 T#7: a stopping run binds nothing (no contact, no reconciliation), and a registration made with the
+a stopping run binds nothing (no contact, no reconciliation), and a registration made with the
 token of an attempt that may not write any more (invalidated, its run stopping) is refused and recorded
 (``graph_execution_hooks`` ``result_refused``). An invalidated attempt's tokens are no evidence any more
 (``run_store.token_ids``), so a node opened again never takes the old attempt's result.
 
-flowgate.v02.0083 WP-4: a node's result just submitted (``result_submitted``), revised (``revised``) or put back in review
+WP-4: a node's result just submitted (``result_submitted``), revised (``revised``) or put back in review
 on its v0.1 review route (``mark_revised``, no node event) is handed to the card (``card_settings_ports.person_result``)
 before this step's settlement: a work plan a person writes takes its card's review or automatic approval as a post-commit
 job (the card marks the node as worked on meanwhile). Nothing else changes here; a rejection is still no node event.
@@ -87,16 +87,16 @@ from .run_apply import RunContext, apply_decision, fill_line, load_context, read
 
 _log = logging.getLogger(__name__)
 
-EDITED = "inbox_edited"                                         # 0083 WP-4: a revision registered in place
+EDITED = "inbox_edited"                                         # WP-4: a revision registered in place
 EVENT_KINDS = ("inbox_registered", "review_decided", EDITED)
 INSTRUCTION_STAGE = "instruction"
 RECONCILE_MAX_STEPS_PER_NODE = 64
-# Only an approval moves a node on; a rejection is no node event (flowgate.v02.0056 T#1).
+# Only an approval moves a node on; a rejection is no node event.
 _DECISIONS = {"approve": "review_approved", "approved": "review_approved"}
-_SUBMISSIONS = ("result_submitted", "revised")                  # 0083 WP-4: a submission the card follows
-_RESUBMISSIONS = ("mark_revised",)                              # 0083 WP-4: the same document back in review
+_SUBMISSIONS = ("result_submitted", "revised")                  # WP-4: a submission the card follows
+_RESUBMISSIONS = ("mark_revised",)                              # WP-4: the same document back in review
 CANCELLED = "cancelled"
-STOPPING = "stopping"                                           # 0061 T#7
+STOPPING = "stopping"                                           # 
 
 
 def _project_id(flow_id: str) -> Optional[str]:
@@ -124,18 +124,18 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
             return
         from modules.flow_gate.services import graph_execution_hooks
         if graph_execution_hooks.call("result_refused", run, kind, payload):
-            return                                               # 0061 T#7: fenced, recorded, nothing moves
+            return                                               # fenced, recorded, nothing moves
         ctx = load_context(run, _project_id(flow_id), None, jobs)
         found = locate(ctx, kind, payload)
         gap = found is not None and found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id
         if not gap:
-            _hand_to_card(ctx, kind, payload, found)             # 0083 WP-4: before the settlement below
+            _hand_to_card(ctx, kind, payload, found)             # WP-4: before the settlement below
         if found is None:
             if kind == EDITED:
-                return                                           # 0083 WP-4: no node event; the card's job settles
+                return                                           # WP-4: no node event; the card's job settles
             if kind == "review_decided" and _approval(payload):
                 _follow_card(ctx)                                # another document of a card approved
-            settle_run(ctx)                                      # 0061 T#2: a review ended with no node event
+            settle_run(ctx)                                      # a review ended with no node event
             return
         policies = policies_of(run_store.policy_entries(ctx.run_id))      # E-33 -> rollback
         if gap:
@@ -150,7 +150,7 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
 
 
 def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[RunEvent]) -> None:
-    """0083 WP-4, inside the guard: the node's result submitted, revised (a new document, or the same one's new
+    """WP-4, inside the guard: the node's result submitted, revised (a new document, or the same one's new
     revision registered in place: ``inbox_edited``) or put back in review goes to its card, whose answer (the step after
     the commit) joins the post-commit jobs."""
     if found is not None and found.kind in _SUBMISSIONS:
@@ -159,7 +159,7 @@ def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[Run
         row = run_store.node_run_by_result(ctx.run_id, payload.get("doc_id")) if payload.get("doc_id") else None
         if row is None and kind == EDITED and payload.get("doc_id"):
             flow_id, doc_id, token_id = ctx.flow_id, payload["doc_id"], payload.get("token_id")
-            # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): an instruction's new revision registered in place
+            # (L-2 CONTENT_SAVED): an instruction's new revision registered in place
             ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, None, token_id))
         if row is None or row["status"] != "review":
             return
@@ -173,12 +173,12 @@ def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[Run
 
 
 def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
-    """L0009 §2.6.8 ``locate_node_run`` / §4.5 — the node event, or None (bind nothing)."""
+    """``locate_node_run`` / — the node event, or None (bind nothing)."""
     doc = document(payload.get("doc_id"))
     if doc is None:
         return None
     rows = run_store.node_runs(ctx.run_id)
-    # 0145 T#1: the first in-place result write has the same registration contact as
+    # the first in-place result write has the same registration contact as
     # a newly allocated result. Later revisions still keep their existing review path.
     from . import result_slot_binding
     bound = result_slot_binding.issued_binding({"group_id": ctx.flow_id, "token_id": payload["token_id"]}) \
@@ -198,34 +198,34 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
         node = ctx.node_rows.get(mapped["node_key"]) or {}        # 2) the node's token
         row = next((r for r in rows if r["node_key"] == mapped["node_key"]), None)
         if row is not None and in_instruction_stage(row):
-            if not mapped.get("stage"):                           # T#2: the dispatch token spent in this stage
+            if not mapped.get("stage"):                           # the dispatch token spent in this stage
                 run_store.mark_token_stage(payload["token_id"], INSTRUCTION_STAGE)
-            _take_instruction(ctx, node, row, doc)                # T#2: the instruction, no node event
+            _take_instruction(ctx, node, row, doc)                # the instruction, no node event
             return None
         if mapped.get("stage") == INSTRUCTION_STAGE:
-            return None                                           # T#2: the instruction stage's token, never a result
+            return None                                           # the instruction stage's token, never a result
         if row is None or _type(doc.get("type_code")) != result_type(ctx, node, row):
             return None                                           # E-24: another type
         if doc["doc_id"] in instruction_stage_documents(ctx, row):
-            return None                                           # T#2: registered before the result stage
+            return None                                           # registered before the result stage
         if row.get("result_doc_id") is None and row["status"] == "open":
             return RunEvent("result_submitted", row["node_key"], doc_id=doc["doc_id"])
         return None                                               # already has a result
     if kind == "review_decided":
-        # flowgate.v02.0119 T#2 (T-1): a review decision on the v0.1 review screen is no node event of a Graph-owned
+        # (T-1): a review decision on the v0.1 review screen is no node event of a Graph-owned
         # Flow (its hidden person's approval): the node follows its completion record only (``next_missing_event``).
         return None
     return None
 
 
 def in_instruction_stage(row: dict) -> bool:
-    """The node run is in its card's instruction stage and its AI has not failed (flowgate.v02.0056 T#2)."""
+    """The node run is in its card's instruction stage and its AI has not failed."""
     return row.get("stage") == INSTRUCTION_STAGE and row["status"] == "open" and not row.get("dispatch_error_code")
 
 
 def instruction_stage_documents(ctx: RunContext, row: Optional[dict]) -> set[str]:
     """The documents the node's tokens registered before its result stage (at or before the node run's
-    ``result_event_floor``): its instruction stage's, never its result (flowgate.v02.0056 T#2). A registration
+    ``result_event_floor``): its instruction stage's, never its result. A registration
     consumed after the boundary is the instruction stage's by its token's stage instead (``locate``,
     ``next_missing_event``)."""
     floor = (row or {}).get("result_event_floor")
@@ -246,7 +246,7 @@ def _take_instruction(ctx: RunContext, node: dict, row: dict, doc: dict) -> None
     run_store.set_stage(ctx.run_id, row["node_key"], INSTRUCTION_STAGE, doc["doc_id"])
     fill_line(ctx, row["node_key"], doc["doc_id"])              # the card's instruction line
     flow_id, key, doc_id = ctx.flow_id, row["node_key"], doc["doc_id"]
-    # flowgate.v02.0113 T#3 (L-2 §2.7.1 REGISTERED): a person's instruction stage judges it after the commit
+    # (L-2 REGISTERED): a person's instruction stage judges it after the commit
     ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, key, "registered"))
 
 
@@ -259,7 +259,7 @@ def _approval(payload: dict) -> bool:
 
 
 def card_complete(ctx: RunContext, key: str, result_doc_id: str) -> bool:
-    """flowgate.v02.0119 T#4 (T-3): no other required output of the node's card is incomplete — the instruction the card
+    """(T-3): no other required output of the node's card is incomplete — the instruction the card
     uses is approved (``card_completion_ports.pending_outputs``); a line document beside the required outputs never
     holds the node."""
     node = ctx.node_rows.get(key) or {"node_key": key}
@@ -285,8 +285,8 @@ def _type(value) -> str:
 
 def result_type(ctx: RunContext, node: dict, row: Optional[dict] = None) -> str:
     """The type a result of ``node`` is: its card's (instruction omitted: the report), else its own — a Custom
-    card's being its work instruction (flowgate.v02.0053 T#8, ``graph_model.run_doc_type``). With its node run
-    ``row`` the card run's stage goes along as ``run_stage`` (flowgate.v02.0056 T#2): a node run with no stage,
+    card's being its work instruction (``graph_model.run_doc_type``). With its node run
+    ``row`` the card run's stage goes along as ``run_stage``: a node run with no stage,
     opened before migration 148, keeps the type its AI was told then."""
     asked = {**node, "run_stage": row.get("stage")} if row is not None else node
     return _type(card_settings_ports.result_type(ctx.flow_id, asked)
@@ -298,7 +298,7 @@ def _next_in_chain(ctx: RunContext, doc_id: Optional[str]) -> Optional[str]:
     return (cur or {}).get("superseded_by")
 
 
-# ── Reconciliation (L0009 §2.6.8, E-27) ──────────────────────────────────────
+# ── Reconciliation ──────────────────────────────────────
 
 def reconcile_targets(ctx: RunContext, s: RunState) -> list[str]:
     out = []
@@ -319,10 +319,10 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr.result_doc_id is None:
         row = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == key), None)
         if row is not None and in_instruction_stage(row):
-            return None                                           # T#2: no result before the result stage
+            return None                                           # no result before the result stage
         want = result_type(ctx, ctx.node_rows.get(key) or {}, row)
-        early = instruction_stage_documents(ctx, row)             # T#2: the instruction stage's registrations
-        tokens = run_store.token_ids(ctx.run_id, key, skip_stage=INSTRUCTION_STAGE)   # T#2: and its tokens'
+        early = instruction_stage_documents(ctx, row)             # the instruction stage's registrations
+        tokens = run_store.token_ids(ctx.run_id, key, skip_stage=INSTRUCTION_STAGE)   # and its tokens'
         for doc in registered_documents(ctx.flow_id, tokens):
             if doc["doc_id"] in early:
                 continue
@@ -346,34 +346,34 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
 
 
 def completion_ready(ctx: RunContext, key: str, cur: dict, *, merged: bool = False) -> bool:
-    """The one completion condition of a node in review whose result is ``cur`` (flowgate.v02.0119 T#4 rework,
+    """The one completion condition of a node in review whose result is ``cur`` (the earlier change the earlier implementation rework,
     rej_01M6DQW6YF0SCQ5D P1): every path that makes the node's ``review_approved`` asks it, inside its Flow guard —
     the reconciliation (``next_missing_event``) and a code node's merge end (``result_merge._finish``, ``merged``):
 
-    - the node's completion record (flowgate.v02.0119 T#2, T-1), not the document's review status (an existing run's
+    - the node's completion record, not the document's review status (an existing run's
       approved result reads as complete through the port's ``legacy`` answer);
-    - the card's other required outputs complete (``card_complete``: the instruction the card uses, approved — T#4 T-3);
-    - no review of the result waiting (0038-T T#3 A-4: approved before, its review waits);
-    - its merge done (0061 T#9 ``integration_waiting``) — not asked by the merge end itself (``merged``), which has just
+    - the card's other required outputs complete (``card_complete``: the instruction the card uses, approved — the earlier implementation T-3);
+    - no review of the result waiting (T the earlier implementation A-4: approved before, its review waits);
+    - its merge done (``integration_waiting``) — not asked by the merge end itself (``merged``), which has just
       integrated the attempt and keeps that fact whatever the rest answers.
 
     False leaves the node in review; once the rest completes (its instruction approved, its review ended), the next
-    reconciliation makes the event — once: the frontier ignores a repeated one (L0009 E-20 / E-36)."""
+    reconciliation makes the event — once: the frontier ignores a repeated one."""
     if card_completion_ports.completion_of(ctx.flow_id, ctx.run, key, cur) is None:
         return False                                              # no completion
     if not card_complete(ctx, key, cur["doc_id"]):
         return False                                              # complete result, its instruction not yet
     if card_settings_ports.result_review_pending(ctx.flow_id, ctx.run_id, key, cur["doc_id"]):
-        return False                                              # 0038-T T#3 A-4: approved before, its review waits
+        return False                                              # A-4: approved before, its review waits
     if not merged:
         from modules.flow_gate.services import graph_execution_hooks
         if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
-            return False                                          # 0061 T#9: approved, its merge decides
+            return False                                          # approved, its merge decides
     return True
 
 
 def needs_reconcile(ctx: RunContext) -> bool:
-    # flowgate.v02.0119 T#2 (T-1): a written completion record that no longer answers its node is settled too
+    # (T-1): a written completion record that no longer answers its node is settled too
     if card_completion_ports.unsettled(ctx.flow_id, ctx.run):
         return True
     s = read_run_state(ctx)
@@ -393,13 +393,13 @@ def reconcile_node(ctx: RunContext, key: str, policies: dict) -> None:
         if d.ignored:
             _log.warning("graph reconcile stopped run=%s node=%s event=%s", ctx.run_id, key, event.kind)
             return
-        _hand_to_card(ctx, "reconcile", {}, event)               # 0083 WP-4: a bound submission, as on its contact
+        _hand_to_card(ctx, "reconcile", {}, event)               # WP-4: a bound submission, as on its contact
         apply_decision(ctx, d)
     _log.warning("graph reconcile_step_limit run=%s node=%s", ctx.run_id, key)
 
 
 def reconcile_links(ctx: RunContext, policies: dict) -> None:
-    # flowgate.v02.0119 T#2 (T-1): inside the guard, first the Flow's written completion records that no longer answer
+    # (T-1): inside the guard, first the Flow's written completion records that no longer answer
     # their node (a moved result / attempt / revision, a node out of review, another run) turn superseded — a run read
     # or a command settles them with no explicit apply — then the nodes take their missing events.
     card_completion_ports.settle(ctx.flow_id, ctx.run)
@@ -408,7 +408,7 @@ def reconcile_links(ctx: RunContext, policies: dict) -> None:
 
 
 def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
-    """Before a run read (L0009 §2.6.8 호출 시점). A failure only skips the repair; the read goes on."""
+    """Before a run read (invocation timing). A failure only skips the repair; the read goes on."""
     from modules.flow_gate.db.groups import is_archived
     if is_archived(flow_id):
         return
@@ -421,14 +421,14 @@ def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
         if is_archived(flow_id) or read_ownership(flow_id).state != "graph":
             return
         again = run_store.active_run(flow_id)
-        if again is None or again["status"] == STOPPING:      # 0061 T#7: a stopping run binds nothing
+        if again is None or again["status"] == STOPPING:      # a stopping run binds nothing
             return
         ctx = load_context(again, project_id, None, jobs)
         reconcile_links(ctx, policies_of(run_store.policy_entries(ctx.run_id)))
 
     try:
         with_flow_guard(flow_id, body)
-    except Exception:  # noqa: BLE001 — L0009 §2.6.8: roll the repair back, answer the read
+    except Exception:  # noqa: BLE001 — the earlier implementation: roll the repair back, answer the read
         _log.exception("graph run reconcile failed flow=%s", flow_id)
         return
     _run_jobs(jobs)

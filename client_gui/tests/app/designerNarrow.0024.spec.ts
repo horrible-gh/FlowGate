@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import appSource from '@/app/App.vue?raw'
 import shellSource from '@/features/designer/shell/DesignerShell.vue?raw'
 
-// flowgate.v02test.0024: at <=1120px the App Shell lets ordinary screens scroll as a page, but the
+// at <=1120px the App Shell lets ordinary screens scroll as a page, but the
 // full-screen Designer must stay pinned to the viewport. Otherwise the right-dock Conversation has
 // no definite height, its timeline loses its own scroll and the composer is pushed off screen.
 // jsdom does no layout, so this pins the CSS source the browser check was done against.

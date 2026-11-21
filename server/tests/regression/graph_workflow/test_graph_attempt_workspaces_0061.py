@@ -1,4 +1,4 @@
-"""0061 T#5: attempt workspaces and fail-closed source routing.
+"""attempt workspaces and fail-closed source routing.
 
 TR runs py_compile only. These SQLite/Git fixtures and mocked provider/lock
 boundaries are for the separate test WP/TSR; no AI or network is required.
@@ -53,7 +53,7 @@ def harness(tmp_path_factory, monkeypatch):
             canvas_state TEXT, actor_user_id TEXT, reason TEXT, payload_json TEXT, created_at TEXT,
             PRIMARY KEY(run_id, event_seq));
     """)
-    # 0110 T#2: execution_store.request and workspace.prepare read/write the T#8 result columns
+    # execution_store.request and workspace.prepare read/write the the earlier implementation result columns
     # (result_commit, integration_status, input_source, ...) added by 153a, which also alters
     # tr_commit_ledger (086d) — the same chain test_graph_attempt_results_0061 loads, on the
     # same parent stubs (086d references groups/documents and alters group_git_state).
@@ -70,7 +70,7 @@ def harness(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(run_store, "get_store", lambda: db)
     monkeypatch.setattr(port, "get_store", lambda: db)
     monkeypatch.setattr(execution, "get_store", lambda: db)
-    # 0110 T#2: T#10 inputs (definition_store.revision) and 0085 gate reservations (settle) read
+    # inputs (definition_store.revision) and 0085 gate reservations (settle) read
     # these stores; on this DB their tables are absent -> no definition edges, no reservations.
     from flowgate.gate_decisions import repository as gate_repository
     monkeypatch.setattr(workspace.definition_store, "get_store", lambda: db)
@@ -232,7 +232,7 @@ def test_creation_failure_invalidates_only_its_attempt(repo, monkeypatch, other_
     directory, _root, branch = workspace.location(row, PROJECT)
     assert not directory.exists()
     assert not workspace.git._ref_exists(repo.group, "refs/heads/" + branch)
-    # 0111 T#8: the ref a new attempt took before its failed worktree add goes with it.
+    # the ref a new attempt took before its failed worktree add goes with it.
     assert not workspace.git._ref_exists(repo.group, workspace.ATTEMPT_REF_PREFIX + directory.name)
     assert json.loads(run_store.events("run")[-1]["payload_json"])["reason"] == "worktree_add_failed"
 
@@ -312,7 +312,7 @@ OPERATIONS = [
 
 
 
-# 0110 T#3 (contract change, NR0003 §3 T-B item 6): "self_check" left this list -- a bound token's Self-check now runs
+# (contract change, the review T-B item 6): "self_check" left this list -- a bound token's Self-check now runs
 # in its attempt root (test_mapped_token_self_check_runs_in_attempt_root below). The other group-only paths still refuse.
 
 
@@ -320,7 +320,7 @@ OPERATIONS = [
 
 @pytest.fixture
 def selfcheck(repo, monkeypatch):
-    """0110 T#3: tr_self_check_service._start on these attempt fixtures, up to its worker thread. The run store and
+    """tr_self_check_service._start on these attempt fixtures, up to its worker thread. The run store and
     the worker are recorded instead of executed; the Group / attempt locks are the harness's recording fakes. The
     worker keeps ``_finish``'s spawn contract: it "spawns" (``before_spawn`` may hold it there, ``order`` records it),
     then sets ``spawned``. The real ``_finish`` and locks: test_tr_self_check_attempt_w_0110."""
@@ -381,7 +381,7 @@ def _draft_token(item, monkeypatch):
 
 @pytest.fixture
 def fenced_selfcheck(selfcheck, monkeypatch):
-    """0110 T#3 rework: the real Stop gate judgement (``fencing.require_token``) in front of the Self-check start, on
+    """the real Stop gate judgement (``fencing.require_token``) in front of the Self-check start, on
     the harness's real graph rows; its refusal records are captured."""
     from flowgate.graph_run import fencing
     recorded = []

@@ -61,7 +61,7 @@ def test_s3_a_re_requested_review_spent_again_is_listed_and_the_next_command_is_
     r = _latest(env)
     print("S3 state =", r["state"], "nodes =", [(n["node_key"], n["outcome"], n["reason"]) for n in r["nodes"]])  # measured
     # The existing failure rule counts the re-requested loop's B-1 (``auto_approval_skipped``) as this command's failure,
-    # so the command reads ``failed`` (the 1st window, D12) while ``blocking`` still names the card; T#2 keeps that rule (D7).
+    # so the command reads ``failed`` (the 1st window, D12) while ``blocking`` still names the card; the earlier implementation keeps that rule (D7).
     assert (r["idle_reason"], r["state"]) == ("needs_intervention", "failed")
     assert [n["node_key"] for n in r["nodes"]] == [a]
     [b] = r["blocking"]
@@ -86,7 +86,7 @@ def test_s4_only_the_latest_command_lists_blocking_cards(env, decided, monkeypat
 @pytest.mark.parametrize("excluded", ["review_verdict_hold", "completion_missing"])
 def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_keeps_nodes_and_counts(
         env, decided, monkeypatch, starts, fork_join, excluded):
-    """T#2 §5.1 S5 on the real run path (the Flow R -> a, R -> m): the result of the first full command, read after
+    """S5 on the real run path (the Flow R -> a, R -> m): the result of the first full command, read after
     ``a`` was excluded. ``review_verdict_hold`` records a B-1 mark after the command (the existing rule counts it as the
     command's failure, D7); ``completion_missing`` leaves no such mark, so ``a`` is a waiting card of the command."""
     from flowgate.graph_run import legacy_adapter as engine
@@ -121,7 +121,7 @@ def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_k
         assert by[a]["reason"] == "review_hold"
         assert by[a]["detail"] == "review_not_passed:review_verdict_hold"
         assert r["failure"] is None
-    # ... and nothing but ``blocking`` differs from the result before T#2 (the same read with the intervention read failing)
+    # ... and nothing but ``blocking`` differs from the result before the earlier implementation (the same read with the intervention read failing)
     with monkeypatch.context() as patched:
         def broken(*_a, **_k):
             raise RuntimeError("a read failed")

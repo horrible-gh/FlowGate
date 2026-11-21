@@ -1,6 +1,6 @@
 """T506 — backend tests for the final-approved group flag in get_group_tree.
 
-Covers D0002 §2 / §3 / §9:
+Covers the design / /:
   1. A group whose owning R doc is wf_done  → is_final_approved: True
   2. A group whose R doc is wf_in_progress  → is_final_approved: False
   3. A group with no R doc                  → is_final_approved: False

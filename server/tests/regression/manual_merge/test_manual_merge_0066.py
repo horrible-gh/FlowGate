@@ -1,4 +1,4 @@
-"""0066 T#3 — manual merge (D#1 §3-6, E8/E9) on real Git, real jobs and real locks.
+"""manual merge on real Git, real jobs and real locks.
 
 The approval gate is replaced by technical guards only; nothing uncommitted is absorbed;
 the merge need is counted against the target three times (request, under the job's locks,

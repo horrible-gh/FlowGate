@@ -50,12 +50,12 @@ from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_reci
 from modules.flow_gate.api.v1.git_routes import router as _git_router
 from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
-# flowgate.v02.0032 T#1 (D0006 §2.1, §5.1): the v0.2 Conversation contract (server/flowgate/).
+# the v0.2 Conversation contract (server/flowgate).
 from flowgate.conversation.routes import router as _conversation_router
-# flowgate.v02.0053 T#2: the v0.2 card (Node) run settings (server/flowgate/card_settings).
+# the v0.2 card (Node) run settings (server/flowgate/card_settings).
 from flowgate.card_settings.routes import router as _card_settings_router
 from flowgate.ai_roles.routes import router as _ai_roles_router
-# flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
+# a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
 from flowgate.card_documents.routes import router as _card_documents_router
 from flowgate.card_document_edit.routes import router as _card_document_edit_router
 from flowgate.graph_read.routes import router as _ai_graph_read_router
@@ -63,12 +63,12 @@ from flowgate.chat_control.routes import router as _chat_control_router
 from flowgate.card_memos.routes import router as _card_memos_router
 from flowgate.card_merge.routes import router as _card_merge_router
 from flowgate.work_plan_deploy.routes import router as _work_plan_deploy_router
-# flowgate.v02.0061 T#13: the Graph Time Machine (server/flowgate/graph_time_machine).
+# the Graph Time Machine (server/flowgate/graph_time_machine).
 from flowgate.graph_time_machine.routes import router as _graph_time_machine_router
-# flowgate.v02.0085 T#2: the confirm gate decision history (server/flowgate/gate_decisions).
+# the confirm gate decision history (server/flowgate/gate_decisions).
 from flowgate.gate_decisions.routes import router as _gate_decisions_router
 from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
-# flowgate.chat.0017 CH0002: AI attachment upload requests, the user side (decision, preview, settings).
+# AI attachment upload requests, the user side (decision, preview, settings).
 from modules.flow_gate.api.v1.attachment_request_routes import router as _attachment_request_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
     # Cooperative-shutdown signal for long-lived SSE streams. Without this, an
     # open EventSource keeps its response generator running forever, and uvicorn
     # waits on that in-flight connection — so the server only exits once the
-    # browser is closed (group 0102 R0001). SSE generators race this event and
+    # browser is closed. SSE generators race this event and
     # stop promptly when it is set. (timeout_graceful_shutdown on every startup
     # path is the belt-and-suspenders backstop for any other stuck request.)
     app.state.shutdown_event = asyncio.Event()
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("server instance shutdown failed", exc_info=True)
     try:
-        # flowgate.v02.0129 T#2: the remote AI Job supervisor started by the bootstrap.
+        # the remote AI Job supervisor started by the bootstrap.
         from modules.flow_gate.services.ai_invoke import remote_supervisor
         remote_supervisor.stop_supervisor()
     except Exception:
@@ -181,7 +181,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # other endpoints that reuse git_service (token/issue, ai-invoke/start build the
 # conflict mention via git_service.list_conflicts) had no such guard, so a
 # GitServiceError from a stale/non-open merge session leaked out as a bare 500
-# (flowgate.default.0233 B0001). This global handler converts it once for every
+#. This global handler converts it once for every
 # route — present and future — matching the git_routes envelope exactly.
 @app.exception_handler(GitServiceError)
 async def git_service_exception_handler(request: Request, exc: GitServiceError):
@@ -195,7 +195,7 @@ async def mutation_policy_exception_handler(request: Request, exc: MutationPolic
     return mutation_error_response(exc)
 
 
-# 0660 T0004 §2 (RC2): a refused workflow slot write (the slot already holds another
+# (RC2): a refused workflow slot write (the slot already holds another
 # document, or the document already sits in another slot) is a workflow conflict, not a
 # server fault. Uncaught it surfaced as a bare 500 the create dialog could only render as
 # "an error occurred". The exception already carries the identified {"error": {...}}
@@ -207,12 +207,12 @@ async def workflow_slot_conflict_exception_handler(request: Request, exc: Workfl
 
 
 app.add_middleware(SlowAPIMiddleware)
-# 0291 P3-1 / 4-8: 요청 하나 = DB 읽기 캐시 하나 + 쿼리 계측 하나.
-# add_middleware 는 스택을 바깥쪽으로 쌓으므로 **나중에 추가된 것이 먼저 실행된다.**
-# 이 줄이 SlowAPIMiddleware 뒤에 오는 덕에 스코프가 바깥에 서고, 레이트리밋에 걸려
-# 거절되는 요청까지 계측에 잡힌다. 스코프가 안쪽에 있으면 그 요청은 통계에서 사라진다.
+# 4-8: one request = one DB read cache + one query measurement scope.
+# add_middleware wraps the stack outward, so **the last middleware added runs first.**
+# Placing this after SlowAPIMiddleware makes the scope outermost, measuring even requests
+# rejected by rate limiting. An inner scope would omit those requests from statistics.
 app.add_middleware(RequestScopeMiddleware)
-# 0378: the durable group lease is the authoritative write boundary for every route.
+# the durable group lease is the authoritative write boundary for every route.
 app.add_middleware(GroupMutationPolicyMiddleware)
 
 # Legacy login/register endpoints removed — replaced by /flowgate/auth/login (B001 fix)
@@ -272,7 +272,7 @@ app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_conversation_router, prefix=f"{CONTEXT}/api/v1", tags=["Conversation"])
-# 0670: registered after the v0.2 Conversation router, which serves the same
+# registered after the v0.2 Conversation router, which serves the same
 # /chat-commands and /chat-activity paths first.
 app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatCommands"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
@@ -288,10 +288,10 @@ app.include_router(_ai_roles_router, prefix=f"{CONTEXT}", tags=["AiSettings"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
 app.include_router(_card_document_edit_router, prefix=f"{CONTEXT}", tags=["CardDocumentEdit"])
 app.include_router(_ai_graph_read_router, prefix=f"{CONTEXT}", tags=["AiGraphRead"])
-# flowgate.v02test.0023: chat control tower stage 1 (CLI chat: place work cards, start the Flow's run).
+# chat control tower stage 1 (CLI chat: place work cards, start the Flow's run).
 app.include_router(_chat_control_router, prefix=f"{CONTEXT}", tags=["ChatControl"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
-app.include_router(_card_merge_router, prefix=f"{CONTEXT}", tags=["CardMerge"])   # flowgate.v02test.0042
+app.include_router(_card_merge_router, prefix=f"{CONTEXT}", tags=["CardMerge"])   # 
 app.include_router(_work_plan_deploy_router, prefix=f"{CONTEXT}", tags=["WorkPlanDeploy"])
 app.include_router(_graph_time_machine_router, prefix=f"{CONTEXT}", tags=["GraphTimeMachine"])
 app.include_router(_gate_decisions_router, prefix=f"{CONTEXT}", tags=["GateDecisions"])
@@ -307,7 +307,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "X-Request-ID"],
 )
-# flowgate.v02gui.0017 (NR 0003 B-R8): added last, so it is the outermost layer -- every response
+# added last, so it is the outermost layer -- every response
 # (CORS preflight, rate-limit rejections, errors) carries X-Request-ID, and handlers such as
 # /auth/refresh can put the same id in their log lines.
 app.add_middleware(RequestIdMiddleware)
@@ -334,7 +334,7 @@ def install_server_logs() -> None:
 install_server_logs()
 
 # ── Built client (staging/prod) ──────────────────────────────────
-# Serve client_gui/dist when present (produced by client_gui/build.sh). flowgate.v02gui.0024:
+# Serve client_gui/dist when present (produced by client_gui/build.sh). the earlier change:
 # client_gui is the only client. Its build has two HTML entries — index.html is the /app SPA
 # (every /app/* deep link), login.html the sign-in page served at / and /login (invitation
 # links are /login?invite=<token>). v0.1's old /main and /settings addresses redirect into
@@ -381,7 +381,7 @@ def _safe_dist_file(dist_dir_real: str, relative: str):
     return candidate
 
 
-# flowgate.v02gui.0024 (R0001 §4.3): v0.1 address -> v0.2 address. A prefix matches itself and
+# v0.1 address -> v0.2 address. A prefix matches itself and
 # everything below it (`/settings/users/123` -> /app/settings/system/users); the v0.1 sub-path
 # itself is not carried over because the v0.2 routes are laid out differently. More specific
 # prefixes come first: settings/system/agents and settings/system/ai before settings/system,
@@ -420,7 +420,7 @@ _CTX = CONTEXT.strip("/")
 # The HTML entry shells (index.html, login.html) are NOT content-hashed, so a browser that
 # heuristically caches them keeps loading an OLD shell that still references a pre-rebuild
 # `main-<oldhash>.js` — the app renders entirely from cache and a fresh rebuild never reaches
-# the screen (group 0126). Force the shells to revalidate every load; the hashed
+# the screen (the earlier change). Force the shells to revalidate every load; the hashed
 # /app/assets/* stay immutably cacheable.
 def _html(path: str) -> FileResponse:
     return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
@@ -448,7 +448,7 @@ async def _serve_client(full_path: str, request: Request):
     if not _client_gui_dist_exists:
         return _not_found()
 
-    # /app and every /app/* deep-link/refresh resolve to the SPA shell (T0005 §6).
+    # /app and every /app/* deep-link/refresh resolve to the SPA shell.
     if full_path == "app" or full_path.startswith("app/"):
         # /app/assets/* is served by the mount above; a request that still reaches
         # here under app/assets/ is a genuine miss (e.g. a stale hashed filename),

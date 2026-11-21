@@ -79,7 +79,7 @@ def test_a_complete_result_revised_while_it_waits_for_its_instruction_is_followe
     run = _current(env)                                                  # the read reconciles: the revision first
     node_run = next(n for n in run["node_runs"] if n["node_key"] == key)
     assert (node_run["status"], node_run["result_doc_id"], node_run["intervention"]["kind"]) == (
-        "review", new, "needs_intervention")                             # 0119 T-2: no person's approval follows
+        "review", new, "needs_intervention")                             # T-2: no person's approval follows
     assert _causes_after(env, key, seq) == ["revised"]
 def test_the_reconciliation_follows_a_live_revision_before_a_complete_result_s_outputs(monkeypatch):
     from types import SimpleNamespace
@@ -159,10 +159,10 @@ def test_the_output_lines_moved_from_the_card_approval_read_written_and_stale_do
     assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": False})
     assert is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": True})
     assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": "pending_review",
-                          "stale": True})                                # 0061 T#7: an ended attempt's document
+                          "stale": True})                                # an ended attempt's document
     assert not is_target({"slot": "instruction", "doc_id": None, "doc_review_status": "approved"})
 def test_the_card_approval_route_is_gone_and_a_person_s_result_completes_its_card(pre_feature_attempts, env, decided):
-    """0119 T-3 rework (rej_01M6DQW6YF0SCQ5D P1, was ``..._is_the_card_s_intervention``): no route takes a person's
+    """T-3 rework (rej_01M6DQW6YF0SCQ5D P1, was ``..._is_the_card_s_intervention``): no route takes a person's
     approval, and a pre-feature person card whose card reviews nothing completes its result as ``human_submitted``."""
     _admin_and_reviewer(env)
     t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
@@ -174,7 +174,7 @@ def test_the_card_approval_route_is_gone_and_a_person_s_result_completes_its_car
     _approval_route_gone(env, t1)
     shown = _node_run(env, t1)
     assert (shown["status"], shown["awaiting_approval"], shown["intervention"]) == ("done", False, None)
-    assert "viewer" not in _current(env)                                 # 0119 T-3: no viewer.can_approve
+    assert "viewer" not in _current(env)                                 # T-3: no viewer.can_approve
     assert _review_status(result) == "approved" and _node(env, t2)[0] == "open"
     [done] = _sql(env["db"], "SELECT cause, actor_kind FROM graph_card_completions WHERE node_key = ?", (t1,))
     assert (done["cause"], done["actor_kind"]) == ("human_submitted", "user")

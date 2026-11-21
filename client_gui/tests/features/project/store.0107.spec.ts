@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0107 T#1 — the project store's Designer Git display read of a Flow work base (D §3.1,
+ * the project store's Designer Git display read of a Flow work base (D,
  * §6.2-6 / 7). It hands back the existing GET /groups/{gid}/work-base answer and writes or
  * invalidates no shared state — knownGitEnabled, the work-base options cache and session, the
  * group trees, the project Git status — whatever the answer is: Git on or off, another project,

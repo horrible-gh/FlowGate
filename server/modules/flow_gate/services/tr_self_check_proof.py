@@ -1,4 +1,4 @@
-"""Release proofs for a Self-check run (flowgate.v02.0080 T#1, NR0007 §5-0).
+"""Release proofs for a Self-check run.
 
 Ending a run (failed/cancelled), clearing its ``active_key`` or deleting its Group's G is
 allowed only when BOTH hold, in this order:
@@ -15,8 +15,8 @@ ownership records, another node, a namespace we cannot see -- never releases any
 An instance's DEAD state, ``os_process_alive() == False``, ``status='dead'`` and heartbeat
 expiry are hints only: nothing here reads them.
 
-Shared by ``recover()`` (T#1), the G reclaim gate and cancel (T#2) and the reaper and
-manual re-verification (T#3), so the rule exists once: :func:`release_verdict`.
+Shared by ``recover()``, the G reclaim gate and cancel and the reaper and
+manual re-verification, so the rule exists once::func:`release_verdict`.
 
 Run marker scan (Linux): adopted. Each run's environment carries ``MARKER_ENV=<run_id>``
 and the tree proof also requires that no process carries it, which covers a run that died
@@ -371,7 +371,7 @@ def tree_state(row: dict) -> Proof:
         if target_pid:
             parts["target"] = executor.identity_state(target_pid, target_id)
         elif row.get("process_owner_kind"):
-            # The spawn began (its stamp lands before Popen, 0080 T#3) and no target is on
+            # The spawn began (its stamp lands before Popen, the earlier implementation) and no target is on
             # record: one may exist outside the Job (Popen -> AssignProcessToJobObject), so
             # an empty or vanished Job proves nothing for it.
             parts["target"] = UNKNOWN

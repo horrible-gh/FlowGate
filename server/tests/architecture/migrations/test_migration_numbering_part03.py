@@ -43,7 +43,7 @@ from tests.architecture.migrations.test_migration_numbering import (
 )
 
 class TestFilenameCarryOver:
-    """`migrations` 표의 파일 이름을 옮기는 동작 자체를 확인한다."""
+    """Verify filename carry-over in the migrations table itself."""
 
     @staticmethod
     def _make_db(tmp_path, applied: list[str] | None) -> str:
@@ -108,11 +108,11 @@ class TestFilenameCarryOver:
         db = SQLiteWrapper(db_name=db_path)
         DatabaseMigrator(db, str(MIGRATIONS_DIR / "sqlite"), True)
 
-        # 0408 TR0018: 장부에는 최종 이름 하나당 행이 하나뿐이고, 같은 최종 이름으로
-        # 수렴하는 옛 이름이 둘인 항목(078b/079b)도 어느 DB 에서나 둘 중 하나만 실제로
-        # 적용돼 있다. 아래 UPDATE 는 RENAMES 순서상 첫 번째 옛 이름 하나만 되돌리므로
-        # 정확히 그 실제 DB 모양을 만든다 — 그래서 되돌아가는 행 수는 len(RENAMES) 가
-        # 아니라 서로 다른 최종 이름의 개수다.
+        # 0408 TR0018: the ledger has one row per final name. For convergent entries
+        # (078b/079b), any actual database applied only one of the two old names.
+        # UPDATE rewinds only the first old name in RENAMES, reproducing that actual
+        # database shape. The number of rows rewound is therefore the number of
+        # distinct final names, rather than len(RENAMES).
         conn = sqlite3.connect(db_path)
         try:
             for old, new in RENAMES:
@@ -140,32 +140,32 @@ def test_the_0332_ledger_sits_at_086a_in_every_dialect(dialect):
             f"{dialect}/{stale} 이 남아 있다. 이동은 복사가 아니다 — 옛 이름이 디스크에 "
             f"있으면 이미 이관한 DB 가 그 파일을 통째로 다시 적용한다."
         )
-    # 뒤따르는 두 파일은 번호도 이름도 그대로여야 한다.
+    # Keep both following files at their existing numbers and names.
     assert {"087_tr_commit_reapply.sql", "088_tr_conflict_session.sql"} <= names
 @pytest.mark.parametrize("dialect", DIALECTS)
 def test_086a_keeps_its_place_between_086_and_087(dialect):
-    """글자 접미를 쓴 이유가 정렬 순서 보존이다.
+    """The letter suffix preserves sort order.
 
-    번호를 089 로 밀어 올리면 087/088 뒤로 가버린다. 086a 는 (아직 병합되지 않은)
-    병렬 작업의 086 바로 뒤, 이 그룹 자신의 087 앞이라는 원래 자리를 그대로 지킨다.
+    Moving to 089 would place this after 087/088. 086a preserves its original
+    position after the parallel work's unmerged 086 and before this group's 087.
     """
-    order = [p.name for p in _files(dialect)]  # _files 는 이미 이름순 정렬이다
+    order = [p.name for p in _files(dialect)]  # _files already returns filename order.
     assert order.index(LEDGER_FINAL_NAME) < order.index("087_tr_commit_reapply.sql")
     assert order.index("087_tr_commit_reapply.sql") < order.index("088_tr_conflict_session.sql")
-    # 먼저 온 086 이 병합돼 들어오더라도 그 뒤여야 한다. 아직 없으면 이 단언은 건너뛴다.
+    # Stay after the earlier 086 when it is merged; skip this assertion if absent.
     siblings = [n for n in order if FILE_NAME.match(n).group("ordinal") == "086"]
     for sibling in siblings:
         assert sibling < LEDGER_FINAL_NAME
-    # 086 과 086a 는 서로 다른 순번이므로 중복으로 보고되지 않는다.
+    # 086 and 086a are distinct ordinals, not duplicates.
     ordinals = [FILE_NAME.match(n).group("ordinal") for n in order]
     assert ordinals.count("086a") == 1
     assert ordinals.count("086") == len(siblings)
 def test_both_ledger_histories_converge_directly_on_the_final_name():
-    """중간 이름 086 을 거치게 하지 않는다.
+    """Do not route through intermediate name 086.
 
-    085 -> 086, 086 -> 086a 로 사슬을 만들면 085 를 든 DB 는 RENAMES 를 한 번 훑는
-    동안 두 항목을 순서대로 맞아 우연히 086a 까지 갈 수도, 순서가 바뀌면 디스크에 없는
-    086 에 멈출 수도 있다. 두 이력 모두 최종 이름을 직접 가리켜야 한다.
+    Chaining 085 -> 086 and 086 -> 086a makes a single RENAMES pass depend on
+    ordering: a database with 085 might reach 086a or stop at the nonexistent
+    086 file. Both historical names must point directly to the final name.
     """
     ledger_entries = {
         (old, new) for old, new in RENAMES if old in LEDGER_APPLIED_HISTORIES
@@ -174,11 +174,11 @@ def test_both_ledger_histories_converge_directly_on_the_final_name():
         (old, LEDGER_FINAL_NAME) for old in LEDGER_APPLIED_HISTORIES
     }, f"두 이력이 {LEDGER_FINAL_NAME} 로 직접 수렴하지 않는다: {sorted(ledger_entries)}"
 
-    # 다른 파일의 기존 이력은 건드리지 않았다.
+    # Existing histories for other files remain unchanged.
     assert ("086_tr_commit_reapply.sql", "087_tr_commit_reapply.sql") in RENAMES
 @pytest.mark.parametrize("history", LEDGER_APPLIED_HISTORIES)
 def test_either_ledger_history_alone_is_carried_to_086a(tmp_path, history):
-    """두 이력을 각각 따로 넣고 돌린다 — 어느 쪽 DB 도 다른 쪽 이름은 갖고 있지 않다."""
+    """Test each history separately; neither database contains the other name."""
     path = TestFilenameCarryOver._make_db(
         tmp_path, ["001_flowgate_schema.sql", history]
     )
@@ -191,7 +191,7 @@ def test_either_ledger_history_alone_is_carried_to_086a(tmp_path, history):
         LEDGER_FINAL_NAME,
     }
 
-    # 두 번째 부팅은 0 건이고 장부도 그대로다.
+    # A second boot carries over zero rows and leaves the ledger unchanged.
     before = TestFilenameCarryOver._names(path)
     assert apply_migration_renames("sqlite3", sqlite_path=path) == 0
     assert TestFilenameCarryOver._names(path) == before
@@ -199,15 +199,16 @@ def test_either_ledger_history_alone_is_carried_to_086a(tmp_path, history):
 def test_real_migrator_reboot_after_ledger_carryover_does_not_rerun_the_ledger(
     tmp_path, history
 ):
-    """장부 행 확인이 아니라 진짜 재부팅이다.
+    """Exercise a real reboot, beyond checking ledger rows.
 
-    `config.py` `instance_init()` 과 같은 순서로 돈다: 새 설치 -> 장부를 그 이력의 옛
-    이름으로 되돌려 이미 적용된 구형 DB 를 재현 -> `apply_migration_renames()` ->
-    같은 디스크 디렉터리로 `DatabaseMigrator` 를 새로 세운다. 이관이 새면 여기서
-    `Failed to apply migration 086a_tr_commit_ledger.sql: duplicate column name:
-    last_cancel_block_reason` 로 실제 부팅과 똑같이 선다(바로 아래 대조군이 그 실패를
-    보인다). MySQL 방언은 같은 자리에서 IF NOT EXISTS 없는 ADD COLUMN 세 개를 다시
-    실행하므로 위험이 더 크고, 막는 장치는 양쪽 다 이 장부 이관 하나뿐이다.
+    Follow config.py instance_init(): fresh install, rewind the ledger to the
+    old name to reproduce an already-migrated database, apply_migration_renames,
+    and construct DatabaseMigrator again against the same directory. A missed
+    carry-over fails exactly like real boot with Failed to apply migration
+    086a_tr_commit_ledger.sql: duplicate column name: last_cancel_block_reason.
+    The control below demonstrates it. MySQL reruns three ADD COLUMN statements
+    without IF NOT EXISTS, making the risk greater; ledger carry-over protects
+    both engines.
     """
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
@@ -224,18 +225,18 @@ def test_real_migrator_reboot_after_ledger_carryover_does_not_rerun_the_ledger(
     except Exception as exc:  # pragma: no cover - failure path is the point
         pytest.fail(f"{history} 이력 DB 의 재부팅이 이관 뒤에도 실패했다: {exc}")
 def test_without_the_carryover_the_ledger_really_does_rerun_and_fail(tmp_path):
-    """대조군. 위 두 케이스의 초록불이 "재적용이 원래 무해해서"가 아님을 보인다.
+    """Control: passing tests must not rely on reapplication being harmless.
 
-    ledger SQL 은 표와 인덱스는 IF NOT EXISTS 지만 `group_git_state` 의 ADD COLUMN 세
-    개는 어느 방언에도 그런 절이 없다. 그래서 장부 이관을 건너뛰면 sqloader 가 086a 를
-    새 파일로 알고 다시 적용하다 첫 ADD COLUMN 에서 선다.
+    Ledger SQL uses IF NOT EXISTS for tables/indexes, but not for its three
+    group_git_state ADD COLUMN statements in any dialect. Without carry-over,
+    sqloader treats 086a as new and fails at the first ADD COLUMN.
     """
     from sqloader import SQLiteWrapper, DatabaseMigrator
 
     db_path = _fresh_real_db(tmp_path, "control.db")
     _rewind_ledger_row(db_path, LEDGER_APPLIED_HISTORIES[0])
 
-    # apply_migration_renames() 를 일부러 호출하지 않는다.
+    # Deliberately omit apply_migration_renames().
     with pytest.raises(Exception) as caught:
         DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
 

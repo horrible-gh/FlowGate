@@ -1,8 +1,8 @@
-"""flowgate.v02.0053 T#1 — card documents: placing a card creates its documents and binds them.
+"""card documents: placing a card creates its documents and binds them.
 
-The feature lives in the v0.2 package ``flowgate.card_documents`` (D0006 §2.1); the Graph workflow
+The feature lives in the v0.2 package ``flowgate.card_documents``; the Graph workflow
 reaches it only through ``card_document_ports``, registered here as ``startup`` does. Flat
-``tests/flowgate/`` placement (NR0003 §6.3).
+``tests/flowgate/`` placement.
 
 On a real SQLite DB (all migrations, TestClient over the Graph routes): a draft save creates each
 card's document lines (요구사항 · 작업계획/전개 · 지시서/레포트 · 테스트 지시서/시나리오/레포트), a re-save
@@ -67,7 +67,7 @@ def env(db_path, monkeypatch, tmp_path):
 
     from flowgate.card_documents import integration
 
-    # flowgate.v02.0146 T#2: the real document write gate, as the server startup registers it, instead of whatever an
+    # the real document write gate, as the server startup registers it, instead of whatever an
     # earlier test module left in the process-wide port table (alone, ``_seed`` was refused with 409).
     import fg_harness_write_gate
 
@@ -254,7 +254,7 @@ def test_card_slot_table_follows_the_0053_agreement():
     assert table("document", "b", ai_delegation=True) == [("requirement", "B", "human", None),
                                                           ("delegation", "M", "run", None)]
     assert table("document", "WP") == [("plan", "WP", "human", None), ("deploy", "M", "run", None)]
-    # flowgate.v02.0056 T#2: an instruction the card's instruction AI writes is "instruction AI or a person"
+    # an instruction the card's instruction AI writes is "instruction AI or a person"
     ai_or_human = "instruction_ai_or_human"
     for design in ("D", "P", "L", "DB"):
         assert table("document", design) == [("instruction", "DS", ai_or_human, None), ("report", design, "run", None)]
@@ -332,7 +332,7 @@ def test_canvas_shows_card_lines_and_keeps_card_documents_inside_the_card(env):
     assert [n["node_key"] for n in other["nodes"]] == [f"doc:{FA}.0001-R"]
     put_draft(env, FA, 0, [node("tmp_r", "R", "요구")])
     fa = {n["node_key"]: n for n in canvas(env, FA)["nodes"]}
-    assert f"doc:{FA}.0001-R" not in fa                            # 0111 T#4: the view shows its root on the card
+    assert f"doc:{FA}.0001-R" not in fa                            # the view shows its root on the card
     assert [n["document"]["doc_id"] for n in fa.values() if n["origin"] == "draft_node"] == [f"{FA}.0001-R"]
 
 
@@ -545,7 +545,7 @@ def test_converting_a_card_root_moves_its_line_and_the_card_still_owns_it(env, c
     b_doc = convert_root(r_doc, "B")                                         # R -> B
     assert doc(r_doc) is None and doc(b_doc)["type_code"] == "B"
     assert line_rows(env, FB) == [{"node_key": key, "slot": "requirement", "doc_type": "B", "doc_id": b_doc, "owned": 1}]
-    # 0064 T#3 (L0005 2.8): the draft card follows its document in the same transaction — type B, the label a
+    # the draft card follows its document in the same transaction — type B, the label a
     # person gave it kept, draft version + 1 and one ``draft`` Canvas event (it used to stay R until a re-save).
     assert _draft_node(env, FB, key) == ({"doc_type": "B", "palette_item_id": None, "label": "요구"}, 2)
     assert _draft_events(env) == [("draft", 2)]
@@ -579,7 +579,7 @@ def test_converting_a_card_root_then_removing_the_card_deletes_the_converted_dra
     key = first["key_map"]["tmp_b"]
     b_doc = first["card_documents"][key][0]["doc_id"]
     r_doc = convert_root(b_doc, "R")                                         # B -> R, then the card goes
-    # the default name and the reserved palette id follow the type (L0005 1.5)
+    # the default name and the reserved palette id follow the type
     assert _draft_node(env, FB, key) == ({"doc_type": "R", "palette_item_id": "requirement", "label": "요구사항"}, 2)
     shown, _keys = _draft_card(env, FB, key)
     assert [line["doc_id"] for line in shown["card_documents"]] == [r_doc]
@@ -629,7 +629,7 @@ def test_a_run_result_line_stays_when_the_next_draft_retypes_the_node(env, decid
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
     result = _doc(FA, 90, "D")
     v01_contact.after_inbox_registered(FA, result, "D", token)
-    # flowgate.v02.0146 T#2: binding a person's result moves the card to ``review``, a protected state
+    # binding a person's result moves the card to ``review``, a protected state
     # (``editing.PROTECTED``: done / open / review). The current API contract is that the Graph refuses a draft that
     # retypes it: 409 ``graph_node_protected`` (``editing.protect_definition``). The node's state is left as the real
     # binding made it; nothing here overwrites it.
@@ -714,7 +714,7 @@ def test_migration_145_has_the_same_table_in_three_dialects():
     assert found["sqlite"] == found["postgres"] == found["mysql"] == ["graph_node_documents"]
 
 
-# ── v0.2 placement: the Graph reaches the package only through its ports (D0006 §2.1 / §4.1) ──
+# ── v0.2 placement: the Graph reaches the package only through its ports ──
 
 def test_without_the_port_handlers_a_draft_save_makes_no_documents(env):
     from flowgate.card_documents import integration
@@ -752,8 +752,8 @@ def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports()
     pkg = _SERVER_DIR / "flowgate" / "card_documents"
     assert {p.stem for p in pkg.glob("*.py")} == {
         "__init__", "slots", "lines", "repository", "legacy_adapter", "integration",
-        "compose", "routes",                    # flowgate.v02.0056 T#3: a person's line write and its route
-        "decisions", "decision_context", "decision_repository", "decision_routes"}  # 0126 T#1
+        "compose", "routes",                    # a person's line write and its route
+        "decisions", "decision_context", "decision_repository", "decision_routes"}  # 
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     for gone in ("domain/card_slots.py", "store/node_document_store.py", "services/card_documents.py"):
         assert not (graph / gone).exists(), gone
@@ -761,14 +761,14 @@ def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports()
                      if any(how in p.read_text(encoding="utf-8")
                             for how in ("import card_document_ports", "from .card_document_ports"))
                      and p.name != "card_document_ports.py")
-    # 0127 (the write gate's release in ``flow_guard``) and the root conversion cards also reach the feature through the
+    # (the write gate's release in ``flow_guard``) and the root conversion cards also reach the feature through the
     # ports only; the list follows the graph package as it is now.
     assert callers == ["services/canvas_service.py", "services/flow_guard.py", "services/graph_service.py",
                        "services/root_conversion_cards.py", "services/run_apply.py", "services/v01_contact.py"]
 
 
 
-# ── flowgate.v02.0088 T#1: the documents a request makes are titled in its language (D0010 §3 / §6) ─────────────
+# ── the earlier change the earlier implementation: the documents a request makes are titled in its language ─────────────
 
 REQUIREMENT_NAMES = {"ko": "요구사항", "ja": "要件", "en": "Requirement"}
 

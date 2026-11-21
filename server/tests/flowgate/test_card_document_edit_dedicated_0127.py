@@ -1,4 +1,4 @@
-"""0127 T#3: window contracts, recovery, JOIN lineage and failure atomicity."""
+"""window contracts, recovery, JOIN lineage and failure atomicity."""
 import json
 from dataclasses import replace
 from types import SimpleNamespace

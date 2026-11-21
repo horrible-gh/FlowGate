@@ -1,5 +1,5 @@
-"""flowgate.default.0490 T0005: server-side regression tests for the repeat-count
-ceiling SSOT (ai_repeat_count_max) — NR0003 §20's server-provable cases.
+"""server-side regression tests for the repeat-count
+ceiling SSOT (ai_repeat_count_max) — the review's server-provable cases.
 
 Uses the same lightweight monkeypatch technique test_source_mode_0147.py uses for
 source_mode_service: the DB layer (modules.flow_gate.db.system_settings) is patched
@@ -191,7 +191,7 @@ def test_router_rejects_zero_with_422(fake_settings):
     assert exc_info.value.status_code == 422
 
 
-# flowgate.default.0578 T0010 task 1: the client can no longer localize this failure from a
+# task 1: the client can no longer localize this failure from a
 # raw message, so the 422 body must carry a stable code + interpolation params instead.
 def test_router_rejects_zero_with_ai_repeat_count_out_of_range_code(fake_settings):
     with pytest.raises(HTTPException) as exc_info:
@@ -268,25 +268,25 @@ def test_new_request_beyond_max_is_422(monkeypatch, fake_settings):
 # ── Test 10: read and write share one ceiling — no frozen literal survives on either
 # side ─────────────────────────────────────────────────────────────────────────────
 #
-# T0005 §3.3 asked for the read path to skip range-checking entirely (accept any
+# The review asked for the read path to skip range-checking entirely (accept any
 # shape-valid int) so a shrunk ceiling could never demote an already-stored pick.
-# flowgate.default.0490.0006-TR rev2/rev3 review rejected every revision that carried
+# review rejected every revision that carried
 # that rule, because resolve_review_count/_resolve_restart_max_attempts already had
-# pre-T0005 unit coverage in test_ai_invoke_review_gate_0414.py and
+# pre-the earlier implementation unit coverage in test_ai_invoke_review_gate_0414.py and
 # test_ai_invoke_restart_count_0443.py (test_a_hand_edited_out_of_range_count_reads_
 # as_no_review, test_unrecognized_value_falls_back_to_default) asserting the opposite
 # — that an out-of-range read (4, at the unconfigured default max of 3) degrades to
-# the feature default, not to itself. T0005 §5 forbids touching those two files, and
+# the feature default, not to itself. the earlier implementation forbids touching those two files, and
 # there is no bound that satisfies both "4 degrades at max=3" and "15 survives at
 # max=5" for the same function — one is strictly a subset check of the other. The
 # review's repeated, explicit instruction ("시험이 아니라 구현을 고쳐라") was resolved by
 # keeping resolve_review_count/_resolve_restart_max_attempts bounded, exactly as they
-# were pre-T0005, except the bound is now read live from
+# were pre-the earlier implementation, except the bound is now read live from
 # ai_execution_policy_service.repeat_count_choices() instead of a frozen
-# frozenset/tuple literal. This satisfies R0001's actual ask (no hardcoded ceiling
+# frozenset/tuple literal. This satisfies the requirement's actual ask (no hardcoded ceiling
 # literal survives; the two pre-existing files stay green with zero edits) at the
-# cost of NR0003 §19 R9's specific non-demotion nuance: lowering the ceiling now
-# demotes an already-stored pick on read, exactly as it always did pre-T0005 — this
+# cost of the review R9's specific non-demotion nuance: lowering the ceiling now
+# demotes an already-stored pick on read, exactly as it always did pre-the earlier implementation — this
 # is a deliberate, documented trade-off, not an oversight.
 def test_read_path_tracks_the_live_ceiling_on_both_sides(fake_settings):
     db_system_settings.set_value("ai_repeat_count_max", "5", "integer")

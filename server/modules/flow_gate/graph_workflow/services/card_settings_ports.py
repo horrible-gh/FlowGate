@@ -1,4 +1,4 @@
-"""Card run settings ports (flowgate.v02.0053 T#2, D0006 §2.1 / §2.3 / §4.1).
+"""Card run settings ports.
 
 The settings every Designer card (Node) keeps are a v0.2 feature: they live in the application
 package ``flowgate.card_settings``. The Graph run reads them when it hands a node out, when it
@@ -10,35 +10,35 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     run_settings     node dispatch, inside its Flow guard: what the node's AI start takes from its card
     result_type      result binding / reconciliation, inside its Flow guard: the document type the
                      node's result is (instruction omitted: the card's report), or None (the node's own).
-                     The node row may carry its node run's card run stage as ``run_stage`` (flowgate.v02.0056
-                     T#2): None there is a node run opened before migration 148, whose AI ran one stage
+                     The node row may carry its node run's card run stage as ``run_stage`` (the earlier change
+                     ): None there is a node run opened before migration 148, whose AI ran one stage
     ai_working       node approval state (``node_approval``): AI still works on a node in review —
                      the node's own AI run has not ended, or the card's AI review works on its result —
-                     so the node is not waiting for a person's approval (flowgate.v02.0056 T#1)
-    instruction_document   the instruction stage (flowgate.v02.0056 T#2), at its start and when its document
+                     so the node is not waiting for a person's approval
+    instruction_document the instruction stage, at its start and when its document
                      is registered: the card's instruction type and its instruction line's document
                      (``doc_type``, ``doc_id`` or None, ``written``: it has a body), or ``{}`` (no stage)
     approve_instruction    the instruction stage: approve the card's instruction automatically, without a
                      review (``flow_id, node, doc_id, actor_user_id`` -> True when approved); a refusal is
                      left to the card approval (False), the stage goes on
-    node_running     a card title save, inside its Flow guard (0064 T-B4b, 0062 L0006 2.7 step 4): the card is
+    node_running a card title save, inside its Flow guard (T-B4b, the earlier implementation 2.7 step 4): the card is
                      running — open in the active run, or in review while its AI review works — the same
                      judgement that locks the card settings
-    person_result    result binding, inside its Flow guard before its settlement (flowgate.v02.0083 WP-4): a result
+    person_result result binding, inside its Flow guard before its settlement: a result
                      of the node was submitted, revised or put back in review (``mark_revised``); the card answers the
                      step that follows it after the commit (a person's work plan: its AI review or its automatic
                      approval) as a callable the binder runs with its post-commit jobs, or None
-    approval_wait_reason   a run read (flowgate.v02.0105 T#2 B-2): why the automatic approval of the node run's result
+    approval_wait_reason a run read: why the automatic approval of the node run's result
                      was not made (the latest B-1 reason recorded for it), or None
-    reconcile_stage  a run read and a Resume, outside every Flow guard (flowgate.v02.0105 T#2 B-3): the AI cards whose
+    reconcile_stage a run read and a Resume, outside every Flow guard: the AI cards whose
                      run-end stage was lost are followed once (an automatic approval only as the run end makes it)
-    intervention     the node judgement and a run read (flowgate.v02.0119 T#3, T-2): ``{"kind", "reason"}`` of a general
+    intervention the node judgement and a run read: ``{"kind", "reason"}`` of a general
                      card in review that nothing completes — ``needs_intervention`` (its automatic rework ended without a
                      completion: a memo rework / re-review, a step / full command's re-review of a spent count
-                     (``command_review``, flowgate.v02.0125 T#1) or the Time Machine moves it) or ``system_error`` (its
+                     (``command_review``, the earlier change the earlier implementation) or the Time Machine moves it) or ``system_error`` (its
                      automatic completion path failed: retried by ``reconcile_stage``) — never a person's approval
     command_review   an explicit step / full command only, after its Flow guard and its ``reconcile_stage`` job
-                     (flowgate.v02.0125 T#1, Q #544): the run's AI cards whose result review count was spent on a revision
+                     : the run's AI cards whose result review count was spent on a revision
                      no review answered yet are reviewed again (a new review assignment of the latest revision and its
                      loop request); never asked by a run read, a reselection, the reconciliation or a loop end
 
@@ -48,11 +48,11 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     step_timeout_sec    the run's time budget (else the AI invoke engine's single-run formula)
     restart_max         no-output restarts on the same AI (else none, as before)
     result_doc_type     the document type the AI writes (else the node's own type)
-    instruction         the card runs an instruction stage first (flowgate.v02.0056 T#2):
+    instruction the card runs an instruction stage first:
                         ``{"doc_type": the instruction type, "provider_id": its AI or None (the assignee)}``
     settings            every setting of the card as stored (carried on the job for the record)
 
-flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kept in the v0.2 package:
+(L-2): the stage assignments of a role card's attempt, kept in the v0.2 package:
 
     stage_dispatch   a node's opening, inside its run step's guard: the dispatch block when the card's attempt is an
                      assigned one, else None (the current dispatch)
@@ -68,12 +68,12 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
                      ``CONTENT_SAVED`` / ``REGISTERED``); a person's instruction stage holding it is judged
     stage_failed     an AI start's failure record, inside its guard: the dispatch error of an assigned stage
                      (``ai_unavailable:<cause>``, its assignment failed), or None (the current ``ai_invoke_failed``)
-    result_review_pending   the binder's reconciliation, inside its guard (0038-T T#3 A-4): the node's approved result
+    result_review_pending the binder's reconciliation, inside its guard: the node's approved result
                      is a report approved before the node's attempt took it, and that attempt's own result review has
                      not passed it yet — the old approval completes nothing (True), else False (no handler: False)
 
     node_running_cause   run read: handoff, Graph execution, group lease or review loop
-    action_required  the node judgement and a run read (flowgate.v02gui.0015 T3): ``action_required:<requirement>`` of a
+    action_required the node judgement and a run read: ``action_required:<requirement>`` of a
                      card whose AI's answers require an action that was not taken (a new attempt), or None — an open
                      card so held is ``needs_intervention`` (``node_approval.intervention``); no handler: None
     upstream_notice  a card's AI start (v02gui.0029): the prompt section naming the earlier cards approved after their
@@ -92,7 +92,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
-CARDS_CREATED = "cards_created"                              # 0113 T#2: draft creation only
+CARDS_CREATED = "cards_created"                              # draft creation only
 USES_AI = "uses_ai"
 RUN_SETTINGS = "run_settings"
 RESULT_TYPE = "result_type"
@@ -102,10 +102,10 @@ APPROVE_INSTRUCTION = "approve_instruction"
 REVIEW_INSTRUCTION = "review_instruction"
 NODE_RUNNING = "node_running"
 NODE_RUNNING_CAUSE = "node_running_cause"
-PERSON_RESULT = "person_result"                                  # flowgate.v02.0083 WP-4
-APPROVAL_WAIT_REASON = "approval_wait_reason"                    # flowgate.v02.0105 T#2 B-2
-RECONCILE_STAGE = "reconcile_stage"                              # flowgate.v02.0105 T#2 B-3
-STAGE_DISPATCH = "stage_dispatch"                                # flowgate.v02.0113 T#3 (L-2)
+PERSON_RESULT = "person_result"                                  # WP-4
+APPROVAL_WAIT_REASON = "approval_wait_reason"                    # B-2
+RECONCILE_STAGE = "reconcile_stage"                              # B-3
+STAGE_DISPATCH = "stage_dispatch"                                # (L-2)
 STAGE_RESULT_START = "stage_result_start"
 STAGE_NEEDS_DISPATCH = "stage_needs_dispatch"
 STAGE_RETRY = "stage_retry"
@@ -114,10 +114,10 @@ STAGE_WAITS = "stage_waits"
 STAGE_UNREADABLE = "unreadable"     # ``stage_waits``: the node's assignment could not be read (its error family)
 INSTRUCTION_SAVED = "instruction_saved"
 STAGE_FAILED = "stage_failed"
-RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
-INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
-COMMAND_REVIEW = "command_review"                                # flowgate.v02.0125 T#1 (Q #544)
-ACTION_REQUIRED = "action_required"                              # flowgate.v02gui.0015 T3
+RESULT_REVIEW_PENDING = "result_review_pending"                  # A-4
+INTERVENTION = "intervention"                                    # (T-2)
+COMMAND_REVIEW = "command_review"                                # (Q #544)
+ACTION_REQUIRED = "action_required"                              # 
 UPSTREAM_NOTICE = "upstream_notice"                              # v02gui.0029
 INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING, NODE_RUNNING_CAUSE,
@@ -209,7 +209,7 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
 
 
 def node_running(flow_id: str, node_key: str) -> bool:
-    """The card actually runs (flowgate.v02.0113 T#1: an AI execution of it requested or running, or its AI review works
+    """The card actually runs (the earlier change the earlier implementation: an AI execution of it requested or running, or its AI review works
     on its result — never merely open): its title and settings cannot change now."""
     handler = _handler(NODE_RUNNING)
     if handler is None:
@@ -256,7 +256,7 @@ def reconcile_stage(flow_id: str) -> None:
 
 
 def command_review(flow_id: str, run_id: str) -> None:
-    """flowgate.v02.0125 T#1 (Q #544): the person's explicit step / full command (``run_service._go_on`` with a mode,
+    """(Q #544): the person's explicit step / full command (``run_service._go_on`` with a mode,
     after its Flow guard and its ``reconcile_stage`` job) asks again for the result review of the run's AI cards whose
     review count was spent on a revision no review answered yet (no handler: nothing). Only that command asks it: a run
     read, F5, a card's reselection, the reconciliation and a review loop's end never do."""
@@ -266,7 +266,7 @@ def command_review(flow_id: str, run_id: str) -> None:
 
 
 def intervention(flow_id: str, row: dict) -> dict:
-    """flowgate.v02.0119 T#3 (T-2): ``{"kind": needs_intervention | system_error, "reason": …}`` of the node run ``row``,
+    """(T-2): ``{"kind": needs_intervention | system_error, "reason": …}`` of the node run ``row``,
     a general card in review that nothing completes (``node_approval.intervention`` judged that). No handler:
     ``needs_intervention`` with the latest recorded reason (``approval_wait_reason``) — never a person's approval."""
     handler = _handler(INTERVENTION)
@@ -277,7 +277,7 @@ def intervention(flow_id: str, row: dict) -> dict:
 
 
 def action_required(flow_id: str, row: dict) -> Optional[str]:
-    """flowgate.v02gui.0015 T3: ``action_required:<requirement>`` of the node run ``row`` whose AI's answers require an
+    """``action_required:<requirement>`` of the node run ``row`` whose AI's answers require an
     action nobody took yet (a new attempt), or None (no handler: None)."""
     handler = _handler(ACTION_REQUIRED)
     if handler is None:
@@ -296,7 +296,7 @@ def upstream_notice(job: dict) -> Optional[str]:
     return notice if isinstance(notice, str) and notice.strip() else None
 
 
-# ── stage assignments (flowgate.v02.0113 T#3) ────────────────────────────────
+# ── stage assignments ────────────────────────────────
 
 def stage_dispatch(ctx, node: dict) -> Optional[dict]:
     """The opening of ``node`` for an assigned attempt (its dispatch block), or None: the current dispatch."""
@@ -337,7 +337,7 @@ def stage_failed(job: dict) -> Optional[str]:
 
 
 def result_review_pending(flow_id: str, run_id: str, node_key: str, doc_id: str) -> bool:
-    """0038-T T#3 A-4: the node's approved result waits for its attempt's own review (no handler: False)."""
+    """A-4: the node's approved result waits for its attempt's own review (no handler: False)."""
     handler = _handler(RESULT_REVIEW_PENDING)
     return bool(handler(flow_id, run_id, node_key, doc_id)) if handler else False
 

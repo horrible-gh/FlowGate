@@ -1,4 +1,4 @@
-"""0618: owner identity, bounded wait, and point-in-time provider evidence."""
+"""owner identity, bounded wait, and point-in-time provider evidence."""
 import sqlite3
 import threading
 import time

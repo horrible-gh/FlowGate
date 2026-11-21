@@ -1,4 +1,4 @@
-"""flowgate.v02.0020 — 환경 설정 시안 11~14: workspaces, system users, system security.
+"""settings mockups 11–14: workspaces, system users, system security.
 
 Covers the migration 136 data carry-over, the workspace service (membership, project access
 materialised into user_project_roles, policy, AI allowlist enforcement), the system user service

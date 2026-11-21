@@ -1,7 +1,7 @@
-"""0127 T#1 rework: exercise the real composition root and its shared middleware.
+"""exercise the real composition root and its shared middleware.
 
 The reference app executes the same root with only the new router registration
-omitted. The historical clean-ref run of all 55 legacy tests is recorded in TR0013.
+omitted. The historical clean-ref run of all 55 legacy tests is recorded in the earlier implementation.
 No server lifespan/bootstrap runs; data and storage come from the isolated fixture.
 """
 import runpy
@@ -77,13 +77,13 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
     from flowgate.card_document_edit import routes as edit_routes, chat_routes
 
     endpoints = (edit_routes.get_document, edit_routes.post_revision,
-                 # 0127 T#5 (L#2 §2.15): the structured TS projection reads and revisions, still /api/v2.
+                 # (L#2): the structured TS projection reads and revisions, still /api/v2.
                  edit_routes.get_test_spec, edit_routes.get_test_brief,
                  edit_routes.post_test_spec_revision, edit_routes.post_test_brief_revision,
                  chat_routes.get_document, chat_routes.post_revision,
-                 # 0127 CH0028: chat doc_id read / existing-body revision / new-document create.
+                 # chat doc_id read / existing-body revision / new-document create.
                  chat_routes.get_document_by_id, chat_routes.post_document_revision, chat_routes.post_document,
-                 # 0157: the Designer's standalone (non-card) document read / revision by doc_id.
+                 # the Designer's standalone (non-card) document read / revision by doc_id.
                  edit_routes.get_standalone_document, edit_routes.post_standalone_revision)
     added = [r for r in current.routes if isinstance(r, APIRoute) and r.endpoint in endpoints]
     assert len(added) == 13
@@ -108,7 +108,7 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
     assert current.dependency_overrides == reference.dependency_overrides == {}
     assert [(m.cls, m.args, m.kwargs) for m in current.user_middleware] == [
         (m.cls, m.args, m.kwargs) for m in reference.user_middleware]
-    # flowgate.v02gui.0017: RequestIdMiddleware is the outermost layer (X-Request-ID on every response).
+    # RequestIdMiddleware is the outermost layer (X-Request-ID on every response).
     assert [m.cls.__name__ for m in current.user_middleware] == [
         "RequestIdMiddleware", "CORSMiddleware", "GroupMutationPolicyMiddleware", "RequestScopeMiddleware",
         "SlowAPIMiddleware"]
@@ -124,9 +124,9 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         assert posted.mutation_resource == "system"
         assert posted.mutation_reason == "explicit_non_group_route"
         assert posted.group_resolver is None  # Flow-coordinate routes enforce policy inside the service.
-    # 0127 CH0028: the chat doc_id routes keep the standard group resolver (lease check in front of
+    # the chat doc_id routes keep the standard group resolver (lease check in front of
     # the service, which re-checks the lease owner itself).
-    # 0157: the Designer doc_id revision resolves the document's group the same way (lease in front of the service).
+    # the Designer doc_id revision resolves the document's group the same way (lease in front of the service).
     for posted in (r for r in added if "POST" in r.methods and ("/chat/documents" in r.path or "/documents/{doc_id}" in r.path)):
         assert posted.mutation_resource == "group"
         assert posted.mutation_reason == "standard_group_resolver"

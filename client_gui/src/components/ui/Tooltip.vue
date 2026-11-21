@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free hover/focus tooltip (T0004 §5.8). The bubble is teleported to <body> and
+// Domain-free hover/focus tooltip. The bubble is teleported to <body> and
 // positioned from the trigger's real measured rect (not a container-relative guess), so it
 // is never clipped by an ancestor's overflow:hidden/auto and never fights App Shell
 // z-index. `display: contents` on the wrapper keeps it invisible to the trigger's own

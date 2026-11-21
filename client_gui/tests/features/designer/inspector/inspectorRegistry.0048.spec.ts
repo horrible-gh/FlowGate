@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — Inspector registry (D#1 §5): the pure collector over glob results
+ * Inspector registry: the pure collector over glob results
  * (contract checks that throw, `order` sorting), the declared conditions per target (card kind,
  * docTypes, ownership, document needed) and the feature string merge.
  */

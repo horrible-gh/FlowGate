@@ -102,7 +102,7 @@ def test_B_non_base_clean_finalize_uses_managed_workspace(proj, monkeypatch):
     assert done.target_branch == "develop" and not done.is_project_base
     assert svc.get_finalize_state(gid)["state"]["finalize_target"]["target_branch"] == "develop"
 
-    # T0014 connected edge: the result just pushed by group finalize is then
+    # Connected edge: the result just pushed by group finalize is then
     # promoted through the real ordinary-branch merge service into main.
     promoted = svc.merge_branches(proj.pid, "develop", "main")
     assert promoted["pushed"] is True and promoted["workspace_cleaned"] is True

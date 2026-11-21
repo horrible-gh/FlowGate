@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — ④ canvas menu: blank canvas / single card / multi-selected card / edge
+// ④ canvas menu: blank canvas / single card / multi-selected card / edge
 // (0006-D rev2 §3.6, §5.3 ④). The card kind is decided from selectedNodeIds membership alone (same
 // in move and select mode) and never changes the selection. The add-card submenu lists the supplied
 // built-in palette definitions (custom items excluded); the blank-canvas snapshot carries the
@@ -6,8 +6,8 @@
 // flowgate.v02.0060 T#2: a single card also lists the card's existing run menu items (0061 T#15 Hold 설정 / 해제,
 // 되돌리기) the caller judged and worded, after a separator. A card of a multi-selection never takes them (§3.6).
 // flowgate.v02gui.0003: a single card also has ID 복사 (node.copyId, outside the mockup's 40: hidden where not connected).
-// flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 (blank Canvas) and 정렬 (multi-selected card) open the Edit menu's
-// 정렬 / 배치 commands as a submenu — the groups, order, words and enabled state the caller gives (the top menu's
+// alignment · layout (blank Canvas) and alignment (multi-selected card) open the Edit menu's
+// alignment / layout commands as a submenu — the groups, order, words and enabled state the caller gives (the top menu's
 // DESIGNER_ARRANGE_GROUPS and isMenuCommandEnabled); a separator between groups. Without them the item keeps the
 // mockup's single entry. The › and the submenu are the one structural difference from the mockup.
 
@@ -31,7 +31,7 @@ export interface CardRunItem {
   readonly disabled: boolean
   readonly danger: boolean
 }
-/** One Edit › 정렬 / 배치 command, worded and judged (its top menu rule) by the caller. */
+/** One Edit › alignment / layout command, worded and judged (its top menu rule) by the caller. */
 export interface ArrangeChoice {
   readonly command: string
   readonly label: string
@@ -40,7 +40,7 @@ export interface ArrangeChoice {
 export interface CanvasMenuInput extends PartInput<CanvasTarget, CanvasAvailability> {
   readonly definitions?: readonly CardDefinition[]
   readonly runItems?: readonly CardRunItem[]
-  /** The 정렬 / 배치 submenu, one group per separator (blank Canvas and multi-selected card). */
+  /** The alignment / layout submenu, one group per separator (blank Canvas and multi-selected card). */
   readonly arrange?: readonly (readonly ArrangeChoice[])[]
 }
 const RUN_ICONS: Readonly<Record<CardRunCommand, string>> = { 'node.run.holdSet': '⏸', 'node.run.holdRelease': '▶', 'node.run.timeMachine': '↺' }

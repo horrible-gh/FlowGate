@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#11 — the test section's state (D#1 §7.2 / §7.3, §8, §10.2 T#11 row). The test view of
+// the test section's state (the earlier implementation row). The test view of
 // the selected TS / TSR (runs, live run, Case tally, result summary) is read through useInspectorResource
 // and read again on the server's test run events — started, phase, Case / stage finished, finished — of
 // the TS the runs belong to (a TSR's runs are its TS's: the frames carry the TS doc_id), on a review state

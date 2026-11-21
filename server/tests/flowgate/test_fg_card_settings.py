@@ -1,13 +1,13 @@
-"""flowgate.v02.0053 T#2 — card (Node) run settings: stored on the card, read and changed one value at a time.
+"""card (Node) run settings: stored on the card, read and changed one value at a time.
 
-The feature lives in the v0.2 package ``flowgate.card_settings`` (D0006 §2.1); the Graph workflow reaches it
+The feature lives in the v0.2 package ``flowgate.card_settings``; the Graph workflow reaches it
 only through ``card_settings_ports`` (node dispatch), registered here as ``startup`` does. ``tests/flowgate/``
-placement (NR0003 §6.3).
+placement.
 
 On a real SQLite DB (all migrations, TestClient over the Graph routes and the card settings routes): a card
 placed in a draft and a card whose run is done both read and write their settings; every value is saved by
 its own PATCH; the items the v0.1 sequence row never stored (instruction use / omit, restart, time limit,
-review basis) are stored (after review is gone, flowgate.v02.0056 T#1: no setting, never read, migration 147); values outside a setting are refused; a running card is locked; and an
+review basis) are stored (after review is gone, the earlier change the earlier implementation: no setting, never read, migration 147); values outside a setting are refused; a running card is locked; and an
 AI node starts with its card's run AI, time limit and restarts (the AI invoke start receives them), or with the shared execution
 defaults when the card stores nothing. Auth, RBAC and SSE delivery are stubbed.
 """
@@ -23,7 +23,7 @@ import pytest
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
-# flowgate.v02.0083 T#1 (T0 baseline): the app settings these suites reach (the card approval's v0.1 approval)
+# (T0 baseline): the app settings these suites reach (the card approval's v0.1 approval)
 # need these when the module runs on its own, as the other suites set them (a Self-check passes no env).
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
 os.environ.setdefault("CONTEXT", "/flowgate")
@@ -37,14 +37,14 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-# flowgate.v02.0113 T#3 (T §6.4): this suite's own cards are cards made before the AI role feature (legacy fields,
+# (T): this suite's own cards are cards made before the AI role feature (legacy fields,
 # L-1 §2.4.5); the stage assignment feature stays on (``legacy_cards`` below, defined in this module).
 pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
-# flowgate.v02.0056 T#2: the run cards' instruction AI comes right after the instruction it writes.
+# the run cards' instruction AI comes right after the instruction it writes.
 # flowgate.v02test.0053 0003-T: the two 검증 options follow the card's review settings (the list also names
 # ``after_review_exhausted``, which the field table already had).
 RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai", "review_count", "time_limit",
@@ -75,10 +75,10 @@ def db_path(tmp_path, migrated_sqlite_db):
 
 @pytest.fixture()
 def legacy_cards(monkeypatch):
-    """flowgate.v02.0113 T#3 (L-1 §2.4.5, L-2 §2.3): the cards drawn while it is used are cards made before the AI role
+    """(L-1, L-2): the cards drawn while it is used are cards made before the AI role
     feature — no role slots, no init row: their stored legacy fields (assignee, ``instruction_ai``, ``run_ai``,
     ``review_count`` / ``review_ai``) are what L-1 resolves each new attempt's stage assignments from. The suites written
-    before T#2/T#3 describe such cards; their attempts run the assigned path (the feature on) all the same."""
+    before the earlier implementation/the earlier implementation describe such cards; their attempts run the assigned path (the feature on) all the same."""
     from modules.flow_gate.graph_workflow.services import card_settings_ports
 
     monkeypatch.setattr(card_settings_ports, "cards_created", lambda group, user_id, nodes: None)
@@ -86,7 +86,7 @@ def legacy_cards(monkeypatch):
 
 @pytest.fixture()
 def pre_feature_attempts(monkeypatch):
-    """flowgate.v02.0113 T#3 (L-2 §2.13, T §6.4): the attempts opened while it is used are pre-feature attempts (opened
+    """(L-2, T): the attempts opened while it is used are pre-feature attempts (opened
     as before the stage assignments: no assignment rows). Call the returned function to switch the feature back on —
     the attempts opened so far stay pre-feature to their end (K-12, G-14)."""
     from flowgate.card_settings import stage_assignment
@@ -98,7 +98,7 @@ def pre_feature_attempts(monkeypatch):
 
 @pytest.fixture()
 def passive_person_results(env):
-    """flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt's person result of a run / test card
+    """(rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt's person result of a run / test card
     now takes its card's review setting at once (``review_stage.person_result``: review 'none' completes it as
     ``human_submitted``, a review set starts its one review) and a lost step is taken by the run read
     (``review_stage._reconcile_person_result``). The suites that use such a person card as a passive vehicle — a
@@ -152,12 +152,12 @@ def env(db_path, monkeypatch, tmp_path, request):
     from flowgate.card_document_edit import write_gate
     from modules.flow_gate.graph_workflow.services import card_document_ports
 
-    # 0148: this isolated app has no startup lifespan. Register the current real document write gate
+    # this isolated app has no startup lifespan. Register the current real document write gate
     # before seeding, as the 0121/0143 harnesses do; keep production write protection enabled.
     monkeypatch.setitem(card_document_ports._handlers, card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
-    # flowgate.v02.0146 T#2: this shared harness seeds documents before any app lifespan registers the document write
+    # this shared harness seeds documents before any app lifespan registers the document write
     # gate. Register the real gate (``fg_harness_write_gate``: only the harness's own direct row writes bypass it)
     # instead of inheriting whatever an earlier test module leaked into the process-wide port table; run on its own
     # (or in another order, as ``--dist loadfile`` does), the suites that use this harness otherwise error on setup
@@ -192,7 +192,7 @@ def env(db_path, monkeypatch, tmp_path, request):
     from flowgate.graph_validation.run_scope import run_scope
     from modules.flow_gate.graph_workflow.domain import run_scope_ports
     monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
-    # flowgate.v02.0113 T#3: every migration is applied here, so the stage assignment store exists and every suite runs
+    # every migration is applied here, so the stage assignment store exists and every suite runs
     # its new attempts on the assigned path (L-2), as a deployment with migration 164 does. A pre-feature attempt is made
     # explicitly by the test that needs one (``pre_feature_attempts``), never by switching a whole suite off.
     def record_job(job):
@@ -327,10 +327,10 @@ def setting(env, flow, key, field, value, expect=200):
 
 
 def legacy_setting(env, flow, key, field, value):
-    """0113 T#2: seed a legacy role field for tests of the unchanged execution path.
+    """seed a legacy role field for tests of the unchanged execution path.
 
     PATCH itself uses slots now. These callers exercise run/approval/token behavior
-    until T#3; their fixture must still represent an old card's stored fields.
+    until the earlier implementation; their fixture must still represent an old card's stored fields.
     """
     if field not in ("instruction_ai", "run_ai", "review_ai", "delegation"):
         return setting(env, flow, key, field, value)
@@ -409,14 +409,14 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     assert (f.card_kind("custom", None), f.card_kind("document", "TS"), f.card_kind("document", "r"),
             f.card_kind("document", "B"), f.card_kind("gate", None)) == (f.RUN, f.TEST, f.REQUIREMENT,
                                                                        f.REQUIREMENT, f.CHECK)
-    # flowgate.v02.0072 T#3: a work plan card keeps the plan settings (values only).
+    # a work plan card keeps the plan settings (values only).
     assert f.card_kind("document", "WP") == f.PLAN and f.card_kind("document", "TSR") is None
     names = {kind: [x.name for x in f.fields_of(kind)] for kind in f.CARD_KINDS}
     assert names == {
         f.RUN: RUN_FIELDS,
         f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "result_cause", "follow_scope"],
         f.REQUIREMENT: [],
-        # 0085 T#1: no usage; flowgate.v02.0098 T#1: the local merge branch next to the remote
+        # no usage; the earlier change the earlier implementation: the local merge branch next to the remote
         f.CHECK: ["archive", "merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch"],
         f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
                  "review_basis", "after_review_exhausted"],
@@ -427,7 +427,7 @@ def test_the_run_plan_hands_on_stored_values_and_execution_defaults():
     from flowgate.card_settings import fields as f
 
     assert f.run_plan(f.RUN, {}) == {"settings": {}, "step_timeout_sec": 14400, "restart_max": 3}
-    # flowgate.v02.0056 T#1: a stored after review value is no setting any more, so it is not handed on
+    # a stored after review value is no setting any more, so it is not handed on
     plan = f.run_plan(f.RUN, {"run_ai": "aip_card", "time_limit": 120, "restart": 0, "after_review": "follow"})
     assert plan == {"settings": {"run_ai": "aip_card", "time_limit": 120, "restart": 0},
                     "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 0}
@@ -446,7 +446,7 @@ def test_the_time_limit_choices_and_default_are_the_engine_budget():
     plan = f.run_plan(f.RUN, {})
     assert plan["step_timeout_sec"] == f.DEFAULT_TIME_LIMIT_MINUTES * 60 == 14400
     assert admission._resolve_timeout_sec("single", 1, False, plan["step_timeout_sec"]) == 14400
-    # A pick: the single run takes it as its budget (0446 T0010).
+    # A pick: the single run takes it as its budget.
     assert admission._resolve_timeout_sec("single", 1, False, 120 * 60) == 7200
 
 
@@ -507,7 +507,7 @@ def test_each_card_kind_keeps_its_own_settings(env):
                          ("limit_total_reviews", 30)):
         setting(env, FB, km["tmp_r"], field, value, expect=422)
     assert shown(get_settings(env, FB, km["tmp_r"])) == {"hold": False}
-    # flowgate.v02.0085 T#1: a check card has the archive flag and a remote (null | origin) as merge target, no usage.
+    # a check card has the archive flag and a remote (null | origin) as merge target, no usage.
     for field, value in (("archive", True), ("merge_mode", "merge"), ("merge_target", "origin"),
                          ("push", True), ("keep_branch", False)):
         gate = setting(env, FB, km["tmp_g"], field, value)
@@ -606,7 +606,7 @@ def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, dec
     setting(env, FA, key, "review_count", 2)                              # before the run: the confirmed card
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_draft_nodes WHERE group_id = ?", (FA,))[0]["n"] == 0
     _start(env)
-    assert get_settings(env, FA, key)["locked"] is False                  # 0113 T#1: a person's open card waits
+    assert get_settings(env, FA, key)["locked"] is False                  # a person's open card waits
     monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == key)
     assert get_settings(env, FA, key)["locked"] is True                   # an AI execution of it works: running
     locked = setting(env, FA, key, "restart", 1, expect=409)
@@ -667,7 +667,7 @@ def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, dec
     call = _start_job(env, monkeypatch, job)
     assert {k: call[k] for k in ("mode", "action_scope", "provider_id", "continuation_step_timeout_sec",
                                  "node_restart_max_attempts")} == {
-        # 0145 T#1 (``result_slot_binding``): a card's result stage writes into its preallocated result slot, so
+        # (``result_slot_binding``): a card's result stage writes into its preallocated result slot, so
         # the start is an edit of that document (the assertion lagged behind with "new").
         "mode": "single", "action_scope": "edit", "provider_id": "aip_card",
         "continuation_step_timeout_sec": 7200, "node_restart_max_attempts": 2}
@@ -699,7 +699,7 @@ def _card_lines(env, flow, key):
 
 
 
-# ── flowgate.v02.0056 T#1: after review is gone (migration 147) ─────────────
+# ── the earlier change the earlier implementation: after review is gone (migration 147) ─────────────
 
 
 
@@ -707,7 +707,7 @@ def _card_lines(env, flow, key):
 
 
 
-# ── migration 146, wiring and placement (D0006 §2.1 / §4.1) ──────────────────
+# ── migration 146, wiring and placement ──────────────────
 
 
 
@@ -718,15 +718,15 @@ def _card_lines(env, flow, key):
 
 
 
-# ── flowgate.v02.0088 T#1: the AI delegation line's document in the PATCH request's language ─────────────────────
+# ── the earlier change the earlier implementation: the AI delegation line's document in the PATCH request's language ─────────────────────
 
 
 
 
-# 0071 T1: result confirmation settings are persisted, but never become AI plan settings.
+# result confirmation settings are persisted, but never become AI plan settings.
 
 
-# ── flowgate.v02.0098 T#1: the check card's local merge target branch (D0004 §3.1 / §3.3 / §3.5) ─────────────────
+# ── the earlier change the earlier implementation: the check card's local merge target branch ─────────────────
 
 import base64  # noqa: E402
 import json  # noqa: E402
@@ -810,11 +810,11 @@ def git_flow(env, tmp_path, monkeypatch, git_repositories):
     svc.delete_config("flowgate")
 
 
-# flowgate.v02.0146 T#2: the two Git-heavy tests that ended this file (``test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows``,
+# the two Git-heavy tests that ended this file (``test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows``,
 # ``test_a_group_without_its_worktree_yet_lists_and_saves_real_branch_names``) were moved verbatim to
 # ``test_fg_card_settings_merge_target_git_0146.py`` / ``test_fg_card_settings_no_worktree_git_0146.py`` (they used the ``git_flow``
 # fixture above) so ``--dist loadfile`` can run them on different workers; the 255 s they took here was the long pole of this file.
 
 
-# flowgate.v02.0148 T#1: a client explicitly keeps only the merge target view.
+# a client explicitly keeps only the merge target view.
 _TARGET_VIEW_KEYS_0148 = {"merge_target_options", "default_target_branch", "merge_target_state"}

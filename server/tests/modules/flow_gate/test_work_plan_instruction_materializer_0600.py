@@ -1,7 +1,7 @@
-"""WorkPlan instruction materialization regression after 0611 T0011.
+"""WorkPlan instruction materialization regression after the earlier implementation.
 
 A WorkPlan-backed N/T is expanded from the step's own instruction document (pre-instruction
-file and/or text). 0614 T0004 overrides the 0611 rej_01M3AVQVHD6PSTBE fallback (historical
+file and/or text). the earlier implementation overrides the 0611 rej_01M3AVQVHD6PSTBE fallback (historical
 contract, still pinned in test_work_plan_instruction_semantics_0611.py's module docstring):
 a step without an instruction document now falls back to server-materializing steps[].note
 under manual/auto_approved, and only falls back further to the legacy generated instruction
@@ -106,7 +106,7 @@ def test_legacy_instruction_still_delegates_to_managed_core(monkeypatch):
 def test_auto_approved_workplan_head_without_instruction_document_is_now_server_materialized(
     monkeypatch,
 ):
-    """0614 T0004 (human override of the 0611 rej_01M3AVQVHD6PSTBE final contract this file
+    """(human override of the 0611 rej_01M3AVQVHD6PSTBE final contract this file
     used to pin as `..._is_authoring_hop`): a WorkPlan-backed N/T with no instruction
     document is no longer left as an authoring hop under auto_approved -- it is
     server-materialized from steps[].note (or the legacy generated instruction when the note

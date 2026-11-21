@@ -1,8 +1,8 @@
 """R0001 group 0135 / N0008 — surface the terminal "연속작업 완료" signal as a distinct notification.
 
-N0008 approved 시안 3 (live feed) and asked that a continuous (unmanned) run's FINAL completion read
-differently from its intermediate per-step inflow, while single-mode work stays as-is. NR0009 found the
-terminal signal (`continuous_work_ended`, group 0125) was already recorded but deliberately excluded from
+N0008 approved mockup 3 (live feed) and asked that a continuous (unmanned) run's FINAL completion read
+differently from its intermediate per-step inflow, while single-mode work stays as-is. the review found the
+terminal signal (`continuous_work_ended`, the earlier change) was already recorded but deliberately excluded from
 the notification feed. This promotes ONLY that single terminal event to the feed as
 `continuous_work_completed`, without reintroducing the 0118 per-transition noise.
 
@@ -112,7 +112,7 @@ def chain_store(monkeypatch):
              "2026-07-02T00:06:00Z"),
         ],
     )
-    # R0001 group 0135 / N0008 (시안 3): an AI review whose verdict is `issues` on the terminal doc —
+    # N0008 (mockup 3): an AI review whose verdict is `issues` on the terminal doc —
     # the feed must surface it as a 🔴 trust signal ("완료로 떴지만 사실 확인 필요").
     store.conn.execute(
         "INSERT INTO document_reviews (doc_id, revision_no, reviewer_id, verdict, findings, "
@@ -153,7 +153,7 @@ def test_intermediate_inflow_still_present(chain_store):
 
 
 def test_noise_invariant_preserved(chain_store):
-    # 0118 / group 0125 NR0003 권고 4: per-transition state_changed and present-tense work_started
+    # per-transition state_changed and present-tense work_started
     # must NEVER reach the feed even though the terminal completion now does.
     result = dashboard_service.get_notification_feed("flowgate", None, 50)
     types = {i["activity_type"] for i in result["recent_activities"]["items"]}
@@ -172,7 +172,7 @@ def test_dashboard_card_excludes_terminal_signal(chain_store):
 
 
 def test_feed_rows_carry_ai_review_signals(chain_store):
-    # 시안 3 trust colours: each row's document DTO carries the latest AI verdict + finding count so the
+    # mockup 3 trust colours: each row's document DTO carries the latest AI verdict + finding count so the
     # UI can paint 🟢🟡🔴 and the "완료로 떴지만 issues" warning without opening the document.
     result = dashboard_service.get_notification_feed("flowgate", None, 50)
     by_doc = {

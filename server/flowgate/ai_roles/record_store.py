@@ -1,4 +1,4 @@
-"""Role invocation records (flowgate.v02.0113 T#1, DB-1 §2.6-§2.7, §4).
+"""Role invocation records.
 
 Migration 165: ``ai_role_invocations`` (one row per provider launch and one per admission refusal, L-3
 ``RoleInvocation``) and the ``invocation_origin_kind`` / ``graph_exec_id`` columns of ``ai_invoke_runs``.
@@ -74,7 +74,7 @@ _FINISH_ORPHANS = (
     "WHERE ai_run_id = ? AND result = 'running'"
 )
 
-# The provider fingerprint's key (DB-1 [DEFERRED] "지문 키 출처", decided here): derived from the AI-key
+# The provider fingerprint's key (DB-1 [DEFERRED] "fingerprint key source", decided here): derived from the AI-key
 # encryption master key of ``utils.api_key_crypto`` (FLOWGATE_AI_ENCRYPT_KEY, else the storage key file) under
 # its own label, so the fingerprint is a keyed hash nobody without the server key can reproduce, the API keys'
 # cipher key itself is never used as an HMAC key, and no new secret has to be provisioned. Without a readable
@@ -175,7 +175,7 @@ def first(unit_hash: str) -> Optional[dict]:
 def latest(unit_hash: str, before_create_seq: int, purposes: Optional[Iterable[str]] = None,
            launched_only: bool = False) -> Optional[dict]:
     """R-12: the unit's last record made before ``before_create_seq`` (optionally only these purposes).
-    ``launched_only`` (flowgate.v02test.0004 T#2): never a start refused at admission (``admission_refused``, nothing
+    ``launched_only``: never a start refused at admission (``admission_refused``, nothing
     launched) — the previous call of a later one is a launched record, failed or not."""
     params: list = [unit_hash, before_create_seq]
     sql = "SELECT * FROM ai_role_invocations WHERE unit_key_hash = ? AND create_seq < ?"
@@ -217,7 +217,7 @@ def page_for_node(group_id: str, node_key: str, limit: int, before_seq=None, bef
 
 
 def for_graph_run(graph_run_id: str) -> list[dict]:
-    """R-19 (flowgate.v02.0113 T#5, the command result): every record of one Graph run in creation order. Which
+    """R-19 (the command result): every record of one Graph run in creation order. Which
     command a record is of is told by the run event its request was made at (``command_result``), never by a time
     window here. A read only."""
     return [dict(r) for r in get_store()._fetch_all(
@@ -345,7 +345,7 @@ def write_record(record: Mapping) -> bool:
         return False
 
 
-# ── launch outputs (flowgate.v02.0113 T#5, migration 168) ───────────────────────────────────────────────────────
+# ── launch outputs (migration 168) ───────────────────────────────────────────────────────
 # One row per launch record (``inv_id``), added once when the launch ended: the AI's last message of that launch, its
 # stderr / stdout tail, the registration errors it added and the classification detail — so a command result shows each
 # launch's own body and error, never the run's final launch's output on another launch. Additive and safe to repeat

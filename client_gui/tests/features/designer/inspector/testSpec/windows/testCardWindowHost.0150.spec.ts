@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0150 — the test card windows are the Frame's windows host (TestCardWindowHost), not the header's: a window
+ * the test card windows are the Frame's windows host (TestCardWindowHost), not the header's: a window
  * opened on a card stays open — with its card's live session — when the card is unselected or another card is selected,
  * Esc does not close it, and only its own close removes it (and the card from the host).
  */

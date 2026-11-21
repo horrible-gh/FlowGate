@@ -1,4 +1,4 @@
-"""0145 T#2: pinned execution, editable latest definition and adoption parity."""
+"""pinned execution, editable latest definition and adoption parity."""
 import copy
 import pytest
 

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#3 — the document window as the App Shell mounts it (DocumentWindows) with
+ * the document window as the App Shell mounts it (DocumentWindows) with
  * `@/features/document` mocked: one modeless window per document in this tab; the title line is name ·
  * state dot · ✎ · minimize · close; the body is the MD Viewer. ✎ turns the same window to a text editor of
  * the body (frontmatter kept aside and put back), 저장 writes it with the v0.1 content save and goes back to
@@ -53,7 +53,7 @@ const REPORT = 'flowgate.v02.0053.0007-TR'
 const EMPTY_REPORT = 'flowgate.v02.0053.0009-TR'
 const ORDER = 'flowgate.v02.0053.0008-T'
 const GONE = 'flowgate.v02.0053.0099-TR'
-/** flowgate.v02.0070 T#3: a document whose body cannot be read (file not found), and one the person may not edit. */
+/** a document whose body cannot be read (file not found), and one the person may not edit. */
 const UNREADABLE = 'flowgate.v02.0053.0010-R'
 const LOCKED = 'flowgate.v02.0053.0011-R'
 
@@ -73,7 +73,7 @@ const unreadable = new Set<string>()
 const failing = new Set<string>()
 
 const axiosError = (status: number) => ({ isAxiosError: true, response: { status, data: { detail: 'x' } } })
-/** A /api/v2 error answer: `{ ok: false, error: { code, params } }` (flowgate.v02.0127 T#5). */
+/** A /api/v2 error answer: `{ ok: false, error: { code, params } }`. */
 const v2Error = (status: number, code: string, params: Record<string, unknown> = {}) =>
   ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, params } } } })
 
@@ -141,7 +141,7 @@ async function type(node: HTMLElement | null, value: string) {
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLElement>('.ui-confirm-actions .ui-btn')]
 const confirmTitle = () => document.body.querySelector('.ui-confirm-title')?.textContent ?? null
 const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
-/** The view footer's buttons in order (flowgate.v02.0070 T#3). */
+/** The view footer's buttons in order. */
 const footer = (panel: HTMLElement) =>
   [...q(panel, 'document-window-viewer-bar')!.querySelectorAll('button')].map((button) => button.getAttribute('data-test'))
 
@@ -163,7 +163,7 @@ describe('document window — view (flowgate.v02.0053 T#3)', () => {
       (node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'),
     )
     // flowgate.v02.0056 F1 moved the view's [편집] to the footer; the title line keeps the body copy.
-    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    // the shell's controls are named in the app's language (ko in this spec).
     expect(order).toEqual(['document-window-title', 'document-window-dot', 'md-viewer-copy', '최소화', '닫기'])
     expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
     expect(q(panel, 'document-window-edit')!.textContent!.trim()).toBe('편집')
@@ -360,7 +360,7 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(cardBridge.calls[1].idempotencyKey).not.toBe(cardBridge.calls[0].idempotencyKey)
   })
 
-  // flowgate.v02.0157: a document no card holds is edited by its doc_id; the server's read decides (edit_path).
+  // a document no card holds is edited by its doc_id; the server's read decides (edit_path).
   it('without card coordinates a standalone document (edit_path=non_card) is edited and saved by its own id, never through a card', async () => {
     cardBridge.calls.length = 0
     cardBridge.standaloneCalls.length = 0
@@ -432,7 +432,7 @@ describe('document window — a report before its run (flowgate.v02.0053 T#3)', 
   })
 })
 
-// flowgate.v02.0070 T#3 (B3, 0003-NR §3): the body shows a short state block only; the footer at the bottom right
+// the body shows a short state block only; the footer at the bottom right
 // is the one action group, by state — unreadable: [복구] (diagnosed recoverable) [본문 다시 입력] [닫기] and no
 // [편집]; readable / empty: [편집] [닫기]; not editable (no sign-in, not editable, gone): [닫기]; editing: the
 // editor bar. [복구] runs only on its click.

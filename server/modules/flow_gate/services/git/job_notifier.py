@@ -1,4 +1,4 @@
-"""Job wake-up Notifier (flowgate.default.0669 unit 5b; 0666 0009-L §1.4, §2.17.1).
+"""Job wake-up Notifier (unit 5b; the earlier implementation).
 
 An in-process queue of wake-up signals plus the hand-off slot through which the
 Sweeper passes jobs it already claimed to a worker. Signals carry identifiers only;

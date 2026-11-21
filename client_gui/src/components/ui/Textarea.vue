@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free multi-line input (T0004 §5.3). Same visual/v-model contract as Input.
+// Domain-free multi-line input. Same visual/v-model contract as Input.
 withDefaults(
   defineProps<{
     modelValue?: string

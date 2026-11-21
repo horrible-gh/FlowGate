@@ -1,6 +1,6 @@
 """Filename sanitizing, extension policy, same-name dedupe, Content-Disposition.
 
-flowgate.default.0060 L0012 §2-2 (S1~S9), §2-3 (E1~E4, U1~U3), §2-4 (D1~D6), §2-7.
+(S1~S9), (E1~E4, U1~U3), (D1~D6),.
 
 What this replaces: ``documents.py`` used to sanitize with a single ``Path(name).name``.
 On Linux that lets ``..\\..\\etc\\passwd`` through as ONE filename component — the exact
@@ -37,7 +37,7 @@ _WINDOWS_ILLEGAL = ('<', '>', ':', '"', '|', '?', '*')
 def _truncate_utf8(text: str, max_bytes: int) -> str:
     """Cut *text* to at most *max_bytes* UTF-8 bytes, on a character boundary.
 
-    L0012 §2-2 note 4: cutting on a raw byte index splits a Hangul syllable in half and the
+    note 4: cutting on a raw byte index splits a Hangul syllable in half and the
     name on disk stops matching the name in the registry.
     """
     if max_bytes <= 0:
@@ -103,7 +103,7 @@ def sanitize_attachment_name(raw: Optional[str]) -> str:
 
 
 def original_display_name(raw: Optional[str]) -> str:
-    """``original_filename`` — S2 only (P0011 §1-3 / L0012 §2-2 last paragraph).
+    """``original_filename`` — S2 only (last paragraph).
 
     The user's own name is shown back to them verbatim; only characters that would corrupt
     a log line or spoof an extension are removed.
@@ -138,7 +138,7 @@ def resolve_content_type(safe_name: str) -> str:
     """E1~E2 — the media type this attachment is stored under. Refuses nothing.
 
     This was ``check_extension``, and it raised ``400 UNSUPPORTED_EXTENSION`` for every
-    kind in §1-3. TR0017 rev3 was rejected for that wall, so the extension no longer decides
+    kind in. the earlier implementation was rejected for that wall, so the extension no longer decides
     whether a file is accepted — only how it is served (see ``constants`` §1-3).
 
     The part's own ``Content-Type`` header is deliberately ignored either way: keeping it
@@ -254,9 +254,9 @@ def rfc5987_encode(name: str) -> str:
 def rfc5987_disposition(name: str) -> str:
     """``filename*`` always, plus the ASCII ``filename`` fallback when the name is ASCII.
 
-    NR0015 §5 measured that ``tree_routes`` has the encoder as a standalone function but
+    The review measured that ``tree_routes`` has the encoder as a standalone function but
     leaves the fallback inline in ``download_file:400-407``. This is that pair lifted into
-    one shared helper, per NR0015 §7 settled directives 4 and 5 — nothing imports the route.
+    one shared helper, per the review settled directives 4 and 5 — nothing imports the route.
     """
     encoded = rfc5987_encode(name)
     try:

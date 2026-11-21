@@ -7,7 +7,7 @@ Covers the backend slice implemented for T0004 (작업개시):
     rides the issued token; the response carries continuation_remaining (TS-6 carrier).
   • inbox_routes._continuation_self_chain — server-driven self-chaining: ordinary token
     is a no-op; AI review mode is the pre-flight Q-registration phase and PAUSES (0086
-    TR0004 rework rev4 #1); non-review continuous auto-approves + mints the next token
+    #1); non-review continuous auto-approves + mints the next token
     (TS-6/§6-①); target reached auto-approves the last step, then stops (rev4 #2).
 
 All pure-function / monkeypatched — no DB or filesystem dependency.
@@ -60,11 +60,11 @@ def test_continuous_mention_replaces_q_guard_ko():
     # The ordinary Q-registration guard is still replaced in continuous mode.
     assert "Clarification guide" not in out
     assert "/questions" not in out
-    # Operational sections are preserved. (group 0372 set 3: the standalone doc_type
-    # guide section was absorbed into the help index — the central "## 도움말" block
-    # is the discovery path now.)
+    # Operational sections are preserved. (the earlier change set 3: the standalone doc_type
+    # guide section was absorbed into the help index — the central help block
+    # is the discovery path now; v02test.0061 renamed its header to "## Help".)
     assert "## Artifact registration" in out
-    assert "## 도움말" in out
+    assert "## Help" in out
     # The bottom Reminder repeats the continuous directive, not the no-choices guard.
     assert "Do NOT present choices" not in out
 
@@ -182,7 +182,7 @@ def test_continuous_ignored_on_edit():
 # ── advance_workflow continuous metadata (mirrors test_r0001_advance_supersede) ──
 
 def _wire_advance(monkeypatch, head_item_seq=4, head_type="NR"):
-    # head_type defaults to a REPORT step: under the group 0092 fix a continuous advance
+    # head_type defaults to a REPORT step: under the the earlier change fix a continuous advance
     # auto-completes instruction heads (N/T/TS) server-side and only ever mints a worker
     # mention at a report head, so the mention-issuance path is exercised with a report.
     doc = {
@@ -279,7 +279,7 @@ def test_self_chain_ordinary_token_is_noop():
 def _wire_self_chain_advance(monkeypatch, *, is_admin=1, item_seq=2):
     """Wire the dependencies the self-chain auto-approve+advance path now touches.
 
-    Resolver fix (0086 TR0004 rework): the self-chain resolves permissions through
+    Resolver fix: the self-chain resolves permissions through
     db.users.get_by_id + workflow._get_user_permissions (the is_admin stub the live
     approve button uses), NOT permission_service.get_user_permissions (∅ on live).
     """
@@ -302,11 +302,14 @@ def _wire_self_chain_advance(monkeypatch, *, is_admin=1, item_seq=2):
 
     monkeypatch.setattr(wds, "advance_workflow", _fake_advance)
     monkeypatch.setattr(inbox_routes, "_inbox_api_base", lambda _r: "http://h/flow_gate/api/v1")
+    # settle_completed_step reads the submitted document's revision_no before approving
+    # (the TR2 retry key is built from it); keep that read off the DB as well.
+    monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {"doc_id": _id, "revision_no": 1})
     return approve, captured
 
 
 def test_self_chain_review_mode_pauses_for_q_phase(monkeypatch):
-    # 0086 TR0004 rework rev4 (reason #1): review mode is the pre-flight Q-registration phase,
+    # (reason #1): review mode is the pre-flight Q-registration phase,
     # NOT "go". The self-chain must NOT auto-approve or advance in review mode — it pauses so
     # the human can resolve Qs and give the explicit go. (Reverses rev3's "advance anyway".)
     approve, captured = _wire_self_chain_advance(monkeypatch)
@@ -318,7 +321,7 @@ def test_self_chain_review_mode_pauses_for_q_phase(monkeypatch):
 
 
 def test_self_chain_target_reached_approves_last_then_done(monkeypatch):
-    # 0086 TR0004 rework rev4 (reason #2): the LAST step (target reached) must be auto-approved
+    # (reason #2): the LAST step (target reached) must be auto-approved
     # too — the run goes up to before final approval, so the last work doc ends approved, not
     # left submitted. Auto-approve happens BEFORE the done check.
     approve, captured = _wire_self_chain_advance(monkeypatch, item_seq=6)
@@ -335,7 +338,7 @@ def test_self_chain_advances_and_embeds_next_token(monkeypatch):
     approve, captured = _wire_self_chain_advance(monkeypatch)
     env = _chain({"doc_ref": "flowgate.default.0051.0001-R", "issued_to": "pm",
                   "continuation_target_seq": 6, "continuation_review_mode": 0}, doc_type="NR")
-    approve.assert_called_once()  # report auto-approved (NR0003 §6-①)
+    approve.assert_called_once()  # report auto-approved (①)
     assert env["next_token"] == "NEXTRAW"
     assert env["next_mention"] == "NEXT-MENTION"
     assert env["continuation_remaining"] == 3
@@ -344,7 +347,7 @@ def test_self_chain_advances_and_embeds_next_token(monkeypatch):
 
 def test_self_chain_pauses_without_approve_permission(monkeypatch):
     # A GENUINE non-approver (is_admin=0 → the is_admin stub grants no document.approve)
-    # still pauses honestly (P0005 §4 — approve is never bypassed). This is the honest
+    # still pauses honestly (approve is never bypassed). This is the honest
     # pause, distinct from the old bug where every approver paused on the ∅ resolver.
     from modules.flow_gate.db import workflow_sequences as wfseq
     from modules.flow_gate.db import users as db_users

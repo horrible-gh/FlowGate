@@ -5,7 +5,7 @@
       <span>{{ t(k('error')) }}</span>
       <IconButton :label="t(k('retry'))" :title="t(k('retry'))" variant="secondary" size="sm" data-test="md-viewer-retry" @click="loadContent()">↻</IconButton>
     </div>
-    <!-- flowgate.v02.0070 T#3 (B3): one short state block — the icon, the reason with the AI warning on one line,
+    <!-- (B3): one short state block — the icon, the reason with the AI warning on one line,
          at most one line of guidance. [복구] / [본문 다시 입력] are the window footer's (`status`, `recover`). -->
     <div v-else-if="unreadableReason" class="md-viewer__state" role="alert" data-test="md-viewer-unreadable">
       <span class="md-viewer__state-icon" aria-hidden="true">⚠</span>
@@ -37,13 +37,13 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0053 T#3 — the v0.1 MD Viewer (client/src/main/components/MdViewer.vue) moved into
+// the v0.1 MD Viewer (client/src/main/components/MdViewer.vue) moved into
 // the v0.2 document window. Kept from v0.1: the GFM renderer with its code-block copy buttons, the
 // frontmatter / next-header strip before rendering, the parse diagnostics, the per-call content
 // apply (no shared cause between overlapping loads), the locale re-render, the debounced reload on
 // `fg:document_content_changed` and `loadContent` / `content` exposed to the parent.
 // The same debounced reload is exposed as `requestContentRefresh`: in v0.2 nothing sends the v0.1
-// window event, so the document window calls it on its document's project hub events (T#3 rework).
+// window event, so the document window calls it on its document's project hub events.
 // Changed for v0.2:
 // - Documents only: the body is read through `@/features/document` (documentContentRead). The v0.1
 //   source-file and Git-branch blob modes stay in v0.1 (they need its explorer store).
@@ -55,7 +55,7 @@
 //   body's `status` (with the diagnosed recoverability) and `recover`, and keeps the short state block only.
 // - The copy button is an icon with a tooltip (⧉ the body without its frontmatter); a failed copy marks
 //   the button instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors
-//   are the v0.2 dark theme. flowgate.v02.0056 F1 (0056 CH §5): the v0.1 "copy with header" (⎘, the
+//   are the v0.2 dark theme. the earlier change F1 (CH): the v0.1 "copy with header" (⎘, the
 //   stored file with its frontmatter) is gone — the body copy is the one copy.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -104,14 +104,14 @@ const renderedContent = ref('')
 
 const hasBody = computed(() => stripLeadingNextHeader(stripFrontmatter(content.value || '')).trim() !== '')
 
-/** The body's state for the window footer (flowgate.v02.0070 T#3); the diagnosis only decides `recoverable`. */
+/** The body's state for the window footer; the diagnosis only decides `recoverable`. */
 const status = computed<DocumentBodyStatus>(() => ({
   state: loading.value ? 'loading' : error.value ? 'error' : unreadableReason.value ? 'unreadable' : hasBody.value ? 'body' : 'empty',
   recoverable: recoverMethod.value !== null,
   recovering: recovering.value,
 }))
 
-// gfm: GitHub-Flavored Markdown (tables, etc.) — v0.1 R0001 #3. flowgate.v02.0113 T#5: the same renderer is the shared
+// gfm: GitHub-Flavored Markdown (tables, etc.) — v0.1 the requirement #3. the earlier change the earlier implementation: the same renderer is the shared
 // factory (core/markdown) the run result details render AI messages with.
 const mdRenderer = createMarkdownRenderer({ copyLabel: () => t(k('copy_code')) })
 
@@ -255,7 +255,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
     const read = await documentContentRead(docId)
     if (!current()) return false
     unreadableReason.value = read.state === 'unreadable' ? (read.reason ?? null) : null
-    // The window reads its document again on a period (T#3 rework 2): an unchanged body is not parsed again.
+    // The window reads its document again on a period: an unchanged body is not parsed again.
     if (!(loadedOnce && read.content === content.value)) applyContent(read.content, cause)
     loadedOnce = true
     return true
@@ -316,8 +316,8 @@ async function recover(): Promise<void> {
 
 /**
  * The server says this document's body changed: read it again (debounced, deferred while scrolling, kept
- * while a load runs). The document window calls this from the v0.2 project event hub (flowgate.v02.0053
- * T#3 rework); the v0.1 `fg:document_content_changed` window event lands here too.
+ * while a load runs). The document window calls this from the v0.2 project event hub (the earlier change
+ * ); the v0.1 `fg:document_content_changed` window event lands here too.
  */
 function requestContentRefresh(detail: { doc_id?: string | null; revision_no?: number | null; refresh_key?: string } | null | undefined) {
   if (!props.docId) return
@@ -451,7 +451,7 @@ defineExpose({
   color: var(--fg2-status-danger-fg);
 }
 
-/* Long unbreakable tokens (file paths) wrap instead of widening the window (v0.1 R0001 #3 rework 2). */
+/* Long unbreakable tokens (file paths) wrap instead of widening the window (v0.1 the requirement #3 rework 2). */
 .md-viewer__content {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -491,7 +491,7 @@ defineExpose({
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   margin-bottom: 10px;
-  /* Wrap long code lines instead of a horizontal scrollbar (v0.1 R0001 #3 rework 2). */
+  /* Wrap long code lines instead of a horizontal scrollbar (v0.1 the requirement #3 rework 2). */
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -524,7 +524,7 @@ defineExpose({
   color: var(--fg2-blue);
 }
 
-/* Lists — markers restored against a global list reset (v0.1 R0001 #3). */
+/* Lists — markers restored against a global list reset (v0.1 the requirement #3). */
 .md-viewer__content :deep(ol),
 .md-viewer__content :deep(ul) {
   margin: 0 0 0.8em;
@@ -548,7 +548,7 @@ defineExpose({
   margin-bottom: 0;
 }
 
-/* Tables always fit the window width; cell text wraps (v0.1 R0001 #3 rework 2). */
+/* Tables always fit the window width; cell text wraps (v0.1 the requirement #3 rework 2). */
 .md-viewer__content :deep(table) {
   table-layout: fixed;
   width: 100%;

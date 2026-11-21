@@ -1,14 +1,14 @@
-// 0072 T#2: isolated Step drafts. Only apply() changes the parent; only the parent saves the WP.
-// 0073 T#2: a Step draft is the pre-instruction and its attachment only — the review is set in the parent's review
+// isolated Step drafts. Only apply changes the parent; only the parent saves the WP.
+// a Step draft is the pre-instruction and its attachment only — the review is set in the parent's review
 // popover, so the baseline / snapshot check and apply() never see it and cannot write an old review back.
-// 0073 T#3: a drop on the attachment area goes through the picker's checks and upload (dropWorkPlanStepFiles).
+// a drop on the attachment area goes through the picker's checks and upload (dropWorkPlanStepFiles).
 import { markRaw, reactive } from 'vue'
 import { workPlanUploadInstruction, workPlanSaveFailureOf } from '@/features/document'
 import type { WorkPlanStepDraft } from './workPlanEditModel'
 import type { WorkPlanStepEditSession, WorkPlanStepEditTarget } from './useWorkPlanEditor'
 import { setWorkPlanStepEditHandler } from './workPlanEditWindows'
 
-/** The Step window edits a pre-instruction: an instruction Step, or a design card's 설계서 (its own editing text). */
+/** The Step window edits a pre-instruction: an instruction Step, or a design card's design document (its own editing text). */
 export const workPlanStepHasEditor = (target: WorkPlanStepEditTarget | null | undefined) =>
   !!target && (target.pairRole !== 'result' || ['D', 'P', 'L', 'DB'].includes(target.type))
 
@@ -110,7 +110,7 @@ export function saveWorkPlanStep(win: WorkPlanStepWindow): boolean {
 }
 
 /**
- * 0073 T#3: files dropped on the attachment area. One file takes the same path as the file picker
+ * files dropped on the attachment area. One file takes the same path as the file picker
  * (uploadWorkPlanStepFile: its result / save-first / size checks and upload); a Step holds one attachment,
  * so a drop of several files is refused instead of silently keeping one of them.
  */

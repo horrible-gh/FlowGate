@@ -1,13 +1,13 @@
 """Regression for 110: 108 must not leave the tokens schema behind 107/109 semantics.
 
-flowgate.default.0533 TS0006 rev1 (rejection): the text-only checks below were the whole
+(rejection): the text-only checks below were the whole
 file before this revision. They read migration files as strings and never opened a
 database, so they could not tell a working repair from a merely plausible-looking one --
 exactly what the rejection said. The tests further down actually run the real
 sqloader.migrator.DatabaseMigrator against a real sqlite3 database (always) and against a
 real PostgreSQL/MySQL server when one is opted in (FLOWGATE_PG_TEST_DSN /
 FLOWGATE_MYSQL_TEST_DSN, same opt-in convention as test_migration_107_postgres_schema_drift_0539.py),
-and prove the claim TR0005 makes: 110 repairs the tokens schema whether 108 ran before or
+and prove the claim the earlier implementation makes: 110 repairs the tokens schema whether 108 ran before or
 after 109, without losing any row.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ _SQLITE_DIR = ROOT / "sqlite"
 _INVERSION_FILE = "108_tokens_resolve_base_dirty_scope.sql"
 _REPAIR_FILE = "110_repair_tokens_after_base_dirty_rebuild.sql"
 
-# TR0005 rev0's text (== git commit ccb2fe8) -- the copy step named `source_access`
+# 's text (== git commit ccb2fe8) -- the copy step named `source_access`
 # alongside the two failure_origin columns instead of leaving it out. Used only as a
 # negative control below, so the reproduction is proven real rather than assumed.
 _PRE_FIX_110 = """-- 110_repair_tokens_after_base_dirty_rebuild.sql
@@ -88,7 +88,7 @@ def test_postgres_108_is_the_historical_schema_loss_and_110_is_forward_repair():
 
 
 def test_sqlite_110_no_longer_selects_source_access_from_the_old_table():
-    """Static guard against re-introducing the exact bug TR0005 fixed."""
+    """Static guard against re-introducing the exact bug the earlier implementation fixed."""
     body = (_SQLITE_DIR / _REPAIR_FILE).read_text(encoding="utf-8")
     insert_select = body.split("INSERT INTO tokens", 1)[1].split(";", 1)[0]
     assert "source_access" not in insert_select, (
@@ -148,7 +148,7 @@ def test_110_repairs_the_schema_when_108_actually_ran_after_109(tmp_path):
     has 001..107, 108_user_chat_source_access and 109 on disk applies through 109, and a
     *later* boot that adds 108_tokens_resolve_base_dirty_scope.sql applies just that file
     -- after source_access already exists -- rebuilding tokens from a column list that
-    does not know about it. TR0005 found exactly this ledger (109 applied
+    does not know about it. the earlier implementation found exactly this ledger (109 applied
     2026-09-08 12:46:54, 108 applied later the same day at 21:01:24) on a real deployment
     sqlite copy.
     """
@@ -190,7 +190,7 @@ def test_110_repairs_the_schema_when_108_actually_ran_after_109(tmp_path):
             "SELECT source_access, action_scope FROM tokens WHERE token_id = 'tok_before_108'"
         ).fetchone()
         assert row is not None, "the pre-existing row must survive the rebuild"
-        # TR0005's documented one-time NULL reset (not silent corruption of an unrelated
+        # 's documented one-time NULL reset (not silent corruption of an unrelated
         # column): source_access resets, action_scope (never excluded from the copy) does not.
         assert row[0] is None
         assert row[1] == "chat"
@@ -238,7 +238,7 @@ def test_110_repairs_the_schema_when_108_ran_before_109_the_ordinary_order(tmp_p
 
 
 def test_the_pre_fix_110_reproduces_the_rejected_boot_without_the_fix(tmp_path):
-    """Negative control: TR0005 rev0's 110 (source_access left in the copy) really does
+    """Negative control: the earlier implementation's 110 (source_access left in the copy) really does
     raise "no such column: source_access" against the inverted-order ledger the two tests
     above build -- proof the fixture reproduces a real failure, not an imagined one, and
     that TC-4's "order-independent recovery" claim is not accidental.

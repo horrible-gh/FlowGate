@@ -1,10 +1,10 @@
-"""0061 T#9 regression specifications. TR compiles; TS/TSR runs behavior.
+"""regression specifications. TR compiles; TS/TSR runs behavior.
 
 Rework (rej_01M4VTZNHWR9JHX9): the session close notice (an early close while integrating, a late close of an older
 session, the wait for the thread's Git locks), the command / idle integration hold, the Stop that keeps a session it
 could not abort, failed integrations requeued only by the drain.
 
-SQLite uses the real additive migrations (151/152/086d/153a through the T#8 fixture). The merge itself runs on a
+SQLite uses the real additive migrations (151/152/086d/153a through the the earlier implementation fixture). The merge itself runs on a
 real linked group worktree; Flow guard, run context, lock and event boundaries are controlled by fixtures.
 """
 from pathlib import Path
@@ -16,7 +16,7 @@ import subprocess
 import pytest
 
 from tests.regression.graph_workflow.test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
-from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db, BASE, RESULT  # noqa: F401 — T#8 result fixture
+from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db, BASE, RESULT  # noqa: F401 — the earlier implementation result fixture
 from flowgate.graph_run import result_merge, settle, stop, workspace
 from modules.flow_gate.graph_workflow.domain.frontier import Decision, Transition
 from modules.flow_gate.graph_workflow.services import node_approval
@@ -176,7 +176,7 @@ def test_late_close_of_an_older_session_leaves_a_new_merge_alone(merge_db, monke
     merge_db._execute("UPDATE graph_node_attempts SET integration_status='integrating', result_commit=? "
                       "WHERE attempt_id=?", [RESULT, merge_db.attempt])
     closed_session(monkeypatch, merge_db, merge_id=6)
-    # 0156 T#2: a new merge in progress runs inside the Flow's drain (``integrate`` is called by ``retry`` only), so the
+    # a new merge in progress runs inside the Flow's drain (``integrate`` is called by ``retry`` only), so the
     # drain owns the Flow; an integrating attempt with no drain is an orphan the close settles (S-D2-5).
     with result_merge._drain_lock:
         result_merge._draining.add("flow")
@@ -322,7 +322,7 @@ def test_conflicting_branch_keeps_merge_in_flight(repo):
 
 
 def test_merge_end_keeps_integrated_and_leaves_the_node_in_review_until_its_card_is_complete(merge_db, monkeypatch):
-    """flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the merge end (e) asks the one completion condition every
+    """(rej_01M6DQW6YF0SCQ5D P1): the merge end (e) asks the one completion condition every
     ``review_approved`` asks (``result_binder.completion_ready``) in its own Flow guard right before the done — the
     card's required outputs and no review of the result waiting, not only the completion record. With the instruction
     the card uses not approved (put back in review while the merge waited), the attempt is integrated (the merge's fact
@@ -381,7 +381,7 @@ def test_merge_end_keeps_integrated_and_leaves_the_node_in_review_until_its_card
 
 
 def test_merge_end_also_waits_for_a_review_of_the_result_and_for_its_completion_record(merge_db, monkeypatch):
-    """The same condition's other parts: no completion record, or a review of the result still waiting (0038-T T#3
+    """The same condition's other parts: no completion record, or a review of the result still waiting (the earlier implementation the earlier implementation
     A-4), leave the node in review at the merge end too."""
     from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
     from modules.flow_gate.graph_workflow.services import card_settings_ports, run_apply, run_service

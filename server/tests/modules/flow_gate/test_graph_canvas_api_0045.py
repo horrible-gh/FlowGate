@@ -1,6 +1,6 @@
-"""flowgate.v02.0045 T0011 (S1+S2) — Canvas read API + layout save against a real SQLite DB.
+"""(S1+S2) — Canvas read API + layout save against a real SQLite DB.
 
-P0008 §3 (S1-1, S1-2, S1-4, S1-6), §4 (S2-1~S2-4), L0009 §2.3 (identity keeper, rematch,
+(S1-1, S1-2, S1-4, S1-6), (S2-1~S2-4), the earlier implementation (identity keeper, rematch,
 supersede handoff), DB0010 §3.2 / §5.3 (migration 141, Flow delete cleanup with FK off).
 Auth (verify_bearer), RBAC and SSE delivery are stubbed at the Graph API boundary.
 """
@@ -133,7 +133,7 @@ def _doc(flow, seq, typ, title, review=None, status="open", **extra):
 
 
 def _seed_documents_flow():
-    """P0008 S1-1 Flow."""
+    """S1-1 Flow."""
     r = _doc(F51, 1, "R", "Canvas 편집 저장", "approved")
     _doc(F51, 2, "N", "Canvas 편집 저장 조사지시", "pending_review", triggered_by=r, target_id=r)
     _doc(F51, 3, "M", "회의 메모")
@@ -144,7 +144,7 @@ def _seed_documents_flow():
 
 
 def _seed_sequence_flow():
-    """P0008 S1-2 Flow: R root, N (approved) -> NR (in review) -> D (pending, WP card), free M."""
+    """S1-2 Flow: R root, N (approved) -> NR (in review) -> D (pending, WP card), free M."""
     from modules.flow_gate.db import workflow_sequences as ws
 
     r = _doc(F48, 1, "R", "Explorer 정렬 개선", "wf_in_progress")
@@ -239,7 +239,7 @@ def test_s1_6_failures(env):
     assert res.status_code == 404
     assert res.json()["error"] == {"code": "flow_not_found", "message": "Flow를 찾을 수 없습니다.",
                                    "params": {"flow_id": "flowgate.v02.9999"}}
-    # 0145 T#2 added latest; retain the malformed-view case with an unsupported value.
+    # added latest; retain the malformed-view case with an unsupported value.
     res = _get(env, F51, query="?view=unknown")
     assert res.status_code == 422
     assert res.json()["error"]["params"] == {"errors": [{"field": "view", "reason": "not_one_of:revision,draft,latest"}]}

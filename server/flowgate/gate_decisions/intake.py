@@ -1,4 +1,4 @@
-"""The decision intake of the product gate rule ``human_confirm_v1`` (flowgate.v02.0085 T#2, D0007 §3.1 / §3.3 / §7.2).
+"""The decision intake of the product gate rule ``human_confirm_v1``.
 
 ``POST /runs/{run_id}/nodes/{node_key}/gate-decision`` of a run whose snapshot holds the product rule comes here
 (``gate_service`` asks the run's own rule for its ``intake``). Everything runs in the run's Flow guard: one transaction,
@@ -18,7 +18,7 @@ the checks first and writing nothing, then the decision. The checks, in the orde
    the Flow (409 ``gate_decision_blocked``) holds the Flow's changes
 9. a new client's ``expected_attempt_id`` / ``expected_settings_version`` not the gate's round / settings version now
    -> 409 ``gate_context_changed`` (``reason``: ``attempt`` / ``settings_version``)
-10. the rule's judgement: a ``reject`` -> 409 ``gate_reject_removed`` (flowgate.v02.0119 T#4, T-3: a confirm card has no
+10. the rule's judgement: a ``reject`` -> 409 ``gate_reject_removed`` (the earlier change the earlier implementation, T-3: a confirm card has no
    rejection any more; nothing is written)
 11. a confirm's settings and Git checks (``preflight``) -> 409 ``gate_settings_invalid`` / ``gate_git_unavailable``
 
@@ -27,7 +27,7 @@ and retarget the predecessor's ``superseded_by_decision_id``, including replacem
 
 Then the decision (its run event carries ``gate_decision_id``, ``history.decision_link``):
 
-- reject: removed (flowgate.v02.0119 T#4, T-3) — refused at the rule's judgement (10), so no new ``rejected`` decision and
+- reject: removed — refused at the rule's judgement , so no new ``rejected`` decision and
   no ``gate_rejected`` event is made. A gate rejected before stays as it was (its decision and event are history, read
   and shown; ``blocked_rejected`` / the revision adoption block still read it), never converted.
 - confirm with neither a Git apply nor an archive: stored ``succeeded`` and the gate ``done`` (``gate_confirmed``) in
@@ -35,7 +35,7 @@ Then the decision (its run event carries ``gate_decision_id``, ``history.decisio
   command goes on at once, a step stays within its targets, a paused / stopped run's propagation waits). -> 200
 - confirm with work: stored ``accepted`` with its settings snapshot, target and ``gate_publish`` job in the same
   transaction; the gate stays open and held (no other decision, no settings change, nothing follows it). An idle run
-  whose command waited for this gate goes on running while its job is LIVE (0132 T#3). A parked reservation permits
+  whose command waited for this gate goes on running while its job is LIVE. A parked reservation permits
   idle, retains the confirm settings lock and never completes the run. The recorded acceptance intent controls resume.
   -> 202 ``{"run", "decision", "job"}``
 
@@ -67,7 +67,7 @@ BLOCK_TIME_MACHINE, BLOCK_MERGE_CONFLICT = "time_machine", "merge_conflict"
 
 
 def fingerprint(decision: str, comment: Optional[str], intent: dict) -> str:
-    """The content a request key is bound to: the decision, the comment and the expected values (D0007 §7.2)."""
+    """The content a request key is bound to: the decision, the comment and the expected values."""
     body = {"decision": decision, "comment": comment, "expected_attempt_id": intent.get("expected_attempt_id"),
             "expected_settings_version": intent.get("expected_settings_version")}
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -82,7 +82,7 @@ def _job_wire(job: Optional[dict]) -> Optional[dict]:
 
 
 def _answer(run_id: str, row: dict) -> dict:
-    """200 for a finished decision (rejected, succeeded, canceled, abandoned), 202 while it holds the gate. T#3: the
+    """200 for a finished decision (rejected, succeeded, canceled, abandoned), 202 while it holds the gate. the earlier implementation: the
     decision also tells what the common Git job actions may do with it (``recovery.flags``)."""
     from flowgate.gate_decisions import recovery
     row = repo.get(row["decision_id"]) or row
@@ -102,7 +102,7 @@ def _merge_sessions(flow_id: str) -> list:
 
 
 def blocked_reason(flow_id: str) -> Optional[str]:
-    """Another apply operation holds the Flow's changes (D0007 §3.1 last row): a Time Machine or a conflict session."""
+    """Another apply operation holds the Flow's changes (last row): a Time Machine or a conflict session."""
     from flowgate.graph_time_machine.operation import busy
     if busy(flow_id):
         return BLOCK_TIME_MACHINE
@@ -199,7 +199,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
         except legacy.PolicyUndecided as exc:                                            # E-21 (defence)
             raise legacy.gate_undecided(flow_id, int(run["revision_no"]),
                                         [{"policy": exc.key, "rule_ref": legacy.RULE_REF[exc.key]}])
-        except GateDecisionRemoved as exc:                                               # 0119 T-3: no gate rejection
+        except GateDecisionRemoved as exc:                                               # T-3: no gate rejection
             raise legacy.GraphApiError(409, exc.code, {"run_id": run_id, "node_key": node_key,
                                                        "decision": exc.decision})
         kind = legacy.GATE_EVENTS.get(outcome)
@@ -230,7 +230,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
         from flowgate.gate_decisions import publish
-        publish.install()                            # T#3: the executor that runs it (idempotent)
+        publish.install()                            # the executor that runs it (idempotent)
         decision_id = repo.new_decision_id()
         job = legacy.insert_gate_publish(
             project_id, {"decision_id": decision_id, "group_id": flow_id, "run_id": run_id, "node_key": node_key},
@@ -261,7 +261,7 @@ def _apply(ctx, state, policies, kind: str, node_key: str, user_id: str, comment
                                         "payload": history.decision_link(stored["decision_id"])})
 
 
-# ── the gate part of a run read (D0007 §7.2) ─────────────────────────────────
+# ── the gate part of a run read ─────────────────────────────────
 
 def _summary(entry: Optional[dict]) -> Optional[dict]:
     if not entry:
@@ -309,7 +309,7 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
             "decision": _summary(latest), "decision_in_progress": held is not None,
             "job": _job_wire(job), "git_active": activity.get(key) == LIVE,
             "parked": activity.get(key) == PARKED,
-            # T#3 (D0007 §7.3): what the common Git job actions may do with the held decision now
+            # what the common Git job actions may do with the held decision now
             "recovery": ({"decision_id": held["decision_id"], "decision_version": held["decision_version"],
                           "status": held["status"], **recovery_flags(held, job)} if held else None),
             "can_decide": (decided and run["status"] in DECIDABLE_RUN_STATUSES and r["status"] == "open"

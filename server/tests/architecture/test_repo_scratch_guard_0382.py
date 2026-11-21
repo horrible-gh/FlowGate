@@ -1,17 +1,17 @@
-"""테스트가 저장소를 오염시키지 못하게 하는 정적 가드 (0382 B0001 / NR0003 제안 2-c).
+"""Static repository-write guard (proposal 2-c).
 
-0382 의 사고는 실행 시점에는 아무 신호도 내지 않았다. 두 스펙이 스크래치 기본값을
-``server/.test-tmp-<번호>`` 로 두었고, 그 폴더는 화면이 감추는 종류라 261개가 남의
-커밋에 실려 main 에 들어갈 때까지 아무도 못 봤다.
+The 0382 incident had no runtime signal: two specs defaulted scratch paths to
+server/.test-tmp-<number>, hidden by the UI, and 261 artifacts reached main in
+another person's commit before anyone noticed.
 
-conftest 의 세션 감시자(제안 2-b)는 **이미 벌어진** 오염을 잡는다. 이 스펙은 그보다
-한 걸음 앞에서, 소스를 읽어 "저장소 경로 아래에 폴더를 만들거나 파일을 쓰는" 테스트를
-잡는다. 같은 방식의 선례가 이 저장소에 이미 있다 — ``test_event_loop_blocking_0279``
-는 소스를 읽어 규칙 위반을 잡는다.
+conftest's session watcher (proposal 2-b) detects pollution after it happens.
+This guard catches tests that create directories or write files below a
+repository-derived path by inspecting source first, following the existing
+test_event_loop_blocking_0279 pattern.
 
-판정은 보수적이다. ``__file__`` 에서 유도된 이름(그리고 그 이름에서 다시 유도된
-이름)에 대해서만 쓰기 호출을 본다. 읽기는 통과한다 — 저장소 파일을 읽는 스펙은
-정상이고, 실제로 여럿 있다.
+Classification is conservative: inspect writes only through names derived
+transitively from __file__. Reads are allowed; many legitimate specs read
+repository files.
 """
 from __future__ import annotations
 
@@ -27,20 +27,20 @@ _SERVER_DIR = Path(__file__).resolve().parents[2]
 _TESTS_DIR = _SERVER_DIR / "tests"
 _REPO_ROOT = _SERVER_DIR.parent
 
-# 경로 객체에 대고 부르면 디스크에 쓰는 메서드.
+# Methods that write to disk when called on a path object.
 _WRITING_METHODS = frozenset({
     "mkdir", "touch", "write_text", "write_bytes", "rename", "replace", "unlink", "rmdir",
 })
-# 첫 인자로 경로를 받아 디스크에 쓰는 함수(모듈 접두어는 보지 않는다).
+# Functions taking a destination path as their first argument, ignoring module prefixes.
 _WRITING_FUNCS = frozenset({"makedirs", "mkdir", "copytree", "copyfile", "copy", "copy2", "move"})
 _WRITE_MODES = ("w", "a", "x", "+")
 
 
-# pytest 가 실제로 수집·임포트하는 파일들. 여기가 이 가드의 범위다.
+# Scope: files actually collected/imported by pytest.
 #
-# 손으로 돌리는 시나리오 준비 스크립트(예: seed_ts004.py)는 일부러 뺐다. 그런 스크립트는
-# 저장소 안 정해진 자리에 픽스처를 만드는 것이 목적이라 이 규칙과 목적이 어긋나고,
-# pytest 세션 중에 돌면 conftest 의 실행 시점 감시자(제안 2-b)가 어차피 잡는다.
+# Exclude manually run scenario setup scripts such as seed_ts004.py:
+# their purpose is to create fixtures at fixed repository paths, unlike tests.
+# If run during pytest, conftest's runtime watcher (proposal 2-b) catches them.
 _SCANNED_EXTRA = ("conftest.py", "scratch_support.py")
 
 
@@ -83,6 +83,7 @@ def _derives_from_file(expr: ast.AST, known: set[str]) -> bool:
 
 
 def _repo_derived_names(tree: ast.AST, inherited=None) -> set[str]:
+    """Names bound to paths derived from __file__, closed transitively."""
     nodes = list(_scope_nodes(tree))
     known = set(inherited or ())
     if isinstance(tree, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -117,7 +118,7 @@ def _repo_derived_names(tree: ast.AST, inherited=None) -> set[str]:
 
 
 def _root_name(expr: ast.AST) -> str | None:
-    """``A / "b" / "c"`` 나 ``A.parent`` 의 뿌리 이름."""
+    """The root name of A / "b" / "c" or A.parent."""
     node = expr
     while True:
         if isinstance(node, ast.Name):
@@ -201,7 +202,7 @@ def test_no_test_writes_inside_the_repository():
     )
 
 
-# ── TC2: 검출기 자체가 살아 있는가 (가드가 조용히 죽지 않게) ─────────────────
+# TC2: the detector itself remains effective.
 
 def test_detector_flags_a_repo_write():
     source = (
@@ -223,7 +224,7 @@ def test_detector_allows_reading_repo_files():
     assert _violations(source) == []
 
 
-# ── TC3: 그때그때 확인하려고 쓴 스크립트가 커밋돼 있지 않은가 ────────────────
+# TC3: ad-hoc investigation scripts are not committed.
 
 def test_no_ad_hoc_scratch_scripts_committed():
     strays = sorted(
@@ -236,7 +237,7 @@ def test_no_ad_hoc_scratch_scripts_committed():
     )
 
 
-# ── TC4: 두 번째·세 번째 층이 실제로 걸려 있는가 ────────────────────────────
+# TC4: the second and third protection layers are actually installed.
 
 def test_gitignore_covers_test_scratch():
     text = (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -250,7 +251,7 @@ def test_conftest_installs_the_pollution_guard():
 
 
 def test_pollution_guard_fails_a_session_that_leaves_ignored_scratch(tmp_path):
-    """문자열 존재가 아니라 실제 pytest 종료 실패까지 고정한다 (0382 review)."""
+    """Verify an actual failing pytest exit, beyond string presence (0382 review)."""
     repo = tmp_path / "repo"
     tests_dir = repo / "server" / "tests"
     tests_dir.mkdir(parents=True)
@@ -302,12 +303,12 @@ def test_pollution_guard_fails_a_session_that_leaves_ignored_scratch(tmp_path):
     "test_t509_src_content_routes.py",
 ])
 def test_known_offenders_now_use_the_shared_scratch(spec):
-    """이 세 스펙이 이번 사고의 출혈 지점이었다 — 되돌아가면 여기서 걸린다."""
+    """These three specs caused the incident; catch a return to those defaults."""
     matches = [path for path in _TESTS_DIR.rglob(spec) if path.is_file()]
     assert len(matches) == 1, f"{spec}: expected exactly one file under tests, found {len(matches)}"
     text = matches[0].read_text(encoding="utf-8-sig")
     assert "session_scratch(" in text
-    # 주석 줄은 뺀다 — 그 안에는 "예전 기본값이 무엇이었는지"가 일부러 적혀 있다.
+    # Exclude comments, which intentionally document the old defaults.
     code = "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("#")
     )

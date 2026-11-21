@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F1 — a document's review history (0056 CH §2): the AI reviews (`ai_review_history`)
+// a document's review history (CH): the AI reviews (`ai_review_history`)
 // and the rejections with the AI responses to them (`rejection_history`), as the v0.1 document read already
 // carries them — the data behind the v0.1 '검수·반려 전체보기' dialog (client/src/main/components/
 // QaReviewHistoryDialog.vue). The 0048 D#1 §10.4 reading ("AI review existence only, never a count") is
@@ -73,7 +73,7 @@ export interface DocumentHistory {
   readonly docId: string
   readonly record: DocumentRecord
   /**
-   * As the server sends them: newest first (flowgate.v02.0056 F2-2 — O3 0009-TR §4-4 checked the document read;
+   * As the server sends them: newest first (the earlier change F2-2 — O3 the earlier implementation checked the document read;
    * the F1 note "as stored, oldest first" was wrong). The window orders by time itself (documentHistoryTimeline).
    */
   readonly reviews: readonly DocumentHistoryReview[]

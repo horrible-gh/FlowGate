@@ -191,7 +191,7 @@ def test_S8_ttl_of_a_hand_back_resolver_session_holds_without_merge_abort(t4):
     mid, m, b2, before = conflict_session(env)
     remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    assert out['result']['status'] == 'returned_to_resolver'   # T#3 D1 hand-back
+    assert out['result']['status'] == 'returned_to_resolver'   # D1 hand-back
     to_conflict(t, mid)
     _only(env, mid)
     _age(mid)

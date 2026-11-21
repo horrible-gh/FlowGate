@@ -1,6 +1,6 @@
-"""flowgate.v02.0064 T#3 — R↔B number swap: file stage, identity fields, attachments, draft cards.
+"""R↔B number swap: file stage, identity fields, attachments, draft cards.
 
-L0005 2.5~2.8 / P0006 §3.2·§3.4~§3.6 / DB0007 §2.5. A real SQLite DB with every migration applied and a
+2.5~2.8 / the plan·~ /. A real SQLite DB with every migration applied and a
 temp storage root: the judgement is a pure read, the coordinator stages the new body next to the original,
 rewrites only the ``type`` / ``doc_number`` values, moves the attachment rows and files before the old row
 goes (``attachments.doc_id`` cascades), moves the draft cards, and removes the old files only after the
@@ -903,12 +903,12 @@ def test_the_route_answers_with_conversion_and_flat_refusals(env, client):
     make_doc(env, doc_id=f"{FLOW}.0002-R", seq=2, rel=f"{GROUP_DIR}/0002-R_requirement.md")
     make_doc(env, doc_id=f"{FLOW}.0003-N", seq=3, body=None, rel="", triggered_by=f"{FLOW}.0002-R")
     child = client.patch(f"/api/v1/documents/{FLOW}.0002-R/root-type", json={"new_type": "B"})
-    # 0064 T#4: a root with child documents is succeeded (P0006 §3.3), the child refusal is gone (§3.5).
+    # a root with child documents is succeeded, the child refusal is gone.
     assert child.status_code == 200, child.text
     assert (child.json()["conversion"]["mode"], child.json()["conversion"]["child_count"]) == ("succession", 1)
 
 
-# ── one guard: the contact's, the coordinator's own, attachment writes (L0005 2.6 / 2.7.1) ─────
+# ── one guard: the contact's, the coordinator's own, attachment writes ─────
 
 DECIDED = "Cannot convert root type after the workflow decision was taken."
 
@@ -998,7 +998,7 @@ def test_an_upload_committing_after_the_conversion_is_refused_and_cleaned(env, m
     assert not (env["storage"] / GROUP_DIR / "0001-R" / "late.txt").exists()
 
 
-# ── one guard, real contention: Flow guard or the document row lock (L0005 2.7.1, V-B1b-2e ③) ─────────────
+# ── one guard, real contention: Flow guard or the document row lock (2.7.1, V-B1b-2e ③) ─────────────
 
 class _Pause:
     """Holds the wrapped call (inside its guard) until released."""
@@ -1209,7 +1209,7 @@ def test_a_root_without_a_flow_converts_under_its_row_lock(env, monkeypatch):
     assert (room_of(new_id) / "a.txt").read_bytes() == b"alpha" and attachment_rows(env, old_id) == []
 
 
-# ── legacy registration under the same guard (L0005 2.7.1) ─────────────────────────────────────────────────
+# ── legacy registration under the same guard ─────────────────────────────────────────────────
 
 def _legacy_original(doc_id, name="note.txt", data=b"note"):
     from modules.flow_gate.documents.attachments import legacy
@@ -1274,7 +1274,7 @@ def test_legacy_registration_rechecks_the_document_under_the_guard(env, monkeypa
     assert not copy_room.exists()                                       # the copy and the room this run made
 
 
-# ── cleanup after the durable lock is gone: another process stages at the same paths (0064 T#3) ─────────────
+# ── cleanup after the durable lock is gone: another process stages at the same paths ─────────────
 
 class _Processes:
     """Worker threads that act as separate server processes: none shares the in-process Flow / document lock of

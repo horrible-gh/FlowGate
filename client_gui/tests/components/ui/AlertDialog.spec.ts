@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import AlertDialog from '@/components/ui/AlertDialog.vue'
 
-// T0006 §8/§12: acknowledge, ESC/close policy, alertdialog semantic, focus return, no
+// acknowledge, ESC/close policy, alertdialog semantic, focus return, no
 // Toast behaviour (no auto-dismiss). Rendered content is teleported (via ModalShell) to
 // <body>.
 describe('components/ui/AlertDialog (T0006)', () => {

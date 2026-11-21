@@ -1,6 +1,6 @@
-"""0449 T0004 — server contracts behind the "reopened group loses its tree / can't proceed" bug.
+"""server contracts behind the "reopened group loses its tree / can't proceed" bug.
 
-Three independent things NR0003 established by execution, pinned here:
+Three independent things the review established by execution, pinned here:
 
 1. **Flat group tree (item 3 / E2).** ``get_group_tree`` used to put every module, group,
    orphan and document node in the top-level ``nodes`` list AND inside its parent's
@@ -251,14 +251,14 @@ class TestFlatGroupTree:
 # 1b. The same contracts at the incident's own scale (item 3.4 / criterion 3)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# 0449 TR0005 rev1. rev0 proved the flattening on 3x4 and 3x8 fixtures — 35 and 59 nodes —
+# proved the flattening on 3x4 and 3x8 fixtures — 35 and 59 nodes —
 # and reported the load numbers from a scratch probe (``tree_probe.py``) that no test runs.
-# T0004 item 3.4 asks for the opposite: the load shape pinned as a PRODUCT regression test,
+# asks for the opposite: the load shape pinned as a PRODUCT regression test,
 # explicitly "조사용 scratch probe만 통과한 것을 제품 회귀 테스트 완료로 대신하지 마라".
 # A 35-node fixture cannot distinguish "linear" from "nearly linear", and it cannot fail the
-# way the live project failed. So the fixture below is built at the size NR0003 measured.
+# way the live project failed. So the fixture below is built at the size the review measured.
 #
-# NR0003 on the live project: 4,210 unique ids serialized as 12,169 entries, 4.8 MB.
+# on the live project: 4,210 unique ids serialized as 12,169 entries, 4.8 MB.
 # This fixture: 2 modules x 84 groups x 34 documents = 5,885 unique ids, which the pre-0449
 # shape would have serialized as 17,480 entries / 4.86 MB (asserted below, not assumed).
 # Seeding and building it costs about 1.2 s, so it runs in the ordinary suite.
@@ -266,7 +266,7 @@ class TestFlatGroupTree:
 LOAD_GROUPS_PER_MODULE = 84
 LOAD_DOCS_PER_GROUP = 34
 
-# What NR0003 measured on the live project, and what this fixture has to be at least as big as.
+# What the review measured on the live project, and what this fixture has to be at least as big as.
 INCIDENT_UNIQUE_IDS = 4_210
 INCIDENT_ENTRIES = 12_169
 INCIDENT_BYTES = 4.8 * 1024 * 1024
@@ -341,7 +341,7 @@ class TestFlatGroupTreeAtIncidentScale:
         nodes = load_tree["nodes"]
         new_bytes = len(json.dumps(load_tree))
         old_bytes = len(json.dumps({"nodes": _pre_0449_shape(nodes)}))
-        # 4.86 MB -> 1.71 MB measured. The refresh retry that NR0003 found so expensive is
+        # 4.86 MB -> 1.71 MB measured. The refresh retry that the review found so expensive is
         # paying for one of these now, not three.
         assert new_bytes < old_bytes / 2.5, (new_bytes, old_bytes)
 
@@ -646,7 +646,7 @@ class TestReturnPointClearedByForwardReapproval:
         """Positive control for the case above.
 
         Disable the hook pipeline_service calls and run the identical steps: the ledger stays,
-        with ``exists=true / current_min_seq=null`` — exactly the E4 state NR0003 measured on
+        with ``exists=true / current_min_seq=null`` — exactly the E4 state the review measured on
         the live group. So the assertion above is driven by the new cleanup, not by the
         fixture happening to leave no return point behind.
         """
@@ -844,7 +844,7 @@ class TestReturnPointClearedByForwardReapproval:
         assert db_rp.get_by_group(ids["group_id"]) is not None
 
     def test_an_approved_A_answer_does_not_decide_the_rewind_is_over(self, rp_store):
-        """0449 TR0005 rev1 — the same item 5.3 rule, for the type that was left out.
+        """the same item 5.3 rule, for the type that was left out.
 
         rev0 spelled the non-restore set out by hand as ``{"Q", "AC"} | AUTO_COMPLETE_TYPES``
         and so covered Q, AC, M and CH but not **A**, even though the shared
@@ -1150,7 +1150,7 @@ class TestAdvanceRouteLogging:
 
 
 class TestAdvanceUnexpected500IsRecorded:
-    """0449 TR0005 rev1 — item 6.1's fourth case, at every point it can happen.
+    """'s fourth case, at every point it can happen.
 
     rev0 opened the ``failed`` guard around the ``advance_workflow()`` call alone. Everything
     before it — normalising the instruction mode, the ``_db_documents.get_by_id()`` lookup, the
@@ -1365,7 +1365,7 @@ class TestTokenIssueRouteLogging:
 
 
 class TestNoTracebackStepsAroundTheDeclaredFields:
-    """0449 TR0005 rev2 — the 500 paths must not write a record the field list cannot see.
+    """the 500 paths must not write a record the field list cannot see.
 
     rev1 wrote the restricted ``failed`` line and then called ``logger.exception(...)`` right
     after it. That second call emits a SEPARATE record whose ``exc_info`` the formatter expands

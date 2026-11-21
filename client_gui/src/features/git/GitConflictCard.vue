@@ -3,7 +3,7 @@
     <div class="gx-title">
       {{ t('gui.git.conflict.title_target', { target }) }}
     </div>
-    <!-- flowgate.v02test.0042 (시안 v7 item 3): a card result's merge conflict is no dead end here — it is handled in the
+    <!-- (mockup v7 item 3): a card result's merge conflict is no dead end here — it is handled in the
          card; [카드로 이동] opens that card's '병합 · 충돌' tab. No resolve action is offered in this panel. -->
     <div v-if="unsupported && graphMerge" class="gx-card-handled" data-test="git-conflict-card-handled">
       <b>{{ t('gui.git.conflict.card_handled') }}</b>
@@ -16,12 +16,12 @@
     </div>
     <p v-else-if="unsupported" class="gx-desc" data-test="git-conflict-unsupported">{{ t('gui.git.conflict.unsupported') }}</p>
     <template v-else>
-      <!-- flowgate.v02test.0052 (0008 할 일 7): the numbers are the server's record (`resolved_paths`), not the files that
+      <!-- (task 7): the numbers are the server's record (`resolved_paths`), not the files that
            merely show no marker (a file the resolver was refused on lost its markers but is not resolved). -->
       <p v-if="files && files.length" class="gx-desc" data-test="git-conflict-count">
         {{ t('gui.git.conflict.count', { open: openCount, done: files.length - openCount }) }}
       </p>
-      <!-- flowgate.v02test.0052 (card B): files the resolution was submitted with besides the session's own (a file main moved). -->
+      <!-- (card B): files the resolution was submitted with besides the session's own (a file main moved). -->
       <div v-if="companions.length" class="gx-companions" data-test="git-conflict-companions">
         <div class="gx-kicker">{{ t('gui.git.conflict.companions') }}</div>
         <p v-for="item in companions" :key="item.path" class="gx-desc" data-test="git-conflict-companion">
@@ -96,12 +96,12 @@
         <button type="button" class="gx-btn ghost" :disabled="!actionable" data-test="git-conflict-abort" @click="askAbort">
           {{ t('gui.git.conflict.abort') }}
         </button>
-        <!-- flowgate.v02test.0052 (0008 할 일 3): the way out when git refuses the abort — administrators only, and only then. -->
+        <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
         <button v-if="canForce" type="button" class="gx-btn danger" :disabled="!actionable" data-test="git-conflict-force" @click="askForceCleanup()">
           {{ t('gui.git.conflict.force_cleanup') }}
         </button>
       </div>
-      <!-- flowgate.v02test.0052 (0008 할 일 2): git's own reason and what to do next, not `git_error` alone. Shown from the
+      <!-- (task 2): git's own reason and what to do next, not `git_error` alone. Shown from the
            session's record; a refusal just answered is the notice line below (the same text), so it is not said twice. -->
       <div v-if="failureShown" class="gx-reason gx-abort-failure" data-test="git-conflict-abort-failure">
         <span>{{ t('gui.git.conflict.abort_failure') }}</span>
@@ -116,9 +116,9 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — merge conflict card (0033-D §3.2). `unsupported` is the TR-revert (or
+// merge conflict card. `unsupported` is the TR-revert (or
 // unknown) conflict this screen does not process: title and one line, no buttons (§3.7).
-// flowgate.v02gui.0004 (0001-B §A) — the one place a conflict is worked on: file states, a file
+// the one place a conflict is worked on: file states, a file
 // opens the direct resolver, [AI 해결 ▾] picks the AI right under the button before it starts,
 // an AI run that ended with conflicts left offers [다시 실행] / [다른 AI로 ▾] / [직접 해결], and
 // the §B re-approval path sits below when a held approval is parked on this conflict.
@@ -135,7 +135,7 @@ const ctx = useGitPanel()
 const session = ctx.session
 
 const files = computed(() => session.state.conflict?.files ?? null)
-// flowgate.v02test.0042: the conflicts answer of this row's merge says it is a Graph card result's merge.
+// the conflicts answer of this row's merge says it is a Graph card result's merge.
 const graphMerge = computed(() => {
   const conflict = session.state.conflict
   return !!conflict?.graphMerge && conflict.mergeId === session.pendingRow.value?.mergeId
@@ -272,7 +272,7 @@ const { askAbort, askForceCleanup } = useAbortMergeConfirm()
 .gx-abort-failure { display: flex; flex-direction: column; gap: 3px; }
 .gx-abort-failure code { display: block; overflow-wrap: anywhere; font-size: 11.5px; }
 .gx-companions { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
-/* flowgate.v02test.0042 (시안 v7 item 3): a card result's conflict is a blue note with [→ 카드로 이동], never a dead end. */
+/* flowgate.v02test.0042 (mockup v7 item 3): a card result's conflict is a blue note with [→ 카드로 이동], never a dead end. */
 .gx-card-handled { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 10px 12px; border: 1px solid rgba(75, 163, 255, 0.4); border-radius: 8px; background: rgba(75, 163, 255, 0.1); }
 .gx-card-handled b { color: #7cc0ff; font-size: 12.5px; }
 .gx-card-handled span { color: #c0d0e2; font-size: 12px; line-height: 1.5; }

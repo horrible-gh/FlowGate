@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FLOW_NODE_KINDS, FLOW_NODE_STATES } from '@/features/designer/center/canvas/flowNodeKinds'
 
-// flowgate.v02.0026 — source-level guards for the Designer Center (0003-D §2.3 / §2.4.5 /
+// source-level guards for the Designer Center (the design / /
 // §7.1) that a DOM test cannot see.
 const ROOT = resolve(__dirname, '../../..')
 const SRC = join(ROOT, 'src')
@@ -31,41 +31,41 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'canvas/FlowCanvas.vue',
         'canvas/FlowEdgePath.vue',
         'canvas/FlowNodeCard.vue',
-        // flowgate.v02.0045 TR0020 rev4: which sides an Edge attaches to.
+        // which sides an Edge attaches to.
         'canvas/edgeGeometry.ts',
         'canvas/flowNodeKinds.ts',
         'canvas/vueFlowMapping.ts',
         'canvasView.ts',
         'designerCenterSession.ts',
         'flowTabs.ts',
-        // flowgate.v02.0045 T0019: which Edges the work already went through.
+        // which Edges the work already went through.
         'graph/edgeProgress.ts',
-        // flowgate.v02.0056 F2-1: what a Graph card shows for its run (Canvas chip and Inspector alike).
+        // what a Graph card shows for its run (Canvas chip and Inspector alike).
         'graph/cardStateView.ts',
-        // flowgate.v02.0064 T#4: a card's own title — its length, version order and who may edit it.
+        // a card's own title — its length, version order and who may edit it.
         'graph/nodeTitle.ts',
         'graph/fixtureFlowGraphSource.ts',
         'graph/flowGraph.ts',
         'graph/flowGraphSource.ts',
-        // flowgate.v02.0045 S1+S2: the server Graph source and the layout save batching.
+        // S1+S2: the server Graph source and the layout save batching.
         'graph/serverFlowGraphSource.ts',
         'layoutSaveQueue.ts',
-        // flowgate.v02.0045 S3+S4 (D0004 §2.3 center/edit): edit commands, connection pre-check,
-        // the draft editor / controller (TR0020 rev4: no draft bar — nothing is laid over the Canvas).
+        // S3+S4 (center/edit): edit commands, connection pre-check,
+        // the draft editor / controller (no draft bar — nothing is laid over the Canvas).
         'edit/connectionRules.ts',
         'edit/draftController.ts',
         'edit/draftEditor.ts',
         'edit/draftModel.ts',
         'edit/graphEditCommands.ts',
-        // flowgate.v02.0053 T#9: the top band's run buttons on the server Graph run.
+        // the top band's run buttons on the server Graph run.
         'run/flowRunControl.ts',
-        // flowgate.v02.0059 T#2: one undo / redo of structure edits and card moves, the draft actions
-        // moved out of the controller, and 정렬 / 분배 / 자동 배치 (the server's auto_layout ported).
+        // one undo / redo of structure edits and card moves, the draft actions
+        // moved out of the controller, and alignment / distribution / auto-layout (the server's auto_layout ported).
         'edit/editHistory.ts',
         'edit/draftActions.ts',
         'arrange/arrangeNodes.ts',
         'arrange/autoLayout.ts',
-        // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 (0005-L §2.1 ~ §2.8) in its own files next to the server port.
+        // flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 (0005-L §2.1 ~ §2.8) in its own files next to the server port.
         'arrange/directionalLayout.ts',
         'arrange/edgeCurve.ts',
         'arrange/layoutBands.ts',
@@ -88,7 +88,7 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
     const pure = CENTER_FILES.filter((f) =>
       /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$|layoutSaveQueue\.ts$)/.test(rel(f)),
     )
-    // flowgate.v02.0056 F2-1: graph/cardStateView.ts is the tenth; flowgate.v02.0064 T#4: graph/nodeTitle.ts the eleventh.
+    // graph/cardStateView.ts is the tenth; the earlier change the earlier implementation: graph/nodeTitle.ts the eleventh.
     expect(pure).toHaveLength(11)
     for (const file of pure) {
       for (const spec of importsOf(read(file))) {
@@ -162,7 +162,7 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'canvas_label',
         'node_kinds',
         'node_states',
-        // flowgate.v02.0045 T0019: a selected Edge's remove button / why it cannot be removed.
+        // a selected Edge's remove button / why it cannot be removed.
         // (TR0020 rev4: no `edit` strings — nothing about saving / 검증 is shown on the Canvas.)
         'edge',
         // flowgate.v02.0056 F2-1: a Graph card's state (cardStateView.ts) and its [승인] with the refusals.
@@ -170,14 +170,14 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'approval',
       ].sort(),
     )
-    // flowgate.v02.0045 T0019: no empty-Graph text and no ownership badge any more.
+    // no empty-Graph text and no ownership badge any more.
     expect(messages.designer.center).not.toHaveProperty('empty_graph')
     expect(messages.designer.center).not.toHaveProperty('ownership')
     expect(Object.keys(messages.designer.center.edge).sort()).toEqual(['locked', 'remove'])
     for (const key of ['workspace_label', 'workspace_parts', 'active_flow', 'no_active_flow']) {
       expect(messages.designer.shell).not.toHaveProperty(key)
     }
-    // flowgate.v02.0042 — no guidance text while no Flow is open.
+    // no guidance text while no Flow is open.
     expect(messages.designer.center).not.toHaveProperty('no_open_flow')
     expect(messages.designer.center).not.toHaveProperty('no_open_flow_desc')
   })

@@ -1,4 +1,4 @@
-"""0596 TR0005 rev2 — 116 work-executor provider FK regression coordinates.
+"""116 work-executor provider FK regression coordinates.
 
 Mirrors test_ai_invoke_paused_provider_fk_0444.py: MySQL cannot be started on the
 FlowGate test host, so the MySQL half fixes the exact migration contract statically.
@@ -53,7 +53,7 @@ def test_mysql_116_adds_a_table_level_fk_with_set_null():
 def test_deleting_a_provider_degrades_the_work_executor_pin_not_the_chain(
     migrated_sqlite_db,
 ):
-    """NR0003 rev3 runtime oracle, exercised through the real SQLite migration set."""
+    """runtime oracle, exercised through the real SQLite migration set."""
     seed_sql = """
     INSERT INTO projects(project_id, project_name, is_active, created_at, updated_at)
       VALUES('flowgate', 'FlowGate', 1, datetime('now'), datetime('now'));

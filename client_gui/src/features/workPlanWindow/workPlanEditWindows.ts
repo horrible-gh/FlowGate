@@ -1,12 +1,12 @@
-// flowgate.v02.0072 T#1 — the work plan edit windows of this tab, kept the way the document windows are
+// the work plan edit windows of this tab, kept the way the document windows are
 // (documentWindows.ts / slotWriteWindows.ts): module state, one window per work plan document, opening it again brings
 // it back (and, when it was minimized, restores it). flowgate.v02.0072 T#3: the WP card's 「작업계획」 line opens it (the
 // Inspector's openDocument.ts openWorkPlan); the App Shell mounts WorkPlanEditWindows once (through DocumentWindows).
 //
-// The Step window boundary (T#2). A Step row's ✎ does not open anything inside this window (no inline drawer): the
+// The Step window boundary. A Step row's ✎ does not open anything inside this window (no inline drawer): the
 // window hands the row to the Step window's handler, registered here by the Step window feature
 // (setWorkPlanStepEditHandler). The handler gets the row's target and a session bound to the parent window's editor
-// (useWorkPlanEditor.stepSession): read a copy of the row's pre-instruction values (0073 T#2: not its review), put edited values back on
+// (useWorkPlanEditor.stepSession): read a copy of the row's pre-instruction values (not its review), put edited values back on
 // that row only, and ask whether the parent is locked or still open. The final server save stays the parent's [저장].
 // While no handler is registered, ✎ is shown disabled with its reason.
 //
@@ -17,7 +17,7 @@
 // Inspector registers (setWorkPlanEditOpener); without one the window is run-locked, as workPlanFlowLock without a reader.
 // Each window tells whether its draft holds unsaved edits (dirty), so a download of the plan can say they are not in it.
 //
-// flowgate.v02.0083 T#3 (D-1 / D-2) — the card line's opener (the Inspector's openWorkPlan) also hands the plan's WP card:
+// (D-1 / D-2) — the card line's opener (the Inspector's openWorkPlan) also hands the plan's WP card:
 // a reader of its latest node run (`card`), so the run card's own plan locks only on an ownership conflict or the card's
 // own AI and offers [제출]; and `submitted`, told after a [제출] (the opener reads its Flow's Canvas again).
 import { reactive, shallowRef } from 'vue'
@@ -39,20 +39,20 @@ export interface WorkPlanEditRequest {
   readonly saved?: (revisionNo: number) => void
   /** flowgate.v02.0074 T#2: 'import' opens [JSON 가져오기] once the plan is read (once per request); absent or null: as before. */
   readonly initialMode?: 'import' | null
-  /** flowgate.v02.0083 T#3: the plan's WP card as the Designer knows it now, read reactively; absent / null: none. */
+  /** the plan's WP card as the Designer knows it now, read reactively; absent / null: none. */
   readonly card?: () => WorkPlanRunCard | null
   /** flowgate.v02.0083 T#3: told after a [제출] the server took (the opener reads its Flow again). */
   readonly submitted?: () => void
 }
 
-/** The opener's part of a request for a window opened from outside the Inspector's work plan line (T#2). */
+/** The opener's part of a request for a window opened from outside the Inspector's work plan line. */
 export type WorkPlanEditOpener = (docId: string, flowId: string) => Pick<WorkPlanEditRequest, 'external' | 'saved'>
 
 export interface WorkPlanEditWindowState {
   readonly docId: string
   request: WorkPlanEditRequest
   minimized: boolean
-  /** flowgate.v02.0074 T#2: the window's draft holds unsaved edits (the window keeps it in step). */
+  /** the window's draft holds unsaved edits (the window keeps it in step). */
   dirty: boolean
   readonly x: number
   readonly y: number
@@ -60,7 +60,7 @@ export interface WorkPlanEditWindowState {
   raise: number
 }
 
-/** The Step window's side of the boundary (T#2). */
+/** The Step window's side of the boundary. */
 export interface WorkPlanStepEditHandler {
   /** Open (or bring back) the Step window of the row. */
   open(target: WorkPlanStepEditTarget, session: WorkPlanStepEditSession): void
@@ -114,19 +114,19 @@ export function setWorkPlanEditWindowMinimized(docId: string, minimized: boolean
   if (open) open.minimized = minimized
 }
 
-/** flowgate.v02.0074 T#2 — the window tells whether its draft holds unsaved edits. */
+/** the window tells whether its draft holds unsaved edits. */
 export function setWorkPlanEditWindowDirty(docId: string, dirty: boolean): void {
   const open = workPlanEditWindowOf(docId)
   if (open && open.dirty !== dirty) open.dirty = dirty
 }
 
-/** flowgate.v02.0074 T#2 — the plan's window holds unsaved edits, or its Step windows edits not applied yet. */
+/** the plan's window holds unsaved edits, or its Step windows edits not applied yet. */
 export function workPlanEditUnsaved(docId: string): boolean {
   return workPlanEditWindowOf(docId)?.dirty === true || workPlanStepEditsPending(docId)
 }
 
 /**
- * flowgate.v02.0074 T#2 — registers the opener of windows asked for from a document line or window (the Inspector: its
+ * registers the opener of windows asked for from a document line or window (the Inspector: its
  * Flow's verdict and the Canvas read after a save, as openWorkPlan); null removes it. Returns the function that removes
  * this one.
  */
@@ -172,7 +172,7 @@ export function closeAllWorkPlanEditWindows(): void {
   cascade = 0
 }
 
-/** Registers the Step window feature (T#2); null removes it. Returns the function that removes this one. */
+/** Registers the Step window feature; null removes it. Returns the function that removes this one. */
 export function setWorkPlanStepEditHandler(handler: WorkPlanStepEditHandler | null): () => void {
   stepHandler.value = handler
   return () => {

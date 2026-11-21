@@ -50,7 +50,7 @@ def test_s3_5_validation_reports_undecided_rules_in_order(env):
     km = res.json()["key_map"]
     body = validate(env, F51, 1).json()
     assert body["confirmable"] is False
-    # L0009 §2.5.2: by the smallest node key, then code rank (join before gate_node).
+    # by the smallest node key, then code rank (join before gate_node).
     rank = {"branch": 0, "join": 1, "gate_node": 2}
     expected = sorted([("branch", "Q-2", [km["tmp_2"]]), ("join", "Q-4", [km["tmp_5"]]),
                        ("gate_node", "Q-11", [km["tmp_5"]])], key=lambda i: (i[2][0], rank[i[0]]))

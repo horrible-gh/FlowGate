@@ -1,4 +1,4 @@
-/** flowgate.v02test.0035: archived tabs and the ended run / chat marks of the Flow tab strip. */
+/** archived tabs and the ended run / chat marks of the Flow tab strip. */
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'

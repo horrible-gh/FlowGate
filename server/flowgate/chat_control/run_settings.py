@@ -1,5 +1,5 @@
-"""Run settings of the cards a chat placed: review count, restarts, time limit (flowgate.v02gui.0032, 0002-CH seq 15-17),
-and the two 검증 options (flowgate.v02test.0053 0003-T: ``verify_max_runs`` / ``verify_run_minutes``, a run card only).
+"""Run settings of the cards a chat placed: review count, restarts, time limit (seq 15-17),
+and the two verification options (``verify_max_runs`` / ``verify_run_minutes``, a run card only).
 
 The chat's card role API wrote only the three AI roles, so a chat could neither read nor change a card's review count:
 it had to ask the user to set it in the Inspector AI tab. The same three run values the AI tab shows next to the roles
@@ -7,7 +7,7 @@ are opened here, and nothing else (hold, merge, assignee, instruction use, revie
 
 - ``FIELDS``: ``review_count``, ``restart``, ``time_limit``, ``verify_max_runs``, ``verify_run_minutes``. A card has those
   of its kind (``fields.fields_of``): a work card (T, run kind) all five, a test card (TS) only ``review_count``. Another
-  one is 422 ``setting_not_applicable``. The two 검증 options take any whole number inside their range (``fields``), their
+  one is 422 ``setting_not_applicable``. The two verification options take any whole number inside their range (``fields``), their
   ``choices`` are the screen combo's presets; ``null`` takes the card default (3 runs / 2 minutes) back.
 - The values are the person's screen's (``fields.check_value`` with ``legacy.repeat_choices()`` / the time limit
   minutes): a value the screen cannot pick is 422 with the field's ``choices``. ``null`` takes the default back (no

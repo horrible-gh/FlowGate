@@ -1,4 +1,4 @@
-"""The report baseline of an attempt (flowgate.v02.0113 0038-T T#3 A-2, 0002-D 개정 §3.6-0-2).
+"""The report baseline of an attempt.
 
 An attempt of a card that uses an instruction and opens with none written records the card's report as it is then —
 its report line document and that document's content (revision, body digest, last body save) — as the attempt's
@@ -11,18 +11,18 @@ baseline report stays as the card's history and is never deleted, and it never c
   still the line's (an attempt replaced by a command — a reinterpreted wait, a reopened failure — keeps the rule).
 - ``advance_at_instruction``: the moment the attempt's own instruction is written (a person's save judged, an AI's
   instruction end), inside that step's Flow guard. The baseline moves to the report as it is now — a report saved
-  while the instruction was still waiting was saved before the instruction and is no report of after it (0030-M
+  while the instruction was still waiting was saved before the instruction and is no report of after it (the earlier implementation
   §3.1 ⑥: the instruction first, then a report written anew). A report saved after this moment is the new report.
 - ``is_baseline``: the document is the attempt's baseline report, unchanged since.
 
-0038-T T#3 rework: a baseline the attempt needs is never assumed. A required record that cannot be made (no store —
+a baseline the attempt needs is never assumed. A required record that cannot be made (no store —
 migration 167 missing —, a failed read or insert) raises ``BaselineUnavailable`` and fails the opening with the run
 step's guard: nothing of the step stays, the report is kept as it is, unregistered, and the next command opens the
 node again once the store works. A baseline that cannot be read (no store, a failed read) raises too and is never
 "no baseline": the stage takes no report while it is not known. One row per attempt: written at the opening (or the
 carry), moved once more each time the attempt's instruction is written (``advance_at_instruction``).
 
-0045-TR rework (flowgate.v02.0113 T#6 → T#3): the baseline of the opening alone let a report saved during the
+the baseline of the opening alone let a report saved during the
 instruction wait pass as a report of after the instruction (it differs from the opening's report), and the card was
 completed with no report written after its instruction. The write order is kept by moving the baseline to the
 instruction's write moment.
@@ -118,7 +118,7 @@ def record_at_opening(attempt_id: str, run_id: str, flow_id: str, node_key: str,
     Instruction not written: the baseline is required — a missing store, a failed read or a failed insert raises
     ``BaselineUnavailable`` and the opening fails with the step (its guard rolls everything back; the report is never
     taken on an unknown baseline). Instruction written: the earlier attempt's baseline is carried while the report is
-    unchanged — or changed by a save made before the instruction's last save (0045-TR rework: a report saved while
+    unchanged — or changed by a save made before the instruction's last save (the earlier implementation rework: a report saved while
     no person's stage took the instruction, then the instruction, is no report of after it); a failed read raises, and
     with no store no earlier baseline can exist (nothing to carry)."""
     try:

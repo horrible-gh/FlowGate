@@ -142,7 +142,7 @@ export function cardLineErrorOf(error: unknown): CardLineError {
 
 
 /**
- * Only known unreadable states warn; older servers and documentless lines do not. (flowgate.v02.0064 T#4: the
+ * Only known unreadable states warn; older servers and documentless lines do not. (the earlier change the earlier implementation: the
  * names carry the file's area, as every export of features/document does — publicSurface.0048.)
  */
 export const cardLineUnreadableBodyStates: ReadonlySet<string> = new Set([

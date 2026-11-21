@@ -25,13 +25,13 @@ def preload_singletons():
 
 
 def recover_ai_invoke_leases():
-    """0401 NR0003 / T0004 작업 1: clear AI-run group leases orphaned by a restart.
+    """task 1: clear AI-run group leases orphaned by a restart.
 
     Every lease still in the table when this runs belongs to a process that no
     longer exists (this process's live-run registry starts empty), so it is safe
     to reclaim unconditionally at this point in the bootstrap sequence.
 
-    flowgate.v02.0129 T#2 (D0005 §3-4): AI-run remote Jobs of the previous process go
+    AI-run remote Jobs of the previous process go
     first -- an unclaimed one is cancelled, a claimed one is asked to stop, settled
     bodies (prompt/token, output) are scrubbed -- and every run whose remote Job is not
     settled yet is held: its group lease and Graph execution lease are left out of the
@@ -56,7 +56,7 @@ def recover_ai_invoke_leases():
 
 
 def start_remote_ai_supervisor():
-    """flowgate.v02.0129 T#2 (D0005 §3-4/§3-6): the periodic remote AI Job supervisor --
+    """the periodic remote AI Job supervisor --
     stage limits without an Agent request, owner-loss / retrieval-deadline hand-over and
     scrub, token revocation retry, and resumption of restart-held recoveries."""
     try:
@@ -68,7 +68,7 @@ def start_remote_ai_supervisor():
 
 
 def sweep_ai_run_scratches():
-    """0610: sweep run scratch after orphan leases have durable end records."""
+    """sweep run scratch after orphan leases have durable end records."""
     try:
         from modules.flow_gate.services import ai_invoke_service
 
@@ -103,7 +103,7 @@ def _sweep_scratches_in_background():
 
 
 def start_scratch_sweeps():
-    """flowgate.v02.0090 T0015 (NR0014 §4.1-3): start the scratch sweeps off the lifespan.
+    """start the scratch sweeps off the lifespan.
 
     Since 0090 the backlog of ReadOnly Git objects is really deleted, and deleting it
     inside the lifespan kept the port closed for minutes. One daemon thread runs the
@@ -122,7 +122,7 @@ def start_scratch_sweeps():
 
 
 def register_server_instance():
-    """0669 1a (0666 L 2.26 steps 1~2): register this process before any lock recovery.
+    """1a (L 2.26 steps 1~2): register this process before any lock recovery.
 
     Lock rows written from here on carry this instance id, so a later recovery can tell
     a dead owner's leftover from a live one. Failure keeps the old behaviour (rows are
@@ -144,7 +144,7 @@ def recover_git_sessions():
     protection could not be written there stays recovery_incomplete, which keeps the
     Group's G closed on its own (0669 unit 9c removed the old project lock row).
 
-    0053 1-B: queue runs hold no G. Recovery ends (or re-queues) the runs a dead process
+    queue runs hold no G. Recovery ends (or re-queues) the runs a dead process
     left executing; then the Self-check queue workers start and take the requests that
     stayed queued across the restart.
     """
@@ -165,7 +165,7 @@ def recover_git_sessions():
 
 
 def start_attachment_requests():
-    """flowgate.chat.0017 CH0002: AI attachment upload requests. An approval a dead process left
+    """AI attachment upload requests. An approval a dead process left
     half-way is put back to pending (an overwrite gets its previous bytes back), then expired
     requests / backups and orphaned staging folders are swept periodically -- all on a daemon
     thread, never blocking startup. Requests are NOT closed because their run ended: they wait
@@ -179,7 +179,7 @@ def start_attachment_requests():
 
 
 def recover_chat_commands():
-    """0670 T0004: chat command rows a dead server left open are closed, never resumed."""
+    """chat command rows a dead server left open are closed, never resumed."""
     try:
         from modules.flow_gate.services import chat_command_service
 
@@ -189,7 +189,7 @@ def recover_chat_commands():
     except Exception as exc:
         logger.warning(f"[startup] chat command recovery failed: {exc}")
     try:
-        # 0675 T0004 §2-5: decide the conversation anchor of rows written before it
+        # decide the conversation anchor of rows written before it
         # existed, and repair rows a failed reply-time re-anchor left at run_start; the
         # counts per state before/after are the backfill's audit trail.
         from modules.flow_gate.services import chat_activity_anchor_service
@@ -202,7 +202,7 @@ def recover_chat_commands():
 
 
 def encrypt_ai_provider_keys():
-    """0371 NR0007 §3: move legacy plaintext ai_providers.api_key rows to AES-256-GCM.
+    """move legacy plaintext ai_providers.api_key rows to AES-256-GCM.
 
     The column existed as plaintext for a long time, so shipping encryption alone would
     leave every already-registered provider key readable in the DB. Idempotent: a run
@@ -219,7 +219,7 @@ def encrypt_ai_provider_keys():
 
 
 def check_agent_pepper():
-    """0078 T0004: name a missing FLOWGATE_AGENT_PEPPER at boot instead of at the first 503.
+    """name a missing FLOWGATE_AGENT_PEPPER at boot instead of at the first 503.
 
     Without it every Agent token issue / enrollment / heartbeat answers 503. When live
     Agent credentials exist the original value was lost: say that it must be restored
@@ -244,7 +244,7 @@ def check_agent_pepper():
 
 
 def record_deployment():
-    """0468 T0013: durable SHA/version/JST process-start marker."""
+    """durable SHA/version/JST process-start marker."""
     try:
         from modules.flow_gate.settings.system_settings_service import record_deployment_started
         record_deployment_started()
@@ -261,7 +261,7 @@ def start_snapshot_cleanup():
         logger.warning(f"[startup] snapshot cleanup bootstrap failed: {exc}")
 
 
-# 0684 T#4 (D#1 §7): the directory Source Bundle kept its Bundles and AI Scratch copies in,
+# the directory Source Bundle kept its Bundles and AI Scratch copies in,
 # under every storage root. Its DB rows went with migration 140.
 RETIRED_SOURCE_BUNDLE_DIR = "source-bundles"
 
@@ -320,7 +320,7 @@ def remove_retired_source_bundle_storage(roots=None) -> list:
 
 def recover_ai_evaluations():
     # ai_evaluation_runs = AI connection tests, ai_evaluations = judge-scored AI Evaluations
-    # (flowgate.v02.0017). No worker of the previous process can still own either.
+    #. No worker of the previous process can still own either.
     from modules.flow_gate.db import ai_evaluation_runs, ai_evaluations
     for label, repo in (("AI connection tests", ai_evaluation_runs), ("AI evaluations", ai_evaluations)):
         try:
@@ -331,7 +331,7 @@ def recover_ai_evaluations():
             logger.warning(f"[startup] {label} recovery failed: {exc}")
 
 def start_conversation_integration():
-    """flowgate.v02.0032 T#1 (D0006 §2.3, §3.7, §4.3): composition root of the Conversation
+    """composition root of the Conversation
     contract. Connects its chat run hook handlers to the AI invoke / conversation turn
     ports, then closes command requests a previous process left open (cancelled with
     chat_command_server_restarted, never resumed) and repairs activity anchors."""
@@ -351,7 +351,7 @@ def start_conversation_integration():
 
 
 def start_card_document_integration():
-    """flowgate.v02.0053 T#1 (D0006 §2.1, §2.3): composition root of the card documents. Connects
+    """composition root of the card documents. Connects
     ``flowgate.card_documents`` to the Graph workflow's card document ports (draft save, Canvas
     read, run step, R↔B root conversion). Unregistered, a card simply has no document lines."""
     try:
@@ -363,7 +363,7 @@ def start_card_document_integration():
 
 
 def start_card_settings_integration():
-    """flowgate.v02.0053 T#2 (D0006 §2.1, §2.3): composition root of the card run settings. Connects
+    """composition root of the card run settings. Connects
     ``flowgate.card_settings`` to the Graph workflow's card settings port (node dispatch).
     Unregistered, a node starts with its assignee AI and the engine defaults, as before."""
     try:
@@ -375,11 +375,11 @@ def start_card_settings_integration():
 
 
 def start_card_completion_integration():
-    """flowgate.v02.0119 T#2 (T-1; D0006 §2.1, §2.3): composition root of the v0.2 card completion. Connects
+    """composition root of the v0.2 card completion. Connects
     ``flowgate.card_completion`` to the Graph workflow's card completion ports: a node's ``review -> done`` follows its
     completion record only (a person's v0.1 approval of the document completes no node), and the done turns the record
     applied. Also marks when the service was installed (an existing run's approved result reads as complete).
-    flowgate.v02.0119 T#4 (T-3): it also answers the card's required outputs (``pending_outputs``), the port that replaced
+    (T-3): it also answers the card's required outputs (``pending_outputs``), the port that replaced
     the removed card approval's (``start_card_approval_integration`` is gone with it).
     Unregistered, nothing completes a node (the port answers no completion), so a failed registration fails the start
     instead of running the Graph with no completion source: the error is logged and raised."""
@@ -393,7 +393,7 @@ def start_card_completion_integration():
 
 
 def start_card_memo_integration():
-    """flowgate.v02.0056 T#3 (D0006 §2.1, §2.3): composition root of the card memos. Connects
+    """composition root of the card memos. Connects
     ``flowgate.card_memos`` to the AI mention builders' card memo port (a card's AI runs, the per-document AI
     invoke, the Q&A answer). Unregistered, every mention is what it was before the memos."""
     try:
@@ -405,7 +405,7 @@ def start_card_memo_integration():
 
 
 def start_graph_policy_integration():
-    """flowgate.v02.0061 (R §2.1 시작점, §2.4 분기, §2.5 합류; D0006 §2.1, §2.3): composition root of the Graph
+    """(R start, fork, join; the design): composition root of the Graph
     execution policies. Registers ``flowgate.graph_policies`` as the decided rules of the Graph workflow's slots:
     ``start_node`` = ``root_start`` (a run opens the requirement / bug nodes with no incoming and an outgoing edge;
     an isolated node and a path they do not reach are left out), ``edge_condition`` / ``parallelism`` =
@@ -422,7 +422,7 @@ def start_graph_policy_integration():
 
 
 def start_graph_validation_integration():
-    """flowgate.v02.0061 (0002-CH turn 13; D0006 §2.1, §2.3): composition root of the Graph pre-run validation.
+    """(CH; the design): composition root of the Graph pre-run validation.
     Registers ``flowgate.graph_validation`` at the Graph workflow's validation port (``graph_service.check_draft``:
     draft validation and confirmation): an isolated node and a path not starting from a requirement / bug node
     are left out of a run (no issue), a left-out path joining the run path and a cycle are refused, a branch and
@@ -437,7 +437,7 @@ def start_graph_validation_integration():
 
 
 def start_graph_run_integration():
-    """flowgate.v02.0061 T#2 (0002-CH turn 29 / 31 / 33; D0006 §2.1, §2.3): composition root of the Graph run state.
+    """(CH / 31 / 33; the design): composition root of the Graph run state.
     Registers ``flowgate.graph_run`` at the Graph workflow's run state ports (``run_state_ports``): after a step a
     running run with no work going on opens what its step / full command may still open, else goes idle with its
     reason, and an idle run whose existing work goes on again is running again; the command a paused / idle run goes
@@ -451,7 +451,7 @@ def start_graph_run_integration():
 
 
 def start_work_plan_deploy_integration():
-    """flowgate.v02.0074 T0017: composition root of the work plan deploy's card start port. Registers
+    """composition root of the work plan deploy's card start port. Registers
     ``flowgate.work_plan_deploy`` at ``work_plan_card_starts``: the WP read marks a plan card started when its
     deployed Graph card ran, and the WP saves refuse to change that card's instruction choice, as the deploy does.
     Unregistered, only the v0.1 sequence's started cards are known to the WP read and saves (the deploy keeps its
@@ -465,7 +465,7 @@ def start_work_plan_deploy_integration():
 
 
 def recover_graph_time_machine():
-    """flowgate.v02.0061 T#13: once the Graph ports are registered and before the Graph execution recovery replays
+    """once the Graph ports are registered and before the Graph execution recovery replays
     anything, every unfinished Graph Time Machine operation (started, Git applied, partially failed) goes on from its
     journal: its interrupted Git step put back, its Git step resumed, then its DB step. Until it is finished the Flow
     refuses its run commands, edits and Time Machine requests, and no execution of it is requested, admitted or
@@ -479,12 +479,12 @@ def recover_graph_time_machine():
 
 
 def _repair_graph_drafts_in_background():
-    """flowgate.v02gui.0019 (0004-CH), once the Graph ports are registered: the Flows left blocked before the fix.
+    """(CH), once the Graph ports are registered: the Flows left blocked before the fix.
 
     1. A draft that lost a card the run has opened since (``draft_restore.restore_all``: the card goes back into the
-       draft, e.g. flowgate.v02gui.0011, whose every save was refused).
-    2. A bug / requirement Flow without its start card (``root_start.ensure_all``: e.g. flowgate.v02gui.0014,
-       flowgate.tr-update.0001, flowgate.v02.0080); the cards already placed stay, no edge is made.
+       draft, e.g. the earlier change, whose every save was refused).
+    2. A bug / requirement Flow without its start card (``root_start.ensure_all``: e.g. the earlier change,
+       flowgate.tr-update.0001, the earlier change); the cards already placed stay, no edge is made.
     Both are idempotent: a later boot finds nothing to do."""
     try:
         from flowgate.graph_run import draft_restore
@@ -515,7 +515,7 @@ def repair_graph_drafts():
 
 
 def check_runtime_dependencies():
-    """flowgate.v02.0137 T0004 §4-2/§4-3: make dependency drift and pool shortfall loud.
+    """make dependency drift and pool shortfall loud.
 
     The pin check may raise ``runtime_checks.DependencyPinError`` — only when the operator
     set FLOWGATE_DEPENDENCY_PIN_POLICY=fail and sqloader/psycopg2-binary is off-pin — and
@@ -539,7 +539,7 @@ def run_all():
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
-    start_scratch_sweeps()           # 0090 T0015: AI-run -> Token -> purge, never awaited here
+    start_scratch_sweeps()           # AI-run -> Token -> purge, never awaited here
     register_server_instance()
     recover_git_sessions()
     start_conversation_integration()
@@ -553,18 +553,18 @@ def run_all():
     start_graph_validation_integration()
     start_graph_run_integration()
     start_work_plan_deploy_integration()
-    # T#4: all Graph ports are ready; orphan AI lease recovery has already completed above
+    # all Graph ports are ready; orphan AI lease recovery has already completed above
     # (the scratch sweep may still be running: the recovery reads DB state, not scratch, and
-    # a replayed AI start only requests its project's sweep on its own thread - 0090 T0015).
-    recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
+    # a replayed AI start only requests its project's sweep on its own thread - the earlier implementation).
+    recover_graph_time_machine()     # before any replay of the Flow's executions
     try:
         from flowgate.graph_run.execution import recover as recover_graph_executions
 
         recover_graph_executions()
     except Exception as exc:
         logger.warning(f"[startup] graph execution recovery failed: {exc}")
-    repair_graph_drafts()            # flowgate.v02gui.0019: after the Graph recovery, off the lifespan
-    start_remote_ai_supervisor()     # flowgate.v02.0129 T#2: after the Graph recovery it may resume
+    repair_graph_drafts()            # after the Graph recovery, off the lifespan
+    start_remote_ai_supervisor()     # after the Graph recovery it may resume
     encrypt_ai_provider_keys()
     check_agent_pepper()
     recover_ai_evaluations()

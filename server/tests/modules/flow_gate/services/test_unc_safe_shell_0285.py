@@ -1,4 +1,4 @@
-r"""0285 B0001 -> NR0004 regression.
+r"""> the review regression.
 
 cmd.exe refuses a UNC path (``\\host\share\...``) as its current directory: it
 prints "UNC 경로는 지원되지 않습니다 / UNC パスはサポートされません。" and silently resets

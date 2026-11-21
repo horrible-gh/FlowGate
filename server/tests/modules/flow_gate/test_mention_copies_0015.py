@@ -1,4 +1,4 @@
-"""Verify the document_mention_copies store (R0001 group 0015 / NR0003 rev4 — option B header badge).
+"""Verify the document_mention_copies store (the review — option B header badge).
 
 One row per (user, doc): the last mention block the user copied to hand the document off to an
 AI worker. A fresh copy OVERWRITES the previous (UPSERT) because the badge shows only the latest.

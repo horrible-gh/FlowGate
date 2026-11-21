@@ -1,8 +1,8 @@
-"""Graph Time Machine execution (0061 T#13): ``POST /runs/{run_id}/nodes/{node_key}/time-machine``.
+"""Graph Time Machine execution: ``POST /runs/{run_id}/nodes/{node_key}/time-machine``.
 
-One operation, in this order (L0007 §4.3: Git first, the DB after it; no Flow guard or DB transaction spans Git):
+One operation, in this order (Git first, the DB after it; no Flow guard or DB transaction spans Git):
 
-(a) the deciding Flow guard: the Flow is Graph-owned, T#12's scope and safety are judged again
+(a) the deciding Flow guard: the Flow is Graph-owned, the earlier implementation's scope and safety are judged again
     (``service.require_safe``; any reason -> 409 ``graph_time_machine_blocked``, nothing written), the plan is made
     (the integration commits that are the targets' own merges; one shared with an attempt outside the targets ->
     ``integration_commit_shared``) and the journal's ``started`` entry is written with it. From this commit the Flow
@@ -79,7 +79,7 @@ def _plan(flow_id: str, assessment: dict, locale: str) -> dict:
     commits = []
     for c in impact["commits"]:
         a = attempts.get(c["attempt_id"]) or {}
-        # Only the attempt's own merge is on the branch for it: a result equal to its input was never merged (T#10).
+        # Only the attempt's own merge is on the branch for it: a result equal to its input was never merged.
         if c["kind"] != "integration" or c["commit_sha"] in (a.get("result_commit"), a.get("input_commit")):
             continue
         commits.append({"attempt_id": c["attempt_id"], "node_key": c["node_key"], "commit_sha": c["commit_sha"],

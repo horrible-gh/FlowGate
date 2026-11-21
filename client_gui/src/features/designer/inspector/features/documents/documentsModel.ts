@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#5 — the documents tab's display rules (D#1 §10.2, §8). Pure functions: the
+// the documents tab's display rules. Pure functions: the
 // selected Node's target plus what the tab read (the document with its review extras, and the
 // documents it superseded) -> what the tab shows. Only what the existing v0.1 API gives is shown:
 // the current document (type · seq · title · review status · rejection reason · AI review

@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import LoadingState from '@/components/ui/LoadingState.vue'
 
-// T0008 §8/§14: label/size/density, accessibility semantic, no API/store access of its own.
+// label/size/density, accessibility semantic, no API/store access of its own.
 describe('components/ui/LoadingState (T0008)', () => {
   it('renders with the default label and md size', () => {
     const wrapper = mount(LoadingState)

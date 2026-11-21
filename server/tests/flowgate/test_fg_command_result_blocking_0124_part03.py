@@ -67,7 +67,7 @@ def test_s5_the_next_no_op_commands_block_the_same_card_alone_and_the_first_comm
         {k: first[k] for k in ("end_seq", "state", "nodes", "counts")}
 def test_s6_a_gate_waiting_beside_an_intervention_card_blocks_only_the_card(
         env, decided, monkeypatch, starts, fork_join):
-    """T#2 §5.1 S6 with both in one real run: R -> a (an AI card spent through its review and excluded) and R -> g (a
+    """S6 with both in one real run: R -> a (an AI card spent through its review and excluded) and R -> g (a
     gate waiting for a person's confirmation). The gate is no blocking card; the card is."""
     from modules.flow_gate.graph_workflow.domain import policies
 

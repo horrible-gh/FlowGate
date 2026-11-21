@@ -120,9 +120,9 @@ def test_branch_merge_rejects_self_remote_and_actual_slots(repo):
             git_service.merge_branches("flowgate", source, target)
         assert caught.value.code == code
 def test_branch_merge_conflict_keeps_a_persistent_attempt_and_its_workspace(repo, monkeypatch):
-    # flowgate.default.0630 T0005 §15 — replaces
+    # replaces
     # test_branch_merge_conflict_aborts_cleans_and_creates_no_session, whose contract
-    # (abort + clean + no session) is exactly what T0005 removes. A conflict is now a
+    # (abort + clean + no session) is exactly what the earlier implementation removes. A conflict is now a
     # live, addressable attempt: no `merge --abort`, the managed workspace keeps
     # MERGE_HEAD and the markers, and nothing about the target moved.
     _git(repo, "checkout", "-b", "target")

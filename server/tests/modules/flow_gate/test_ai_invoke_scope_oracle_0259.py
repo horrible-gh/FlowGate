@@ -6,7 +6,7 @@ documents past the baseline seq — but the inbox scope guards make registering 
 IMPOSSIBLE for an edit/review token, so success was an unreachable state for those runs. A
 worker that did its job perfectly still settled outcome='none' ("실패(문서 미등록)").
 
-The regression these tests pin is the one NR0003 asked for: for every scope, a worker that
+The regression these tests pin is the one the review asked for: for every scope, a worker that
 does its scope's real work settles 'complete' — and, so the fix cannot be "call everything
 a success", a worker that does nothing still settles 'none'.
 
@@ -126,7 +126,7 @@ def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", group_id
         return "started_ok", None
 
     # A clean exit with no registration errors, no tool misses and no turn exhaustion is
-    # exactly the case NR0003 flagged: the better the worker behaved, the more emphatic
+    # exactly the case the review flagged: the better the worker behaved, the more emphatic
     # the false 'none' verdict became (it also set oracle_mismatch).
     import unittest.mock as mock
     with mock.patch.object(svc, "_cli_execute", side_effect=_fake_cli):
@@ -158,7 +158,7 @@ def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", group_id
 # ── The bug: success was unreachable, not merely unlikely ────────────────────
 
 class TestPerfectWorkerSucceeds:
-    """NR0003 회귀 방어: 스코프별로 '완벽한 워커 → complete'를 고정한다."""
+    """regression guard: pin a perfect worker reaching complete for every scope."""
 
     def test_edit_run_that_revises_the_document_is_complete(self, world):
         run = _run(world, "edit", work=world.do_edit)
@@ -204,7 +204,7 @@ class TestNoWorkStillFails:
 
 
 class TestJudgeTargetComesFromTheToken:
-    """AI review finding on NR0003: run doc_ref and token doc_ref are not always the same."""
+    """AI review finding on the review: run doc_ref and token doc_ref are not always the same."""
 
     def test_oracle_follows_the_token_not_the_run_doc_ref(self, world):
         # The legacy Q&A follow-up (qa_routes) starts the run on the Q document while
@@ -256,7 +256,7 @@ class TestDocumentScopesUnchanged:
 class TestEveryWireScopeHasAJudge:
     """The point of putting the default in the engine: no scope can be left behind.
 
-    0248 built the `completion_oracle` hook and then migrated exactly one call site, so
+    built the `completion_oracle` hook and then migrated exactly one call site, so
     five wire scopes silently kept the unreachable document oracle. A registry keyed by
     token scope only helps if every scope the route accepts actually lands on a judge that
     can see its work — that is what this pins, and it is the assertion that fails first if
@@ -264,7 +264,7 @@ class TestEveryWireScopeHasAJudge:
     """
 
     # NR0003's 전수 조사, as an executable table: wire scope → does it make a document?
-    # 0405 P0004: work_plan_proposal joins the row. It is not an edit of an existing plan
+    # work_plan_proposal joins the row. It is not an edit of an existing plan
     # (that is work_plan_fill, which has its own probe) — it hands the worker a 'new' token
     # through advance_workflow and the worker registers a WP document, so the document
     # oracle is exactly the right judge for it.
@@ -288,7 +288,7 @@ class TestEveryWireScopeHasAJudge:
 
     def test_the_six_defective_paths_now_land_on_a_scope_probe(self):
         # review / edit / rework / vr_correction / chat, plus the legacy Q follow-up which
-        # reaches start_run as 'edit' from qa_routes. These are exactly the rows NR0003
+        # reaches start_run as 'edit' from qa_routes. These are exactly the rows the review
         # tabulated as "무조건 none".
         from modules.flow_gate.api.v1 import ai_invoke_routes as routes
 
@@ -297,7 +297,7 @@ class TestEveryWireScopeHasAJudge:
             assert token_scope in svc._SCOPE_PROBES, wire_scope
 
     def test_chat_has_its_own_append_only_scope_probe(self):
-        # 0351 T3: chat no longer revises the document through inbox/edit. The engine
+        # chat no longer revises the document through inbox/edit. The engine
         # receives the literal chat scope and judges success by the conversation head.
         from modules.flow_gate.api.v1 import ai_invoke_routes as routes
 
@@ -305,7 +305,7 @@ class TestEveryWireScopeHasAJudge:
         assert svc._SCOPE_PROBES["chat"] is svc._probe_conversation_head
 
 
-# ── Fast-fail (NR0003 §3) ────────────────────────────────────────────────────
+# ── Fast-fail ────────────────────────────────────────────────────
 
 class TestFastFailUsesTheRunsOwnJudge:
     def test_landed_scope_work_is_not_discarded_as_a_startup_failure(self, world):
@@ -357,8 +357,8 @@ class TestResolveBaseDirtyScopeProbe:
         assert oracle() is True   # 2 files -> 1 file: progress settles complete
 
     def test_no_output_retry_machinery_stays_closed_for_this_scope(self):
-        """L0008/T0011 give `resolve_base_dirty` its own oracle but explicitly do not open
-        the 0446 T0008 no-output-retry path to it — that machinery is deliberately narrowed
+        """give `resolve_base_dirty` its own oracle but explicitly do not open
+        the the earlier implementation no-output-retry path to it — that machinery is deliberately narrowed
         to `edit`/single (see `_scope_oracle_retry_open`'s own docstring). A 'none' outcome
         here must be reported once, not silently re-run on the next provider."""
         assert svc._scope_oracle_retry_open("single", "resolve_base_dirty", True) is False
@@ -411,7 +411,7 @@ class TestResolveBaseDirtyScopeProbe:
         )
         baseline = svc._probe_base_dirty("flowgate")
         current = svc._probe_base_dirty("flowgate")
-        assert current > baseline   # partial progress still settles complete (L0008 §2.7)
+        assert current > baseline   # partial progress still settles complete
 
     def test_same_or_increased_file_count_settles_none(self, monkeypatch):
         from modules.flow_gate.services import git_service

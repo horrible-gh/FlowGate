@@ -62,7 +62,7 @@ describe('0147 six required run/body/read conditions through the real session', 
       source.startChatRun.mockRejectedValueOnce(Object.assign(new ConversationRequestError('', 409, 'run_in_progress'), { runId: 'r1' }))
       await session.invokeAi()
     } else if (adopt === 'lost-start') {
-      // flowgate.v02.0152: the same press is sent again (same client_request_id) and the server answers with the run
+      // the same press is sent again (same client_request_id) and the server answers with the run
       // it already admitted — r1 here — instead of starting another.
       source.startChatRun.mockRejectedValueOnce(new ConversationRequestError('lost', null, null))
       const first = session.invokeAi()
@@ -558,7 +558,7 @@ describe('0151 T-A1 server assessment and status lifecycle (§2.8)', () => {
     expect(codes(session)).toEqual([])
     expect(session.state.runId).toBe('r1')
     expect(session.running.value).toBe(true)
-    // flowgate.v02test.0024 D: the one run in progress line stays after the early reply until the run ends.
+    // D: the one run in progress line stays after the early reply until the run ends.
     expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2', 'status:local-status-run-running'])
     await time.tick()
     expect(codes(session)).toEqual([])

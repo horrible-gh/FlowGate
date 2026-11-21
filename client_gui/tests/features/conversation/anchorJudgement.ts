@@ -1,4 +1,4 @@
-// flowgate.v02.0151 T-A2 (NR Rev.4 §2.5, §2.7, §2.8 V6d5 / V6e / V6f) — the read-only check procedure for a reported
+// T-A2 (NR Rev.4,, V6d5 / V6e / V6f) — the read-only check procedure for a reported
 // case, written down as pure functions so its decision table is tested. It is a test-side tool: the product neither
 // imports it nor re-places a card from it (§2.6-3 ⑥ — the server anchor decides, the GUI only reads it sooner).
 // Inputs are values read without writing: the change row (run_id, doc_id, run_start_seq, anchor_*), the AI turns of
@@ -88,11 +88,11 @@ export interface AttributionEvidence {
   overlappingIntervals?: boolean
   sameChangeInBothSummaries?: boolean
   reEdit?: boolean
-  /** (가) the row's doc_id is another chat, or the anchored turn's source_run_id stays different after a re-read. */
+  /** (a) the row's doc_id is another chat, or the anchored turn's source_run_id stays different after a re-read. */
   wrongLinkPersisted?: boolean
   /** (나) the row's times / trees contradict the run's own record, or a full copy of another run with no change. */
   rowContradictsRun?: boolean
-  /** (다) a server log / event shows the save or notice for a wrong run / doc. */
+  /** (c) a server log / event shows the save or notice for a wrong run / doc. */
   wrongTargetLogged?: boolean
 }
 

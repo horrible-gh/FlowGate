@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#5 — the card document lines T#1 adds to the Canvas read (`card_documents` of a Graph /
+ * the card document lines the earlier implementation adds to the Canvas read (`card_documents` of a Graph /
  * draft node) and to the draft save answer (node key -> lines) reach the Designer in camelCase. A node or an
  * answer without them carries no field, so the 0045 / 0048 shapes stay as they were.
  */

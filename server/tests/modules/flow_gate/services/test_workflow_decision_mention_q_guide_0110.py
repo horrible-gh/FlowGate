@@ -1,4 +1,4 @@
-"""Group 0110 B0001/NR0003: the non-continuous workflow-decision mention must carry
+"""Group the regression/the review: the non-continuous workflow-decision mention must carry
 the same Q-registration guidance the other worker mentions do.
 
 Before this fix, ``build_workflow_decision_mention``'s non-continuous branch used inline
@@ -50,7 +50,7 @@ def _build(locale: str = "ko", *, continuous: bool = False, review: bool = False
 def test_non_continuous_embeds_q_post_on_r_root_anchor():
     mention = _build("ko")
     # Q registration POST embedded, anchored on the R-root doc_id (= the workflow_decide
-    # token's doc_ref, accepted by the Q endpoint per NR0003 §타당성 검증).
+    # token's doc_ref, accepted by the Q endpoint per the review §feasibility validation).
     assert (
         "POST http://localhost/flowgate/api/v1/q/flowgate.default.0110.0001-B/questions"
         in mention

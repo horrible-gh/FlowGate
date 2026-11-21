@@ -1,4 +1,4 @@
-"""Manual Git path policy (0066 D#1): visibility and ownership are independent."""
+"""Manual Git path policy: visibility and ownership are independent."""
 from __future__ import annotations
 
 import logging

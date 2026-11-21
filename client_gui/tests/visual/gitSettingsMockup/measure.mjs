@@ -1,10 +1,10 @@
-// flowgate.v02test.0002 R0001 #2 (0010-T §5) - browser measurement of the Git box against the approved mockup.
+// #2 - browser measurement of the Git box against the approved mockup.
 //
 //   cd client_gui
 //   node tests/visual/gitSettingsMockup/measure.mjs <outDir> <flowgate_git_settings_mockup.html>
 //
 // <outDir> must be outside the repository (a scratch folder); nothing is written to the source tree.
-// The mockup is the R0001 attachment; its sha256 must be the approved one.
+// The mockup is the the requirement attachment; its sha256 must be the approved one.
 // 1) bundles harness.ts (the real CheckSettings.vue + the mockup in an iframe) with this package's own vite and
 //    @vitejs/plugin-vue, in production mode like `vite build` (templates without comments, production runtime),
 // 2) opens it in a headless Chromium (Edge, else Chrome) per width case: --dump-dom for the measurements,

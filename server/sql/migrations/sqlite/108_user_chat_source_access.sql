@@ -1,6 +1,6 @@
 -- 108_user_chat_source_access.sql
 -- flowgate.default.0515: per-user source-access mode + edit_once one-shot claim marker.
--- D0006 §2.1 (분리 저장소), L0007 §2.4.5 (claim 마커 요구).
+-- D0006 §2.1 (separate repositories), L0007 §2.4.5 (claim marker requirement).
 
 BEGIN;
 

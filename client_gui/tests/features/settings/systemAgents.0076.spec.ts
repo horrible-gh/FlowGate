@@ -10,15 +10,15 @@ import { issueAgentEnrollment, revokeAgentCredential, updateSystemAgent } from '
 import SystemAgentSettingsView from '@/features/settings/views/SystemAgentSettingsView.vue'
 import AgentEditDialog from '@/features/settings/components/AgentEditDialog.vue'
 
-// flowgate.v02.0076 T#4 (D §2.6, §5.2 V16·V17): 시스템 › 시스템 Agent on the real /app router
+// flowgate.v02.0076 T#4 (D §2.6, §5.2 V16·V17): 시스템 › System Agent on the real /app router
 // (installAuthGuard + installSettingsAccessGuard + SettingsLayout) with the real view. Only the
 // transport is replaced: @shared/api's request helpers talk to an in-memory server that keeps the
 // Agents the way services/agent_registry.py does — credential history, one pending enrollment per
 // Agent, detail() for every answer (online only with enabled + an active credential + compatible
 // protocol + a fresh heartbeat; local = not_applicable), the route models (extra fields → 422, the
 // Empty body required, location immutable) and the route's error envelope
-// {"ok":false,"error":{"code"}}. Every call is recorded with its body, so "요청 0건", "1건", "바꾼
-// 필드만" and "재조회값" are read off the request list and the server state. The real routers /
+// {"ok":false,"error":{"code"}}. Every call is recorded with its body, so "zero requests", "one request", "changed
+// fields only" and "re-read values" are read off the request list and the server state. The real routers /
 // auth / RBAC / store are exercised separately by server/tests/test_system_agents_0076.py.
 
 type Caps = { ai_cli: boolean; ai_api: boolean; storage: boolean }
@@ -30,11 +30,11 @@ interface Rec {
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
   remote_workdir?: string | null
-  /** flowgate.v02test.0019: workspace cleanup policy (server default ON / 24 h). */
+  /** workspace cleanup policy (server default ON / 24 h). */
   maxJobs?: number
   cleanup?: boolean
   hours?: number
-  /** flowgate.v02test.0019: a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
+  /** a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
   activeJobs?: boolean
   configured: Caps
   reported: Caps | null
@@ -217,7 +217,7 @@ vi.mock('@shared/api', async (importOriginal) => {
       if (m[1] === 'GET') return { data: detail(find(id)) }
       if (m[1] === 'PATCH') return patch(id, body as Record<string, unknown>)
       const r = find(id)
-      // flowgate.v02test.0019: registration history no longer blocks deleting; Jobs in progress do.
+      // registration history no longer blocks deleting; Jobs in progress do.
       if (r.activeJobs) throw agentError(409, 'agent_has_active_jobs', 'Agent has Jobs in progress; delete it after they finish')
       net.agents = net.agents.filter((a) => a !== r)
       return { status: 204, data: '' }
@@ -369,7 +369,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  // D §2.6 / T#4 지시 1·6: only the /system/agents management family, never the Agent runtime
+  // D / the earlier implementation instruction 1·6: only the /system/agents management family, never the Agent runtime
   // (/agent/enrollments, /agent/heartbeat), no other registry or personal-Agent API, and no PATCH
   // ever carries location / connection_mode.
   for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/users')) {

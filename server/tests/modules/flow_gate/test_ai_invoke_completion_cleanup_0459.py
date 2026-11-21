@@ -1,6 +1,6 @@
-"""flowgate.default.0459 T0005 — 리비전 인식 리뷰 게이트 · 완료 기반 system stop exact-delete.
+"""aware review gate and completion-based exact system-stop deletion.
 
-The two defects 0459 NR0003 traced, and nothing else. Each NR regression item owns one
+The two defects the review traced, and nothing else. Each NR regression item owns one
 class, so a failure names its own cause:
 
   * NR1 ``TestNr1RevisionAwareGateReachesCompleted`` — rev0 `issues` → rework → rev1
@@ -196,7 +196,7 @@ def cleanup_env(monkeypatch):
 
 
 def _single_review_run(**overrides):
-    """The run record 0459 NR0003 read off the live DB: a review hop is ``mode='single'``,
+    """The run record the review read off the live DB: a review hop is ``mode='single'``,
     and only continuous runs record a ``hop_item_seq`` — so this one has none."""
     run = {"run_id": REVIEW_RUN, "group_id": GROUP, "mode": "single", "status": "finished",
            "outcome": "complete", "end_reason": "exited", "stop_code": "hop_handoff",
@@ -300,7 +300,7 @@ def gate_world(monkeypatch):
                         lambda run, bundle, stop_code: spawned["parked"].append(stop_code))
     monkeypatch.setattr(svc, "_clear_handoff_row", lambda g, r: None)
     monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda g, r, **kw: True)
-    # 0688 T#2: the gate reads the slot's answered questions before approving, and a question
+    # the gate reads the slot's answered questions before approving, and a question
     # record that cannot be read holds the slot. No hop here asks anything: no container.
     from modules.flow_gate.db import questions as db_questions
     monkeypatch.setattr(db_questions, "get_container_by_doc", lambda doc_id: None)
@@ -327,7 +327,7 @@ class TestNr1RevisionAwareGateReachesCompleted:
             self, gate_world):
         """NR1 end to end: rev0 issues → rework → rev1 revised → rev1 pass.
 
-        The three things NR0003 says went wrong are asserted as three separate observables:
+        The three things the review says went wrong are asserted as three separate observables:
         the single writer is never asked to reject the fresh revision, the approval it IS
         asked for is the legal ``revised + approve``, and the target slot's completion
         removes the paused row instead of parking an ``approve_failed`` card.
@@ -378,11 +378,11 @@ class TestNr1RevisionAwareGateReachesCompleted:
         assert store.deleted_groups == [GROUP]
 
     def test_the_old_verdict_path_would_have_needed_an_unlisted_transition(self):
-        """NR1's counterfactual, and T0005 §1-5: the fix is NOT 'allow rejected + approve'.
+        """NR1's counterfactual, and the earlier implementation: the fix is NOT 'allow rejected + approve'.
 
         If the gate re-rejects a reworked revision, the pass that follows has to make this
         transition — and the production table has no such row, which is precisely the
-        ``approve_failed`` NR0003 read off the live chain."""
+        ``approve_failed`` the review read off the live chain."""
         assert transition_rules.get_doc_review_rule("rejected", "approve") is None
         assert ("rejected", "approve") not in transition_rules.DOC_REVIEW_TRANSITIONS
         assert transition_rules.get_doc_review_rule("revised", "approve") == "approved"
@@ -456,7 +456,7 @@ class TestNr2WfDoneClearsNullHopSystemStop:
         assert store.deleted_system == [] and store.rows
 
     def test_a_user_pause_in_a_finished_group_is_never_auto_deleted(self, cleanup_env):
-        """T0005 §2-1: only ``stop_kind='system'`` rows carrying a ``stop_run_id`` are
+        """only ``stop_kind='system'`` rows carrying a ``stop_run_id`` are
         judged at all. A person's pause survives even a wf_done group."""
         store = cleanup_env["store"]
         store.put(stop_kind="user", stop_code=None, stop_run_id=None)
@@ -532,7 +532,7 @@ class TestNr3StoredScopeCompletion:
         assert store.deleted_system == []
 
     def test_a_missing_sequence_is_not_completion_evidence(self, cleanup_env):
-        """T0005 §2-3, negative: "no sequence" must not be read as "all done". Before this
+        """negative: "no sequence" must not be read as "all done". Before this
         split, ``_next_incomplete_item_seq`` returned ``None`` for both."""
         store, runs = cleanup_env["store"], cleanup_env["runs"]
         store.put(continuation_target_seq=2)
@@ -552,7 +552,7 @@ class TestNr3StoredScopeCompletion:
         assert store.deleted_system == []
 
     def test_a_failed_sequence_lookup_keeps_the_row_and_the_response(self, cleanup_env):
-        """T0005 §2-6: a lookup that raises must not delete anything and must not fail
+        """a lookup that raises must not delete anything and must not fail
         ``/ai-invoke/active-all`` — the widget still renders the card it could not judge."""
         store, runs = cleanup_env["store"], cleanup_env["runs"]
         store.put(continuation_target_seq=2)
@@ -643,7 +643,7 @@ class TestNr4PreservationAndExactDeleteRace:
         assert store.deleted_system == []
 
     def test_a_newer_system_stop_written_under_the_read_survives(self, cleanup_env):
-        """The race T0005 §2-5 names: the row is judged from a snapshot, and by the time
+        """The race the earlier implementation names: the row is judged from a snapshot, and by the time
         the delete runs the group carries a DIFFERENT system stop. The exact predicate
         misses; a ``delete_by_group`` would have taken the new row with it."""
         store, runs = cleanup_env["store"], cleanup_env["runs"]
@@ -716,7 +716,7 @@ class TestNr4PreservationAndExactDeleteRace:
 
     def test_a_delete_failure_does_not_fail_the_whole_response(self, cleanup_env,
                                                                monkeypatch):
-        """T0005 §2-6: cleanup is best-effort. The stale row is still withheld from the
+        """cleanup is best-effort. The stale row is still withheld from the
         card list and the next active-all retries the delete."""
         store, runs = cleanup_env["store"], cleanup_env["runs"]
         store.put(continuation_target_seq=10)
@@ -835,7 +835,7 @@ class TestNr5ItemSeqJudgementUnchanged:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# 0385 T3 — active-all batch snapshot reuse and failure fallback
+# active-all batch snapshot reuse and failure fallback
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestActiveAllBatchSnapshotContract:

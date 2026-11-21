@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#2 rework (0030-M §2, 0002-D 개정 §3.1-6 / §3.2 / §3.2-A / §3.3-6 / §3.4, 0031-CH turn 6 #4): the
+"""the
 account's first AI setup, saved and applied to the Flow it was asked from, in one transaction.
 
     POST /api/v1/flows/{flow_id}/ai-roles/first-setup   {"request_id": <text>, "roles": {instruction, execution, review}}
@@ -14,7 +14,7 @@ account's first AI setup, saved and applied to the Flow it was asked from, in on
   restart, instruction use, assignee, stage assignment, ``graph_node_settings`` value. Another Flow's cards are not
   targets; a node only on the screen (no server key yet) is not one either — it takes the same values when it is saved
   (``card_init.initialize_new_card`` copies the account's values).
-- Refusal: a target card *actually running* (T#1 ``legacy.node_running``) refuses the whole request, account included
+- Refusal: a target card *actually running* (``legacy.node_running``) refuses the whole request, account included
   (409 ``ai_role_setup_cards_running`` with the cards); an unfinished Time Machine operation refuses as for a card
   setting. Any failure rolls the transaction back: nothing is partly applied.
 - Concurrency: an account's requests are serialized in the server (an in-process lock per account, then the Flow guard).

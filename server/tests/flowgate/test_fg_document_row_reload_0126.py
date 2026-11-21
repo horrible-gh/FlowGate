@@ -1,4 +1,4 @@
-"""0126 T#6 B10: HTTP reload after a committed decision whose SSE delivery was lost.
+"""B10: HTTP reload after a committed decision whose SSE delivery was lost.
 
 Uses real migrated SQLite/doc storage/Flow guard and HTTP routes, stub worker/JWT/SSE
 from the existing decision fixture. This does not claim browser F5/UI acceptance.

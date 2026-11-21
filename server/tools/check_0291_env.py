@@ -1,8 +1,8 @@
-"""Preflight guard for the flowgate.default.0291 test scenarios.
+"""Preflight guard for the the earlier change test scenarios.
 
 Run from ``server/`` as ``python tools/check_0291_env.py``.
 
-Exists because the TS0014 setup steps kept dying before a single test case ran,
+Exists because the the earlier implementation setup steps kept dying before a single test case ran,
 which leaves the test-run panel with no per-case detail at all.  Rather than
 inlining a multi-clause python -c into a cmd.exe step (where quoting differs per
 shell), the check lives here as a file so the TS step is a single portable
@@ -24,7 +24,7 @@ import sys
 # Files this scenario exercises. Their absence means the runner is not sitting in
 # the 0291 source root (or the implementation was never committed).
 REQUIRED_FILES = (
-    # P3-1 (TS0014)
+    # P3-1
     "modules/flow_gate/db/request_cache.py",
     "modules/flow_gate/api/request_scope_middleware.py",
     "modules/flow_gate/db/connection.py",

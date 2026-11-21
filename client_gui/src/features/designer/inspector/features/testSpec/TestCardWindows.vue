@@ -4,7 +4,7 @@
   </template>
 </template>
 <script setup lang="ts">
-// flowgate.v02.0150: one card's open windows, drawn by the Frame's TestCardWindowHost with the target the card was last
+// one card's open windows, drawn by the Frame's TestCardWindowHost with the target the card was last
 // selected as (or by a page of its own); `idle` says no window of the card is open any more.
 import { computed, defineAsyncComponent, watch, type Component } from 'vue'
 import type { InspectorTarget } from '../../inspectorTarget'

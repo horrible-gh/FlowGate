@@ -1,15 +1,15 @@
-"""flowgate.default.0267 TR0005 — required tests for the file/folder delete API.
+"""required tests for the file/folder delete API.
 
-Covers the NR0003 '필수 테스트' items that touch the server contract:
+Covers the the review 'required tests' items that touch the server contract:
   - file delete success (+ base_git returned so the explorer can refresh base-dirty)
   - empty / non-empty folder recursive delete
   - non-existent path (404 NOT_FOUND) and type mismatch (409 TYPE_MISMATCH)
   - root / absolute / '..' / drive-prefix / symlink rejection (400 INVALID_PATH)
   - unauthorized user and other-project token rejection (403 FORBIDDEN)
-  - group-scoped delete resolves that group's worktree — 0327 TR0005 (see below)
+  - group-scoped delete resolves that group's worktree — the earlier implementation (see below)
   - delete failure surfaces 500 DELETE_FAILED without corrupting the response contract
 
-0327 TR0005 supersedes NR0003 권고 4/권고 5 for the group case. Those recommendations
+supersedes the review/recommendation 5 for the group case. Those recommendations
 assumed a group delete would hard-delete inside the BASE checkout, which is why they
 tied it to the finalize E3 base-contamination guard and refused every group delete with
 403. Group context is now resolved to that group's OWN worktree (fail-closed — never a
@@ -38,7 +38,7 @@ from modules.flow_gate.api.v1 import tree_routes as tr
 
 PID = "proj-del-tr0005"
 PROJECT_NAME = "del-project"
-# 0382 B0001: this was `Path(__file__).resolve().parent / "_scratch_tr0005_delete_src"`
+# this was `Path(__file__).resolve().parent / "_scratch_tr0005_delete_src"`
 # — a scratch tree inside server/tests, and `ROOT.parent` below put two more siblings
 # next to it. All three now live outside the repository, so a failed Windows cleanup
 # can no longer leave anything for the next finalize commit to swallow.
@@ -48,7 +48,7 @@ PROJECT_NAME = "del-project"
 # — it resolves through `git_service.base_src_root` now — so the stub simply stopped being
 # consulted, the tests read a real path that does not exist, and all six turned into 404s
 # against a product that was working. Nothing announced the miss; a stub that no longer
-# matches anything is silent by construction, which is the failure mode NR0003 flags.
+# matches anything is silent by construction, which is the failure mode the review flags.
 #
 # So point the resolver at this tree the way an install does, through the storage root,
 # and let every layer below the route run for real. `src_root()` is
@@ -100,7 +100,7 @@ def test_delete_file_success_returns_base_git(monkeypatch):
     body = res.json()
     assert body["deleted"] == "docs/gone.md"
     assert body["type"] == "file"
-    # NR0003 권장 8: base-git status is returned so the explorer refreshes base-dirty/finalize.
+    # base-git status is returned so the explorer refreshes base-dirty/finalize.
     assert body["base_git"] == BASE_GIT_SENTINEL
     assert not f.exists()
 
@@ -185,7 +185,7 @@ def test_delete_rejects_symlink_component(monkeypatch):
 # ── authorization ────────────────────────────────────────────────────────────
 
 def test_delete_forbidden_without_delete_permission(monkeypatch):
-    # NR0003 권장 4: a user JWT without perm_document_delete is rejected.
+    # a user JWT without perm_document_delete is rejected.
     client = _client(monkeypatch, is_user_jwt=True, can_delete=False)
     (ROOT / "keep.md").write_text("k", encoding="utf-8")
     res = client.request("DELETE", _url(), json={"path": "keep.md", "type": "file"})
@@ -195,7 +195,7 @@ def test_delete_forbidden_without_delete_permission(monkeypatch):
 
 
 def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
-    # NR0003 권장 4: worker/outbound tokens (and cross-project tokens) must ALSO be gated
+    # worker/outbound tokens (and cross-project tokens) must ALSO be gated
     # by perm_document_delete — not just perm_document_read. is_user_jwt=False models a
     # worker token; can_delete=False models a token whose issued_to user lacks delete on
     # THIS project (e.g. a token bound to a different project).
@@ -207,7 +207,7 @@ def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
     assert (ROOT / "keep.md").exists()
 
 
-# ── group-scoped delete (0327 TR0005 — supersedes NR0003 권고 4/권고 5) ─────────
+# ── group-scoped delete (supersedes the review recommendations 4/5) ───
 
 GID = "flowgate.default.0267"
 
@@ -227,7 +227,7 @@ def _stub_group(monkeypatch, *, worktree: Path | None, exists: bool = True) -> N
 
 
 def test_delete_on_group_resolves_group_worktree(monkeypatch):
-    """0327 TR0005: a group delete removes the file from THAT group's worktree and
+    """a group delete removes the file from THAT group's worktree and
     leaves the base checkout's same-named file alone (so finalize's E3 base guard is
     never involved — the reason the old 403 blanket rule existed)."""
     client = _client(monkeypatch)

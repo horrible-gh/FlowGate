@@ -1,9 +1,9 @@
-"""flowgate.v02.0045 T0017 (S6) — gate decision, unattended run and editing during a run.
+"""(S6) — gate decision, unattended run and editing during a run.
 
-P0008 S6-1 (``POST /runs/{run_id}/nodes/{node_key}/gate-decision``) and §8.3 ``gate_confirmed`` /
-``gate_rejected``; L0009 §2.6.3 (a gate decision needs ``gate_node`` on top of the revision's
+S6-1 (``POST /runs/{run_id}/nodes/{node_key}/gate-decision``) and ``gate_confirmed`` /
+``gate_rejected``; the earlier implementation (a gate decision needs ``gate_node`` on top of the revision's
 policies), §2.6.4 / §3.2 (open -> done / rejected, propagation record), §2.6.6 (a gate hands out no
-token), §2.6.7 (a stopped run takes no gate decision). D0004 §8 Q-11 is unanswered, so the product
+token), (a stopped run takes no gate decision). the design Q-11 is unanswered, so the product
 refuses every gate decision with ``run_policy_undecided``; the decided paths use a *test* gate
 policy. Q-7 (editing during a run) and Q-9 (unattended run) are unanswered too: a run keeps the
 revision it started with and an AI node is started once with no continuation target.
@@ -42,7 +42,7 @@ def _gate(key, label="확인"):
 @pytest.fixture()
 def gate_flow(env, monkeypatch):
     """A confirmed revision with a gate node. Confirming it needs a non-undecided validation slot
-    for ``gate_node`` (P0008 S3-5); the product slot stays ``undecided``."""
+    for ``gate_node``; the product slot stays ``undecided``."""
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.graph_workflow.domain import policies
 
@@ -138,7 +138,7 @@ def test_a_confirmed_gate_completes_and_opens_the_next_node(gate_flow, gate_deci
     confirmed = gate_flow["events"][3].payload
     assert (confirmed["from"], confirmed["to"], confirmed["canvas_state"], confirmed["dispatch"]) == (
         "open", "done", "done", None)
-    assert "comment" not in confirmed and "actor_user_id" not in confirmed       # P0008 §8.3 payload
+    assert "comment" not in confirmed and "actor_user_id" not in confirmed       # payload
     row = _sql(gate_flow["db"], "SELECT actor_user_id, reason FROM graph_run_events WHERE event_seq = 4")[0]
     assert row == {"actor_user_id": "u_kim", "reason": "검토 완료"}
     prop = _sql(gate_flow["db"], "SELECT node_key, outcome, source_event_seq, status FROM graph_propagations")

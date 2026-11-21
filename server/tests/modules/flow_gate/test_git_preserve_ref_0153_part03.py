@@ -123,7 +123,7 @@ def test_rejected_reset_keeps_existing_flow_and_the_ref(env, branch):
         'ref': ref, 'sha': m, 'round': 0, 'preserved_at': AT, 'retain_until': RETAIN,
         'closed_at': AT, 'closed_reason': 're_review'}]
 def test_remote_unchanged_reset_gate(env):
-    # 0153 T#3: the remote-unchanged reset is gone; the reset gate now guards the
+    # the remote-unchanged reset is gone; the reset gate now guards the
     # hand-off reset (preserve.verify_round right before it).
     r = env.repo
     mid, m, before = unknown_session(env)
@@ -144,7 +144,7 @@ def test_remote_unchanged_reset_gate(env):
     assert after['merge_commit'] == m and git(['rev-parse', 'HEAD'], r.work) == m
     assert git(['rev-parse', 'main'], r.bare) == c
 def test_remote_unchanged_reset_keeps_the_ref_and_history(env):
-    # 0153 T#3: the hand-off reset (the only reconcile reset) keeps the ref and closes
+    # the hand-off reset (the only reconcile reset) keeps the ref and closes
     # the round into the history.
     r = env.repo
     mid, m, before = unknown_session(env)

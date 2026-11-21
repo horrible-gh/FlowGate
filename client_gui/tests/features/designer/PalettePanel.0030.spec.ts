@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0030 — Palette part screen (R0001 §2, §6): category sections and cards, the add
+ * Palette part screen: category sections and cards, the add
  * dialog, and the select / drag intents handed to the Designer.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -105,7 +105,7 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     expect(w.text()).not.toMatch(/대화|Git/)
     expect(w.findAll('[data-test="designer-palette-add"]')).toHaveLength(1)
     expect(w.get('[data-test="designer-palette-add"]').attributes('aria-label')).toBe('카드 추가')
-    // flowgate.v02.0053 T#8: the [+] tooltip names it the same way
+    // the [+] tooltip names it the same way
     expect(w.get('[data-test="designer-palette-add"]').attributes('title')).toBe('카드 추가')
   })
 

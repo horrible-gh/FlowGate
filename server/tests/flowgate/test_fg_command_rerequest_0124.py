@@ -1,4 +1,4 @@
-"""flowgate.v02.0124 T#1 (0003-NR §5.1, §6 server side) — an explicit step / full command requests the result review of
+"""(NR, server side) — an explicit step / full command requests the result review of
 a card whose review loop spent its budget again, as the review assignment's next ``seq``.
 
 The harness of ``test_fg_card_intervention_assigned_0119`` (real SQLite DB, routes and migrations, the stage
@@ -123,7 +123,7 @@ def test_only_a_spent_review_budget_is_requested_again_by_a_command_and_nothing_
 
     for stop in ("retry_exhausted", "review_count_exhausted", "total_timeout"):
         assert reasons.command_rerequest_due("review_not_passed:" + stop) is True
-        assert reasons.retry_due(["review_not_passed:" + stop]) is False             # 0119: no automatic retry
+        assert reasons.retry_due(["review_not_passed:" + stop]) is False             # no automatic retry
         assert reasons.kind_of("review_not_passed:" + stop) == reasons.NEEDS_INTERVENTION
     for reason in ("review_not_passed:review_verdict_hold", "review_not_passed:review_stalled",
                    "review_not_passed:restart_orphaned", "review_not_passed:", "run_not_clean:timeout",

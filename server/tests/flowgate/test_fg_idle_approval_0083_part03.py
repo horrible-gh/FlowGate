@@ -61,14 +61,14 @@ def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
         return RunState(status, {"a": NodeRun("a", "review", "d")}, approval_wakes=wakes)
 
     assert defers(state("running")) is False
-    assert defers(state("idle", wakes=True)) is False                   # 0061 T#2 개정
+    assert defers(state("idle", wakes=True)) is False                   # revised
     assert defers(state("idle")) is True                                # stopped / Time Machine / a command
     assert defers(state("paused")) is True and defers(state("paused", wakes=True)) is True
     assert virtual(state("idle", wakes=True), Decision()).approval_wakes is True
 def test_r_ai_cards_still_approve_by_themselves_with_no_person_s_approval(env, decided, monkeypatch):
     from modules.flow_gate.workflow import pipeline_service
 
-    # 0119 T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
+    # T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
     approvals = []
     real = pipeline_service.transition_document_review
     monkeypatch.setattr(pipeline_service, "transition_document_review",

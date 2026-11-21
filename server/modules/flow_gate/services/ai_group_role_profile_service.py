@@ -1,6 +1,6 @@
-"""0120 T#1: group role settings only; does not resolve or mutate card/runtime AI.
+"""group role settings only; does not resolve or mutate card/runtime AI.
 
-flowgate.v02test.0027 (0007-T, A-server): each profile row also keeps a default review count (``review_count``,
+(T, A-server): each profile row also keeps a default review count (``review_count``,
 migration 191). NULL on a type row inherits the common row; NULL on the common row is the existing card default 0;
 0 is an explicit "no review". It has its own write (``set_review_count``), separate from the AI cells, and is copied
 into a card only when the card is created (``flowgate.ai_roles.card_init``) — existing cards never change.

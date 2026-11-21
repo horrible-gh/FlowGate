@@ -1,7 +1,7 @@
 <template>
   <!-- Left Dock header (0025 T0006 §2): the [프로젝트] [파일] switch is the Dock's title row and
        carries the collapse button on its right. The Shell owns the value (activeLeftMode);
-       arrow-key switching comes from the Tabs primitive. flowgate.v02.0039 T#3: `disabled` (no
+       arrow-key switching comes from the Tabs primitive. the earlier change the earlier implementation: `disabled` (no
        work target yet) keeps the row on screen but makes the switch and the collapse button
        unavailable, as the confirmed initial-state design draws the left navigation. -->
   <header class="explorer-mode-header" :class="{ 'is-unavailable': disabled }" data-test="designer-explorer-header">
@@ -39,7 +39,7 @@ import { DESIGNER_LEFT_MODES, type DesignerLeftMode } from './designerLayout'
 const props = withDefaults(
   defineProps<{
     modelValue: DesignerLeftMode
-    /** True while the Designer has no work target (0039 T#3). */
+    /** True while the Designer has no work target. */
     disabled?: boolean
   }>(),
   { disabled: false },
@@ -103,7 +103,7 @@ function onSelect(key: string) {
   flex: none;
 }
 
-/* No work target (0039 T#3, confirmed design v7): dimmed and unavailable. */
+/* No work target (confirmed design v7): dimmed and unavailable. */
 .explorer-mode-header.is-unavailable {
   opacity: 0.46;
   filter: saturate(0.55);

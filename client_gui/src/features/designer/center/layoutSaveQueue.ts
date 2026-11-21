@@ -1,5 +1,5 @@
-// flowgate.v02.0045 S2 — per-Flow layout save batching (P0008 S2-1 "드래그 종료 후 디바운스 묶음
-// 1회 전송"). Moved Node positions (last one per Node wins) and the last committed Viewport of
+// S2 — per-Flow layout save batching (the plan S2-1 "Send one debounced batch
+// after dragging ends"). Moved Node positions (last one per Node wins) and the last committed Viewport of
 // one Flow are collected and handed to `send` once the Flow has been quiet for `delayMs`.
 // No Vue, no transport: the Center session owns the send and what happens after it.
 //

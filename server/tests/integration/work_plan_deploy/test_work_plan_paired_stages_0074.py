@@ -1,4 +1,4 @@
-"""T0017 latest rejection: card-owned stored stages -> deploy -> durable Graph runs/reviews.
+"""latest rejection: card-owned stored stages -> deploy -> durable Graph runs/reviews.
 External AI processes are recorders; DB, routes, token issuing, stage handoff and approvals are real.
 """
 from copy import deepcopy

@@ -1,6 +1,6 @@
-"""A refused group mutation must leave its reason on the run that refused it (0393 T0005 §2-6).
+"""A refused group mutation must leave its reason on the run that refused it.
 
-B0001's three dead reviews are the whole point of this file. NR0003 §3 read the operating
+'s three dead reviews are the whole point of this file. the review read the operating
 database and found that every one of them ended with an EMPTY error list and exit code 0:
 the gate said 403 on the wire and nowhere else, so the only account of what happened was a
 sentence each worker happened to volunteer in its last message. The reporter's words were
@@ -12,7 +12,7 @@ What is pinned here:
   `register_errors` list a failed inbox POST lands in, plus the `lease_denied_*` fields the
   stop classifier reads.
 * `_resolve_stop_code` then names it `group_lease_denied` — for a mode="single" run, which
-  is exactly the shape B0001 hit and the shape that used to fall through to `return None`.
+  is exactly the shape the regression hit and the shape that used to fall through to `return None`.
 * `_stop_reason_text` turns it into a sentence carrying the refusal code and the blocked
   operation, and `is_resumable` says no (T0005 §2-6: "재개 가능 목록에는 넣지 않는다").
 * `mutation_policy._record_denied_mutation` does the write OFF the event loop
@@ -51,7 +51,7 @@ CODE = "GROUP_AI_RUN_OWNER_MISMATCH"
 
 @pytest.fixture
 def live_run():
-    """A run in this process's registry, shaped like B0001's: single mode, nothing produced."""
+    """A run in this process's registry, shaped like the regression's: single mode, nothing produced."""
     run = {
         "run_id": RUN_ID,
         "group_id": GROUP_ID,

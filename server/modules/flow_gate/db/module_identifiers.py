@@ -1,4 +1,4 @@
-"""Group (module) identifier rules (flowgate.v02gui.0012 0001-B item B).
+"""Group (module) identifier rules.
 
 A module's name *is* its key: ``groups.module``, ``documents.module``, the module part of every
 ``group_id`` / ``doc_id``, the ``id_counter`` keys, the storage directory and the branch/worktree

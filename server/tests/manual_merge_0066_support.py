@@ -1,4 +1,4 @@
-"""Shared real-Git harness for the 0066 T#3 suites (manual merge, merge results, fetch-only).
+"""Shared real-Git harness for the the earlier implementation suites (manual merge, merge results, fetch-only).
 
 Built on the 0594 harness: every test gets its own project (bare origin, seed clone, base
 checkout) on a temporary SQLite with the real migrations, and the real job / lock path runs

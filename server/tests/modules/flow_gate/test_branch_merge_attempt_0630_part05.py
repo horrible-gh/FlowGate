@@ -131,7 +131,7 @@ def test_16c_crash_after_a_landed_base_merge_is_applied_on_recovery(proj, monkey
     assert _ctx(session["merge_id"])["attempt_state"] == "in_progress"
     assert p.sha("refs/heads/main") == main_before               # the crash left main behind
 
-    # 0669 unit 8a: the attempt belongs to its branch_merge_publish job (holder ``job:{id}``),
+    # unit 8a: the attempt belongs to its branch_merge_publish job (holder ``job:{id}``),
     # which is still running while its lease is valid -- boot recovery leaves it alone.
     from modules.flow_gate.db import operation_job as db_jobs
     from modules.flow_gate.db.connection import get_store

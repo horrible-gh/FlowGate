@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// flowgate.v02.0045 T0011 — source guards for the S1+S2 client files (L0009 §1.5
-// CLIENT_NEW_FILE_MAX_LINES, D0004 §2.3 / §4.2 dependency direction).
+// source guards for the S1+S2 client files (the earlier implementation
+// CLIENT_NEW_FILE_MAX_LINES, the design / dependency direction).
 const SRC = join(resolve(__dirname, '../../..'), 'src')
 const NEW_FILES = [
   'features/project/flowCanvasApi.ts',
   'features/project/flowCanvasEvents.ts',
   'features/designer/center/graph/serverFlowGraphSource.ts',
   'features/designer/center/layoutSaveQueue.ts',
-  // flowgate.v02.0045 T0013 (S3+S4)
+  // (S3+S4)
   'features/project/flowGraphApi.ts',
   'features/designer/center/edit/connectionRules.ts',
   'features/designer/center/edit/draftController.ts',

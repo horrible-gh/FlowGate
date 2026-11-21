@@ -1,4 +1,4 @@
-"""flowgate.default.0594 T0012 — selected finalize target + managed target workspace.
+"""selected finalize target + managed target workspace.
 
 Real git end-to-end (bare origin + service clone, like test_git_integration_0115.py)
 on a temporary SQLite with the real migrations. Every test builds its OWN project
@@ -63,7 +63,7 @@ class _MockTxn:
 
     def execute(self, sql, params=None):
         # No commit here: a transaction that commits every statement cannot roll
-        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # anything back, and then an atomic unit of work (the design INV-6: AC
         # approval + root completion + intent consume, all or nothing) silently
         # tests as "each write landed on its own". begin_transaction below owns
         # the commit/rollback.
@@ -77,7 +77,7 @@ class _MockTxn:
         transaction's cursor (that is the one portable place all three real
         adapters expose it). A mock that hides its cursor makes every CAS write
         raise "database driver did not expose affected row count" — a harness
-        gap, not a product one (0555 T0008).
+        gap, not a product one.
         """
         return self._cur
 
@@ -276,7 +276,7 @@ def proj(tmp_path, monkeypatch, git_repositories):
     p = Proj(tmp_path, git_repositories)
     yield p
     from modules.flow_gate.services.git import merge_target as mt
-    mt.settle_check_targets(30)          # flowgate.v02test.0020: no background candidate computation outlives a test
+    mt.settle_check_targets(30)          # no background candidate computation outlives a test
     svc.delete_config(p.pid)
 
 
@@ -481,14 +481,14 @@ def _arm_crash(monkeypatch, where: str) -> None:
 
 
 # ── N ────────────────────────────────────────────────────────────────────────
-# flowgate.default.0594 T0016 §8.2 — a v0.2-style integration branch is not a
+# a v0.2-style integration branch is not a
 # one-shot target: several DIFFERENT groups finalize into it in turn, and each
 # later merge builds on what the previous one just pushed, never touching main.
 
 
 
 # ── O ────────────────────────────────────────────────────────────────────────
-# T0016 §2.2/§3.2 — the last non-base target a finalize actually merged into
+# the last non-base target a finalize actually merged into
 # becomes this project's persisted suggestion for the NEXT finalize dialog
 # (surfaced through list_branches), and the same setting can be changed or
 # cleared directly (a distinct action from running an actual branch merge).
@@ -498,13 +498,13 @@ def _arm_crash(monkeypatch, where: str) -> None:
 
 
 
-# ── flowgate.default.0683 T0004 — group finalize blocker / plan-time recovery ────
+# ── the earlier change the earlier implementation — group finalize blocker / plan-time recovery ────
 
 
 
 
 
-# ── flowgate.v02.0086 — base checkout off the project base branch (NR0003 §5.3) ──
+# ── the earlier change — base checkout off the project base branch ──
 
 def _merge_rows(gid: str) -> list[dict]:
     from modules.flow_gate.db.connection import get_store
@@ -524,7 +524,7 @@ def _assert_off_branch(exc) -> None:
 
 
 
-# ── flowgate.v02.0098 T#1: the check card's common merge target judgement (D0004 §3.2 / §7) ──────────────────────
+# ── the earlier change the earlier implementation: the check card's common merge target judgement ──────────────────────
 
 def _check_view(p: Proj, gid: str, selected=None, refresh=True) -> dict:
     from modules.flow_gate.services.git import merge_target as mt

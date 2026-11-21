@@ -1,4 +1,4 @@
-"""0061 T#4 execution ledger. Call requests under the Flow guard; all ownership writes are CAS."""
+"""execution ledger. Call requests under the Flow guard; all ownership writes are CAS."""
 from __future__ import annotations
 
 import json
@@ -35,17 +35,17 @@ def _assignment_columns():
 
 
 def request(attempt_id, run_id, kind, payload, assignment=None):
-    """``assignment`` = ``(stage, seq)`` of the stage assignment making this request (flowgate.v02.0113 T#1, DB-1
+    """``assignment`` = ``(stage, seq)`` of the stage assignment making this request (the earlier change the earlier implementation, DB-1
     W-11): stored in ``assignment_stage`` / ``assignment_seq`` once migration 164 added them, so the request is
     found again by its assignment (R-9). None, or a DB without the columns: the request is written as before.
-    flowgate.v02.0113 T#5: the stored request also carries ``run_event_seq`` (the run event it was made at)."""
+    the stored request also carries ``run_event_seq`` (the run event it was made at)."""
     if kind not in ("write", "review", "rework"):
         raise ValueError(kind)
     if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
                       "AND status IN ('requested', 'running')", [attempt_id]):
         raise LeaseLost("attempt already has an execution")
     exec_id = "exe_" + secrets.token_hex(12)
-    # flowgate.v02.0113 T#5: the run event this request was made at (the run's ``last_event_seq`` inside the guard
+    # the run event this request was made at (the run's ``last_event_seq`` inside the guard
     # making it), so its AI launches are told to the command whose events hold it, never by their time.
     stored = dict(payload)
     anchor = run_store._one("SELECT last_event_seq FROM graph_runs WHERE run_id = ?", [run_id])
@@ -159,7 +159,7 @@ def working(run_id):
                               "AND status IN ('requested', 'running') LIMIT 1", [run_id]))
 
 
-# 0061 T#7: the run-end hand-offs in flight (in-process). An execution that ended on its own and was owned to its end
+# the run-end hand-offs in flight (in-process). An execution that ended on its own and was owned to its end
 # is followed by its finalize's run-end stage (the instruction approval and the result stage, the result's review or
 # approval); until that stage is over the run is still worked on (``settle.working``), so it never goes idle between
 # the execution's ledger end and what follows it. Cleared by the finalize (``handoff_end``) or after the TTL.

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#4 — special documents in the document window, as the App Shell mounts it
+ * special documents in the document window, as the App Shell mounts it
  * (DocumentWindows) with `@/features/document` mocked at its reads and the save: a work plan shows its plan
  * table (the v0.1 WorkPlanEditor's, read only), a specification test scenario its Cases and a test report its
  * verdicts (the v0.1 TestDocumentBody's), every other document the MD Viewer. The flow is the same as a
@@ -431,7 +431,7 @@ function shown(panel: HTMLElement): string {
 }
 
 describe('work plan in the document window (flowgate.v02.0053 T#4)', () => {
-  // flowgate.v02.0056 F1 (0056 CH §5): the totals tiles over the quantity boxes are gone (they repeated the boxes).
+  // (CH): the totals tiles over the quantity boxes are gone (they repeated the boxes).
   it('shows the plan table — quantity boxes, one row per Step by card, no totals tiles — not the MD Viewer', async () => {
     const panel = await open(PLAN)
     expect(q(panel, 'document-window-body')!.getAttribute('data-view')).toBe('work_plan')

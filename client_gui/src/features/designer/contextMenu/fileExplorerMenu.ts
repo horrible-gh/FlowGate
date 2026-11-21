@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — ② file explorer menu: folder (root = the explorer's blank area) / file
+// ② file explorer menu: folder (root = the explorer's blank area) / file
 // (0006-D rev2 §5.3 ②). The root folder has no open / rename / delete. Git link state comes from a
 // real status read, and read failure / no worktree / no permission stay distinct from "not linked".
 // Git › 되돌리기 is judged only from group-HEAD facts (uncommitted change, tracked in HEAD); the

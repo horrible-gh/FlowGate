@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0076 T#1 (D §1.2, §5.2 V03): what the start screen shows while the bootstrap's
+// (D, V03): what the start screen shows while the bootstrap's
 // /auth/me answer is still out. main.ts mounts it on #app in place of the App Shell and
 // replaces it with the real app once the answer is in, so it is a neutral loading state only:
 // no router, no Topbar/Sidebar, no settings view or project picker, and no request of its own.

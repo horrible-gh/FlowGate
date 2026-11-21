@@ -1,8 +1,9 @@
 export default {
+  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
-  // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
+  // AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
   attachment_request: {
     title: 'AI添付の承認依頼',
     pending_n: '承認待ち {n}件',
@@ -338,7 +339,7 @@ export default {
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
   designer: {
-    // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
+    // Designer Center (Flow Tabs + read-only Canvas).
     center: {
       document: '文書',
       open_card_document: '{kind}を開く: {title}',
@@ -349,14 +350,14 @@ export default {
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       tabs_label: '開いているフロー',
       close_tab: '{name} を閉じる',
-      // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
+      // the tab strip's list button (only while the tabs overflow) and its list header.
       open_tabs_list: '開いているフローの一覧',
       open_tabs_list_marked: '開いているフローの一覧 — 隠れたタブに確認する表示があります',
       open_tabs_count: '開いているフロー {count}件',
-      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      // a tab's run mark (its accessible name).
       tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       tab_chat: 'チャットAI応答中',
-      // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
+      // an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: 'アーカイブ済み',
       tab_run_end: { completed: '実行完了', ended: '実行終了' },
       tab_chat_end: { done: 'チャットの回答が終わりました', failed: 'チャットの回答が完了しませんでした' },
@@ -367,12 +368,12 @@ export default {
       retry: '再試行',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
-      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      // a selected Canvas edge: remove button / why it cannot be removed.
       edge: {
         remove: '接続線を削除',
         locked: 'すでに進行した接続線は削除できません',
       },
-      // flowgate.v02.0061 T#14 — the run lock note, a card's result integration and Hold.
+      // the run lock note, a card's result integration and Hold.
       run_lock: '実行中はカードと接続線を編集できません（表示・移動・拡大は可能）',
       run_lock_pending: '実行状態を確認するまではカードと接続線を編集できません（表示・移動・拡大は可能）',
       integration: {
@@ -381,7 +382,7 @@ export default {
         conflict: 'マージ競合',
         failed: 'マージ失敗',
         open_conflict: 'カードの「マージ · 競合」タブで処理します',
-        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        // a waiting merge's hourglass tooltip.
         waiting_for: '「{title}」カードの競合解決を待っています',
         waiting_behind: '「{title}」カードのマージが終わるのを待っています',
         waiting_turn: 'マージの順番を待っています',
@@ -396,7 +397,7 @@ export default {
         unknown: '一部の試行は変更数を読み取れませんでした。',
       },
       hold: 'Hold',
-      // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
+      // the Hold mark, a card's context menu and the Graph Time Machine dialog.
       hold_icon: 'Hold — このカードは実行で開かれません',
       card_menu: {
         hold_set: 'Hold を設定',
@@ -453,14 +454,14 @@ export default {
         timeout: '制限時間を超えたため呼び出しが終了しました。',
         providers_exhausted: '実行できるAIプロバイダーがないため呼び出しが終了しました。',
       },
-      // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
+      // a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: 'レビュー回数を使い切り、最後の修正版は未レビューです。`次のステップ`または`全体実行`で再レビューしてください。承認だけでは完了しません。',
-        // flowgate.v02gui.0015 T3
+        
         action_required_new_attempt: 'Q&Aの回答で新しい attempt が必要とされましたが、まだ開かれていないためカードを再呼び出ししていません。`次のステップ`または`全体実行`で新しい attempt として開き直します。レビュー中のカードは停止してから実行してください。',
       },
-      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
-      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
         needs_intervention: '介入が必要',
         system_error: 'システムエラー',
@@ -470,7 +471,7 @@ export default {
         recovery_required: '復旧が必要',
         confirmed: '確認完了',
 
-        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        // a person's writing wait by its role, a review card that waits, ◌ = actually running.
         instruction_write_wait: '指示書作成待ち',
         result_write_wait: '結果作成待ち',
         waiting: '待機',
@@ -479,7 +480,7 @@ export default {
         ai_unavailable: 'AI使用不可',
         no_result: '結果なし',
         incomplete: '実行未完了',
-        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        // an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: '回答待ち',
         waiting_writer: '作成待ち',
         writing_instruction: '◌ 指示書作成中',
@@ -520,7 +521,7 @@ export default {
         approved_documents_named: '先に承認された文書: {docs}',
       },
     },
-    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    // a card's inline title edit.
     nodeTitle: {
       edit: 'タイトルを編集',
       input: 'カードのタイトル',
@@ -539,7 +540,7 @@ export default {
         flow_disposed: '破棄されたフローは変更できません。',
       },
     },
-    // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
+    // Designer Palette part (categories, default items, add dialog).
     palette: {
       label: 'パレット',
       categories: {
@@ -616,7 +617,7 @@ export default {
         teal: '青緑',
       },
     },
-    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    // Designer Project Explorer (Project > Group > Flow).
     archive: {
       action: 'アーカイブ', restore: '復元', include: 'アーカイブを含める',
       run_not_completed: '完了したフローのみアーカイブできます。',
@@ -644,8 +645,9 @@ export default {
       no_flows: 'フローがありません。',
       group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
+      reconnecting: '再接続中…',
     },
-    // flowgate.v02.0024 T0005 — Designer File Explorer.
+    // Designer File Explorer.
     file_explorer: {
       reconnecting: '再接続中…',
       title: 'ファイル',
@@ -685,7 +687,7 @@ export default {
       no_flow: 'アクティブなフローがありません。',
       no_project: 'プロジェクトを選択してください。',
     },
-    // flowgate.v02.0025 — Designer Shell (left Dock, placeholders of the final containers).
+    // Designer Shell (left Dock, placeholders of the final containers).
     shell: {
       explorer_title: 'エクスプローラー',
       mode_tabs_label: 'エクスプローラーモード',
@@ -695,14 +697,14 @@ export default {
       expand_left: '左パネルを展開',
       minimap_label: 'MINIMAP',
       minimap_parts: 'Minimap',
-      // flowgate.v02.0037 — right Tool Panel tabs.
+      // right Tool Panel tabs.
       tool_tabs_label: 'ツールパネル',
       tool_palette: 'パレット',
       tool_conversation: '会話',
       tool_git: 'Git',
     },
-    // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
-    // flowgate.v02.0048 T#1: no placeholder line — a tab exists only with a registered feature.
+    // bottom Inspector Frame (v7: header + tabs + Content area).
+    // no placeholder line — a tab exists only with a registered feature.
     inspector: {
       label: 'インスペクター',
       tabs_label: 'インスペクタータブ',
@@ -712,7 +714,7 @@ export default {
         ai: 'AI',
         qna: 'Q&A',
       },
-      // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
+      // the target's states in the header and the common section states (parts).
       doc_status_label: 'ドキュメント状態',
       run_status_label: '実行状態',
       review_status: {
@@ -740,10 +742,10 @@ export default {
         error: '読み込めませんでした。',
         retry: '再試行',
         details: '詳細',
-        // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
+        // a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'まだ対応していない操作です。',
       },
-      // flowgate.v02.0051 — the rest of the v7 header line, on every card.
+      // the rest of the v7 header line, on every card.
       header: {
         read_only: '読み取り専用',
         read_only_conflict: '所有権の競合 — 読み取り専用',
@@ -756,27 +758,27 @@ export default {
         kind_bug: 'バグ',
         state_tip: 'ドキュメント状態: {doc} / 実行状態: {run}',
       },
-      // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
+      // common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
       slot: {
         progress: '進捗',
-        // flowgate.v02.0053 T#5 — the document icon (and the line name) that opens the window.
+        // the document icon (and the line name) that opens the window.
         open: '開く',
-        // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
+        // ✎ opens the document window straight in its editor.
         edit: '編集',
-        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
+        // the wording of a line without a document (F1: drawn in the line).
         none: '文書なし',
-        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // who writes a card line (O2 the earlier implementation `author`); only the instruction line's
         // instruction_ai_or_human is drawn.
         author: {
           instruction_ai_or_human: '指示AIまたは人',
         },
-        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        // the history button of a document line: its review·rejection history window.
         history: 'レビュー・差し戻し履歴',
         history_count: 'レビュー・差し戻し履歴 {n}件',
-        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from 文書なし (a document that has no body).
+        // (B4): drawn in the line, told from 文書なし (a document that has no body).
         blank: '本文が空です',
         actions: {
           write: '作成',
@@ -827,7 +829,7 @@ export default {
         failed: '保存失敗',
       },
     },
-    // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
+    // Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
     // purpose (0007-T §7).
     top: {
       menubar_label: 'メニュー',
@@ -845,8 +847,8 @@ export default {
           ai: 'AI',
           questions: '質疑応答',
         },
-        project_only: '現在のプロジェクト {name} の実行のみ表示します。',
-        empty_runs: '実行中・待機中の実行はありません。',
+        project_only: 'プロジェクト {name} のタスクです。実行数は実行中のAIタスクのみです。',
+        empty_runs: '実行・待機・結果回収中のタスクはありません。',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: '「{title}」カードのマージ競合 — 選択が必要',
@@ -876,6 +878,9 @@ export default {
         failure: '失敗',
         unknown: '状態不明',
         phases: {
+          queued_capacity: '待機（Agentの空きなし）',
+          retrieving: '結果回収中',
+          settling: '終了確認中',
           running: '実行中',
           queued: '待機中',
           starting: '開始中',
@@ -957,7 +962,7 @@ export default {
       },
       panels: { left: '左パネル', right: '右ツールパネル', inspector: 'インスペクター', minimap: 'ミニマップ' },
       tabs: { project: 'プロジェクトエクスプローラー', file: 'ファイルエクスプローラー', palette: 'パレット', conversation: '会話', git: 'Git' },
-      // flowgate.v02.0059 T#2 — 整列 / 配置 のコマンド（編集メニューのサブメニューとツールバー ▾）。
+      // 整列 / 配置 のコマンド（編集メニューのサブメニューとツールバー ▾）。
       arrange: {
         'align-left': '左揃え',
         'align-center': '左右中央揃え',
@@ -980,7 +985,7 @@ export default {
         run_all: 'すべて実行',
         validate: '検証',
         stop: '停止',
-        // flowgate.v02.0061 T#14 — 一時停止 / 再開 and the stopping placeholder of the run buttons.
+        // 一時停止 / 再開 and the stopping placeholder of the run buttons.
         pause: '一時停止',
         resume: '再開',
         stop_retry: '停止を再試行',
@@ -992,9 +997,9 @@ export default {
         zoom_preset: 'ズーム率を選択',
         density: '配置密度 — カードをドラッグで動かす間隔（自由配置: 間隔なし）',
       },
-      // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
+      // the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '実行中', stopped: '停止中', completed: '完了', paused: '一時停止', stopping: '停止処理中', idle: '待機' },
-      // flowgate.v02.0061 T#14 — the run band: the command, why an idle run is idle, executions, waiting cards.
+      // the run band: the command, why an idle run is idle, executions, waiting cards.
       run_command: { step: '次のステップ', full: 'すべて実行' },
       run_idle_reasons: {
         completed: '完了',
@@ -1006,21 +1011,21 @@ export default {
         merge_conflict: 'マージ競合',
         hold: 'Hold で待機',
         step_done: '次のステップ完了',
-        needs_intervention: '介入が必要',   // flowgate.v02.0124 T#2
+        needs_intervention: '介入が必要',   
         waiting_confirm: '確認待ち',
       },
       run_executions: '実行 {running}/{limit}',
       run_completed_ack: 'すでに完了した実行のため、コマンドは何も行いませんでした。新しい構成を確定すると再度実行できます。',
       run_requested: '要求 {n}',
       run_waiting_cards: '次のカード {n} 件待ち',
-      // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
+      // a told wait: the other blocking cards, and how the first one is released.
       run_wait_more: '他{n}件',
       run_wait_release: {
         new_submission: '解除: 文書を修正して再提出',
         issuer_permission: '解除: 発行者の承認権限を補う',
         memo_rereview: 'カードに介入が必要な状態が記録されています。',
       },
-      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      // a stopped run with cards approved meanwhile.
       run_pending: '停止中 · 次のカード {n} 件待ち',
       run_pending_keys: '次に進むカード: {keys}',
       run_command_recovery: {
@@ -1071,7 +1076,7 @@ export default {
         flow_disposed: '破棄されたフローは実行できません。',
         flow_access_denied: '実行する権限がありません。',
         graph_validation_failed: 'カードの接続に問題があるため実行できません。',
-        // flowgate.v02.0061 T#14 — used only when the server sent no message of its own.
+        // used only when the server sent no message of its own.
         run_in_progress: 'すでに実行中です。',
         graph_run_locked: '実行中・一時停止中・停止中のフローは編集できません。',
         graph_git_required: 'Git 統合が必要な作業です。',
@@ -1080,7 +1085,7 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine を安全に実行できません。',
         graph_time_machine_in_progress: 'Graph Time Machine の操作が完了していません。',
         graph_engine_owned: 'このフローは Graph エンジンの担当です。',
-        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        // R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
         run_command_storage_unavailable: 'ブラウザのストレージを使えないため、実行要求を記録できませんでした。ストレージを許可するか再読み込みしてから再試行してください。',
         run_command_record_corrupt: 'このフローの実行要求の記録を読み取れません。実行要求の案内で記録を整理してから再試行してください。',
         run_command_mode_requires_void: '未確認の以前の実行要求と実行方式が異なります。以前の要求を確認してから再試行してください。',
@@ -1104,7 +1109,7 @@ export default {
         },
       },
     },
-    // flowgate.v02.0043 — File menu dialogs (グループを開く… / フローを開く… / 新規グループ / 新規フロー).
+    // File menu dialogs (グループを開く… / フローを開く… / 新規グループ / 新規フロー).
     file_menu: {
       group_open_title: 'グループを開く',
       flow_open_title: 'フローを開く',
@@ -1145,7 +1150,7 @@ export default {
       create_failed: '作成できませんでした。',
     },
   },
-  // flowgate.v02.0031 — Conversation part (Designer right tool area).
+  // Conversation part (Designer right tool area).
   conversation: {
     label: '会話',
     retry: '再試行',
@@ -1176,7 +1181,7 @@ export default {
       empty: 'まだメッセージがありません。下から会話を始めてください。',
       no_flow: 'フローを開くと、そのフローの会話がここに表示されます。',
     },
-    // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting チェックポイントを使用).
+    // the message ⋯ menu and the divider (context setting チェックポイントを使用).
     checkpoint: {
       menu: 'メッセージメニュー',
       from_here: 'このメッセージから送信 (含む)',
@@ -1194,11 +1199,11 @@ export default {
       change_failed: '変更できませんでした。再確認してください。',
       user: '自分',
       ai: 'AI',
-      // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
+      // FlowGate's own turn (e.g. the chat commit result).
       system: 'FlowGate',
       sending: '送信中',
       failed: '送信できませんでした。',
-      // flowgate.v02gui.0007 A: the failed bubble's short reason.
+      // A: the failed bubble's short reason.
       failure: {
         rejected: 'サーバーがメッセージを拒否しました',
         forbidden: '権限がありません',
@@ -1208,7 +1213,7 @@ export default {
         network: 'サーバーに接続できませんでした',
       },
       stale: '#{seq} のメッセージを見る前に書かれた返信です。',
-      // flowgate.v02test.0029: a message sent while the AI answered.
+      // a message sent while the AI answered.
       waiting: '待機',
       waiting_title: '現在の回答が終わると、AI がこのメッセージまで読んで続けて回答します。',
       copy: '原文をコピー',
@@ -1231,7 +1236,7 @@ export default {
         cancelled: 'キャンセル済み',
         rejected: '拒否済み',
       },
-      // Who rejected (D0006 §5.2) and the cancel / failure reason codes (§5.3).
+      // Who rejected and the cancel / failure reason codes.
       rejected_by: {
         policy: '会話設定のコマンドポリシーが拒否しました。何も実行していません。',
         user: 'ユーザーが拒否しました。何も実行していません。',
@@ -1247,7 +1252,7 @@ export default {
         chat_command_internal_error: '実行中にサーバーエラーが発生しました。',
       },
       exit_code: '終了コード {code}',
-      // flowgate.v02.0150 — the in-card detail of a command request.
+      // the in-card detail of a command request.
       detail: {
         show: '詳細',
         hide: '詳細を閉じる',
@@ -1282,7 +1287,7 @@ export default {
       too_large: 'ファイルが大きいため内容を比較しません。',
       empty: '内容の差分はありません。',
       more_lines: 'あと {n} 行',
-      // flowgate.v02test.0031 B/C: change window view mode, full text basis and context projection wording.
+      // B/C: change window view mode, full text basis and context projection wording.
       mode_label: '表示方式',
       mode_changes: '変更',
       mode_full: '全体',
@@ -1331,7 +1336,7 @@ export default {
       provider: 'AI を選択',
       provider_loading: '読み込み中',
       provider_failed: 'AI 一覧エラー',
-      // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
+      // the chat's AI is read before anything is sent on it.
       ai_pick_failed: 'このチャットの AI を確認できないため送信を止めています',
       ai_pick_retry: '再試行',
       provider_none: 'AI なし',
@@ -1352,12 +1357,12 @@ export default {
         edit: 'AI がソースを変更できます',
         edit_once: '次の AI 呼び出し 1 回だけソースを変更できます',
       },
-      // flowgate.v02.0061 T#14 — the Flow's Graph run only allows switching to read mode.
+      // the Flow's Graph run only allows switching to read mode.
       source_locked: 'このフローの Graph 実行中（実行中・一時停止中・停止中）または実行状態の確認前は、読み取りモードへの切り替えのみ可能です',
       manual_copy_title: 'クリップボードにコピーできませんでした。下の内容を手動でコピーしてください。',
       manual_copy_again: 'もう一度コピー',
     },
-    // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
+    // message images: pasted / dropped into the composer, shown on the message.
     image: {
       download: '画像をダウンロード',
       alt: '画像 {n}',
@@ -1423,7 +1428,7 @@ export default {
       no_provider: '呼び出せる AI がありません',
       invoke_failed: 'AI を呼び出せませんでした',
       cancel_failed: 'AI 呼び出しを停止できませんでした',
-      // flowgate.v02gui.0011 B — a stop pressed before the AI call started.
+      // B — a stop pressed before the AI call started.
       start_stopped: 'AI 呼び出しを停止しました。送信したメッセージは保存されています',
       cancel_unconfirmed: '停止の結果を確認できませんでした。もう一度押してください',
       mention_failed: 'メンションを作成できませんでした',
@@ -1440,7 +1445,7 @@ export default {
       command_decision_forbidden: 'このコマンド実行リクエストを決定する権限がありません',
     },
   },
-  // flowgate.v02.0033 — Designer Git part (features/git).
+  // Designer Git part (features/git).
   git: {
     gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "今は再試行できません · サーバー処理待ち", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能", "cancel_approval": "この承認を取消", "closed_note": "この承認は再び反映できません。マージセッションはすでに閉じています。", "closed_next": "[この承認を取消] のあと、確認カードで [承認] → 現在のコミットで反映", "retry_blocked_closed": "再試行が無効な理由: 閉じたマージセッションを読み直すだけで、結果は常に同じです。", "goto_gate": "確認カードへ移動", "retry_same_next": "原因が変わらないため、再度押しても同じです。[!] 詳細で原因を確認するか、[キャンセル] のあと確認カードで再承認してください。", "retry_changed_next": "今回は別の理由で止まりました。[!] 詳細で新しい原因を確認してください。", "retry_closed_next": "マージセッションが閉じているため、やり直しても同じです。[この承認を取消] のあと、確認カードで [承認] を押して現在のコミットで再び反映してください。"},
     header: {
@@ -1496,7 +1501,7 @@ export default {
       companion_item: '{path} · 元は {source}',
       abort_bound: '進行中の最終承認の試行も終了します。',
       unsupported: 'この画面では扱わない種類の競合です。',
-      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      // a Graph card result's merge conflict is handled in the card, not here.
       card_handled: 'カード結果のマージ競合 — カードで処理します',
       card_handled_desc: 'この競合は Git タブではなく、そのカードの「マージ · 競合」タブで選びます。',
       open_card: 'カードへ移動',
@@ -1663,13 +1668,13 @@ export default {
       force_cleanup_branch_mismatch: '反映専用の作業スペースに別のブランチがチェックアウトされているため、強制整理しませんでした。',
       force_cleanup_unsupported_target: '共用の作業スペースのため強制整理できません。',
     },
-    // flowgate.v02test.0052 0008 (#25): the dialog's two buttons never read the same — [戻る] closes it and the
+    // (#25): the dialog's two buttons never read the same — [戻る] closes it and the
     // other button names what it does ([マージを中断] …).
     confirm: {
       ok: '確認',
       cancel: '戻る',
     },
-    // flowgate.v02test.0052 0008 — the administrator's forced cleanup of a merge whose abort git refuses.
+    // the administrator's forced cleanup of a merge whose abort git refuses.
     force: {
       title: '作業スペースを強制整理しますか？',
       workspace: '反映専用の作業スペース {workspace} を {target} の HEAD（{head}）に戻します。',
@@ -1683,7 +1688,7 @@ export default {
       action: '強制整理',
       preview_failed: '強制整理の内容を読み込めませんでした。',
     },
-    // flowgate.v02test.0052 0008 — administrators only: the open merges marked "cleanup failed".
+    // administrators only: the open merges marked "cleanup failed".
     abort_failures: {
       title: '整理失敗 {n} 件',
       desc: 'マージの中断を git が拒否したセッションです。管理者にだけ表示されます。',
@@ -1697,7 +1702,7 @@ export default {
       done_unchecked: 'マージセッション {id}（{group}）を閉じました。このグループの承認はここでは確認できませんでした。残っている場合は、該当 Flow の Git タブで [この承認を取消] を押してください。',
       done_failed: 'マージセッション {id}（{group}）は閉じましたが、以前の承認を取り消せませんでした（{code}）。該当 Flow の Git タブの [Git 処理失敗] カードで [この承認を取消] を押してください。',
     },
-    // flowgate.v02.0065 — Git 未連携 / 状態取得の失敗 / Git 連携モードレス。
+    // Git 未連携 / 状態取得の失敗 / Git 連携モードレス。
     unlinked: {
       heading: 'Git 未連携',
       connect: 'Git 連携',
@@ -1725,7 +1730,7 @@ export default {
       submitting: '連携中…',
       required: 'リポジトリ URL と Base branch を入力してください。',
       invalid_url: 'リポジトリ URL の形式を確認してください。',
-      // flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection, request outcomes.
+      // follow-up of a saved-but-not-prepared connection, request outcomes.
       retry_provision: 'リポジトリ準備を再試行',
       provisioning: 'リポジトリ準備中…',
       result: {
@@ -1743,7 +1748,7 @@ export default {
         config_failed: '既存の Git 設定を読み込めませんでした。値を直接入力してください。',
       },
     },
-    // flowgate.v02.0066 T#6 — Group worktree 作業エリア(変更ファイル・コミット)、無効理由、Center Diff。
+    // Group worktree 作業エリア(変更ファイル・コミット)、無効理由、Center Diff。
     worktree: {
       loading: '作業スペースを読み込み中…',
       read_failed: '作業スペースの状態を読み込めませんでした。',
@@ -1751,7 +1756,7 @@ export default {
       read_forbidden: '作業スペースを見る権限がありません。',
       retry: '再試行',
       unavailable: '作業スペースなし(整理済みのグループ)',
-      // flowgate.v02.0067 T#1 — Git タブの要約・入口ボタンと Git モードレス(タブ・状態)。
+      // Git タブの要約・入口ボタンと Git モードレス(タブ・状態)。
       overview: {
         changed: '変更',
         staged: 'Stage',
@@ -1867,7 +1872,7 @@ export default {
         git_busy: '別の Git 作業が進行中です。しばらくしてから再試行してください。',
         invalid_state: '作業スペースの状態が変わりました。再読み込みしました。',
         ownership_unavailable: '管理ファイルを判定できません — 今は処理できません。',
-        // flowgate.v02.0066 T#7 — マージ・後続 Push・Fetch。
+        // マージ・後続 Push・Fetch。
         merged: '{target} にマージしました。',
         merged_pushed: '{target} にマージして Push しました。',
         recovered: '先にマージされた結果を記録しました({target})。',
@@ -1912,7 +1917,7 @@ export default {
       staged_protected: 'コミットできない保護ファイルが Stage 済み — すべて解除してから再度',
       no_message: 'コミットメッセージを入力',
       no_provider: '既定の AI が未設定',
-      // flowgate.v02.0066 T#7 — マージ・後続 Push。
+      // マージ・後続 Push。
       merge_unread: 'マージ判定を読み込めません',
       no_target: 'マージ対象なし',
       merge_unavailable: '今はマージできません',
@@ -1937,7 +1942,7 @@ export default {
     centerDiff: {
       reload: '再読み込み',
       loading: '読み込み中…',
-      // flowgate.v02.0067 T#4 — Git モードレス `Diff` タブ詳細: 一覧へ · ファイルパス · 比較基準。
+      // Git モードレス `Diff` タブ詳細: 一覧へ · ファイルパス · 比較基準。
       back: '一覧へ',
       path_label: 'ファイルパス',
       compare_label: '比較基準',
@@ -1958,7 +1963,7 @@ export default {
         failed: 'Diff を読み込めませんでした。({code})',
       },
     },
-    // flowgate.v02.0066 T#7 — Base 反映アコーディオン(マージ対象・Fetch・マージ後 Push・状態/Diff・後続 Push)。
+    // Base 反映アコーディオン(マージ対象・Fetch・マージ後 Push・状態/Diff・後続 Push)。
     apply: {
       summary: {
         merging: 'マージ中',
@@ -2004,15 +2009,15 @@ export default {
       diff_title: '{target} 基準の変更 {n} 件',
       diff_refreshing: '更新中…',
       diff_empty: '変更なし',
-      // flowgate.v02.0067 T#4 — `Diff` タブ一覧の検索とページ移動。
+      // `Diff` タブ一覧の検索とページ移動。
       diff_search: '比較するファイルを検索',
       diff_range: '{from}–{to} / {n}',
       diff_prev: '前へ',
       diff_next: '次へ',
     },
   },
-  // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
-  // flowgate.v02.0068 T#1 — the document upload / download of the Inspector's document lines and the document
+  // the document window (features/documentWindow): title line, editor, MD Viewer.
+  // the document upload / download of the Inspector's document lines and the document
   // window's header (one coordinator; its notices are toasts).
   document_io: {
     upload: 'アップロード',
@@ -2069,7 +2074,7 @@ export default {
     editor: '文書本文',
     save: '保存',
     cancel: 'キャンセル',
-    // flowgate.v02.0056 F1 — エディターバーの[閉じる]: ウィンドウを閉じる（未保存の内容は先に確認する）。
+    // エディターバーの[閉じる]: ウィンドウを閉じる（未保存の内容は先に確認する）。
     close: '閉じる',
     discard: {
       title: '保存していない内容を破棄しますか？',
@@ -2136,7 +2141,7 @@ export default {
       copy_code: 'コードをコピー',
       copy_failed: 'コピーできませんでした',
     },
-    // flowgate.v02.0056 F1 — レビュー・差し戻し履歴ウィンドウ（v0.1 のダイアログを ModelessShell に移したもの）。
+    // レビュー・差し戻し履歴ウィンドウ（v0.1 のダイアログを ModelessShell に移したもの）。
     history: {
       title: 'レビュー・差し戻し履歴',
       filter_label: '履歴の種類',
@@ -2164,7 +2169,7 @@ export default {
       fold: '折りたたむ',
       unfold: '展開する',
     },
-    // flowgate.v02.0056 F2-2 — [作成] of a card line without a document (O3 0009-TR §4-2).
+    // [作成] of a card line without a document.
     write: {
       title: '{name}を作成',
       editor: '作成する本文',
@@ -2201,7 +2206,7 @@ export default {
         other: '保存できませんでした。',
       },
     },
-    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    // the single AI call on a document.
     ai: {
       title: 'AI 呼び出し',
       provider: 'AI',
@@ -2225,9 +2230,9 @@ export default {
         other: 'AI を実行できませんでした。',
       },
     },
-    // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
+    // special document views: type names, the work plan table, the test views.
     types: {
-      // flowgate.v02.0074 T#3 (D#1 §7.6): 「設計指示」 everywhere, as ko.
+      // 「設計指示」 everywhere, as ko.
       DS: '設計指示',
       D: '基本設計',
       P: 'プロトコル',
@@ -2245,7 +2250,7 @@ export default {
     },
     work_plan: {
       label: '作業計画',
-      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
+      // the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: '数量',
       assignments: 'ステップ別担当',
       sets: {
@@ -2320,7 +2325,7 @@ export default {
       conflicts: '重複した結果{n}件',
     },
   },
-  // flowgate.v02.0088 F01~F05 — Project open / create Dialog, list and row.
+  // ~F05 — Project open / create Dialog, list and row.
   project: {
     dialog: {
       title: 'プロジェクトを開く',
@@ -2392,7 +2397,7 @@ export default {
       none: 'なし',
     },
     providers: {
-      // flowgate.v02.0088 F08: the generic provider kind (product names stay as they are).
+      // the generic provider kind (product names stay as they are).
       kind_custom: 'カスタム',
       mode_disabled: 'AI未使用',
       add_title: 'AI 接続を追加',
@@ -2687,7 +2692,7 @@ export default {
       set_supervisor: 'Supervisorに指定',
       unset_supervisor: 'Supervisorを解除',
     },
-    // flowgate.v02.0088 F11: each AI request's own localized fallback (network · empty body · unknown code).
+    // each AI request's own localized fallback (network · empty body · unknown code).
     request_failed: {
       sequence_load: 'ワークフローの順序を読み込めませんでした。',
       system_load: 'システムAIを読み込めませんでした。',
@@ -2750,7 +2755,7 @@ export default {
       ai_group_validation_failed: '入力が正しくありません。',
     },
   },
-  // flowgate.v02.0020 환경 설정 (시안 11~14).
+  // flowgate.v02.0020 환경 설정 (mockup 11~14).
   settings: {
     title: '環境設定',
     breadcrumb_aria: '現在地',
@@ -3408,7 +3413,7 @@ export default {
       paths: '保存パス',
       git: 'Git',
     },
-    // flowgate.v02.0076 T#5: 프로젝트 조회 · 시스템 › 전체 프로젝트 (read only).
+    // flowgate.v02.0076 T#5: Project lookup · 시스템 › 전체 프로젝트 (read only).
     projects: {
       refresh: '再読み込み',
       picker: 'プロジェクト',

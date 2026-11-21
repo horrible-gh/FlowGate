@@ -1,4 +1,4 @@
-"""Catalog parity and completeness regressions for group 0356."""
+"""Catalog parity and completeness regressions for the earlier change."""
 
 import pytest
 

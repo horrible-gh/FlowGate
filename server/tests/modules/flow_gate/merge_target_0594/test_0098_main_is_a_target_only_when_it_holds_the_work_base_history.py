@@ -57,7 +57,7 @@ def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, ch
 
     gid = _feature_group(proj, 3)
     view = _check_view(proj, gid)
-    # flowgate.v02test.0020 rev2: the list no longer reads the work base history a target lacks (the scope floor);
+    # The list no longer reads the work base history a target lacks (the scope floor);
     # main lacks the v0.2 commit, is listed, and the single judgement of a save / confirm / run refuses it
     assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
     assert view["default_target_branch"] == "feature/v0.2.0"

@@ -140,7 +140,7 @@ def test_a_submission_without_its_review_assignment_whose_setting_is_unreadable_
         assert (a["actor"], a["actor_reason"]) == ("wait_setup", "setting_unreadable")
     else:
         assert (a["actor"], a["source"]) == ("wait_setup", "store_error")
-    # a wait with its cause, never "nothing to run"; flowgate.v02.0119 T#3 (T-2 rework): the instruction's
+    # a wait with its cause, never "nothing to run"; the earlier change the earlier implementation (T-2 rework): the instruction's
     # ``review_result_unknown`` is a system error (the error family), the result's store error a setup wait
     assert run["idle_reason"] == ("error" if stage == "instruction" else "needs_intervention")
     wait = _wire(run, key)["wait_reason"]

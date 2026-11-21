@@ -1,15 +1,15 @@
-"""Draft cards follow an R↔B root conversion (0064 L0005 1.5 / 2.8, P0006 §3.6).
+"""Draft cards follow an R↔B root conversion.
 
 In the conversion's transaction, after the card lines moved: a draft ``document`` card of the old type
 whose ``requirement`` line now holds the converted document takes the new type. Its palette id changes
 only from one reserved root id to the other, and its label only while it is the old type's default name
-(ko / ja / en, normalized as the 0062 L0006 2.1 titles); a label or palette id a person chose stays.
+(ko / ja / en, normalized as the the earlier implementation 2.1 titles); a label or palette id a person chose stays.
 Only when a card changed: the draft version goes up by one and ``graph_canvas_changed`` (``draft``) is
 queued for after the commit. Confirmed revisions are never touched.
 
 That event's ``origin_client_id`` is the requesting tab's ``x-canvas-client-id`` when the route was given one
 (``conversion_origin``): the tab reads its Canvas again after the answer, and with this id it tells its own
-conversion's event from another change and reads the Canvas once for both (P0008 §8.1). None otherwise.
+conversion's event from another change and reads the Canvas once for both. None otherwise.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def conversion_origin(client_id: Optional[str]) -> Iterator[None]:
 
 
 def name_key(raw: Optional[str]) -> str:
-    """0062 L0006 2.1 normalization (NFC, controls and spaces as one space, zero-width removed), casefolded."""
+    """2.1 normalization (NFC, controls and spaces as one space, zero-width removed), casefolded."""
     text = unicodedata.normalize("NFC", raw or "")
     text = "".join(" " if unicodedata.category(ch) in {"Cc", "Zs", "Zl", "Zp"} else ch
                    for ch in text if ch not in {"​", "﻿"})

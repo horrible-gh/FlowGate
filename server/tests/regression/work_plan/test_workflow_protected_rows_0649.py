@@ -1,6 +1,6 @@
-"""Protected rows, row-id echoes and the card-id column — flowgate.default.0649 T#1.
+"""Protected rows, row-id echoes and the card-id column — the earlier change the earlier implementation.
 
-NR0003 O1 (§3.6 / §3.9) and §5.4, against a real sqlite file with every migration applied:
+O1 and, against a real sqlite file with every migration applied:
 
   * migration 138 adds ``source_wp_card_id``; insert / read / backfill / in-place update
     round-trip through the registered SQL, and the three dialect files agree;

@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0023: a person can approve or reject a card document an ended attempt left behind.
+"""a person can approve or reject a card document an ended attempt left behind.
 
 A Stop (or a lost lease) leaves the previous attempt's report as ``stale`` history. The card still shows it as
 ``pending_review``; a person must be able to decide it. Approval completes the card through the normal human

@@ -1,4 +1,4 @@
-// flowgate.v02.0031 / v02.0032 — Conversation part models. A conversation of record is an existing CH
+// v02.0032 — Conversation part models. A conversation of record is an existing CH
 // document whose body is a list of turns (v0.1 ConversationView, P0003 §0-2); the part keeps
 // those turns as they are and adds the frontend shapes it needs to show one timeline.
 
@@ -17,7 +17,7 @@ export interface ChatSummary {
 }
 
 /**
- * flowgate.v02test.0030: how a chat's AI came to be the selected one — sent with the AI call and kept on the
+ * how a chat's AI came to be the selected one — sent with the AI call and kept on the
  * run (`ai_invoke_runs.client_provider_origin`), so a run on an unexpected AI can be traced to the path that chose it.
  * 'user_pick' = picked on this screen, 'stored' = the chat's stored pick, 'last_answered' = the AI that last answered
  * in the chat (no stored pick), 'default_fallback' = my default AI (nothing else usable, or a new chat untouched).
@@ -38,10 +38,10 @@ export interface ConversationTurn {
   seq: number
   speaker: 'user' | 'ai' | string
   participantKey?: string | null
-  /** The AI / model badge (0293 R0001: a badge only, identity is participantKey). */
+  /** The AI / model badge (a badge only, identity is participantKey). */
   displayName?: string | null
   body: string
-  /** flowgate.v02test.0029: the message images the turn points at (metadata only; bytes come from `url`). */
+  /** the message images the turn points at (metadata only; bytes come from `url`). */
   images?: TurnImage[]
   /** Server attribution only; null / missing is unknown. */
   sourceRunId?: string | null
@@ -50,7 +50,7 @@ export interface ConversationTurn {
   createdAt: string | null
 }
 
-/** flowgate.v02test.0029: one message image as the server lists it on a turn (never the bytes). */
+/** one message image as the server lists it on a turn (never the bytes). */
 export interface TurnImage {
   imageId: string
   mediaType: string
@@ -80,7 +80,7 @@ export interface TurnsPage {
   prevBeforeSeq: number | null
 }
 
-/** Server state of record of a command request (D0006 §3.1) — all eight, never inferred. */
+/** Server state of record of a command request — all eight, never inferred. */
 export type CommandStatus =
   | 'pending_approval'
   | 'approved'
@@ -93,16 +93,16 @@ export type CommandStatus =
 
 /**
  * What a command card shows: the server status, or one of the two optimistic client-only
- * states while this client's own decision is in flight (D0006 §5.5). The optimistic states
+ * states while this client's own decision is in flight. The optimistic states
  * never come from the server and always fall back to a server status.
  */
 export type CommandState = CommandStatus | 'approving' | 'rejecting'
 
-/** Who rejected a request: the user's command policy or the user (D0006 §5.2). */
+/** Who rejected a request: the user's command policy or the user. */
 export type CommandRejectedBy = 'policy' | 'user'
 
 export type AnchorPosition = 'before' | 'after'
-/** How the server placed an activity (D0006 §3.9.1). */
+/** How the server placed an activity. */
 export type AnchorState = 'reply' | 'run_start' | 'ambiguous' | 'unresolved'
 
 /**
@@ -116,7 +116,7 @@ export interface ActivityAnchor {
   state: AnchorState | null
 }
 
-/** An AI request to run a command, waiting in the timeline for the user (R0001 §5). */
+/** An AI request to run a command, waiting in the timeline for the user. */
 export interface CommandRequestActivity {
   kind: 'command'
   /** request_id */
@@ -127,7 +127,7 @@ export interface CommandRequestActivity {
   command: string
   cwd?: string | null
   state: CommandState
-  /** Cancel / failure reason code (`chat_command_*`, D0006 §5.3); null otherwise. */
+  /** Cancel / failure reason code (`chat_command_*`, the design); null otherwise. */
   errorCode?: string | null
   /** Set only on a rejected request. */
   rejectedBy?: CommandRejectedBy | null
@@ -160,7 +160,7 @@ export interface WorkChangeFile {
   deletions: number | null
 }
 
-/** File changes one AI run produced, recorded where they happened (R0001 §6, D0006 §3.8). */
+/** File changes one AI run produced, recorded where they happened. */
 export interface WorkChangeActivity {
   kind: 'change'
   /** One run change per run: the run id. */
@@ -210,21 +210,21 @@ export interface StatusActivity {
   /** Source-supplied text, or extra detail appended to a known event. */
   text: string | null
   /**
-   * flowgate.v02test.0024 D: the run in progress line (`run_running`) — the AI connection name and the read / edit
+   * D: the run in progress line (`run_running`) — the AI connection name and the read / edit
    * access the run got. Null parts are not known yet (an adopted run before its first detail read).
    */
   run?: RunDisplay
-  /** flowgate.v02test.0024 B: a recorded chat error (send / AI call / command decision refused) kept in the history. */
+  /** B: a recorded chat error (send / AI call / command decision refused) kept in the history. */
   chatError?: boolean
 }
 
 /**
- * flowgate.v02test.0024 D: the read / edit access a chat run actually got (its token's `source_access`).
- * flowgate.v02gui.0026: `execute` is a read token that may run commands (`command_access=execute`).
+ * D: the read / edit access a chat run actually got (its token's `source_access`).
+ * `execute` is a read token that may run commands (`command_access=execute`).
  */
 export type ChatSourceAccess = 'read' | 'execute' | 'read_write'
 
-/** flowgate.v02test.0024 D: what the one run in progress line shows. */
+/** D: what the one run in progress line shows. */
 export interface RunDisplay {
   providerName: string | null
   access: ChatSourceAccess | null
@@ -240,7 +240,7 @@ export interface ConversationAttachmentConflict {
 }
 
 /**
- * flowgate.chat.0017 CH0002: one AI attachment upload request as the chat reads it (`GET /chat-activity` `attachments`).
+ * one AI attachment upload request as the chat reads it (`GET /chat-activity` `attachments`).
  * The same shape the card tab's request row takes, so the container's row component draws either.
  */
 export interface ConversationAttachmentRequest {
@@ -285,7 +285,7 @@ export interface ConversationAttachmentGroup {
 }
 
 /**
- * flowgate.chat.0017 CH0002: the AI attachment upload requests one run made, shown as one block right below that run's
+ * the AI attachment upload requests one run made, shown as one block right below that run's
  * AI message (server anchor: after the run's last reply). `id` is the run id (or the request id without a run).
  */
 export interface AttachmentRequestActivity {
@@ -323,14 +323,14 @@ export type ConversationActivity = CommandRequestActivity | WorkChangeActivity |
 /** The activities TimelineActivity draws (attachment request blocks have their own component). */
 export type TimelineActivityEntry = CommandRequestActivity | WorkChangeActivity | StatusActivity
 
-/** The decisions the card offers (the wire also has `cancel`, not offered here — D0006 §3.2). */
+/** The decisions the card offers (the wire also has `cancel`, not offered here — the design). */
 export type CommandDecision = 'approve' | 'reject'
 
 /** A provider the composer's AI select offers (GET /ai-invoke/providers). */
 export interface ChatProvider {
   id: string
   name: string
-  /** flowgate.v02test.0029: false = this AI is never given message images; absent = the server did not say. */
+  /** false = this AI is never given message images; absent = the server did not say. */
   acceptsImages?: boolean
 }
 
@@ -340,9 +340,9 @@ export interface ProviderList {
 }
 
 /**
- * flowgate.v02test.0025 — the signed-in user's settings of one chat (GET/PATCH
+ * the signed-in user's settings of one chat (GET/PATCH
  * /documents/{doc_id}/conversation/settings): the AI picked in that chat (null = my default AI) and its context
- * checkpoint (null = none). The checkpoint applies only while the context setting is 체크포인트 사용.
+ * checkpoint (null = none). The checkpoint applies only while the context setting is "체크포인트 사용".
  */
 export interface ChatDocSettings {
   timeoutMinutes?: number | null
@@ -362,12 +362,12 @@ export interface ChatDocSettingsPatch {
 }
 
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
-/** flowgate.v02test.0025: 'checkpoint' = the chat's checkpoint decides what is sent (the last 5 turns without one). */
+/** 'checkpoint' = the chat's checkpoint decides what is sent (the last 5 turns without one). */
 export type ContextMode = 'recent' | 'all' | 'checkpoint' | 'checkpoint_recent'
-/** AI source access mode (group 0515/0568, flowgate.v02test.0026): read / execute (commands only) / edit / edit once. */
+/** AI source access mode (the earlier change/0568, the earlier change): read / execute (commands only) / edit / edit once. */
 export type SourceAccessMode = 'read_only' | 'execute' | 'edit' | 'edit_once'
 
-/** GET/PATCH /me/chat-settings (D0008 / P0009). */
+/** GET/PATCH /me/chat-settings. */
 export interface ChatSettings {
   timeoutMinutes?: number | null
   sendAction: SendAction
@@ -391,7 +391,7 @@ export interface ChatSettingsPatch {
   source_access_mode?: SourceAccessMode
 }
 
-/** flowgate.v02.0135 CH0006: why the run's last connection failed (its fallback_history entry). */
+/** why the run's last connection failed (its fallback_history entry). */
 export interface AiRunFailure {
   /** Remote Agent cause (permission_denied, workdir_missing, ...), null when not classified. */
   cause: string | null
@@ -415,12 +415,12 @@ export interface AiRunState {
   groupId?: string | null
   finishedAt?: string | null
   failure?: AiRunFailure | null
-  /** flowgate.v02test.0024: when the run started (places a result line without a finish time). */
+  /** when the run started (places a result line without a finish time). */
   startedAt?: string | null
-  /** flowgate.v02test.0024 D: the run's AI connection (`provider_id` / live `provider` / the pinned request). */
+  /** D: the run's AI connection (`provider_id` / live `provider` / the pinned request). */
   providerId?: string | null
   providerName?: string | null
-  /** flowgate.v02test.0024 D: the applied read / edit access of a chat run; null when the server does not say. */
+  /** D: the applied read / edit access of a chat run; null when the server does not say. */
   sourceAccess?: ChatSourceAccess | null
 }
 

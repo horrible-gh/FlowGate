@@ -1,8 +1,8 @@
-"""flowgate.default.0688 T#2: an answer that lands after the document it was asked about.
+"""an answer that lands after the document it was asked about.
 
-T#1 (test_q_handoff_park_0688.py) holds a hop that submitted its document while a question of
+(test_q_handoff_park_0688.py) holds a hop that submitted its document while a question of
 its own was open, has the responder answer it and resumes the gate it held exactly once. The
-document, though, was written on the assumption the question stated. T#2 decides with the
+document, though, was written on the assumption the question stated. the earlier implementation decides with the
 review gate the chain already has -- no new verdict:
 
   * review.resolve_review_gate refuses an approval while a question a hop of the slot raised
@@ -220,7 +220,7 @@ def _verdict(state, rid, verdict, revision, run_id=None, created_at=REVIEWED_AT)
 class TestAnswerCheckGate:
     def test_a_last_round_rework_s_answer_buys_one_answer_check_review(self, world):
         pk = _ask(world)
-        assert review._derive_review_gate(_bundle())["approve_first"] is True   # T#1's gate
+        assert review._derive_review_gate(_bundle())["approve_first"] is True   # 's gate
 
         gate = review.resolve_review_gate(_bundle())
 
@@ -240,7 +240,7 @@ class TestAnswerCheckGate:
     @pytest.mark.parametrize("arrival", ["a_second_answer", "the_round_s_own_question"])
     def test_an_answer_that_lands_while_the_round_runs_is_not_checked_by_it(
             self, world, arrival):
-        # 0688 TR0008 rev1 review: the check round's mention read the answer of 01:30Z; a new
+        # review: the check round's mention read the answer of 01:30Z; a new
         # answer landed at 01:45Z; the round's `pass` was registered at 02:00Z. The verdict is
         # newer than the answer, but the round never saw it -- no approval, no next hop.
         pk = _ask(world, at="2026-10-11T01:30:00Z")
@@ -374,7 +374,7 @@ class TestAnswerCheckGate:
     @pytest.mark.parametrize("asked_at", [None, "2026-10-11T00:10:00Z", "last week"])
     def test_a_question_whose_asking_run_has_no_record_holds_instead_of_approving(
             self, world, asked_at):
-        # 0688 TR0008 rev1 review: count=1 after a pass, an answer to check -- the control
+        # review: count=1 after a pass, an answer to check -- the control
         # asks for the answer-check round. The same records with the asking run gone (purged
         # after 90 days) cannot say whether the question was about this slot: held.
         _ask(world, created_at=asked_at)
@@ -498,7 +498,7 @@ def review_answers_module():
 # ═══════════════════════════ -1 / finite: the answer loop and a running round ═══════════════════════════
 
 class TestUntilItPassesAnswerLoop:
-    """0688 TR0008 review: under -1 a check that went `issues` → rework → a plain `pass` that
+    """review: under -1 a check that went `issues` → rework → a plain `pass` that
     asked again bought a new answer-check round every cycle. The gate counts the rounds that
     were given an answer to check (`_answer_checks_spent`) from the delivery ledger."""
 
@@ -699,7 +699,7 @@ class TestAnsweredQuestionMention:
     @pytest.mark.parametrize("broken", ["lookup", "purged_run", "ledger_write", "ledger_read"])
     def test_a_hop_whose_answers_cannot_be_read_or_recorded_raises(self, world, monkeypatch,
                                                                    stage, broken):
-        # 0688 TR0008 rev1 review: the old builder swallowed this and launched the hop with
+        # review: the old builder swallowed this and launched the hop with
         # its base mention; its verdict / fix was later taken as the answer's comparison.
         _ask(world)
         if broken == "lookup":
@@ -770,7 +770,7 @@ class TestAnsweredQuestionMention:
 # ═══════════════════════════ a hop that cannot be given its answers is not launched ═══════════════════════════
 
 class TestUndeliveredAnswersAreNotLaunched:
-    """0688 TR0008 rev1 review: a check review / rework built while the questions could not be
+    """review: a check review / rework built while the questions could not be
     read ran with its base mention, and its later verdict / fix approved the slot."""
 
     @pytest.fixture
@@ -1093,7 +1093,7 @@ class TestAnswerCheckAfterResume:
         assert gate_chain["settle"] == [] and gate_chain["started"] == []
 
     def test_a_question_whose_asking_run_is_gone_holds_the_cold_resume(self, last_round):
-        # 0688 TR0008 rev1 review: an earlier hop of the slot asked (its run since purged);
+        # review: an earlier hop of the slot asked (its run since purged);
         # the rework hop parks on its own question; the answer resumes the gate cold. Whether
         # the purged run's question was about this slot cannot be told -- no approval, no
         # review, no next hop.
@@ -1186,7 +1186,7 @@ class TestAnswerCheckAfterResume:
 class TestHandoffProbeToGate:
     def test_an_unreadable_open_question_listing_never_reaches_an_approval(
             self, gate_chain, monkeypatch):
-        # 0688 TR0008 rev1 review: count=0, the work hop submitted TR on an assumption its
+        # review: count=0, the work hop submitted TR on an assumption its
         # own unanswered question states; only the group's open-container listing fails --
         # containers and items read fine.
         from modules.flow_gate.db import questions as db_questions

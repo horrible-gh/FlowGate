@@ -1,11 +1,11 @@
-"""flowgate.default.0359 T0012 (2번 묶음): 헛돈 홉을 다시 시도하게 만들기.
+"""(set 2): retry hops that produced no useful result.
 
-NR0003 §3 found the hop loop had exactly ONE edge — "a document was registered" — and no
+The review found the hop loop had exactly ONE edge — "a document was registered" — and no
 branch at all for "the hop ran and produced nothing". A worker that hit an environment fault,
 said so politely and exited 0 therefore ended the whole unmanned chain in silence, with 11
 configured providers never contacted, no failure record, no notification and no resume card.
 
-This file pins the branch that closes it (L0007 §2.1~2.8, §4.1~4.3):
+This file pins the branch that closes it:
   * a no-output hop opens another attempt on the NEXT provider, same run_id, same token;
   * the retry stops at 3 attempts / no providers left / no budget left, and the stop is
     recorded, notified and parked as a resumable card;
@@ -65,36 +65,36 @@ class FakePausedStore:
 
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
                continuation_target_seq, docs_target, docs_reached,
-               # flowgate.default.0466 T0007: no test in this file drove a real
+               # no test in this file drove a real
                # `_write_handoff_row` call before the A10 integrated-gate tests — every
                # earlier one only inspected `run` dict state. Named explicitly, not
                # swallowed by **kwargs, for the same reason the DB0009 fields below are:
                # a permissive double would silently pass while dropping the chain identity
-               # `_write_handoff_row` always sends (L5382-5440).
+               # `_write_handoff_row` always sends.
                requested_ai_group_id=None, continuation_reworker_provider_id=None,
                chain_id=None, chain_docs_target=None, chain_docs_reached=0,
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
                continuation_provider_overrides=None,
-               # flowgate.default.0596 T0004 (NR0003 rev3): named explicitly like the
+               # named explicitly like the
                # [검수] maps below -- a permissive double would silently drop the captured
                # actual work-hop executor.
                continuation_work_executor_provider_id=None,
                continuation_default_note=None,
                continuation_note_overrides=None,
-               # 0352 T0004 §3.6: unlike provider/note preferences (not sent on a SYSTEM
+               # unlike provider/note preferences (not sent on a SYSTEM
                # row unless 0435's explicit provider pin is active), the N/T authoring
                # mode + its per-item_seq selection ARE sent on every
                # upsert call, system rows included — that is the pause->resume mode-loss
                # bug fix this group's TR ships.
                continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
-               # flowgate.default.0400 M0005: sent on every upsert call, system rows included
+               # sent on every upsert call, system rows included
                # — same "policy, not preference" treatment as instruction_mode above.
                continuation_step_timeout_sec=None,
-               # flowgate.default.0443 T0002: same treatment as the budget pick above.
+               # same treatment as the budget pick above.
                continuation_restart_max_attempts=None,
-               # 0414 DB0009 §5-3: named explicitly, not swallowed by **kwargs. A permissive
+               # : named explicitly, not swallowed by **kwargs. A permissive
                # double would pass while the real upsert silently dropped the [검수] selection
                # — the exact class of miss DB0009 warns about, and the worst one, because a
                # dropped review selection means "approved with nobody reviewing it".
@@ -143,7 +143,7 @@ class FakePausedStore:
         return group_id in self.rows
 
     def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
-        # flowgate.default.0466 T0007 rev4 (review finding #3 / A11): resume_chain()'s
+        # (review finding #3 / A11): resume_chain's
         # CAS-consume, needed so the new integrated A10-3-then-resume test can drive a
         # real [이어서 진행] on the row a real park just wrote, instead of a row a test
         # hand-built and fed straight to _park_handoff.
@@ -172,7 +172,7 @@ class FakeDocs:
         self.reveal_after_calls: int | None = None
         self.pending: list[dict] = []
         self.calls = 0
-        # 0446 T0008 §4-2: the `edit` scope is judged by `_probe_doc_revision`, i.e. by this
+        # the `edit` scope is judged by `_probe_doc_revision`, i.e. by this
         # number going up — the FakeDocs counterpart of the `revision_no = revision_no + 1`
         # the inbox's `_handle_edit` performs. A rework worker's ONLY visible product.
         self.revision_no = 3
@@ -183,7 +183,7 @@ class FakeDocs:
         """Raise the revision after `after_calls` more reads.
 
         The scoped equivalent of `reveal_after_calls`: a write that lands between the judge's
-        probe and the moment a second worker would start (L0007 §5 / T0008 §3-4).
+        probe and the moment a second worker would start.
         """
         self._late_revision_in = after_calls
 
@@ -211,7 +211,7 @@ class FakeDocs:
 
 
 class FakeReviews:
-    """flowgate.default.0466 T0007: `document_reviews` rows for a review hop's own scope
+    """`document_reviews` rows for a review hop's own scope
     oracle (`_probe_doc_reviews`), with the same scripted-late-arrival shape `FakeDocs`
     gives the edit/rework oracle above."""
 
@@ -221,7 +221,7 @@ class FakeReviews:
 
     def arm_late_verdict(self, after_calls: int = 1) -> None:
         """A verdict row lands after `after_calls` more reads — the review-scope twin of
-        `FakeDocs.arm_late_revision` (L0007 §5 / T0007 §3.1.3's re-probe-before-retry)."""
+        `FakeDocs.arm_late_revision` ('s re-probe-before-retry)."""
         self._late_verdict_in = after_calls
 
     def list_by_doc(self, doc_id):
@@ -236,7 +236,7 @@ class FakeReviews:
         return list(self.rows.get(doc_id, []))
 
     def add_verdict(self, doc_id, verdict="pass", revision_no=0):
-        # flowgate.default.0466 T0007 rev4: newest first, like the real
+        # newest first, like the real
         # document_reviews.list_by_doc contract `resolve_review_gate` relies on
         # (`latest = reviews[0]`) — a plain append put the FIRST verdict ever added
         # permanently at index 0, which was invisible while no test ever added a second
@@ -263,7 +263,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc, "_auto_resume", {})
-    # 0661 T0004 (harness repair): admission.start_run probes the group's branch-merge claim
+    # (harness repair): admission.start_run probes the group's branch-merge claim
     # (0635) through the store before anything else; this fixture runs with no database
     # (`_get_db()` is None under TESTING=1), so every start_run died with
     # `branch_merge_claim_query_failed` and no engine test in the files reusing `env` could
@@ -279,13 +279,13 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
     monkeypatch.setattr(svc.db_reviews, "list_by_doc", reviews.list_by_doc)
-    # No question ever pending by default (NR0003 후속 조치 제안 1) — individual tests
+    # No question ever pending by default (follow-up proposal 1) — individual tests
     # override this to exercise the pending-question guard. The anchor mock defaults to
     # identity; the guard tests below supply their own anchor + container fakes to prove
     # the reanchored lookup is what actually gets queried, not the raw spine doc_ref.
     monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: doc_id)
     monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
-    # 0688 T#2: the group's open containers, which the hand-off's own-question probe
+    # the group's open containers, which the hand-off's own-question probe
     # (finalize.open_questions_raised_by_run) lists first -- a probe that cannot read it
     # parks the chain instead of handing off. Read off the container fake in force, so the
     # tests that open a question on ANCHOR (`_open_question_of`) list it, and none else do.
@@ -312,7 +312,7 @@ def env(monkeypatch, tmp_path):
     })
     monkeypatch.setattr(svc.token_service, "revoke", lambda *a, **kw: None)
     # The dead hop's token is normally still unconsumed — that is the whole reason the retry
-    # can reuse it (NR0003 §6 measured 24 such tokens).
+    # can reuse it (measured 24 such tokens).
     monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
         "token_id": tid, "consumed_at": None, "revoked_at": None, "expires_at": FAR_FUTURE,
     })
@@ -360,10 +360,10 @@ def _start(env, *, target=2, provider_id=None, provider_pinned=None,
 
 
 def _start_rework(env, **kw):
-    """A 반려 재작업 run exactly as `ai_invoke_routes` starts one (0446 T0008).
+    """A rejected-document rework run exactly as `ai_invoke_routes` starts one.
 
     `_TOKEN_SCOPE` folds rework / vr_correction / work_plan_fill / plain edit all into the
-    `edit` token scope (T0008 §3-9), so from the engine's side there is one shape and this
+    `edit` token scope, so from the engine's side there is one shape and this
     helper is it: mode="single", action_scope="edit", no caller `completion_oracle`, and —
     for rework specifically — no `issue_builder` (the route declares none, §3-6).
     """
@@ -386,10 +386,10 @@ def _start_rework(env, **kw):
 
 
 def _start_review(env, *, chain_id="run_chain_review", **kw):
-    """A review hop exactly as `_spawn_review_hop` starts one (flowgate.default.0466 T0007).
+    """A review hop exactly as `_spawn_review_hop` starts one.
 
     `hop_kind=REVIEW_HOP_KIND` + a `chain_id` is what `_review_hop_recovery_open` checks for
-    — that combination is the ENGINE's own signature (T0007 §3.1.1), never a plain human
+    — that combination is the ENGINE's own signature, never a plain human
     single review call (which carries neither).
     """
     return svc.start_run(
@@ -413,7 +413,7 @@ def _start_review(env, *, chain_id="run_chain_review", **kw):
 
 
 def _scripted_review_worker(env, monkeypatch, script):
-    """The review-scope twin of `_scripted_rework_worker` (T0007 §3.1).
+    """The review-scope twin of `_scripted_rework_worker`.
 
     Entries are (last_message, exit_code, action) with action in (None, "verdict",
     "late_verdict"). Unlike the edit/rework fakes, a REAL non-zero exit code is scriptable
@@ -451,9 +451,9 @@ def _wait_finished(run_id, timeout=30.0):
 
 
 def _wait_until(predicate, timeout=5.0, message="condition"):
-    """Poll `predicate` until it is truthy (flowgate.default.0466 T0007 A10 integrated
+    """Poll `predicate` until it is truthy (the earlier change the earlier implementation A10 integrated
     tests). `_worker` runs on a background thread and calls `_maybe_auto_resume_hop`
-    strictly AFTER `_wait_finished` can already observe `status == "finished"` (L2601-2604),
+    strictly AFTER `_wait_finished` can already observe `status == "finished"`,
     so anything that only happens inside that tail call — a real park, a real gate
     settlement — needs its own wait instead of racing `_wait_finished`'s return."""
     deadline = time.monotonic() + timeout
@@ -489,7 +489,7 @@ def _scripted_worker(env, monkeypatch, script):
 
 
 def _scripted_rework_worker(env, monkeypatch, script):
-    """The rework twin of `_scripted_worker` (0446 T0008 §4-2).
+    """The rework twin of `_scripted_worker`.
 
     An `edit` token cannot register a document, so "the work landed" here means the bound
     document's revision went up. Entries are (last_message, action) with action in
@@ -519,7 +519,7 @@ def _scripted_rework_worker(env, monkeypatch, script):
     return launches
 
 
-# ── The fix: a wasted lap becomes another attempt (L0007 §2.1 / P0006 [핵심]) ──
+# ── The fix: a wasted lap becomes another attempt ([core]) ──
 
 class TestNoOutputRetry:
     def test_same_provider_retry_gets_the_hop_and_saves_the_chain(self, env, monkeypatch):
@@ -533,7 +533,7 @@ class TestNoOutputRetry:
         assert launches == ["aip_1", "aip_1"]      # the selected provider owns both attempts
         assert run["attempts_used"] == 2
         assert (run["outcome"], run["docs_reached"]) == ("complete", 1)
-        # Same run, same identity — P0006 [핵심] 1: a retry must not look like a second run.
+        # Same run, same identity — the plan [core] 1: a retry must not look like a second run.
         assert run["run_id"] == res["run_id"]
 
         switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
@@ -542,7 +542,7 @@ class TestNoOutputRetry:
         assert switches[0]["retry_kind"] == "no_output"
         assert switches[0]["token_reissued"] is False   # the dead hop's token was still good
         assert "실행환경 장애" in switches[0]["detail"]
-        # started fires once per RUN, not once per attempt (P0006 부록 D).
+        # started fires once per RUN, not once per attempt (appendix D).
         assert len([t for t, _ in env["events"] if t == "ai_invoke_started"]) == 1
 
         history = run["fallback_history"]
@@ -582,7 +582,7 @@ class TestNoOutputRetry:
         assert run["resumable"] is True
         assert '"OpenAI Codex CLI" produced no document in 2 attempts' in run["stop_reason"]
 
-        # 1. it survives a server restart (NR0003 §4: nothing was persisted at all before)
+        # 1. it survives a server restart (nothing was persisted at all before)
         assert len(env["records"]) == 1
         record = env["records"][0]
         assert record["run_id"] == res["run_id"]
@@ -622,14 +622,14 @@ class TestNoOutputRetry:
         run = _wait_finished(res["run_id"])
 
         # Even a one-provider project gets exactly the one same-provider retry promised by
-        # 0435 T0004, then stops loudly without inventing a fallback.
+        # then stops loudly without inventing a fallback.
         assert launches == ["aip_1", "aip_1"]
         assert run["attempts_used"] == 2
         assert run["stop_code"] == "no_output_exhausted"
         assert len(env["signals"]) == 1
 
     def test_late_registration_cancels_the_retry(self, env, monkeypatch):
-        # L0007 §5: the document lands after the judge looked but before a second worker
+        # the document lands after the judge looked but before a second worker
         # would start. Two documents from one hop is worse than one wasted hop.
         launches = _scripted_worker(env, monkeypatch, [("등록 시도 중...", False)])
         env["docs"].reveal_after_calls = 1
@@ -645,7 +645,7 @@ class TestNoOutputRetry:
 
     def test_last_message_of_the_earlier_attempt_survives(self, env, monkeypatch):
         # A later attempt may say nothing at all; the sentence that explains the failure is
-        # usually the one the first attempt left behind (L0007 §2.6).
+        # usually the one the first attempt left behind.
         script = [("첫 시도가 남긴 원인 설명", False), (None, False), (None, False)]
         _scripted_worker(env, monkeypatch, script)
         res = _start(env)
@@ -654,7 +654,7 @@ class TestNoOutputRetry:
         assert run["last_message_received"] is True
 
 
-# ── What must NOT be retried (L0007 §2.4 / P0006 [엣지]) ─────────────────────
+# ── What must NOT be retried ([edge]) ─────────────────────
 
 JUDGED_RUN_ID = "run_judged_0359"
 
@@ -676,7 +676,7 @@ class TestRetryEligibility:
         assert svc._retry_eligible(_judged_run()) is True
 
     @pytest.mark.parametrize("over, why", [
-        # 0446 T0008 §4-1: this used to read "a single run has no chain to save". It is now
+        # this used to read "a single run has no chain to save". It is now
         # split in two, because the mode alone no longer decides. (a) A single run with NO
         # engine-planted scope oracle is still judged by documents and still blocked; the
         # positive half (b) is `test_scope_oracle_rework_run_is_eligible` below.
@@ -696,9 +696,9 @@ class TestRetryEligibility:
         ({"end_reason": "cancelled"}, "the user decided"),
         ({"end_reason": "all_providers_failed"}, "the provider walk already gave its verdict"),
         ({"pause_requested": True}, "a pause is pending"),
-        # 0446 T0008 §4-1: still blocked, and now for a stated reason. `scope_oracle_run`
+        # still blocked, and now for a stated reason. `scope_oracle_run`
         # is pinned False so this case cannot silently turn green if `_judged_run`'s
-        # defaults ever change: what stays blocked is a CALLER's override (0248 B0001, the
+        # defaults ever change: what stays blocked is a CALLER's override (the regression, the
         # legacy Q&A follow-up), whose success criterion lives outside the engine.
         ({"completion_oracle": (lambda: True), "scope_oracle_run": False},
          "success is not measured in documents, and a caller's oracle is not the engine's "
@@ -719,9 +719,9 @@ class TestRetryEligibility:
         assert svc._retry_eligible(run) is False
 
     def test_scope_oracle_rework_run_is_eligible(self):
-        """0446 T0008 §4-1 (b) / §5-4: all four gates open at once, or nothing happens.
+        """(b) /: all four gates open at once, or nothing happens.
 
-        NR0003 §6-2 named three (mode, docs_target, attempts_max). The fourth —
+        named three (mode, docs_target, attempts_max). The fourth —
         `completion_oracle is not None` — is invisible from the outside because the ENGINE
         plants that oracle itself for every scoped run, so a rework never reaches this
         function with it unset.
@@ -799,7 +799,7 @@ class TestRetryEligibility:
 
     def test_registration_errors_do_not_block(self):
         # "tried to register and failed" is still zero documents, and another AI may get
-        # through — these three deliberately do NOT veto a retry (L0007 §2.4).
+        # through — these three deliberately do NOT veto a retry.
         assert svc._retry_eligible(_judged_run(
             register_errors=[{"status": 409}], tool_call_misses=2, turn_limit_exhausted=True,
         )) is True
@@ -850,7 +850,7 @@ class TestRetryToken:
         assert prepared["reissued"] is True
         assert (prepared["token_id"], prepared["token_id_before"]) == ("tok_b", "tok_a")
         assert run["token_id"] == "tok_b" and run["raw_token"] == "raw_b"
-        # T0004 rev1 rejection: the reissued token's scratch must move WITH token_id/
+        # rejection: the reissued token's scratch must move WITH token_id/
         # raw_token, never linger on the pre-reissue hop's scratch (tok_a's).
         assert run["token_scratch_dir"] == "/scratch/tok_b"
 
@@ -863,7 +863,7 @@ class TestRetryToken:
         assert svc._prepare_retry_token(self._run(tmp_path)) is None
 
 
-# ── Stop classification (L0007 §4.1 ~ §4.3) ─────────────────────────────────
+# ── Stop classification ─────────────────────────────────
 
 class TestStopCode:
     def test_no_output_is_named(self):
@@ -885,7 +885,7 @@ class TestStopCode:
         assert svc._resolve_stop_code(run, respawn_pending=False) == "approve_denied"
 
     def test_single_mode_without_a_scope_oracle_has_no_stop_code(self):
-        # 0446 T0008 §4-1: was `test_single_mode_has_no_stop_code`. Half of it survives
+        # was `test_single_mode_has_no_stop_code`. Half of it survives
         # unchanged — a plain single run still ends nameless — and the other half moved to
         # the two cases below, where the mode is the same and the verdict is not.
         run = _judged_run(mode="single")
@@ -930,7 +930,7 @@ class TestStopCode:
         assert svc.mark_chain_stop(GROUP, "head_slot_mismatch") is False
 
 
-# ── flowgate.default.0435: a human pin wins; no-output never changes provider ─
+# ── the earlier change: a human pin wins; no-output never changes provider ─
 
 class TestSelectedProviderContract0435:
     def test_pinned_provider_outranks_a_different_stored_provider(self, env, monkeypatch):
@@ -1040,7 +1040,7 @@ class TestUnpinnedHeaderKeepsTheStartupTail:
 
 class TestHopBudget:
     def test_continuous_hop_is_a_flat_hour(self):
-        # The old formula gave the LAST hop the SMALLEST budget (min(3600 × 남은 슬롯, 14400)).
+        # The old formula gave the LAST hop the SMALLEST budget (min(3600 × remaining slots, 14400)).
         assert svc._resolve_timeout_sec("continuous", 1, False) == svc.HOP_TIMEOUT_SEC == 3600
         assert svc._resolve_timeout_sec("continuous", 5, True) == 3600
 
@@ -1055,7 +1055,7 @@ class TestHopBudget:
         assert res["deadline_at"] > res["started_at"]
 
 
-# -- NR0003 후속 조치 제안 1~3: a Q registered mid-hop is not a silent failure ----
+# -- the review follow-up proposal 1~3: a Q registered mid-hop is not a silent failure ----
 
 class TestReviewModeDocsTarget:
     def test_review_mode_hop_targets_zero_documents(self, env, monkeypatch):
@@ -1088,7 +1088,7 @@ def _judged_run_with_doc_ref(**over):
 # The reanchored work-context document (the TR/NR draft a user is actually looking at) —
 # deliberately different from DOC_REF (the run's spine) so these tests fail if the guard
 # regresses to querying the spine directly instead of going through resolve_question_anchor,
-# exactly the bug NR0003 found (group 0389).
+# exactly the bug the review found (the earlier change).
 ANCHOR = "flowgate.default.0359.0003-TR"
 
 
@@ -1112,7 +1112,7 @@ class _AnyRun:
 def _open_question_of(monkeypatch, asker_run_id=None, asker_kind="ai", status="pending"):
     """One open item on ANCHOR, registered by ``asker_run_id`` (default: the probing run).
 
-    0661 T0004 (review rej_01M4HRWSVP3M0BSH finding 1): `_has_pending_question` is keyed on
+    (review rej_01M4HRWSVP3M0BSH finding 1): `_has_pending_question` is keyed on
     the run's own open item, not on the container status alone.
     """
     monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
@@ -1133,7 +1133,7 @@ class TestPendingQuestionGuard:
         assert run["retry_block_reason"] == "question_pending"
 
     def test_querying_the_spine_directly_would_miss_it(self, monkeypatch):
-        # NR0003's actual bug: the container the router wrote lives under the reanchored
+        # 's actual bug: the container the router wrote lives under the reanchored
         # doc, never under the spine. The mapping below has no DOC_REF key, so a guard that
         # regressed to querying run["doc_ref"] as-is would see nothing and wrongly retry.
         assert DOC_REF != ANCHOR
@@ -1179,7 +1179,7 @@ class TestPendingQuestionGuard:
         assert run.get("retry_block_reason") != "question_pending"
 
     def test_partial_output_then_own_question_is_question_pending(self, monkeypatch):
-        # 0661 T0004 F4 (review rej_01M4HRWSVP3M0BSH finding 2): a hop that landed part of
+        # (review rej_01M4HRWSVP3M0BSH finding 2): a hop that landed part of
         # its documents and then registered its OWN Q parks as question_pending — before,
         # the partial-output guard returned first and the Q never reached the responder.
         _open_question_of(monkeypatch, asker_run_id=JUDGED_RUN_ID)
@@ -1200,7 +1200,7 @@ class TestPendingQuestionGuard:
     ])
     def test_a_foreign_open_question_does_not_park_an_empty_hop(
             self, monkeypatch, asker_run_id, asker_kind):
-        # 0661 T0004 safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): the anchor
+        # safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): the anchor
         # stays 'pending' because of a Q this run did not register. The empty hop is an
         # ordinary no-output hop (retry), never a question_pending park that the responder
         # dispatch — keyed on this run's own items — could not serve.
@@ -1259,9 +1259,9 @@ class TestPendingQuestionEndToEnd:
         assert (row["stop_kind"], row["stop_code"]) == ("system", "question_pending")
 
 
-# -- 0446 T0008 (NR0003 R2~R4): 반려 재작업(single/edit) gets the recovery machinery ----
+# -- the earlier implementation: rejected-document rework(single/edit) gets the recovery machinery ----
 #
-# NR0003 measured 27 of 242 rework runs registering nothing at all, and the 15 that ended
+# The review measured 27 of 242 rework runs registering nothing at all, and the 15 that ended
 # cleanly all shared one record shape: attempts_used 1, stop_code NULL, zero notifications.
 # Everything below is that shape, run end to end through the real engine.
 
@@ -1295,7 +1295,7 @@ class TestSingleReworkNoOutputRecovery0446:
         switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
         assert len(switches) == 1
         assert (switches[0]["reason"], switches[0]["retry_kind"]) == ("no_output", "no_output")
-        # §3-6: reuse only. rework declares no issue_builder, and NR0003 measured 15/15 of
+        # : reuse only. rework declares no issue_builder, and the review measured 15/15 of
         # these tokens still unconsumed, so the reissue path is never needed.
         assert switches[0]["token_reissued"] is False
         assert run["docs_reached"] == 0            # an edit token registers nothing, ever
@@ -1329,7 +1329,7 @@ class TestSingleReworkNoOutputRecovery0446:
 
     def test_a_question_only_rework_is_named_question_pending_and_stays_silent(
             self, env, monkeypatch):
-        """§4-2 case 2 — NR0003's 4 legitimate stops, told apart from the 11 dead ones."""
+        """case 2 — the review's 4 legitimate stops, told apart from the 11 dead ones."""
         self._no_sequence(monkeypatch)
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
         _open_question_of(monkeypatch)
@@ -1492,7 +1492,7 @@ class TestSingleReworkNoOutputRecovery0446:
         assert env["signals"] == []
 
 
-# ── flowgate.default.0622 T0004: gate-owned rework no-output recovery ────────────────
+# ── the earlier change the earlier implementation: gate-owned rework no-output recovery ────────────────
 class TestReworkHopNoOutputRecoveryIntegratedGate0622:
     ITEM_SEQ = 5
 
@@ -1597,7 +1597,7 @@ class TestReworkHopNoOutputRecoveryIntegratedGate0622:
         )
 
 
-# ── flowgate.default.0466 T0007: review-hop no-verdict recovery (A10) ────────────────────
+# ── the earlier change the earlier implementation: review-hop no-verdict recovery (A10) ────────────────────
 class TestReviewHopNoVerdictRecovery0466:
     """A10: an ENGINE-spawned review hop (`hop_kind=REVIEW_HOP_KIND`, inside a chain) may
     reopen on the SAME reviewer when an attempt leaves no `document_reviews` row. The
@@ -1607,7 +1607,7 @@ class TestReviewHopNoVerdictRecovery0466:
     def test_a_usage_limit_first_attempt_recovers_on_the_second_and_records_one_verdict(
             self, env, monkeypatch):
         """A10-1/A10-2: started_ok, non-zero exit, no message, no review row on attempt 1 —
-        the shape T0007 names — then a real verdict lands on attempt 2. Same reviewer both
+        the shape the earlier implementation names — then a real verdict lands on attempt 2. Same reviewer both
         times, exactly 2 attempts, exactly one review row, no failure signal."""
         launches = _scripted_review_worker(env, monkeypatch, [
             (None, 1, None),          # usage-limit crash: nothing written, non-zero exit
@@ -1671,7 +1671,7 @@ class TestReviewHopNoVerdictRecovery0466:
 
     def test_a_late_verdict_between_judge_and_retry_cancels_the_second_attempt(
             self, env, monkeypatch):
-        """T0007 §3.1.3: the recheck right before opening attempt 2 must ask the oracle
+        """the recheck right before opening attempt 2 must ask the oracle
         again — a verdict that lands in that exact window must not be reviewed twice."""
         launches = _scripted_review_worker(env, monkeypatch, [
             (None, 1, "late_verdict"),
@@ -1686,7 +1686,7 @@ class TestReviewHopNoVerdictRecovery0466:
 
     def test_no_override_review_hop_locks_onto_whichever_provider_actually_started(
             self, env, monkeypatch):
-        """T0007 §2.3/§3.1.5: with no explicit reviewer pin the chain keeps every provider (so
+        """with no explicit reviewer pin the chain keeps every provider (so
         a startup failure can still fall through within the FIRST attempt), but once one has
         actually started, the no-verdict retry must reuse exactly that one — never re-walk the
         tiers back to the provider that failed to spawn."""
@@ -1718,7 +1718,7 @@ class TestReviewHopNoVerdictRecovery0466:
 
     def test_a_plain_single_review_call_without_the_engine_signature_stays_one_shot(
             self, env, monkeypatch):
-        """Control group (T0007 §3.1.1): a human's plain single review call never sets
+        """Control group: a human's plain single review call never sets
         `hop_kind=REVIEW_HOP_KIND` — `ai_invoke_routes` starts every review run with
         `hop_kind` at its `start_run` default (`WORK_HOP_KIND`); only `_spawn_review_hop`
         ever passes `REVIEW_HOP_KIND` — so it must keep the pre-existing one-shot behaviour,
@@ -1746,11 +1746,11 @@ class TestReviewHopNoVerdictRecovery0466:
         assert run["outcome"] == "none"
 
 
-# ── flowgate.default.0466 T0007 rev2 review finding #2: A10-1/A10-3 at the INTEGRATED
+# ── the earlier change the earlier implementation review finding #2: A10-1/A10-3 at the INTEGRATED
 # boundary. Every test above only proves the run's OWN attempts/outcome; production never
 # reaches `review_no_verdict` that way — `_worker`'s tail call to `_maybe_auto_resume_hop`
-# (L2601-2604) pops the bundle `run_review_gate`'s review branch queues BEFORE the hop is
-# spawned (L2539-2544) and re-resolves the SAME gate for real once the hop ends. A
+# pops the bundle `run_review_gate`'s review branch queues BEFORE the hop is
+# spawned and re-resolves the SAME gate for real once the hop ends. A
 # standalone `_start_review()` call with nothing queued never exercises that re-entry —
 # `_maybe_auto_resume_hop` finds nothing to pop and returns immediately — so it can never
 # reach `_park_handoff`/`resolve_review_gate`'s stop branch, no matter how the worker itself
@@ -1763,11 +1763,11 @@ class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
     # (the new resume test below) has a real pending worker step to target — production
     # never parks a review-only sequence with nothing else left to do, and
     # `_paused_row_resume_state`'s `docs_target` check would otherwise refuse the resume
-    # with `no_pending_worker_steps` (flowgate.default.0466 T0007 rev4 review finding #3).
+    # with `no_pending_worker_steps` (review finding #3).
     NEXT_ITEM_SEQ = 6
 
     def _wire_pending_slot(self, env, monkeypatch):
-        """Makes `_pending_review_slot(DOC_REF)` resolve for real (L5878-5918) — the other
+        """Makes `_pending_review_slot(DOC_REF)` resolve for real — the other
         tests in this file never need this because they never call `resolve_review_gate`."""
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda s: [
             {"item_seq": self.ITEM_SEQ, "type": "TR", "result_doc_id": DOC_REF},
@@ -1781,10 +1781,10 @@ class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
 
     def _queue_first_dispatch(self, env):
         """What `run_review_gate`'s review branch queues before spawning the hop
-        (L6539-6544) — `last_stage`/`rounds_before` are exactly what `_check_expected_
+        — `last_stage`/`rounds_before` are exactly what `_check_expected_
         progress` reads back on the re-entry call.
 
-        flowgate.default.0466 T0007 rev4 (review finding #3): T0007 §4 A10-1 spells out
+        (review finding #3): the earlier implementation A10-1 spells out
         `count=2`, "1회차 issues와 rework가 착지한 뒤 2회차 review의 첫 attempt가..." — a
         REAL round 2, not a bare first-and-only round mislabeled as one. Round 1's `issues`
         verdict is seeded for real (the doc's own `revision_no`, still at `FakeDocs`'
@@ -1840,7 +1840,7 @@ class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
         # Round/rejection state is unchanged: round 2 never recorded a review row of its
         # own, so only round 1's seeded `issues` verdict is present — rounds_used stays 1.
         assert [r["verdict"] for r in env["reviews"].rows[DOC_REF]] == ["issues"]
-        # T0007 rev4 §3.2.5: exactly one failure signal on final failure — never zero.
+        # exactly one failure signal on final failure — never zero.
         assert len(env["signals"]) == 1
         signal = env["signals"][0]
         assert signal["extra"]["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
@@ -1907,7 +1907,7 @@ class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
 
         _wait_until(lambda: bool(settled), message="the real gate settling the landed pass")
         assert settled == [DOC_REF]
-        # No failure signal on a successful recovery (T0007 §3.2.5): the failed FIRST
+        # No failure signal on a successful recovery: the failed FIRST
         # attempt must not park or notify the chain that went on to pass on the second.
         assert env["signals"] == []
         # The gate resolved the SAME verdict the worker just recorded, not a stale park.

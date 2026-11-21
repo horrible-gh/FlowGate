@@ -9,7 +9,7 @@ import {
 } from '@/features/git/worktreeReasons'
 import { manualMergeView, mergeResultRow, mergeResults, noDetails, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#7 — C21 for the merge / follow-up push / Fetch columns of 0066 D#2 §3-5:
+// C21 for the merge / follow-up push / Fetch columns of the earlier implementation:
 // read-only > 403 > in progress > checking > no workspace > (E8 read failed) > no target > the
 // first E8 `blocked[]` entry; push: the group blocker or the row's reason; Fetch: ranks 1–3 only.
 // A waiting approval is never a reason (C17).

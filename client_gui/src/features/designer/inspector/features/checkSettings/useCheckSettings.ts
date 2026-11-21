@@ -13,7 +13,7 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
     const saved = c?.settings.value
     if (!saved) return null
     const gate = c?.gate.value
-    // flowgate.v02.0132 T#4: the lock keeps the server's reason (the gate's, else the settings read's) and the gate's Git state
+    // the lock keeps the server's reason (the gate's, else the settings read's) and the gate's Git state
     return { ...saved, locked: saved.locked || gate?.settings_locked === true || !!c?.busy.value || c?.hasRequest() === true,
       lockReason: gate?.settings_lock_reason ?? saved.lockReason ?? null, gitActive: gate?.git_active === true, parked: gate?.parked === true }
   })
@@ -26,7 +26,7 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
     const kind = settingsNodeErrorOf(last.error)
     return { field: last.field, kind, key: last.field === 'merge_target_branch' && kind === 'invalid' ? 'target.invalid' : null }
   })
-  // flowgate.v02.0148 T#2: each field keeps the refusal of its own last write (the single `failure` is the latest one).
+  // each field keeps the refusal of its own last write (the single `failure` is the latest one).
   const fieldFailures = computed(() => {
     const out: Record<string, { kind: CheckSettingsFailureKind; key: string | null }> = {}
     for (const [field, error] of Object.entries(context.value?.failures.value ?? {})) {
@@ -54,7 +54,7 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
     errorKind: computed(() => node.value === null && context.value?.error.value ? settingsNodeErrorOf(context.value.error.value) : null),
     failure,
     fieldFailures,
-    /** Per field: `saving` / `saved` / `failed` (flowgate.v02.0148 T#2). */
+    /** Per field: `saving` / `saved` / `failed`. */
     fieldStates: computed(() => context.value?.fieldStates.value ?? {}),
     disposed: computed(() => failure.value?.kind === 'disposed'),
     placing: computed(() => target()?.nodeId.startsWith('tmp_') === true),

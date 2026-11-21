@@ -86,7 +86,7 @@ from test_fg_integration_persistence_0156 import (
 
 def test_s_il_l2_the_attempt_worktree_lock_is_a_failed_commit_never_pending(tmp_path, monkeypatch):
     """L2: a result commit already made (the integration reuses it) never touches the attempt worktree; the result
-    commit step (T#8, ``create_attempt_commit``) meeting an attempt worktree ``index.lock`` answers ``commit_failed``,
+    commit step (``create_attempt_commit``) meeting an attempt worktree ``index.lock`` answers ``commit_failed``,
     which ``integrate`` records as ``failed`` (only ``git_busy`` — an app lock with a release notice — is pending)."""
     if not shutil.which("git"):
         pytest.skip("Git is not installed")

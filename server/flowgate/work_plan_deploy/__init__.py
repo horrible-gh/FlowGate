@@ -1,4 +1,4 @@
-"""Work plan deploy (flowgate.v02.0074 T#4, D0006 §3.1 ~ §3.6): a WP card's plan becomes Designer cards.
+"""Work plan deploy: a WP card's plan becomes Designer cards.
 
 The steps of the work plan a Designer WP card holds are projected onto cards of the same Flow's Graph draft: one card
 per WP card id (N + NR, T + TR, TS + TSR, D / P / L / DB), chained after the WP card in plan order. A step's

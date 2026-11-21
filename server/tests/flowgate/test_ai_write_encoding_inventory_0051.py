@@ -1,4 +1,4 @@
-"""flowgate.v02test.0051: every write route an AI worker token can reach is classified for the encoding gate.
+"""every write route an AI worker token can reach is classified for the encoding gate.
 
 Corrupted Korean (``?? ????`` from a Windows command line) kept coming back because each
 fix guarded only the route where it was found; question / answer registration was never

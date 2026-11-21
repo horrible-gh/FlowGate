@@ -1,16 +1,16 @@
-"""Start node execution policy — flowgate.v02.0061 (R §2.1 시작점, 0002-CH turns 3 / 7 / 13 / 15).
+"""Start node execution policy — the earlier change (R start, the discussion turns 3 / 7 / 13 / 15).
 
-The ``start_node`` slot (L0009 §2.6.1, D0004 §8 Q-1) gets its decided implementation here, for what a run
+The ``start_node`` slot gets its decided implementation here, for what a run
 opens on its ``start`` control event:
 
 - ``start_node`` = ``root_start``: the run start nodes of ``flowgate.graph_validation.run_scope`` — a requirement
   / bug node (``R`` / ``B``) with no incoming live edge and at least one outgoing live edge. A root node with no
   edge at all is an isolated node (rule 1) and is not a start (turn 15 rule 3); a root node with an incoming edge
-  is no start either (L0009 §2.0), so the path through it is left out as a whole (rule 2).
+  is no start either, so the path through it is left out as a whole (rule 2).
 - A path the start nodes do not reach is never opened (turn 15 rule 4): the resolver (``frontier``) opens only
   what ``select`` returns and what an approval propagates to along its out-edges, so nothing reaches a node the
   run scope leaves out. New runs do not create node run rows for left-out nodes.
-- 0056 T#1 개정: the root-bound input (``run_service._root_bound_start``) is already ``done`` when ``select``
+- the earlier implementation revision: the root-bound input (``run_service._root_bound_start``) is already ``done`` when ``select``
   is asked; ``openable_only`` skips it and its recorded propagation is drained by the same ``start`` decision,
   as before. A root start node that is not bound is ``pending`` and is opened like any other node.
 
@@ -33,7 +33,7 @@ ROOT_START = "root_start"
 IMPL_VERSION = "1"
 
 MULTIPLE_START = "multiple_start"             # the validator's structure name of two or more start nodes
-RULE_REF = "Q-1"                              # D0004 §8: the question several start nodes still wait on
+RULE_REF = "Q-1"                              # the question several start nodes still wait on
 SLOT_KEY = "start_node"
 
 

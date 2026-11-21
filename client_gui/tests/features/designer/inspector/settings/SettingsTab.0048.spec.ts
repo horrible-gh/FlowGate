@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#9 — the settings tab with `@/features/document` mocked as a small v0.1 sequence server
+ * the settings tab with `@/features/document` mocked as a small v0.1 sequence server
  * that also refuses (D#1 §12.1; D#2 §2.4, §4.1 tests ②~⑤): the Node's row and its run AI / review count /
  * reviewer; a change saved as a PATCH holding every row with its item_id and the fields as read, nothing
  * sent when nothing changed, the rows read again right before the save; the server writing the pending rows
@@ -8,12 +8,12 @@
  * reviewer; the refusals (409 stale / disposed / Graph owner, 423, 422, 400, network) shown and read again;
  * the guard (AI running, disposed); events; a Node change; the running hop of the row (what the run took
  * from the saved row). Last, the real registry: the settings tab on v0.1 step Nodes only.
- * flowgate.v02.0053 T#7 — the same v0.1 Node, drawn as v7 draws it: no row title / state line, no save button
+ * the same v0.1 Node, drawn as v7 draws it: no row title / state line, no save button
  * and no "saved" line (a change is saved at once), no running-hop block, a done step in the same form (off),
- * the v7 items a sequence row cannot hold (지시서 · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
+ * the v7 items a sequence row cannot hold (instruction · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
  * with their reason as a tooltip, and a refusal as a red ! beside the field. A Graph card's settings are
  * cardSettings.0053.
- * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its setting (O1 0005-TR §4-3); a v0.1
+ * the progress-after-review row is removed with its setting; a v0.1
  * step has no 지시 AI row (a Graph RUN card's, O2 0007-TR §4-1).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -55,7 +55,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
-    // flowgate.v02.0053 T#7: Graph cards read their own settings (and a test card its TS) in the Frame cases.
+    // Graph cards read their own settings (and a test card its TS) in the Frame cases.
     settingsNodeRead: (...args: unknown[]) => nodeRead(...args),
     testSpecRead: (...args: unknown[]) => specRead(...args),
   }
@@ -319,7 +319,7 @@ async function mountTab(target: InspectorTarget) {
   return wrapper
 }
 
-// flowgate.v02.0051 stage 2: the three fields sit in the common run settings block (InspectorRunSettings).
+// stage 2: the three fields sit in the common run settings block (InspectorRunSettings).
 const RUN_FIELD = { provider: 'run_ai', reviewCount: 'review_count', reviewer: 'review_ai' } as const
 type Field = keyof typeof RUN_FIELD
 const select = (w: VueWrapper<any>, name: Field) => w.find(`select[data-test="inspector-run-settings-${RUN_FIELD[name]}"]`)
@@ -358,7 +358,7 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
     expect(w.text()).not.toContain('6단계')
     expect(w.text()).not.toContain('시작 전')
     expect(w.text()).not.toContain('저장')
-    // v7 execSettings order: 지시서 · 실행 설정 (flowgate.v02.0056 F2-1: no progress-after-review row, no 지시 AI on a v0.1 step).
+    // v7 execSettings order: instruction · 실행 설정 (flowgate.v02.0056 F2-1: no progress-after-review row, no 지시 AI on a v0.1 step).
     expect(
       w.findAll('[data-test="inspector-run-settings"], [data-test="settings-instruction"], [data-test="settings-policy"], [data-test="settings-instruction-ai"]').map((el) => el.attributes('data-test')),
     ).toEqual(['settings-instruction', 'inspector-run-settings'])
@@ -777,7 +777,7 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9 / flow
     expect(sections(w)).toEqual(['settings'])
   })
 
-  // flowgate.v02.0053 T#7: a Graph card has its own settings (the card API), never the v0.1 sequence's.
+  // a Graph card has its own settings (the card API), never the v0.1 sequence's.
   it.each([
     ['graph', ['settings', 'testRunSettings'], 'card'],
     ['graphGate', ['checkSettings'], null],
@@ -791,7 +791,7 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9 / flow
     expect(sequenceRead).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0053 T#7 (0053 CH §4, no sentence on an empty screen): a Node without settings has an empty
+  // (CH, no sentence on an empty screen): a Node without settings has an empty
   // 설정 area — no "why not" line, "v0.1 단계에 속하지 않은 Node" among them.
   it('the empty 설정 tab (a conflict Flow’s document) says nothing', async () => {
     const w = await mountFrame(SELECTIONS.conflict)

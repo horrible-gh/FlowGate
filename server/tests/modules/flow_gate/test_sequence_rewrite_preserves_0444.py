@@ -1,24 +1,24 @@
-"""0444 T0007 — NR0003 §4-2 · §4-6: the values a sequence rewrite must not lose.
+"""·: the values a sequence rewrite must not lose.
 
 Two defects with one shape: a row is rebuilt from somebody's payload and a value that was
 already stored quietly disappears.
 
-* §4-2 (NR0003 §2-7) — ``expand_steps_with_reports`` copied the instruction row's note onto
+* — ``expand_steps_with_reports`` copied the instruction row's note onto
   every report row it inserted, ``TSR`` included. ``attach_auto_rows`` (the pour path) has
   refused exactly that for ``TSR`` since commit ``0009e926`` ("TSR is assembled by the
   server: no provider and no note may be written for it"); commit ``178b21b2``
-  (0434 T0004 F1) added the note copy on the decision/edit path and put the
+  added the note copy on the decision/edit path and put the
   ``if report_type != "TSR"`` guard on the ``provider_id`` line only. The two sibling
   functions ended up disagreeing about the same row — a regression, not a design.
 
-* §4-6 (NR0003 §2-4) — ``edit_workflow_pending`` deletes the pending rows and re-inserts the
+* — ``edit_workflow_pending`` deletes the pending rows and re-inserts the
   caller's items verbatim. The AI sequence-edit worker is a real partial-payload caller: the
   contract it is handed (mention payload, mention rules, help example and guidance) never
   named ``provider_id``, so its PATCH cleared a provider the server never showed it.
 
-NR0003 §6 recorded that the suites which should have caught the second defect monkeypatch the
+recorded that the suites which should have caught the second defect monkeypatch the
 DB away. So every rewrite test here runs against a **real migrated sqlite** (the
-``real_sequence`` pattern of test_workflow_sequence_provider_0408.py, as TR0006 used it in
+``real_sequence`` pattern of test_workflow_sequence_provider_0408.py, as the earlier implementation used it in
 test_work_plan_apply_0444.py) and reads the rows back through the production query.
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ INSERT OR IGNORE INTO documents(
 """
 
 
-# ── A — TSR must not inherit the instruction note (NR0003 §4-2) ────────────────────
+# ── A — TSR must not inherit the instruction note ────────────────────
 
 def expanded(items: list[dict]) -> list[dict]:
     return wf_svc.expand_steps_with_reports([dict(item) for item in items], locale="ko")
@@ -98,7 +98,7 @@ def test_the_server_assembled_tsr_row_is_not_given_the_instruction_note():
 
 def test_the_tsr_row_still_carries_its_instructions_plan_source():
     """§7 server 2 — only the note is cleared. source_doc_id/source_revision_no keep
-    riding along, because 0434 T0004 F1/F2 put the automatic report in the same plan
+    riding along, because the earlier implementation F1/F2 put the automatic report in the same plan
     revision as its instruction so freshness checks see them together."""
     rows = expanded([ts_step()])
     assert rows[1]["source_doc_id"] == SOURCE_WP
@@ -107,7 +107,7 @@ def test_the_tsr_row_still_carries_its_instructions_plan_source():
 
 @pytest.mark.parametrize("code,report", [("T", "TR"), ("N", "NR")])
 def test_instruction_report_pairs_still_inherit_note_source_and_provider(code, report):
-    """§7 server 3 — the control group. The handoff 0434 T0004 F1 was fixing is the
+    """server 3 — the control group. The handoff the earlier implementation F1 was fixing is the
     N→NR / T→TR one, and it survives untouched."""
     rows = expanded([{
         "type": code, "label": code, "note": HANDOFF,
@@ -123,7 +123,7 @@ def test_instruction_report_pairs_still_inherit_note_source_and_provider(code, r
 
 
 def test_both_sibling_functions_now_build_the_same_tsr_note():
-    """§7 server 4 — the exact comparison NR0003 §2-7 ran by hand and found different."""
+    """server 4 — the exact comparison the review ran by hand and found different."""
     decision_rows = expanded([ts_step()])
     poured, _uid = pour_svc.attach_auto_rows(
         [pour_svc._new_row(1, "TS", "ko", note=HANDOFF, pair_note=HANDOFF)], "ko", 1,
@@ -133,7 +133,7 @@ def test_both_sibling_functions_now_build_the_same_tsr_note():
     assert decision_rows[1]["provider_id"] == poured[1]["provider_id"] is None
 
 
-# ── B — the pending-row rewrite must not drop a stored provider (NR0003 §4-6) ──────
+# ── B — the pending-row rewrite must not drop a stored provider ──────
 
 class SqliteStore:
     """Minimal real-SQL store: the query text still comes from the production registry."""

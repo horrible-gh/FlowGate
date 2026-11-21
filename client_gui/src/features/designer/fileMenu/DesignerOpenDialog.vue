@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0043 — File › Group 열기… / Flow 열기…: the current Project's Groups, or its
+  <!-- File › Group Open… / Flow Open…: the current Project's Groups, or its
        Flows under their Groups, from the same group tree the Project Explorer shows (the store's
        cached read). Choosing a row emits it; the Shell does the opening (Explorer selection,
        Center tab). No text beyond the title, the search field and the rows. -->
@@ -139,7 +139,7 @@ async function load(force = false) {
     nodes.value = next
   } catch (err) {
     if (seq !== readSeq) return
-    // flowgate.v02.0088 F10: the title says load_failed in the current locale; keep only the server's words.
+    // the title says load_failed in the current locale; keep only the server's words.
     error.value = err instanceof Error ? err.message.trim() : ''
   } finally {
     if (seq === readSeq) loading.value = false
@@ -163,7 +163,7 @@ watch(
 
 const project = computed(() => (props.projectId ? buildExplorerProject(nodes.value, projectNodeId(props.projectId)) : null))
 
-// Group 열기 filters the Groups by name; Flow 열기 keeps a Flow's Group around it (the Explorer's
+// Group Open filters the Groups by name; Flow Open keeps a Flow's Group around it (the Explorer's
 // own search rule) and shows only Groups that have a Flow to choose.
 const groups = computed<ExplorerGroup[]>(() => {
   if (!project.value) return []

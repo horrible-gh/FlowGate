@@ -1,10 +1,10 @@
-"""Project-control remote tool API — thin router (P0005 §3.1).
+"""Project-control remote tool API — thin router.
 
   POST /flowgate/api/v1/remote/{operation}   operation ∈ read|diff|log|write|grep|glob|remove|patch|stat|move
 
 Authentication, permission scope, path validation, execution, op-logging and the
-completion ment all live in remote_tool_service (L0006). This router only
-extracts the Bearer token + JSON body, delegates, and returns the P0005 envelope
+completion ment all live in remote_tool_service. This router only
+extracts the Bearer token + JSON body, delegates, and returns the the plan envelope
 with the pipeline's HTTP status.
 """
 from __future__ import annotations
@@ -38,14 +38,14 @@ async def remote_tool(request: Request, operation: str):
         # request is authenticated, the missing fields surface as 422 (④).
         body = None
 
-    # 0279 T0005 (NR0003 cause 1): remote_tool_service.handle() is a plain `def`
+    # remote_tool_service.handle is a plain `def`
     # that walks the entire source tree (grep/glob) and does blocking file I/O.
     # Calling it directly from this `async def` ran it ON the event loop, so one
     # remote/grep froze every other in-flight request — measured at 40s, during
     # which an unrelated 0.15s DB read took 40.2s and returned only once the grep
     # finished. This handler must stay `async def` because it awaits
     # request.json(), so push the sync pipeline through the threadpool instead.
-    # (Same bug class as 0275 T0005, whose fix covered tree/list/document/git
+    # (Same bug class as the earlier implementation, whose fix covered tree/list/document/git
     # routes but missed this router.)
     status, payload = await anyio.to_thread.run_sync(
         remote_tool_service.handle, operation, raw_token, body

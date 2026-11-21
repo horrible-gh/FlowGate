@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0048 T#10 — the kind switch through the real Center session (D#2 §3.4 / §3.5 WP0006 T#10
- * 완료 조건): the Center column (session on a server Graph source answering the Canvas read P0008 §3) with
+ * the kind switch through the real Center session (the earlier implementation / the plan the earlier implementation
+ * completion criteria): the Center column (session on a server Graph source answering the Canvas read P0008 §3) with
  * the bottom Inspector and the real registry; only the document calls and the Canvas read are mocked.
  *
  * - unassigned: R -> B. The switch asks `refresh-flow`; the session reads the Canvas again; the old node
@@ -38,7 +38,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     ...actual,
     kindSwitchConvert: (...args: unknown[]) => convertCall(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
-    // flowgate.v02.0064 T#4: the switch reads the document state with its judgement (P0006 §6.1).
+    // the switch reads the document state with its judgement.
     kindSwitchPreviewRead: (...args: unknown[]) => documentRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
@@ -53,7 +53,7 @@ const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail
 const i18n = prepareInspectorI18n()
 
 const FLOW = 'flowgate.v02.0050'
-/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+/** each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
 const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
 const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = `${FLOW}.0001-R`
@@ -264,7 +264,7 @@ async function activate(center: Center, flowId: string) {
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
 
-/** flowgate.v02.0051 stage 2: the switch is the header 종류 배지 ▾ — open its menu and pick the other kind (0015-T T2: no confirmation). */
+/** stage 2: the switch is the header kind badge ▾ — open its menu and pick the other kind (T T2: no confirmation). */
 async function pickOther() {
   await find('kind-switch-open').trigger('click')
   await flushPromises()
@@ -273,7 +273,7 @@ async function pickOther() {
   await flushPromises()
 }
 
-/** flowgate.v02.0070 (0015-T T2): picking the other kind is the switch — no confirmation opens on the way. */
+/** picking the other kind is the switch — no confirmation opens on the way. */
 async function switchKind() {
   await pickOther()
   expect(document.body.querySelectorAll('.ui-confirm-actions button')).toHaveLength(0)

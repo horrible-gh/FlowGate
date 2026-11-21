@@ -1,4 +1,4 @@
-"""flowgate.v02.0137 T0004 §4 (B): dependency pin, effective pool and connection budget checks.
+"""(B): dependency pin, effective pool and connection budget checks.
 
 Pure unit tests plus one isolated churn measurement on the INSTALLED sqloader: the real
 PostgreSQLWrapper and psycopg2 pool run with only `psycopg2.connect` replaced by a
@@ -103,7 +103,7 @@ def test_policy_off_and_unknown_values(monkeypatch):
 
 
 def test_pool_built_by_0215_is_flagged():
-    # What sqloader 0.2.15 builds whatever DB_POOL_MIN/MAX say (NR0003 B §0-8).
+    # What sqloader 0.2.15 builds whatever DB_POOL_MIN/MAX say.
     state = {"impl": "SimpleConnectionPool", "minconn": 1, "maxconn": 20, "max_parallel_queries": 20}
     problems = runtime_checks.pool_problems(state, pool_min=20, pool_max=24, max_parallel_queries=20)
     assert any("minconn=1 but DB_POOL_MIN=20" in p for p in problems)
@@ -168,7 +168,7 @@ def test_shipped_env_sample_is_churn_free_and_in_budget():
         processes=int(sample["DB_SERVER_PROCESSES"]), pool_max=int(sample["DB_POOL_MAX"]))["ok"]
 
 
-# ── the installed sqloader, measured (T0004 §4-1/§5-B8) ──────────────────────
+# ── the installed sqloader, measured ──────────────────────
 
 def _installed_pool_capable() -> bool:
     version = runtime_checks.installed_version("sqloader")

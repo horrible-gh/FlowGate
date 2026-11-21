@@ -1,4 +1,4 @@
-"""Per-document-type AI provider assignment CRUD (flowgate.default.0317 D0004 implementation).
+"""Per-document-type AI provider assignment CRUD (implementation).
 
 Stores the project-scoped "document type -> provider" assignment rules the continuous chain's hop
 provider decider reads at each step boundary. One row = one (project_id, doc_type)

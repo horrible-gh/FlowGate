@@ -1,4 +1,4 @@
-"""Live workflow roots and the succession marks (0064 L0005 2.9 / 2.10, DB0007 §2.3 / §4 Q8).
+"""Live workflow roots and the succession marks.
 
 A Flow's live root is a document of type R/B that is not cancelled and has no ``superseded_by``. A root
 succeeded by an R↔B succession conversion keeps its row (history, readable) but is never a live root
@@ -45,7 +45,7 @@ def is_root_type(doc: Optional[dict]) -> bool:
 
 
 def is_live_root(doc: Optional[dict]) -> bool:
-    """R/B, not cancelled, not superseded (L0005 2.10)."""
+    """R/B, not cancelled, not superseded."""
     return (is_root_type(doc) and (doc or {}).get("status") != CANCELLED
             and not str((doc or {}).get("superseded_by") or "").strip())
 

@@ -1,6 +1,6 @@
-"""flowgate.default.0295 T0004: CLI-provider command normalization and last-message recovery.
+"""CLI-provider command normalization and last-message recovery.
 
-Regression cover for 0295 B0001 / NR0003 — two independent ways a CLI provider could look
+Regression cover for the regression / the review — two independent ways a CLI provider could look
 broken while the CLI itself was fine:
 
   * codex was spawned without ``--skip-git-repo-check``, so any run whose cwd was not a git
@@ -82,7 +82,7 @@ class TestNormalizeCliCommand:
         for host_os in ("posix", "nt"):
             assert _SKIP_GIT in examples["codex"][host_os]
             assert "--model" in examples["claude"][host_os]
-            # 0371 NR0007 §5 reversed the other half of this assertion. It used to require
+            # reversed the other half of this assertion. It used to require
             # `--dangerously-skip-permissions` here, on the grounds that a permission prompt
             # nobody can answer is indistinguishable from a slow run — true, but it made
             # "the CLI may act without asking" the default for every provider seeded or
@@ -137,13 +137,13 @@ class TestRecoverCliLastMessage:
         assert run["last_message"] == "from file"
 
     def test_codex_missing_file_does_not_fall_back_to_the_json_stream(self):
-        # The stream is machine output; reporting it as the answer is what NR0003 fixed.
+        # The stream is machine output; reporting it as the answer is what the review fixed.
         assert self._recover("codex", '{"type":"turn.completed"}')["last_message"] is None
 
 
 class TestSpawnedCommand:
     """The flag has to reach the process that is actually spawned — a provider row stored
-    before this fix (B0001's "Codex GPT-5.6") never passes through the catalog again."""
+    before this fix ('s "Codex GPT-5.6") never passes through the catalog again."""
 
     def _spawn_cmd(self, monkeypatch, tmp_path, provider) -> str:
         seen: dict = {}

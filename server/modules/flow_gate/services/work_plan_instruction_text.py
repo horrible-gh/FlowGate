@@ -1,4 +1,4 @@
-"""The instruction text a work plan step's pre-instruction makes (flowgate.v02.0074 T#4, D0006 §3.5).
+"""The instruction text a work plan step's pre-instruction makes.
 
 One composition rule for the v0.1 next-approved materializer (``documents._work_plan_instruction_document`` /
 ``_work_plan_instruction_body``) and the v0.2 work plan deploy (``flowgate.work_plan_deploy``): the attached

@@ -34,12 +34,12 @@
 </template>
 
 <script setup lang="ts">
-// Active Project list surface (WP0005 T#2 §2.1/§3.1). Owns only which visual state to
+// Active Project list surface. Owns only which visual state to
 // render for the list it is handed -- loading/error/empty(no projects)/empty(no search
 // results)/rows -- using the existing domain-free LoadingState/ErrorState/EmptyState
-// (D0004 §1.3/§4.2). `hasAnyProjects` lets ProjectDialog distinguish "no Project exists
-// at all" from "search matched nothing" with two different EmptyState messages (D0004
-// §3.5, T#2 §4) without this component knowing about search itself -- ProjectDialog
+//. `hasAnyProjects` lets ProjectDialog distinguish "no Project exists
+// at all" from "search matched nothing" with two different EmptyState messages (the design
+// , the earlier implementation) without this component knowing about search itself -- ProjectDialog
 // already filtered `projects` before handing it here.
 import { useI18n } from 'vue-i18n'
 import Button from '../../components/ui/Button.vue'
@@ -66,7 +66,7 @@ const { t } = useI18n()
 .project-list-wrap {
   /* Header/Footer stay fixed (rendered outside ModalShell's scroll container); only this
      region scrolls internally, capped by viewport height rather than the mockup's fixed
-     680px (D0004 §2.2, T#2 §2). `flex: 1` also lets it fill available space whenever an
+     680px. `flex: 1` also lets it fill available space whenever an
      ancestor happens to be a flex column with room to give. */
   flex: 1;
   min-height: 0;

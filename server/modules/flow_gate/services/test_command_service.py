@@ -1,6 +1,6 @@
-"""Per-project verified test-command registry (flowgate.default.0152).
+"""Per-project verified test-command registry.
 
-Design chain: R0001 → D0002 → P0003 → L0004 → T0005. Implements the L logic — command
+Design chain: the requirement → the design → the plan → the earlier implementation → the earlier implementation. Implements the L logic — command
 normalization/identity, manual CRUD with the suppressed-tombstone model, auto-reflection from
 passed remote test runs, and the TS-mention "Verified test commands" block.
 
@@ -28,7 +28,7 @@ DESCRIPTION_MAX_LEN = 200
 
 _WS_RE = re.compile(r"\s+")
 
-# Host-OS awareness (flowgate.default.0277 B0001 → NR0003 §4 F2).
+# Host-OS awareness.
 # A registered command is a shell string, and the shell differs per host: FlowGate spawns
 # every test command with shell=True, which resolves to %COMSPEC% (cmd.exe) on Windows and
 # /bin/sh on POSIX. A command that passed on one is not evidence for the other, so the
@@ -75,7 +75,7 @@ def _truncate(text: Optional[str], limit: int) -> str:
 
 
 def _short_doc_id(doc_id: str) -> str:
-    """Group + doc-code short form, e.g. 'flowgate.default.0152.0005-TS' -> '0152.0005-TS'."""
+    """Group + doc-code short form, e.g. 'the earlier change' -> '0152.0005-TS'."""
     parts = (doc_id or "").split(".")
     if len(parts) >= 2:
         return ".".join(parts[-2:])
@@ -183,7 +183,7 @@ def reflect_from_passed_run(doc: dict, items: list[dict]) -> None:
             kind = item.get("kind") or "case"
             cmd_raw = item.get("cmd") or ""
             if kind == "setup":
-                # T0009 task 4: this registry's description literals are English and
+                # task 4: this registry's description literals are English and
                 # locale-independent by design (module docstring, L 2-5) — every other
                 # branch already is. This one Korean literal was the odd one out, not a
                 # genuine locale-dictionary candidate; corrected to match, not localized.
@@ -297,7 +297,7 @@ def build_verified_commands_block(project: str) -> str:
     if not rows:
         return ""
 
-    # Host-OS filter (0277 NR0003 §4 F2). A row whose verified_os names a DIFFERENT OS than
+    # Host-OS filter. A row whose verified_os names a DIFFERENT OS than
     # this host passed under a different shell; presenting it as "verified" is worse than
     # saying nothing, so it is withheld and only counted. verified_os NULL means we have no
     # OS evidence either way (manual entries, and every row predating migration 068) — those

@@ -42,7 +42,7 @@ const props = defineProps<{
   projectId?: string | null
   groupId?: string | null
   /**
-   * flowgate.v02.0127 T#5 (§2.11 / §2.14): the card coordinates of the line this group belongs to. flowgate.v02.0157: or
+   * : the card coordinates of the line this group belongs to. the earlier change: or
    * the window's standalone edit target; without either the upload targets the document itself (the server decides).
    */
   card?: DocumentEditTarget | null

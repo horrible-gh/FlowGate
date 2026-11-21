@@ -1,4 +1,4 @@
-"""0126 T#2 B12: real TR2 source lock/apply/validation/Git/finalize + human cascade.
+"""B12: real TR2 source lock/apply/validation/Git/finalize + human cascade.
 
 The Graph context lookup/editability is injected for this isolated sequence-backed
 TR2 harness; source effects, Flow guard, authority, CAS, receipts and audit are real.

@@ -1,4 +1,4 @@
-"""0132 NR §4.1 / §5.3-4,5: push classification precedence and bounded, scrubbed evidence."""
+"""NR /,5: push classification precedence and bounded, scrubbed evidence."""
 from __future__ import annotations
 
 import os

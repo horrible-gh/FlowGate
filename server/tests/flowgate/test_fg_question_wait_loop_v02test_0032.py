@@ -1,6 +1,6 @@
-"""flowgate.v02test.0032: a question a review loop's rework AI asked is answered even when the loop ran out of reviews.
+"""a question a review loop's rework AI asked is answered even when the loop ran out of reviews.
 
-0029 Q #628: the rework AI asked inside an assigned result review loop, the loop went on and stopped with
+Q #628: the rework AI asked inside an assigned result review loop, the loop went on and stopped with
 ``review_count_exhausted``; ``assigned_review.consume_loop_verdict`` held the verdict for the answer, but
 ``question_wait._waiting`` only took a passed loop, so no responder was dispatched and an answer moved nothing.
 """
@@ -46,7 +46,7 @@ def held(monkeypatch):
     monkeypatch.setattr(sa, "is_legacy_attempt", lambda attempt_id: state["legacy"])
     monkeypatch.setattr(sa.store, "read", lambda *a: state["assignment"])
     monkeypatch.setattr(sa, "current_review_assignment", lambda attempt_id, stage: state["latest"])
-    # flowgate.v02test.0051 T0005: no parked mid-loop wait unless a test stores one
+    # no parked mid-loop wait unless a test stores one
     from flowgate.card_settings import question_loop_wait
     state["wait"] = None
     monkeypatch.setattr(question_loop_wait, "wait_of_run", lambda run_id: state["wait"])
@@ -78,7 +78,7 @@ def test_not_waiting_when_the_verdict_is_not_held(held, change):
     assert wait._waiting(FLOW, _loop_run()) is None
 
 
-# flowgate.v02test.0051 T0005 (A1): the former ``{"active": True}`` case above. An unstopped loop row alone no longer
+# (A1): the former ``{"active": True}`` case above. An unstopped loop row alone no longer
 # decides: a loop working on the document (no parked wait) is still not a waiting step, but a loop parked at its hop
 # boundary for its questions — its row unstopped, the card locked — is the ``loop_wait`` step, never the loop-end
 # ``review`` step (whatever its verdict hold says).

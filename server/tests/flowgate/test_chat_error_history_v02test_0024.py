@@ -1,4 +1,4 @@
-"""Chat error history and the applied read/edit access of a chat run (flowgate.v02test.0024 B, D).
+"""Chat error history and the applied read/edit access of a chat run.
 
 B (decision 1): a refused send / AI call / command decision is recorded per user and read back
 with the chat's activity, so it stays in the conversation history across F5 and reopening.
@@ -174,7 +174,7 @@ def _token(token_id, *, action_scope="chat", source_access="read_write", command
 
 
 def test_chat_command_access_names_the_execute_mode_0026(env):
-    # flowgate.v02gui.0026 (0004-CH): an execute-mode run is "read" + "execute", not just "read".
+    # (CH): an execute-mode run is "read" + "execute", not just "read".
     _token("tok_exec", source_access="read", command_access="execute")
     _token("tok_read", source_access="read")
     _token("tok_edit", source_access="read_write")

@@ -1,12 +1,12 @@
-"""CRUD for the user_chat_settings table (group 0362, DB0011).
+"""CRUD for the user_chat_settings table (the earlier change, ).
 
-One row per user, holding the three chat settings P0009 §0-2 named: ``send_action``,
+One row per user, holding the three chat settings the plan named: ``send_action``,
 ``context_mode``, ``context_turns``.  The absence of a row is itself the answer to
 "has this person ever chosen anything" — DB0011 §2-6 — so nothing here creates a row
 implicitly.  Read paths call :func:`get` only; :func:`upsert` is the single write and
 its only caller is the PATCH handler (DB0011 §5-2).
 
-Column-at-a-time updating is the one thing L0010 §2-2 asks of storage: a request that
+Column-at-a-time updating is the one thing the earlier implementation asks of storage: a request that
 carries only ``context_mode`` must leave the stored ``context_turns`` alone, so the
 number the user was using is still there when they switch back to [recent].
 """
@@ -49,7 +49,7 @@ def upsert(
     if not columns:
         # An empty patch must not reach storage at all: writing here would create a
         # default row and flip is_default to false, which permanently blocks the
-        # [on send] hand-over (L0010 §2-2, DB0011 §3-3).
+        # [on send] hand-over.
         raise ValueError("upsert requires at least one column")
 
     values = [

@@ -285,7 +285,7 @@ def _patch_pipeline_d1(monkeypatch, doc: dict):
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # These tests isolate slot/head and single-writer effects from body validation.
     monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
-    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # The workflow-head guard fails closed without a sequence store, which
     # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
     monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     mock_events = MagicMock()
@@ -696,7 +696,7 @@ def test_register_workflow_result_does_not_write_doc_review_status(monkeypatch):
     monkeypatch.setattr(db_docs, "get_by_id",
                         MagicMock(return_value={"doc_id": "DS0001", "doc_review_status": "pending_review"}))
     monkeypatch.setattr(db_wir, "insert_result", MagicMock())
-    # 0457 T0005: the slot write is the conditional claim; report it as won.
+    # the slot write is the conditional claim; report it as won.
     monkeypatch.setattr(
         db_wfseq,
         "claim_item_result_doc_id",
@@ -704,7 +704,7 @@ def test_register_workflow_result_does_not_write_doc_review_status(monkeypatch):
             "id": item_id, "result_doc_id": result_doc_id,
         }),
     )
-    # 0457 T0007: registration first asks whether the document already occupies some other
+    # registration first asks whether the document already occupies some other
     # slot (migration 090 makes two slots for one document a unique-index violation).
     # None = it does not, which is the case this test describes.
     monkeypatch.setattr(db_wfseq, "get_item_by_result_doc_id", MagicMock(return_value=None))
@@ -758,7 +758,7 @@ def test_transition_document_review_is_single_writer_for_doc_review_status(monke
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # These tests isolate slot/head and single-writer effects from body validation.
     monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
-    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # The workflow-head guard fails closed without a sequence store, which
     # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
     monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     monkeypatch.setattr(el, "db_events", MagicMock())
@@ -899,13 +899,13 @@ def test_d030_row3_r_head_in_progress_not_stranded(monkeypatch):
 
 
 def test_d030_row4_pending_m_is_create_head_realized_m_never_head(monkeypatch):
-    """[D030 #4, revised by B0001 / group 0105] The M-never-head invariant applies to a
+    """[D030 #4, revised by the regression / the earlier change] The M-never-head invariant applies to a
     *realized* (already-created, auto-approved) memo — it must not re-surface as the head.
     It does NOT apply to a *pending* (not-yet-created) M slot: that is an actionable
     'create next document' step and must surface as the head, so the action bar offers
     [create document] rather than collapsing to the AC final-approval gate.
 
-    B0001 reported the old behavior (pending M → AC) as a bug: "if the last step is an
+    The review reported the old behavior (pending M → AC) as a bug: "if the last step is an
     auto-approve type (memo/chat), final approval shows instead of document creation".
     The fix aligns _parse_doc_workflow with the SSOT workflow_sequences.get_effective_head,
     which never type-filters unrealized slots.
@@ -948,7 +948,7 @@ def test_d030_row5_q_answered_next_pending(monkeypatch):
 
 def test_d030_row6_sequence_complete_final_approval_gate(monkeypatch):
     """[D030 #6 / M042] All document steps done but final approval (AC) not yet performed
-    -> head = AC/pending so the action bar shows [final approval] (group 0104 restore).
+    -> head = AC/pending so the action bar shows [final approval] (restore).
     (Was head_status='done' under b39f6b8, which auto-finalized and dropped the AC gate.)"""
     parsed = _parse_r_doc(
         monkeypatch,
@@ -1002,7 +1002,7 @@ def test_d030_row7_approved_next_slot_pending_execution_level(monkeypatch, type_
         )
     else:
         # single-slot complete, but final approval (AC) not yet done → AC gate is the head
-        # (M042 / group 0104): head_status='pending', head_type='AC', so the action bar shows
+        # (M042 / the earlier change): head_status='pending', head_type='AC', so the action bar shows
         # the [final approval] control instead of auto-finalizing the workflow.
         assert parsed.get("workflow_head_status") == "pending"
         assert parsed.get("workflow_head_type") == "AC"

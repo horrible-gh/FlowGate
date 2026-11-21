@@ -158,7 +158,7 @@ import {
 const props = defineProps<{
   open: boolean
   evaluationId: string | null
-  // Administrator only (a system AI's evaluation, CH0006 #48); the result itself is read by all.
+  // Administrator only (a system AI's evaluation, the discussion #48); the result itself is read by all.
   canReview?: boolean
 }>()
 
@@ -273,7 +273,7 @@ function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'su
   return 'info'
 }
 
-// flowgate.v02.0088 F09: the app's language, not the browser's. Called from the template, so
+// the app's language, not the browser's. Called from the template, so
 // reading `locale` here makes an open list / detail re-render on a language switch; the stored
 // timestamp itself is never changed.
 function formatDate(value?: string | null): string {

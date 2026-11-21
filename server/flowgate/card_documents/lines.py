@@ -1,4 +1,4 @@
-"""Card documents (flowgate.v02.0053 T#1): every card placed on the Designer has its documents.
+"""Card documents: every card placed on the Designer has its documents.
 
 Reached from the Graph workflow only through ``card_document_ports`` (``integration`` registers
 these functions). The write paths run inside the caller's Flow guard — a draft save
@@ -8,7 +8,7 @@ removed only through the existing v0.1 services (``legacy_adapter``).
 
 - Placing a card creates an empty draft for each of its lines (``slots.card_slots``). A requirement
   card shows the Flow's existing root document instead of making a second root (two live roots
-  would block the root binding, L0009 §2.4.1); with no root yet its draft becomes the root.
+  would block the root binding, the earlier implementation); with no root yet its draft becomes the root.
 - Removing a draft-only card deletes its own documents that are still drafts. A document that went
   further (submitted, reviewed, superseded) or that the card did not create is only unlinked and
   stays a free document node: v0.1 removes such documents only by a person's delete / cancel
@@ -27,12 +27,12 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   superseded by the result, so the line, the Canvas and the supersede chain agree.
 - Historical AI delegation lines and settings remain readable. New delegation lines are never
   created, and draft saves do not remove historical lines when the setting is retired.
-- flowgate.v02.0056 T#2: whether a card document is written is decided by its body, not by the document
+- the earlier change the earlier implementation: whether a card document is written is decided by its body, not by the document
   existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
   one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
-  completion's required outputs (``card_completion.outputs``, flowgate.v02.0119 T-3: the removed card approval's
+  completion's required outputs (``card_completion.outputs``, the earlier change T-3: the removed card approval's
   targets before) and the card document read all ask it.
-- flowgate.v02.0056 T#3: every line read (draft save, Canvas) carries whether its document is written
+- the earlier change the earlier implementation: every line read (draft save, Canvas) carries whether its document is written
   (``has_body``, that same judgement) and the count of its document's review history as the v0.1 document read
   shows it — its AI reviews (``review_count``), its rejections (``rejection_count``) and both
   (``history_count``). ``node_keys_showing`` names the cards whose lines show a document (the card memos an AI
@@ -57,7 +57,7 @@ def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_k
     """Bring the card lines in line with the saved draft; returns the lines of the draft's nodes.
 
     ``previous_nodes`` are the nodes of the draft (or, for a new draft, the revision) the save replaces.
-    ``locale`` is the saving request's: the documents this save makes are titled in it (flowgate.v02.0088).
+    ``locale`` is the saving request's: the documents this save makes are titled in it.
     """
     flow_id = group["group_id"]
     if not repository.available():
@@ -157,7 +157,7 @@ def _existing_root(flow_id: str, doc_type: str):
 
 
 def disposed_documents(flow_id: str, removed_keys: Iterable[str]) -> list[str]:
-    """The documents a draft save that removes the nodes ``removed_keys`` deletes with them (flowgate.v02.0074 T#4):
+    """The documents a draft save that removes the nodes ``removed_keys`` deletes with them:
     the release of those nodes and ``_dispose``, read only. A line a confirmed revision of the node shows stays, and
     so does its document; a document another line still holds stays too."""
     if not repository.available():
@@ -190,7 +190,7 @@ def _dispose(flow_id: str, rows: list[dict], user_id: Optional[str]) -> None:
             legacy.delete_document(doc_id, user_id)
 
 
-# ── AI delegation setting (T#2) ──────────────────────────────────────────────
+# ── AI delegation setting ──────────────────────────────────────────────
 
 def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], registered: set[str],
                    locale: Optional[str] = None) -> None:
@@ -204,7 +204,7 @@ def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> li
     """The converter gave a root a new id and kind (``documents.root_conversion``, inside the same Flow
     guard): the lines holding it follow — id, line kind (R/B) — and keep their ownership. A line of the
     new kind the node already has keeps its kind and only takes the new id. Returns the node keys whose
-    requirement line now holds the converted root (their draft cards follow it, 0064 T#3)."""
+    requirement line now holds the converted root (their draft cards follow it, the earlier implementation)."""
     if not repository.available():
         return []
     new_id, new_type = converted["doc_id"], str(converted.get("type_code") or "").upper()
@@ -228,8 +228,8 @@ def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> li
 def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
     """A document bound to a node (run result / its revision) takes the line of its type.
 
-    The document the line held is superseded by the new one when the card made it (its empty draft) or — flowgate.v02.0118
-    T#1 (0003-NR §2.5) — when an invalidated attempt of this node registered it (``legacy.invalidated_documents``: a Time
+    The document the line held is superseded by the new one when the card made it (its empty draft) or — the earlier change
+    (NR) — when an invalidated attempt of this node registered it (``legacy.invalidated_documents``: a Time
     Machine rewind, a Stop, a lost lease): the earlier result a rework replaces is the card's history, not a live document
     of no line that the Canvas would draw as a free card. A person's own document, a shared root line and the document
     of a live attempt are only rebound, as before. Then the node's earlier results such a rework left on no line before
@@ -269,7 +269,7 @@ def _supersede_once(old_id: str, new_id: str) -> bool:
 
 
 def settle_displaced(flow_id: str, node_key: str, stale: Optional[set[str]] = None) -> list[str]:
-    """flowgate.v02.0118 T#1: the repair of an earlier result a rework displaced before ``adopt_result`` superseded
+    """the repair of an earlier result a rework displaced before ``adopt_result`` superseded
     such documents — a document an invalidated attempt of the node registered (``legacy.invalidated_documents``) that
     is still alive (not superseded, not cancelled) yet on no line of the Flow, while the node's line of its type shows
     another live document: it is superseded by that document, so it leaves the free documents as the history of the
@@ -314,7 +314,7 @@ def _shown_rows(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str
 
 def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
     """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
-    written (``has_body``) and its review history counts (flowgate.v02.0056 T#3; 0 without a document)."""
+    written (``has_body``) and its review history counts (0 without a document)."""
     shown_rows = _shown_rows(flow_id, docs_by_id, node_keys)
     reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
     out: dict[str, list[dict]] = {}
@@ -354,7 +354,7 @@ def node_keys_showing(flow_id: str, doc_id: Optional[str]) -> list[str]:
 
 
 def card_line_doc_ids(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -> list[str]:
-    """``card_document_ports.card_line_doc_ids`` handler (0064 T-B1e, L0005 2.14): the documents the lines of the
+    """``card_document_ports.card_line_doc_ids`` handler: the documents the lines of the
     card ``node_key`` show -- or, for an AI working on one document (a Q&A answer), of the cards whose lines show
     ``doc_id`` (``node_keys_showing``, the cards the memo section reads) -- card by card in line order. The same
     live documents the line read shows (``lines_by_node``); no body is read here."""

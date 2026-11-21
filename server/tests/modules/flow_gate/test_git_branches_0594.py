@@ -87,7 +87,7 @@ class _MockDB:
 
 @pytest.fixture(scope="module")
 def attempt_db(tmp_path_factory):
-    """0630 T0005: every branch merge now writes a persistent attempt row
+    """every branch merge now writes a persistent attempt row
     (git_merge_session, owner branch_merge) before `git merge` runs, so the merge
     cases need a real store with the real sqlite migrations (123 included)."""
     db_path = tmp_path_factory.mktemp("bm-db") / "flowgate.db"
@@ -137,7 +137,7 @@ def repo(tmp_path, monkeypatch, attempt_db):
     monkeypatch.setattr(git_service, "_load_secret_for", lambda cfg: "")
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", lambda: [])
-    # 0613 T0013: the delete guard also asks which live groups pin a branch as their
+    # the delete guard also asks which live groups pin a branch as their
     # Base Branch; none do in these catalog/delete scenarios.
     from modules.flow_gate.db import groups as db_groups
     monkeypatch.setattr(db_groups, "list_open_groups_by_work_base", lambda project_id, ref: [])
@@ -294,7 +294,7 @@ def test_detached_worktree_does_not_pin_an_unrelated_branch(repo):
 
 
 
-# flowgate.default.0612 T0006 §10 — merge/push separation. The existing
+# merge/push separation. The existing
 # test_branch_merge_clean_pushes_target_without_switching_base above already
 # covers T1 (push omitted defaults to the old always-push behavior).
 

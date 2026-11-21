@@ -45,7 +45,7 @@ describe('gitErrors 0578 stable contract', () => {
     expect(resolveGitError({ isAxiosError: true, request: {} }, t)).toBe('NETWORK')
   })
 
-  // 0685 T0006 §5: a branch that moved after the merge started is told as such, with the
+  // a branch that moved after the merge started is told as such, with the
   // way out, instead of the generic failure.
   it.each(['stale_source', 'stale_target'])('maps %s to its own key', (code) => {
     const input = { response: { status: 409, data: { ok: false, error: { code, message: 'RAW' } } } }

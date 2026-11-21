@@ -68,7 +68,7 @@ def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_retried_u
 
     monkeypatch.setattr(ai_invoke_service, "start_run", refuse)
     _reads(env)
-    assert len(starts) == (0 if failure == "no_reviewer" else LIMIT)    # 0119 T-2: a system error, retried
+    assert len(starts) == (0 if failure == "no_reviewer" else LIMIT)    # T-2: a system error, retried
     assert _waits(env) == [(instruction, "review_not_started")] * LIMIT and _refusals(env) == []
     assert _review_status(instruction) != "approved" and _stage(env, key) == ("open", "instruction")
     assert _result_jobs(env) == []

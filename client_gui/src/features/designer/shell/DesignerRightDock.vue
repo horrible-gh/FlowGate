@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0037 — right Tool Panel (R0001 §2): the final container for the right Dock
+  <!-- right Tool Panel: the final container for the right Dock
        now assembles the existing right parts behind one [팔레트] [대화] [Git] header row —
        0030 Palette, 0031/0032 Conversation and 0033 Git. Each part keeps its own content; this
        container owns only the tab row, the body that gives the part its height, and the mount
@@ -8,16 +8,16 @@
        survives a tab switch. Part intents with no target screen yet (Palette select / drag,
        Conversation open-change, Git open-diff / confirm settings / windows / badge) are
        intentionally not handled here — later Feature groups wire them.
-       flowgate.v02.0039 T#3: with no work target (`unselected`) the tab row stays on screen
+       with no work target (`unselected`) the tab row stays on screen
        dimmed and unavailable and the body is an empty frame — no part is shown or mounted
        until there is a target (confirmed initial-state design). A part mounted earlier stays
        mounted but gets no Project / Flow context while there is no target, so a Project switch
        back to the initial state does not read Git / Conversation data for the new Project.
-       flowgate.v02.0061 T#14: `sourceLocked` (the open Flow's Graph run is running / paused / stopping) goes to the
+       `sourceLocked` (the open Flow's Graph run is running / paused / stopping) goes to the
        Conversation, whose AI source access mode then cannot change.
-       flowgate.v02.0066 T#6 sent the Git part's `open-diff` and `git-center-diff-refresh` up to the Shell's Center
-       Diff; flowgate.v02.0067 T#4 shows that diff in the Git part's own modeless, so none of its intents goes up.
-       flowgate.v02test.0013: the Conversation gets the project event stream (`subscribe-events`) and whether it is the
+       sent the Git part's `open-diff` and `git-center-diff-refresh` up to the Shell's Center
+       Diff; the earlier change the earlier implementation shows that diff in the Git part's own modeless, so none of its intents goes up.
+       the Conversation gets the project event stream (`subscribe-events`) and whether it is the
        part shown (`active`, as the Git part already did), so it follows the server's chat events and catches up when
        its tab is shown again. -->
   <aside
@@ -40,7 +40,7 @@
       >
         <template #tab="{ tab }">
           <!-- Original vector artwork: palette / chat; the existing Git geometry is retained. The chat bubble is
-               shared with the flow tab's "chat AI responding" mark (flowgate.v02gui.0020). -->
+               shared with the flow tab's "chat AI responding" mark. -->
           <ChatBubbleIcon v-if="tab.key === 'conversation'" class="designer-right-tab-icon is-conversation" :size="14" />
           <svg v-else class="designer-right-tab-icon" :class="'is-' + tab.key" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
             <g v-if="tab.key === 'palette'">
@@ -115,9 +115,9 @@ const props = withDefaults(
     tool: DesignerRightTool
     collapsed: boolean
     selectedPaletteId?: string | null
-    /** No work target yet (0039 T#3): tabs unavailable, no part shown. */
+    /** No work target yet: tabs unavailable, no part shown. */
     unselected?: boolean
-    /** flowgate.v02.0061 T#14: the open Flow's Graph run locks the Conversation's source access mode. */
+    /** the open Flow's Graph run locks the Conversation's source access mode. */
     sourceLocked?: boolean
   }>(),
   { unselected: false, selectedPaletteId: null, sourceLocked: false },
@@ -146,7 +146,7 @@ function onSelect(key: string) {
 
 // Which parts have been shown at least once. Rendering detail of this Dock, not layout state:
 // it only grows, so nothing already mounted is ever torn down by a switch. A part is not
-// mounted while there is no work target (0039 T#3); it mounts once there is one.
+// mounted while there is no work target; it mounts once there is one.
 const mountedTools = reactive<Record<DesignerRightTool, boolean>>({ palette: false, conversation: false, git: false })
 
 watch(
@@ -157,12 +157,12 @@ watch(
   { immediate: true },
 )
 
-// Context handed to the mounted parts: none while there is no work target (0039 T#3). The parts
+// Context handed to the mounted parts: none while there is no work target. The parts
 // reset to their empty state and read nothing; the target's context arrives with the first choice.
 const partProjectId = computed(() => (props.unselected ? null : props.projectId))
 const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
 
-// flowgate.v02test.0013: the Conversation knows no store; it hears the project's shared event stream through this.
+// the Conversation knows no store; it hears the project's shared event stream through this.
 // A Dock mounted without the app's Pinia (a unit test) hands in nothing and the chat hears no event.
 const pinia = getCurrentInstance()?.appContext.config.globalProperties.$pinia
 const projectStore = pinia ? useProjectStore(pinia) : null
@@ -190,7 +190,7 @@ const subscribeChatEvents = projectStore
   border-bottom: 1px solid var(--fg2-line);
 }
 
-/* No work target (0039 T#3, confirmed design v7): dimmed and unavailable. */
+/* No work target (confirmed design v7): dimmed and unavailable. */
 .designer-right-dock.is-unselected .designer-right-header {
   opacity: 0.46;
   filter: saturate(0.55);

@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0002 C (v02test.0024.0006-B C-1): a confirm gate's archive ON archives the Flow once its run completes.
+"""C (v02test.0024.0006-B C-1): a confirm gate's archive ON archives the Flow once its run completes.
 
 The confirm card's ``archive`` switch was the Git checkpoint only (``publish``: ``refs/flowgate/gate-archive/<id>``);
 the Flow stayed in the active tree until a person pressed the toolbar [아카이브]. The contract asked for is: archive ON on

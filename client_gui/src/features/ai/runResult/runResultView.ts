@@ -1,6 +1,6 @@
 import type { FlowCommandMessage, FlowCommandNode, FlowCommandResult, FlowCommandRoleUse } from '@/features/project'
 
-// flowgate.v02.0113 T#5 — what the run result windows say, built from the server's command result in the current
+// what the run result windows say, built from the server's command result in the current
 // language (`t`, `te`: vue-i18n). No fixed sentence: every line is the command's own state, scope, cards and counts.
 
 export type Translate = (key: string, values?: Record<string, unknown>) => string

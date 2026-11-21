@@ -30,10 +30,10 @@
 </template>
 
 <script setup lang="ts">
-// Short "read and acknowledge" message, built on ModalShell (T0006 §8). One button,
-// `role="alertdialog"` (T0006 §8's accessibility requirement), and never a Toast: it
-// does not auto-dismiss and does not stack multiple messages (T0006 §8 "AlertDialog와
-// Toast 역할 혼합" 금지) — the caller controls `open` and shows one at a time, same as
+// Short "read and acknowledge" message, built on ModalShell. One button,
+// `role="alertdialog"` ('s accessibility requirement), and never a Toast: it
+// does not auto-dismiss and does not stack multiple messages (the earlier implementation "Do not mix AlertDialog
+// and Toast responsibilities") — the caller controls `open` and shows one at a time, same as
 // every other declarative dialog in this layer.
 //
 // Every close path — the acknowledge button and ESC — resolves the same `close` event,

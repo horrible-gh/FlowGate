@@ -1,4 +1,4 @@
-"""flowgate.v02.0119 T#3 (T-2) — a general card nothing completes is ``needs_intervention`` (or a ``system_error``), never
+"""(T-2) — a general card nothing completes is ``needs_intervention`` (or a ``system_error``), never
 a person's approval; it stops only its own descendants, and the idle reason tells a confirm wait from an intervention.
 
 On the same real SQLite DB and fixtures as ``test_fg_card_completion_0119`` (every migration, the card documents and card
@@ -28,7 +28,7 @@ from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helper
     FA, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft,
 )
 
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+# (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
 pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions", "fork_join",
                                      "passive_person_results")
 
@@ -150,7 +150,7 @@ def _completed(key, result):
 
 
 def _approval_route_gone(env, key):
-    """flowgate.v02.0119 T#4 (T-3): the card approval route is unmounted (404) — no person approves a card."""
+    """(T-3): the card approval route is unmounted  — no person approves a card."""
     run_id = _current(env)["run_id"]
     res = env["client"].post(f"/api/v1/runs/{run_id}/nodes/{key}/approval", json=None,
                              headers={**_h(), "Authorization": "Bearer user:u_kim"})

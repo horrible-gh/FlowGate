@@ -53,7 +53,7 @@ def _stub_route(monkeypatch, documents_router, doc: dict, existing_body: str):
 
 
 def _patch_client(documents_router) -> TestClient:
-    """Real HTTP client over the documents router (T0005 §5-1: through the door,
+    """Real HTTP client over the documents router (the earlier implementation: through the door,
     not the function — mirrors ``tests/inbox_client.py``'s rationale)."""
     from modules.flow_gate.auth.middleware import get_current_user
 

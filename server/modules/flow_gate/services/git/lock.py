@@ -1,6 +1,6 @@
 """Project-level Git mutex and admission guards.
 
-Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 
 LOCK_WAIT_SEC = 5
 
-# 0669 unit 9c: the old project mutex (``_acquire_lock`` over git_project_lock) is gone.
+# unit 9c: the old project mutex (``_acquire_lock`` over git_project_lock) is gone.
 # Every Git/source path takes its domain locks through ``lock_manager``.
 
 
@@ -29,7 +29,7 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
     best: Optional[dict] = None
     for session in _gs.db_git.list_open_sessions():
         try:
-            # 0630 T0005: a branch_merge row has no group; its owner column names the project.
+            # a branch_merge row has no group; its owner column names the project.
             if _gs._session_project(session) != project_id:
                 continue
             # A group_update merge lives exclusively in that group's worktree.
@@ -37,7 +37,7 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
             # groups' base-mutating operations.
             if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
                 continue
-            # 0594 T0012: a finalize attempt record now exists from BEFORE the merge
+            # a finalize attempt record now exists from BEFORE the merge
             # runs, and a non-base target merges in its own managed workspace. Only
             # a session that actually owns the base checkout's merge state (legacy,
             # TR kinds, or a base-target attempt that reached a conflict) blocks it.
@@ -53,7 +53,7 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
 def base_merge_in_progress(project_id: str) -> Optional[dict]:
     """The merge that currently OWNS the base checkout's dirty files, or None.
 
-    flowgate.default.0481 T0010 #1. While `git merge` is stopped on a conflict, the base
+    #1. While `git merge` is stopped on a conflict, the base
     checkout's `git status --porcelain` reports every unmerged path AND every side that
     merged cleanly — so `base_dirty` fills up with the merge itself. The Git panel then
     offers that pile as an uncommitted-base-changes summary with an AI-delegation button,

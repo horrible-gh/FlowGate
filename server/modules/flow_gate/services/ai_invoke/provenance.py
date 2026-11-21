@@ -1,4 +1,4 @@
-"""Common AI-run provider provenance for every persistent AI result (0582 T0005).
+"""Common AI-run provider provenance for every persistent AI result.
 
 The AI review path (document_reviews / inbox_routes._review_provenance) already
 snapshots the run's requested/actual provider at the moment a review is written, and
@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 
 def effective_action_scope(run: dict[str, Any]) -> Optional[str]:
-    """The run's CURRENT stage, expressed in `action_scope` vocabulary (0582 TR0006 rev1).
+    """The run's CURRENT stage, expressed in `action_scope` vocabulary.
 
     A document_review_loop hop rewrites `run["hop_kind"]` in place as it alternates
     stages -- worker.py's in-process transition sets `run["hop_kind"] = loop["current_stage"]`
@@ -108,7 +108,7 @@ def resolve_run_provenance(
 
 
 def resolve_persisted_run_provenance(ai_run_id: Optional[str]) -> dict[str, Any]:
-    """Provider evidence from the finished run's persisted row (flowgate.v02.0064 T-B5, L0005 2.18).
+    """Provider evidence from the finished run's persisted row.
 
     The second half of the memory-then-DB order ``inbox_routes._resolve_origin_provider_name``
     already uses: a run that finished in an earlier process (or whose in-memory record is
@@ -139,7 +139,7 @@ def resolve_persisted_run_provenance(ai_run_id: Optional[str]) -> dict[str, Any]
 
 
 def to_api_payload(snapshot: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """The canonical public shape (0582 T0005 SS6): {ai_run_id, ai_provider_id, ai_provider_name}.
+    """The canonical public shape: {ai_run_id, ai_provider_id, ai_provider_name}.
 
     None when there is no evidence at all, so a legacy row or an external/unconfirmed
     path (e.g. a [Copy Mention] answer, where FlowGate never started a run) can render

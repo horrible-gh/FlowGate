@@ -183,7 +183,7 @@ class TestConflictSupersede0604(_Scenario):
 
 
     def test_declaration_on_a_file_without_violation_is_rejected(self):
-        # T#1 synthesized group: already passes, so a declaration is never needed there.
+        # The synthesized group already passes, so a declaration is never needed there.
         original, submissions = TestConflictSideDroppedAdjacentGroups0604._work_plan_0599_reduction()
         problems, _records = self._check(
             "work_plan.py", original, submissions["merged"], {"side": "theirs", "reason": "r"},

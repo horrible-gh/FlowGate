@@ -1,12 +1,12 @@
-// flowgate.v02.0059 T#2 (0016-TR rev2) — a mocked `@shared/api` server whose layout reads the test can hold
-// back, for the tests of a 자동 배치 answer that comes late (autoLayoutLateAnswer.0059 /
+// (TR) — a mocked `@shared/api` server whose layout reads the test can hold
+// back, for the tests of a auto-layout answer that comes late (autoLayoutLateAnswer.0059 /
 // DesignerShellDensityLate.0059). It answers GET /api/v1/flows/{flowId}/canvas (with and without
 // collapse=conversation), the v0.1 GET /api/v1/documents/{docId} and the layout save PUT in the server's shapes.
 //
 // The Flows (positions = the server's auto placement, no saved layout unless the test gives one):
 // - documentsFlow: an unassigned Flow, documents R, CH (a conversation, hidden by the collapsed read), D —
 //   R (0, 0), CH (260, 0), D (520, 0), as the server answered p.ui.0013 (autoLayoutServerRead.0059). `replaced`:
-//   D 0003 is replaced by D 0004 (the same places, D 0004 at (520, 0)).
+//   is replaced by the earlier implementation (the same places, the earlier implementation at ).
 // - assignedFlow: the same Flow once a v0.1 root R with one slot is assigned (sequence) — R (0, 0), the slot
 //   (260, 0), CH (260, 180) hidden, D (520, 180) (the sequence rule of the p.ui.0016 server answer).
 // - replacedRootFlow: a v0.1 Flow with no slot whose root was replaced twice (0001-R -> 0002-R -> 0005-R) —

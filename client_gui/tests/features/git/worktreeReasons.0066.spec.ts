@@ -3,8 +3,8 @@ import type { WorktreeStatus } from '@/features/git/types'
 import { reasonMessage, worktreeReason, type WorktreeButton, type WorktreeReasonInput } from '@/features/git/worktreeReasons'
 import { worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#6 — C21: one disabled reason per button, in the order of 0066 D#2 §3-5
-// (file and commit columns; merge / push / fetch are T#7's).
+// C21: one disabled reason per button, in the order of the earlier implementation
+// (file and commit columns; merge / push / fetch are the earlier implementation's).
 const stagedFile = worktreeFile('src/a.ts', { staged: 'M', unstaged: null, canStage: false, canUnstage: true })
 
 function input(overrides: Partial<WorktreeReasonInput> = {}, status: Partial<WorktreeStatus> = {}): WorktreeReasonInput {

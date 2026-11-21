@@ -48,7 +48,7 @@ const projectStore = useProjectStore()
 // Build date injected by vite.config.ts `define` — the real build, not a hand-kept string.
 const BUILD_STAMP = __FG_GUI_BUILD__
 
-// Active state follows the router (T0011 §12): each screen route carries meta.navKey, so a
+// Active state follows the router: each screen route carries meta.navKey, so a
 // deeper path such as /app/projects/x still highlights its section, and an unknown /app/*
 // path highlights nothing.
 const activeKey = computed(() => (route.meta.navKey as AppNavKey | undefined) ?? null)
@@ -68,7 +68,7 @@ function isPlainClick(event: MouseEvent): boolean {
   )
 }
 
-// T0010 (T#3) §1/§2: Project has its own Dialog, not a routed /projects screen. Clicking
+// Project has its own Dialog, not a routed /projects screen. Clicking
 // this entry must keep the current route and open the single Project Dialog through the
 // feature's public interface (D0004 §4.1) — not navigate to the /projects "준비 중"
 // placeholder that still exists underneath for direct/deep links.
@@ -209,7 +209,7 @@ function onNavClick(item: AppNavItem, navigate: (e: MouseEvent) => void, event: 
 }
 
 /* The mockup hides the sidebar below 760px, which would leave no way to navigate
-   (T0011 §14). Instead it collapses into a horizontally scrollable strip of titles. */
+   . Instead it collapses into a horizontally scrollable strip of titles. */
 @media (max-width: 760px) {
   .gui-sidebar {
     flex-direction: row;

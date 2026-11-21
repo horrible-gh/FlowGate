@@ -1,4 +1,4 @@
-"""API re-request (nudge) keeps the "what to do now" block last (v02test.0049 TR0018)."""
+"""API re-request (nudge) keeps the "what to do now" block last (v02test.0049 the earlier implementation)."""
 from __future__ import annotations
 
 import copy

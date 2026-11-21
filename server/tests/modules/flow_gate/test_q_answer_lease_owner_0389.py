@@ -1,11 +1,11 @@
-"""The AI answer worker must own the group lease its own run holds (0389 R0001).
+"""The AI answer worker must own the group lease its own run holds.
 
-R0001 reported that the AI cannot answer document queries. Measured on the live server:
+The review reported that the AI cannot answer document queries. Measured on the live server:
 runs aiv_20260805_000019..000023 (items 206/207 of ansm.default.0005) each started, wrote an
 answer, and then had the POST rejected — `outcome='none'`, worker message
 "GROUP_AI_RUN_OWNER_MISMATCH". Every one of those runs' tokens carries `ai_run_id = NULL`
 while every continuous run in the same window carries its own run id, and no AI answer has
-landed since 2026-08-02, the day group 0378's durable lease started gating group mutations.
+landed since 2026-08-02, the day the earlier change's durable lease started gating group mutations.
 
 The gate (mutation_policy.assert_group_mutation_allowed) admits a worker only when its token
 matches the active lease on group / token_id / run_id / action_scope. dispatch_answer_run
@@ -86,7 +86,7 @@ def issued(monkeypatch):
     monkeypatch.setattr(q_answer, "_source_tool_block", lambda *_a, **_k: [])
     monkeypatch.setattr(q_answer, "_document_lookup_block", lambda *_a, **_k: [])
     monkeypatch.setattr(q_answer, "_ai_answer_count", lambda _item_id: 0)
-    # 0661 T0004: the builder now claims the item durably before minting (no DB here).
+    # the builder now claims the item durably before minting (no DB here).
     monkeypatch.setattr(q_answer.db_question_items, "get_by_pk", lambda _pk: None)
     monkeypatch.setattr(q_answer.db_question_items, "claim_responder_dispatch",
                         lambda *_a, **_k: True)

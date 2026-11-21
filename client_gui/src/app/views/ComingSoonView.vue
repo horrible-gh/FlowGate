@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-// Placeholder for the v0.2 screens that are not built yet (T0011 §8): it names the screen
+// Placeholder for the v0.2 screens that are not built yet: it names the screen
 // and says plainly that it is not implemented. It never embeds or imports a v0.1 screen.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

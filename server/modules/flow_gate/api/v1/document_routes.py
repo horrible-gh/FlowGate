@@ -21,6 +21,7 @@ from modules.flow_gate.storage.paths import resolve_storage_path
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.q_service import get_answers_for_document
+from modules.flow_gate.services import ai_response_slim
 from modules.flow_gate.services import conversation_markdown_service
 from modules.flow_gate.services import document_outline_service as outline_svc
 from modules.flow_gate.services.conversation_turn_service import ConversationTurnError
@@ -53,7 +54,7 @@ def _parse_rejection_history(raw: Any) -> list:
     if not isinstance(parsed, list):
         return []
     from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
-    # flowgate.v02.0119 T#2 (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
+    # (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
     return [db_reviews.rejection_actors(item) for item in enrich_rejection_history_provenance(parsed)]
 
 
@@ -81,10 +82,10 @@ def _shape_review(row: dict) -> dict:
         "id": row.get("id"),
         "revision_no": row.get("revision_no"),
         "reviewer_id": row.get("reviewer_id"),
-        # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
+        # one shared builder for both read surfaces, so the key set and
         # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": db_reviews.review_provider_payload(row),
-        "actor": db_reviews.review_actor(row),          # flowgate.v02.0119 T#2 (T-1)
+        "actor": db_reviews.review_actor(row),          # (T-1)
         "review_intent": row.get("review_intent"),
         "superseded_review_id": row.get("superseded_review_id"),
         "verdict": row.get("verdict"),
@@ -220,7 +221,7 @@ def _compose_group_doc_ids(project: str, module: str, group: str, doc: str) -> t
     return group_id, doc_id
 
 
-# _fallback_file_path was removed in L0054.0002 §4 — the branch-segment-drift
+# _fallback_file_path was removed in the earlier implementation.0002 — the branch-segment-drift
 # fallback is now absorbed into storage.paths.resolve_storage_path().
 
 
@@ -576,7 +577,7 @@ def get_document_by_path(
         "created_at": document.get("created_at"),
         "updated_at": document.get("updated_at"),
     }
-    # group 0022: Q&A is sub-data of every document. Attach the answers key only to
+    # Q&A is sub-data of every document. Attach the answers key only to
     # documents that have a container (query) — Q doc-type gating removed (Q type retired).
     qa_pairs = get_answers_for_document(doc_id)
     if qa_pairs:
@@ -642,15 +643,15 @@ def get_document_reviews(request: Request, doc_id: str):
     })
 
 
-# ── 0370 R0001 / P0002 / L0003: the four partial-read endpoints ─────────────────
+# ── the requirement / the plan / the earlier implementation: the four partial-read endpoints ─────────────────
 #
 # Until now, opening a document dragged the entire body along. The four endpoints below are
 # ways to fetch only the part you need, and they are **all additive**: no field is removed
-# from, and no meaning changed in, the existing `GET /document/{doc_id}` response (P0002 §0).
+# from, and no meaning changed in, the existing `GET /document/{doc_id}` response.
 #
 # Not one line of computation lives here. Outlines, sections and coordinates are all done by
-# document_outline_service, and this file only repackages the result into the shape P0002
-# fixed — so one named number never differs per screen (L0003's purpose).
+# document_outline_service, and this file only repackages the result into the shape the plan
+# fixed — so one named number never differs per screen ('s purpose).
 
 
 def _fail_with(status: int, message: str, extra: Optional[dict] = None) -> JSONResponse:
@@ -687,6 +688,8 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth, None, None
+    # The three reads below slim their answer for an AI token only.
+    ai_response_slim.remember_auth(request, auth)
 
     try:
         _validate_outbound_doc_id(doc_id)
@@ -741,7 +744,7 @@ def get_document_outline(
     # rejected. Bouncing one outline read with a 422 buys nothing in unattended work.
     level = max(1, min(int(max_level), outline_svc.MAX_HEADING_LEVEL))
     items, truncated = outline_svc.outline_items(text, level)
-    return JSONResponse(content={
+    return JSONResponse(content=ai_response_slim.for_ai(request, {
         "ok": True,
         "doc_id": doc_id,
         "revision_no": int(doc.get("revision_no", 0) or 0),
@@ -756,7 +759,7 @@ def get_document_outline(
         "max_level": level,
         "truncated": truncated,
         "items": items,
-    })
+    }, keep=ai_response_slim.OUTLINE_KEEP, whole=ai_response_slim.OUTLINE_WHOLE))
 
 
 @router.get("/document/{doc_id}/section")
@@ -814,7 +817,7 @@ def get_document_section(
             char_end=text.char_end_of(resolved.line_end),
         )
 
-    return JSONResponse(content={
+    return JSONResponse(content=ai_response_slim.for_ai(request, {
         "ok": True,
         "doc_id": doc_id,
         "revision_no": rev,
@@ -835,7 +838,7 @@ def get_document_section(
         "document_chars": text.document_chars,
         "truncated": truncated,
         "next_locator": next_locator,
-    })
+    }, keep=ai_response_slim.SECTION_KEEP, whole=ai_response_slim.SECTION_WHOLE))
 
 
 @router.get("/document/{doc_id}/meta")
@@ -902,7 +905,7 @@ def get_document_meta(
     body["state"] = _content_state(doc, text)
     resp["body"] = body
     resp["content_state"] = body["state"]
-    return JSONResponse(content=resp)
+    return JSONResponse(content=ai_response_slim.for_ai(request, resp))
 
 
 _RELATIONS_REFERENCED_BY_MAX = 50

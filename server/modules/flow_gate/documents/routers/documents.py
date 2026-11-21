@@ -33,7 +33,7 @@ from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
 from modules.flow_gate.documents import live_root as _live_root
 from modules.flow_gate.documents.type_code import doc_code_seq_text
-from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D#2 §4.2 (flowgate.v02.0048 T#10)
+from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # 
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
     INSTRUCTION_AUTO_TYPES,
@@ -55,11 +55,11 @@ _log = _logging.getLogger(__name__)
 # M sets doc_review_status='approved'), have no review action, and are therefore
 # never an actionable workflow head. They are notes, not gates — the time machine
 # does not reset them, and head derivation never selects an existing one.
-# CH (conversation/chat) joins M here per L0044.0008 §2/§3: a chat doc is a
+# CH (conversation/chat) joins M here per the earlier implementation.0008 /: a chat doc is a
 # non-gate, auto-approved note whose body accumulates dialogue turns.
 # Defined in documents.constants so review guards and creation paths share one source.
 # Conversation (chat) types — auto-complete like M, plus two extra behaviours:
-# owner-targeted SSE on edit (L0044.0008 §8) and turn carry-over at the content
+# owner-targeted SSE on edit and turn carry-over at the content
 # cap (§7). Kept separate from AUTO_COMPLETE_TYPES so memo (M) behaviour is
 # untouched by those conversation-only paths.
 CONVERSATION_TYPE_CODES = {"CH"}
@@ -272,7 +272,7 @@ def _regenerate_target_path(doc: dict) -> Path:
         # escaping path → fall through to a recomputed jailed path
     filename = "document.md"
     if str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
-        # A work plan's canonical body is JSON (P0009 §2.6 decision 2). Recomputing a `.md`
+        # A work plan's canonical body is JSON (decision 2). Recomputing a `.md`
         # name here would recover the document into a file its own reader cannot open.
         from modules.flow_gate.services import work_plan_service as _wp
 
@@ -454,8 +454,8 @@ class NextEmptyDocumentCreate(BaseModel):
     type_code: str
     title: str
     module: str = "none"
-    # group 0022 D0005 §3.4 form ②: empty document + queries. Right after creation, in the
-    # same transaction, attach them as asker_kind='ai' queries (L0007 §5). None/[] behaves the same as before.
+    # form ②: empty document + queries. Right after creation, in the
+    # same transaction, attach them as asker_kind='ai' queries. None/ behaves the same as before.
     questions: Optional[list["NextEmptyQuestionIn"]] = None
 
 
@@ -511,8 +511,8 @@ class TransitionRequestRpc(BaseModel):
 
 
 class MentionCopyRecordRpc(BaseModel):
-    # R0001 group 0015 / NR0003 rev4: record that the current user copied this document's
-    # mention block (to hand it off to an AI worker). mention_kind is a stable code (NR0005);
+    # record that the current user copied this document's
+    # mention block (to hand it off to an AI worker). mention_kind is a stable code;
     # the client maps it to a localized badge label.
     doc_id: str
     mention_kind: str = Field(..., min_length=1, max_length=64)
@@ -556,16 +556,16 @@ def _parse_doc_workflow(doc: dict) -> dict:
         parsed_history = raw_history
     else:
         parsed_history = []
-    # 0582 T0005 §4: attach the same AI provider evidence api/v1/document_routes
+    # attach the same AI provider evidence api/v1/document_routes
     # attaches (rejection_provider/response_provider), via the one shared function, so
     # the console UI and the T-API worker view of the same rejection cannot disagree.
     from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
     from modules.flow_gate.db import document_reviews as _db_reviews_actor
-    # flowgate.v02.0119 T#2 (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
+    # (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
     out["rejection_history"] = [_db_reviews_actor.rejection_actors(item)
                                 for item in enrich_rejection_history_provenance(parsed_history)]
 
-    # 0291 T3: read the group's document list **once, first**, and let the R/B root lookup and
+    # read the group's document list **once, first**, and let the R/B root lookup and
     # the head decision below share that result. Previously the root was fetched by two narrow
     # queries (R, then B) and then the same group's whole document list was read again — even
     # though the latter fully contains the former. Up to 3 → 1 per document response.
@@ -591,7 +591,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES and doc.get("group_id") and doc.get("project_id"):
         from modules.flow_gate.db import documents as _db_docs
         try:
-            # 0064 T#4 (L0005 2.10 P4): only a live root (R/B, not cancelled, not succeeded) is the parent.
+            # only a live root (R/B, not cancelled, not succeeded) is the parent.
             live = _live_root.live_roots(candidates)
             roots = [c for c in live if c.get("type_code") == "R"][:1]
             if not roots:
@@ -624,7 +624,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
 
     # Resolve group head by direct documents-table lookup (PM 4-step spec, T818).
     # NOT using workflow_sequence_items.result_doc_id (rejected by PM thrice).
-    # 0291 T3: the document list was already read above (``candidates``); this only filters it.
+    # the document list was already read above (``candidates``); this only filters it.
     #
     # The two constants are defined here, not inside the try. They used to sit in the lookup
     # block, so if the lookup raised, the head decision below blew up with NameError — a worse
@@ -649,13 +649,13 @@ def _parse_doc_workflow(doc: dict) -> dict:
     final_approved = (
         doc.get("doc_review_status") == "wf_done"
         or any(
-            _live_root.is_live_root(c)                      # 0064 T#4 (L0005 2.10 P5)
+            _live_root.is_live_root(c)                      # 
             and c.get("doc_review_status") == "wf_done"
             for c in candidates
         )
     )
     out["is_final_approved"] = final_approved
-    # TR0079.0003 (rework): a disposed group is recorded by a file-less DC document
+    # (rework): a disposed group is recorded by a file-less DC document
     # (process_service.dispose_group) — the requirement stays wf_in_progress and the
     # group status is untouched, so the DC document is the only reliable discard marker
     # (same signal the dashboard exclusion uses). Surface it so the client can collapse
@@ -676,7 +676,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
         else out.get("parent_root_doc_id") or out.get("parent_r_doc_id")
     )
     if _live_root.is_succeeded_root(doc):
-        # 0064 T#4 (L0005 2.10 P5): a succeeded root reads the head of the live root at its chain's end.
+        # a succeeded root reads the head of the live root at its chain's end.
         root_doc_id_for_head = _live_root.live_end_doc_id(
             doc, {c["doc_id"]: c for c in candidates if c.get("doc_id")} if not _candidates_truncated else None,
         ) or doc["doc_id"]
@@ -699,7 +699,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
             if c.get("doc_id")
         }
 
-        # B0001 (group 0105): a *pending* (not-yet-created) auto-approve slot (M / CH)
+        # (the earlier change): a *pending* (not-yet-created) auto-approve slot (M / CH)
         # IS an actionable "create next document" step — it just auto-approves on
         # creation. Excluding it from `pending` made the resolver return None when the
         # only remaining slot was a memo/chat, which collapsed the head to the synthetic
@@ -776,18 +776,18 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 # explicit step, not a document: keep the head at AC/pending until
                 # the R doc is finalized (wf_done), then the workflow is done.
                 root_done = any(
-                    _live_root.is_live_root(c)              # 0064 T#4 (L0005 2.10 P5)
+                    _live_root.is_live_root(c)              # 
                     and c.get("doc_review_status") == "wf_done"
                     for c in candidates
                 )
-                # Mandatory final-approval (AC) gate (M042 / group 0104): every workflow ends
+                # Mandatory final-approval (AC) gate (M042 / the earlier change): every workflow ends
                 # in an explicit final approval, even memo / auto-approved instruction chains.
                 # When all document steps are realized + approved but final approval has NOT
                 # happened yet, keep the head at AC/pending so the action bar surfaces the
                 # [final approval] control. Only report 'done' once final approval is actually
                 # performed — the root is finalized (wf_done) or an approved AC document exists.
                 # (b39f6b8 had collapsed this to always-'done', auto-finalizing the workflow
-                #  and removing the final-approval action — the regression in group 0104.)
+                #  and removing the final-approval action — the regression in the earlier change.)
                 ac_done = any(
                     c.get("type_code") == "AC"
                     and c.get("status") != "archived"
@@ -801,11 +801,11 @@ def _parse_doc_workflow(doc: dict) -> dict:
                     out["workflow_head_status"] = "pending"
         else:
             # seq_items is empty. Two very different situations collapse here — keep
-            # them apart (0119 B0001 / NR0009 §6.1):
+            # them apart:
             #  • _seq_found True  → the sequence ROW exists but every item was deleted
-            #    (a decided workflow emptied of all steps — the B0001 "decided but empty" zombie).
+            #    (a decided workflow emptied of all steps — the the regression "decided but empty" zombie).
             #    This is NOT a finished workflow: the only legitimate terminal state is the
-            #    AC (final-approval) gate (M042 / group 0104). Reporting 'done' here made the
+            #    AC (final-approval) gate (M042 / the earlier change). Reporting 'done' here made the
             #    strip paint [done] and let the group chain advance past a broken/empty
             #    workflow. Report a distinct 'empty' status so the client routes to recovery
             #    ([edit sequence]) instead of [done]/auto-advance.
@@ -862,7 +862,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
         # before the (synthetic, off-sequence) AC gate. Concretely, group test.test.0007
         # has steps [N,NR,T,TR] with TR pending (head_idx=3, step_count=4): 3 < 3 is
         # False, so the action bar blanked on every approved doc whose next step is TR
-        # (next-next = final approval). This is the group 0104 regression the prior fix
+        # (next-next = final approval). This is the the earlier change regression the prior fix
         # missed — restored to the pre-b39f6b8 semantics.
         if eff_head_type == "AC":
             out["next_step_exists"] = True
@@ -997,11 +997,11 @@ def _build_next_empty_content(
     return "\n".join(lines)
 
 
-# Locale-branched copy for auto-approved instruction documents (group 0099 B0001).
+# Locale-branched copy for auto-approved instruction documents.
 # The stored document title/body are NOT re-rendered through FE i18n — they are persisted
 # verbatim in the .md and shown as-is — so the only place to honor the selected locale is
 # here, at generation time. The earlier "delegate the locale-specific copy to i18n" design
-# (D0004 §4-4) never materialized (no auto-approved i18n key exists), which left the
+# never materialized (no auto-approved i18n key exists), which left the
 # unmanned continuous chain emitting Korean regardless of the chosen locale. The label
 # itself is already localized by get_type_name; these tables localize the surrounding copy
 # and drop the Korean subject particle for non-ko locales.
@@ -1195,7 +1195,7 @@ def create_next_empty_document(
         raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
     if type_code in {"AC", "RJ", "V", "C"}:
         raise HTTPException(status_code=422, detail=f"Cannot create an empty document for type: {type_code}")
-    # 0441 T0004 item 3 (NR0003 §2): a TSR is assembled by test_run_service out of a finished
+    # a TSR is assembled by test_run_service out of a finished
     # run, so there is no such thing as an empty one to fill in. Until now the type list above
     # did not name it and the head-type comparison below happily passed a TSR request through
     # (head=TSR, requested=TSR), which is how a hand-made TSR took the slot the run was going
@@ -1222,7 +1222,7 @@ def create_next_empty_document(
     _reject_if_revert_pending(prev_doc)
 
     # prev_doc may be the sequence root OR a produced child (the just-approved doc the
-    # FE navigated to). Resolve the owning sequence either way (0048 TR0009 — creating
+    # FE navigated to). Resolve the owning sequence either way (the earlier implementation — creating
     # from a child gave seq=None → 422 "Workflow is not defined.").
     seq = _db_wfseq.get_sequence_for_member_doc(body.prev_doc_id)
     if seq is None:
@@ -1245,7 +1245,7 @@ def create_next_empty_document(
             detail="Workflow step has already been created.",
         )
 
-    # 0660 T0004 §1 (RC1): a TR2 cannot exist without its source root. Make sure of it
+    # (RC1): a TR2 cannot exist without its source root. Make sure of it
     # here — provisioning a not-yet-ready group worktree synchronously — BEFORE the
     # number is reserved and anything is written, so a refusal leaves nothing behind and
     # tells the client whether a retry can help (retryable + public reason).
@@ -1269,12 +1269,12 @@ def create_next_empty_document(
     seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{body.group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
-    # 0395 T0026 rework: a work plan's canonical form is JSON, not Markdown (P0009 §2.6 decision 2).
+    # a work plan's canonical form is JSON, not Markdown (decision 2).
     # Writing a Markdown skeleton here when the head slot is WP creates the document but its
     # reader cannot open it, leaving "this work plan cannot be opened as a table" on screen (user report).
     is_work_plan = type_code == WORK_PLAN_TYPE
     from modules.flow_gate.services import work_plan_service as _wp
-    # 0565 T0030 §4: a TR2 is a canonical JSON proposal too. This route used to register a
+    # a TR2 is a canonical JSON proposal too. This route used to register a
     # Markdown skeleton for it, which the TR2 reader then failed to open ("No such file ...
     # _document.json"). Its row now names the canonical file, and the canonical writer
     # creates that file as revision 1 once the slot is registered (same writer as inbox).
@@ -1391,7 +1391,7 @@ def create_next_empty_document(
                 refreshed = _db_docs.get_by_id(doc["doc_id"])
                 if refreshed is not None:
                     doc = refreshed
-            # group 0022 §5 (D0005 §3.4 form ②): attach AI queries in the SAME transaction
+            # (form ②): attach AI queries in the SAME transaction
             # so a failure rolls them back with the document (+ .md unlink below).
             if body.questions:
                 from modules.flow_gate.services import q_service
@@ -1403,7 +1403,7 @@ def create_next_empty_document(
                     document_accompanied=True,
                 )
             if is_work_plan:
-                # 0599 T#2: next-empty has no later body synthesis. Snapshot the
+                # next-empty has no later body synthesis. Snapshot the
                 # canonical JSON written above, inside the creation transaction.
                 _wp.ensure_revision_snapshot(
                     doc,
@@ -1422,7 +1422,7 @@ def create_next_empty_document(
             return _tr2_error_response(exc)
         from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
         if isinstance(exc, WorkflowSlotConflictError):
-            # 0660 T0004 §2 (RC2): an identified workflow conflict, never a bare 500.
+            # (RC2): an identified workflow conflict, never a bare 500.
             return JSONResponse(status_code=409, content=exc.body())
         raise
 
@@ -1482,19 +1482,19 @@ class NextApprovedError(Exception):
         self.detail = detail
 
 
-# 0611 T0011: a WorkPlan N/T step carries its instruction document as the step's
+# a WorkPlan N/T step carries its instruction document as the step's
 # pre-instruction -- the attached Markdown file and/or the directly written text.  Both the
 # automatic AI-invoke path (advance_workflow -> _auto_complete_instruction_heads) and the
 # manual [승인 문서 생성] path expand exactly that document into the canonical N/T body.
 #
-# 0611 TR0012 rev2 (historical final contract, rej_01M3AVQVHD6PSTBE): steps[].note was
+# (historical final contract, rej_01M3AVQVHD6PSTBE): steps.note was
 # NEVER a body source, because copying it produced a self-referential document (0611
-# B0001: "a work order that says: write a work order"). A WorkPlan N/T step with no
-# instruction document had nothing to expand and stayed the authoring hop (0611 T0009) --
+# "a work order that says: write a work order"). A WorkPlan N/T step with no
+# instruction document had nothing to expand and stayed the authoring hop --
 # manual [승인지시서 생성] answered 409 instead of inventing a body.
 #
-# 0614 T0004 (explicit human override, NOT a regression fix): the user re-confirmed the
-# B0001 risk and asked for a new source priority --
+# (explicit human override, NOT a regression fix): the user re-confirmed the
+# risk and asked for a new source priority --
 #   instruction file/pre_instruction_text > steps[].note > legacy generated instruction
 # -- so a WorkPlan step with no instruction document now falls back to its note, and only
 # falls back further to the legacy generated instruction when both are absent. When an
@@ -1503,7 +1503,7 @@ class NextApprovedError(Exception):
 WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "work_plan_instruction_document"
 WORK_PLAN_STEP_NOTE_CONTENT_SOURCE = "work_plan_step_note"
 WORK_PLAN_LEGACY_CONTENT_SOURCE = "work_plan_legacy_generated"
-# flowgate.v02.0074 T#4 (D0006 §3.5): the composition rule lives in one place, shared with the v0.2 work plan deploy.
+# the composition rule lives in one place, shared with the v0.2 work plan deploy.
 from modules.flow_gate.services.work_plan_instruction_text import (  # noqa: E402
     EXTRA_HEADING as _WORK_PLAN_INSTRUCTION_EXTRA_HEADING,
     LEADING_FRONTMATTER_RE as _LEADING_FRONTMATTER_RE,
@@ -1593,7 +1593,7 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
     if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
         return None
 
-    # 0649 T#2 (NR0003 O6, G5): a row that records its card takes the key that card had in
+    # a row that records its card takes the key that card had in
     # the revision the row was poured from. Counting same-type rows of one revision (below)
     # is only for rows poured before card ids existed (card id NULL): for a row with a card
     # it could name another card's key, so a key that cannot be read from the snapshot (or
@@ -1784,7 +1784,7 @@ def materialize_work_plan_instruction(
                 "idempotent_reuse": True,
             }
         raise NextApprovedError(409, "Workflow slot is occupied by a different document.")
-    # 0600 TR0010 rev5 (human rejection): review necessity is the effective review_count,
+    # (human rejection): review necessity is the effective review_count,
     # NOT reviewer_provider_id presence. A WorkPlan row may carry review_count > 0 with
     # reviewer_provider_id = null — "use the project default reviewer" — and
     # resolve_reviewer() already falls back to that default when no reviewer is stored.
@@ -1850,14 +1850,14 @@ def create_next_approved_core(
     type_code = (type_code or "").strip().upper()
     module = module or "none"
 
-    # (G1) Type whitelist — stronger than next-empty's blacklist (P0005 §5).
-    # AC is excluded naturally (AC ∉ {N,T}, D0004 §3-3). TS removed (group 0121 R0001):
+    #  Type whitelist — stronger than next-empty's blacklist.
+    # AC is excluded naturally (AC ∉ {N,T}, the design). TS removed:
     # a test-scenario directive is token-issued (AI authors it), never auto-approved.
     if type_code not in {"N", "T", "T2"}:
         raise NextApprovedError(422, f"Auto-approved document not allowed for type: {type_code}")
 
     # (G2) Shared guards — replicated from next-empty (documents.py next-empty path)
-    # for behavior parity and next-empty regression = 0 (L0007 §3).
+    # for behavior parity and next-empty regression = 0.
     prev_doc = document_service.get_document(prev_doc_id)
     if prev_doc is None:
         raise NextApprovedError(404, f"Previous document not found: {prev_doc_id}")
@@ -1867,7 +1867,7 @@ def create_next_approved_core(
         raise NextApprovedError(422, "group_id does not match the previous document.")
 
     # prev_doc may be the sequence root OR a produced child (parity with next-empty;
-    # 0048 TR0009). Resolve the owning sequence either way.
+    # ). Resolve the owning sequence either way.
     seq = _db_wfseq.get_sequence_for_member_doc(prev_doc_id)
     if seq is None:
         raise NextApprovedError(422, "Workflow is not defined.")
@@ -1892,7 +1892,7 @@ def create_next_approved_core(
     # (G3) Approve permission check — block with 403 BEFORE reserving a number (avoid
     # wasting a doc number). The caller resolves the real/effective permission set via the
     # same resolver as the live approve action; approve must never be bypassed with a
-    # hardcoded set (P0005 §4). A non-approver still gets 403.
+    # hardcoded set. A non-approver still gets 403.
     if "document.approve" not in (approver_perms or set()):
         raise NextApprovedError(403, "document.approve permission is required.")
 
@@ -1911,9 +1911,9 @@ def create_next_approved_core(
         step_key = str(materialization.get("source_wp_step_key") or "")
         if not step_key.startswith(type_code + "#"):
             raise NextApprovedError(422, "WorkPlan materialization type/step mismatch.")
-        # 0614 T0004 (human override of the 0611 rej_01M3AVQVHD6PSTBE final contract):
+        # (human override of the 0611 rej_01M3AVQVHD6PSTBE final contract):
         # instruction file/pre_instruction_text > steps[].note > legacy generated
-        # instruction. 0611 B0001 rejected copying the note into the body because it
+        # instruction. the regression rejected copying the note into the body because it
         # produced a self-referential document; the note is still never merged behind an
         # instruction document -- that risk stands only when there is nothing else to use.
         instruction_document = _work_plan_instruction_document(head)
@@ -2010,7 +2010,7 @@ def create_next_approved_core(
         store = get_store()
         with store.transaction():
             doc = document_service.create_document(data, actor_user_id=actor_user_id)
-            # P0005 §3 D-C: NOT the M direct-write shortcut. Register the slot fully
+            # D-C: NOT the M direct-write shortcut. Register the slot fully
             # and go through the state machine (submit → approve) so the slot meta,
             # audit log and permission check are preserved (N/T/TS are real steps).
             register_workflow_result(
@@ -2082,7 +2082,7 @@ def create_next_approved_core(
     # doc-created SSE so the auto-generated "<type> approval" instruction appears in the explorer /
     # group view without an F5. broadcast (audience="*") + threadsafe because this runs from
     # a sync worker thread (mirrors the conversation-turn publish). Best-effort: a push
-    # failure must never undo the already-committed document (NR0003 §notifications).
+    # failure must never undo the already-committed document.
     try:
         from modules.flow_gate.api.v1.events.publisher import (
             FlowEvent,
@@ -2100,7 +2100,7 @@ def create_next_approved_core(
                     "title": gen_title,
                     "status": doc.get("status"),
                     "revision_no": 0,
-                    # NR0005 §6-3 (T0006): this auto-generated "<type> approval" head is the
+                    # this auto-generated "<type> approval" head is the
                     # auto-advance target document N0004 asked the explorer to pinpoint
                     # AND select — not merely refresh. Carry an explicit select intent so
                     # the FE can distinguish "select this" from a plain "refresh". The
@@ -2211,7 +2211,7 @@ class _RestoreBody(BaseModel):
     destination_seq: Optional[int] = None
 
 
-# 0449 T0004 item 5.1 (NR0003 E5): the return-point helpers this router used to define itself
+# the return-point helpers this router used to define itself
 # — _record_return_point / _return_point_payload / _group_workflow_root_doc, plus the
 # fingerprint pair they leaned on — were byte-for-byte copies of the ones in
 # services/workflow_rework_service.py. Two copies meant a rewind fix could land in one and
@@ -2359,11 +2359,11 @@ def get_workflow_return_point(
     if not group_id:
         raise HTTPException(status_code=400, detail="Document has no group")
     payload = {"ok": True, "return_point": _return_point_payload(group_id)}
-    # 0332 P0006 §2 — the rewind dialog opens on this call, so the commit preview rides
+    # the rewind dialog opens on this call, so the commit preview rides
     # along instead of getting an endpoint of its own (one group, one answer). It is
     # additive and optional: if it cannot be assembled the key is simply absent, the
     # dialog shows "확인할 수 없음" per step and the confirm button stays enabled —
-    # git state has never been allowed to block a rewind (D0005 §6.3).
+    # git state has never been allowed to block a rewind.
     try:
         from modules.flow_gate.services import tr_commit_service as _tr_commit
         payload["tr_commit_preview"] = _tr_commit.commit_preview(group_id)
@@ -2447,7 +2447,7 @@ def retry_reapply_tr_commits(
     return {"ok": True, "tr_commit_restore": result}
 
 
-# 0332 T0018 K11 — the forward restore's audit trail, a SEPARATE event for the same reason
+# K11 — the forward restore's audit trail, a SEPARATE event for the same reason
 # `workflow_rework_service.EVT_TR_COMMIT_CANCEL` is one: the restore's own event row is
 # written inside the transaction, before git has run, and backfilling a committed audit row
 # is the history edit this whole group refuses to do.
@@ -2560,7 +2560,7 @@ def restore_workflow(
             # restore actually reconstructed the approved baseline. If any snapshot doc is still
             # pending_review — a pre-existing polluted return point whose prev_status was itself
             # pending — keep the return point and leave the root untouched rather than finalizing over
-            # a pending step and laundering the pollution on the next rewind (0142 T0013).
+            # a pending step and laundering the pollution on the next rewind.
             still_pending = _db_rp.current_pending_min_seq(rp["id"])
             if still_pending is None:
                 # Honest re-declaration: walk the root back to whatever it held before the rewind.
@@ -2604,7 +2604,7 @@ def restore_workflow(
             "return_point_cleared": return_point_cleared,
         }
 
-    # 0332 T0018 K11 — the source half, and deliberately OUTSIDE the transaction above.
+    # K11 — the source half, and deliberately OUTSIDE the transaction above.
     # git is slow and takes the project lock; the rewind direction already learned to split
     # (`reopen_to_target` closes its transaction, then calls `_rearm_git`) and this is the
     # same shape read the other way. Only the steps this call actually brought forward are
@@ -2984,7 +2984,7 @@ def get_test_document(
     out = _test_run_service.describe_test_document(doc)
     if out.get("kind") == "TS" and out.get("contract_version") == _test_spec_service.CONTRACT_LEGACY:
         # An empty/new TS may START as a specification; a TS that already carries legacy
-        # executable cases is never re-interpreted (D0006 §5).
+        # executable cases is never re-interpreted.
         try:
             _test_run_service.parse_test_cases(_test_run_service._read_doc_content_or_empty(doc))
             out["can_start_spec"] = False
@@ -3225,10 +3225,10 @@ def _shape_review(row: dict) -> dict:
         "revision_no": row.get("revision_no"),
         "reviewer_id": reviewer_id,
         "reviewer_name": reviewer_name,
-        # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
+        # one shared builder for both read surfaces, so the key set and
         # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": _db_reviews_shape.review_provider_payload(row),
-        "actor": _db_reviews_shape.review_actor(row),   # flowgate.v02.0119 T#2 (T-1)
+        "actor": _db_reviews_shape.review_actor(row),   # (T-1)
         "review_intent": row.get("review_intent"),
         "superseded_review_id": row.get("superseded_review_id"),
         "verdict": row.get("verdict"),
@@ -3335,7 +3335,7 @@ def get_document(
     # Group-scoped, NOT document-scoped: every document of the group gets the same answer,
     # so the action bar of a sibling tab can lock itself while a run is in flight elsewhere.
     out["group_test_run"] = _load_group_test_run(doc)
-    # 0549 T0008: the test controls need the TS contract before any result exists (a
+    # the test controls need the TS contract before any result exists (a
     # specification TS is never run by the server, so its [run] button must not appear), and
     # the TSR action bar needs the server-computed gate (a report that did not pass the gate
     # cannot be approved). Both are display-only extras: a failure omits them.
@@ -3350,12 +3350,12 @@ def get_document(
                 out["test_gate"] = _test_run_service.tsr_gate_state(doc, memo=True)
     except Exception:  # noqa: BLE001 — display-only extras must not break document lookup
         pass
-    # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the
-    # screen never parses the meta string itself. 0390 TR0005 rev2: with no stored verdict, if
+    # TR work-scope check result. It lives in meta, but is unfolded here so the
+    # screen never parses the meta string itself. the earlier implementation: with no stored verdict, if
     # the type is checked and the body has a changed-files section, an unevaluated verdict
     # carrying only the declared list read from the body is shipped instead — to remove the
     # symptom where the sidebar's work-scope card vanished entirely on a document submitted
-    # before its type became checked (TS0006, say). With neither, the key is omitted as before.
+    # before its type became checked (say). With neither, the key is omitted as before.
     try:
         from modules.flow_gate.services import tr_scope_service as _tr_scope
 
@@ -3507,7 +3507,7 @@ def _stage_body_save(doc, *, relative, size, actor_user_id, source, write_file, 
     record_body_saved(doc, source=source, file_path=relative, size=size)
     after_commit(lambda: _broadcast_document_refresh(doc))
     if doc.get("group_id"):
-        # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): a person's instruction stage holding this document judges it
+        # (L-2 CONTENT_SAVED): a person's instruction stage holding this document judges it
         # after the commit (never raises; no handler: nothing).
         from modules.flow_gate.graph_workflow.services import card_settings_ports
         flow_id, doc_id = doc["group_id"], doc["doc_id"]
@@ -3516,7 +3516,7 @@ def _stage_body_save(doc, *, relative, size, actor_user_id, source, write_file, 
             card_settings_ports.instruction_saved(flow_id, doc_id)
 
         if after_guard is not None:
-            # 0113 T#3 rework: a commit callback still holds the save's Flow guard (its in-process lock is released
+            # a commit callback still holds the save's Flow guard (its in-process lock is released
             # after the callbacks) and the contact takes that guard to judge the stage — inside, it waited the whole
             # lock timeout and judged nothing (FlowLockTimeout). The committed save hands it to its caller, which runs
             # it once the guard is left; a rolled back save hands nothing.
@@ -3560,14 +3560,14 @@ def _save_write_checks(doc: dict) -> None:
             status_code=409,
             detail="Use the TR2 document endpoint with expected_revision.",
         )
-    # 0344 TR0008 후속 — 이관이 끝난 대화(CH)는 전체 본문 교체를 받지 않는다
-    # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR 이 이 마무리를 시도했다가
-    # 반려된 뒤 후속이 없어 방치돼 있었다. 화면의 [편집] 진입점을 지우는 것만으로는
-    # 옛 즐겨찾기와 직접 호출이 같은 일을 계속할 수 있다. 이관된 대화의 파일은 아무도
-    # 읽지 않는 껍데기라서(위 get_document_content 는 턴에서 만든 projection 을 준다)
-    # 여기를 열어 두면 "저장 성공" 응답을 받고도 대화는 하나도 바뀌지 않는다.
-    # 이관되지 않은 대화(pending/in_progress/failed)는 아직 파일이 정본이라 그대로 저장된다.
-    # 봉투는 세션 계열 HTTPException(detail) 그대로 — 0344.0004-P §0-5.
+    # follow-up: migrated conversations (CH) do not accept full-body replacements
+    # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR attempted this final step,
+    # but it remained unfinished after rejection. Removing only the UI's [편집] entry point still lets
+    # old bookmarks and direct calls perform the same action. A migrated conversation's file is an unused
+    # shell (get_document_content above returns a projection of turns), so leaving this entry open
+    # would return a successful-save response without changing the conversation at all.
+    # Unmigrated conversations (pending/in_progress/failed) still use the file as their source of truth and save normally.
+    # Keep the session-family HTTPException(detail) envelope — 0344.0004-P §0-5.
     if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc["doc_id"]):
         raise HTTPException(
             status_code=409,
@@ -3811,7 +3811,7 @@ def delete_document_type(
 
 # ── Attachments ────────────────────────────────────────────────────────────────
 #
-# flowgate.default.0060 T0016 §3·§4 — P0011 §1-1 is the canonical contract:
+# · — the plan is the canonical contract:
 #
 #   POST   /documents/{doc_id}/attachments             upload (repeat `file` for many)
 #   GET    /documents/{doc_id}/attachments             list
@@ -3821,9 +3821,9 @@ def delete_document_type(
 #   POST   /documents/{doc_id}/attachments/{name}/copy copy into the source tree
 #
 # Everything below is a thin shell: parse, delegate to the attachment service, turn an
-# AttachmentError into the P0011 §1-4 envelope. All judgement lives in the service, which is
+# AttachmentError into the the plan envelope. All judgement lives in the service, which is
 # what lets the compatibility RPC and the canonical REST route share one body instead of one
-# route function calling the other (NR0015 §2-3).
+# route function calling the other.
 
 @router.post("/{doc_id}/attachments", status_code=201)
 async def upload_attachment(
@@ -3855,7 +3855,7 @@ async def upload_attachment(
         return exc.response()
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 — logged, then answered as the P0011 envelope
+    except Exception as exc:  # noqa: BLE001 — logged, then answered as the the plan envelope
         return attachments.unexpected(exc, operation="route:upload", doc_id=doc_id).response()
     return JSONResponse(status_code=201, content={"data": data})
 

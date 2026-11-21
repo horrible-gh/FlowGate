@@ -1,4 +1,4 @@
-"""Refresh failure log + request id + access-log token redaction (flowgate.v02gui.0017, NR 0003 B-R8).
+"""Refresh failure log + request id + access-log token redaction.
 
 * every refused /auth/refresh writes one WARNING with a reason code, ids and the request id,
   and never the refresh token itself; status and detail stay what they were;

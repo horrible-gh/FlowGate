@@ -1,4 +1,4 @@
-"""AI attachment upload requests (flowgate.chat.0017 CH0002, final design approved at seq 11).
+"""AI attachment upload requests (final design approved at seq 11).
 
 What this suite pins, in the design's own priority order:
 

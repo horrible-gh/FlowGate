@@ -93,7 +93,7 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         monkeypatch.setattr(
             svc.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path / "storage root 日本語"
         )
-        # T0004 (0581 NR0003 §8): run scratch (engine-internal: TMP/TEMP/TMPDIR, provider
+        # run scratch (engine-internal: TMP/TEMP/TMPDIR, provider
         # output) and token scratch (the /inbox doc_path jail) are deliberately DIFFERENT
         # directories here -- the old shared-directory setup made this E2E green even though
         # production FLOWGATE_SCRATCH pointed at run scratch while inbox validated token

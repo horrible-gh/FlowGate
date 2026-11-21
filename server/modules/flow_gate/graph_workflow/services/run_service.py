@@ -1,26 +1,26 @@
-"""Run Coordinator (D0004 §2.2 실행 서비스, L0009 §2.6.5 / §2.6.7, P0008 §7 S5).
+"""Run Coordinator (execution service, the earlier implementation /, the plan S5).
 
 Start, stop and resume each run in one Flow guard; the checks come first and write nothing (the
-order of L0009 §4.6 / §4.7 fixes which error wins). Policies come from the run's snapshot only.
-Until D0004 §8 is answered every policy is ``undecided``, so a start is refused with
-``run_policy_undecided`` naming the policies this revision needs (P0008 S5-1).
+order of the earlier implementation / fixes which error wins). Policies come from the run's snapshot only.
+Until the design is answered every policy is ``undecided``, so a start is refused with
+``run_policy_undecided`` naming the policies this revision needs.
 
-flowgate.v02.0056 T#1: a run read also tells the run band how many approved cards' propagations wait
+a run read also tells the run band how many approved cards' propagations wait
 for the run to go on (``pending_propagation_count`` / ``pending_node_keys``: "멈춤 · 다음 카드 N개 대기")
 and each node run whether its card waits for a person's approval (``awaiting_approval``,
-``node_approval``). 0056 T#1 개정: a bound root is existing input accepted by Run, including a rejected
+``node_approval``). the earlier implementation revision: a bound root is existing input accepted by Run, including a rejected
 root. Its card becomes done and propagates approved without changing the document's review status.
 
-flowgate.v02.0056 T#2: each node run also tells the stage of its card run (``stage``: ``instruction`` while the
+each node run also tells the stage of its card run (``stage``: ``instruction`` while the
 card's instruction AI writes its instruction, ``result`` while its run AI writes the result) and the instruction
 the card run uses (``instruction_doc_id``).
 
-flowgate.v02.0061 T#2: a Flow keeps one run — ``running``, ``paused`` or ``idle`` (``idle_reason``) — and a finished
+a Flow keeps one run — ``running``, ``paused`` or ``idle`` (``idle_reason``) — and a finished
 run stays idle (completed) and goes on with the next command. A command is ``step`` (open the run candidates of the
 moment; what they make runnable waits for the next command) or ``full`` (go on opening until no candidate is left):
 ``POST /flows/{flow_id}/runs`` and ``POST /runs/{run_id}/resume`` take it as ``mode``. ``POST /runs/{run_id}/pause``
-is Pause (running -> paused, open nodes keep their tokens and their work, the Flow stays locked; T#2's behaviour, moved
-from ``/stop`` by T#7). ``POST /runs/{run_id}/stop`` is T#7's Stop (``run_state_ports.stop``: stopping, then idle with
+is Pause (running -> paused, open nodes keep their tokens and their work, the Flow stays locked; the earlier implementation's behaviour, moved
+from ``/stop`` by the earlier implementation). ``POST /runs/{run_id}/stop`` is the earlier implementation's Stop (``run_state_ports.stop``: stopping, then idle with
 the reason ``stopped`` once the AI processes ended). A run read tells the command (``mode``), the idle reason and each
 node's attempt.
 Which command a run goes on with, what it records and whether a run goes on after a step are ``flowgate.graph_run``'s
@@ -28,25 +28,25 @@ Which command a run goes on with, what it records and whether a run goes on afte
 Flow): a run written before migration 151 that completed gave the Flow up and takes it back only when no other run
 holds or follows it.
 
-flowgate.v02.0061 T#11: each node run tells whether its card is held (``hold``, ``graph_execution_hooks`` ``held_nodes``).
+each node run tells whether its card is held (``hold``, ``graph_execution_hooks`` ``held_nodes``).
 A held root-bound input is not marked done at the run start either (``_take_root_binding``): it
 stays ``pending``, no propagation is recorded and nothing follows it. Released, nothing happens until the next step /
-full command, which marks the root input done and records its approved propagation (0056 T#1 개정),
+full command, which marks the root input done and records its approved propagation,
 then goes on as the start would have — never an ordinary opening of the R / B card
 (``run_apply.read_run_state`` keeps such a node out of every opening).
 
-flowgate.v02.0064 T#4: each node run also tells whether its card is running now (``node_running``): the running lock the
+each node run also tells whether its card is running now (``node_running``): the running lock the
 card settings and a card title save use (``card_settings_ports.node_running`` — open in the active run, or in review while
 the card's AI review works on its result). The Canvas closes a card's title edit by it instead of judging it again.
 
-flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9): a node run awaiting approval also tells why its result was not
+(NR the earlier change): a node run awaiting approval also tells why its result was not
 approved automatically (``approval_wait_reason``, B-2; null otherwise — ``awaiting_approval`` and the card approval API's
 409 are judged as before); a run read and a Resume first follow the AI cards whose run-end stage was lost
 (``card_settings_ports.reconcile_stage``, B-3, outside the Flow guard). The run answered to a user no longer tells whether that
-user may approve its cards (``viewer.can_approve``, B-6): flowgate.v02.0119 T#4 (T-3) removed the card approval, its port
+user may approve its cards (``viewer.can_approve``, B-6): the earlier change the earlier implementation (T-3) removed the card approval, its port
 and that field (``with_viewer``).
 
-flowgate.v02.0119 T#3 (T-2): no card awaits a person's approval (``awaiting_approval`` is always false, kept for the
+(T-2): no card awaits a person's approval (``awaiting_approval`` is always false, kept for the
 readers T-3 / T-5 remove). Each node run tells instead whether its card is in intervention (``intervention``:
 ``{"kind": "needs_intervention" | "system_error", "reason": …}`` of a general card in review that nothing completes,
 null otherwise — ``node_approval.intervention``), with the latest recorded reason as ``approval_wait_reason``. A run
@@ -59,7 +59,7 @@ flowgate.v02.0125 T#1 (Q #544, 0005-NR §3.5 / §4.1): a step / full command giv
 review answered yet (``needs_intervention``, ``review_not_passed:review_count_exhausted``): after its guard and its
 stage reconciliation it asks ``card_settings_ports.command_review``. A run read never asks it.
 
-flowgate.v02.0159 T#3: node_running_cause accompanies the run read lock;
+node_running_cause accompanies the run read lock;
 unknown ownership detail preserves a true lock and never aborts the read.
 """
 from __future__ import annotations
@@ -95,7 +95,7 @@ _restore_checked = False
 
 
 def _restore_check_once() -> None:
-    """L0009 §2.6.2: try every active run's snapshot once per process (log only)."""
+    """try every active run's snapshot once per process (log only)."""
     global _restore_checked
     if _restore_checked:
         return
@@ -107,7 +107,7 @@ def _restore_check_once() -> None:
 
 
 def run_jobs(jobs: list) -> None:
-    """Post-commit jobs (L0009 §2.1.4): after the guard released, best effort."""
+    """Post-commit jobs: after the guard released, best effort."""
     for job in jobs:
         try:
             job()
@@ -132,19 +132,19 @@ def _undecided(flow_id: str, revision_no: int, missing: list[dict]) -> GraphApiE
 
 
 def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> list[dict]:
-    """L0009 §2.6.3 ``undecided_for``; ``extra`` adds what one step needs on top (gate: ``gate_node``)."""
+    """``undecided_for``; ``extra`` adds what one step needs on top (gate: ``gate_node``)."""
     required = required_policies(ctx.revision, (ctx.binding or {}).get("node_key"))
     return undecided_for(required | set(extra), entries)
 
 
 def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optional[str] = None,
               command_request_id: Optional[str] = None, *, recovery=None) -> dict:
-    """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}`` (P0008 S5-1~S5-3, L0009 §2.6.5).
+    """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}``.
 
-    0061 T#2: the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
+    the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
     goes on with the command instead of a second run (as ``resume`` with a mode; with no mode, its own command). A
     running run, or a requested revision other than the run's or latest, stays 409 ``run_already_active``.
-    T#3: the guarded command adopts the latest confirmed revision only when no attempt is active."""
+    the guarded command adopts the latest confirmed revision only when no attempt is active."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     require_writable(flow_id)
     _restore_check_once()
@@ -152,7 +152,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
 
     def body() -> dict:
         require_writable(flow_id)
-        own = read_ownership(flow_id)                                             # 1~3 담당
+        own = read_ownership(flow_id)                                             # 1–3 assignment
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
         if command_request_id is not None:
@@ -165,7 +165,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
                     raise GraphApiError(409, "command_request_conflict", params)
                 return {"run": run_payload(prior["run_id"], with_nodes=True),
                         "command": _command_identity(prior, replayed=True)}
-        _refuse_time_machine(flow_id)                                             # 0061 T#13
+        _refuse_time_machine(flow_id)                                             # 
         if recovery is None:
             from flowgate.graph_run.recovery_store import refuse_pending
             refuse_pending(flow_id)
@@ -173,7 +173,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             replay = recovery.before()
             if replay is not None:
                 return replay
-        active = run_store.current_run(flow_id)                                    # 4 진행 중 실행
+        active = run_store.current_run(flow_id)                                    # 4 active run
         if active is not None:
             if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
                     revision_no is not None and revision_no not in (
@@ -187,16 +187,16 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             result = {"run": run_payload(active["run_id"], with_nodes=True)}
             return record(result, active["run_id"], command_seq, "user_command")
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
-        if number is None or definition_store.revision(flow_id, number) is None:  # 5 개정
+        if number is None or definition_store.revision(flow_id, number) is None:  # 5 revision
             raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
-        snapshot = policy_set_for_run(flow_id)                                    # 6 정책
+        snapshot = policy_set_for_run(flow_id)                                    # 6 policy
         policies = policies_of(snapshot["entries"])
         probe = load_context({"run_id": "", "group_id": flow_id, "revision_no": number, "status": "running",
                               "last_event_seq": 0, "started_by": user_id}, project_id, user_id, jobs)
         missing = _missing(probe, snapshot["entries"])
         if missing:
             raise _undecided(flow_id, number, missing)
-        root = probe.root_document() if probe.binding else None                 # 7 결합 문서
+        root = probe.root_document() if probe.binding else None                 # 7 bound document
         if probe.binding and (root is None or probe.binding["node_key"] not in bindable_starts(
                 probe.revision, probe.binding.get("doc_type"))):
             raise GraphApiError(409, "root_binding_lost", {"flow_id": flow_id, "node_key": probe.binding["node_key"],
@@ -262,7 +262,7 @@ def void_command(group_id: str, cid: str, user_id: str) -> dict:
 
 
 def answer_after_jobs(result: dict, project_id: Optional[str], jobs: list, with_nodes: bool) -> dict:
-    """flowgate.v02.0113 T#3 rework (0026-TR review): a command answers the run as its post-commit jobs left it. The
+    """(TR review): a command answers the run as its post-commit jobs left it. The
     guarded answer is built before those jobs run (a lost stage's reconciliation, a reused instruction's review
     assignment, ``stage_assignment.proceed``) and before the settlement after them, so it told the reason of the moment
     before (``no_targets``) and the stage assignments of the attempt the command replaced — and the client puts the
@@ -281,7 +281,7 @@ def answer_after_jobs(result: dict, project_id: Optional[str], jobs: list, with_
 
 
 def _command_fence(flow_id: str):
-    """0113 T#3 (L-2 §2.10, T §4.5): an explicit command that replaces a node's attempt (``REOPEN_NEW_ATTEMPT``) takes
+    """(L-2, T): an explicit command that replaces a node's attempt (``REOPEN_NEW_ATTEMPT``) takes
     the Flow's Stop gate exclusively before its Flow guard (``graph_execution_hooks`` ``command_fence``) — the lock
     order of every attempt replacement; any other command takes no fence."""
     from modules.flow_gate.services import graph_execution_hooks
@@ -290,7 +290,7 @@ def _command_fence(flow_id: str):
 
 def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str, reason: Optional[str],
            jobs: list) -> int:
-    """A paused or idle run goes on (L0009 §2.6.7, 0061 T#2): reconcile -> running (its new command recorded first,
+    """A paused or idle run goes on: reconcile -> running (its new command recorded first,
     so the run status event tells it) -> re-dispatch -> drain -> run candidates. The command is
     ``run_state_ports.command_of``'s: a new one (``mode`` given, or an idle run) or, for a paused run with no mode,
     its own (a step keeps its targets). Inside the run's Flow guard; ownership and the Flow checked by the caller."""
@@ -305,7 +305,7 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     if missing:
         raise _undecided(run["group_id"], int(run["revision_no"]), missing)
     if not adopted and from_status == run_store.IDLE and run.get("idle_reason") == "completed":
-        # 0085 T#4: a completed definition only acknowledges the command. Do not reconcile,
+        # a completed definition only acknowledges the command. Do not reconcile,
         # re-dispatch, settle/cleanup or reapply a gate's already recorded result.
         return emit_run_status(ctx, run_store.IDLE, run_store.IDLE, cause, reason)
     command = run_state_ports.command_of(run, mode)                              # None: the paused command goes on
@@ -327,15 +327,15 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
                     if r["status"] == "done" and before_repair.get(r["node_key"]) in ("open", "review")}
         ctx.command_pending = False
         flow_id = run["group_id"]
-        jobs.append(lambda: card_settings_ports.reconcile_stage(flow_id))        # 0105 T#2 B-3, after the guard
+        jobs.append(lambda: card_settings_ports.reconcile_stage(flow_id))        # B-3, after the guard
         if mode is not None:
-            # flowgate.v02.0125 T#1 (Q #544): the person's explicit step / full command (a mode given: the menu's
+            # (Q #544): the person's explicit step / full command (a mode given: the menu's
             # 다음 단계 / 전체 실행) asks again for the review of a card whose review count was spent on a revision no
             # review answered — after the reconciliation (its RC-1 consumes a stopped loop's verdict first), outside
             # the guard as a card stage step is. Only here: a run read, F5 and every automatic path never ask it. The
             # command's own scope (``record_command`` / ``record_step_targets``) is not widened by it.
             jobs.append(lambda: card_settings_ports.command_review(flow_id, run_id))
-        # 0061 T#9: the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
+        # the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
         # attempt order; until the drain has asked each of them the command holds — its re-dispatch, drain and
         # openings follow in ``go_on_command`` from the state of that moment (the Git work stays outside the guard).
         held = bool(graph_execution_hooks.call("retry_integrations", ctx))
@@ -362,11 +362,11 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
 
 def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
-    records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
-    asked (``flowgate.graph_run.result_merge``). 0061 T#11: a bound node its Hold kept pending at the start takes its
-    input completion first, once released (``_take_root_binding``, 0056 T#1 개정).
+    records its targets). the earlier implementation: also the end of a command's integration hold, once its waiting integrations were
+    asked (``flowgate.graph_run.result_merge``). the earlier implementation: a bound node its Hold kept pending at the start takes its
+    input completion first, once released (``_take_root_binding``, the earlier implementation revision).
 
-    flowgate.v02.0124 T#1 (0003-NR §5.1.1 / §5.1.3-1): after the re-dispatch of the open nodes a new command
+    (NR): after the re-dispatch of the open nodes a new command
     (``command`` given) asks for each node in review whether its card's spent result review is requested again
     (``_rerequest_reviews``); the cards it requested are the step's targets with what the decision opens."""
     run_id = ctx.run_id
@@ -374,7 +374,7 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
         kind = node_dispatch.redispatch_kind(ctx, row) if row["status"] == "open" else None
         if kind == node_dispatch.REOPEN:
-            # 0113 T#3 (L-2 §2.10 REOPEN_NEW_ATTEMPT): an assigned attempt's wait or failure — the attempt is
+            # (L-2 REOPEN_NEW_ATTEMPT): an assigned attempt's wait or failure — the attempt is
             # invalidated and the node opened again as a new attempt (resolved anew), inside this guard and under the
             # exclusive Stop gate the command's entry took (``_command_fence``); judged again there.
             from modules.flow_gate.services import graph_execution_hooks
@@ -395,17 +395,17 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
 
 
 def _rerequest_reviews(ctx: RunContext) -> list[str]:
-    """flowgate.v02.0124 T#1 (0003-NR §5.1.3-1): inside the explicit command's Flow guard, the node keys whose result
+    """(NR): inside the explicit command's Flow guard, the node keys whose result
     review the command requested again — every node in review is asked (``graph_execution_hooks``
     ``rerequest_review``, as ``reopen_attempt`` is for an open node); the v0.2 card stage judges which may be and writes
-    it (0003-NR §5.1.2). No handler: none. The node stays in review; nothing else of the run changes here."""
+    it (NR). No handler: none. The node stays in review; nothing else of the run changes here."""
     from modules.flow_gate.services import graph_execution_hooks
     return [row["node_key"] for row in run_store.node_runs(ctx.run_id)
             if row["status"] in ("open", "review") and graph_execution_hooks.call("rerequest_review", ctx, row)]
 
 
 def _refuse_time_machine(flow_id: str) -> None:
-    """0061 T#13: while a Graph Time Machine operation of the Flow is unfinished (started, its Git applied, or partially
+    """while a Graph Time Machine operation of the Flow is unfinished (started, its Git applied, or partially
     failed), a step / full command is refused (409 ``graph_time_machine_in_progress``). Inside the command's guard;
     the v0.2 judgement is ``flowgate.graph_time_machine``'s (``graph_execution_hooks`` ``time_machine_refusal``)."""
     from modules.flow_gate.services import graph_execution_hooks
@@ -413,7 +413,7 @@ def _refuse_time_machine(flow_id: str) -> None:
 
 
 def _hold_flow(run: dict) -> None:
-    """0061 T#2, one run per Flow: the run that goes on holds its Flow (``active_group_id``). A run written before
+    """one run per Flow: the run that goes on holds its Flow (``active_group_id``). A run written before
     migration 151 that completed gave the Flow up (NULL); it takes the Flow back — this run only, under the unique
     ``idx_graph_runs_active`` — when no run holds the Flow and no later run of the Flow follows it. Any other is
     refused as a start is (409 ``run_already_active``, naming the run that holds or follows). Inside the Flow guard."""
@@ -433,7 +433,7 @@ def _hold_flow(run: dict) -> None:
 
 
 def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = None) -> None:
-    """0061 T#11 / 0056 T#1 개정: the bound input is marked done (``_root_bound_start``) while it is ``pending`` and
+    """the bound input is marked done (``_root_bound_start``) while it is ``pending`` and
     has not been bound yet — at the run start, or at the first command after its Hold is released. A held one stays
     pending (the Hold bounds this as it bounds an opening); a root lost by then is refused as at the start (409
     ``root_binding_lost``)."""
@@ -454,7 +454,7 @@ def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = N
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
-    """0056 T#1 개정: Run accepts the bound root as input, regardless of its review status.
+    """Run accepts the bound root as input, regardless of its review status.
 
     The input consumes neither approval nor a Step; only its card becomes done. The document's
     review status stays unchanged, and the existing approved propagation opens the first work card.
@@ -468,7 +468,7 @@ def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
 
 
 def _guarded_run(run_id: str, body_of, command: bool = False, project_id: Optional[str] = None) -> dict:
-    """Stop / resume: ``flow_id`` from outside the guard picks the guard only (L0009 §2.1.1). ``command`` (resume):
+    """Stop / resume: ``flow_id`` from outside the guard picks the guard only. ``command`` (resume):
     the explicit command's fence first (``_command_fence``), and its answer read once its jobs ran
     (``answer_after_jobs``)."""
     outside = run_store.run_by_id(run_id)
@@ -510,7 +510,7 @@ def pause_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> 
 
 
 def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``POST /runs/{run_id}/stop`` — 0061 T#7 Stop (``run_state_ports.stop``, ``flowgate.graph_run.stop``): a running
+    """``POST /runs/{run_id}/stop`` — the earlier implementation Stop (``run_state_ports.stop``, ``flowgate.graph_run.stop``): a running
     or paused run becomes stopping at once, and idle (stopped) once its AI processes ended and the worktrees of the
     attempts it invalidated are removed; a stopping run goes on with its stop; any other is 409 ``run_not_running``."""
     require_writable(group["group_id"])
@@ -533,21 +533,21 @@ def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mo
         own = read_ownership(run["group_id"])                                     # 2
         if own.state != "graph":
             raise _ownership_error(run["group_id"], own)
-        _refuse_time_machine(run["group_id"])                                     # 0061 T#13
-        _hold_flow(run)                                                           # 0061 T#2: one run per Flow
+        _refuse_time_machine(run["group_id"])                                     # 
+        _hold_flow(run)                                                           # one run per Flow
         _go_on(group, run, user_id, mode, "user_resume", reason, jobs)            # 3~5
         return {"run": run_payload(run_id, with_nodes=False)}
 
     return _guarded_run(run_id, body_of, command=True, project_id=group.get("project_id"))
 
 
-# ── Reads (P0008 S5-4) ───────────────────────────────────────────────────────
+# ── Reads ───────────────────────────────────────────────────────
 
-LEGACY_WAITING_APPROVAL = "waiting_approval"       # an idle reason stored before flowgate.v02.0119 T#3 (T-2)
+LEGACY_WAITING_APPROVAL = "waiting_approval"       # an idle reason stored before the earlier change the earlier implementation (T-2)
 
 
 def idle_reason_read(run: dict) -> Optional[str]:
-    """0119 T-2: the run's idle reason as read — a stored ``waiting_approval`` told as ``waiting_confirm`` /
+    """T-2: the run's idle reason as read — a stored ``waiting_approval`` told as ``waiting_confirm`` /
     ``needs_intervention`` (``graph_execution_hooks`` ``idle_reason_read``), never converted. A failed read: as stored."""
     stored = run.get("idle_reason")
     if stored != LEGACY_WAITING_APPROVAL:
@@ -574,9 +574,9 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         "last_event_seq": run["last_event_seq"],
         "pending_propagation_count": len(pending),
         "pending_node_keys": sorted({p["node_key"] for p in pending}),
-        "mode": run.get("run_mode") or MODE_FULL, "idle_reason": idle_reason_read(run),        # 0061 T#2, 0119 T-2
+        "mode": run.get("run_mode") or MODE_FULL, "idle_reason": idle_reason_read(run),        # T-2
     }
-    # flowgate.v02.0143 T#1 (W1): an idle run whose card's question an automatic Q&A responder answers now.
+    # (W1): an idle run whose card's question an automatic Q&A responder answers now.
     responding = qa_responding_nodes(run_id, run["group_id"]) if run["status"] == run_store.IDLE else frozenset()
     out["qa_responding"] = bool(responding)
     out["qa_responding_node_keys"] = sorted(responding)
@@ -584,16 +584,16 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
     out.update(graph_execution_hooks.call("execution_wire", run_id, run["group_id"]))
     if with_nodes:
         attempts = run_store.current_attempts(run_id)
-        held = frozenset(graph_execution_hooks.call("held_nodes", run["group_id"]) or ())          # 0061 T#11
+        held = frozenset(graph_execution_hooks.call("held_nodes", run["group_id"]) or ())          # 
         asked = question_nodes(run_id, run["group_id"])                                           # 0063
-        gates = gate_wire(run, rows)                                                              # 0085 T#2
+        gates = gate_wire(run, rows)                                                              # 
         out["node_runs"] = [{**node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held, asked),
                              **({"gate": gates[r["node_key"]]} if r["node_key"] in gates else {})} for r in rows]
     return out
 
 
 def gate_wire(run: dict, rows: list[dict]) -> dict:
-    """flowgate.v02.0085 T#2 (D0007 §7.2 run read): ``{gate node key: …}`` — the current decision summary, its job, whether
+    """(run read): ``{gate node key: …}`` — the current decision summary, its job, whether
     a decision can be made now (``can_decide``), the settings lock and whether the current confirm's archive is done.
     Read by ``gate_service.gate_reader`` - not the decision's choice of the run's own rule, so a run whose stored
     snapshot is ``undecided`` is read too (``can_decide`` false); none when no gate rule with a reader is registered.
@@ -608,11 +608,11 @@ def gate_wire(run: dict, rows: list[dict]) -> dict:
 
 
 def question_nodes(run_id: str, flow_id: str) -> frozenset:
-    """flowgate.v02.0063: the nodes whose own document (result document, the root bound one included, or instruction)
+    """the nodes whose own document (result document, the root bound one included, or instruction)
     holds a question (Q&A item) nobody has answered yet — the card of the document the question is on. A failed read
     marks nothing.
 
-    flowgate.v02.0113 T#3 rework (0084: the card stopped with its AI's question on the R document, the run idle
+    (0084: the card stopped with its AI's question on the R document, the run idle
     ``no_targets``): also the open node whose own AI asked a question nobody has answered yet (``node_asks``) — the card
     that waits for that answer, wherever the question hangs."""
     from modules.flow_gate.db import questions as db_questions  # noqa: PLC0415
@@ -653,7 +653,7 @@ def question_wait_details(flow_id: str, row: dict) -> list[dict]:
         for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]):
             for item in open_questions_raised_by_run(flow_id, ai_run_id):
                 items[item["id"]] = item
-        # flowgate.v02test.0051 T0005 (A1): a question that holds a review loop at its hop boundary carries the wait
+        # (A1): a question that holds a review loop at its hop boundary carries the wait
         # phase (``loop_wait``) and the stage the loop goes on with, so the card tells it from a running loop.
         from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
         loop_waits = question_loop_wait.item_wait_phases(flow_id) if items else {}
@@ -674,7 +674,7 @@ def question_wait_details(flow_id: str, row: dict) -> list[dict]:
 
 
 def node_asks(flow_id: str, row: dict) -> bool:
-    """flowgate.v02.0113 T#3 rework: the open node run ``row``'s own AI — a run of its live attempt
+    """the open node run ``row``'s own AI — a run of its live attempt
     (``run_store.ai_runs_of_node``) — asked a question nobody has answered yet (``finalize.open_questions_raised_by_run``,
     the question wait's own read): the card waits for that answer. Reads only; raises on a failed read."""
     if row.get("status") != "open":
@@ -686,7 +686,7 @@ def node_asks(flow_id: str, row: dict) -> bool:
 
 
 def qa_responding_nodes(run_id: str, flow_id: str) -> frozenset:
-    """flowgate.v02.0143 T#1 (W1, NR flowgate.v02.0143.0003 §4.2): the open nodes of the run whose own AI — a run of its
+    """(W1, NR the earlier change): the open nodes of the run whose own AI — a run of its
     live attempt (``run_store.ai_runs_of_node``) — asked a question (``finalize.open_questions_raised_by_run``) that an
     automatic Q&A responder answers now: the item's ``responder_state`` is ``dispatched`` and its ``responder_run_id`` is an
     AI run still live (``ai_invoke.runtime.is_run_live``, the responder's own liveness probe). ``question``
@@ -716,13 +716,13 @@ def qa_responding_nodes(run_id: str, flow_id: str) -> frozenset:
 
 def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None,
                   asked: Optional[frozenset] = None) -> dict:
-    """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
-    card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
-    attempt, else its last ended one; null for a node not opened since migration 151). 0061 T#9: that attempt's
-    result integration (``integration_status``, ``integration_reason``; null when it has none). 0061 T#11: whether its
+    """``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
+    card run's ``instruction_doc_id`` (null until known). the earlier implementation: the node's current ``attempt_id`` (its active
+    attempt, else its last ended one; null for a node not opened since migration 151). the earlier implementation: that attempt's
+    result integration (``integration_status``, ``integration_reason``; null when it has none). the earlier implementation: whether its
     card is held (``hold``; ``held``: the Flow's held node keys when the caller read them already). 0063: whether its
     document holds a question still unanswered (``question``; ``asked``: ``question_nodes`` when the caller read them already).
-    0064 T#4: whether its card is running now (``node_running``, ``running_lock``)."""
+    whether its card is running now (``node_running``, ``running_lock``)."""
     from modules.flow_gate.services import graph_execution_hooks
     if held is None:
         held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
@@ -730,30 +730,30 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
         asked = question_nodes(row["run_id"], flow_id)
     dispatch = dispatch_block(row)
     failure = graph_execution_hooks.call("write_failure", row)
-    if failure and failure != "question_pending" and dispatch is not None:   # 0111 T-A1: a question wait, no error
+    if failure and failure != "question_pending" and dispatch is not None:   # T-A1: a question wait, no error
         dispatch = {**dispatch, "error_code": failure}
-        # flowgate.v02.0121 T#4: the failed writer's short cause (``provider_capacity``, ``provider_failed``, ...), only
+        # the failed writer's short cause (``provider_capacity``, ``provider_failed``, ...), only
         # when the records tell one; the provider's output itself is never put on the wire.
         detail = graph_execution_hooks.call("write_failure_detail", row) if failure == "ai_invoke_failed" else None
         if detail:
             dispatch["error_detail"] = detail
     current_error = row.get("dispatch_error_code")
     if dispatch is not None and current_error and dispatch.get("error_code") == current_error:
-        # flowgate.v02.0140 T#1-3: a refused AI start keeps its safe detail (code / message / phase / retryable / run_id)
+        # a refused AI start keeps its safe detail (code / message / phase / retryable / run_id)
         start_failure = start_failure_of(row)
         if start_failure:
             dispatch = {**dispatch, START_FAILURE_KEY: start_failure}
     running = running_lock(flow_id, row)
-    state = intervention(flow_id, row)                                                     # 0119 T-2
+    state = intervention(flow_id, row)                                                     # T-2
     reason = approval_wait_reason(flow_id, row) if state else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
-            "awaiting_approval": False,                     # 0119 T-2: no person approves a card (T-3 / T-5 remove it)
-            "approval_wait_reason": reason,                                                         # 0105 T#2 B-2
-            "intervention": state,                                                                  # 0119 T-2
+            "awaiting_approval": False,                     # T-2: no person approves a card (T-3 / T-5 remove it)
+            "approval_wait_reason": reason,                                                         # B-2
+            "intervention": state,                                                                  # T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
             "question_wait": question_wait_details(flow_id, row) if row["node_key"] in asked else [],
@@ -762,7 +762,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
 
 
 def uncarried_changes(row: dict, attempt_id: Optional[str]) -> dict:
-    """v02gui.0015 T2 (NR0006 §6-6): ``uncarried_changes`` -- ``{"attempts", "files", "unknown"}`` of the earlier
+    """v02gui.0015 T2: ``uncarried_changes`` -- ``{"attempts", "files", "unknown"}`` of the earlier
     attempts of the node whose uncommitted changes its attempt did not take, null when none. A notice only: a failed
     read is null; the run read goes on."""
     from modules.flow_gate.services import graph_execution_hooks
@@ -776,7 +776,7 @@ def uncarried_changes(row: dict, attempt_id: Optional[str]) -> dict:
 
 
 def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optional[str]) -> dict:
-    """flowgate.v02.0113 T#3 (P-1 §6.1): ``wait_reason``, ``stage_assignments`` and ``approval_wait_submission`` of the
+    """(P-1): ``wait_reason``, ``stage_assignments`` and ``approval_wait_submission`` of the
     node run (``card_settings_ports.stage_view``; no handler: none of the keys). A failed read is null; the read goes
     on. A read only: no role is resolved, no assignment written."""
     try:
@@ -787,7 +787,7 @@ def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optio
 
 
 def intervention(flow_id: str, row: dict) -> Optional[dict]:
-    """flowgate.v02.0119 T#3 (T-2): ``{"kind", "reason"}`` of the node run's card in intervention, or None. A failed read
+    """(T-2): ``{"kind", "reason"}`` of the node run's card in intervention, or None. A failed read
     tells none; the run read goes on."""
     try:
         return node_approval.intervention(flow_id, row)
@@ -797,7 +797,7 @@ def intervention(flow_id: str, row: dict) -> Optional[dict]:
 
 
 def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
-    """flowgate.v02.0105 T#2 B-2: why the node run's result was not approved automatically (the latest B-1 reason), or
+    """B-2: why the node run's result was not approved automatically (the latest B-1 reason), or
     None. A failed read tells none; the run read goes on."""
     try:
         return card_settings_ports.approval_wait_reason(flow_id, row)
@@ -818,15 +818,15 @@ def running_cause(flow_id: str, row: dict, running: bool) -> Optional[str]:
 
 
 def running_lock(flow_id: str, row: dict) -> bool:
-    """0064 T#4: the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
+    """the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
     the one a title save is refused by). Only an open or review node can be running, so no other is asked.
-    flowgate.v02.0113 T#1 (0002-D 개정 §3.13): that lock is the node's *actual running* (an AI execution of it requested
+    that lock is the node's *actual running* (an AI execution of it requested
     or running, or an AI review loop on its result), so an open node a person or a setup waits on is not running."""
     return row.get("status") in ("open", "review") and card_settings_ports.node_running(flow_id, row["node_key"])
 
 
 def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
-    """0061 T#2, before a run read and after a card stage followed a node's AI run: a running run whose work ended with
+    """before a run read and after a card stage followed a node's AI run: a running run whose work ended with
     no node event to judge it (a card review that ended without passing) goes idle or opens what its command may, an
     idle run whose existing work goes on again (a card review started) is running again, and an idle run's reason
     follows its nodes (``run_state_ports.settle``). A failure only skips it; the read goes on."""
@@ -864,7 +864,7 @@ def current_run(group: dict) -> dict:
     from modules.flow_gate.db.groups import is_archived
     if not is_archived(flow_id):
         result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
-        card_settings_ports.reconcile_stage(flow_id)                # 0105 T#2 B-3: a lost run-end stage, once
+        card_settings_ports.reconcile_stage(flow_id)                # B-3: a lost run-end stage, once
         settle_if_needed(flow_id, group.get("project_id"))
     run = run_store.current_run(flow_id)
     return {"run": run_payload(run["run_id"], with_nodes=True) if run else None}

@@ -1,6 +1,6 @@
-"""flowgate.v02.0083 T#2 (0015-WP T#2) — the type a Graph node's token writes, and the inbox refusing another type.
+"""(WP the earlier implementation) — the type a Graph node's token writes, and the inbox refusing another type.
 
-The reported case (symptoms 2 and 4, CH 0014 turn 4 §2 / turn 6 B·C): the two judgements differed.
+The reported case (symptoms 2 and 4, the earlier implementation / B·C): the two judgements differed.
 ``card_settings.settings.token_step_type`` answered None when the card changes nothing (``result_type`` None) and the
 source tools read that None as "nothing recorded" and took the token's ``doc_ref`` — the Flow's root R. The result
 binder (``result_binder.result_type``) reads the same None as the node's own type (``graph_model.run_doc_type``). So a WP
@@ -35,7 +35,7 @@ from test_fg_card_approval_0056 import LEE, card_outputs_port  # noqa: F401 — 
 from test_fg_wp_ai_run_0083 import (
     OPUS, ROOT, _consumed, _grant_document_create, _opus, _plan_line, _start_ai_run, _wp_json,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -136,7 +136,7 @@ CARDS = [
 ]
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: was_none rows compare with the code before 0083 (person / omitted / pre-148 one-stage cards); an assigned attempt's token type is its plan's (K-2, §2.14) — test_fg_ai_roles_l2_manual.py::test_k2_*
+# (T) pre-feature contract: was_none rows compare with the code before 0083 (person / omitted / pre-148 one-stage cards); an assigned attempt's token type is its plan's (K-2) — test_fg_ai_roles_l2_manual.py::test_k2_*
 @pytest.mark.parametrize("kind, assignee, values, stage, expected, was_none", [c[1:] for c in CARDS],
                          ids=[c[0] for c in CARDS])
 def test_a_node_token_writes_what_the_result_binder_binds(request, env, decided, kind, assignee, values, stage, expected,
@@ -334,5 +334,5 @@ def test_a_wp_card_token_reads_the_wp_template_and_its_help_context_is_wp(env, d
     assert template.status_code == 200, template.text
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

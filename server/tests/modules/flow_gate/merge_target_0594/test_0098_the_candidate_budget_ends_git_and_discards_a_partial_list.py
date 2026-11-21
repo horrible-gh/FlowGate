@@ -62,7 +62,7 @@ def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, mo
     proj.local_branch("develop")
     mt.reset_check_targets()
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.01)
-    # flowgate.v02test.0020: the computation has a budget of its own; here it runs out too (a host where even that
+    # The computation has a budget of its own; here it runs out too (a host where even that
     # one is not enough), so nothing finishes behind the timed-out view
     monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.01)
     view = _check_view(proj, gid)

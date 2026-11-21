@@ -6,7 +6,7 @@ import { createConversationSession } from '@/features/conversation/conversationS
 import type { ProviderList } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0047 — a chat started from the composer (R0001 §2.1, §2.2): created by its first
+// a chat started from the composer: created by its first
 // send, never as an empty draft, and titled once by the AI unless the user named it.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'

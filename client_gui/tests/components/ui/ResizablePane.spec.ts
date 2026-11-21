@@ -40,7 +40,7 @@ function stubRect(el: HTMLElement, rect: { left: number; right: number; top: num
   } as DOMRect)
 }
 
-// T0010 §6/§13.2: single-panel edge resize, min/max clamp, disabled means no handle at
+// single-panel edge resize, min/max clamp, disabled means no handle at
 // all, and listener cleanup.
 describe('components/ui/ResizablePane (T0010)', () => {
   const originalInnerWidth = window.innerWidth
@@ -287,7 +287,7 @@ describe('components/ui/ResizablePane (T0010)', () => {
     wrapper.unmount()
   })
 
-  // rev2 / T0010 §6.3 "viewport/parent 경계 고려": clamp/End only ever looked at
+  // / the earlier implementation "Respect viewport/parent boundaries": clamp/End only ever looked at
   // `window.innerWidth`/`innerHeight`, never the pane's own screen position or its
   // parent's boundary, so an offset pane inside a narrower parent could still grow past
   // the parent (and past its own container) even while staying under the viewport bound.
@@ -332,7 +332,7 @@ describe('components/ui/ResizablePane (T0010)', () => {
     wrapper.unmount()
   })
 
-  // rev3 / T0010 §6.3: `viewportExtent()` used to always return the full
+  // / the earlier implementation: `viewportExtent()` used to always return the full
   // `window.innerWidth`/`innerHeight`, ignoring the pane's own on-screen position. A
   // `right`-edge pane offset well into a wide viewport could report/reach a max far past
   // where the viewport actually ends.

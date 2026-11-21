@@ -1,6 +1,6 @@
-"""Chat command requests: states, policies, decisions, errors, AI result (flowgate.v02.0032 T#1).
+"""Chat command requests: states, policies, decisions, errors, AI result.
 
-D0006 §3.1-§3.3, §3.7, §5.2, §5.3 and completion conditions 3, 4, 6, 8, 10, 11, 26.
+,, and completion conditions 3, 4, 6, 8, 10, 11, 26.
 """
 from __future__ import annotations
 
@@ -653,7 +653,7 @@ def test_token_allows_commands_is_the_offer_not_the_gate(env):
     assert commands.token_allows_commands(None) is False
 
 
-# ── execute mode (flowgate.v02test.0026, 0001-B §7) ──────────────────────────
+# ── execute mode ──────────────────────────
 # An execute-mode token: source_access stays "read" (no source / document edit) and
 # command_access="execute" lets it run commands that do not change files.
 

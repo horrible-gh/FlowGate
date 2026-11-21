@@ -6,9 +6,9 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free "waiting for a result" state (T0008 §8). Purely presentational: it never
+// Domain-free "waiting for a result" state. Purely presentational: it never
 // calls fetch/store itself, never decides a loading-timeout policy, and never forces
-// itself into a blocking overlay by default (T0008 §8 금지) -- `inline` only switches
+// itself into a blocking overlay by default (prohibition) -- `inline` only switches
 // padding/layout, it never adds a backdrop or blocks background interaction.
 withDefaults(
   defineProps<{

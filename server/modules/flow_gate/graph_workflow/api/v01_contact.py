@@ -1,4 +1,4 @@
-"""The v0.1 side of the engine router (D0004 §4.3 접점 목록, P0008 §9).
+"""The v0.1 side of the engine router (contact-point list, the plan).
 
 The only Graph module the v0.1 routes import. Each contact adds one call after the existing v0.1
 guards; refusals use the v0.1 flat error shape (``{"error", "doc_id", "group_id",
@@ -21,7 +21,7 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
     v0.1 call's result, or a 409 JSONResponse refusal.
 
     On an unassigned Flow the call runs inside the Flow guard so that it and a Graph
-    confirmation cannot both assign the Flow (L0009 §2.2.3).
+    confirmation cannot both assign the Flow.
     """
     outcome = _contact.guarded_v01_assignment(doc, call, actor)
     if isinstance(outcome, _contact.V01Rejection):
@@ -32,10 +32,10 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
 def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None,
                             origin_client_id: Optional[str] = None) -> Any:
     """R↔B root-type conversion of ``doc``: guarded like a sequence save (``guarded_assignment``,
-    flowgate.v02.0048). ``call`` is ``documents.root_conversion.execute_root_conversion``, which joins
-    this guard and moves the card lines and draft cards itself (flowgate.v02.0053 T#1, 0064 T#3).
+    ). ``call`` is ``documents.root_conversion.execute_root_conversion``, which joins
+    this guard and moves the card lines and draft cards itself.
     ``origin_client_id``: the requesting tab's ``x-canvas-client-id`` as sent (or None), named by the draft card
-    event when it has the P0008 §1.1 format; any other value is ignored, never refused."""
+    event when it has the the plan format; any other value is ignored, never refused."""
     from modules.flow_gate.graph_workflow.services.root_conversion_cards import conversion_origin
 
     from .envelope import CLIENT_ID_RE
@@ -56,7 +56,7 @@ def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:
 
 
 def time_machine_refusal(doc: Optional[dict], request=None) -> Optional[JSONResponse]:
-    """0061 T#12: v0.1 reopen/restore stop before touching Graph-owned state.
+    """v0.1 reopen/restore stop before touching Graph-owned state.
 
     Reuse the engine router's existing read-only ownership contact. v0.1 and
     unassigned flows pass unchanged; conflicts retain the ownership-conflict code.
@@ -78,7 +78,7 @@ def after_inbox_registered(flow_id: Optional[str], doc_id: str, doc_type: str, t
 
 
 def after_inbox_edited(flow_id: Optional[str], doc_id: str, revision_no: int, token_id: Optional[str]) -> None:
-    """inbox edit committed: the document's new revision ``revision_no`` registered in place (flowgate.v02.0083 WP-4: a
+    """inbox edit committed: the document's new revision ``revision_no`` registered in place (the earlier change WP-4: a
     node's result revised in place is a new submission its card follows). Never raises, never changes the response."""
     _contact.after_document_event("inbox_edited", flow_id,
                                   {"doc_id": doc_id, "revision_no": revision_no, "token_id": token_id})

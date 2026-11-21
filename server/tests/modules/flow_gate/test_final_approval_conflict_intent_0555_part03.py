@@ -32,7 +32,7 @@ from tests.modules.flow_gate.test_final_approval_conflict_intent_0555 import (
 
 @needs_git
 class TestFinalApprovalConflictIntent0555:
-    """C1–C11 plus T0008 §15's extra guarantees, in sequence on one group."""
+    """C1–C11 plus the earlier implementation's extra guarantees, in sequence on one group."""
 
     GROUP = f"{PROJECT}.default.0140"
     PATH = "shared.py"
@@ -90,7 +90,7 @@ class TestFinalApprovalConflictIntent0555:
 
     # ── C10 ───────────────────────────────────────────────────────────────────
 
-    # ── reconciling success branch (T0008 §5/§7/§9) ────────────────────────────
+    # ── reconciling success branch ────────────────────────────
     def test_reconcile_completes_the_deferred_approval_when_the_push_actually_landed(
         self, origin_repo, monkeypatch,
     ):
@@ -119,7 +119,7 @@ class TestFinalApprovalConflictIntent0555:
 
         # Let the push really happen, then tell the caller it timed out — exactly
         # the "result unknown" gap `_conditionally_push_or_reconcile` classifies as
-        # push_remote_unknown, D0006 §3.6.
+        # push_remote_unknown, the design
         original_run_git = svc._run_git
 
         def _push_result_lost(args, **kwargs):
@@ -269,7 +269,7 @@ class TestFinalApprovalConflictIntent0555:
         monkeypatch.setattr(store, "_execute", _fail_on_file_rows)
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
-        # 0669: the approval job records an unknown result (its lease is left to lapse and
+        # the approval job records an unknown result (its lease is left to lapse and
         # the Sweeper reconciles it) instead of letting the exception escape the request
         assert status == 500, payload
         assert payload["error"]["code"] == "approval_job_error"
@@ -335,7 +335,7 @@ class TestFinalApprovalCleanA11Retry0555:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        # 0669 unit 6b: Git is terminal, only the DB step failed -> the approval job stays queued
+        # unit 6b: Git is terminal, only the DB step failed -> the approval job stays queued
         # (retry_wait / db_finalize) and keeps retrying that one step; the request answers queued.
         assert status == 200, payload
         assert payload["approval"]["stage"] == "queued" and payload["approval"]["deferred"] is True

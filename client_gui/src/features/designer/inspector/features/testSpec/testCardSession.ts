@@ -37,7 +37,7 @@ export interface TestCardRefusal {
   message: string | null; fieldErrors: readonly TestSpecFormatError[]; error: unknown
 }
 /**
- * flowgate.v02.0127 T#5 — a TS v2 revision that was not saved (rejected / uncertain / busy / no card connection),
+ * a TS v2 revision that was not saved (rejected / uncertain / busy / no card connection),
  * thrown to `changeDocument` so the refusal reads the same way as every other command's.
  */
 export class TsReviseFailure extends Error {
@@ -187,7 +187,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (operation === 'settingChange') {
       const reason = cardSettingsDisabledReason({ readOnly: current.readOnly, settingsReadOnly: current.settingsReadOnly, placing: settings.placing.value,
         read: settings.node.value !== null, blocked: settings.blocked.value,
-        // flowgate.v02.0113 T#1: only an actually running card (server lock / node_running) or an unconfirmed run status
+        // only an actually running card (server lock / node_running) or an unconfirmed run status
         locked: settings.node.value?.locked === true || current.nodeRun?.nodeRunning === true || (current.editLock === 'unknown' && settings.node.value === null) })
       if (reason) return item(reason.startsWith('reason.read_only') || reason === 'reason.disposed' ? reason : 'guard.' + reason.slice(7))
       if (settingsDenied.value) return item('reason.forbidden')
@@ -234,7 +234,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!canOpen(kind)) return false
     const window = windows[kind]
     window.open = true; window.minimized = false; window.caseId = caseId; window.zIndex = ++front
-    // flowgate.v02.0150: the Frame's window host draws the card's windows from now on, whatever is selected.
+    // the Frame's window host draws the card's windows from now on, whatever is selected.
     const current = target()
     if (current) pinTestCardWindows(current)
     return true
@@ -263,7 +263,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     finally { if (target()) await reload(); busy.value = null }
     return ok
   }
-  // flowgate.v02.0127 T#5 (§2.15.3): the card's v2 coordinates of the TS and the snapshots the drafts pinned.
+  // : the card's v2 coordinates of the TS and the snapshots the drafts pinned.
   // Review fix: every draft pins ONE v2 response — docId, revision, coordinates and the content/projection it shows
   // are taken from that same response and stay with that draft. A reopen, another draft's ACK or a late GET never
   // replaces them; only this draft's own confirmed ACK moves its base (to N+1, with the submitted cases).
@@ -391,7 +391,7 @@ const fallbackApp = {}
 export const testCardSessionKey = (target: InspectorTarget) => [target.projectId, target.flowId, target.nodeType ? target.nodeId : target.docId ?? target.nodeId].join('\n')
 
 /**
- * flowgate.v02.0150 — the test cards with an open window, each with the target it was last selected as (by session key).
+ * the test cards with an open window, each with the target it was last selected as (by session key).
  * The Frame's window host (TestCardWindowHost) draws their windows whatever is selected — no card, another card, another
  * tab — so a window closes only by its own close / save / cancel; its card's session stays live while it is drawn.
  */

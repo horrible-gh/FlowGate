@@ -1,10 +1,10 @@
-"""flowgate.default.0233 B0001 — resolve_conflict token INSERT must pass the CHECK.
+"""resolve_conflict token INSERT must pass the CHECK.
 
 The [멘트복사] (/token/issue) and [AI호출] (/ai-invoke/start) buttons for an unresolved
 git conflict both issue a token with action_scope='resolve_conflict'. Migration 063 added
 tokens.merge_id for those tokens but forgot to widen the tokens_action_scope_check CHECK
 (introduced by 062), so the INSERT in db.tokens.create() violated the constraint and leaked
-a bodyless HTTP 500 (NR0010). Migration 064 re-defines the CHECK to include
+a bodyless HTTP 500. Migration 064 re-defines the CHECK to include
 'resolve_conflict' across all three dialects.
 
 These tests exercise the REAL migration DDL — no stubbing of the issue layer (the gap that

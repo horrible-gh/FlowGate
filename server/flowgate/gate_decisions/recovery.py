@@ -1,4 +1,4 @@
-"""retry / cancel / resolve of an accepted gate decision (flowgate.v02.0085 T#3, D0007 §7.2 table, §7.3.1, §7.3.2).
+"""retry / cancel / resolve of an accepted gate decision (table).
 
     POST /runs/{run_id}/nodes/{node_key}/gate-decisions/{decision_id}/retry    {request_id, expected_decision_version}
     POST /runs/{run_id}/nodes/{node_key}/gate-decisions/{decision_id}/cancel   {request_id, expected_decision_version}
@@ -15,13 +15,13 @@ before anything here (``routes``). Then, in this order:
    as the first thing inside it: two copies of one request that both found nothing are serialized by the guard, and
    the second answers the first's stored result (never a version conflict, never a second row).
 1. ``expected_decision_version`` not the decision's now -> 409 ``gate_context_changed`` (``reason=decision_version``);
-   for resolve also the reviewed evidence (D0007 §7.2: the version and the references the person checked, both
+   for resolve also the reviewed evidence (the design: the version and the references the person checked, both
    required): ``evidence_version`` not the decision's evidence version now (``reason=evidence_version``) or
    ``evidence_refs`` not exactly the decision's evidence references now (``reason=evidence_refs``: one per phase row,
    ``<decision>/<phase>@<row version>``; a row that moved or a reference of another decision is stale). The reviewed
    evidence is part of the request's fingerprint and is kept with the close (the request's stored result and the
    close event's payload).
-2. the action's own rules (D0007 §7.2 table):
+2. the action's own rules (table):
 
 - retry: the same decision, job, frozen settings and snapshot go on (the parked job back to pending; the phases read
   their evidence, so nothing done is done again). 202 with run / decision / job; the same job already going on is 202 as
@@ -99,7 +99,7 @@ def fingerprint(action: str, body: dict) -> str:
 # ── wire ─────────────────────────────────────────────────────────────────────
 
 def flags(row: dict, job: Optional[dict] = None) -> dict:
-    """What the common Git job actions may do now (D0007 §7.3 last paragraph): retryable / cancelable / resolvable,
+    """What the common Git job actions may do now (last paragraph): retryable / cancelable / resolvable,
     the effects state, the evidence version and the current phase."""
     store = _store()
     job = job if job is not None else legacy.get_job(row.get("job_id"))
@@ -240,7 +240,7 @@ def cancel(run_id: str, node_key: str, decision_id: str, user_id: str, body: dic
         return replay
     store = _store()
     # The decision's own refs, read before the guard (a local read): an archive ref no phase evidence tells of is an
-    # unknown effect, so the intent is never let go as "no effect" (D0007 §7.3.1).
+    # unknown effect, so the intent is never let go as "no effect".
     seen = repo.get(decision_id)
     refs_effects = publish.effects_now(seen) if seen is not None else repo.EFFECTS_NONE
 
@@ -381,10 +381,10 @@ def _remote_holds(slot, row: dict, branch: Optional[str], sha: str) -> bool:
 
 
 def _keep_recovery_refs(row: dict) -> dict:
-    """abandon: the frozen SHA, a local merge result and the last remote sync commit (``-sync``, 0132 T#2) become
+    """abandon: the frozen SHA, a local merge result and the last remote sync commit (``-sync``, the earlier implementation) become
     non-consuming recovery refs (create-only, never deleted here). ``{phase: {"sha", "ref", "kept"}}`` - one entry per SHA, kept or not. A ref that cannot be written
     now (no slot, M busy, a ref error) is NOT stood in for by another ref: it is reported unkept and becomes a
-    retention obligation (D0007 §7.3.2), and the abandon goes on."""
+    retention obligation, and the abandon goes on."""
     from modules.flow_gate.services.git import lock_manager as locks
     decision_id, frozen = row["decision_id"], row.get("frozen_sha")
     wanted = []
@@ -399,7 +399,7 @@ def _keep_recovery_refs(row: dict) -> dict:
         slot = git.slot_of(row["group_id"])
     except git.git_error_type():
         slot = None
-    # 0132 T#2 (NR §4.3): the newest sync commit of the push phase's remote sync is kept the same way - also one that
+    # (NR): the newest sync commit of the push phase's remote sync is kept the same way - also one that
     # landed while its round's row is still unknown / pending (``publish.sync_commit_to_keep``, read only).
     from flowgate.gate_decisions.publish import SYNC_PHASE, sync_commit_to_keep
     synced = sync_commit_to_keep(row, slot)
@@ -475,7 +475,7 @@ def resolve(run_id: str, node_key: str, decision_id: str, user_id: str, body: di
                                    reviewed_evidence_version=reviewed,
                                    **({"evidence": {"verified_by": "server", "changed": True}} if how == "verified"
                                       else {}))
-            # 0132 T#2 (NR §4.3): the push phase's remote sync is no proof item (``_needed``) but its row is the
+            # (NR): the push phase's remote sync is no proof item (``_needed``) but its row is the
             # decision's evidence too: recorded as the person confirmed it (a done sync confirmed, else as it stands).
             sync_row = repo.effect(decision_id, "remote_sync")
             if sync_row is not None:

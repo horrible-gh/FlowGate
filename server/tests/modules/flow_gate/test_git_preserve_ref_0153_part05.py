@@ -88,7 +88,7 @@ def test_release_is_explicit_and_guarded(env):
     assert ref_value(r.work, ref) is None
 @pytest.mark.parametrize('outcome', ['released', 'delete_failed'])
 def test_release_delete_is_audited_on_the_session(env, outcome):
-    """T#1 §5.3 / §3.1-4: the explicit delete is a session ref move. It runs through the
+    """: the explicit delete is a session ref move. It runs through the
     session audit runner with the CAS kept, and the re-read sqlite row records it —
     success or a real nonzero failure — without disturbing the earlier push evidence.
     The caller's live context carries the same entry, so its later write keeps it."""
@@ -148,7 +148,7 @@ def test_no_automatic_path_deletes_preserve_refs():
 def test_preserve_ref_alone_keeps_commit_and_parents_through_external_gc(env):
     r = env.repo
     mid, m, before = unknown_session(env)
-    # 0153 T#3: reconcile no longer rewinds the branch; the same rewind is made directly.
+    # reconcile no longer rewinds the branch; the same rewind is made directly.
     git(['reset', '-q', '--hard', r.B], r.work)
     assert git(['rev-parse', 'HEAD'], r.work) == r.B
     git(['update-ref', '-d', 'ORIG_HEAD'], r.work)

@@ -2,9 +2,9 @@
   <!-- Horizontal axis of the Designer: Left ↔ Center ↔ Right (0003-D §3.7.2). Left / Right
        get fixed widths from the layout state; the Center takes everything left over, down to
        its minimum. Narrower than that, only the Body scrolls sideways — columns never
-       overlap. flowgate.v02.0046: a resize handle sits on each Left / Right ↔ Center line
+       overlap. the earlier change: a resize handle sits on each Left / Right ↔ Center line
        while that Dock is expanded; dragging it asks the Shell for a new Dock width.
-       flowgate.v02test.0056: the widths passed in are the ones the person chose. When the Body is
+       The widths passed in are the ones the person chose. When the Body is
        too narrow for them and the Center minimum, the expanded Docks are drawn smaller here
        (fitDockWidths) and the chosen widths are left alone; a wider Body shows them again. -->
   <div
@@ -56,7 +56,7 @@ const props = withDefaults(
     leftResizable?: boolean
     /** The right Dock is expanded, so its width can be dragged. */
     rightResizable?: boolean
-    /** flowgate.v02test.0056: the Dock dragged last keeps its width when the Body is too narrow. */
+    /** The Dock dragged last keeps its width when the Body is too narrow. */
     fitKeep?: DesignerFitKeep
   }>(),
   { leftResizable: false, rightResizable: false, fitKeep: null },
@@ -66,7 +66,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'resize-left': [width: number, bodyWidth: number]
   'resize-right': [width: number, bodyWidth: number]
-  /** flowgate.v02test.0056: a left / right handle was let go. */
+  /** A left / right handle was let go. */
   'resize-end': []
 }>()
 
@@ -76,7 +76,7 @@ function bodyWidth(): number {
   return bodyRef.value?.clientWidth ?? 0
 }
 
-// flowgate.v02test.0056: the Body's own width, followed while the window changes size. 0 until it is
+// The Body's own width, followed while the window changes size. 0 until it is
 // measured (and where there is no layout), which draws the chosen widths as they are.
 const measuredWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null

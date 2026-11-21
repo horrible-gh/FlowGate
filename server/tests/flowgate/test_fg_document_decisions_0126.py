@@ -1,4 +1,4 @@
-"""0126 T#1 B1/B3/B9/B11: isolated HTTP + real migrated SQLite/file storage.
+"""B1/B3/B9/B11: isolated HTTP + real migrated SQLite/file storage.
 
 The inherited fixture stubs worker dispatch, default JWT verification and SSE transport.
 Decision permissions, guards, body gates, storage and migrations are real. Separate tests

@@ -1,6 +1,6 @@
-"""Register mutation context SSOT and its failure telemetry — flowgate.default.0492 T0018.
+"""Register mutation context SSOT and its failure telemetry — the earlier change the earlier implementation.
 
-What B0001 actually was (N0012 / NR0013): the API provider proxy posted every registration
+What the regression actually was: the API provider proxy posted every registration
 as ``action="new"``, so an edit-scoped run entered ``_handle_new`` and died on its scope
 check, three turns running. Fixing the string alone was never enough — ``_handle_test_run``
 does not read ``prev_doc_id`` at all, so a test_run "fixed" that way turns the 403 into a 400.
@@ -106,7 +106,7 @@ def bound(monkeypatch):
 
 @pytest.mark.parametrize("scope", ["new", "edit", "review", "test_run"])
 def test_register_schema_exposes_no_server_owned_field(scope):
-    """L0010 R4: routing is server property, so it is not even nameable by the model."""
+    """R4: routing is server property, so it is not even nameable by the model."""
     schema = tools.REGISTER_SCHEMAS[scope]
     assert set(schema["properties"]) & SERVER_OWNED_FIELDS == set()
     assert schema["additionalProperties"] is False
@@ -138,7 +138,7 @@ def test_envelope_routing_comes_from_the_context(scope, doc_field):
 
 
 def test_test_run_envelope_carries_the_key_its_handler_reads():
-    """NR0013 §4: `_handle_test_run` reads doc_id/doc_ref/target_id and never prev_doc_id,
+    """`_handle_test_run` reads doc_id/doc_ref/target_id and never prev_doc_id,
     so an action-only fix would have produced 'Required field missing: doc_id' (400)."""
     context = binding.canonical_context("test_run", PROJECT, GROUP, DOC)
     body = invoke._register_envelope(context, _run("test_run"), {})
@@ -260,7 +260,7 @@ def test_a_matching_context_passes_and_records_nothing(bound, monkeypatch):
 
 
 def test_a_token_from_the_previous_hop_is_refused_before_any_side_effect(bound, monkeypatch):
-    """L0010 §5 continuation race: the axes may still line up, the token is still stale."""
+    """continuation race: the axes may still line up, the token is still stale."""
     bound["token"] = _token("new", token_id="tok-previous")
     monkeypatch.setattr(invoke.urllib.request, "urlopen",
                         lambda *a, **k: pytest.fail("a stale token must not reach /inbox"))
@@ -325,7 +325,7 @@ def test_a_legacy_review_token_with_no_group_column_still_passes(bound, monkeypa
 
     A human legacy review token has neither a group column nor a doc_ref, so its group could
     only ever have come from the doc_ref that is missing. Refusing it on `group` after
-    waiving `doc` would reject exactly the tokens L0010 §2.3 exists to let through.
+    waiving `doc` would reject exactly the tokens the earlier implementation exists to let through.
     """
     monkeypatch.setattr(
         inbox_routes.register_binding.db_docs, "get_by_id",
@@ -575,7 +575,7 @@ def test_migration_094_exists_in_all_three_dialects_with_the_same_shape():
 
 
 def test_the_postgres_file_owns_no_transaction():
-    """T0018 measurement step 5: a file that BEGINs and COMMITs itself cannot be applied
+    """measurement step 5: a file that BEGINs and COMMITs itself cannot be applied
     and rolled back inside a caller's transaction, which is how it is proven on the live DB."""
     sql = (MIGRATIONS / "postgres" / "094_register_context_failures.sql").read_text(encoding="utf-8")
     body = "\n".join(re.sub(r"--.*$", "", line) for line in sql.splitlines())

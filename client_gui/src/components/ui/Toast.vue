@@ -7,11 +7,11 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free transient feedback (T0008 §5). Owns render/tone/lifecycle only -- never the
+// Domain-free transient feedback. Owns render/tone/lifecycle only -- never the
 // wording (the message is caller content via the default slot) and never *when* to show
-// one (that is entirely the calling Feature's decision, T0008 §5.1). Never a Modal: no
+// one (that is entirely the calling Feature's decision, the earlier implementation). Never a Modal: no
 // focus trap, no backdrop, no background interaction block, and it never steals focus
-// itself (T0008 §5.3) -- only a timer is armed below, nothing calls .focus().
+// itself -- only a timer is armed below, nothing calls .focus.
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import IconButton from './IconButton.vue'
 
@@ -30,8 +30,8 @@ const props = withDefaults(
 const emit = defineEmits<{ dismiss: [] }>()
 
 // A strong/danger toast is announced immediately (role="alert", assertive live region);
-// every other tone waits for a pause in speech (role="status", polite) -- T0008 §5.3's
-// "정보성 status / 강한 오류 alert" split, mirrored on aria-live so screen readers get the
+// every other tone waits for a pause in speech (role="status", polite) -- the earlier implementation's
+// "Informational status / strong error alert" split, mirrored on aria-live so screen readers get the
 // same urgency signal through two independent AT mechanisms.
 const toastRole = computed(() => (props.tone === 'danger' ? 'alert' : 'status'))
 const ariaLive = computed(() => (props.tone === 'danger' ? 'assertive' : 'polite'))

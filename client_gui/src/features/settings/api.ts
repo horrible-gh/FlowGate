@@ -1,4 +1,4 @@
-// Environment Settings API adapter (flowgate.v02.0020). Reuses the `@shared/api` transport.
+// Environment Settings API adapter. Reuses the `@shared/api` transport.
 // The routes answer {"detail": {"code"}}; a known code is shown as gui.settings.errors.<code>.
 
 import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
@@ -63,7 +63,7 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
   }
 }
 
-// ── Workspaces (시안 11 / 12) ────────────────────────────────────────────────
+// ── Workspaces (mockup 11 / 12) ────────────────────────────────────────────────
 
 export const listWorkspaces = () =>
   call(() => getRequest<WorkspaceListResponse>(`${API}/workspaces`), 'load_failed')
@@ -120,12 +120,12 @@ export const revokeResource = (id: string, resourceType: ResourceType, resourceI
     'save_failed',
   )
 
-// ── System › 사용자 (시안 13) ─────────────────────────────────────────────────
+// ── System › "사용자" (mockup 13) ─────────────────────────────────────────────────
 
 export const listSystemUsers = () =>
   call(() => getRequest<SystemUsersResponse>(`${API}/system/users`), 'load_failed')
 
-/** Only the four fields the server reads; workspace_id is never sent (flowgate.v02.0076 T#3). */
+/** Only the four fields the server reads; workspace_id is never sent. */
 export const createSystemUser = (input: CreateUserInput) =>
   call(
     () => postRequest<UserCredentialResult>(`${API}/system/users`, {
@@ -152,7 +152,7 @@ export const resetPassword = (id: string) =>
 export const resetTfa = (id: string) =>
   call(() => postRequest<SystemUser>(`${user(id)}/tfa-reset`, {}), 'save_failed')
 
-// ── System › 일반 (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
+// ── System › "일반" (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
 // Two read contracts — the Root of GET /system/storage-root (never /system/settings/storage-root)
 // and the rows of GET /system/settings — and two separate saves on PATCH /system/settings: the
 // Scratch value/unit pair together in one request (the server writes it in one transaction), and
@@ -179,7 +179,7 @@ export const saveRepeatCountMax = async (value: string) =>
     'save_failed',
   )).updated
 
-// ── System › 시스템 Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+// ── System › System Agent ─────────────────────
 // Only the /system/agents management family of api/v1/agent_routes.py (the one the old
 // client/src/settings AgentsView used). The Agent runtime routes /agent/enrollments and
 // /agent/heartbeat are never called from here. Errors come as {"ok":false,"error":{"code"}} and go
@@ -248,8 +248,8 @@ export const issuePersonalAgentEnrollment = (id: string) =>
 export const deletePersonalAgent = (id: string) =>
   call(() => deleteRequest<unknown>(personalAgent(id)), 'action_failed')
 
-// ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ──────
-// Three existing GETs and nothing else: the project list (status=all; the 활성 filter is the
+// ── Project lookup · "시스템" › "전체 프로젝트" (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ──────
+// Three existing GETs and nothing else: the project list (status=all; the "활성" filter is the
 // screen's own display rule, not a server permission filter), one project's storage Root and one
 // project's Git config. No settings / paths GET, no /system/settings/storage-root, no legacy
 // /projects · /list/projects, and no write of any kind (settings / paths PATCH, storage migrate,
@@ -265,7 +265,7 @@ export const getProjectStorageRoot = (id: string) =>
 export const getProjectGitConfig = (id: string) =>
   call(() => getRequest<ProjectGitConfigView>(`${project(id)}/git/config`), 'load_failed')
 
-// ── System › 보안 (시안 14) ───────────────────────────────────────────────────
+// ── System › "보안" (mockup 14) ───────────────────────────────────────────────────
 
 export const getSecurity = () => call(() => getRequest<SecurityResponse>(`${API}/system/security`), 'load_failed')
 

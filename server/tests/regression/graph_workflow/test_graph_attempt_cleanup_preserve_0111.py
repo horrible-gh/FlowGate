@@ -1,12 +1,12 @@
-"""0111 T#1 (NR 0003 §5.4 D-1a-0): attempt cleanup removes a tree and branch only once its source is kept elsewhere.
+"""attempt cleanup removes a tree and branch only once its source is kept elsewhere.
 
-Real temporary Git repositories (the 0061 T#5 harness: SQLite ledger, real linked worktrees, mocked locks / Flow
+Real temporary Git repositories (the the earlier implementation harness: SQLite ledger, real linked worktrees, mocked locks / Flow
 guard). Kept: ⓐ a modified tracked file, ⓑ an untracked file only, ⓒ a commit no lasting ref reaches, ⓓ a requested /
 running execution, ⓔ a failed status / rev-list (or a broken tree / owner marker) -- by the immediate cleanup and by
 ⓕ two server starts (``cleanup_finished``), each a ``cleanup_preserved`` event. Removed: ⓖ a clean tree with no
 commit of its own, ⓗ an integrated clean attempt, its result commit kept on the group branch.
 
-0111 T#8: every case runs in both attempt layouts (``layout``) -- the ``graph_attempt_*`` branch an attempt prepared
+every case runs in both attempt layouts (``layout``) -- the ``graph_attempt_*`` branch an attempt prepared
 before keeps, and the dedicated ``refs/flowgate/attempts/<key>`` ref with a detached tree a new one takes. ``item.head``
 is the ref the attempt's commits are on: a removal deletes it, a preservation keeps it.
 """
@@ -49,7 +49,7 @@ def _attempt(repo, *, status="invalidated", live=False):
 
 
 def _head_of(item):
-    """T#8: the attempt's own ref, read from its owner marker while it is there."""
+    """the attempt's own ref, read from its owner marker while it is there."""
     return workspace.attempt_head(workspace.attempt(item.attempt), PROJECT) or "refs/heads/" + item.branch
 
 
@@ -108,7 +108,7 @@ def _commit_on_another_attempt_only(repo, item, mp):
 
 
 def _commit_on_another_attempt_ref_only(repo, item, mp):
-    """T#8: a ref of the new attempt namespace is another attempt's too -- it keeps nothing."""
+    """a ref of the new attempt namespace is another attempt's too -- it keeps nothing."""
     _unique_commit(repo, item, mp)
     _git(repo.group, "update-ref", workspace.ATTEMPT_REF_PREFIX + "other", item.at("rev-parse", "HEAD"))
 

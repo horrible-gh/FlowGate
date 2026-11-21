@@ -1,4 +1,4 @@
-"""One AI-made title for a new standalone CH (flowgate.v02.0047 R0001 §2.2).
+"""One AI-made title for a new standalone CH.
 
 ``POST /conversations/{doc_id}/auto-title`` with ``{"provider_id"}``. The composer asks once,
 right after the first message of a chat it created on the first send was accepted; the send

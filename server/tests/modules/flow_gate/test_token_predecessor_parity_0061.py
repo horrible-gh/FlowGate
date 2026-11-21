@@ -1,6 +1,6 @@
-"""0061 T0004 — token-path predecessor parity with advance_workflow.
+"""token-path predecessor parity with advance_workflow.
 
-NR0003 found that `advance_workflow` merges the two most recent predecessor
+The review found that `advance_workflow` merges the two most recent predecessor
 result docs into Section 3 'Reference documents' (previous + previous-previous
 + R), but the token-issuance path (`_build_mention_for_token`, used by the
 NextActionModal flow) did not. The client only ticks the spine R and the step's
@@ -58,7 +58,7 @@ def _capture(monkeypatch):
 
 def test_token_path_merges_two_predecessors(monkeypatch):
     captured = _capture(monkeypatch)
-    # Client ticked only the spine R + the step's own instruction (T0004).
+    # Client ticked only the spine R + the step's own instruction.
     out = token_routes._build_mention_for_token(
         doc_ref="G-R0001",
         group_id="G",
@@ -69,7 +69,7 @@ def test_token_path_merges_two_predecessors(monkeypatch):
         ref_doc_ids=["G-R0001", "G-T0004"],
     )
     assert out == "MENTION"
-    # NR0003 must be appended; T0004 already present must not duplicate; order =
+    # must be appended; the earlier implementation already present must not duplicate; order =
     # client selection first, then any missing predecessors.
     assert captured["ref_doc_ids"] == ["G-R0001", "G-T0004", "G-NR0003"]
 
@@ -96,7 +96,7 @@ def test_token_path_first_report_step_has_single_predecessor(monkeypatch):
 
 def test_token_path_no_sequence_passes_selection_through(monkeypatch):
     captured = _capture(monkeypatch)
-    # 0084 TR0005 (B): _build_mention_for_token now resolves the sequence via the
+    # (B): _build_mention_for_token now resolves the sequence via the
     # member-doc-aware helper, so the no-sequence seam to stub is get_sequence_for_member_doc.
     monkeypatch.setattr(db_wfseq, "get_sequence_for_member_doc", lambda did: None)
     token_routes._build_mention_for_token(

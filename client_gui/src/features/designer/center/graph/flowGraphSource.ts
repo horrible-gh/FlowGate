@@ -1,8 +1,8 @@
-// flowgate.v02.0026 — Graph source (adapter) boundary (0003-D §3.2.2): "project id + Flow id
+// Graph source (adapter) boundary: "project id + Flow id
 // -> FlowGraph". Whatever transport a source uses (server JSON field names, ...) stays inside
 // the source; only the FlowGate Graph Model leaves it. The Center session takes a source at
 // creation and falls back to the fixture source (fixtureFlowGraphSource.ts); the Designer Shell
-// passes the server source (serverFlowGraphSource.ts, flowgate.v02.0045). A server source goes
+// passes the server source (serverFlowGraphSource.ts, the earlier change). A server source goes
 // through the features/project public surface (store loaders), never @shared/api or axios
 // directly (structure.0024).
 import type { RunCommandIdentity, RunCommandLookup } from '@/features/project/flowRunApi'
@@ -37,7 +37,7 @@ export interface FlowGraphChangeHandlers {
 }
 
 /**
- * flowgate.v02.0045 S3: a whole Graph draft as the Center edits it. A node / edge created here and
+ * S3: a whole Graph draft as the Center edits it. A node / edge created here and
  * not yet saved has `isNew` and a `tmp_` key; the save answers the key it got (`keyMap`).
  */
 export interface FlowDraftContent {
@@ -58,7 +58,7 @@ export interface FlowDraftSaveResult {
   readonly version: number
   /** `tmp_` key -> stored key, nodes and edges alike. */
   readonly keyMap: Readonly<Record<string, string>>
-  /** flowgate.v02.0053 T#5: stored node key -> the card's document lines the save made or kept. */
+  /** stored node key -> the card's document lines the save made or kept. */
   readonly cardDocuments?: Readonly<Record<string, readonly FlowGraphCardDocument[]>>
 }
 
@@ -87,8 +87,8 @@ export interface FlowDraftError extends Error {
 }
 
 /**
- * flowgate.v02.0061 T#14: one node of a run as the band and the Canvas lock read it — its state, its attempt's
- * result integration and Hold, and its attempt's running / requested AI executions. T#15: its current attempt
+ * one node of a run as the band and the Canvas lock read it — its state, its attempt's
+ * result integration and Hold, and its attempt's running / requested AI executions. the earlier implementation: its current attempt
  * (`attemptId`, null when none; absent when not known), a basis of the Time Machine confirmation.
  */
 export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
@@ -99,13 +99,13 @@ export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
   readonly status: string
   readonly integrationStatus?: string | null
   readonly integrationReason?: string | null
-  /** flowgate.v02test.0042: the card (node key) whose merge this card's merge waits for, or null. */
+  /** the card (node key) whose merge this card's merge waits for, or null. */
   readonly integrationBlockedBy?: string | null
   readonly hold?: boolean
-  /** flowgate.v02.0063: the card's document holds a question still unanswered. */
+  /** the card's document holds a question still unanswered. */
   readonly question?: boolean
   questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
-  /** flowgate.v02.0064 T#4: the card is running now (the server's card running lock, `node_running`). */
+  /** the card is running now (the server's card running lock, `node_running`). */
   readonly nodeRunning?: boolean
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
@@ -118,50 +118,50 @@ export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
 export type FlowRunCommand = 'step' | 'full'
 
 /**
- * flowgate.v02.0053 T#9: a Flow's Graph run as the top band shows it (P0008 S5-4). `status` is the server's
- * open key — flowgate.v02.0061 T#14: `running` | `paused` | `stopping` | `idle` (one run per Flow).
+ * a Flow's Graph run as the top band shows it. `status` is the server's
+ * open key — the earlier change the earlier implementation: `running` | `paused` | `stopping` | `idle` (one run per Flow).
  */
 export interface FlowRunInfo {
   readonly command?: RunCommandIdentity
   readonly runId: string
   readonly status: string
   readonly openNodeKeys: readonly string[]
-  /** flowgate.v02.0061 T#14: the run's last command (`step` | `full`), or null / absent when not known. */
+  /** the run's last command (`step` | `full`), or null / absent when not known. */
   readonly mode?: string | null
-  /** flowgate.v02.0061 T#14: why an idle run is idle (open key), or null / absent. */
+  /** why an idle run is idle (open key), or null / absent. */
   readonly idleReason?: string | null
-  /** flowgate.v02.0061 T#14: running / requested AI executions of the run and the Flow's limit. Absent = not known. */
+  /** running / requested AI executions of the run and the Flow's limit. Absent = not known. */
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
   readonly executionLimit?: number | null
-  /** flowgate.v02.0061 T#14: the run's nodes when the answer carried them, else absent. */
+  /** the run's nodes when the answer carried them, else absent. */
   readonly nodeRuns?: readonly FlowRunNodeInfo[]
   /**
-   * flowgate.v02.0061 T#15: the revision the run runs and its event sequence (grows with every run event). Absent = not
+   * the revision the run runs and its event sequence (grows with every run event). Absent = not
    * known. With the node runs' attempts they tell the Time Machine confirmation that the run's history changed.
    */
   readonly revisionNo?: number | null
   readonly lastEventSeq?: number
   /**
-   * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait
+   * cards approved while the run was stopped whose successors wait
    * ("멈춤 · 다음 카드 N개 대기"), and their node keys. Absent = none (a source that does not know them).
    */
   readonly pendingPropagationCount?: number
   readonly pendingNodeKeys?: readonly string[]
   /**
-   * flowgate.v02.0105 T#2 (B-6): the server confirmed that the requesting user may approve the run's cards
+   * (B-6): the server confirmed that the requesting user may approve the run's cards
    * (`viewer.can_approve`). Absent = not told (an older server, a run the Canvas read alone tells): no [승인].
    */
   readonly viewerCanApprove?: boolean
   /**
-   * flowgate.v02.0143 T#1 (W1): the server's `qa_responding` — an automatic Q&A responder answers a question of the idle
+   * (W1): the server's `qa_responding` — an automatic Q&A responder answers a question of the idle
    * run's card now (designerTop `runCommandHold`). Absent = not told (an older server, a sample source): never held.
    */
   readonly qaResponding?: boolean
 }
 
 /**
- * flowgate.v02.0059 T#2: a document's supersede link as the v0.1 document read gives it — what the server's
+ * a document's supersede link as the v0.1 document read gives it — what the server's
  * live_end follows to find the document a v0.1 sequence root shows.
  */
 export interface FlowDocumentLink {
@@ -176,15 +176,15 @@ export interface FlowDocumentLink {
 export interface FlowRunError extends Error {
   readonly serverRequestId?: string | null
   readonly code?: string | null
-  /** flowgate.v02.0056 F2-1: the HTTP status and the server's params (a refused approval names its document). */
+  /** the HTTP status and the server's params (a refused approval names its document). */
   readonly status?: number | null
   readonly params?: Readonly<Record<string, unknown>>
-  /** flowgate.v02.0061 T#15: a refused Graph Time Machine's assessment (`graph_time_machine_blocked`), else absent. */
+  /** a refused Graph Time Machine's assessment (`graph_time_machine_blocked`), else absent. */
   readonly timeMachine?: FlowTimeMachineRefusal
 }
 
 /**
- * flowgate.v02.0061 T#15: what a Graph Time Machine of a done node did (T#13): the server's impact (the node and every
+ * what a Graph Time Machine of a done node did: the server's impact (the node and every
  * node below it) and what changed. The run stays idle; the next step / full command opens the pending nodes again.
  */
 export interface FlowTimeMachineResult {
@@ -200,7 +200,7 @@ export interface FlowTimeMachineResult {
   readonly idleReason: string | null
 }
 
-/** flowgate.v02.0061 T#15: why a Graph Time Machine was refused — the server's reasons (its sentences) and impact. */
+/** why a Graph Time Machine was refused — the server's reasons (its sentences) and impact. */
 export interface FlowTimeMachineRefusal {
   readonly reasons: ReadonlyArray<{ readonly code: string; readonly message: string }>
   readonly impactNodeKeys: readonly string[]
@@ -212,7 +212,7 @@ export interface FlowGraphSource {
   /**
    * Reads the Graph of one Flow. Rejects with an Error whose `message` is safe to show to the
    * user when the Graph cannot be read. `view` ('draft' | 'revision' | 'latest') picks the definition a
-   * Graph Flow shows; omitted, the source's default. flowgate.v02.0061 T#15: with the card Holds (`holds`) when the
+   * Graph Flow shows; omitted, the source's default. the earlier change the earlier implementation: with the card Holds (`holds`) when the
    * source keeps Holds.
    */
   loadGraph(projectId: string, flowId: string, view?: string): Promise<FlowGraph>
@@ -223,18 +223,18 @@ export interface FlowGraphSource {
    * screen made itself are not reported. Absent = the source reports nothing.
    */
   watchChanges?(projectId: string, handlers: FlowGraphChangeHandlers): () => void
-  /** flowgate.v02.0045 S3: replaces the Flow's draft (`version` = the one replaced, 0 = none). */
+  /** S3: replaces the Flow's draft (`version` = the one replaced, 0 = none). */
   saveDraft?(projectId: string, flowId: string, version: number, content: FlowDraftContent): Promise<FlowDraftSaveResult>
   /** Checks the saved draft without changing anything. */
   validateDraft?(projectId: string, flowId: string, version: number): Promise<FlowDraftCheck>
-  /** flowgate.v02.0045 S4: confirms the saved draft as the next revision; resolves its number. */
+  /** S4: confirms the saved draft as the next revision; resolves its number. */
   confirmDraft?(projectId: string, flowId: string, version: number, baseRevisionNo: number | null): Promise<number>
   /** The latest revision's definition, to start a new draft from it (null = no revision). */
   loadRevision?(projectId: string, flowId: string): Promise<{ revisionNo: number; content: FlowDraftContent } | null>
-  /** flowgate.v02.0053 T#9: the Flow's run, or null. Absent = the source runs nothing. */
+  /** the Flow's run, or null. Absent = the source runs nothing. */
   loadRun?(projectId: string, flowId: string): Promise<FlowRunInfo | null>
   /**
-   * flowgate.v02.0061 T#14: one step / full command — a new run of the Flow's latest revision, or its idle run going on
+   * one step / full command — a new run of the Flow's latest revision, or its idle run going on
    * (`full` when omitted).
    */
   /** Read-only assessment of the saved draft or newer confirmed revision; null means allowed, an Error means refused.
@@ -243,32 +243,32 @@ export interface FlowGraphSource {
   startRun?(projectId: string, flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunInfo>
   lookupCommand?(projectId: string, flowId: string, cid: string): Promise<RunCommandLookup>
   voidCommand?(projectId: string, flowId: string, cid: string): Promise<RunCommandLookup>
-  /** flowgate.v02.0061 T#14: Stop (T#7) — the run is stopping, then idle (stopped) once its AI processes ended. */
+  /** Stop — the run is stopping, then idle (stopped) once its AI processes ended. */
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /** Resumes a paused run with its own command. */
   resumeRun?(projectId: string, runId: string): Promise<FlowRunInfo>
-  /** flowgate.v02.0061 T#14: Pause (running -> paused). Absent = the source cannot pause. */
+  /** Pause (running -> paused). Absent = the source cannot pause. */
   pauseRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /**
-   * flowgate.v02.0059 T#2: the Graph as loadGraph reads it but with nothing left out (no collapse) — the
-   * input of 자동 배치 when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.
+   * the Graph as loadGraph reads it but with nothing left out (no collapse) — the
+   * input of auto-layout when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.
    */
   loadLayoutGraph?(projectId: string, flowId: string, view?: string): Promise<FlowGraph>
-  /** flowgate.v02.0059 T#2: one document's supersede link (a v0.1 sequence root's chain). Absent = none read. */
+  /** one document's supersede link (a v0.1 sequence root's chain). Absent = none read. */
   readDocumentLink?(projectId: string, docId: string): Promise<FlowDocumentLink>
   /**
-   * flowgate.v02.0061 T#15: sets (true) / releases (false) a card's Hold; resolves whether it is held now. Only the
+   * sets (true) / releases (false) a card's Hold; resolves whether it is held now. Only the
    * setting changes: nothing runs before the next command. Rejects with a FlowRunError (the server's code).
    */
   writeCardHold?(projectId: string, flowId: string, nodeKey: string, on: boolean): Promise<boolean>
   /**
-   * flowgate.v02.0061 T#15: the Graph Time Machine of a done node of the run (T#13) — the node and every node below it.
+   * the Graph Time Machine of a done node of the run — the node and every node below it.
    * Answers what it did and the run after it; a refusal rejects with a FlowRunError (`timeMachine` when blocked).
    * Absent = the source has no Time Machine.
    */
   timeMachine?(projectId: string, runId: string, nodeKey: string): Promise<{ result: FlowTimeMachineResult; run: FlowRunInfo }>
   /**
-   * flowgate.v02.0064 T#4 (0064 P0006 §4.2.2): saves one card's title (no draft save, no undo entry); resolves the title
+   * saves one card's title (no draft save, no undo entry); resolves the title
    * state the server answered. A refusal rejects with a FlowRunError (the server's code: `title_empty`, `node_title_locked`
    * …). Absent = the source keeps no card title (no inline edit).
    */

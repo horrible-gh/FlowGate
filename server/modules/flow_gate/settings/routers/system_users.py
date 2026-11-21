@@ -1,4 +1,4 @@
-"""System › 사용자 / 보안 API (flowgate.v02.0020, 시안 13 / 14).
+"""System › 사용자 / 보안 API (flowgate.v02.0020, draft 13 / 14).
 
 GET  /api/v1/system/users                          users with state, 2FA, workspaces, summary
 POST /api/v1/system/users                          create (invite link or temporary password)

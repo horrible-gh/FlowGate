@@ -14,7 +14,7 @@
       </div>
 
       <div class="fgs-panel-body">
-        <!-- 로그인 정보: GET /auth/me 그대로, 읽기 전용 -->
+        <!-- Sign-in information: read-only values returned by GET /auth/me -->
         <div class="fgs-sec">
           <div class="fgs-sec-head">
             <h3>{{ t('gui.settings.self.account.profile') }}</h3>
@@ -35,7 +35,7 @@
         <div class="fgs-sec">
           <div class="fgs-sec-head"><h3>{{ t('gui.settings.hub.tags.display') }}</h3></div>
           <div class="fgs-rows">
-            <!-- 표시 언어: 공유 i18n의 ko/ja/en, preferred_locale -->
+            <!-- Display language: shared i18n ko/ja/en, preferred_locale -->
             <div class="fgs-row" data-card="language">
               <div class="fgs-row-label">
                 <strong>{{ t('gui.settings.self.account.language') }}</strong>
@@ -58,7 +58,7 @@
               </div>
             </div>
 
-            <!-- 완료 카드 유지 시간: GET/PATCH /me/ui-settings -->
+            <!-- Completed card retention time: GET/PATCH /me/ui-settings -->
             <div class="fgs-row" data-card="retention">
               <div class="fgs-row-label">
                 <label for="me-retention">{{ t('gui.settings.self.account.retention') }}</label>
@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-// 내 설정 › 계정 · 화면 (flowgate.v02.0076 T#2, D §2.1).
+// 내 설정 › Account · 화면 (flowgate.v02.0076 T#2, D §2.1).
 //
 // - 로그인 정보: the username/email of GET /auth/me, which bootstrap already asked (core/auth/
 //   currentUser). Read-only: there is no input for them and no profile PATCH exists.
@@ -135,7 +135,7 @@ const selected = ref<number | null>(null)
 // The last value the server confirmed (GET or a successful PATCH); a failed save returns here.
 const confirmed = ref<number | null>(null)
 const loading = ref(true)
-// flowgate.v02.0088 F17: the errors this screen keeps on display are kept as their key (or, for an unexpected
+// the errors this screen keeps on display are kept as their key (or, for an unexpected
 // error, its own words) and translated when they render, so the language buttons right above change them too.
 const LOAD_FAILED = 'gui.settings.self.errors.load_failed'
 const loadError = ref<UiText | null>(null)

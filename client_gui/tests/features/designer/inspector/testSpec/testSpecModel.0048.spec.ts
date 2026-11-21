@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#11 — the test section rules as tables (D#1 §8.5, §10.1, §10.2 T#11 row): the target
+ * the test section rules as tables (the earlier implementation row): the target
  * document, the form (specification / legacy / none), the Case tally, the run state (live phases, a
  * cancel, a run in flight that one server answer lists only in its history, a prepare / execution failure
  * newer than the result, stale / unchecked / done), the history
@@ -273,7 +273,7 @@ describe('availability', () => {
     ['TS revised that already ran: run again', { view: ts({ doc_review_status: 'revised' }) }, null],
     ['TS pending review that never ran', { view: ts({ doc_review_status: 'pending_review', run_history: [] }) }, null],
     ['TSR: its TS not approved', { view: tsr({ ts_review_status: 'draft', run_history: [] }) }, null],
-    // flowgate.v02.0094: the test card's full run approves a written TS still awaiting its review on the way.
+    // the test card's full run approves a written TS still awaiting its review on the way.
     ['test card run: TS pending review that never ran', { view: ts({ doc_review_status: 'pending_review', run_history: [] }) }, null],
     ['test card run: TS revised that never ran', { view: ts({ doc_review_status: 'revised', run_history: [] }) }, null],
     ['test card run: a never submitted TS', { view: ts({ doc_review_status: 'draft', run_history: [] }) }, null],
@@ -281,7 +281,7 @@ describe('availability', () => {
     ['test card run: still no runnable automated Case', { view: ts({ doc_review_status: 'pending_review', run_history: [], case_capabilities: { 'TC-1': 'none', 'TC-2': 'none' } }) }, 'reason.automation_unbound'],
     ['spec errors', { view: ts({ errors: [{ code: 'x', message: 'm' }] }) }, 'reason.invalid_spec'],
     ['no runnable automated Case', { view: ts({ case_capabilities: { 'TC-1': 'none', 'TC-2': 'none' } }) }, 'reason.automation_unbound'],
-    // flowgate.v02.0094: a bound test file without its command, or a command the policy refuses.
+    // a bound test file without its command, or a command the policy refuses.
     ['automated Case without a command', { view: ts({ case_capabilities: { 'TC-1': 'command_missing', 'TC-2': 'unbound' } }) }, 'reason.command_missing'],
     ['automated Case with a refused command', { view: ts({ case_capabilities: { 'TC-1': 'command_missing', 'TC-2': 'command_invalid' } }) }, 'reason.command_invalid'],
     ['manual Cases only', { view: ts({ cases: [{ case_id: 'M', execution_mode: 'manual' }], case_capabilities: { M: 'case_selectable' } }) }, 'reason.no_automated'],

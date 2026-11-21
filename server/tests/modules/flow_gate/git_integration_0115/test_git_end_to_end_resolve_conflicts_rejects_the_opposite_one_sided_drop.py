@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_resolve_conflicts_rejects_the_opposite_one_sided_drop(self, origin_repo):
-        # 0602 T0004 C2 — same check, opposite direction: dropping THEIRS (the group
+        # C2 — same check, opposite direction: dropping THEIRS (the group
         # side) and keeping only ours must reject too, not just the direction the
         # neighboring regression above happens to cover.
         from modules.flow_gate.db import git_integration as db_git

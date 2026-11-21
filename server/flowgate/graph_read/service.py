@@ -18,7 +18,7 @@ RUN_FIELDS = ("run_id", "flow_id", "status", "revision_no", "started_at", "stopp
 NODE_FIELDS = ("node_key", "identity_source", "origin", "kind", "doc_type", "title", "state")
 DOC_FIELDS = ("doc_id", "type_code", "seq", "title", "doc_review_status", "status", "revision_no")
 LINE_FIELDS = ("slot", "doc_type", "doc_id", "revision_no", "status", "doc_review_status", "has_body", "body_state")
-# 0002-CH turn 48: why a card waits is an object on the run read (``stage_view.node_wait_reason``,
+# : why a card waits is an object on the run read (``stage_view.node_wait_reason``,
 # ``node_approval.intervention``); ``scalar_fields`` alone dropped it, so a chat could not tell why a card stopped.
 WAIT_REASON_FIELDS = ("code", "role", "stage", "seq", "detail")
 INTERVENTION_FIELDS = ("kind", "reason")

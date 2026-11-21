@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0150 — the Q&A ↗ windows of every document with one open (useQnaWindows), drawn by the Frame for as
+  <!-- the Q&A ↗ windows of every document with one open (useQnaWindows), drawn by the Frame for as
        long as it lives whatever is selected: no card, another card, another tab. Each document's windows keep the
        target they were opened for; only a window's own × closes it. -->
   <QnaWindows

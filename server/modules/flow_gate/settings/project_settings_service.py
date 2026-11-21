@@ -151,7 +151,7 @@ def delete_template(project_id: str, template_id: int) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Template-body content management (group 0024 — P0011 E1~E7).
+# Template-body content management.
 # Bodies live in document_type_template_contents (option D). Ownership-fail → None
 # (router → 404); validation-fail → TemplateValidationError (422);
 # ko-fallback delete guard → KoFallbackProtected (409).

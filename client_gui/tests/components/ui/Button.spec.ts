@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Button from '@/components/ui/Button.vue'
 
-// T0004 §5.1/§9: domain-free button primitive — render, click, disabled, keyboard focus.
+// domain-free button primitive — render, click, disabled, keyboard focus.
 describe('components/ui/Button (T0004)', () => {
   it('renders slot content as a real <button> with default variant/size classes', () => {
     const wrapper = mount(Button, { slots: { default: 'Save' } })

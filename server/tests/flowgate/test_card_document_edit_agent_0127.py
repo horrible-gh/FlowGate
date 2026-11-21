@@ -1,4 +1,4 @@
-"""0127 T#2 Agent: real SQLite, token verification/claim, common revision and file store."""
+"""Agent: real SQLite, token verification/claim, common revision and file store."""
 import importlib
 import json
 from datetime import datetime, timedelta, timezone

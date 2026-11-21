@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InternalAxiosRequestConfig } from 'axios'
 
-// flowgate.v02gui.0017 B6: `navigator.locks` exists only in a secure context (HTTPS, localhost).
+// B6: `navigator.locks` exists only in a secure context (HTTPS, localhost).
 // Over plain HTTP on a LAN address two remember-me tabs refreshed at the same moment (their
 // proactive timers share the same expiry) and both POSTed the same refresh token; the server
 // rotated on the first and revoked every session on the second (reuse). Without Web Locks the

@@ -2,13 +2,13 @@ import { readonly, ref } from 'vue'
 import { getRequest } from '@shared/api'
 
 // Who is signed in, as reported by the shared auth API's GET /auth/me. core owns auth
-// (T0011 §6), so the Topbar only reads this state and never talks to the auth API itself.
+// , so the Topbar only reads this state and never talks to the auth API itself.
 // main.ts calls loadCurrentUser() once during bootstrap — that request doubles as the
-// token validity check T#1 already performed there — so rendering the Topbar costs no
+// token validity check the earlier implementation already performed there — so rendering the Topbar costs no
 // extra request.
 //
-// flowgate.v02.0076 T#1: `status` tells "the /auth/me answer is still out" apart from "there
-// is no administrator". Screens that only an administrator may see (환경 설정 프로젝트/시스템)
+// `status` tells "the /auth/me answer is still out" apart from "there
+// is no administrator". Screens that only an administrator may see (Settings: Project/System)
 // wait while it is `loading` and treat every other state without `isAdmin` as not allowed.
 
 export interface CurrentUser {
@@ -31,7 +31,7 @@ const status = ref<CurrentUserStatus>('idle')
 
 function unwrap(data: unknown): MeResponse | null {
   if (!data || typeof data !== 'object') return null
-  // Tolerate an enveloped `{ data: {...} }` body the same way the T#1 placeholder did.
+  // Tolerate an enveloped `{ data: {...} }` body the same way the the earlier implementation placeholder did.
   const inner = 'data' in data ? (data as { data: unknown }).data : data
   return inner && typeof inner === 'object' ? (inner as MeResponse) : null
 }

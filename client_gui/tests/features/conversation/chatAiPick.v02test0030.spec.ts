@@ -11,7 +11,7 @@ import { createFakeSource, turn } from './fakeConversationSource'
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0030 (0001-B) — the chat's AI never changes without the user: a new chat keeps the AI picked in its
+// the chat's AI never changes without the user: a new chat keeps the AI picked in its
 // draft even when the screen moved on during the create; a reopened chat waits for its stored AI (a failed read says
 // so and offers a retry instead of sending on my default AI); a chat with no stored AI opens on the AI that last
 // answered in it; the same Flow coming back after a blink keeps the chat and its AI; every AI call says how its AI was

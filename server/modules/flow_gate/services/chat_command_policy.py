@@ -1,6 +1,6 @@
-"""Command policy for chat (CH) command execution (flowgate.default.0670 T0004).
+"""Command policy for chat (CH) command execution.
 
-R0001 §12 / NR0003 §5: the chat command path must not become a new unrestricted
+the chat command path must not become a new unrestricted
 shell, yet it must allow what the Self-check policy deliberately forbids (``git``
 and ordinary developer tools). So this module reuses the Self-check building blocks
 -- structured argv (no command string is ever parsed), shell-operator and
@@ -10,7 +10,7 @@ launcher adapter and the scrubbed environment -- and swaps only the deny list.
 Nothing here decides *whether* a command runs; that is the user's policy
 (``always_approve`` / ``user_approval`` / ``reject``) applied by
 ``chat_command_service``. This module only answers "is this a well-formed, non-shell
-command bound to this worktree" and "what kind of command is it" (R0001 §7: the
+command bound to this worktree" and "what kind of command is it" (the requirement: the
 category is recorded per request so per-category policies can be added later without
 re-shaping the data).
 """
@@ -28,7 +28,7 @@ TIMEOUT_MAX_SEC = 1800
 # Shells, privilege escalation, host/service control, remote shells and network
 # transfer tools, LOLBins and container/VM control. Unlike the Self-check list this
 # deliberately keeps git, file utilities and build/test runners available: the user's
-# approval policy, not this list, is what governs those (R0001 §3/§4).
+# approval policy, not this list, is what governs those.
 DENIED = frozenset({
     "cmd", "command", "powershell", "pwsh", "bash", "sh", "zsh", "fish", "wsl",
     "sudo", "su", "runas", "doas", "pkexec",
@@ -115,7 +115,7 @@ def _validate_git(args: list[str]) -> None:
             ("--git-dir=", "--work-tree=", "--exec-path=")
         ):
             # The command is bound to this conversation's worktree; pointing git at a
-            # different repository would bypass that binding (R0001 §10).
+            # different repository would bypass that binding.
             raise ChatCommandPolicyError("chat_command_invalid_cwd",
                                          f"git {arg} is not allowed; use cwd instead")
         if value is not None:
@@ -206,6 +206,6 @@ def environment(path_value: str, runtime: Path) -> dict[str, str]:
 
 
 def display(program: str, args: list[str]) -> str:
-    """The full command on one line, exactly as executed (R0001 §3: never abbreviated)."""
+    """The full command on one line, exactly as executed (never abbreviated)."""
     import shlex
     return " ".join(shlex.quote(part) for part in [program, *args])

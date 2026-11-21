@@ -1,4 +1,4 @@
-"""Schema and dialect regression tests for flowgate.default.0351 T0007."""
+"""Schema and dialect regression tests for the earlier change the earlier implementation."""
 from __future__ import annotations
 
 import sqlite3
@@ -24,8 +24,8 @@ def test_089_preserves_the_23_column_token_and_conversation_schema():
     columns = [row[1] for row in conn.execute("PRAGMA table_info(tokens)")]
     # This exact historical column count belongs to migration 089, not every
     # future schema. The latest-schema FK test below still applies the full chain.
-    # 0352 T0004 §3.1 / migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
-    # 0447 T0007 review rev1 / migration 089 added revoke_claim (22 -> 23).
+    # migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
+    # review / migration 089 added revoke_claim (22 -> 23).
     assert len(columns) == 23
     assert {
         "continuation_instruction_mode", "provider_id", "ai_run_id",

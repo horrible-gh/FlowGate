@@ -1,4 +1,4 @@
-// flowgate.v02.0024 T0005 — pure tree projection for the Designer File Explorer. Kept free
+// pure tree projection for the Designer File Explorer. Kept free
 // of Vue/store state so the "전체 / 변경됨 / 찾기" rules can be pinned by plain unit tests,
 // and so FileTree stays a renderer instead of a decision tree.
 import type { FlowChangeEntry, FlowFileNode } from '@/features/project'

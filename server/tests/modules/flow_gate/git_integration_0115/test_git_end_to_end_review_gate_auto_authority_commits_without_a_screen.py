@@ -69,7 +69,7 @@ from test_git_integration_0115 import TestGitEndToEnd as _Scenario
 
 class TestGitEndToEnd(_Scenario):
     def test_review_gate_auto_authority_commits_without_a_screen(self, origin_repo):
-        # D0006 §3.2: [자동] is recorded ONLY by a human call before resolution, and
+        # The auto authority is recorded ONLY by a human call before resolution, and
         # then bypasses the screen for a normal completion — but the safety net
         # (identity check, py_compile, conditional push) still runs underneath it.
         from modules.flow_gate.db import git_integration as db_git

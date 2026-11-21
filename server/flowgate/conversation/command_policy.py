@@ -1,4 +1,4 @@
-"""Command / cwd / worktree / category checks for chat command requests (D0006 §2.2, §3.7).
+"""Command / cwd / worktree / category checks for chat command requests.
 
 The chat command path must not become an unrestricted shell, yet it has to allow what
 the self-check policy deliberately forbids (``git`` and ordinary developer tools). So
@@ -13,7 +13,7 @@ command bound to this worktree" and "what kind of command is it" (the category i
 stored per request so per-category policies can be added later).
 
 Every refusal is a :class:`CommandPolicyError` whose code becomes the 422 code of the
-request (D0006 §5.3).
+request.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ _TEST_BUILD = frozenset({"pytest", "py.test", "python", "python3", "py", "node",
                          "dotnet", "make", "cmake", "ctest", "deno", "bun", "uv", "poetry", "pip", "pip3"})
 _READ = frozenset({"ls", "dir", "cat", "type", "head", "tail", "wc", "find", "findstr", "grep", "rg",
                    "tree", "pwd", "which", "where", "echo", "stat", "file", "du", "df",
-                   # Identity readers (0001-B §1's whoami): they print, never change anything.
+                   # Identity readers (B 's whoami): they print, never change anything.
                    "whoami", "id", "uname"})
 
 CATEGORIES = ("read", "test_build", "file_mutation", "git_read", "git_write", "other")
@@ -197,7 +197,7 @@ def validate_request(payload: object) -> ChatCommand:
     return ChatCommand(program, tuple(args), cwd.replace("\\", "/"), timeout, category, high_impact)
 
 
-# ── execute mode (flowgate.v02test.0026, 0001-B §7-3) ─────────────────────────────
+# ── execute mode ─────────────────────────────
 # An execute-mode chat may run commands but must not change source. A command can write
 # files whatever the token says, so the boundary is the command itself: only categories
 # that do not change the tree by design, minus the known writing options inside them.
