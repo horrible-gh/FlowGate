@@ -649,6 +649,7 @@ export default {
       no_flows: '플로우가 없습니다.',
       group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
+      reconnecting: '다시 연결하는 중…',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
