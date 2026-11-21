@@ -98,7 +98,7 @@ def main():
             assert abs(box['y'] + box['height'] - height) <= 1, box
             assert page.locator('[data-test="designer-header-settings"]').count() == 0
             bar.locator('.menu-trigger').click()
-            assert [c.get_attribute('data-card') for c in bar.locator('[role="menuitem"]').all()] == ['my-ai', 'question-policy', 'theme']
+            assert [c.get_attribute('data-card') for c in bar.locator('[role="menuitem"]').all()] == ['my-ai', 'question-policy', 'theme', 'agents']
             # The board is two cards wide: the two AI cards sit side by side on one row.
             ai_cards = [bar.locator(f'[data-card="{key}"]').bounding_box() for key in ('my-ai', 'question-policy')]
             assert abs(ai_cards[0]['y'] - ai_cards[1]['y']) <= 1 and ai_cards[1]['x'] >= ai_cards[0]['x'] + ai_cards[0]['width'], ai_cards
@@ -262,6 +262,58 @@ def main():
             policy = context.request.get(base+'/flowgate/api/v1/me/question-policy', headers=headers).json()
             assert policy['body'] == saved_text, policy
             print('POLICY_WINDOW_OK', width, height, box)
+        # The agents card opens my own Agent list as a window over the Designer. Nothing is registered here.
+        agents_before = context.request.get(base+'/flowgate/api/v1/me/agents', headers=headers).json()['agents']
+        for width, height in [(1568, 875), (1100, 760)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.locator('.menu-trigger').click()
+            card = page.locator('[data-card="agents"]')
+            assert card.get_attribute('data-card-state') == 'closed'
+            # The theme and agents cards sit side by side on the settings row.
+            row = [page.locator(f'[data-card="{key}"]').bounding_box() for key in ('theme', 'agents')]
+            assert abs(row[0]['y'] - row[1]['y']) <= 1 and row[1]['x'] >= row[0]['x'] + row[0]['width'], row
+            if evidence: page.screenshot(path=str(Path(evidence) / f'agents_menu_{width}x{height}.png'))
+            card.click()
+            window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="me-agents-window"]'))
+            window.wait_for()
+            assert '/designer' in page.url, page.url
+            window.locator('[data-testid="agent-list"]').wait_for()
+            box = window.bounding_box()
+            assert box['x'] >= 0 and box['x'] + box['width'] <= width and box['y'] >= 0 and box['y'] + box['height'] <= height - 50, (box, width, height)
+            # The settings page frame stays out of the window, and nothing is cut off sideways.
+            body = window.locator('[data-test="me-agents-window"]')
+            assert body.locator('.fgs-layout, .settings-shell-view').count() == 0
+            assert body.locator('.agent-page-head h2').is_hidden()
+            assert window.locator('.ui-modeless-body').evaluate('el => el.scrollWidth <= el.clientWidth + 1')
+            rows = body.locator('[data-testid="agent-list"] .agent-row')
+            assert rows.count() == len(agents_before), (rows.count(), len(agents_before))
+            if not agents_before: assert body.locator('[data-testid="agents-empty"]').is_visible()
+            print('AGENTS_LIST rows', rows.count())
+            if evidence: page.screenshot(path=str(Path(evidence) / f'agents_window_{width}x{height}.png'))
+            # The registration dialog opens above the window and closes again without registering.
+            window.locator('[data-testid="agent-new"]').click()
+            form = page.locator('[data-testid="agent-create-form"]')
+            form.wait_for()
+            if evidence and width == 1100: page.screenshot(path=str(Path(evidence) / f'agents_register_{width}x{height}.png'))
+            page.locator('[data-testid="agent-editor-close"]').click()
+            form.wait_for(state='hidden')
+            window.locator('[data-modeless-action="minimize"]').click()
+            assert not window.is_visible()
+            item = page.locator('.minimized-item').filter(has_text='에이전트')
+            assert item.locator('.item-text').inner_text().strip() == '내 설정 · 에이전트', item.inner_text()
+            page.locator('.menu-trigger').click()
+            assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            if evidence: page.screenshot(path=str(Path(evidence) / f'agents_minimized_{width}x{height}.png'))
+            card.click()
+            window.wait_for()
+            assert page.locator('[data-test="me-agents-window"]').count() == 1
+            assert window.bounding_box() == box, (box, window.bounding_box())
+            window.locator('[data-modeless-action="close"]').click()
+            assert page.locator('[data-test="me-agents-window"]').count() == 0
+            print('AGENTS_WINDOW_OK', width, height, box)
+        agents_after = context.request.get(base+'/flowgate/api/v1/me/agents', headers=headers).json()['agents']
+        assert [a['agent_id'] for a in agents_after] == [a['agent_id'] for a in agents_before]
         after = context.request.get(base+'/flowgate/api/v1/me/ui-settings', headers=headers).json()['settings']
         assert after['designer_taskbar_style'] == 'flowgate'
         for key in ('designer_left_width','designer_right_width','designer_bottom_height','ai_finished_card_retention_minutes'):

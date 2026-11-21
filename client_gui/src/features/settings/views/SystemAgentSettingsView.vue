@@ -1,5 +1,5 @@
 <template>
-  <SettingsShell :scope="personal ? 'me' : 'system'">
+  <component :is="embedded ? 'div' : SettingsShell" :scope="embedded ? undefined : personal ? 'me' : 'system'" :class="{ 'agent-embedded': embedded }">
     <template #nav><SettingsSubnav :items="personal ? meNav : systemNav" active="agents" /></template>
     <section :data-panel="personal ? 'personal-agents' : 'system-agents'">
       <header class="agent-page-head">
@@ -92,7 +92,7 @@
     </ModalShell>
 
     <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
-  </SettingsShell>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -122,7 +122,8 @@ import { createSystemAgent, deleteSystemAgent, issueAgentEnrollment, listSystemA
   createPersonalAgent, deletePersonalAgent, issuePersonalAgentEnrollment, listPersonalAgents, updatePersonalAgent } from '../api'
 import type { AgentCapabilities, AgentCapability, AgentEnrollment, SystemAgent, SystemAgentChanges } from '../types'
 
-const props = defineProps<{ personal?: boolean }>()
+// `embedded`: the same list without the settings page frame, for the Designer menu window.
+const props = defineProps<{ personal?: boolean; embedded?: boolean }>()
 const listAgents = props.personal ? listPersonalAgents : listSystemAgents
 const createAgent = props.personal ? createPersonalAgent : createSystemAgent
 const updateAgent = props.personal ? updatePersonalAgent : updateSystemAgent
@@ -756,6 +757,8 @@ const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() =>
 
 /** Overview › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */
 function openFromQuery() {
+  // Inside a window the route belongs to the page underneath; its query is not ours to read or drop.
+  if (props.embedded) return
   const id = route.query.agent
   if (typeof id !== 'string' || !id) return
   void router.replace({ query: {} })
