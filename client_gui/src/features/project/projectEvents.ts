@@ -180,7 +180,12 @@ export function revive(reason: Revive) {
       continue
     }
     if (reason === 'token' && hub.retry === null && hub.stream !== null && hub.token === currentToken()) continue
-    if (reason === 'recovered') hub.missed = true
+    // API recovery must refresh panels even while the SSE endpoint remains unavailable.
+    // A later stream open still resyncs to cover events missed in the meantime.
+    if (reason === 'recovered') {
+      hub.missed = true
+      resyncAll(hub)
+    }
     replace(projectId, hub)
   }
 }

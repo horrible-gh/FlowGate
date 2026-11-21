@@ -134,3 +134,90 @@ def test_parallel_token_ids_and_owned_paths(tmp_path, monkeypatch):
         ids=list(executor.map(allocate,range(32)))
     assert len(set(ids))==32
     assert all((tmp_path/'work'/'Project'/i/token_scratch.MANIFEST_NAME).exists() for i in ids)
+
+
+# Local route error handlers must not hide a DB outage from GET recovery.
+def _read_failure(kind, wrapper=RuntimeError):
+    if kind == "db":
+        return OperationalError("private database connection details")
+    if kind == "wrapped_db":
+        error = wrapper("read failed")
+        error.__cause__ = OperationalError("private database connection details")
+        return error
+    return wrapper("ordinary read failure")
+
+
+def _recovery_client(router):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.api.request_observability import RequestIdMiddleware, unhandled_error_response
+
+    app = FastAPI()
+    app.include_router(router)
+    app.add_exception_handler(Exception, unhandled_error_response)
+    app.add_middleware(RequestIdMiddleware)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _assert_read_failure(response, kind):
+    assert response.status_code == (503 if kind in ("db", "wrapped_db") else 500)
+    assert response.headers["X-Request-ID"] == "read-recovery-0060"
+    if response.status_code == 503:
+        assert response.headers["Retry-After"] == "1"
+    else:
+        assert "Retry-After" not in response.headers
+    assert "private database" not in response.text
+
+
+@pytest.mark.parametrize("endpoint", ["dashboard/summary", "notifications", "notifications/seen"])
+@pytest.mark.parametrize("kind", ["db", "wrapped_db", "ordinary"])
+@pytest.mark.parametrize("stage", ["watermark", "service"])
+def test_notification_db_outages_reach_recovery(monkeypatch, endpoint, kind, stage):
+    from modules.flow_gate.api.v1 import dashboard_routes as routes
+
+    client = _recovery_client(routes.router)
+    client.app.dependency_overrides[routes._dashboard_current_user] = lambda: {"user_id": "u1"}
+    monkeypatch.setattr(routes.db_projects, "get_by_id", lambda _: {"project_id": "flowgate"})
+    monkeypatch.setattr(routes, "has_permission", lambda *args: True)
+    monkeypatch.setattr(routes.db_notification_seen, "get_last_seen", lambda *args: None)
+    wrapper = routes.DashboardDataError if stage == "service" and endpoint != "notifications/seen" else RuntimeError
+    failure = Mock(side_effect=_read_failure(kind, wrapper))
+    if endpoint == "notifications/seen":
+        monkeypatch.setattr(routes.db_notification_seen, "mark_seen", failure)
+    elif stage == "watermark":
+        monkeypatch.setattr(routes.db_notification_seen, "get_last_seen", failure)
+    else:
+        service = "get_dashboard_summary" if endpoint == "dashboard/summary" else "get_notification_feed"
+        monkeypatch.setattr(routes, service, failure)
+    method = client.post if endpoint.endswith("/seen") else client.get
+    response = method("/api/v1/projects/flowgate/" + endpoint,
+                      headers={"X-Request-ID": "read-recovery-0060"})
+    _assert_read_failure(response, kind)
+    assert failure.call_count == 1
+
+
+@pytest.mark.parametrize("endpoint", ["body", "path", "outline", "download"])
+@pytest.mark.parametrize("kind", ["db", "wrapped_db", "ordinary"])
+def test_document_db_outages_reach_recovery(monkeypatch, endpoint, kind):
+    from modules.flow_gate.api.v1 import document_routes as routes
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+    doc_id = "flowgate.v02test.0060.0001-R"
+    doc = {"doc_id": doc_id, "project_id": "flowgate", "revision_no": 1}
+    monkeypatch.setattr(routes, "verify_bearer", lambda _: {"_is_user_jwt": True, "issued_to": "u1"})
+    monkeypatch.setattr(routes.db_docs, "get_by_id", lambda _: doc)
+    monkeypatch.setattr(routes, "has_permission", lambda *args: True)
+    monkeypatch.setattr(routes, "_download_available", lambda _: True)
+    monkeypatch.setattr(routes, "_compose_group_doc_ids", lambda *args: ("flowgate.v02test.0060", doc_id))
+    failure = Mock(side_effect=_read_failure(kind))
+    monkeypatch.setattr(card_document_ports, "card_edit", failure)
+    paths = {
+        "body": "/api/v1/document/" + doc_id,
+        "path": "/api/v1/document/flowgate/branches/main/__ALL__/0060/0001-R",
+        "outline": "/api/v1/document/" + doc_id + "/outline",
+        "download": "/api/v1/document/" + doc_id + "/download",
+    }
+    response = _recovery_client(routes.router).get(paths[endpoint],
+                      headers={"X-Request-ID": "read-recovery-0060"})
+    _assert_read_failure(response, kind)
+    assert failure.call_count == 1

@@ -8,6 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from fastapi.responses import JSONResponse
 
 from modules.flow_gate.auth.middleware import get_current_user, verify_token
+from modules.flow_gate.db.resilience import unavailable
 from modules.flow_gate.db import notification_seen as db_notification_seen
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.rbac.permission_service import has_permission
@@ -107,9 +108,13 @@ def dashboard_summary(
             last_seen_at,
         )
     except DashboardDataError as exc:
+        if unavailable(exc):
+            raise
         _log.error("Dashboard data integrity failure project=%s error=%s", project_id, exc)
         return _fail(500, "Dashboard data could not be normalized")
-    except Exception:
+    except Exception as exc:
+        if unavailable(exc):
+            raise
         _log.exception("Dashboard summary failed project=%s", project_id)
         return _fail(500, "Dashboard data lookup failed")
 
@@ -165,9 +170,13 @@ def notifications(
         last_seen_at = db_notification_seen.get_last_seen(user_id, project_id)
         result = get_notification_feed(project_id, last_seen_at, parsed_limit)
     except DashboardDataError as exc:
+        if unavailable(exc):
+            raise
         _log.error("Notification feed integrity failure project=%s error=%s", project_id, exc)
         return _fail(500, "Notification data could not be normalized")
-    except Exception:
+    except Exception as exc:
+        if unavailable(exc):
+            raise
         _log.exception("Notification feed failed project=%s", project_id)
         return _fail(500, "Notification data lookup failed")
 
@@ -188,7 +197,9 @@ def notifications_seen(
 
     try:
         last_seen_at = db_notification_seen.mark_seen(user_id, project_id)
-    except Exception:
+    except Exception as exc:
+        if unavailable(exc):
+            raise
         _log.exception("Notification mark-seen failed project=%s", project_id)
         return _fail(500, "Notification mark-seen failed")
 
