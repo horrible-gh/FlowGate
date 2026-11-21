@@ -32,7 +32,7 @@
            For an administrator the system AI's relative order is also the fallback order (linked). -->
       <section class="detail-panel">
         <div class="detail-toolbar">
-          <div class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
+          <div v-if="!mineOnly" class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
             <button
               v-for="key in OWNER_FILTERS"
               :key="key"
@@ -48,16 +48,18 @@
             ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.providers.search_placeholder')" />
           </label>
           <span class="detail-hint count-hint">
-            {{ t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
+            {{ mineOnly
+              ? t('gui.ai.owned.count', { count: myList.length, max: PROVIDERS_MAX })
+              : t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
           </span>
         </div>
         <p class="detail-hint order-hint" data-test="ai-order-hint">
-          {{ isAdmin ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
+          {{ isAdmin && !mineOnly ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
         </p>
 
         <div class="provider-cards">
           <div v-if="rows.length === 0" class="empty-row">
-            {{ t('gui.ai.providers.empty_list') }}
+            {{ mineOnly && !myList.length ? t('gui.ai.owned.empty_mine') : t('gui.ai.providers.empty_list') }}
           </div>
 
           <div
@@ -311,6 +313,9 @@ import { getAvatarClass, getInitials, getKindToneClass, isModeSupported, modeKey
 
 // Emitted after a successful save so screens listing usable AI can reload.
 const emit = defineEmits<{ changed: [] }>()
+// The Designer's "내 AI" window lists my own AI only (no system AI, no owner filter, adds are mine);
+// the AI 관리 screen keeps the full list.
+const props = defineProps<{ mineOnly?: boolean }>()
 
 const { t } = useI18n()
 const { user } = useCurrentUser()
@@ -460,6 +465,13 @@ const rows = computed<Row[]>(() => {
     p.kind.toLowerCase().includes(query) ||
     p.id.toLowerCase().includes(query) ||
     modeLabel(p).toLowerCase().includes(query)
+  if (props.mineOnly) {
+    // Only my AI, numbered among themselves; a drag still moves within my whole order.
+    return orderedRows.value
+      .filter((row) => row.owner === 'user')
+      .map((row, index) => ({ ...row, rank: index + 1 }))
+      .filter((row) => matches(row.item))
+  }
   return orderedRows.value.filter((row) => (ownerFilter.value === 'all' || row.owner === ownerFilter.value) && matches(row.item))
 })
 
@@ -480,7 +492,7 @@ function dismissToast(id: string | number): void {
 
 // Owners the add dialog may pick; each list has its own PROVIDERS_MAX.
 const ownerChoices = computed<AiOwnerScope[]>(() => {
-  const owners: AiOwnerScope[] = isAdmin.value ? ['system', 'user'] : ['user']
+  const owners: AiOwnerScope[] = isAdmin.value && !props.mineOnly ? ['system', 'user'] : ['user']
   return owners.filter((owner) => listOf(owner).length < PROVIDERS_MAX)
 })
 const addBlocked = computed(() => ownerChoices.value.length === 0)

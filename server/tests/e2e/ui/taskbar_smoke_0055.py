@@ -98,11 +98,18 @@ def main():
             assert abs(box['y'] + box['height'] - height) <= 1, box
             assert page.locator('[data-test="designer-header-settings"]').count() == 0
             bar.locator('.menu-trigger').click()
-            assert bar.locator('[role="menuitem"]').count() == 1
-            card = bar.locator('.menu-card').bounding_box()
-            # The menu card keeps the canvas-card size and must not stretch across the board.
-            assert card and 160 <= card['width'] <= 176 and abs(card['height'] - 92) <= 1, card
-            print('CARD_OK', width, height, card)
+            assert [c.get_attribute('data-card') for c in bar.locator('[role="menuitem"]').all()] == ['my-ai', 'question-policy', 'theme']
+            # The board is two cards wide: the two AI cards sit side by side on one row.
+            ai_cards = [bar.locator(f'[data-card="{key}"]').bounding_box() for key in ('my-ai', 'question-policy')]
+            assert abs(ai_cards[0]['y'] - ai_cards[1]['y']) <= 1 and ai_cards[1]['x'] >= ai_cards[0]['x'] + ai_cards[0]['width'], ai_cards
+            assert bar.locator('.menu-group-label').all_inner_texts() == ['내 AI 관리', '내 설정']
+            # Every menu card keeps the canvas-card size and must not stretch across the board.
+            board = bar.locator('.menu-board').bounding_box()
+            assert board['y'] >= 0 and board['y'] + board['height'] <= box['y'], (board, box)
+            for menu_card in bar.locator('.menu-card').all():
+                card = menu_card.bounding_box()
+                assert card and 160 <= card['width'] <= 176 and abs(card['height'] - 92) <= 1, card
+                print('CARD_OK', width, height, card)
             page.keyboard.press('Escape')
             assert bar.locator('[role="menu"]').count() == 0
             bar.locator('.menu-trigger').click()
@@ -165,6 +172,96 @@ def main():
             window.locator('[data-modeless-action="close"]').click()
             assert page.locator('[data-test="me-theme-window"]').count() == 0
             print('THEME_WINDOW_OK', width, height, box)
+        # The my AI card opens the AI list as a window over the Designer.
+        for width, height in [(1568, 875), (1100, 760)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.locator('.menu-trigger').click()
+            card = page.locator('[data-card="my-ai"]')
+            assert card.get_attribute('data-card-state') == 'closed'
+            if evidence: page.screenshot(path=str(Path(evidence) / f'myai_menu_{width}x{height}.png'))
+            card.click()
+            window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="my-ai-window"]'))
+            window.wait_for()
+            assert '/designer' in page.url, page.url
+            window.locator('.detail-toolbar').wait_for()
+            box = window.bounding_box()
+            assert box['x'] >= 0 and box['x'] + box['width'] <= width and box['y'] >= 0 and box['y'] + box['height'] <= height - 50, (box, width, height)
+            # Nothing in the list may be cut off sideways inside the window.
+            body = window.locator('[data-test="my-ai-window"]')
+            assert body.evaluate('el => [...el.querySelectorAll(".detail-head, .detail-toolbar, .provider-card")].every(n => n.scrollWidth <= n.clientWidth + 1 && n.getBoundingClientRect().right <= el.getBoundingClientRect().right + 1)')
+            assert window.locator('.page-title').is_hidden()
+            # My own AI only: no owner filter and no system AI card, for an administrator too.
+            assert window.locator('.segmented').count() == 0
+            assert window.locator('.provider-card .mode-icon.owner.system').count() == 0
+            print('MYAI_MINE_ONLY cards', window.locator('.provider-card').count())
+            if evidence: page.screenshot(path=str(Path(evidence) / f'myai_window_{width}x{height}.png'))
+            # The add dialog opens above the window and closes again.
+            window.get_by_role('button', name='AI 추가').click()
+            dialog = page.get_by_role('dialog').last
+            dialog.wait_for()
+            if evidence and width == 1100: page.screenshot(path=str(Path(evidence) / f'myai_add_{width}x{height}.png'))
+            page.keyboard.press('Escape')
+            if dialog.is_visible(): dialog.get_by_role('button', name='취소').click()
+            dialog.wait_for(state='hidden')
+            window.locator('[data-modeless-action="minimize"]').click()
+            assert not window.is_visible()
+            item = page.locator('.minimized-item').filter(has_text='내 AI')
+            assert item.locator('.item-text').inner_text().strip() == 'AI 관리 · 내 AI', item.inner_text()
+            page.locator('.menu-trigger').click()
+            assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            if evidence: page.screenshot(path=str(Path(evidence) / f'myai_minimized_{width}x{height}.png'))
+            card.click()
+            window.wait_for()
+            assert page.locator('[data-test="my-ai-window"]').count() == 1
+            assert window.bounding_box() == box, (box, window.bounding_box())
+            window.locator('[data-modeless-action="close"]').click()
+            assert page.locator('[data-test="my-ai-window"]').count() == 0
+            print('MYAI_WINDOW_OK', width, height, box)
+        # The question policy card opens the policy box as a window over the Designer. Nothing is saved here.
+        for width, height in [(1568, 875), (1100, 760)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.locator('.menu-trigger').click()
+            card = page.locator('[data-card="question-policy"]')
+            assert card.get_attribute('data-card-state') == 'closed'
+            if evidence: page.screenshot(path=str(Path(evidence) / f'policy_menu_{width}x{height}.png'))
+            card.click()
+            window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="question-policy-window"]'))
+            window.wait_for()
+            assert '/designer' in page.url, page.url
+            text = window.locator('#question-policy-body')
+            text.wait_for()
+            page.wait_for_function("!document.querySelector('#question-policy-body').disabled")
+            box = window.bounding_box()
+            assert box['x'] >= 0 and box['x'] + box['width'] <= width and box['y'] >= 0 and box['y'] + box['height'] <= height - 50, (box, width, height)
+            # The text box, [AI와 정하기] and [저장] all fit inside the window with no scrolling.
+            body = window.locator('.ui-modeless-body')
+            assert body.evaluate('el => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1'), body.evaluate('el => [el.scrollHeight, el.clientHeight, el.scrollWidth, el.clientWidth]')
+            assert window.get_by_role('button', name='AI와 정하기').is_visible()
+            assert window.get_by_role('button', name='저장', exact=True).is_visible()
+            assert text.bounding_box()['height'] >= 96
+            if evidence: page.screenshot(path=str(Path(evidence) / f'policy_window_{width}x{height}.png'))
+            saved_text = text.input_value()
+            text.fill(saved_text + ' (0055 점검)')
+            window.locator('[data-modeless-action="minimize"]').click()
+            assert not window.is_visible()
+            item = page.locator('.minimized-item').filter(has_text='질의 방침')
+            assert item.locator('.item-text').inner_text().strip() == 'AI 관리 · 질의 방침', item.inner_text()
+            page.locator('.menu-trigger').click()
+            assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            if evidence: page.screenshot(path=str(Path(evidence) / f'policy_minimized_{width}x{height}.png'))
+            card.click()
+            window.wait_for()
+            assert page.locator('[data-test="question-policy-window"]').count() == 1
+            assert window.bounding_box() == box, (box, window.bounding_box())
+            # Text typed before minimizing is still there, and is thrown away by closing without [저장].
+            assert text.input_value() == saved_text + ' (0055 점검)'
+            window.locator('[data-modeless-action="close"]').click()
+            assert page.locator('[data-test="question-policy-window"]').count() == 0
+            policy = context.request.get(base+'/flowgate/api/v1/me/question-policy', headers=headers).json()
+            assert policy['body'] == saved_text, policy
+            print('POLICY_WINDOW_OK', width, height, box)
         after = context.request.get(base+'/flowgate/api/v1/me/ui-settings', headers=headers).json()['settings']
         assert after['designer_taskbar_style'] == 'flowgate'
         for key in ('designer_left_width','designer_right_width','designer_bottom_height','ai_finished_card_retention_minutes'):
