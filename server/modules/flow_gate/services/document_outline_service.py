@@ -1,19 +1,19 @@
-"""Document lookup tools — canonical text, outline and section maths (group 0370, P0002 / L0003).
+"""Document lookup tools — canonical text, outline and section maths (the earlier change, the plan / the earlier implementation).
 
-P0002 fixed the format (locator and response shape); L0003 fixed the computation that
-fills it in. This module implements L0003 §1 (parameters) and §2-1..§2-6 verbatim and is
+fixed the format (locator and response shape); the earlier implementation fixed the computation that
+fills it in. This module implements the earlier implementation (parameters) and .. verbatim and is
 the **single source of truth**. The `/outline`, `/section` and `/meta` routes, search hit
 positions (2-7) and the save response's change summary (2-9, change_summary_service) all
-use only the functions here, so one named number never differs per screen (L0003 goal).
+use only the functions here, so one named number never differs per screen (goal).
 
 Three core conventions come first.
 
 * Every coordinate is **relative to the stored file text**. Line numbers are 1-based and
-  inclusive, char offsets 0-based exclusive, lengths in code points not bytes (P0002 §1-2).
+  inclusive, char offsets 0-based exclusive, lengths in code points not bytes.
 * Frontmatter detection imports the very regex search uses
-  (`content_search_service._FRONTMATTER`). A second copy would drift from search (L0003 §2-1).
+  (`content_search_service._FRONTMATTER`). A second copy would drift from search.
 * The alias table (the Korean/English `Changed Files` pair, etc.) is **imported** from the
-  existing parser's constants. Retyping the values lets one side drift (L0003 §2-4).
+  existing parser's constants. Retyping the values lets one side drift.
 """
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ from bisect import bisect_right
 from pathlib import Path
 from typing import Any, Optional
 
-# L0003 §2-1: the frontmatter boundary must match search character for character. The
+# the frontmatter boundary must match search character for character. The
 # private name is imported on purpose — keeping two copies would be far more dangerous.
 from modules.flow_gate.services.content_search_service import (  # noqa: F401
     SEARCH_SNIPPET_CHARS as _SEARCH_SNIPPET_CHARS,
     _FRONTMATTER,
 )
 
-# ── 1. Parameters (L0003 §1 — never scattered inline through the code) ───────────
+# ── 1. Parameters (never scattered inline through the code) ───────────
 SECTION_MAX_CHARS_DEFAULT = 20000     # default section-read cap (characters)
 SECTION_MAX_CHARS_LIMIT = 200000      # ceiling a request may raise it to (characters)
 OUTLINE_MAX_ITEMS = 500               # max items in an outline response
@@ -71,7 +71,7 @@ def read_canonical(path: Any) -> Optional[str]:
     """Read one file as canonical text, or None if it cannot be read.
 
     Bytes that are not valid UTF-8 are replaced and reading continues, so one file with
-    broken encoding cannot kill the whole lookup (L0003 §5).
+    broken encoding cannot kill the whole lookup.
     """
     try:
         raw = Path(path).read_bytes()
@@ -84,7 +84,7 @@ def split_lines(text: str) -> list[str]:
     """Split canonical text into lines.
 
     **A trailing newline does NOT add one more line.** Leaving this undefined makes the
-    same file flip between 1217 and 1218 lines (L0003 §2-1).
+    same file flip between 1217 and 1218 lines.
     """
     parts = (text or "").split("\n")
     if parts and parts[-1] == "":
@@ -106,7 +106,7 @@ def frontmatter_span(text: str) -> tuple[int, int]:
     """``(body_line_start, frontmatter_chars)``.
 
     ``(1, 0)`` when there is no frontmatter. If the closing line never appears the file is
-    treated as having none — better than hiding the whole document as frontmatter (L0003 §2-1).
+    treated as having none — better than hiding the whole document as frontmatter.
     """
     m = _FRONTMATTER.match(text or "")
     if m is None:
@@ -127,7 +127,7 @@ def content_sha256(text: str) -> str:
     ``documents._normalise_markdown_for_fingerprint`` is deliberately NOT used: it exists
     to detect duplicate submissions and strips some frontmatter keys and trailing space.
     What is needed here is "is the file I am reading now the same file as before?", so one
-    differing trailing space must produce a different fingerprint (L0003 §2-1).
+    differing trailing space must produce a different fingerprint.
     """
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
@@ -206,7 +206,7 @@ def build_tree(headings: list[dict]) -> list[dict]:
 
     When ``####`` follows ``##`` directly, the parent of ``####`` is that ``##``. No absent
     ``###`` is invented, and ``level`` is carried exactly as written. A document starting
-    at ``###`` simply has a null ``parent_id`` — that is not an error (L0003 §2-3).
+    at ``###`` simply has a null ``parent_id`` — that is not an error.
     """
     items: list[dict] = []
     stack: list[dict] = []
@@ -353,7 +353,7 @@ class DocumentText:
                 return it
         return None
 
-    # -- body coordinate → file coordinate (L0003 §2-1 / §2-7) ---------------
+    # -- body coordinate → file coordinate ---------------
     def body_char_to_file(self, body_char: int) -> int:
         return int(body_char) + self.frontmatter_chars
 
@@ -375,7 +375,7 @@ def normalize_heading(s: str) -> str:
 
     **Emphasis markers (``*``, ``_``) are NOT stripped.** ``_`` is common in filenames and
     identifiers, so stripping it would make ``client_src`` and ``clientsrc`` the same
-    heading. Only backticks go, because they never carry meaning in a heading (L0003 §2-4).
+    heading. Only backticks go, because they never carry meaning in a heading.
     """
     t = unicodedata.normalize("NFKC", s or "")
     t = _WS_COLLAPSE.sub(" ", t).strip()
@@ -403,7 +403,7 @@ def alias_map() -> dict[str, str]:
     """Normalised alias → the group's representative name.
 
     **No new constant is defined; the existing values are imported.** Retyping them lets
-    one side drift (L0003 §2-4). There are no Japanese aliases (0355 T0009 decided against).
+    one side drift. There are no Japanese aliases (decided against).
 
     This table is used for **lookup only**. It does not loosen ``tr_scope_service``'s report
     section check one bit — that parser still uses its own regex and rejects a numbered
@@ -476,7 +476,7 @@ def resolve_by_name(items: list[dict], requested: str) -> list[dict]:
 
     The stages run in order rather than all at once so that, when a document holds both
     ``2.1 Structure`` and ``Structure``, asking for ``2.1 Structure`` returns exactly that
-    one. Stripping numbering up front would match both and be needlessly ambiguous (L0003 §2-4).
+    one. Stripping numbering up front would match both and be needlessly ambiguous.
     """
     requested = requested or ""
     if ">" in requested:
@@ -549,7 +549,7 @@ def cut_to_limit(
     Only whole lines that fit under the cap are returned, so the real character count can
     be below ``max_chars``. **If the very first line already exceeds the cap it is returned
     whole** — otherwise nothing would come back and ``next_locator`` would point at the same
-    place, repeating the identical request forever (L0003 §2-6).
+    place, repeating the identical request forever.
     """
     taken = 0
     cursor = line_start
@@ -562,7 +562,7 @@ def cut_to_limit(
     return cursor - 1, cursor <= line_end
 
 
-# ── Locators (P0002 §1-1) ───────────────────────────────────────────────────────
+# ── Locators ───────────────────────────────────────────────────────
 
 def make_ref(doc_id: str, revision_no: int, line_start: int, line_end: int) -> str:
     return f"{doc_id}@r{revision_no}#L{line_start}-{line_end}"
@@ -578,7 +578,7 @@ def build_locator(
     char_start: Optional[int] = None,
     char_end: Optional[int] = None,
 ) -> dict:
-    """One P0002 §1-1 locator set — same shape whether asked by name or by line."""
+    """One the plan locator set — same shape whether asked by name or by line."""
     cs = doc.char_start_of(line_start) if char_start is None else char_start
     ce = doc.char_end_of(line_end) if char_end is None else char_end
     return {
@@ -599,7 +599,7 @@ def build_locator(
 def build_turn_locator(
     doc_id: str, revision_no: int, turn_seq: int, char_start: int, char_end: int
 ) -> dict:
-    """A conversation turn's position (P0002 §1-4). Lines carry no meaning, so ``unit`` is ``turn``."""
+    """A conversation turn's position. Lines carry no meaning, so ``unit`` is ``turn``."""
     return {
         "doc_id": doc_id,
         "revision_no": revision_no,
@@ -618,7 +618,7 @@ def build_turn_locator(
 
 def candidate_entry(doc_id: str, revision_no: int, item: dict, doc: DocumentText,
                     include_children: bool = True) -> dict:
-    """One candidate row carried on a 404/ambiguous response (P0002 scenarios 5 and 6)."""
+    """One candidate row carried on a 404/ambiguous response (scenarios 5 and 6)."""
     idx = doc.items.index(item)
     line_end = section_end_line(doc.items, idx, include_children, doc.document_lines)
     return {
@@ -636,7 +636,7 @@ def outline_items(doc: DocumentText, max_level: int) -> tuple[list[dict], bool]:
 
     Filtering by ``max_level`` only decides **what goes in the response**; the numbering is
     the pre-filter ordinal. So a ``section_id`` from an outline fetched with ``max_level=2``
-    opens the same section when passed straight to ``/section?section_id=`` (L0003 §2-2).
+    opens the same section when passed straight to ``/section?section_id=``.
     """
     items = doc.items
     out: list[dict] = []
@@ -709,8 +709,8 @@ def resolve_locator(
 ) -> Resolved:
     """Turn **exactly one** of ``section``/``section_id``/``lines``/``chars`` into a section.
 
-    Two or more, or none at all, is a 422 (P0002 scenario 19). The check order follows
-    L0003 §4-1 — a changed revision (409) is already filtered out before this function.
+    Two or more, or none at all, is a 422 (scenario 19). The check order follows
+    a changed revision  is already filtered out before this function.
     """
     given = [x for x in (section, section_id, lines, chars) if x is not None and x != ""]
     if len(given) != 1:
@@ -738,7 +738,7 @@ def resolve_locator(
                 },
             )
         # On multiple hits, serve the one that comes first in the document and say it was
-        # ambiguous. The point of this rule is not to stall unattended work (P0002 scenario 5).
+        # ambiguous. The point of this rule is not to stall unattended work (scenario 5).
         hits.sort(key=lambda it: (it["line_start"], items.index(it)))
         chosen = hits[0]
         idx = items.index(chosen)
@@ -759,7 +759,7 @@ def resolve_locator(
         if chosen is None:
             # The id came from an outline, not from a human guess. If it is wrong the
             # revision changed; suggesting a nearby id would be wrong. section_total is
-            # returned instead so the caller re-fetches the outline (L0003 §4-2).
+            # returned instead so the caller re-fetches the outline.
             raise LocatorError(
                 404,
                 f"section not found: {section_id}",

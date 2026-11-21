@@ -1,4 +1,4 @@
-"""Cursor reads, read-cursor bookkeeping and single-turn SSE (group 0351, T2).
+"""Cursor reads, read-cursor bookkeeping and single-turn SSE (the earlier change, T2).
 
 Backed by a real in-memory SQLite carrying the 074 schema, so the paging, the
 monotonic cursors and the CHECK that keeps ``last_viewed_seq <= last_read_seq`` are
@@ -132,7 +132,7 @@ def _seed(count: int, body: str = "hello", speaker: str = "user", key: str = "us
         )
 
 
-# ── Cursor validation (P0003 scenario 21 / L0004 §4-2) ──
+# ── Cursor validation (scenario 21 / the earlier implementation) ──
 
 def test_after_and_before_are_mutually_exclusive(store, doc):
     with pytest.raises(append_service.ConversationTurnError) as exc:
@@ -159,7 +159,7 @@ def test_cursor_domain_violations_are_422(store, doc, kwargs, message):
 def test_limit_over_the_ceiling_is_trimmed_not_rejected(store, doc):
     _seed(3)
     result = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, after_seq=0, limit=500)
-    # P0003 §0-6: the response reports the limit actually applied.
+    # the response reports the limit actually applied.
     assert result["limit"] == query.TURN_LIMIT_MAX == 200
     assert [t["seq"] for t in result["turns"]] == [1, 2, 3]
 
@@ -177,7 +177,7 @@ def test_non_conversation_document_is_400_and_missing_is_404(store, monkeypatch)
     assert missing.value.status_code == 404
 
 
-# ── Forward / reverse pagination (P0003 scenarios 1·2·7) ──
+# ── Forward / reverse pagination (scenarios 1·2·7) ──
 
 def test_forward_page_reports_next_cursor_and_stops_when_exhausted(store, doc):
     _seed(5)
@@ -198,7 +198,7 @@ def test_forward_page_reports_next_cursor_and_stops_when_exhausted(store, doc):
 def test_backward_page_is_seq_ascending_and_carries_prev_cursor(store, doc):
     _seed(6)
     page = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, before_seq=5, limit=3)
-    # Rows are read newest-first but the wire is always ascending (P0003 scenario 2).
+    # Rows are read newest-first but the wire is always ascending (scenario 2).
     assert [t["seq"] for t in page["turns"]] == [2, 3, 4]
     assert page["prev_before_seq"] == 2
     assert page["next_after_seq"] is None
@@ -226,7 +226,7 @@ def test_missing_cursor_resumes_from_the_remembered_read_position(store, doc):
     assert [t["seq"] for t in page["turns"]] == [3, 4]
 
 
-# ── Budget checks (L0004 §2-9 apply_budget) ──
+# ── Budget checks (apply_budget) ──
 
 def test_byte_budget_cuts_before_the_count_limit_and_says_so(store, doc):
     big = "x" * 100_000  # 3 of these blow past the 256 KiB response budget
@@ -268,7 +268,7 @@ def test_budget_disabled_when_the_byte_ceiling_is_misconfigured_to_zero(store, d
     assert page["truncated_by"] is None
 
 
-# ── head / participants / me (P0003 §0-3·0-4, L0004 §2-10) ───────────────────
+# ── head / participants / me ───────────────────
 
 def test_head_is_only_built_on_request_and_carries_metadata_without_turn_copy(store, doc):
     _seed(5)
@@ -311,7 +311,7 @@ def test_participants_list_reflects_every_speaker_in_the_conversation(store, doc
     page = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, after_seq=0, include_head=True)
     keys = {p["participant_key"] for p in page["participants"]}
     assert "provider:cx_opus" in keys
-    # last_viewed_seq is an internal column and must not leak onto the wire (L0004 §2-8).
+    # last_viewed_seq is an internal column and must not leak onto the wire.
     assert all("last_viewed_seq" not in p for p in page["participants"])
 
 
@@ -320,11 +320,11 @@ def test_unknown_participant_reads_from_zero_without_being_recorded(store, doc):
     page = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, after_seq=0, include_head=True)
     assert page["me"]["last_read_seq"] == 0
     assert page["me"]["first_seen_seq"] == 0
-    # Merely looking is not participation (L0004 §5).
+    # Merely looking is not participation.
     assert turns.get_participant(DOC_ID, "user:u1") is None
 
 
-# ── Read cursor (L0004 §2-8, P0003 scenarios 5·9) ──
+# ── Read cursor (scenarios 5·9) ──
 
 def test_worker_read_advances_delivered_only_to_the_last_turn_actually_sent(store, doc):
     _seed(5)
@@ -397,7 +397,7 @@ def test_delivered_then_a_late_viewed_keeps_viewed_below_read(store, doc):
     assert row["last_viewed_seq"] == 3
 
 
-# ── Real-time single-turn delivery (P0003 scenario 6, L0004 §2-11) ──
+# ── Real-time single-turn delivery (scenario 6, the earlier implementation) ──
 
 def test_appended_turn_is_broadcast_as_one_turn_not_a_document_refresh():
     result = {
@@ -418,7 +418,7 @@ def test_appended_turn_is_broadcast_as_one_turn_not_a_document_refresh():
     assert event.payload["turn"]["seq"] == 14
     assert event.payload["head_seq"] == 14
     assert event.payload["participant"]["participant_key"] == "provider:cx_opus"
-    # The whole conversation body must never ride on the event (D0002 §6).
+    # The whole conversation body must never ride on the event.
     assert "content" not in event.payload
 
 
@@ -439,7 +439,7 @@ def test_document_explorer_refresh_remains_a_separate_event_type():
     assert EventType.DOCUMENT_EXPLORER_REFRESH.value == "document_explorer_refresh"
 
 
-# ── Route registration (P0003 §0-1 route table) ──
+# ── Route registration (route table) ──
 
 def test_session_and_worker_query_paths_are_registered_exactly_once():
     from modules.flow_gate.api.v1 import conversation_routes
@@ -454,7 +454,7 @@ def test_session_and_worker_query_paths_are_registered_exactly_once():
     assert worker.count("/api/v1/conversation/{doc_id}/turn") == 1
 
 
-# ── HTTP acceptance (P0003 §0-5 error envelope) ──
+# ── HTTP acceptance (error envelope) ──
 
 def _session_client():
     from fastapi import FastAPI
@@ -536,7 +536,7 @@ def test_worker_query_uses_the_worker_error_envelope_and_never_consumes_the_toke
         )
     assert response.status_code == 200
     assert response.json() == page
-    # Paging through a long conversation must stay free (P0003 §0-1).
+    # Paging through a long conversation must stay free.
     consume.assert_not_called()
 
 
@@ -556,7 +556,7 @@ def test_worker_query_rejects_a_token_bound_to_another_document():
     assert response.status_code == 403
     body = response.json()
     # Worker routes keep their own envelope; mixing in {"detail": ...} would break every
-    # existing worker's error handling (P0003 §0-5).
+    # existing worker's error handling.
     assert body["ok"] is False
     assert body["http_status"] == 403
     assert "error_message" in body and "help_url" in body
@@ -571,7 +571,7 @@ def test_worker_query_without_a_bearer_header_is_401():
 def test_worker_read_route_is_async_and_offloads_blocking_work():
     """Reading hits the DB synchronously, so it must not run on the event loop.
 
-    0394 T0016 item 4 (NR0003 §5.3): previously this checked only whether this
+    previously this checked only whether this
     function's source contained 'anyio.to_thread.run_sync'. A comment could satisfy
     that check, as could an unrelated occurrence after actual offloading was removed.
     The existing test_event_loop_blocking_0279 guard enforces the same rule across

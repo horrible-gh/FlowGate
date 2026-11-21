@@ -1,6 +1,6 @@
-"""Combine four return-point queries into one (flowgate.default.0291 T2).
+"""Combine four return-point queries into one.
 
-Each document response repeated these four reads, observed four times in the CH0016 dump:
+Each document response repeated these four reads, observed four times in the the discussion dump:
 
     SELECT * FROM workflow_return_points WHERE group_id = ?
     SELECT doc_id, seq, type_code, title FROM documents WHERE group_id = ? AND seq = ?

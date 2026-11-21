@@ -1,5 +1,5 @@
 /**
- * flowgate.v02gui.0027 (0006-T) — Group archive / restore on the client: the Group menu part, the Explorer display tree,
+ * Group archive / restore on the client: the Group menu part, the Explorer display tree,
  * the Group row's ⋯ button and the store / API path. The Shell end to end (window, refresh, restore) is in
  * contextMenuServerActions.0060.spec.ts; the server side in server/tests/.../test_group_archive_v02gui_0027.py.
  */

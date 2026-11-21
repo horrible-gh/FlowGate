@@ -1,4 +1,4 @@
-"""flowgate.default.0180 T0004 -- CH fixed-token command capability regressions.
+"""CH fixed-token command capability regressions.
 
 Real persisted tokens are issued through token_service.issue. Each token is issued for the
 exact run id the command request runs under (ai_run_id), so the axis check passes for the

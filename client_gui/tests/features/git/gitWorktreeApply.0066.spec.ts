@@ -17,7 +17,7 @@ import {
   worktreeStatus,
 } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#7 — the Base apply part of the Group worktree session (0066 D#2 §3-2-2 ④–⑨,
+// the Base apply part of the Group worktree session (the earlier implementation ④–⑨,
 // §3-3 merge–Fetch, §3-4): target choice and late E8 answers (C15), the merge request (C16),
 // approval never a reason (C17), merge results incl. push_rejected (C18), follow-up push (C19),
 // Fetch (C20), the `Diff` pane list and target comparison Center Diff (C23 b·c), reads after 0033

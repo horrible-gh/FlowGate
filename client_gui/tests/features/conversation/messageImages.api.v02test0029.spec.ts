@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02test.0029 T0005 — the screen's image calls: upload by flow id, delete, authenticated content, the
+// the screen's image calls: upload by flow id, delete, authenticated content, the
 // `images` field of a turn, `accepts_images` of a provider, and the shrink-before-upload rule.
 const net = vi.hoisted(() => ({
   postFormRequest: vi.fn(),

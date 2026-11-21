@@ -18,10 +18,10 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free single-panel resize primitive (T0010 §6): one panel with one draggable
-// edge, independent of any sibling ("Unaware of the other pane's meaning", T0010 §7). It never knows
-// whether it wraps a Designer Inspector or a Git Workspace panel (T0010 §4/§6.4), and
-// never persists its own size (T0010 §16: no localStorage/API/store).
+// Domain-free single-panel resize primitive: one panel with one draggable
+// edge, independent of any sibling ("Unaware of the other pane's meaning", the earlier implementation). It never knows
+// whether it wraps a Designer Inspector or a Git Workspace panel, and
+// never persists its own size (no localStorage/API/store).
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createAxisResize } from '../../core/interaction/axisResize'
 
@@ -36,7 +36,7 @@ const props = withDefaults(
     minSize?: number
     maxSize?: number
     /** When false, the resize handle is not rendered at all -- resize is impossible, not
-     *  merely visually disabled (T0010 §6.3 "No resizing while disabled"). */
+     *  merely visually disabled ("No resizing while disabled"). */
     resizable?: boolean
     step?: number
   }>(),
@@ -73,7 +73,7 @@ const ariaOrientation = computed<'horizontal' | 'vertical'>(() => (isHorizontalE
 const resizeTick = ref(0)
 
 // How far the pane's resizing edge could move before it would reach the *viewport*
-// boundary on that side (T0010 §6.3 "Respect viewport/parent boundaries"). This must account for
+// boundary on that side ("Respect viewport/parent boundaries"). This must account for
 // the pane's own on-screen position, not just the raw viewport length: a `right`-edge
 // pane whose left edge already sits at x=300 in a 500px-wide viewport only has 200px of
 // room to its right, not the full 500. Falls back to the full viewport length before
@@ -107,7 +107,7 @@ function viewportExtent(): number {
 }
 
 // How far the pane's resizing edge could move before it would push the *other*,
-// anchored edge past the parent's boundary (T0010 §6.3 "Respect viewport/parent boundaries").
+// anchored edge past the parent's boundary ("Respect viewport/parent boundaries").
 // Returns 0 (= "not measurable, ignore this bound") when there is no parent or the
 // environment does not lay elements out (e.g. jsdom without an explicit rect stub).
 function parentGrowthExtent(): number {

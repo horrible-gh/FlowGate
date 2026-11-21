@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0053 T#4 — the test scenario / test report view in the document window: the v0.1
+// the test scenario / test report view in the document window: the v0.1
 // TestDocumentBody (client/src/main/components/documents/TestDocumentBody.vue). A specification (contract 2)
 // TS shows its scenario (TestSpecPanel), a TSR its report (TestReportPanel), both read only; a legacy TS / TSR,
 // a document not written yet (a scenario or report before its run) and a failed read keep the Markdown body

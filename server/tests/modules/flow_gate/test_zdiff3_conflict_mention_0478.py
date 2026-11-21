@@ -1,6 +1,6 @@
-"""zdiff3 base-chunk propagation into server mentions (flowgate.default.0478 WP0003 T#3).
+"""zdiff3 base-chunk propagation into server mentions.
 
-T0008 item 3 verifies _split_conflict_chunks() and _build_conflict_mention() preserve
+verifies _split_conflict_chunks and _build_conflict_mention preserve
 base markers actually observed in zdiff3 merge output by
 TestGitEndToEnd.test_conflict_resolve_flow: <<<<<<< HEAD / mainline version /
 Base marker: ||||||| line1 / line1 / ======= / group version / >>>>>>> group/branch.
@@ -52,7 +52,7 @@ group version
 
 
 def test_build_conflict_mention_carries_base_from_zdiff3(monkeypatch):
-    """T0008 item 3, integration half: feed the same real zdiff3 content that
+    """integration half: feed the same real zdiff3 content that
     list_conflicts() returns through _build_conflict_mention() (not just
     _split_conflict_chunks() directly) and assert the emitted mention's JSON
     `files[].chunks[].base` is non-empty and equals the common-ancestor content.

@@ -1,4 +1,4 @@
-// flowgate.v02.0156 T1 R4 — cross-tab mutual exclusion for a Flow's run command when `navigator.locks` is missing.
+// R4 — cross-tab mutual exclusion for a Flow's run command when `navigator.locks` is missing.
 //
 // `navigator.locks` is a secure-context API: on the LAN plain-HTTP deployment it does not exist (and some secure browsers
 // lack it too), so two tabs of the same Flow could read "no pending command" at once, each allocate an identity and

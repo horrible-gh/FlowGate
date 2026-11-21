@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0125 T#2 (rejection rej_01M6G972AQBVWPW8) — the exhausted-review `needs_intervention` card on the path the
+ * (rejection rej_01M6G972AQBVWPW8) — the exhausted-review `needs_intervention` card on the path the
  * user actually sees: the mounted Designer Shell with a Graph Flow whose card `gn_a` really is in the Canvas (ownership
  * `graph`), its run read from the server, the Canvas card chip, the Inspector pill, the top Run menu and the toolbar.
  * Only the HTTP layer (`@shared/api`) is mocked; the Canvas read, the run read / command and the run control are the real

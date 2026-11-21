@@ -1,9 +1,9 @@
-"""flowgate.v02.0083 T#4 — the Canvas state of a Graph card follows the run facts the server already tells apart.
+"""the Canvas state of a Graph card follows the run facts the server already tells apart.
 
 ``canvas_mapping.node_run_state`` maps an open node whose writer ended without a result (the run wire's
 ``dispatch.error_code``: ``no_result``, a failed AI start or run) to ``blocked`` instead of ``in_progress``; every other
 node keeps its table value. ``graph_projector`` hands each node its run wire, so the Canvas read and the run read say
-the same thing. No new state value: ``blocked`` is P0008 §2.3's.
+the same thing. No new state value: ``blocked`` is the plan's.
 
 rev1: the Canvas read's ``run`` block carries the run band's facts of the same run read (``run_payload``: command, idle
 reason, AI executions, waiting cards), so a Canvas read newer than the client's last run read tells the band as of

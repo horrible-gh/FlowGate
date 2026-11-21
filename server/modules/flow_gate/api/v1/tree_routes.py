@@ -38,13 +38,13 @@ class SrcContentUpdate(BaseModel):
 class SrcDeleteRequest(BaseModel):
     path: str
     type: str
-    # 0327 T0004: the client sends its current group-branch context here so the delete
+    # the client sends its current group-branch context here so the delete
     # is resolved against THAT group's worktree instead of the base checkout (fail-closed,
     # never a silent base fallback). Absent (base-checkout edit) → None.
     group_id: str | None = None
 
 
-# 0275 T0005 (NR0003 cause 2): these handlers do sync DB/filesystem work, so they
+# these handlers do sync DB/filesystem work, so they
 # must be plain `def` — FastAPI then runs them in the threadpool instead of on
 # the event loop, where a slow tree load froze every in-flight request (SSE
 # heartbeats included). Only group_dispose stays async (it awaits the SSE
@@ -60,7 +60,7 @@ def _resolve_src_path(project_id: str, path: str, group_id: str | None = None):
     from modules.flow_gate.db import projects as _proj
     from modules.flow_gate.services import git_service
 
-    # 0327 T0004 (B0001 / NR0003 recommendation 3): downloading is a read, so the group-branch
+    # downloading is a read, so the group-branch
     # explorer may offer it — but it has to read the GROUP's tree. Resolving a group
     # download against the base checkout would hand the user the base version of the
     # file under a group tab, silently wrong. Fail-closed like the src-content reader.
@@ -92,7 +92,7 @@ def _resolve_src_path(project_id: str, path: str, group_id: str | None = None):
     if not project_name:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # 0319 B0001: a git-integrated project's base checkout lives under the git
+    # a git-integrated project's base checkout lives under the git
     # base_branch; resolve base file reads/edits there (non-integrated → unchanged).
     docs_root = git_service.base_src_root(project_id, project_name, branch).resolve()
     try:
@@ -114,7 +114,7 @@ def _resolve_delete_path(project_id: str, path: str, group_id: str | None = None
     from modules.flow_gate.services import git_service
 
     if group_id:
-        # 0327 T0004: NR0003 recommendation 4 assumed "delete == hard-delete in the BASE checkout",
+        # assumed "delete == hard-delete in the BASE checkout",
         # which is why it was entangled with the finalize E3 base-contamination guard.
         # Resolved against the group's own worktree the base is not touched at all, so a
         # group delete is just a working-tree change on that group's branch — the same
@@ -143,14 +143,14 @@ def _resolve_delete_path(project_id: str, path: str, group_id: str | None = None
     branch = (settings.get("branch") or "main").strip() if settings else "main"
     if not project_name:
         raise HTTPException(status_code=404, detail="Not found")
-    # 0319 B0001: delete targets the git base_branch checkout when integrated.
+    # delete targets the git base_branch checkout when integrated.
     root = git_service.base_src_root(project_id, project_name, branch).resolve()
     return _seal_under_root(root, path)
 
 
 def _seal_under_root(root, path: str):
     """Join *path* under *root*, refusing escapes and symlink components."""
-    # NR0003 finding: normalize a SINGLE backslash to '/', matching _validate_path_param.
+    # finding: normalize a SINGLE backslash to '/', matching _validate_path_param.
     # Replacing only a double backslash left 'foo\bar' as one literal component, so its
     # per-component symlink check was bypassed and resolution disagreed with validation.
     candidate = root.joinpath(*path.replace("\\", "/").split("/"))
@@ -297,10 +297,10 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
 
 
 # ---------------------------------------------------------------------------
-# 0454 T0006 §1 — display-state pruning for the group tree
+# display-state pruning for the group tree
 # ---------------------------------------------------------------------------
 #
-# B0001 ("releasing the completed-hide toggle is slow"): the explorer hides terminal
+# ("releasing the completed-hide toggle is slow"): the explorer hides terminal
 # (final-approved / discarded) groups by default, but the server shipped them anyway —
 # the whole subtree travelled the wire and got JSON-parsed on every load, SSE refresh and
 # retry, only for GroupExplorer to filter it back out. `include_terminal=false` drops that
@@ -312,7 +312,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
 # legacy payload that predates the fields hides nothing.
 _TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
 
-# 0454 T0007 review — the overview cards (MainPanel.vue) used to warm the FULL group tree on
+# review — the overview cards (MainPanel.vue) used to warm the FULL group tree on
 # every default-screen entry just to read three numbers off it, which the review found doubles
 # the default (hidden) entry's transfer/parse cost past the pre-pruning baseline: pruned
 # (735,105 bytes) + full (1,713,209 bytes) > full alone (rev0 finding). rev1 fixed the transfer
@@ -324,12 +324,12 @@ _TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
 #
 # rev2 folded build_overview_summary's result into the `/groups/tree` envelope itself so both
 # problems above went away — but that made `include_terminal=true` (the default) stop being
-# byte-identical to the pre-T0006 API for every existing caller, which is exactly what T0006
+# byte-identical to the pre-the earlier implementation API for every existing caller, which is exactly what the earlier implementation
 # §1.1 ("return unchanged") and the completion criteria ("preserve existing API compatibility") rule out.
 # The review on rev2 called this out.
 #
 # rev3 put `/groups/tree/overview_summary` back as its own route, so `/groups/tree` reverted to
-# exactly the pre-T0006 `{"data": {"nodes": [...]}}` envelope for every variant, and shared the
+# exactly the pre-the earlier implementation `{"data": {"nodes": [...]}}` envelope for every variant, and shared the
 # raw node list between the two routes through `_get_raw_tree_nodes` — but rev3's version of that
 # function memoized `process_service.get_group_tree()` per project for a flat 5-second TTL, which
 # the rev3 review correctly rejected on two counts: the cache was checked and released BEFORE the
@@ -350,14 +350,14 @@ _TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
 # (project switch, SSE refresh, manual refresh), nothing guaranteed the two requests actually
 # overlapped — a sequential arrival (the second landing only after the first had already
 # returned) left rev4's own test suite documenting two separate `get_group_tree` calls per screen
-# load, the exact rev1 regression T0006 §1.3 rules out.
+# load, the exact regression the earlier implementation rules out.
 #
 # rev5 removes both gaps at their root instead of tuning the join window:
 #
 # 1. `include_summary` (see `get_groups_tree` below) folds the overview aggregate into the SAME
 #    `/groups/tree` response as an OPT-IN query flag, defaulting to `False` — every caller that
 #    does not pass it (every pre-existing caller, since the flag did not exist before this
-#    revision) gets the exact `{"data": {"nodes": [...]}}` envelope T0006 §1.1 requires. This is
+#    revision) gets the exact `{"data": {"nodes": [...]}}` envelope the earlier implementation requires. This is
 #    NOT rev2's design: rev2 added the key unconditionally to the default variant every existing
 #    caller already receives; here the key only ever appears on a request that explicitly asks
 #    for it. GroupExplorer.vue is now the ONLY caller that asks for it, on the exact same fetch
@@ -369,7 +369,7 @@ _TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
 #    revision). `force=True` means, precisely, "I need a read that starts no earlier than THIS
 #    request" — which is exactly what a caller that just awaited a write's own response needs
 #    (DashboardView.vue's two reveal-after-create calls both pass `force=true` already, for that
-#    reason, since 0454 T0006). A forced fetch therefore NEVER joins an already-in-flight one,
+#    reason, since the earlier implementation). A forced fetch therefore NEVER joins an already-in-flight one,
 #    however recent — it always starts its own `process_service.get_group_tree()` call, which
 #    cannot have begun before the caller's own request arrived, and therefore cannot have begun
 #    before any write that request's own caller had already observed complete (the client only
@@ -625,7 +625,7 @@ async def group_dispose(request: Request, group_id: str):
             raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from exc
 
     result = await anyio.to_thread.run_sync(dispose)
-    # TR0079.0003 (rework): a group disposal must propagate over SSE so already-open
+    # (rework): a group disposal must propagate over SSE so already-open
     # clients react immediately — without it the only refresh was the disposing user's
     # local explorer reload, leaving open document tabs (and other users' views) stale:
     # the action bar kept offering approve/reject/workflow actions on a now-discarded
@@ -635,7 +635,7 @@ async def group_dispose(request: Request, group_id: str):
     # explorer and signals open tabs to refetch, which now surfaces group_disposed and
     # collapses the action bar. Best-effort; never fail the request on a delivery error.
     if isinstance(result, dict) and result.get("status") == "success":
-        # 0192 T0005 §3: dispose_group only writes the file-less DC marker — it never
+        # dispose_group only writes the file-less DC marker — it never
         # touched git, so the discarded group's worktree directory, unmerged local
         # work branch and ledger row all leaked (and the stale ledger row lingered in
         # the file-explorer group dropdown). Tear the slot down now, before the SSE

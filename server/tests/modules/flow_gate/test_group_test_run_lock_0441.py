@@ -1,4 +1,4 @@
-"""flowgate.default.0441 TR0005 rev2 — a running test locks the WHOLE group, not one tab.
+"""a running test locks the WHOLE group, not one tab.
 
 Rejection: "테스트 중일떄는 \"그룹 내 다른 문서의\" 액션바\"도\" 전부 비활성화 해놔야 할거아냐".
 
@@ -216,7 +216,7 @@ def test_load_group_test_run_is_inactive_with_no_run(store):
 def test_load_group_test_run_fails_closed_to_unconfirmed_on_a_db_error(monkeypatch):
     """A display-only extra must never take the document GET down with it.
 
-    0441 TR0005 rev10: this used to assert ``active is False`` — but ``False`` is what the
+    this used to assert ``active is False`` — but ``False`` is what the
     client reads as "confirmed: no run in this group", which unlocks every sibling document's
     action bar. A DB error is not a confirmation of anything; it must answer ``None``
     (unconfirmed) so DocHeader/MainPanel's fail-closed default keeps every sibling locked.
@@ -301,7 +301,7 @@ def test_get_document_always_carries_the_key_even_when_idle(monkeypatch):
 def test_get_document_group_test_run_fails_closed_to_unconfirmed_not_false(monkeypatch):
     """The route's own except-branch must not contradict the service layer's fail-closed value.
 
-    0441 TR0005 rev10: this drives a failure through `_load_group_test_run`'s own `except`
+    this drives a failure through `_load_group_test_run`'s own `except`
     (not the service's), by making `load_group_test_run` itself raise, so both independent
     fail-closed layers are pinned to the same `None` (unconfirmed) answer.
     """

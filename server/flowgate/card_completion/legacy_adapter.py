@@ -1,17 +1,17 @@
-"""Reuse boundary of the card completion (flowgate.v02.0119 T#2, T-1).
+"""Reuse boundary of the card completion.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never changed: the Flow's engine
 ownership, the Flow guard (one DB transaction under the Flow lock), the active run and its node runs and active attempts,
 a run step's context and its post-commit jobs, the run's policies, the result binder's per-node reconciliation (the one
 path that turns a missing node event into ``resolve`` -> ``apply_decision``; the frontier ignores an invalid or repeated
-event, L0009 E-20 / E-36), the document row and its review verdicts.
+event, the earlier implementation E-20 / E-36), the document row and its review verdicts.
 
 Listed for the directory move (WP Appendix A): ``graph_workflow.services.result_binder`` / ``run_apply`` / ``flow_guard``,
 ``graph_workflow.store.run_store``, ``db.documents``, ``db.document_reviews``, ``workflow_events`` (a submission's author),
 ``services.ai_invoke.runtime.get_run_record`` (the provider a review run actually ran on).
 
-flowgate.v02.0119 T#4 (T-3): what the removed card approval (``flowgate.card_approval``) took from ``modules.flow_gate`` and
-the completion still needs moved here — the card lines an ended attempt left behind (``stale_documents``, 0061 T#7) — with
+(T-3): what the removed card approval (``flowgate.card_approval``) took from ``modules.flow_gate`` and
+the completion still needs moved here — the card lines an ended attempt left behind (``stale_documents``, the earlier implementation) — with
 the read-only gates the v0.1 approval asked (a readable, non-blank body; a TSR's test gate), which are now the v0.2
 completion's own judgement (``card_completion.gates``), and the system's write of an approved instruction
 (``write_instruction_approved``: no v0.1 review transition, no TR approval hook, no Graph contact). Listed for the directory
@@ -176,10 +176,10 @@ def run_jobs(jobs: list) -> None:
     run_service.run_jobs(jobs)
 
 
-# ── flowgate.v02.0119 T#4 (T-3): moved from the removed card approval, and the completion's own gates ──────────────
+# ── the earlier change the earlier implementation (T-3): moved from the removed card approval, and the completion's own gates ──────────────
 
 def stale_documents(flow_id: str, node_key: Optional[str]) -> set[str]:
-    """flowgate.v02.0061 T#7 (0017-TR question 440, moved from ``card_approval.legacy_adapter`` by T-3): the card's documents
+    """(TR question 440, moved from ``card_approval.legacy_adapter`` by T-3): the card's documents
     an ended attempt of the node left behind — registered (new or edit) with the tokens of the node's invalidated attempts
     in the Flow's active run (a Stop, a lost lease, a failed worktree) and with none of its live tokens. They stay as the
     card's history and are no output the node's completion waits for."""

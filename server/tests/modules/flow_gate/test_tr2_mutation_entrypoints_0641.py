@@ -1,4 +1,4 @@
-"""flowgate.default.0641 T2#2 — behavior tests for every ordinary mutation entrypoint."""
+"""#2 — behavior tests for every ordinary mutation entrypoint."""
 from __future__ import annotations
 
 import asyncio

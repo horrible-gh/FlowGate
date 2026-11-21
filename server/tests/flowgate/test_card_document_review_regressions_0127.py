@@ -1,4 +1,4 @@
-"""TR0019 review regressions: real guards, transactions, path races and token evidence."""
+"""review regressions: real guards, transactions, path races and token evidence."""
 import asyncio
 import io
 import json
@@ -76,7 +76,7 @@ def test_reference_index_has_linear_filesystem_call_bound(env, tmp_path, monkeyp
     def identity(p):
         calls['identity'] += 1
         return original(p)
-    # flowgate.v02.0135: the walk asks each row's candidates through candidate_paths (no jail per row).
+    # the walk asks each row's candidates through candidate_paths (no jail per row).
     monkeypatch.setattr(gate, 'candidate_paths', candidates)
     monkeypatch.setattr(gate, 'file_key', identity)
     monkeypatch.setattr(gate, 'same', lambda *a: pytest.fail('pairwise filesystem comparison'))

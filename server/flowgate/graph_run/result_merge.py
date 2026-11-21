@@ -1,7 +1,7 @@
-"""0061 T#9: an approved code node is done only once its attempt's result is merged into the Flow's branch.
+"""an approved code node is done only once its attempt's result is merged into the Flow's branch.
 
 A card's approval (``review_approved``, the card approved as a whole, 0056) of a node whose active attempt worked in
-a Git worktree (T#5) is held back (``defer_done``, inside the approval's Flow guard): the node stays in review, its
+a Git worktree is held back (``defer_done``, inside the approval's Flow guard): the node stays in review, its
 attempt's ``integration_status`` becomes ``pending`` and the integration is requested after the commit (the step's
 jobs). A gate, a node with no attempt, an attempt never prepared and a document-only attempt are done at once.
 
@@ -10,29 +10,29 @@ Flow guard and DB transaction (``integrate``):
 
 (a) only while the run is running / paused / idle and the attempt active and ``pending`` — a stopping run starts
     none. An idle run (a person's approval on it) goes running first (``_wake``: the integration hold ``idle``), so
-    the run is working, locked and may be stopped while its integration waits or runs. 0083 WP-3 rework (0061 T#2
+    the run is working, locked and may be stopped while its integration waits or runs. 0083 WP-3 rework (the earlier implementation
     revision): a person's approval whose propagation an idle run admits at once (``command.approval_wakes``) wakes the run
     in its own guard (``run_apply.apply_decision``, cause ``work_resumed``) before this, so no idle hold is taken and
     (e) opens the next cards with no further resume; the idle hold is left to the integrations no approval woke for
     (a step's, the next command's drain, the server start);
-(b) the attempt's result commit (T#8 ``result_commit.commit_result``, reused when it exists); v02gui.0015 T4: a result
+(b) the attempt's result commit (``result_commit.commit_result``, reused when it exists); v02gui.0015 T4: a result
     that changed its input is then checked (``result_verify.check``: the ``.py`` / ``.json`` files the attempt broke) —
     a failure leaves it ``failed`` (``verification_failed``) with nothing merged, whichever approval it had (a
     person's or the automatic one); a Stop then opens a new attempt;
-(c) a result equal to its input (no source change) already in the group branch goes to (e) with no merge (T#10: a
+(c) a result equal to its input (no source change) already in the group branch goes to (e) with no merge (the earlier implementation: a
     Join's merged input is not, and is merged as any result so the branch keeps it);
 (d) ``integrating``, then the group's G (``commit._acquire_group_lock``, no wait) for one merge only: the result is
     merged into the group worktree with a merge commit (``branches.merge_no_ff``, --no-ff), so the result commit
     stays a parent on the group branch;
 (e) once G is released, in one Flow guard: ``integrated_commit``, ``integrated``, the held approval applied (the
-    node done, its attempt ended, the candidates recomputed and the free slots refilled — T#2 / T#6); then, outside
-    the guard, the ended attempt's worktree and branch are removed (T#10 ``workspace.cleanup_ended``).
+    node done, its attempt ended, the candidates recomputed and the free slots refilled — the earlier implementation / the earlier implementation); then, outside
+    the guard, the ended attempt's worktree and branch are removed (``workspace.cleanup_ended``).
 
 The integration hold (a run status event of the cause ``integration_hold``; it ends with ``integration_hold_end`` or
 with the run leaving running): while a command's or an idle run's waiting integrations go first, a running run opens,
 refills and dispatches nothing (``settle.settle_plan``) and a result's propagation waits as on a paused run
 (``propagation_held``). The hold of an idle run ends once none of its integrations is pending / integrating: the run
-goes idle again and the done's propagation waits for the next command (T#2). The hold of a step / full / resume
+goes idle again and the done's propagation waits for the next command. The hold of a step / full / resume
 command (``hold_command``) ends once the drain has asked every waiting integration in attempt order: the command then
 re-dispatches, drains what waits and opens its candidates from the state of that moment (``run_service.go_on_command``).
 
@@ -58,7 +58,7 @@ are asked again in attempt order. ``pending`` / ``integrating`` keep a running /
 ``conflict`` / ``failed`` left and nothing else working, the run is idle (``merge_conflict``). An integration takes
 no execution slot.
 
-Stop (T#7): no integration starts once the run is stopping; one ``integrating`` goes on to its end (done stays done)
+Stop: no integration starts once the run is stopping; one ``integrating`` goes on to its end (done stays done)
 and the Stop's idle (stopped) follows it. The run's ``graph_attempt_merge`` sessions are aborted first (the abort
 under G, ``conflict.abort_tr_conflict``); while one stays open the Stop does nothing more and stays stopping (a
 repeated Stop and the server start retry the abort). ``pending`` / ``failed`` attempts are invalidated and their nodes
@@ -105,7 +105,7 @@ RUNNING, IDLE, STOPPING = "running", "idle", "stopping"
 HOLD_CAUSE, HOLD_END_CAUSE = "integration_hold", "integration_hold_end"
 HOLD_FAILED_CAUSE = "integration_hold_failed"            # a hold released by ``_release_hold``
 HOLD_IDLE, HOLD_RESUME, HOLD_COMMAND = "idle", "resume", "command:"
-# flowgate.v02test.0042: a conflict the merge finds is not kept as the group's session any more (one open session per
+# a conflict the merge finds is not kept as the group's session any more (one open session per
 # group, so a kept session held every other card's merge, silently ``session_busy``, until a person came). The merge
 # is undone at once and the attempt waits in ``conflict`` with ``CONFLICT_DEFERRED`` (no session, the group free; its
 # overlapping files on the run event's ``files``). A person's choice on the card (``request_resolution``) asks the
@@ -121,7 +121,7 @@ def _status(row: Optional[dict]) -> str:
 
 
 def needs_integration(row: dict) -> bool:
-    """The attempt worked in its own Git worktree (T#5): its approval waits for the merge. Document-only and
+    """The attempt worked in its own Git worktree: its approval waits for the merge. Document-only and
     never-prepared attempts have nothing to merge."""
     record = workspace._mode(row)
     return bool(record and record.get("mode") == "worktree" and row.get("input_commit"))
@@ -167,7 +167,7 @@ def integration_wire(attempt_id: Optional[str]) -> dict:
 
 
 def blocked_by(row: Optional[dict]) -> Optional[str]:
-    """flowgate.v02test.0042: the card a ``pending`` integration waits behind (its node key), or None — the node of
+    """the card a ``pending`` integration waits behind (its node key), or None — the node of
     the group's open ``graph_attempt_merge`` session, else another card of the run whose merge is in progress. Never
     guessed: anything else (a busy G of another kind, a gate reservation, an unreadable session) is None. Never
     raises (a run read goes on)."""
@@ -327,7 +327,7 @@ def hold_command(ctx, command: Optional[str]) -> None:
 # ── the integration ───────────────────────────────────────────────────────────
 
 def _time_machine_busy(flow_id: str) -> bool:
-    """T#13: a Flow with an unfinished Graph Time Machine operation (it keeps the run idle; its Git step holds the
+    """a Flow with an unfinished Graph Time Machine operation (it keeps the run idle; its Git step holds the
     group's G and reverts on the group branch, and its DB step needs the run idle) has no integration woken or started,
     whatever its run's status; a pending integration waits for the next command's drain."""
     from flowgate.graph_time_machine.operation import busy
@@ -335,7 +335,7 @@ def _time_machine_busy(flow_id: str) -> bool:
 
 
 def _runnable(attempt_id: str) -> bool:
-    """(a): the run running / paused / idle (never stopping), the attempt active and pending; T#13: no Time Machine
+    """(a): the run running / paused / idle (never stopping), the attempt active and pending; the earlier implementation: no Time Machine
     operation of the Flow unfinished, whatever the run's status."""
     row = workspace.attempt(attempt_id)
     if not row or row["status"] != "active" or _status(row) != PENDING:
@@ -400,7 +400,7 @@ def _group_root(row: dict) -> tuple[Optional[str], Optional[Path], Optional[str]
 
 
 def _in_group(row: dict) -> bool:
-    """(c) T#10: the result is already on the group branch (a run base or a predecessor's result). A Join's merged
+    """(c) the earlier implementation: the result is already on the group branch (a run base or a predecessor's result). A Join's merged
     input is not: it is merged, else the ended attempt's branch removal would leave it unreferenced."""
     _project_id, root, _branch = _group_root(row)
     return root is not None and git._is_ancestor(root, row["result_commit"], "HEAD")
@@ -410,7 +410,7 @@ def _trailer(row: dict) -> str:
     return f"FlowGate-Attempt: {row['attempt_id']}\nFlowGate-Result: {row['result_commit']}"
 
 
-# 0085 T#3 rework (D0007 §7.3): a confirm accepted with a publish job holds the group branch until its job pinned the
+# a confirm accepted with a publish job holds the group branch until its job pinned the
 # snapshot - an integration then waits (``pending``, retried by the release of the job's G like any busy one), so a
 # result integrated after the acceptance never enters that decision's snapshot; it is the next confirm's.
 GATE_SNAPSHOT_RESERVED = "gate_snapshot_reserved"
@@ -425,7 +425,7 @@ def _gate_snapshot_reserved(flow_id: str) -> bool:
 # of exactly that session is the attempt's, however early it comes.
 _opened: dict[str, int] = {}
 _opened_lock = threading.Lock()
-# 0156 T#2 (D2-b, S-D2-5): the session an ``integrate`` opened whose ``conflict`` it could not record (the attempt left
+# (D2-b, S-D2-5): the session an ``integrate`` opened whose ``conflict`` it could not record (the attempt left
 # ``integrating``; attempt -> (Flow, merge_id)), kept by that ``integrate`` itself before its drain lets the Flow go. A
 # close of that session, whenever it comes and whoever takes it, is the attempt's (``_settle_closed``: a person's abort
 # -> ``failed`` / ``conflict_aborted``, a commit -> (e)) - never a reason to merge it again, even when it closes while a
@@ -436,7 +436,7 @@ _left_open: dict[str, tuple[str, int]] = {}
 
 def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
     """(d) under G: ``(INTEGRATED, merge commit)``, ``(DEFERRED, files)``, ``(CONFLICT, merge_id)``, ``(PENDING,
-    reason)`` or ``(FAILED, reason)``. The lock is held for this one merge only. flowgate.v02test.0042: a conflict is
+    reason)`` or ``(FAILED, reason)``. The lock is held for this one merge only. the earlier change: a conflict is
     undone and deferred (no session, ``CONFLICT_DEFERRED``) unless ``keep_session`` (a person asked for its
     resolution, ``RESOLVE_REQUESTED``): only then is it kept as the group's session."""
     project_id, root, group_branch = _group_root(row)
@@ -462,7 +462,7 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
         if git._dirty(root, include_untracked=False):
             return FAILED, "group_worktree_dirty"
         _directory, _root, attempt_branch = workspace.location(row, project_id)
-        # 0111 T#8: the result commit is merged by its SHA in either layout; a ref-layout attempt has no branch to name.
+        # the result commit is merged by its SHA in either layout; a ref-layout attempt has no branch to name.
         attempt_ref = workspace.attempt_head(row, project_id)
         if attempt_ref:
             attempt_branch = attempt_ref
@@ -480,7 +480,7 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
                 return FAILED, "merge_verification_failed"
             return INTEGRATED, head
         if not keep_session:
-            # flowgate.v02test.0042: undone at once — the group stays free for the other cards' merges. How each file
+            # undone at once — the group stays free for the other cards' merges. How each file
             # overlaps (both changed it / one side deleted it) is read first: the card's tab says it per file.
             kinds = conflict_kinds(root)
             proc = git._abort_merge(root)
@@ -547,7 +547,7 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
         ctx = run_apply.load_context(run_store.run_by_id(current["run_id"]), workspace._project(current), None, jobs)
         node = _node(current)
         if node and node["status"] == "review" and node.get("result_doc_id") and not _completed(ctx, node):
-            # flowgate.v02.0119 T#4 rework (P1): integrated stays integrated; the node stays in review until its card is
+            # (P1): integrated stays integrated; the node stays in review until its card is
             # complete (its instruction approved again, its review ended) — the reconciliation then makes it done once
             log.warning("Graph integration found the node not complete yet attempt=%s node=%s", attempt_id,
                         current["node_key"])
@@ -567,13 +567,13 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
     outcome = with_flow_guard(row["group_id"], body)
     run_service.run_jobs(jobs)
     if outcome == INTEGRATED:
-        workspace.cleanup_ended(attempt_id)          # T#10: only once the attempt ended (the approval applied)
+        workspace.cleanup_ended(attempt_id)          # only once the attempt ended (the approval applied)
     return outcome
 
 
 def _completed(ctx, node: dict) -> bool:
-    """flowgate.v02.0119 T#2 (T-1): the held approval is applied only for the node's completion record (an existing
-    run's approved result counts, ``card_completion_ports.completion_of``). flowgate.v02.0119 T#4 rework
+    """(T-1): the held approval is applied only for the node's completion record (an existing
+    run's approved result counts, ``card_completion_ports.completion_of``). the earlier change the earlier implementation rework
     (rej_01M6DQW6YF0SCQ5D P1): and only on the one completion condition every ``review_approved`` asks
     (``result_binder.completion_ready``), judged here in the same Flow guard right before the done — the card's required
     outputs (an instruction put back in review while the merge waited or its conflict was resolved holds the node) and no
@@ -697,7 +697,7 @@ def integrate(attempt_id: str) -> str:
 
 
 def _verification_refused(row: dict) -> Optional[str]:
-    """v02gui.0015 T4 (0006-NR §6-4), after (b): the result commit's syntax check (``result_verify.check``) before any
+    """v02gui.0015 T4 (NR), after (b): the result commit's syntax check (``result_verify.check``) before any
     merge. A failure: ``failed`` / ``verification_failed`` (the failed files on the run event) and None merged — the
     outcome (``failed``, or ``skipped`` when the attempt moved meanwhile). None: the integration goes on (passed, or
     the commits unreadable or the check itself raising — never a reason to block). A requeued integration (the next
@@ -720,7 +720,7 @@ def _verification_refused(row: dict) -> Optional[str]:
     return FAILED if recorded else SKIPPED
 
 
-# flowgate.v02test.0042: how a conflicting file overlaps, as the card's tab says it. The group branch is ``ours``
+# how a conflicting file overlaps, as the card's tab says it. The group branch is ``ours``
 # (HEAD, the latest code) and the card's result ``theirs`` (MERGE_HEAD).
 KIND_BOTH, KIND_DELETED_LATEST, KIND_DELETED_CARD = "both", "deleted_latest", "deleted_card"
 _KIND_OF_XY = {"DU": KIND_DELETED_LATEST, "UD": KIND_DELETED_CARD}
@@ -744,7 +744,7 @@ def conflict_kinds(root) -> dict[str, str]:
 
 
 def deferred_conflict(attempt_id: str) -> tuple[list[str], dict[str, str]]:
-    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event) and
+    """the overlapping files of the attempt's latest deferred conflict (its run event) and
     their kinds, or ([], {})."""
     row = workspace.attempt(attempt_id) if attempt_id else None
     if not row:
@@ -764,12 +764,12 @@ def deferred_conflict(attempt_id: str) -> tuple[list[str], dict[str, str]]:
 
 
 def deferred_files(attempt_id: str) -> list[str]:
-    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event), or []."""
+    """the overlapping files of the attempt's latest deferred conflict (its run event), or."""
     return deferred_conflict(attempt_id)[0]
 
 
 def request_resolution(attempt_id: str) -> str:
-    """flowgate.v02test.0042: a person's choice on a card whose conflict waits with no session (``conflict_deferred``):
+    """a person's choice on a card whose conflict waits with no session (``conflict_deferred``):
     the attempt goes ``pending`` (``RESOLVE_REQUESTED``) and the Flow's drain merges it again, now keeping a conflict
     as the group's session (the resolution then goes as before). Returns the attempt's integration status after the
     drain: ``conflict`` (its session open), ``integrated`` (it merged cleanly meanwhile), ``pending`` (the group busy,
@@ -849,7 +849,7 @@ def retry(flow_id: str, skip=(), *, failed: bool = True) -> None:
         while True:
             with _drain_lock:
                 _again.pop(flow_id, None)
-            reclaim_integrating(flow_id, drain_owner=True)     # 0156 T#2 (D2): the integrating ones a failure left
+            reclaim_integrating(flow_id, drain_owner=True)     # (D2): the integrating ones a failure left
             aborted = _closed_conflicts(flow_id)
             with _drain_lock:
                 _skips[flow_id] |= aborted
@@ -909,7 +909,7 @@ def _end_hold(flow_id: str, *, drained: bool) -> None:
                                   settle.CAUSE_COMPLETED if reason == settle.IDLE_COMPLETED else settle.CAUSE_IDLE)
 
     try:
-        # 0113 T#3 (T §4.5): the held command's re-dispatch may replace an attempt — its fence first, as at its entry
+        # (T): the held command's re-dispatch may replace an attempt — its fence first, as at its entry
         from flowgate.graph_run import execution
         with (execution.command_fence(flow_id) if drained else contextlib.nullcontext()):
             with_flow_guard(flow_id, body)
@@ -1006,7 +1006,7 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
         sql += " AND group_id = ?"
         args.append(group_id)
     runs = run_store._all(sql, args)
-    # 0156 T#3 / Q3: a lost close notice must not require a server restart.
+    # Q3: a lost close notice must not require a server restart.
     # Keep open sessions untouched; only the existing drain settles closed conflicts.
     conflict_sql = ("SELECT r.run_id, r.group_id, r.status, a.integration_reason "
                     "FROM graph_runs r JOIN graph_node_attempts a ON a.run_id = r.run_id "
@@ -1015,7 +1015,7 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
     for run in run_store._all(conflict_sql + (" AND r.group_id = ?" if group_id else ""), args):
         if run.get("integration_reason") != CONFLICT_DEFERRED and not _session_open(_merge_id(run)):
             runs.append(run)
-    # 0156 T#2 (D3 ⓓ): a running run left holding (its hold's end and release both failed) with no pending /
+    # (D3 ⓓ): a running run left holding (its hold's end and release both failed) with no pending /
     # integrating attempt — the server start's choice (``recover``): its drain ends the hold (a command's hold asks the
     # failed ones again, as its command's drain does).
     hold_sql = "SELECT run_id, group_id, status FROM graph_runs WHERE status = 'running'"
@@ -1102,7 +1102,7 @@ def session_closed(group_id: str, merge_id: int) -> None:
             _after(attempt_id)
         elif row and row["status"] == "active" and _status(row) == INTEGRATING and opened is None and \
                 left == (group_id, int(merge_id)):
-            # 0156 T#2 (D2-b, S-D2-5): the session an integration opened and left ``integrating`` (its conflict's
+            # (D2-b, S-D2-5): the session an integration opened and left ``integrating`` (its conflict's
             # record raised, ``_left_open``) closed — a person's abort / commit. Its end, judged as the drain owner (no
             # ``integrate`` of the Flow holds the attempt). A drain owning the Flow meanwhile (the failed one not out
             # yet, another pass) leaves it: ``_left_open`` keeps the close's meaning past that drain (even a failed
@@ -1198,7 +1198,7 @@ def _recover_one(row: dict) -> None:
 
 
 def _as_drain_owner(flow_id: str, body) -> bool:
-    """0156 T#2: ``body`` run as the Flow's drain owner (``_draining``), so no ``integrate`` of the Flow starts or runs
+    """``body`` run as the Flow's drain owner (``_draining``), so no ``integrate`` of the Flow starts or runs
     meanwhile in this process; False (``body`` not run) when a drain owns the Flow already. A drain asked meanwhile
     (``retry`` found the Flow owned and left ``_again`` / ``_skips``) runs right after, as it would have. Single process
     (``FLOWGATE_WORKERS`` = 1, SSE): the ownership is this process's."""
@@ -1222,7 +1222,7 @@ def _as_drain_owner(flow_id: str, body) -> bool:
 
 
 def _closed_meanwhile(flow_id: str, attempt_id: str, merge_id: int) -> None:
-    """0156 T#2 (S-D2-5, TR0008 rev 1 review): the recovery read the attempt's own session (``_left_open``) open and
+    """(S-D2-5, the earlier implementation review): the recovery read the attempt's own session (``_left_open``) open and
     let ``_recover_one`` judge it, and that session closed in between - a person's abort / commit whose notice found
     the Flow owned and left the close to this recovery. The close stays the attempt's (``_settle_closed``, as
     ``session_closed`` would have judged it) before the pass retries anything: ``_recover_one``'s ``pending``
@@ -1245,7 +1245,7 @@ def _closed_meanwhile(flow_id: str, attempt_id: str, merge_id: int) -> None:
 
 
 def reclaim_integrating(flow_id: str, *, drain_owner: bool = False) -> None:
-    """0156 T#2 (D2): the runtime recovery of an ``integrating`` attempt no ``integrate`` holds any more (its end —
+    """(D2): the runtime recovery of an ``integrating`` attempt no ``integrate`` holds any more (its end —
     ``_finish`` / ``_set`` — raised: a Flow lock timeout, ...), by the server start's own rule (``_recover_one``: its
     open session -> ``conflict``, its result in the group branch -> (e) with no second merge, its merge left in flight
     -> undone under G, else ``pending`` again). Called at each drain pass start (``retry``, ``drain_owner``: the

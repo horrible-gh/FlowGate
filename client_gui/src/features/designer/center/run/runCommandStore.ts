@@ -1,5 +1,5 @@
 /** Flow-lifetime pending identity. Age changes the notice and retries, never identity or retention. */
-// flowgate.v02.0156 T1 R1: the default identity source works on an insecure LAN origin too (Web Crypto randomUUID is
+// R1: the default identity source works on an insecure LAN origin too (Web Crypto randomUUID is
 // secure-context only). The explicit relative `.ts` path resolves in Vite, vitest, vue-tsc and Node type stripping.
 import { randomUuid } from '../../../../shared/utils/uuid.ts'
 export const STALE_AFTER_MS = 10 * 60 * 1000

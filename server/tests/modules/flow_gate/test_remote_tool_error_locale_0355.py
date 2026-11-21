@@ -1,10 +1,10 @@
-"""remote_tool_service — error envelope follows the worker's locale (0355 T0015).
+"""remote_tool_service — error envelope follows the worker's locale.
 
-_ERROR_MESSAGES (the 7 generic P0005 §6 status strings — 401/403/404/409/413/
+_ERROR_MESSAGES (the 7 generic the plan status strings — 401/403/404/409/413/
 422/503) used to be Korean-fixed regardless of the calling worker's requested
 locale. A worker grant is lazily created from a document worker token
 (`_worker_grant_from_flowgate_token`), and that token carries
-`continuation_locale` (the unmanned chain's chosen locale, group 0099 B0001) —
+`continuation_locale` (the unmanned chain's chosen locale, the regression) —
 the same field mention_service already reads. This suite seeds a worker token
 with continuation_locale set to en/ja and asserts the generic error message
 (status 404 here) is rendered in that locale, while a legacy non-worker grant
@@ -235,7 +235,7 @@ def _assert_no_korean_syllable(payload):
 def test_all_seven_generic_statuses_have_zero_korean_via_worker_token(
     env, monkeypatch, locale
 ):
-    """Exercise the real handle pipeline and locale lookup for every P0005 status."""
+    """Exercise the real handle pipeline and locale lookup for every the plan status."""
     from modules.flow_gate.services import remote_tool_service
 
     monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "TR")
@@ -248,7 +248,7 @@ def test_all_seven_generic_statuses_have_zero_korean_via_worker_token(
     env.make_worker_token(worker_token, token_id=f"tok_all_statuses_{locale}", locale=locale)
 
     for expected_status in (401, 403, 404, 409, 413, 422, 503):
-        # flowgate.default.0482 T0011: `_execute` grew a 4th positional `grant` argument
+        # `_execute` grew a 4th positional `grant` argument
         # (resolve_base_dirty resolves project identity from the token, not request input).
         # This stub must accept it explicitly — it used to be absorbed by `status`'s default,
         # which silently made every raised status the grant dict instead of `expected_status`.

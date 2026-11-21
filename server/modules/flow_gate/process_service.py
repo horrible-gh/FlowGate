@@ -96,8 +96,8 @@ TYPE_ACTIONS: dict[str, list[str]] = {
     "TR": ["review_request", "revision_request", "approve", "reject"],
     "VR": ["approve_batch", "reject_batch"],
     "M": [],
-    "CH": [],  # L0044.0008 §3.5: conversation — no review actions (non-gate, like M)
-    # 0395 D0007 §3.6: a work plan uses the EXISTING review lifecycle — no new states and
+    "CH": [],  # : conversation — no review actions (non-gate, like M)
+    # a work plan uses the EXISTING review lifecycle — no new states and
     # no plan-only review procedure. It is reviewable and approvable like a design sheet;
     # what the reviewer reads is a table instead of prose, which changes nothing here.
     "WP": ["review_request", "approve", "reject"],
@@ -694,7 +694,7 @@ def create_workflow_root(
         # below needs an already-vetted value. An existing group's ref instead goes
         # through git_service.change_group_work_base_ref once that group is confirmed
         # in the "elif group_id:" branch -- the change path the PATCH work-base route
-        # shares (flowgate.v02.0104 D0004 §3.4): extended lock, busy provision and
+        # shares: extended lock, busy provision and
         # the conditional save under the group row lock, only the expected compare left out.
         try:
             from .services import git_service
@@ -711,7 +711,7 @@ def create_workflow_root(
         return {"status": "error", "errors": errors}
 
     if stored_work_base_ref is None and not group_id:
-        # 0665 T0004: a new Git group pins the project base AS OF NOW instead of
+        # a new Git group pins the project base AS OF NOW instead of
         # following whatever the project base becomes later.
         from .services import git_service
         stored_work_base_ref = git_service.default_work_base_ref_for_new_group(project)
@@ -867,7 +867,7 @@ def create_workflow_root(
         raise
     db.insert_event(doc_id, "created", memo_file=filename)
 
-    # flowgate.v02gui.0019: from its registration on, the bug / requirement is the Flow's start card (a real draft card
+    # from its registration on, the bug / requirement is the Flow's start card (a real draft card
     # holding this root, not a document node drawn like one). Never fails the registration.
     from modules.flow_gate.graph_workflow.services import root_start
     root_start.ensure_in_guard(final_group_id, None, locale)
@@ -1914,7 +1914,7 @@ def get_group_detail(group_id: str, locale: str = "en") -> dict | None:
         exclude_statuses=GROUP_HISTORY_EXCLUDED_STATUSES,
     )
     can_close, close_reason = _can_close_group(group_id, docs)
-    # B0001 fix: group-level events now live in the dedicated group_events table
+    # fix: group-level events now live in the dedicated group_events table
     # (FK → groups) instead of the document-scoped events table. See migration 048.
     group_events = [
         {
@@ -2062,14 +2062,14 @@ def close_group(group_id: str, reason_option: str = "", reason_detail: str = "")
     )
 
 
-# Group discard is modelled exactly like the final-approval AC document (TR0029.0008
+# Group discard is modelled exactly like the final-approval AC document (the earlier implementation.0008
 # review #3): a file-less "virtual" documents row records the action. Critically, the
 # group's status column is NOT flipped — the previous code wrote "DISCARDED", which is
 # not in the groups.status CHECK constraint (OPEN/CLOSED/CANCELLED) and raised
 # sqlite3.IntegrityError on first real use (review #1). AC works the same way: it never
 # writes a bespoke group status, it creates a file-less doc and derives state from it.
 #
-# Type code is "DC" (=Discard), per TR0029.0008 review r2 #1: the reviewer directed
+# Type code is "DC" (=Discard), per the earlier implementation.0008 review r2 #1: the reviewer directed
 # that discard use the code "DC" rather than the invented "GD". This is safe in the
 # live registry — "DC" is NOT a seeded/registered document type there (GET
 # /help/doc_type lists no DC), so the action-series Discard label below is the only DC
@@ -2129,7 +2129,7 @@ def is_group_disposed(group_id: str | None) -> bool:
     document that the dashboard exclusion (dashboard_service) and the document-detail
     ``group_disposed`` flag (documents.py) key off. Server-side action endpoints call
     this to REJECT any forward workflow action on a document whose group was discarded
-    (TR0079.0003 rework): hiding the action bar on the client is UX only and depends on
+    : hiding the action bar on the client is UX only and depends on
     SSE arriving, so a stale or un-refreshed client could still fire approve/reject/
     advance — this guard makes a disposed group's documents inert at the source.
     """
@@ -2167,7 +2167,7 @@ def dispose_group(group_id: str, reason_option: str = "", reason_detail: str = "
     _ensure_group_discard_type()
 
     # Anchor the discard to the group's workflow root (like AC's target_id), when present.
-    # 0064 T#4 (L0005 2.10 P7): the first live root (a succeeded root is history); none -> as before.
+    # the first live root (a succeeded root is history); none -> as before.
     root_doc = next((d for d in group_docs if _is_live_root(d)), None) or next(
         (d for d in group_docs if d.get("type_code") in WORKFLOW_ROOT_TYPES),
         None,
@@ -2187,7 +2187,7 @@ def dispose_group(group_id: str, reason_option: str = "", reason_detail: str = "
         warning="",
     )
 
-    # NR0003 §6 (atomicity): previously insert_document committed on its own and the
+    # (atomicity): previously insert_document committed on its own and the
     # group_disposed event was written afterward. When the event failed (the FK bug
     # below) the DC placeholder document was already committed, and the §2080 idempotency guard then
     # refused to retry — leaving a half-disposed "zombie" group. Wrap the document
@@ -2218,7 +2218,7 @@ def dispose_group(group_id: str, reason_option: str = "", reason_detail: str = "
             )
         except Exception:
             pass
-        # B0001 fix: the group-level event belongs in group_events (FK → groups), NOT the
+        # fix: the group-level event belongs in group_events (FK → groups), NOT the
         # document-scoped events table (events.doc_id FK → documents). Writing it with
         # doc_id=group_id raised FOREIGN KEY constraint failed → 500. See migration 048.
         db.insert_group_event(group_id, "group_disposed", reason=reason_value, note=note)
@@ -2227,7 +2227,7 @@ def dispose_group(group_id: str, reason_option: str = "", reason_detail: str = "
         "status": "success",
         "group_id": group_id,
         # project is returned so the dispose route can scope its SSE refresh broadcast
-        # to the disposed group's project (TR0079.0003 — SSE-driven action-bar refresh).
+        # to the disposed group's project (.0003 — SSE-driven action-bar refresh).
         "project": project,
         "doc_id": doc_id,
         "discarded_at": now,
@@ -2275,7 +2275,7 @@ def create_group(
             }
 
     if stored_work_base_ref is None:
-        # 0665 T0004: pin the creation-time project base (Git projects only).
+        # pin the creation-time project base (Git projects only).
         from .services import git_service
         stored_work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
@@ -2389,10 +2389,10 @@ def _apply_group_terminal_action(
         reason_detail=detail_text,
         warning=warning,
     )
-    # B0001 fix: group_closed is a group-level event → group_events (FK → groups). The
+    # fix: group_closed is a group-level event → group_events (FK → groups). The
     # close path has no carrier document to anchor to, which is exactly why anchoring
     # group events to documents was never viable; the dedicated channel resolves close
-    # and dispose consistently. See NR0003 / migration 048.
+    # and dispose consistently. See the review / migration 048.
     db.insert_group_event(
         group_id,
         event_type,
@@ -2467,7 +2467,7 @@ def _slugify(text: str) -> str:
 def _resolve_storage_path(file_path: str) -> str | None:
     """Resolve a stored path (relative / '/storage/...' / legacy absolute) to a real OS path.
 
-    Delegates to the unified storage.paths.resolve_storage_path() (L0054.0002 §4),
+    Delegates to the unified storage.paths.resolve_storage_path,
     which returns only existing files inside the storage jail. The sole caller
     (build_clipboard_text) re-checks existence, so a None for a missing file is
     behaviour-equivalent to the previous best-effort normpath.
@@ -2865,7 +2865,7 @@ def _build_self_contained_sections(
 
     # 2. Next-step writing guide
     #    Design types (D/P/L/DB) carry only the authenticated help pointer; the full
-    #    template body is fetched on demand (group 0372 set 2). Non-design mapped
+    #    template body is fetched on demand (set 2). Non-design mapped
     #    types (N/NR/T/TR) keep the legacy file-path pointer.
     is_design_next = bool(next_type) and template_provision.is_design_type(next_type)
     is_legacy_mapped = bool(next_type) and next_type in NEXT_TYPE_TEMPLATE_MAP
@@ -5105,7 +5105,7 @@ _FILE_TREE_NATURAL_RE = re.compile(r"(\d+)")
 
 
 def _file_tree_sort_key(name: str, is_dir: bool) -> tuple:
-    """Sort key for file-tree entries (R0003 fix).
+    """Sort key for file-tree entries (fix).
 
     Folders are grouped before files (folders-first convention), and within
     each group entries are ordered case-insensitively with numeric-aware
@@ -5141,7 +5141,7 @@ def get_file_tree(project_id: str) -> dict:
     if not project_name:
         return {"nodes": [], "complete": True, "scan_failures": []}
 
-    # 0319 B0001: a git-integrated project's base checkout lives under the git
+    # a git-integrated project's base checkout lives under the git
     # base_branch, not project_settings.branch (which stays "main"); resolve it so
     # the base file explorer shows the connected repo's source. A non-integrated or
     # disabled project keeps the settings-branch folder — behaviour unchanged.
@@ -5156,7 +5156,7 @@ def get_file_tree(project_id: str) -> dict:
     def _list_dir_with_retry(
         path: str, retries: int = 3, delay: float = 0.3, failure_paths: list[str] | None = None,
     ) -> list:
-        # 0283 T0004 (NR0003 causes 2 and 3): remote/UNC storage can raise a transient
+        # (causes 2 and 3): remote/UNC storage can raise a transient
         # OSError/PermissionError mid-walk — a network hiccup, or a worker writing the
         # same directory (Windows sharing violation). The write path already defends
         # against this (storage.filesystem.safe_rename retries on PermissionError); the
@@ -5199,7 +5199,7 @@ def get_file_tree(project_id: str) -> dict:
                 is_dir = False
             visible.append((name, entry.path, is_dir))
 
-        # Folders-first + natural, case-insensitive ordering (R0003).
+        # Folders-first + natural, case-insensitive ordering.
         visible.sort(key=lambda item: _file_tree_sort_key(item[0], item[2]))
 
         for entry, full_path, is_dir in visible:
@@ -5238,7 +5238,7 @@ def get_file_tree(project_id: str) -> dict:
                 })
 
     walk_directory(docs_root)
-    # 0525 T0004: keep 0283's HTTP-200 partial-success behaviour, but make a
+    # keep 0283's HTTP-200 partial-success behaviour, but make a
     # retry-exhausted subtree explicit so consumers never mistake this for an
     # authoritative complete snapshot.
     return {
@@ -5258,7 +5258,7 @@ def _storage_create_target(
 
     Returns ``(target_path, None)`` on success and ``(None, error_dict)`` otherwise.
 
-    0327 T0004 (B0001 / NR0003 recommendation 1): *group_id* routes the creation into that
+    *group_id* routes the creation into that
     group's live worktree instead of the base checkout, which is what makes "new folder /
     new file" work while a group branch is selected in the explorer. It is
     fail-closed on purpose — a group whose worktree is gone gets an error rather
@@ -5294,7 +5294,7 @@ def _storage_create_target(
         branch = (settings.get("branch") or "main").strip() if settings else "main"
         if not project_name:
             return None, {"status": "error", "message": "Project not found."}
-        # 0319 B0001: create inside the git base_branch checkout when integrated, so a
+        # create inside the git base_branch checkout when integrated, so a
         # new file/folder lands in the same tree the base file explorer shows.
         docs_root = git_service.base_src_root(project_id, project_name, branch).resolve()
 
@@ -5398,14 +5398,14 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
     _tree_started = time.perf_counter()
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
-    # flowgate.v02gui.0027 (0008-T): every Flow of a Group (live `groups` row), archived or discarded
+    # every Flow of a Group (live `groups` row), archived or discarded
     # alike, counted before any visibility filter. The Group menu shows it ahead of a delete, which
     # only an empty Group allows (the DELETE route makes the final call).
     flow_totals: dict[str, int] = {}
     for _row in groups:
         _label = (dict(_row).get("module") or "").strip() or "none"
         flow_totals[_label] = flow_totals.get(_label, 0) + 1
-    # flowgate.v02gui.0027 (0006-T): a v0.2 Group (module) can be display-archived through its
+    # a v0.2 Group (module) can be display-archived through its
     # project_modules row. Hidden by default together with its Flows and their documents; with
     # include_archived the module node is kept and marked `archived`. Nothing is written here.
     try:
@@ -5435,13 +5435,13 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
         perf_log.debug(f"group_tree_fast stage=groups_modules project_id={project_id} elapsed_ms={(time.perf_counter() - _tree_started) * 1000:.3f}")
     _stage_started = time.perf_counter()
 
-    # 0275 NR0003 cause 3: this tree used to issue one documents query per group
+    # this tree used to issue one documents query per group
     # plus one 'created'-event memo_file query per document (≈ 2 + G + D queries
     # per load — thousands on a real project, ruinous against a remote DB).
     # Batch all three lookups upfront so a tree load stays at a handful of
     # queries regardless of tree size.
     #
-    # 0276 NR0003 finding 1: batching alone traded query count for bind-parameter
+    # batching alone traded query count for bind-parameter
     # count — the three batched lookups passed the project's whole group list and
     # whole doc_id list as IN(...) parameters (thousands of %s per tree load, and
     # still growing linearly with the project). Every one of those lists WAS the
@@ -5549,7 +5549,7 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
         if project_name:
             project_label = project_name
 
-    # 0449 T0004 item 3 (NR0003 E2): `nodes` is a FLAT list and the single source of truth —
+    # `nodes` is a FLAT list and the single source of truth —
     # every node appears in it exactly once and names its parent through `parent_id`. Nodes
     # used to be appended here AND nested into their parent's `children`, so the same object
     # was serialized twice (measured on the live project: 4,210 unique ids serialized as
@@ -5683,14 +5683,14 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
         # A group is final-approved when the R/B document that owns its workflow has
         # reached wf_done. This reuses the docs already fetched above so no extra
         # query is issued. Reuses the single source of truth: the final-approval AC
-        # flipping the R doc to wf_done (see D0002 §2).
+        # flipping the R doc to wf_done.
         #
         # A group is discarded when it carries a file-less DC (discard) record —
-        # the AC-symmetric derivation (TR0029.0008 review r2 #5). The explorer hides
+        # the AC-symmetric derivation (.0008 review r2 #5). The explorer hides
         # discarded groups by default, mirroring the final-approved hide toggle.
         for doc_row in docs:
             doc = dict(doc_row)
-            if _is_live_root(doc) and doc.get("doc_review_status") == "wf_done":    # 0064 T#4 (L0005 2.10 P8)
+            if _is_live_root(doc) and doc.get("doc_review_status") == "wf_done":    # 
                 group_node["is_final_approved"] = True
             if doc.get("type_code") == _GROUP_DISCARD_TYPE:
                 group_node["is_discarded"] = True

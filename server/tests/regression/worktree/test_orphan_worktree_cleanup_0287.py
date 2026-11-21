@@ -1,6 +1,6 @@
-"""flowgate.default.0287 — an interrupted worktree teardown must not become permanent.
+"""an interrupted worktree teardown must not become permanent.
 
-NR0004: `git worktree remove --force` ran under the 30 s local budget against a
+`git worktree remove --force` ran under the 30 s local budget against a
 full checkout on an SMB share, got killed mid-delete, and left the directory
 standing with its `.git` link already gone. From then on every retry hit
 ``_cleanup_group_slot``'s two-state branch — "directory exists ⇒ healthy worktree"
@@ -166,7 +166,7 @@ def test_healthy_worktree_still_uses_git_remove(slot, monkeypatch):
 
 
 def test_removal_gets_its_own_timeout(slot, monkeypatch):
-    """NR0004 §3: the 30 s local budget is what killed git mid-delete."""
+    """the 30 s local budget is what killed git mid-delete."""
     from modules.flow_gate.services import git_service
 
     _db, _base_root, wt = slot
@@ -309,7 +309,7 @@ def test_on_disk_recovery_rejects_a_broken_directory(slot, monkeypatch):
     from modules.flow_gate.storage import paths as storage_paths
 
     db, _base_root, wt = slot
-    db._state["worktree_registered"] = 0        # the state 0284 T0005 recovers from
+    db._state["worktree_registered"] = 0        # the state the earlier implementation recovers from
     _mk_tree(wt, linked=False)
 
     assert storage_paths._group_worktree_on_disk(PROJECT, GROUP) is None

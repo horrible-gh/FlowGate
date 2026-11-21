@@ -32,7 +32,7 @@ export class MeRequestError extends Error {
     readonly status: number | null,
     readonly violations: string[] = [],
     /**
-     * flowgate.v02.0088 F17: the gui.settings.self.errors.* key `message` was made from, so a screen that keeps the
+     * the gui.settings.self.errors.* key `message` was made from, so a screen that keeps the
      * error on display can show it again in the current language.
      */
     readonly messageKey: string | null = null,

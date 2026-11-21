@@ -1,9 +1,9 @@
-// flowgate.v02.0049 — MiniMap geometry (pure): what the MiniMap draws and how a point on it maps
+// MiniMap geometry (pure): what the MiniMap draws and how a point on it maps
 // back to the Canvas. Everything is in Canvas World coordinates (FlowGraph x / y); the Canvas
 // Viewport (x, y = World translation in screen pixels, zoom) and the Canvas size come from the
 // Center session — the MiniMap keeps no Graph or Viewport of its own.
 //
-// flowgate.v02.0068 T#2 (0004-D §0.1, 0005-L §2.9): a line joins the same sides the Canvas joins — the Canvas's
+// a line joins the same sides the Canvas joins — the Canvas's
 // edgeAnchors over the two cards (their measured size when the Canvas reported one, else the card size) — so a
 // Flow laid out top to bottom shows its lines from bottom to top here too. Same positions and sizes: same sides.
 import type { CanvasSize, CanvasViewport } from '../center/canvasView'
@@ -44,7 +44,7 @@ export interface MiniMapFit {
   readonly offsetY: number
 }
 
-/** flowgate.v02.0068 T#2: a card's size as the Canvas measured it, by node id (absent: not measured). */
+/** a card's size as the Canvas measured it, by node id (absent: not measured). */
 export type MiniMapNodeSizes = Readonly<Record<string, { readonly width: number; readonly height: number }>>
 
 /** A Node as a World rectangle: its position and measured size, else the card size. */
@@ -66,7 +66,7 @@ export function miniMapNodes(graph: FlowGraph, sizes?: MiniMapNodeSizes | null):
 /**
  * The execution Edges the Canvas draws (the same ids its vueFlowMapping keeps), as lines between
  * the facing sides of their two Nodes. `edgeIds`: the Edge ids the Canvas draws.
- * flowgate.v02.0068 T#2: the sides and points are the Canvas's (edgeAnchors), up / down as well as left / right.
+ * the sides and points are the Canvas's (edgeAnchors), up / down as well as left / right.
  */
 export function miniMapEdges(graph: FlowGraph, edgeIds: ReadonlySet<string>, sizes?: MiniMapNodeSizes | null): MiniMapEdgeLine[] {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))

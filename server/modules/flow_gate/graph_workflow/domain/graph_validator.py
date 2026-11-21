@@ -1,7 +1,7 @@
-"""Graph structure validator (D0004 §2.2 graph validator, L0009 §2.5, P0008 S3-5 issue table).
+"""Graph structure validator (graph validator, the earlier implementation, the plan S3-5 issue table).
 
-Every problem is reported at once, ordered by L0009 §2.5.2. A structure whose execution rule is
-still undecided (D0004 §8) is neither allowed nor forbidden: it is reported as ``rule_undecided``
+Every problem is reported at once, ordered by the earlier implementation A structure whose execution rule is
+still undecided is neither allowed nor forbidden: it is reported as ``rule_undecided``
 with the question it waits on, which only blocks confirmation. Messages are added by the API
 layer (locale); issues here carry codes and keys only.
 
@@ -9,7 +9,7 @@ flowgate.v02.0053 T#8: a Custom card (``custom`` node) is a plain document card 
 structure with an undecided rule: it is checked like any document node and never reported as
 ``rule_undecided/custom_node``. A gate keeps waiting on Q-11.
 
-flowgate.v02.0061: the pre-run validation decided there (``flowgate.graph_validation``: an isolated node and a
+the pre-run validation decided there (``flowgate.graph_validation``: an isolated node and a
 path not starting from a root node are no error but left out of a run, a left-out path joining the run path and
 a cycle are refused) composes the pieces of this module — ``well_formed_issues``, ``reachable``,
 ``strongly_connected``, ``structural_issues`` with its own start nodes and without the cycle occurrence,
@@ -45,7 +45,7 @@ def _rank(item: dict) -> int:
 
 
 def order(issues: list[dict]) -> list[dict]:
-    """L0009 §2.5.2: issues naming nodes by (min node key, code rank), then edge-only issues."""
+    """issues naming nodes by (min node key, code rank), then edge-only issues."""
     with_nodes = [i for i in issues if i["node_keys"]]
     edge_only = [i for i in issues if not i["node_keys"]]
     with_nodes.sort(key=lambda i: (min(i["node_keys"]), _rank(i)))
@@ -114,7 +114,7 @@ def structural_issues(g: Graph, policies: Mapping[str, Any], starts: Optional[li
     non-Palette document types.
 
     ``starts``: the start nodes the ``multiple_start`` occurrence counts (default: every node without an incoming
-    edge, L0009 §2.0). ``cycle``: whether a cycle is an occurrence of ``rejection_path`` (Q-6); a caller that
+    edge, the earlier implementation). ``cycle``: whether a cycle is an occurrence of ``rejection_path`` (Q-6); a caller that
     refuses cycles on its own passes False.
     """
     edges = g.live_edges()
@@ -164,7 +164,7 @@ def structural_issues(g: Graph, policies: Mapping[str, Any], starts: Optional[li
 
 
 def well_formed_issues(g: Graph) -> list[dict]:
-    """L0009 §2.5.1 ``E``: an edge with an end that is no node of the graph, two edges between the same two nodes."""
+    """``E``: an edge with an end that is no node of the graph, two edges between the same two nodes."""
     issues: list[dict] = []
     keys = set(g.node_keys())
     for e in g.edges:
@@ -180,7 +180,7 @@ def well_formed_issues(g: Graph) -> list[dict]:
 
 
 def validate_graph(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
-    """L0009 §2.5.1. Root binding issues are appended by the caller after ``order``."""
+    """Root binding issues are appended by the caller after ``order``."""
     if not g.nodes:
         return [issue("empty_graph")]
     issues = well_formed_issues(g)

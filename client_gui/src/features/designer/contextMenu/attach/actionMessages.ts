@@ -1,4 +1,4 @@
-// flowgate.v02.0060 T#2 — display strings of the context menu's 2-B windows (rename, Flow Delete = dispose (DC),
+// display strings of the context menu's 2-B windows (rename, Flow Delete = dispose (DC),
 // new folder / file, upload, folder download, delete, Review changes). Owned by this folder and used through a local
 // vue-i18n scope that follows the app locale, as the menu's own strings are (contextMenu/messages.ts).
 

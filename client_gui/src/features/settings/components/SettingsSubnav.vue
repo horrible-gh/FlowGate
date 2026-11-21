@@ -36,7 +36,7 @@
 
 <script setup lang="ts">
 // The pages of one settings scope, drawn under that scope in the settings navigation
-// (SettingsNav; mockup ⑩, flowgate.v02.0077). An item with `to` is a route link, an item without
+// (SettingsNav; mockup ⑩, the earlier change). An item with `to` is a route link, an item without
 // one emits `select` (in-page tabs), a disabled item is a scope that is not part of this step
 // ("준비 중"), a `group` item is a small heading. `title` (with the `mark` slot) and `back` are only
 // used by the retired Workspace views; the `head` slot holds a picker above the items.

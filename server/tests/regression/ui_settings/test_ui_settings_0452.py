@@ -1,13 +1,13 @@
-"""Group 0452 T0005 — the per-user finished-card retention setting.
+"""Group the earlier implementation — the per-user finished-card retention setting.
 
 Three things are pinned here, in the order the work was specified:
 
-1. reading and saving the value, in both directions (L0003 §2-1/§2-8),
+1. reading and saving the value, in both directions,
 2. the endpoint that carries it, including the shape of a refusal,
 3. the table it lives in, including the constraints DB0004 deliberately did NOT put in
    the schema.
 
-The recurring theme is the asymmetry L0003 §2-8 asked for: a value *arriving* in a save
+The recurring theme is the asymmetry the earlier implementation asked for: a value *arriving* in a save
 is refused, while a value already *sitting* in storage is repaired on the way out and the
 call proceeds — a setting must never be able to stop finished cards from working.
 
@@ -110,7 +110,7 @@ class TestResolveSettings:
         assert settings["updated_at"] == "2026-08-23T18:22:41+09:00"
 
     def test_an_explicit_thirty_from_before_the_default_changed_is_not_migrated(self, memory_store):
-        # T#2 changes the fallback to -1 but must not touch rows a user already saved.
+        # changes the fallback to -1 but must not touch rows a user already saved.
         memory_store.row = {
             "user_id": "u1", FIELD: 30,
             "created_at": "x", "updated_at": "2026-08-23T18:22:41+09:00",

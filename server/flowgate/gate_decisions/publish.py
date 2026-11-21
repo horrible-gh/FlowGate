@@ -1,4 +1,4 @@
-"""The ``gate_publish`` job: a confirm's Git apply, archive and completion (flowgate.v02.0085 T#3, D0007 §3.3 / §7.3).
+"""The ``gate_publish`` job: a confirm's Git apply, archive and completion.
 
 A confirm that needs Git work is accepted with this job (``intake``); the gate stays open and held until the job is
 done. The job is a Runner executor (``job_runner``), so it uses the existing claim, lease, fenced writes, lock manager
@@ -20,7 +20,7 @@ domains and their order (G, then W or B, then R, then M), backoff and reconcile.
   waits (parked, going on by itself once the review closed). commit mode makes no commit: the frozen SHA is the result.
 * push (``push`` on): a plain push of the result to origin (merge: the work base branch, commit: the group branch). A
   failed or timed-out command is judged by reading the remote: holding our SHA (or a descendant) is pushed, unreadable
-  is unknown, a network failure retries with backoff, anything else needs recovery. Never forced. 0132 T#2 (NR §4.2 /
+  is unknown, a network failure retries with backoff, anything else needs recovery. Never forced. the earlier implementation (NR /
   §4.3): merge mode holds W(target) or B, then R, for the whole phase, checks the local target and its checkout
   against the applied SHA (pushing the local target, another owner's result on top recorded as ``foreign_included``),
   and a push refused because only the remote went ahead (``push_remote_ahead``) merges the fetched remote tip into the
@@ -42,7 +42,7 @@ Git command therefore leaves the phase's evidence as it was before the command (
 judges it from Git. Every step first reads what an earlier claim left (the phase's effect row, the refs, the merge
 attempt), so a restart, a lost lease or a reconcile never repeats a merge, a push or an archive. A failure the job
 cannot get past parks it: ``recovery_required`` with ``phase_note`` gate_failed / gate_recovery (never retried on its
-own) and the decision ``failed`` (no effect outside, D0007 §7.3.1) or ``recovery_required`` (effects present or
+own) and the decision ``failed`` (no effect outside, the design) or ``recovery_required`` (effects present or
 unknown, §7.3.2), for the person's retry / cancel / resolve (``recovery``). A Stop's cancel request is honoured at every
 phase boundary: with no effect the decision is canceled and the job cancelled (the Stop then puts the gate back to
 pending), with effects the job parks for recovery. Locks are never held across the DB phase, and no Git or network
@@ -196,7 +196,7 @@ def effects_now(decision: dict) -> str:
     """``repository.effects_state`` checked against the decision's own refs: an archive ref of this decision that
     exists while no phase says so (an archive cut off before its evidence) is an unknown effect, never none. A ref
     that cannot be read is unknown too. Read only, no lock (a local ref read). The push phase's ``remote_sync`` is one
-    of ``repository.EXTERNAL_PHASES`` (0132 T#2): a sync commit is an effect, a sync cut off is unknown."""
+    of ``repository.EXTERNAL_PHASES``: a sync commit is an effect, a sync cut off is unknown."""
     state = repo.effects_state(decision["decision_id"])
     if state != repo.EFFECTS_NONE:
         return state
@@ -281,7 +281,7 @@ def _transient(ctx, plan: Plan, code: str):
 
 
 def _self_cancel(ctx, plan: Plan) -> None:
-    """A Stop asked to cancel and nothing was done outside (D0007 §7.3): decision canceled, job cancelled."""
+    """A Stop asked to cancel and nothing was done outside: decision canceled, job cancelled."""
     store = _store()
     _get_store, now_iso = _db()
     _guarded(ctx, plan, lambda current: _move_in(current, repo.CANCELED, last_error_code=STOP_REQUESTED),
@@ -551,7 +551,7 @@ def _push(ctx, plan: Plan, applied: str) -> None:
             return
         _settle_sync(ctx, plan, slot, is_base)
         sha, extra = _target_check(plan, slot, applied, is_base)
-        # The refusals of earlier claims stay in the evidence a later push writes (0132 T#2 rework: an audit trail
+        # The refusals of earlier claims stay in the evidence a later push writes (the earlier implementation rework: an audit trail
         # across retries, like ``foreign_included``).
         carried = ((repo.effect(plan.decision_id, "push") or {}).get("evidence") or {}).get("rejections")
         if isinstance(carried, list) and carried:
@@ -631,10 +631,10 @@ def _target_check(plan: Plan, slot: git.Slot, applied: str, is_base: bool) -> tu
     (the same or a descendant: another owner's result on top, recorded as ``foreign_included``) goes on with
     ``P = L``; anything else (diverged, or ``L`` behind ``A``) parks ``target_diverged``.
 
-    ``foreign_included`` is always counted from the approved applied SHA ``A₀`` (WP0004 (1), NR §4.2), never from
+    ``foreign_included`` is always counted from the approved applied SHA ``A₀`` (the plan , NR), never from
     the last sync commit: the commits of ``A₀..L`` that came neither from the remote (the fetched tips ``h`` of the
     decision's sync rounds) nor from the decision's own sync commits. A retry after a sync round therefore still
-    records the other owners' results it sends (0132 T#2 rework)."""
+    records the other owners' results it sends."""
     synced = _last_sync_commit(plan.decision_id)
     a = synced or applied
     local = git.rev(slot.base_root, f"refs/heads/{plan.target_branch}")
@@ -692,7 +692,7 @@ def _last_sync_commit(decision_id: str) -> Optional[str]:
 
 
 def sync_commit_to_keep(decision: dict, slot: Optional[git.Slot]) -> Optional[str]:
-    """abandon's ``-sync`` recovery ref target (NR §4.3, 0132 T#2 rework): the newest sync commit of the decision that
+    """abandon's ``-sync`` recovery ref target (NR, the earlier implementation rework): the newest sync commit of the decision that
     is in Git - not only the rounds recorded done. A round whose row is still ``unknown`` / ``pending`` / ``failed``
     (its commit landed and the claim ended before writing it, or the resume could not settle it) is judged from what
     is read now, read only: the commit recorded for its own attempt (``observed_sync_commit``, the attempt's result)
@@ -834,7 +834,7 @@ def _settle_sync(ctx, plan: Plan, slot: git.Slot, is_base: bool) -> None:
     if outcome == git.CONFLICT:
         # A claim cut off between the conflict hand-off and its ``pending`` record left the row ``unknown``: the open
         # review is recorded now as the decision's active conflict (``_conflict_merge_id``) before the job parks, so
-        # retry / cancel, the Sweeper and the Stop all wait for that review (0132 T#2 rework).
+        # retry / cancel, the Sweeper and the Stop all wait for that review.
         if row["status"] != repo.PENDING or not evidence.get("conflict"):
             _sync_effect(ctx, plan, status=repo.PENDING, error_code="merge_conflict",
                          evidence={**evidence, "merge_id": state.get("merge_id", evidence.get("merge_id")),
@@ -880,7 +880,7 @@ def _archive(ctx, plan: Plan, frozen: str, applied: Optional[str]) -> None:
     with_applied = bool(applied) and applied != frozen
     _phase(ctx, "archive")
     if done is None or done["status"] != repo.UNKNOWN:
-        # The intent before any ref (D0007 §7.3): an archive cut off after its ref reads as unknown, never as none.
+        # The intent before any ref: an archive cut off after its ref reads as unknown, never as none.
         _effect(ctx, plan, "archive", status=repo.UNKNOWN, target_ref=ref, sha_after=frozen,
                 evidence={"applied_ref": extra if with_applied else None, "applied_sha": applied}, new_attempt=True)
     held: list = []
@@ -1006,7 +1006,7 @@ def after_terminal(flow_id: str, run_id: str) -> None:
 
 
 def _retry_reserved_integrations(flow_id: str) -> None:
-    """0156 T#2 (D3 ⓐ-2): a reservation that ended with no pin (canceled, resolved, abandoned) releases no G/M a
+    """(D3 ⓐ-2): a reservation that ended with no pin (canceled, resolved, abandoned) releases no G/M a
     waiting integration (``pending`` / ``gate_snapshot_reserved``) hears: the Flow's drain is asked here, after the
     decision's commit and outside every guard, when the Flow's active run has an integration waiting. Never raises."""
     try:

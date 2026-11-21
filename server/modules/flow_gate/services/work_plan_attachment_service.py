@@ -127,7 +127,7 @@ def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
 
     Raises :class:`PreInstructionAttachmentError` when an attachment reference is stored
     but does not validate (missing file, wrong document, digest mismatch, stale reference,
-    reserved-namespace violation, ...) — see T0014 §5's fail-closed list.
+    reserved-namespace violation, ...) — see the earlier implementation's fail-closed list.
     """
     if not item:
         return None
@@ -136,7 +136,7 @@ def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
     text = (item.get("pre_instruction_text") or "").strip() or None
     raw_json = item.get("pre_instruction_attachment_json")
     if db_wfseq.pre_instruction_attachment_json_malformed(raw_json):
-        # 0554 T0014 §5 (review rej_01M334Z5Y72GK6BW finding 1): a non-empty column that
+        # (review rej_01M334Z5Y72GK6BW finding 1): a non-empty column that
         # cannot decode to a reference dict is a corrupted reference, not "no attachment".
         # decode_pre_instruction_attachment alone cannot tell the two apart (both return
         # None), which used to let this fall through to the text-only/no-instruction path
@@ -159,7 +159,7 @@ def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
 
 
 def read_reference_text(reference: dict) -> str:
-    """Return the text of a validated WorkPlan pre-instruction file (0611 T0011).
+    """Return the text of a validated WorkPlan pre-instruction file.
 
     ``reference`` must already have passed :func:`validate_reference` (for example through
     :func:`resolve_pre_instruction`); the file is re-read through the same registry and

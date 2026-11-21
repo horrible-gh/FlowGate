@@ -1,6 +1,6 @@
-"""Pool sizing + per-request load reduction (flowgate.default.0288 NR0003) — unit suite.
+"""Pool sizing + per-request load reduction — unit suite.
 
-TR0005 fixed the sqloader side (recommendation 1). This covers the two flowgate-side
+fixed the sqloader side (recommendation 1). This covers the two flowgate-side
 recommendations that were left open:
 
   - recommendation 2 / finding 4: server/config.py forwarded nothing to sqloader, so the
@@ -189,7 +189,7 @@ class TestPoolSettingsDefaults:
         s = self._settings()
         # The point of the change: not sqloader's 5 / 1 / 5.
         assert s.DB_MAX_PARALLEL_QUERIES == 20
-        # flowgate.v02.0137 T0004 §4-3: pool_min follows max_parallel_queries — any
+        # pool_min follows max_parallel_queries — any
         # lower value still opened and closed a connection per query above it.
         assert s.DB_POOL_MIN == 20
         assert s.DB_SERVER_PROCESSES == 3

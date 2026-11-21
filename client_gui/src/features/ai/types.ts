@@ -1,6 +1,6 @@
 export type { AiRole, AiRoleValue, AiRoleOption, AiAccountRole, MyAiRoles, AiRoleValues, CardAiRole, CardAiRoles } from './roles/types'
 
-// AI Settings types (v0.2 flowgate.v02.0015 T0003, product semantics flowgate.v02.0017 T0002)
+// AI Settings types (v0.2 the earlier change the earlier implementation, product semantics the earlier change the earlier implementation)
 
 export type ProviderExecType = 'cli' | 'api'
 // Where the AI runs: FlowGate itself (local) or a receiving Agent on another machine (remote).
@@ -44,7 +44,7 @@ export interface VisibleSystemAi {
   execution_policy?: undefined
 }
 
-// flowgate.v02test.0025: my display order over system AI and my AI (GET/PUT /me/ai-order). For an administrator the
+// my display order over system AI and my AI (GET/PUT /me/ai-order). For an administrator the
 // system AI's relative order is the fallback order (linked): a save that changes it reports system_order_changed.
 export interface UserAiOrder {
   order: string[]

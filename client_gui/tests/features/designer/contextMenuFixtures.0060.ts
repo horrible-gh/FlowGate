@@ -48,7 +48,7 @@ export const firstConnected = [
 ] as const
 
 
-// flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 run (initial 11 + 2 alignment commands), 11 awaiting wiring (2-B), 16 unimplemented — 40.
+// 13 run (initial 11 + 2 alignment commands), 11 awaiting wiring (2-B), 16 unimplemented — 40.
 // `connectedNow` stays the 13 client paths: the part contract (and a host that lends no server path) shows the 11 2-B
 // commands as awaiting integration with it.
 export const arrangeConnected = ['canvas.arrange', 'multi.arrange'] as const
@@ -57,7 +57,7 @@ export const plannedCommands = [
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
   'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
 ] as const
-// flowgate.v02.0060 T#2 (0006-D §4.3 2-B): the Designer Shell connects the 11 through their existing server contracts —
+// the Designer Shell connects the 11 through their existing server contracts —
 // 24 run, 16 unimplemented.
 export const serverConnected = plannedCommands
 export const connectedAll = [...connectedNow, ...serverConnected] as const

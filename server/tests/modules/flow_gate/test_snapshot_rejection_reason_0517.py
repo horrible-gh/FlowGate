@@ -1,4 +1,4 @@
-"""flowgate.default.0517 T0026 §2 — a human's snapshot rejection carries a reason.
+"""a human's snapshot rejection carries a reason.
 
 Drives the real FastAPI routes over a real sqlite schema built from the migrations
 (115/116/118/120/121), so the reason is proven end to end: typed by a human on the reject
@@ -185,7 +185,7 @@ def test_repeated_reject_is_idempotent_and_keeps_the_first_reason(env):
     again = env["client"].post("/api/v1/snapshots/snap_twice/reject", json={"rejection_reason": "second"})
     assert again.status_code == 200
     assert again.json()["request"]["rejection_reason"] == "first"
-    # The pre-T0026 call shape (no reason) on an already-decided request answers as before.
+    # The pre-the earlier implementation call shape (no reason) on an already-decided request answers as before.
     legacy = env["client"].post("/api/v1/snapshots/snap_twice/reject", json={})
     assert legacy.status_code == 200
     assert legacy.json()["request"]["status"] == "rejected"

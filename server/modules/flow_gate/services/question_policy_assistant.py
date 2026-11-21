@@ -15,7 +15,7 @@ from modules.flow_gate.settings import ai_settings_service as settings
 from modules.flow_gate.services import ai_connection_test_service as connection
 from modules.flow_gate.services.ai_invoke import runtime, provider_remote, provider_cli
 
-# 0026 (0009-CH): the final turn returns the whole draft and is the slowest one. A remote Agent's queue and
+# (CH): the final turn returns the whole draft and is the slowest one. A remote Agent's queue and
 # start-up time no longer count against this: TIMEOUT starts when the Job is STARTED (see _remote).
 TIMEOUT = 240
 # Output ceiling of one API reply: a 4000-character Korean draft plus message and JSON must never be cut off.
@@ -36,8 +36,8 @@ class Reply(BaseModel):
     policy: str | None = Field(default=None, max_length=4000)
 
 
-# 0021 (0004-CH): ask the same AI again before the user sees a failure.
-# 0026 (0004-CH): up to two more times (three in all), also after a timeout or a transient run failure; a
+# (CH): ask the same AI again before the user sees a failure.
+# (CH): up to two more times (three in all), also after a timeout or a transient run failure; a
 # second timeout ends it so the user never waits more than two TIMEOUTs on one reply. An AI that is off or
 # misconfigured (provider_unavailable, remote_agent_*, provider_launch_failed) is not asked again.
 MAX_ATTEMPTS = 3
@@ -62,7 +62,7 @@ def prompt(body, messages, locale):
             "Ask ONE question at a time in at most two short sentences, with 2-4 short choices and one "
             "recommendation where helpful. The screen shows the choices as buttons: never repeat them in message. "
             "Accept free-form answers. Existing policy is provided: when editing, ask only what should change. "
-            # 0026 (0004-CH): the conversation also assesses which questions this user can answer.
+            # (CH): the conversation also assesses which questions this user can answer.
             "This conversation also assesses the user: between the policy questions, show 3-5 sample questions "
             "that an AI working on a task might really ask, one per turn and each of a different kind (an "
             "implementation detail such as an index or a library, a choice between two visible screen results, a "
@@ -91,7 +91,7 @@ def prompt(body, messages, locale):
 
 def _json_objects(text):
     """Every JSON object in the text, outermost first: a sentence or a code fence around it is ignored."""
-    # 0026 (0009-CH): strict=False reads a multi-line Markdown draft whose newlines were not escaped.
+    # (CH): strict=False reads a multi-line Markdown draft whose newlines were not escaped.
     decoder = json.JSONDecoder(strict=False)
     index = text.find("{")
     while index != -1:
@@ -148,7 +148,7 @@ def _ask(provider, text, user_id, request_id):
             return parse_reply(answer)
         except ValueError as exc:
             code = str(exc)
-            # 0026 (0009-CH): leave the cause on the server. Code, attempt and sizes only: never prompt or reply text.
+            # (CH): leave the cause on the server. Code, attempt and sizes only: never prompt or reply text.
             _log.warning("question policy assistant attempt failed: request=%s attempt=%d/%d code=%s exec=%s "
                          "kind=%s prompt_chars=%d reply_chars=%s", request_id, attempt, MAX_ATTEMPTS, code,
                          provider.get("exec_type"), provider.get("kind"), len(text + note),
@@ -182,7 +182,7 @@ def _remote(provider, text, user_id, request_id):
         cwd=provider_remote.job_workdir(template, job), timeout_seconds=TIMEOUT,
         job_id=job, attempt_id=attempt, target_agent_id=target,
         requested_by_user_id=requester, ai_run_id=request_id, retrieval_owner=owner)
-    # 0026 (0009-CH): TIMEOUT counts from STARTED. Before that the server itself ends a Job nobody claimed
+    # (CH): TIMEOUT counts from STARTED. Before that the server itself ends a Job nobody claimed
     # (AI_CLAIM_WAIT_SECONDS) or started (AI_START_WAIT_SECONDS); this cap only guards against a stuck row.
     waiting_until = time.monotonic() + agent_jobs.AI_CLAIM_WAIT_SECONDS + agent_jobs.AI_START_WAIT_SECONDS + 30
     deadline = None

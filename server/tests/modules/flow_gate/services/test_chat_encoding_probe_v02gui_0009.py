@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0009 (chat 0002-CH): language-neutral encoding guard for chat turns.
+"""(chat the discussion): language-neutral encoding guard for chat turns.
 
 The question-mark heuristic rejected ordinary punctuation ("??") while missing partial
 loss and mis-decoding in other languages. These tests pin the replacement:

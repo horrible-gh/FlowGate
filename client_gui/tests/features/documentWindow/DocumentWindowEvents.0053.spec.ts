@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#3 (rework) — an open document window follows the server through the real v0.2 path:
+ * (rework) — an open document window follows the server through the real v0.2 path:
  * DocumentWindows as the App Shell mounts it, the real project store (Pinia) and the real project event hub
  * (features/project projectEvents.ts) on the fake EventSource of the shared Inspector test support. Only
  * `@/features/document` is mocked (the stored files and records below).

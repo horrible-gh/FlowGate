@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0132 T#4 (review rework) — a confirm gate's Git work (`gate.git_active`) locks the Flow's structure on
+ * (review rework) — a confirm gate's Git work (`gate.git_active`) locks the Flow's structure on
  * screen, through the real Center session: the Canvas read and the run read both carry it, a gate moving between parked
  * and active raises no run event (only its job event), and the run stays idle all along.
  *  - the job event reads the Flow's Canvas (and run) again;

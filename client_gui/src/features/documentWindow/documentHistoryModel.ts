@@ -1,6 +1,6 @@
-// flowgate.v02.0056 F1 — what the review history window decides without a screen or a server call (0056
+// what the review history window decides without a screen or a server call (0056
 // CH §2): the one timeline of a document's AI reviews and rejections (newest first, as the v0.1
-// QaReviewHistoryDialog ordered them; flowgate.v02.0056 F2-2: whatever order the read sends), the filter and
+// QaReviewHistoryDialog ordered them; the earlier change F2-2: whatever order the read sends), the filter and
 // its counts, and the short display words. Pure.
 import type { DocumentHistory, DocumentHistoryRejection, DocumentHistoryReview } from '@/features/document'
 
@@ -26,7 +26,7 @@ export type DocumentHistoryEntry = DocumentHistoryRejectEntry | DocumentHistoryR
 
 /**
  * Rejections and AI reviews as one list, newest first; entries without a time go last.
- * flowgate.v02.0056 F2-2 — the order no longer leans on what the read happens to send: the server sends the AI
+ * the order no longer leans on what the read happens to send: the server sends the AI
  * reviews newest first and the rejections oldest first (O3 0009-TR §4-4; F1 took both as "oldest first").
  * Times are compared as instants (a `Z` and a `+09:00` time of the same moment are the same time). Entries of the
  * same moment, and entries without a time, are newest first within their kind (the reviews as sent, the

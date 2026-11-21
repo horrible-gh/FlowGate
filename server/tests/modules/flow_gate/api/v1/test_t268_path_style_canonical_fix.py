@@ -8,7 +8,7 @@ Canonical format per D013 ?3-1:
   doc_canonical = {project}-{module}-{group}-{doc}
 
 Test scenarios (NR068 ?4 regression protection):
-1. GET /document/test/__ALL__/0001/R0001 ? 200 or 404 (not 422) ? original bug scenario
+1. GET /document/test/__ALL__/0001/the requirement ? 200 or 404 (not 422) ? original bug scenario
 2. GET /document/{canonical_doc_id} ? 200 or 404 (canonical 1-segment endpoint unaffected)
 3. Invalid non-canonical segments ? 422 (validator behavior preserved)
 4. Existing tests (test_t261_id_validators.py, etc.) all pass
@@ -50,7 +50,7 @@ class TestPathStyleCanonicalReconstruction:
         self.client = TestClient(app, raise_server_exceptions=False)
 
     def test_scenario_1_path_style_segments_no_422(self):
-        """Scenario 1: GET /document/test/__ALL__/0001/R0001 ? 200 or 404 (not 422).
+        """Scenario 1: GET /document/test/__ALL__/0001/the requirement ? 200 or 404 (not 422).
         
         Original NR068 defect A: segments were passed directly to the canonical validator, causing 422.
         After the T268 fix: reconstruct segments first, then validate ? no 422.

@@ -141,7 +141,7 @@ def test_blob_has_no_working_tree_fallback_for_an_uncommitted_file(repo):
     # A local branch has no live worktree behind it (unlike a group branch), so an
     # uncommitted change made directly to the shared base checkout while HEAD points
     # at another branch must never leak through the blob reader as that branch's
-    # content — there is no untracked channel here at all (T0004 §3.2).
+    # content — there is no untracked channel here at all.
     _git(repo, "branch", "test-branch")
     (repo / "untracked.txt").write_text("not committed\n", encoding="utf-8")
 

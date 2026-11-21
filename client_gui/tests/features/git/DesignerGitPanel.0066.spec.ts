@@ -10,12 +10,12 @@ import type { WorktreeCounts, WorktreeFile, WorktreeStatus } from '@/features/gi
 import { G, P, createFakeGitSource, gitError, row, status } from './fakeGitSource'
 import { createFakeWorktreeSource, worktreeFile, worktreeStatus } from './fakeWorktreeSource'
 
-// flowgate.v02.0066 T#6 — the worktree area of the Git tab mounted with in-memory sources:
+// the worktree area of the Git tab mounted with in-memory sources:
 // gate, changed-files accordion, selection, full Stage / unstage with hidden entries, commit, AI
 // draft, revert / remove, badge, read-only / 403 and the worktree `open-diff` intent
 // (0066 D#2 §3-1, §3-3, §3-5, §3-6, §3-8, §6-1–§6-3; C5–C13, C24, C25), and confirm dialogs /
 // late answers bound to the Flow they were made in (§3-2-2 ①, C23).
-// flowgate.v02.0067 T#4 — a row name opens its diff in the Git modeless `Diff` tab (no `open-diff`,
+// a row name opens its diff in the Git modeless `Diff` tab (no `open-diff`,
 // no `git-center-diff-refresh` any more); DesignerGitPanelDiff.0067 has the tab itself.
 registerAppMessages(i18n)
 
@@ -61,9 +61,9 @@ function setup(wtStatus?: WorktreeStatus, gitStatus?: ProjectGitStatus | null) {
   return { wt, fake }
 }
 
-// flowgate.v02.0067 T#1 — the changed files and the commit line live in the Git modeless the
+// the changed files and the commit line live in the Git modeless the
 // `파일 관리` entry opens; the panel is mounted with it open there unless `window: false`.
-// flowgate.v02.0067 T#2 — that tab has no fold of its own: the list, search / filter and the
+// that tab has no fold of its own: the list, search / filter and the
 // selection bar are there as soon as it opens.
 const entry = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-worktree-entry"][data-tab="${tab}"]`)
 
@@ -146,7 +146,7 @@ describe('worktree area — gate and first look (C5)', () => {
     expect(q('git-changes-viewport')).not.toBeNull()
     expect(rowEl('src/a.ts')).not.toBeNull()
     expect(q('git-commit-bar')).not.toBeNull()
-    // flowgate.v02.0067 T#1: opening the Git modeless reads the worktree once more.
+    // opening the Git modeless reads the worktree once more.
     expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadManualMerge).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadMergeResults).toHaveBeenCalledTimes(2)
@@ -292,7 +292,7 @@ describe('full Stage and selection (C7, C8)', () => {
     expect((inRow('lock.ts', 'git-row-select') as HTMLInputElement).disabled).toBe(true)
     expect(inRow('lock.ts', 'git-row-stage')).toBeNull()
     expect(text('git-row-tag')).toBe('🔒')
-    // flowgate.v02.0067 T#2 (0067-R §4-3): a managed row is never checked, even for its Stage
+    // a managed row is never checked, even for its Stage
     // release; its own − (the server's can_unstage) is still there.
     expect((inRow('mg.ts', 'git-row-select', 'staged') as HTMLInputElement).disabled).toBe(true)
     expect(inRow('mg.ts', 'git-row-unstage', 'staged')).not.toBeNull()
@@ -366,7 +366,7 @@ describe('hidden entries and the full unstage (C9)', () => {
   it('(d) a hidden Stage disables commit and AI with staged_protected; a server refusal offers the full unstage', async () => {
     const t = setup(worktreeStatus({ files: [staged('a.ts')], counts: counts({ changed: 1, staged: 2, hidden: 1 }) }))
     await mountPanel(t)
-    // flowgate.v02.0067 T#2: the commit cannot run, so the message is closed as well.
+    // the commit cannot run, so the message is closed as well.
     expect((q('git-commit-message') as HTMLInputElement).disabled).toBe(true)
     expect((q('git-commit') as HTMLButtonElement).disabled).toBe(true)
     expect((q('git-commit-ai') as HTMLButtonElement).disabled).toBe(true)

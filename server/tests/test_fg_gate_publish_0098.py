@@ -1,10 +1,10 @@
-"""flowgate.v02.0098 T#2 (D0004 §3.4, §3.6 to §3.6.3; T0008): the recorded merge target of a gate decision,
+"""(to; the earlier implementation): the recorded merge target of a gate decision,
 its execution, push and unmerge limits on real local targets and a temporary bare origin.
 
 Uses the harness of ``test_fg_gate_publish_0085``. It is its own file so that ``--dist loadfile`` can run it
-beside that file; one file is one worker, and together they exceeded the 1800 s Self-check limit (TR0009).
+beside that file; one file is one worker, and together they exceeded the 1800 s Self-check limit.
 The resume, unmerge, lock slot and ref-movement cases are in ``test_fg_gate_publish_0098_resume``: this
-file's 20 cases on one worker took about as long as that limit on a loaded host (TR0009).
+file's 20 cases on one worker took about as long as that limit on a loaded host.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from test_fg_gate_publish_0085 import (  # noqa: E402,F401
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary required")
 
 
-# flowgate.v02.0098 T#2 -- real local targets and a temporary bare origin.
+# real local targets and a temporary bare origin.
 def _0098_target(r, name="review/selected"):
     from modules.flow_gate.services.git import merge_target as mt
     _git(["branch", name, "main"], cwd=r["base"])
@@ -150,7 +150,7 @@ def test_0098_execution_uses_common_judgement_and_parks_specific_safety_errors(g
 
 
 def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_sha(git_env):
-    """0132 T#2 (NR §5.3-11): a non-fast-forward because only the remote went ahead is no longer parked. The push
+    """(NR): a non-fast-forward because only the remote went ahead is no longer parked. The push
     phase merges the fetched remote tip into the local target once (``remote_sync``) and pushes that; the approved
     merge is kept as it was (one attempt, the applied SHA unchanged)."""
     r = git_env

@@ -48,10 +48,10 @@ def insert(
     """question_items INSERT (DB0006 §3.3 — title + asker_kind; DB0007 §4 — options).
 
     ``options`` is the serialized [{"id", "label"}] JSON array (DB0007 §2); the caller
-    validates and serializes it (L0008 §2.2/§2.3).
+    validates and serializes it.
 
     The three ``asker_*`` columns are the AI run/provider snapshot for an AI-registered
-    question (0582 T0005 §4/§D) — always None for a human [+query], and None for an AI
+    question — always None for a human [+query], and None for an AI
     question whose token carried no bound run (legacy/external — the caller could not
     resolve one, not that one was silently dropped here).
     """
@@ -70,7 +70,7 @@ def increment_answer_count(pk: int) -> bool:
 
     An item the automatic responder has touched (responder_state set) takes ONE answer:
     the write is a CAS on answer_count = 0 there, so a person's answer that arrives just
-    after the responder's committed one changes nothing (review of 0661 TR0005 rev1).
+    after the responder's committed one changes nothing (review of the earlier implementation).
     An item no responder ever touched keeps the old multi-answer behaviour. Returns
     whether the row changed.
     """
@@ -82,7 +82,7 @@ def increment_answer_count(pk: int) -> bool:
 
 
 def increment_answer_count_for_responder(pk: int, run_id: str) -> bool:
-    """answer_count += 1 as a CAS for the item's own responder run (0661 T0004).
+    """answer_count += 1 as a CAS for the item's own responder run.
 
     Changes the row only while the item is still unanswered, still owned by ``run_id`` and
     not handed to a user ('user_decision'). Returns whether the row changed — False means
@@ -95,10 +95,10 @@ def increment_answer_count_for_responder(pk: int, run_id: str) -> bool:
     return affected > 0
 
 
-# ── Automatic responder state (flowgate.default.0661 T0004, migration 142) ───────────
+# ── Automatic responder state (migration 142) ───────────
 #
 # One durable state machine per item, so "who is answering this, and if nobody, why not"
-# survives the process and can be read by the Q&A panel (0003-NR F3/F5):
+# survives the process and can be read by the Q&A panel (NR F3/F5):
 #   NULL -> 'dispatched' -> 'answered' | 'failed' | 'user_decision'
 # The transitions are compare-and-swap writes keyed on the responder run that owns the
 # item, so a late finalization of a superseded run cannot overwrite a newer run's state.
@@ -162,7 +162,7 @@ def fail_responder(
     observed_state: Optional[str] = None,
     observed_run_id: Optional[str] = None,
 ) -> bool:
-    """Move the item to 'failed' as one CAS (0661 TR0005 rev1/rev2 review).
+    """Move the item to 'failed' as one CAS (review).
 
     Both forms refuse an item that already carries an answer (answer_count = 0 is in the
     WHERE, not a prior read), so a person's answer that commits between the caller's
@@ -214,7 +214,7 @@ def list_by_responder_run(run_id: str) -> list[dict]:
 def list_by_answer_run(run_id: str) -> list[dict]:
     """Items that have an answer row written by the AI run ``run_id`` (``answers.author_ai_run_id``), oldest first.
 
-    flowgate.v02gui.0010: a chat AI that answered a card's question is followed at its run's end like a responder
+    a chat AI that answered a card's question is followed at its run's end like a responder
     (``question_wait.follow``) — the chat run is never the item's ``responder_run_id``."""
     store = get_store()
     return store._fetch_all(store._sql("question_items.list_by_answer_run"), [run_id])
@@ -233,7 +233,7 @@ def list_by_doc(doc_id: str) -> list[dict]:
 
 
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:
-    """Flattened question + answer rows for a document (the mention-assembly data provider, L0007 §6).
+    """Flattened question + answer rows for a document (the mention-assembly data provider, the earlier implementation).
 
     Each row: {seq, title, body, asker_kind, options, author_kind, answer_body,
     answer_selected_options}. A question with no answer yields one row with

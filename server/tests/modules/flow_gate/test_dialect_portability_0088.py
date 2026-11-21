@@ -115,7 +115,7 @@ def test_conditional_where_dropped_for_mysql():
 
 
 # ── system_settings upsert: table-qualified existing-row reference (0148) ────────
-# Regression for B0001/NR0003: the ON CONFLICT DO UPDATE set clause reads the
+# Regression for the regression/the review: the ON CONFLICT DO UPDATE set clause reads the
 # existing row's `description` inside COALESCE(excluded.description, <existing>).
 # PostgreSQL rejects an *unqualified* `description` there as AmbiguousColumn
 # (target table vs. the `excluded` pseudo-table) → 500 on PATCH /system/settings.
@@ -193,9 +193,9 @@ def test_insert_or_ignore_mysql_and_pg():
     assert pg.rstrip().endswith("ON CONFLICT DO NOTHING")
 
 
-# ── Line comments (T0004 / NR0003): `--` comment apostrophes must not eat the ──
+# ── Line comments: `--` comment apostrophes must not eat the ──
 # ── next line's execution placeholders ──────────────────────────────────────────
-# Regression for B0001/NR0003: dashboard_service._active_workflow_rows() has a
+# Regression for the regression/the review: dashboard_service._active_workflow_rows has a
 # `-- ... dashboard's workflow-status list ...` comment. The old single-quote-toggle
 # scanner treated that apostrophe as the start of a string literal, so the next
 # line's `dc.type_code = ?` was left unconverted on PostgreSQL/MySQL, causing
@@ -242,7 +242,7 @@ def test_string_literal_qmark_escape_and_dashdash_preserved_before_line_comment(
         assert out.count("%s") == 1
 
 
-# ── Real dashboard_service._active_workflow_rows() query (NR0003 §6.4) ─────────
+# ── Real dashboard_service._active_workflow_rows query ─────────
 # Capture the actual production SQL/params via a stub store instead of copying the
 # query text, so this test tracks the real query if it ever changes.
 

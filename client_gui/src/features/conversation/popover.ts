@@ -1,4 +1,4 @@
-// flowgate.v02.0047 — open state of one composer popover (model picker, settings, ⋯ menu).
+// open state of one composer popover (model picker, settings, ⋯ menu).
 // A press outside `root` or Esc closes it, so opening one popover closes the others.
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 

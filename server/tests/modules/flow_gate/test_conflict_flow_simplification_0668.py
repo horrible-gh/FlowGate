@@ -1,6 +1,6 @@
-"""Simplified Git conflict handling: server contracts (flowgate.default.0668 T0004).
+"""Simplified Git conflict handling: server contracts.
 
-0668 NR0003 defines approval → conflict → AI/manual resolution → review/approval → completion.
+defines approval → conflict → AI/manual resolution → review/approval → completion.
 Client simplification relies on three server contracts:
 
 * TR conflicts use the same review screen. Resolution freezes review_fingerprint;
@@ -89,7 +89,7 @@ class _SqliteStore:
     ``resolve_conflicts`` → ``_write_resolved_file``) requires a real transaction frame:
     ``connection._tx_local.txn`` set for the outermost frame, nested frames joining it,
     ``after_commit`` / ``after_rollback`` queues drained after commit / rollback, and the
-    statements of the frame committed together (0153 T#4 fixture, review
+    statements of the frame committed together (the earlier implementation fixture, review
     rej_01M6ZWFPF1E6JE2M). A no-op ``transaction()`` made every TR conflict test stop at
     "path namespace requires a transaction" before reaching the code under test."""
 
@@ -210,7 +210,7 @@ def git_active(monkeypatch, repo):
 
 
 def _parked_cancel(repo):
-    """0009-TR wrote A to f.txt, then a person changed it to C; cancellation conflicts."""
+    """wrote A to f.txt, then a person changed it to C; cancellation conflicts."""
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     row = db_ledger.record_commit(
@@ -384,7 +384,7 @@ def _session(created_h: float, touched_h: float) -> dict:
 
 
 def test_a_review_wait_that_holds_no_base_never_expires(monkeypatch):
-    """0683 T0004 §5: not because it "blocks nobody" — a non-base review wait DOES own its
+    """not because it "blocks nobody" — a non-base review wait DOES own its
     target's workspace and blocks every same-target finalize/branch merge. It is still never
     deleted for being old; the refusal names it instead (see the next test)."""
     monkeypatch.setattr(cleanup.merge_target, "holds_base_checkout", lambda s: False)
@@ -393,7 +393,7 @@ def test_a_review_wait_that_holds_no_base_never_expires(monkeypatch):
 
 
 def test_the_non_base_review_wait_premise_is_no_longer_blocks_nobody():
-    """0683 T0004 §5: the code no longer carries the wrong "blocks nobody" premise."""
+    """the code no longer carries the wrong "blocks nobody" premise."""
     import inspect
 
     doc = inspect.getsource(cleanup._review_pending_ttl_expired)
@@ -442,7 +442,7 @@ def test_the_sweep_keeps_a_resolved_tr_conflict_under_the_review_ttl(
 
 @needs_git
 def test_opening_the_tr_review_is_not_activity(real_store, git_active, repo):
-    """flowgate.v02test.0052 T0003 task 4(c) supersedes 0668 T0004 here: opening (reading)
+    """task 4(c) supersedes the earlier implementation here: opening (reading)
     the TR review is not activity — only real operations move ``touched_at``."""
     _row, parked, _out = _resolved_cancel(repo)
     merge_id = parked["merge_id"]

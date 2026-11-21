@@ -1,21 +1,21 @@
-"""Flow-level serialization (L0009 §2.1): in-process Flow lock + durable guard row.
+"""Flow-level serialization: in-process Flow lock + durable guard row.
 
 Everything written inside ``with_flow_guard`` is one transaction; the guard bump is its first
 SQL statement (GUARD_FIRST_STATEMENT). SSE publication is queued with ``after_commit`` by the
 body, so it runs after the commit and before the in-process lock is released.
 
-0064 L0005 2.6 / 2.7.1: ``run_in_document_guard`` is the one boundary an R↔B conversion and the
+2.6 / 2.7.1: ``run_in_document_guard`` is the one boundary an R↔B conversion and the
 attachment writes (upload registration, delete, legacy registration) share. A document in a Flow is
 serialized by that Flow's guard; a document without one by its own row lock
 (``with_document_lock``). A caller already inside a transaction joins only when that transaction is
 the very guard the document needs; any other open transaction is refused before ``body`` runs.
 
-0064 T#3: the in-process lock outlives the transaction, the durable lock does not — it ends with the commit or
+the in-process lock outlives the transaction, the durable lock does not — it ends with the commit or
 the rollback, before the queued callbacks run. A file cleanup a guarded write queues therefore runs through
 ``run_cleanup``: a fresh short transaction whose first statement takes the durable lock again (no guard bump),
 so a writer of another process staging files at the same paths is never interleaved with it.
 
-0064 T-B4b (DB0007 Q1, L0006 2.8): ``with_read_snapshot`` is the read unit of a Canvas / Graph / revision response — the
+T-B4b: ``with_read_snapshot`` is the read unit of a Canvas / Graph / revision response — the
 definition and the card title states it carries are read in one transaction that is one snapshot of the database.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ _timeout_log: Optional[logging.Logger] = None
 
 
 def _timeout_logger() -> logging.Logger:
-    """This module's logger, its WARNING lines handed to ``logs/default.log`` (flowgate.v02test.0040 T0005).
+    """This module's logger, its WARNING lines handed to ``logs/default.log``.
 
     A plain ``getLogger(__name__)`` propagates to a handler-less root (route_logging.get_logger), so the
     FlowLockTimeout of 11/17 15:15 left no line in default.log. Looked up lazily: route_logging lives in the
@@ -115,7 +115,7 @@ def _holding(key: GuardKey) -> Iterator[None]:
 
 
 def with_flow_guard(flow_id: str, body: Callable[[], T]) -> T:
-    # L0009 E-01: entering from inside another transaction would make the bump not the
+    # E-01: entering from inside another transaction would make the bump not the
     # first statement and could nest two Flow guards.
     assert not in_transaction(), "with_flow_guard must not run inside an open transaction"
     lock = _flow_lock(flow_id)
@@ -150,7 +150,7 @@ READ_SNAPSHOT_STATEMENTS = {
 
 
 def with_read_snapshot(body: Callable[[], T]) -> T:
-    """One transaction, one snapshot, for the reads of a response (0064 T-B4b, DB0007 Q1 / L0006 2.8).
+    """One transaction, one snapshot, for the reads of a response.
 
     The Graph definition (draft, revisions, ownership) and the card title states ``body`` reads come from one moment:
     a write committed meanwhile is either wholly seen or not at all. Inside an open transaction (a Flow guard) ``body``
@@ -181,7 +181,7 @@ def lock_document_row(doc_id: str) -> None:
 
 
 def with_document_lock(doc_id: str, body: Callable[[], T]) -> T:
-    """The guard of a document without a Flow: in-process lock + the document row lock (L0005 2.7.1)."""
+    """The guard of a document without a Flow: in-process lock + the document row lock."""
     assert not in_transaction(), "with_document_lock must not run inside an open transaction"
     lock = _named_lock(_doc_locks, doc_id)
     if not lock.acquire(timeout=FLOW_LOCK_WAIT_SEC):
@@ -218,7 +218,7 @@ def lock_durably(key: GuardKey) -> None:
 
 
 def run_cleanup(key: GuardKey, body: Callable[[], T], what: str = "cleanup") -> T:
-    """Run a file cleanup queued by a guarded write, after that write's commit / rollback (0064 T#3).
+    """Run a file cleanup queued by a guarded write, after that write's commit / rollback.
 
     The cleanup's own transaction takes the durable lock of ``key`` as its first statement and holds it while
     ``body`` checks and removes, so it waits for a writer of another process that is staging under that guard
@@ -241,7 +241,7 @@ def document_guard_key(doc: Optional[dict], doc_id: str) -> GuardKey:
 
 
 def run_in_document_guard(doc_id: str, body: Callable[[], T]) -> T:
-    """One guarded transaction for a write to ``doc_id`` (0064 L0005 2.6 / 2.7.1).
+    """One guarded transaction for a write to ``doc_id``.
 
     Inside an open transaction ``body`` joins only when that transaction is the guard this document
     needs (re-entry runs the guard once; the commit / rollback callbacks stay with the outermost frame).

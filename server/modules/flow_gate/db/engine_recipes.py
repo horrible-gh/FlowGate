@@ -1,4 +1,4 @@
-"""engine_recipes CRUD — sqloader.load pattern (flowgate.default.0157 DB0005).
+"""engine_recipes CRUD — sqloader.load pattern.
 
 Inline SQL is prohibited; only use SQL registered in queries.json (`engine_recipes` namespace).
 Mirrors project_test_commands.py (0152) but at GLOBAL scope — there is no project column; identity is

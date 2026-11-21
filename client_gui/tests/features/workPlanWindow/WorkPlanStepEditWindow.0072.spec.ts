@@ -1,9 +1,9 @@
-// 0072 T#2: real parent/child ModelessShells, mocked HTTP at the transport boundary.
+// real parent/child ModelessShells, mocked HTTP at the transport boundary.
 // Reserved-file state models the existing successful-PUT cleanup contract; no server writes.
-// 0073 T#2: the Step window has no review controls and never names the Step key; a review set in the parent's review
+// the Step window has no review controls and never names the Step key; a review set in the parent's review
 // popover is kept through the Step window's save and cancel (its draft carries no review); an Esc in the Step window
 // is the Step window's, never the popover's.
-// 0073 T#3: a file dropped on the attachment area takes the picker's checks and upload (result step, new card, size,
+// a file dropped on the attachment area takes the picker's checks and upload (result step, new card, size,
 // lock, failure classification); the area is icon / name / choose-replace-remove, and the long notes are tooltips
 // (native titles) or error lines while the checks they describe still hold.
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -340,7 +340,7 @@ describe('identity and external state', () => {
     await confirm()
     expect(workPlanStepWindowList()).toHaveLength(0)
     expect(session.target()).toBeNull()
-    // flowgate.v02.0074 T#1 (R §2.2): no r{n} shown; the read revision 7 is the next parent save's base.
+    // (R): no r{n} shown; the read revision 7 is the next parent save's base.
     expect(document.querySelector('[data-test="wp-edit-revision"]')).toBeNull()
     expect(api.putRequest).not.toHaveBeenCalled()
     await type(q('wp-edit-step-note', row('c_d1|main')), 'after reload')

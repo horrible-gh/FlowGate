@@ -1,4 +1,4 @@
-"""Display messages of validation issues (P0008 S3-5 / S4-4 / S4-5) in ko / en / ja.
+"""Display messages of validation issues in ko / en / ja.
 
 Clients branch on ``code`` / ``structure`` only; ``message`` is for display and may change.
 Keys the domain attaches for wording (``_`` prefix) are used here and never sent.
@@ -26,7 +26,7 @@ SOURCE_MESSAGES = {
         "en": "This source operation does not support Graph attempts.",
         "ja": "このソース操作は Graph attempt に対応していません。",
     },
-    # flowgate.v02.0061 T#7: a late write / result of a stopping run or an attempt / execution that no longer owns it
+    # a late write / result of a stopping run or an attempt / execution that no longer owns it
     "graph_attempt_inactive": {
         "ko": "이 Graph attempt는 더 이상 쓰기·결과 반영을 받을 수 없습니다(실행 정지 중이거나 attempt가 무효화됨).",
         "en": "This Graph attempt no longer accepts writes or results (the run is stopping or the attempt was invalidated).",
@@ -40,7 +40,7 @@ RUN_EDIT_MESSAGES = {
         "en": "Graph Time Machine cannot run safely. Check the blocking reasons.",
         "ja": "Graph Time Machine を安全に実行できません。ブロック理由を確認してください。",
     },
-    # 0061 T#13: an unfinished Graph Time Machine operation refuses commands / edits; a partial failure
+    # an unfinished Graph Time Machine operation refuses commands / edits; a partial failure
     "graph_time_machine_in_progress": {
         "ko": "Graph Time Machine 작업이 끝나지 않았습니다. 완료 또는 복구 뒤에 다시 시도하세요.",
         "en": "A Graph Time Machine operation is unfinished. Try again once it is finished or recovered.",
@@ -72,7 +72,7 @@ RUN_EDIT_MESSAGES = {
         "en": "A deleted node key cannot be reused.",
         "ja": "削除したノードのキーは再利用できません。",
     },
-    # flowgate.v02.0085 T#2: also refused while a confirm card is unresolved (``reason`` gate_rejected /
+    # also refused while a confirm card is unresolved (``reason`` gate_rejected /
     # gate_recovery_reset_required in the params)
     "graph_revision_migration_blocked": {
         "ko": "진행 중 attempt나 해결되지 않은 확인 카드(반려·회차 분리 대기)가 있어 최신 개정으로 이관할 수 없습니다. "
@@ -85,20 +85,20 @@ RUN_EDIT_MESSAGES = {
               "表示されたカードより前にある完了済みカードで Time Machine により、そのカードから表示されたカードまで"
               "巻き戻してから（却下された確認カードはそのカードで）再度お試しください。",
     },
-    # flowgate.v02.0085 T#1: a confirm gate's settings are locked outside the pending / open gate of a running or idle
+    # a confirm gate's settings are locked outside the pending / open gate of a running or idle
     # run (a reserved decision, a finished gate, a pause, a Time Machine, a conflict, a pending round split)
     "gate_settings_locked": {
         "ko": "지금은 이 확인 카드의 설정을 바꿀 수 없습니다.",
         "en": "The settings of this confirm card cannot be changed now.",
         "ja": "現在、この確認カードの設定は変更できません。",
     },
-    # flowgate.v02.0085 T#1: the screen the request was made from is out of date (settings version / attempt / decision)
+    # the screen the request was made from is out of date (settings version / attempt / decision)
     "gate_context_changed": {
         "ko": "화면의 내용이 최신이 아닙니다. 다시 불러온 뒤 시도하세요.",
         "en": "The screen is out of date. Reload and try again.",
         "ja": "画面の内容が最新ではありません。再読み込みしてからやり直してください。",
     },
-    # flowgate.v02.0085 T#2 (D0007 §7.2): the gate decision intake
+    # the gate decision intake
     "gate_request_conflict": {
         "ko": "같은 요청 ID로 다른 내용의 결정이 이미 접수되었습니다.",
         "en": "A decision with different content was already received under the same request ID.",
@@ -109,7 +109,7 @@ RUN_EDIT_MESSAGES = {
         "en": "An earlier decision on this confirm card is still being processed.",
         "ja": "この確認カードの以前の決定がまだ処理中です。",
     },
-    # flowgate.v02.0119 T#4 (T-3): a confirm card has no rejection any more (the Time Machine and a memo stand in for it)
+    # (T-3): a confirm card has no rejection any more (the Time Machine and a memo stand in for it)
     "gate_reject_removed": {
         "ko": "확인 카드는 반려할 수 없습니다. 확인(✓)만 할 수 있습니다.",
         "en": "A confirm card cannot be rejected any more. It can only be confirmed (✓).",
@@ -136,7 +136,7 @@ RUN_EDIT_MESSAGES = {
         "en": "The run has no such confirm card.",
         "ja": "この実行に該当する確認カードがありません。",
     },
-    # flowgate.v02.0085 T#3 (D0007 §7.2 retry / cancel / resolve of an accepted decision)
+    # (retry / cancel / resolve of an accepted decision)
     "gate_decision_not_found": {
         "ko": "이 확인 카드에 해당 결정이 없습니다.",
         "en": "The confirm card has no such decision.",
@@ -178,7 +178,7 @@ RUN_EDIT_MESSAGES = {
         "en": "The required Git effects cannot be verified, so it cannot be closed as effects confirmed.",
         "ja": "必要な Git の効果の成功を確認できないため、効果確定で終結できません。",
     },
-    # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
+    # Hold cannot be set on a node done in the Flow's run
     "graph_hold_done_node": {
         "ko": "완료된 노드에는 Hold를 설정할 수 없습니다.",
         "en": "Hold cannot be set on a done node.",
@@ -186,15 +186,15 @@ RUN_EDIT_MESSAGES = {
     },
 }
 
-# flowgate.v02.0061 T#14 (WP answer 2): a chat's edit / edit-once source access while the Flow's Graph run is running,
-# paused or stopping — refused with the T#3 lock code ``graph_run_locked`` and this wording.
+# (WP answer 2): a chat's edit / edit-once source access while the Flow's Graph run is running,
+# paused or stopping — refused with the the earlier implementation lock code ``graph_run_locked`` and this wording.
 CHAT_SOURCE_LOCKED = {
     "ko": "이 Flow의 Graph 실행이 진행 중(실행·일시정지·정지 중)이라 채팅으로 소스를 수정할 수 없습니다. 읽기 모드로 사용하세요.",
     "en": "This flow's Graph run is running, paused or stopping, so a chat cannot change the source. Use the read mode.",
     "ja": "このフローの Graph 実行が進行中（実行中・一時停止中・停止中）のため、チャットでソースを変更できません。読み取りモードを使用してください。",
 }
 
-# 0061 T#12: stable reason codes; message text is display-only.
+# stable reason codes; message text is display-only.
 TIME_MACHINE_REASONS = {
     "run_missing": (
         "되돌릴 Graph 실행이 없습니다.", "There is no Graph run to rewind.", "巻き戻す Graph 実行がありません。"),
@@ -230,7 +230,7 @@ TIME_MACHINE_REASONS = {
     "execution_history_incomplete": (
         "실행 개정 또는 입력 의존 기록이 불완전합니다.", "Execution revision or input dependency history is incomplete.",
         "実行リビジョンまたは入力依存の記録が不完全です。"),
-    # 0061 T#13: judged by the operation itself (its plan, its Git step)
+    # judged by the operation itself (its plan, its Git step)
     "integration_commit_shared": (
         "대상의 병합 커밋을 대상 밖 attempt도 가리킵니다.", "A target's merge commit is shared with an attempt outside the targets.",
         "対象のマージコミットを対象外の attempt も指しています。"),
@@ -272,7 +272,7 @@ _FIXED = {
                        "同じ二つのノードを結ぶエッジが複数あります。"),
     "unreachable_node": ("시작 노드에서 도달할 수 없는 노드입니다.", "The node cannot be reached from a start node.",
                          "開始ノードから到達できないノードです。"),
-    # flowgate.v02.0061 pre-run validation (``flowgate.graph_validation``, 0002-CH turn 13 rules 3 / 4)
+    # pre-run validation (``flowgate.graph_validation``, the discussion rules 3 / 4)
     "excluded_path_join": (
         "실행 대상이 아닌 경로가 실행 경로에 합류합니다. 요구사항·버그 노드에서 시작하지 않는 경로는 실행 경로에 연결할 수 없습니다.",
         "A path that is not run (it does not start from a requirement / bug node) joins the run path.",

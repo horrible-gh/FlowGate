@@ -1,4 +1,4 @@
-// D0004 §6: server-owned local merge targets and immediate, versioned settings.
+// server-owned local merge targets and immediate, versioned settings.
 import type { SettingsMergeTargetState } from '../../inspectorTarget'
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
@@ -8,7 +8,7 @@ export type CheckScope = 'merge' | 'commit' | 'hold'
 export type CheckLookupStatus = 'ok' | 'empty' | 'timeout' | 'failed' | 'git_unavailable'
 /**
  * Where the shown candidates come from: this answer, the kept confirmed list (0006-T §2), the stored / inherited names
- * alone while no confirmed list exists after a timeout / failure (`unverified`, flowgate.v02test.0020), or nowhere.
+ * alone while no confirmed list exists after a timeout / failure (`unverified`, the earlier change), or nowhere.
  */
 export type CheckOptionsSource = 'live' | 'cache' | 'unverified' | 'none'
 export const CHECK_LOOKUP_STATUSES: readonly CheckLookupStatus[] = ['ok', 'empty', 'timeout', 'failed', 'git_unavailable']
@@ -43,7 +43,7 @@ export interface CheckSettingsView {
   readonly reason?: string | null
   /** Field -> message key of why its last change was refused. */
   readonly failures?: Readonly<Record<string, string>>
-  /** Field -> its own save state while it has one (flowgate.v02.0148 T#2): `saving`, `saved` (only after the answer confirmed it), `failed`. */
+  /** Field -> its own save state while it has one: `saving`, `saved` (only after the answer confirmed it), `failed`. */
   readonly fieldStates?: Readonly<Record<string, FieldSaveState>>
 }
 
@@ -58,7 +58,7 @@ export const CHECK_SCOPES: readonly CheckScope[] = ['merge', 'commit', 'hold']
 export interface CheckNodeFacts {
   readonly locked: boolean
   /**
-   * flowgate.v02.0132 T#4: why it is locked, as the server tells it (the gate's `settings_lock_reason`, else the settings
+   * why it is locked, as the server tells it (the gate's `settings_lock_reason`, else the settings
    * read's `lock_reason`), and the gate decision's Git state (`git_active`: auto sync going on, `parked`: waiting for a
    * recovery). Absent = not told: the plain `reason.locked`.
    */
@@ -85,9 +85,9 @@ export interface CheckSettingsInput {
   readonly placing: boolean
   readonly disposed: boolean
   readonly failure: { readonly field: string; readonly kind: CheckSettingsFailureKind; readonly key?: string | null } | null
-  /** flowgate.v02.0148 T#2: the refusal of each field's own last write (a field keeps its refusal until its next input). */
+  /** the refusal of each field's own last write (a field keeps its refusal until its next input). */
   readonly fieldFailures?: Readonly<Record<string, { readonly kind: CheckSettingsFailureKind; readonly key?: string | null }>>
-  /** flowgate.v02.0148 T#2: each field's save state (the context's `fieldStates`). */
+  /** each field's save state (the context's `fieldStates`). */
   readonly fieldStates?: Readonly<Record<string, FieldSaveState>>
   /**
    * 0006-T §2: the last candidates the server confirmed (lookup ok / empty) for this very project, flow, card and work
@@ -96,7 +96,7 @@ export interface CheckSettingsInput {
   readonly cachedTargets?: readonly string[] | null
 }
 
-/** The server's gate `settings_lock_reason` -> the message key of the lock (flowgate.v02.0132 T#4). */
+/** The server's gate `settings_lock_reason` -> the message key of the lock. */
 const LOCK_REASON_KEYS: Readonly<Record<string, string>> = {
   decision_reserved: 'reason.lock_decision_reserved', merge_conflict: 'reason.lock_merge_conflict',
   time_machine: 'reason.lock_time_machine', gate_decided: 'reason.lock_gate_decided',
@@ -139,8 +139,8 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const state = input.node?.mergeTargetState
   const current = targetStored ? state?.current : state?.default
   const defaultTarget = input.node?.defaultTargetBranch ?? null
-  // T0012: the saved or inherited branch name is always shown; why it cannot be used is its error, never a blank.
-  // flowgate.v02.0148 T#2: the branch being saved is shown at once (like every other field); a refusal brings the confirmed one back.
+  // the saved or inherited branch name is always shown; why it cannot be used is its error, never a blank.
+  // the branch being saved is shown at once (like every other field); a refusal brings the confirmed one back.
   const pendingTarget = 'merge_target_branch' in input.pending
   const requested = input.pending.merge_target_branch
   const target = pendingTarget ? (typeof requested === 'string' && requested ? requested : defaultTarget) : targetStored ? field!.value as string : defaultTarget
@@ -150,7 +150,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   // 0006-T §3.3: the live answer's candidates when it has any, else the kept confirmed list after a timeout / failure.
   const usable = lookupStatus !== null && CACHE_USABLE_LOOKUPS.includes(lookupStatus)
   const cached = usable ? input.cachedTargets ?? [] : []
-  // flowgate.v02test.0020 (replaces 0006-T §3.5's lock): with no confirmed list at all after a timeout / failure (a first
+  // (replaces the earlier implementation's lock): with no confirmed list at all after a timeout / failure (a first
   // entry, F5, the kept list expired), the stored and the inherited name stay choosable, marked unverified, so the lookup
   // alone never locks the control. The server judges the choice again on PATCH (judge_check_target) and before the
   // confirmation; a refusal is the field's own error, as for any other name.
@@ -180,8 +180,8 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     targetStored,
     defaultTarget,
     // 0006-T §3.2: a candidate (live, kept, or the unverified stored / inherited names) and no safety lock; a lookup
-    // error alone never locks the choice (flowgate.v02test.0020).
-    // flowgate.v02.0148 T#2: a save of another field on its way is no lock (the writes are queued).
+    // error alone never locks the choice.
+    // a save of another field on its way is no lock (the writes are queued).
     targetEnabled: scope === 'merge' && targetOptions.length > 0 && reason === null,
     targetError: scope === 'merge' && !pendingTarget ? targetError : null,
     lookupError: scope === 'merge' ? lookupError : null,

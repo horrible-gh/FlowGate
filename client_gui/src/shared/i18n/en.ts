@@ -236,16 +236,16 @@ export default {
     design_handoff_dialog: {
       mention_batch: 'Worker, the next step is design-related. Please create the following types as a batch: {types}\nTarget: {docRef}',
     },
-    // flowgate.default.0405 P0004 — the work-plan-only proposal dialog.
+    // the work-plan-only proposal dialog.
     work_plan_create_dialog: {
       create_failed: 'An error occurred while creating the work plan.',
     },
     work_plan: {
-      // 0403 NR0004 F5·F7 — the lock reason is the server's verdict, copied verbatim.
+      // ·F7 — the lock reason is the server's verdict, copied verbatim.
       step_no: 'Step {n}',
-      // D0007 §5.5 — confirm before a quantity decrease removes a step that carries a value.
-      // 0649 T#3 (NR0003 §5.3 / O7) — card moves and started-card lock.
-      // T0007 §1.2 — rendered from the server's code+params on every render of the current
+      // confirm before a quantity decrease removes a step that carries a value.
+      // card moves and started-card lock.
+      // rendered from the server's code+params on every render of the current
       // UI locale. Wording is paired with work_plan_service._ERROR_COPY (same placeholder syntax).
       errors: {
         json_parse_failed: 'The work plan body is not a JSON object.',
@@ -305,7 +305,7 @@ export default {
         card_id_type_changed: 'The card type of card_id {value} cannot change.',
         instruction_mode_started: 'The instruction omission of card_id {value} cannot change: the card already started.',
       },
-      // T0007 rev1 §1 — maps `empty_selection`'s `what_key` param to the current UI locale.
+      // maps `empty_selection`'s `what_key` param to the current UI locale.
       // Keys are paired with work_plan_service._EMPTY_SELECTION_WHAT.
       empty_selection_what: {
         counted_types: 'document type to count',
@@ -330,9 +330,9 @@ export default {
         load_failed: 'Could not load the proposal: {detail}',
       },
     },
-    // flowgate.default.0549 T0008: structured test specification (TS) and test report (TSR).
+    // structured test specification (TS) and test report (TSR).
     test_document: {
-      // 0684 T#3: one run entry point (action bar / Case row), its state, and the report body.
+      // one run entry point (action bar / Case row), its state, and the report body.
       field: {
         expected: 'Expected result',
         actual: 'Actual result',
@@ -359,15 +359,15 @@ export default {
     next_action_modal: {
       mm_section_header: 'User message',
     },
-    // 0311 T0004: QaHistoryDialog is back to being the Q&A-only full view
-    // (TR0005 rev6 rejection §3 — "drop Q&A from it").
+    // QaHistoryDialog is back to being the Q&A-only full view
+    // (rejection — "drop Q&A from it").
     // ReviewHistoryDialog (rejections) merged into a review/rejection-only full-history
-    // dialog. TR0005 rev6 rejection: (1) the title wrongly said "Q&A" — it should say
+    // dialog. the earlier implementation rejection:  the title wrongly said "Q&A" — it should say
     // "Review/Rejection" (2) AI review needs a fold like rejection does (3) Q&A moved
     // out to its own dialog (qa_history).
-    // 0399 D0010/L0011 — [Apply work plan]. Both design documents deferred the wording to
+    // [Apply work plan]. Both design documents deferred the wording to
     // the T stage, so every sentence this feature shows lives together here.
-    // 0325 TR0007 rev1 — the changes viewer opened by [Open changes] in the AC sidebar.
+    // the changes viewer opened by [Open changes] in the AC sidebar.
     git_errors: {
       network: 'Unable to reach the server. Check your connection and try again.',
       generic: 'The Git operation failed. Please try again.',
@@ -383,7 +383,7 @@ export default {
       invalid_state: 'This Git operation is not available in the current state.',
       invalid_request: 'The Git request is invalid.',
       workflow_revert_pending: 'A Time Machine rewind has not finished canceling an approved commit. Finish the commit cancel with [Retry commit cancel] on the proposal (TR2) first; until then this group cannot be rewound again or advanced.',
-      // 0685 T0006 §5 — a branch moved after the merge started, so the review cannot be applied.
+      // a branch moved after the merge started, so the review cannot be applied.
       stale_source: 'The source branch changed after this merge started, so the current review result cannot be applied as is. Abort this merge and start it again.',
       stale_target: 'The target branch changed after this merge started, so the current review result cannot be applied as is. Abort this merge and start it again.',
     },
@@ -396,14 +396,14 @@ export default {
       ai_repeat_count_out_of_range: 'The repeat count must be between {min} and {max}.',
     },
     git_finalize: {
-      // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
-      // flowgate.default.0594 T0016 §3.3/§5 — the finalize-approval dialog's merge
+      // proposal 1 — temporary artifacts excluded from the finalize commit.
+      // the finalize-approval dialog's merge
       // target selector: it only shows where THIS approval actually goes (full
       // branch management lives in git_branch_manager instead).
-      // flowgate.default.0665 T0004 — target differs from the group's work base
-      // 0685 T0006 §4 — shown only when a target other than the work base is chosen.
-      // 0674 T0004 §2-1 — the conflict AI run ended without resolving the conflict.
-      // 0481 T0010 rev2 — the submission reached the server but this screen does not
+      // target differs from the group's work base
+      // shown only when a target other than the work base is chosen.
+      // the conflict AI run ended without resolving the conflict.
+      // the submission reached the server but this screen does not
       // know the result state it answered with (a screen older than the server, e.g.
       // a failed deploy build still serving the previous bundle). Saying nothing there
       // is what the operator experiences as "the button does nothing".

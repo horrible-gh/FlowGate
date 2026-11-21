@@ -1,7 +1,7 @@
 """Git credential handling: master-key encryption, secret masking, and
 commit-author env resolution.
 
-Extracted from git_service.py (flowgate.default.0550 T0007, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ from modules.flow_gate.storage.paths import get_storage_root
 
 _log = logging.getLogger(__name__)
 
-# ── Configurable author (flowgate.default.0237 — R0001/NR0003) ────────────────
+# ── Configurable author ────────────────
 # A project may override the AUTHOR of server-made commits so work does not land
-# under the FlowGate name (R0001). Only the author moves; the committer above stays
+# under the FlowGate name. Only the author moves; the committer above stays
 # FlowGate, which is the GitHub-App convention and keeps the history honest —
-# contribution graphs key off the author, so this is what R0001 actually needs.
+# contribution graphs key off the author, so this is what the requirement actually needs.
 # The override travels in GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL rather than `-c user.*`
 # (which would move the committer too) or `--author` (which `git merge` rejects —
-# NR0003 §4). Both fields are stored together or not at all; an empty ident makes
+# ). Both fields are stored together or not at all; an empty ident makes
 # `git commit` fail with "Author identity unknown", so "" is normalized to NULL.
 GIT_AUTHOR_NAME_MAX = 100
 GIT_AUTHOR_EMAIL_MAX = 200
@@ -102,7 +102,7 @@ def git_error_envelope(exc: GitServiceError) -> dict:
     return {"ok": False, "error": error}
 
 
-# ── Master key / encryption / masking (L0006 §2.3 — TOTP precedent) ─────────
+# ── Master key / encryption / masking (TOTP precedent) ─────────
 
 def _key_file_path() -> Path:
     return get_storage_root(create=True) / ".flowgate-git-key"
@@ -127,7 +127,7 @@ def _load_key_material(env_name: str) -> Optional[bytes]:
 def _get_current_key(create: bool = False) -> bytes:
     """Resolve the master key: env/.env → persisted storage file (→ generate).
 
-    Boot-time provisioning (L0006 E5): the docker entrypoint persists the key
+    Boot-time provisioning: the docker entrypoint persists the key
     into the container env; host installs without one fall back to a key file
     under the storage root, generated once and chmod 600 — same pattern as the
     entrypoint's .flowgate-secrets.env.

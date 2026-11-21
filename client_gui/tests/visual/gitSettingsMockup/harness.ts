@@ -1,4 +1,4 @@
-// flowgate.v02test.0002 R0001 #2 (0010-T §5) - browser measurement harness for the Git box. Not part of the product
+// #2 - browser measurement harness for the Git box. Not part of the product
 // build and not a vitest spec: measure.mjs (same folder) bundles this file and opens it in a headless Chromium.
 // It mounts the real CheckSettings.vue with a fixture view (the component's own `view` prop, no server), below the
 // approved mockup (flowgate_git_settings_mockup.html) in an iframe, and writes DOM measurements into #fg-measure:
@@ -29,7 +29,7 @@ const base = { usage: null, archive: false, scope: 'merge', target: 'feature/v0.
 const STATES: Record<string, unknown> = {
   timeout: { ...base, targetEnabled: false, targetOptions: [], lookupError: 'target.lookup_timeout', canRefreshTargets: true },
   ok: { ...base, targetEnabled: true, targetOptions: ['feature/v0.2.0', 'main', 'release/local'], lookupError: null, canRefreshTargets: false },
-  // flowgate.v02test.0002 T-b (0006-T §2/§3, R0001 #3): the lookup timed out but the last confirmed list is kept - the
+  // T-b: the lookup timed out but the last confirmed list is kept - the
   // select stays open with that list while the refresh and the lookup error are shown beside / under it.
   kept: { ...base, targetEnabled: true, targetOptions: ['feature/v0.2.0', 'main', 'release/local'], lookupError: 'target.lookup_timeout',
     canRefreshTargets: true, lookupStatus: 'timeout', optionsSource: 'cache' },

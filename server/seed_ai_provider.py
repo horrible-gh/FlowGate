@@ -480,7 +480,7 @@ def main() -> None:
         announce_permission_mode(svc, saved.get("kind"), saved.get("cli_command") or "")
     else:
         print(f"   model  : {saved['api_model']}  @ {saved.get('api_base_url')}")
-        # The key lives in ai_providers.api_key and is never echoed back (L0004 §2.3).
+        # The key lives in ai_providers.api_key and is never echoed back.
         print(f"   api key: {'set' if saved['api_key_set'] else 'NOT set'}")
 
     probe_off = args.no_probe or os.environ.get("FLOWGATE_AI_PROBE", "").strip() == "0"

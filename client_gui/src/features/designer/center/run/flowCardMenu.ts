@@ -1,4 +1,4 @@
-// flowgate.v02.0061 T#15 — what a card's context menu (right click on a Designer card) offers, by the server's rules.
+// what a card's context menu (right click on a Designer card) offers, by the server's rules.
 // Pure: no Vue, no transport. The Canvas draws it with the shared ContextMenu (components/ui) and sends the chosen key
 // back; the Center session acts on it.
 //
@@ -10,7 +10,7 @@
 //   card (Q8, 409 graph_hold_done_node). A release only changes the setting: nothing runs before the next command.
 // - 되돌리기 (Graph Time Machine, WP answer 3): only on a done card of a Graph-owned Flow, for the card and every card
 //   below it — the server finds those by the run's execution history (never the shown Graph or its draft). It waits
-//   unless the Flow's run is confirmed idle (the server's T#12 assessment decides the rest).
+//   unless the Flow's run is confirmed idle (the server's the earlier implementation assessment decides the rest).
 // - While another card action of the Flow is answered (a command, a Hold, an approval, a Time Machine) every item waits.
 import type { FlowRunInfo } from '../graph/flowGraphSource'
 import type { FlowEditLock } from './flowRunLock'

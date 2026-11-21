@@ -1,4 +1,4 @@
-"""0272 — the installer must wait for migrations, not for the DB file.
+"""the installer must wait for migrations, not for the DB file.
 
 Regression coverage for `sqlite3.IntegrityError: FOREIGN KEY constraint failed`
 during install: setup.ps1 treated "flowgate.db exists" as "DB is ready", but

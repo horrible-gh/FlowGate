@@ -1,7 +1,7 @@
-"""flowgate.v02.0094 B0001, B0005 — the automated Case's execution contract is framework-neutral.
+"""the automated Case's execution contract is framework-neutral.
 
 An automated Case says what runs in one ``run_command``; naming a test file is not required, and
-the test files its arguments do name are its targets (B0005). The command is checked by the TR Self-check command policy (no shell,
+the test files its arguments do name are its targets. The command is checked by the TR Self-check command policy (no shell,
 operators, inline code or denied program), resolved again in the run's copy and executed
 through the shared process layer; exit 0 is PASS, a JUnit XML report written to ``{junit}``
 adds per-test detail. A Case saved with a target (``automation_ref``, optionally ``run_cwd``)
@@ -105,7 +105,7 @@ def test_without_a_command_only_a_saved_py_target_keeps_its_pytest_invocation():
         assert basis.locator(case(ref, "npm test"))["capability"] == "unbound"
 
 
-# ── B0005: the command alone says what runs ─────────────────────────────────
+# ── the regression: the command alone says what runs ─────────────────────────────────
 
 def test_without_a_target_the_command_names_its_test_files():
     loc = basis.locator(case("", "node --test client_gui/tests/a.test.mjs"))

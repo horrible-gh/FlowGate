@@ -1,14 +1,14 @@
-// flowgate.v02.0033 — the one data boundary of the Designer Git part (0033-D §2.2). The
+// the one data boundary of the Designer Git part. The
 // session talks only to a GitSource. The default one reads through the features/project
 // loaders (git/status, AI activity, Base / review file diff — 0033-D §2.3: no Git-only store,
 // one git/status reader in v0.2) and acts through features/git/api.ts. Tests hand in their own
 // to replay any server state, including the S1 / S2 stage-2 fields.
 //
-// flowgate.v02.0107 adds the display read of the Flow's work base (GitWorktreeSource.loadWorkBase,
+// adds the display read of the Flow's work base (GitWorktreeSource.loadWorkBase,
 // D §3.1): the HTTP source reads it through the project store's side-effect-free display boundary,
 // never through the 0104 settings loader (loadFlowWorkBase), and a test source hands in the answer.
 //
-// flowgate.v02.0066 adds the Group worktree boundary (GitWorktreeSource) as the optional
+// adds the Group worktree boundary (GitWorktreeSource) as the optional
 // `worktree` member: the worktree area appears only for a source that has one, so a test
 // source without it keeps the 0033 / 0065 behaviour unchanged (0066 D#2 §2-3, §3-1).
 import { useProjectStore } from '@/features/project'
@@ -58,7 +58,7 @@ import type {
 } from './types'
 
 /**
- * The Group worktree of the current Flow (flowgate.v02.0066, 0066 D#2 §5-1): its own reads and
+ * The Group worktree of the current Flow: its own reads and
  * actions, apart from the Base checkout ones of GitSource (baseCommit / baseRevert / …).
  */
 export interface GitWorktreeSource {
@@ -87,12 +87,12 @@ export interface GitWorktreeSource {
   /** The existing /changes?base= list against one target (the `Diff` panel). */
   loadTargetChanges(projectId: string, groupId: string, target: string): Promise<FlowChangeSet>
   /**
-   * flowgate.v02.0067 T#4 — the existing group file diff (GET .../groups/{gid}/diff?path=[&base=]) the
+   * the existing group file diff (GET .../groups/{gid}/diff?path=[&base=]) the
    * Git modeless `Diff` tab shows; `compareBase` null = the work base floor (no `base` sent).
    */
   loadFileDiff(projectId: string, groupId: string, path: string, compareBase: string | null): Promise<FlowFileDiff>
   /**
-   * flowgate.v02.0107 — the existing GET /groups/{gid}/work-base for display only (D §3.1): its
+   * the existing GET /groups/{gid}/work-base for display only (D): its
    * `effectiveWorkBaseRef` is the Flow base the Git header and status tab show. Never an argument
    * of E1–E12; it changes no shared project state.
    */
@@ -107,11 +107,11 @@ export interface GitSource {
 
   fetchConflicts(groupId: string, mergeId: number): Promise<GitConflictSession>
   startConflictAi(groupId: string, mergeId: number, providerId?: string | null): Promise<string | null>
-  /** flowgate.v02gui.0004 — direct resolve of one conflict file (POST …/resolve, chunks). */
+  /** direct resolve of one conflict file (POST …/resolve, chunks). */
   resolveConflictFile?(groupId: string, mergeId: number, path: string, chunks: GitChunkResolution[]): Promise<GitResolveResult>
   cancelAiRun(runId: string): Promise<string | null>
   abortMerge(groupId: string, mergeId: number): Promise<void>
-  // flowgate.v02test.0052 (0008): the administrator's way out of a merge whose abort git refuses. Absent = no such
+  // : the administrator's way out of a merge whose abort git refuses. Absent = no such
   // reads / action (the card then offers none).
   fetchForceCleanupPreview?(groupId: string, mergeId: number): Promise<GitForceCleanupPreview>
   forceCleanup?(groupId: string, mergeId: number): Promise<GitForceCleanupResult>
@@ -150,7 +150,7 @@ export interface GitSource {
   provisionGit(projectId: string): Promise<GitProvisionResult>
   fetchGitProvision(projectId: string): Promise<GitProvisionView | null>
 
-  // flowgate.v02.0066 — the Group worktree. Absent = no worktree area (and no worktree request).
+  // the Group worktree. Absent = no worktree area (and no worktree request).
   worktree?: GitWorktreeSource
 }
 

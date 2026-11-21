@@ -1,10 +1,10 @@
-"""Document body full-text search (R0001 Phase 2 / group 0123 T0006).
+"""Document body full-text search (Phase 2 / the earlier implementation).
 
 Phase 1 (``GET /search/documents``) matched title/doc_id metadata in SQL. Phase 2
 adds body (markdown) search. The body is stored on the filesystem — the
 ``documents`` table has no ``content`` column — and the DB is multi-dialect
 (SQLite/MySQL/PostgreSQL), so native FTS (FTS5 / FULLTEXT / tsvector) cannot be
-expressed in one portable query (NR0003 §2-2). Instead of mirroring bodies into a
+expressed in one portable query. Instead of mirroring bodies into a
 denormalized column (which would couple to every write path) this service reads the
 canonical file through the same ``resolve_storage_path`` chokepoint the read API
 uses, so it is correct regardless of which writer produced the file.
@@ -17,7 +17,7 @@ This is self-healing — no write-path hooks, no migration, zero dialect cost.
 Limitation (honest): a facet-less search reads every candidate file on the cold
 pass (then only re-reads changed files). For the per-instance document volume this
 is acceptable; if corpora grow large enough to feel it, the next step is a
-persistent index / dialect-specific FTS (NR0003 Option B1), tracked separately.
+persistent index / dialect-specific FTS (Option B1), tracked separately.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.storage.paths import resolve_storage_path
 
-# ── T4 conversation-turn search (L0004 §1-4 / §2-15) ────────────────────────────
+# ── T4 conversation-turn search ────────────────────────────
 # Single source of truth for the read-side numbers; do not inline these values.
 SEARCH_TURN_LIMIT = 50
 SEARCH_TURNS_PER_DOC = 3
@@ -49,23 +49,14 @@ def _escape_like(value: str) -> str:
 
 # doc_id -> (mtime, original_text, lowered_text, frontmatter_prefix), LRU first.
 #
-# 0370 L0003 §2-7: the cached body is frontmatter-stripped, but a match locator must be
-# reported in *file* coordinates (P0002 §1-2 — one coordinate system, the stored file).
+# the cached body is frontmatter-stripped, but a match locator must be
+# reported in *file* coordinates (one coordinate system, the stored file).
 # Caching the stripped prefix is all that is needed to rebuild the file text, and it is a
 # few hundred bytes rather than a third full copy of the body.
 #
-# 0279 P3-11: this cache was an unbounded plain dict. A facet-less body search walks
-# every candidate document (see the "Limitation (honest)" note above), so one such
-# search admitted the *entire corpus* — and each entry holds the body twice, the
-# original text plus its lowercased copy, so the resident cost is roughly 2× the
-# total size of all document bodies and it never came back down. Nothing evicted:
-# `reset_cache()` is only called by tests. On a long-lived server with a growing
-# corpus that is a monotonic climb into memory pressure, which is exactly the kind
-# of slow-onset "it freezes sometimes" R0001 is chasing.
-#
-# An LRU cap makes the footprint predictable. The cache is a pure optimisation
-# keyed on mtime — a miss re-reads the file and is correct, just slower — so
-# eviction can never produce a wrong result, only a re-read.
+# Bound cache memory: a cold search can admit the entire document corpus, and
+# each entry keeps both original and lowercased text. LRU eviction only causes
+# a re-read; mtime checks keep results correct without write-path invalidation.
 _CACHE_MAX_ENTRIES = 512
 _CACHE: "OrderedDict[str, tuple[float, str, str, str]]" = OrderedDict()
 _LOCK = threading.Lock()
@@ -78,7 +69,7 @@ _WS = re.compile(r"\s+")
 # every stored document file begins with. The detail snippet (and the body match)
 # must be drawn from the *body* below that fence so the header never shows in the
 # search detail row and the row starts from the real content
-# (group 0123 rev6: "do not print the document header in the detail pane; start from the content").
+# ("do not print the document header in the detail pane; start from the content").
 # This mirrors the in-app viewer's ``stripFrontmatter`` (client shared/utils/markdown.ts)
 # exactly, so search and the open document agree on where the body begins.
 #
@@ -88,18 +79,18 @@ _WS = re.compile(r"\s+")
 # heading: a ``## 2. Resources`` section title is *body content*. Dropping heading lines
 # meant a search term that lives only in a section title (very common in these
 # structured docs) matched the row but produced *no* snippet — the body excerpt came
-# and went depending on whether the hit was prose or a heading (group 0123 rev7:
+# and went depending on whether the hit was prose or a heading (the earlier change:
 # "content appears and disappears; even documents with a body do not show up"). So the heading *text*
 # stays in the snippet; only the leading ``#`` markup glyphs are stripped so no header
 # markup shows.
 _FRONTMATTER = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n?", re.DOTALL)
 # Leading ATX heading markers (``# ``…``###### ``) at the start of a line — only the
 # ``#`` glyphs and the gap are removed; the heading words are kept as snippet content
-# (group 0123 rev7). NOT a whole-line strip (that was the rev4 bug).
+#. NOT a whole-line strip (that was the bug).
 _HEADING_MARK = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
 # Canonical storage-relative tail of a stored body path: ``documents/<project>/…``.
 # Used to recover a body file whose stored ``file_path`` is a stale *absolute* path
-# left over from a previous host (group 0123 rev8 — see ``_resolve_body_path``).
+# left over from a previous host (see ``_resolve_body_path``).
 _DOC_TAIL = re.compile(r"(documents/[^/]+/.*)$")
 
 
@@ -107,7 +98,7 @@ def _resolve_body_path(file_path: str, project_id, branch: str) -> Optional[Path
     """Resolve a stored body path to a real file, recovering host-migrated paths.
 
     First tries the canonical jailed resolver. When that fails AND the stored value
-    still carries a foreign *absolute* prefix from a previous host — the B0054
+    still carries a foreign *absolute* prefix from a previous host — the the regression
     host-migration class; the ``documents`` table still holds rows like
     ``/home/<olduser>/.../storage/documents/flowgate/main/0123/0007-TR_….md`` — the
     dead prefix is dropped and the canonical ``documents/<project>/…`` tail is
@@ -115,7 +106,7 @@ def _resolve_body_path(file_path: str, project_id, branch: str) -> Optional[Path
 
     Without this the file is never read, so a document that genuinely *has* matching
     body content is silently skipped and never appears in search — the reviewer's
-    literal report: "even documents that have a body do not show up in search" (group 0123 rev8).
+    literal report: "even documents that have a body do not show up in search".
     Purely additive: it only runs when the normal resolve already returned None, so a
     working (relative or current-host) path is never re-routed.
     """
@@ -181,8 +172,8 @@ def _get_cached_ex(doc: dict) -> Optional[tuple[str, str, str]]:
     # Cache the body with the leading YAML frontmatter (the document header) removed,
     # so both the body-match test and the snippet operate on the content below the
     # fence — the header never reaches the detail row and a metadata-only term in the
-    # frontmatter does not masquerade as a body hit (group 0123 rev6).
-    # 0370 L0003 §2-1: normalise to the same canonical text the outline/section endpoints
+    # frontmatter does not masquerade as a body hit.
+    # normalise to the same canonical text the outline/section endpoints
     # compute on (BOM dropped, newlines folded to ``\n``). Without this the search would
     # be able to disagree with /outline about a character offset on a BOM-carrying file.
     from modules.flow_gate.services import document_outline_service as _outline
@@ -211,7 +202,7 @@ def _snippet(text: str, needle: str) -> Optional[str]:
     ``text`` is already the document body with the YAML frontmatter header removed
     (see ``_strip_frontmatter`` in ``_get_cached``). The excerpt is drawn from the
     *whole* body — a markdown section heading (``## 2. Resources ...``) is body content, so a
-    term that lives only in a heading still yields a snippet (group 0123 rev7: the body
+    term that lives only in a heading still yields a snippet (the earlier change: the body
     excerpt was missing whenever the hit was a heading instead of prose). Only the
     leading ``#`` heading markers inside the excerpt are dropped, so the heading text
     shows but the ``#`` markup never does.
@@ -237,7 +228,7 @@ def _body_preview(text: str) -> Optional[str]:
     Content search is the mode where the explorer is allowed to show body detail.
     Even when the query matched title/doc_id instead of the body text, the result row
     should still show the document's simplified body when a readable body exists
-    (group 0123 rev9: concrete doc_id searches showed rows with no body excerpt).
+    (concrete doc_id searches showed rows with no body excerpt).
     """
     frag = _HEADING_MARK.sub("", text[:_SNIPPET_AFTER])
     frag = _WS.sub(" ", frag).strip()
@@ -255,12 +246,12 @@ def body_preview_for_doc(doc: dict) -> Optional[str]:
     — the search the explorer runs when "search inside contents" is *off*) uses so that every
     result row shows the document's brief body, not just its id and title.
 
-    Root cause of group 0123 rev1–rev9: the body preview was only ever attached on
+    Root cause of the earlier change –: the body preview was only ever attached on
     the *content* endpoint (the checkbox-on path), but the reviewer was searching in
-    the default metadata mode (e.g. by doc_id ``flowgate.default.0094.0001-R``). In
+    the default metadata mode (e.g. by doc_id ``the earlier change``). In
     that mode the body was never read, so the brief body (``test 1234``) never showed
     — every prior fix patched the wrong endpoint. Attaching the preview here, on the
-    default search, is the fix (group 0123 rev10).
+    default search, is the fix.
 
     Reuses ``_get_cached`` (mtime cache + frontmatter strip + host-migrated path
     recovery) and ``_body_preview`` so the preview is byte-for-byte the same one the
@@ -308,10 +299,10 @@ def _is_migrated_conversation(doc: dict) -> bool:
 
 
 
-# ── 0370 set 2: search-hit positions and context lines (P0002 scenarios 9-11 / L0003 §2-7, §2-8) ──
+# ── 0370 set 2: search-hit positions and context lines (scenarios 9-11 / the earlier implementation) ──
 #
 # The existing `snippet`, `matched_in` and `match_kind` computations are untouched. `matches` is
-# added alongside them (P0002 §3) — screens using this response today need no change.
+# added alongside them — screens using this response today need no change.
 
 
 def _find_matches(body_text: str, query: str, scan_max: int) -> list[tuple[int, int]]:
@@ -321,7 +312,7 @@ def _find_matches(body_text: str, query: str, scan_max: int) -> list[tuple[int, 
     slices text around the hit so a drift never shows, but a locator publishes the number:
     Unicode has characters whose lowercase form is *longer* (``İ`` → ``i̇``, 1 char → 2), so
     one such character earlier in the document shifts every subsequent offset. Searching the
-    original text keeps the returned positions true to the file (L0003 §2-7).
+    original text keeps the returned positions true to the file.
 
     The query is literal, not a regex — ``re.escape`` neuters the metacharacters, mirroring
     the LIKE-escaping the SQL side already does. Overlapping hits are not counted twice
@@ -345,7 +336,7 @@ def _match_entry(fdoc, doc_id: str, revision_no: int, char_start: int, char_end:
 
     ``fdoc`` is the *file* text (frontmatter included) so the locator agrees with
     ``/outline`` and ``/section``. Missing lines at the top/bottom of a document are simply
-    absent — they are never padded with empty strings (P0002 scenario 9).
+    absent — they are never padded with empty strings (scenario 9).
     """
     from modules.flow_gate.services import document_outline_service as _outline
 
@@ -373,7 +364,7 @@ def _document_matches(doc: dict, needle: str, matched_in: str,
 
     A hit that came from the title or the doc_id has no place in the body, so no place is
     invented: both values come back empty. Forcing it to point at line 1 would open the
-    wrong spot when someone clicks the result (P0002 scenario 10).
+    wrong spot when someone clicks the result (scenario 10).
     """
     from modules.flow_gate.services import document_outline_service as _outline
 
@@ -412,7 +403,7 @@ def _format_turn(row: dict) -> str:
 
 def _turn_matches(row: dict, needle: str, context_lines: int,
                   hits_per_doc: int) -> tuple[list[dict], int]:
-    """``(matches, match_total)`` for one conversation-turn result row (L0003 §2-8).
+    """``(matches, match_total)`` for one conversation-turn result row.
 
     A turn has no lines that mean anything, so ``unit`` is ``turn`` and the context is
     neighbouring *turns*, not neighbouring lines. Neighbours are the nearest sequence
@@ -472,8 +463,8 @@ def search_document_bodies(
     field that matched. Returns ``(page_items, total_matches)`` where total ignores
     limit/offset for paging. Ordering follows the DB helper (updated_at DESC).
 
-    0370 set 2: when ``include_matches`` is on, every row of the *returned page* also
-    carries ``match_total`` and ``matches`` (P0002 scenario 9). The locators are computed
+    set 2: when ``include_matches`` is on, every row of the *returned page* also
+    carries ``match_total`` and ``matches`` (scenario 9). The locators are computed
     for the page only — the match scan re-walks each body, and doing that for every
     candidate rather than the ~50 rows actually returned would make a facet-less search
     pay it corpus-wide. ``include_matches=False`` omits **both keys entirely**, giving
@@ -557,14 +548,14 @@ def search_conversation_turns(
     context_lines: int = None,
     hits_per_doc: int = None,
 ) -> list[dict]:
-    """Conversation-turn body search (T4, L0004 §2-15 / P0003 scenario 16).
+    """Conversation-turn body search (T4, the earlier implementation / the plan scenario 16).
 
     Case-insensitive (``LOWER`` on both sides); a literal ``%``/``_``/``\\`` in the
     query is escaped so it cannot act as a wildcard. At most ``per_doc`` turns are
     returned per document (a very active chat must not crowd out every other result),
     and at most ``SEARCH_TURN_LIMIT`` turns are scanned/returned overall. Only fully
     migrated conversations participate, so an in-progress migration can never leak a
-    partial turn set. Ordering is the L0004 contract: newest ``created_at`` first,
+    partial turn set. Ordering is the the earlier implementation contract: newest ``created_at`` first,
     then document id and descending sequence as deterministic tie-breakers.
     """
     needle = (q or "").strip()

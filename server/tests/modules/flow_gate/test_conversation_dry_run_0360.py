@@ -1,8 +1,8 @@
-"""0360 T0004 -- chat turn dry-run + corruption check.
+"""chat turn dry-run + corruption check.
 
-NR0003 root cause: chat turns have no dry-run at all, and the "??????" corruption
+root cause: chat turns have no dry-run at all, and the "??????" corruption
 signature is a submission-environment artifact (Windows console code page), not a
-server bug (see group 0114's `_label_is_corrupted`). This wires the existing inbox
+server bug (see the earlier change's `_label_is_corrupted`). This wires the existing inbox
 dry-run counter (`tokens.dry_run_count`, migration 043/075) and the existing
 corruption detector into the chat turn-append endpoint, without inventing a new
 schema, a chat-only env var, or a second copy of the corruption threshold.
@@ -102,7 +102,7 @@ def test_dry_run_never_inserts_or_consumes_and_bumps_counter_once(monkeypatch):
 
 
 def test_dry_run_ignores_whether_the_token_was_already_consumed(monkeypatch):
-    """dry_run must validate-only regardless of consumed_at (T0004 item 1)."""
+    """dry_run must validate-only regardless of consumed_at."""
     monkeypatch.setattr(service, "_validate_document_for_append", lambda doc_id: DOC)
     monkeypatch.setattr(token_service, "increment_dry_run", lambda token_id: None)
     consumed_token = dict(TOKEN, consumed_at="2026-01-01T00:00:00+00:00")
@@ -193,12 +193,12 @@ def test_dry_run_field_omitted_is_unchanged():
 # ── the corruption threshold is defined in exactly one place ───────────────────────
 
 def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
-    """0391 T0005 §5-4: chat goes through the line-based `_text_is_corrupted`, not
+    """chat goes through the line-based `_text_is_corrupted`, not
     `_label_is_corrupted` directly — a long AI turn dilutes the whole-body '?' ratio below
-    the threshold exactly like the long document bodies NR0004 measured (0.404 on the
+    the threshold exactly like the long document bodies the review measured (0.404 on the
     reporting document's own body, under the 0.5 cut).
 
-    0394 T0016 item 4 (NR0003 §6.2-d): previously this counted constant definitions
+    (d): previously this counted constant definitions
     in both modules and searched for a workflow_decision_service._text_is_corrupted
     call. Copying the constant into chat under a different name (_CHAT_RATIO = 0.5)
     would pass all three checks while duplicating the threshold. Assert behavior
@@ -206,10 +206,10 @@ def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
     """
     long_clean_tail = "\n".join("정상적인 한국어 문장입니다." for _ in range(200))
     cases = {
-        # A long body with one corrupt line: below the whole-body threshold but above the line threshold (NR0004).
-        # 0474 T0007 §1.2: four or more consecutive '?' characters are themselves a corruption signal
+        # A long body with one corrupt line: below the whole-body threshold but above the line threshold.
+        # four or more consecutive '?' characters are themselves a corruption signal
         # that immediately trips _label_is_corrupted on the entire string. Avoid that signal here
-        # (at most three in a row), matching observed mojibake (NR0003, CORRUPT constant).
+        # (at most three in a row), matching observed mojibake (CORRUPT constant).
         "one corrupted line in a long clean body": "??? ?? ? ??\n" + long_clean_tail,
         "all corrupted": "?????? ??????",
         "clean korean": long_clean_tail,

@@ -127,7 +127,7 @@ def test_heartbeat_api_success_contract_and_runtime_state(heartbeat_api):
  payload=response.json()
  assert set(payload)=={"accepted","agent_id","server_time","protocol_version",
   "heartbeat_interval_seconds","online_ttl_seconds","workspace_cleanup","max_concurrent_jobs"}
- # flowgate.v02test.0019: the stored policy of this Agent; an existing row is ON / 24 h.
+ # the stored policy of this Agent; an existing row is ON / 24 h.
  assert payload["workspace_cleanup"]=={"enabled":True,"retention_hours":24}
  assert type(payload["workspace_cleanup"]["enabled"]) is bool and type(payload["workspace_cleanup"]["retention_hours"]) is int
  assert payload["accepted"] is True
@@ -173,7 +173,7 @@ def test_heartbeat_api_failure_contract(heartbeat_api,headers,body,setup,status,
 
 
 def test_heartbeat_sends_the_latest_stored_policy_0019(heartbeat_api):
- # flowgate.v02test.0019: a saved change reaches the Agent on its next heartbeat; OFF keeps the hours.
+ # a saved change reaches the Agent on its next heartbeat; OFF keeps the hours.
  client,db,raw=heartbeat_api
  send=lambda: client.post("/flowgate/api/v1/agent/heartbeat",headers={"Authorization":"Bearer "+raw},json=heartbeat_body())
  db.execute("UPDATE agents SET workspace_cleanup_enabled=0,workspace_cleanup_retention_hours=720 WHERE agent_id='agt_x'"); db.commit()

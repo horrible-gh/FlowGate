@@ -1,4 +1,4 @@
-"""0061 T#6 regression cases. TR compiles only; TS/TSR executes behavior.
+"""regression cases. TR compiles only; TS/TSR executes behavior.
 
 Real SQLite execution ledger and migration 153, mocked process/workspace/provider
 and Flow guard. No AI process or production database is touched by these tests.

@@ -146,7 +146,7 @@ def test_finished_run_binds_requested_group_without_fk(monkeypatch):
 
 
 def test_routes_reads_open_writes_administrator_only(monkeypatch):
-    """CH0006 #48: a group of system AI is read by every signed-in user and edited by an
+    """#48: a group of system AI is read by every signed-in user and edited by an
     administrator only (system.settings.manage, no project)."""
     from fastapi import HTTPException
     from starlette.requests import Request

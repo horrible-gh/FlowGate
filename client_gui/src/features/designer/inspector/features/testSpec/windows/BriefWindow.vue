@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0094 — the instruction editor on the requirement document editor's layout (DocumentWindow in its editor): the
+  <!-- the instruction editor on the requirement document editor's layout (DocumentWindow in its editor): the
        title, the text filling the window, and the editor bar at the bottom — a failed save on its left, [저장] ·
        [닫기] at its right end. Why it cannot be saved is the muted line above the text; a failed read replaces the text
        with its retry. It only saves: the scenario's AI writing is the 시나리오 line's [AI 호출]. -->

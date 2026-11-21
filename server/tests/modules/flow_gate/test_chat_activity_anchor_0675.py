@@ -1,6 +1,6 @@
-"""flowgate.default.0675 T0004 -- persisted conversation anchors of chat activity.
+"""persisted conversation anchors of chat activity.
 
-Covers T0004 §4 (server / DB):
+Covers the earlier implementation (server / DB):
   1. a new run's command/change rows store an anchor and the activity API returns it;
   2. with an AI reply: command = before the reply, change = after the reply;
   3. without a reply: both fixed after the turn the run started from;

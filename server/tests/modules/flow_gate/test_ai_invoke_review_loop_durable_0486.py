@@ -1,9 +1,9 @@
-"""Durable document-review-loop regressions (flowgate.default.0486 T0029 / NR0028 F1-F3).
+"""Durable document-review-loop regressions.
 
 Every verdict here is read back from a real SQLite database that has the real migrations
 applied -- `035`/`104` for `document_reviews` provenance, `091`-`107` for the loop row -- and
 is written through the real `db_loops.checkpoint()`, the real gate and the real
-`_checkpoint_document_review_loop()`. NR0028's post-mortem of why the existing suite could
+`_checkpoint_document_review_loop()`. the review's post-mortem of why the existing suite could
 not see F1 or F2 is the reason for that shape:
 
   * the worker/checkpoint regressions in `test_ai_invoke_document_review_loop_0417.py`
@@ -54,7 +54,7 @@ OWNER = "owner-0486"
 REVIEW_MIGRATIONS = (
     "035_document_reviews.sql",
     "104_document_review_provider_provenance.sql",
-    # 0583 T0004: 111 was added after this harness was written and `insert_review` names
+    # 111 was added after this harness was written and `insert_review` names
     # every provenance column unconditionally, so leaving it out made every hop that
     # posts a verdict die on "table document_reviews has no column named review_intent"
     # -- the whole review-posting half of this file. The tuple has to track the columns
@@ -80,7 +80,7 @@ class Store:
     `transaction()` is re-entrant like the production store: the nested transaction
     `db_loops.checkpoint()` opens JOINS the checkpoint's own instead of committing
     underneath it. That is what makes the CHECK-constraint failure below roll the automatic
-    document rejection back with it, exactly as NR0028 4 F2 reported.
+    document rejection back with it, exactly as the review 4 F2 reported.
     """
 
     def __init__(self, conn):
@@ -230,7 +230,7 @@ class LoopWorld:
             actual_provider_id="reviewer",
             actual_provider_name="Reviewer",
             provider_source="project_default",
-            # The real, unchanging value (NR0028 F1). Not a simplification: no run whose
+            # The real, unchanging value. Not a simplification: no run whose
             # provider starts on the first try ever writes anything else.
             attempt_no=1,
             fallback_used=False,
@@ -280,11 +280,11 @@ def world(tmp_path, monkeypatch):
         conn.close()
 
 
-# ── NR0028 F1: the review count really is a ceiling ──────────────────────────
+# ── the review F1: the review count really is a ceiling ──────────────────────────
 
 @pytest.mark.parametrize("review_count", [1, 2, 3])
 def test_review_count_stops_the_loop_at_exactly_that_many_rounds(world, review_count):
-    """The regression NR0028 4 F1 measured: 2 and 3 never stopped, only 1 did.
+    """The regression the review 4 F1 measured: 2 and 3 never stopped, only 1 did.
 
     Before the fix `_document_loop_review_view` collapsed by `attempt_no`, which is 1 on
     every row a normal run writes, so `rounds_used` was pinned at 1 and only `review_count=1`
@@ -332,7 +332,7 @@ def test_a_pass_stops_the_loop_before_the_count_is_spent(world):
     assert len(loops.review_rows()) == 1
 
 
-# ── NR0028 F2: review_stalled is a value the loop table accepts ──────────────
+# ── the review F2: review_stalled is a value the loop table accepts ──────────────
 
 def _same_findings(_round_no):
     return [{"locus": "3", "note": "the same finding, round after round"}]
@@ -356,7 +356,7 @@ def test_repeated_findings_stop_as_review_stalled_and_keep_their_rejection(world
 
 
 def test_without_migration_107_the_same_stall_rolls_back_the_rejection(world):
-    """NR0028 4 F2 reproduced: the CHECK inherited from 106 does not list `review_stalled`.
+    """4 F2 reproduced: the CHECK inherited from 106 does not list `review_stalled`.
 
     This is the control that proves the migration -- not some other edit in this TR -- is
     what closes F2, and it also shows the collateral damage: the automatic rejection written
@@ -379,7 +379,7 @@ def test_without_migration_107_the_same_stall_rolls_back_the_rejection(world):
     assert [item["review_id"] for item in loops.rejection_history()] == [1]
 
 
-# ── NR0028 F2: the migration itself, in all three dialects ──────────────────
+# ── the review F2: the migration itself, in all three dialects ──────────────────
 
 _KEPT_STOP_REASONS = (
     "review_passed", "review_count_exhausted", "retry_exhausted",
@@ -460,7 +460,7 @@ def test_107_preserves_rows_indexes_and_foreign_keys_of_a_populated_106_database
     conn.close()
 
 
-# ── NR0028 F5: the loop's auto-reject dedupes by review row, not by status ───
+# ── the review F5: the loop's auto-reject dedupes by review row, not by status ───
 
 def _checkpoint_one_review_hop(loops, loop_row):
     service._checkpoint_document_review_loop({
@@ -486,9 +486,9 @@ def test_a_review_row_already_rejected_is_never_rejected_twice(world):
     """The loop's auto-reject asked only "is the document `rejected` right now?".
 
     Its sibling gate `resolve_review_gate` has ANDed that momentary status with the review
-    row's own identity since T0005, precisely because the status does not survive a landed
+    row's own identity since the earlier implementation, precisely because the status does not survive a landed
     rework. The document-review loop did not, so once the status had moved on, the very same
-    review row became a rejection candidate again (NR0028 F5 / NR0014 8-5).
+    review row became a rejection candidate again.
     """
     loops = world(run_id="aiv_dedupe", review_count=-1)
     loop_row = loops.loop()
@@ -516,7 +516,7 @@ def test_a_review_row_not_in_the_ledger_is_still_rejected(world):
     assert loops.document()["doc_review_status"] == "rejected"
 
 
-# ── NR0028 F3: a loop nobody could checkpoint is still closed ────────────────
+# ── the review F3: a loop nobody could checkpoint is still closed ────────────────
 
 def _active_loop(world_factory, run_id):
     loops = world_factory(run_id=run_id, review_count=2)

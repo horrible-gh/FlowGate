@@ -1,4 +1,4 @@
-"""The own effects of a TS / TR2 result, run by the v0.2 completion itself (flowgate.v02.0119 T#2, T-1).
+"""The own effects of a TS / TR2 result, run by the v0.2 completion itself.
 
 A TS's and a TR2's completion have an effect of the document's own that the v0.1 approval used to carry: a TS admits its
 test run (the specification fixed and its automated Cases queued), a TR2 applies its source change (precheck, source
@@ -17,7 +17,7 @@ transition (``pipeline_service.transition_document_review``) and with no person 
           the caller writes the completion (the recovery path); approved with no succeeded attempt is refused.
 
 ``write`` is the caller's completion write (``() -> record``, run inside the effect's transaction); with no node it is
-the status display alone. flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a test card's TS *instruction* runs the
+the status display alone. the earlier change the earlier implementation rework (rej_01M6DQW6YF0SCQ5D P1): a test card's TS *instruction* runs the
 same TS effect from its own approval (``instruction.approve``), with the instruction's approved display as ``write`` —
 the TS is no node's result there, so the effect is no longer left to a result completion that never comes. Raises ``EffectRefused`` (the effect is refused: nothing is written) or ``EffectRevisionMoved``
 (the document's revision is not ``revision`` any more).
@@ -120,7 +120,7 @@ def _announce(doc: dict, admitted: dict) -> None:
             "group_id": doc.get("group_id"), "reason": "test_report_opened", "doc_id": admitted["tsr_doc_id"],
             "run_id": admitted["run"]["run_id"]})
 
-    # 0126 T#1: a human cascade can own the outer Flow transaction. Its admission
+    # a human cascade can own the outer Flow transaction. Its admission
     # notice must not escape before the badges, request and audit rows commit.
     if not after_commit(send):
         send()

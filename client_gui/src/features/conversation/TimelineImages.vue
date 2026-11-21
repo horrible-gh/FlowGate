@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02test.0029 T0005 — the images of one message: a row of thumbnails under its text; pressing one opens the
+  <!-- the images of one message: a row of thumbnails under its text; pressing one opens the
        original large (a modal, closed with Esc, the backdrop or ✕). The bytes are fetched through the signed-in session
        and shown from a blob address — the content address is never put on `<img src>` and no token is put on a URL. -->
   <div class="tl-imgs" data-test="tl-images">

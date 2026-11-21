@@ -11,7 +11,7 @@ const APP_VUE_SRC = readFileSync(resolve(__dirname, '../../src/app/App.vue'), 'u
 
 registerAppMessages(i18n)
 
-// T0009 §8: App.vue (the App Shell) owns the Topbar, not any per-view component, so
+// App.vue (the App Shell) owns the Topbar, not any per-view component, so
 // every /app/* route rendered through RouterView gets it for free. This mounts
 // the real App.vue + router combination (like tests/app/router.deepLink.spec.ts) rather
 // than Topbar in isolation, to prove the shell actually wraps whatever route matches.
@@ -36,14 +36,14 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
     await router.push('/projects')
 
     const wrapper = mount(App, {
-      // App.vue mounts the Project Dialog (T0010/T#3 §2), which needs an active Pinia
+      // App.vue mounts the Project Dialog, which needs an active Pinia
       // instance to construct, same as main.ts installs one for the real app.
       global: { plugins: [i18n, router, createPinia()] },
     })
     await router.isReady()
 
     expect(wrapper.find('.app-header.gui-topbar').exists()).toBe(true)
-    // flowgate.v02gui.0024: v0.1 is gone, so there is no switch back to it.
+    // v0.1 is gone, so there is no switch back to it.
     expect(wrapper.find('.gui-switch-btn').exists()).toBe(false)
     // The route content (T0011: the /app/projects "준비 중" placeholder) still renders
     // beneath/alongside the shell, inside the shell's content area.
@@ -59,7 +59,7 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
   // auto-placed it into the 280px sidebar cell instead of the full width. jsdom doesn't
   // run real grid layout, so this asserts the source contract directly: the shell root
   // must not opt into the shared 2-column class, and its own grid must declare a single
-  // content column (T0011 puts the sidebar/content split in the body's own grid instead).
+  // content column (puts the sidebar/content split in the body's own grid instead).
   it('does not confine the routed view to the shared sidebar column (T0009 §10/§12)', () => {
     expect(rootShellClass(APP_VUE_SRC)).not.toBe('app-shell')
 

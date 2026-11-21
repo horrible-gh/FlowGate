@@ -1,4 +1,4 @@
-"""ai_providers CRUD + per-scope default persistence (flowgate.default.0164 DB0005).
+"""ai_providers CRUD + per-scope default persistence.
 
 Scope follows the document_types precedent: project_id NULL = the global (system) row
 set, a value = that project's own list. The routing chain is one scope's rows ordered
@@ -7,19 +7,19 @@ system_settings('ai_default_provider_id') for the global scope and in
 project_settings.ai_default_provider_id for a project scope (DB0005 §2.2/§2.3).
 
 Whole-list replace runs in ONE transaction (delete-missing → update/insert → persist
-default/mode) so a failed save never leaves a partial list (L0004 §5, no partial save).
-api_key is stored ENCRYPTED at rest (0371 NR0007 §3): every write goes through
+default/mode) so a failed save never leaves a partial list (no partial save).
+api_key is stored ENCRYPTED at rest: every write goes through
 utils.api_key_crypto (AES-256-GCM, "enc:v1:" prefix) immediately before the column and
 every read decrypts here, so the service layer above keeps working in plaintext and the
-value still never reaches an HTTP response (L0004 §2.3). A row whose ciphertext does not
+value still never reaches an HTTP response. A row whose ciphertext does not
 decrypt is flagged api_key_unreadable instead of being read back as a plaintext key.
 
-Owner scope (flowgate.v02.0017 TR0003 rev7, migration 131): a row is owned by the system
+Owner scope (migration 131): a row is owned by the system
 (owner_scope='system', managed by an administrator) or by one user (owner_scope='user',
 owner_user_id). Projects no longer own rows, and since migration 135 keep no usage policy
 either (project_access is stored but no longer read). The "global" scope below means SYSTEM rows only: a
 user's own AI never appears in list_scope(None)/get_row(None, ...)/get_secret(), so the
-server's fallback chains never pick it up. flowgate.v02.0129 CH0012: an owner may select their
+server's fallback chains never pick it up. the earlier change the discussion: an owner may select their
 own remote-CLI AI explicitly; such a run reads it through get_runnable_row(id, requester), which
 returns a user row only to that row's owner, and it executes on the owner's Agent.
 The project_id branch stays for pre-131 callers and reads nothing after the migration.
@@ -176,7 +176,7 @@ def get_name_any(provider_id: str) -> Optional[str]:
 
 
 def get_public_row(provider_id: str) -> Optional[dict]:
-    """Role availability lookup across owners: no secret columns or decryption (0113 T#2)."""
+    """Role availability lookup across owners: no secret columns or decryption."""
     return get_store()._fetch_one(
         "SELECT provider_id, name, exec_type, kind, enabled, owner_scope, owner_user_id, "
         "exec_location, target_agent_id FROM ai_providers WHERE provider_id = ?", [provider_id])
@@ -190,7 +190,7 @@ def get_user_row(provider_id: str) -> Optional[dict]:
 
 
 def get_runnable_row(provider_id: str, requester_user_id: Optional[str]) -> Optional[dict]:
-    """The row a run requested by requester_user_id may execute (flowgate.v02.0129 CH0012):
+    """The row a run requested by requester_user_id may execute:
     a system row, or a row the requester owns. Another user's AI is never returned."""
     row = get_system_row(provider_id)
     if row is not None or not requester_user_id:
@@ -209,7 +209,7 @@ def get_system_row(provider_id: str) -> Optional[dict]:
 
 def get_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     """Raw api_key for the follow-up execution module (internal use only — never
-    call from an HTTP serialization path; L0004 §2.3).
+    call from an HTTP serialization path; the earlier implementation).
 
     Unlike the list/view path this does NOT swallow a decryption failure: a run that
     cannot read its own key must fail loudly (ApiKeyCryptoError) rather than start as
@@ -260,7 +260,7 @@ def replace_scope(
                       owner_user_id=None, active_ids=active_ids)
 
         if project_id is None:
-            # 0148 precedent: set_value's upsert already table-qualifies the existing-row
+            # precedent: set_value's upsert already table-qualifies the existing-row
             # reference, and _execute joins the ambient transaction.
             _system_settings.set_value(
                 SYSTEM_DEFAULT_KEY,
@@ -347,7 +347,7 @@ def all_provider_ids() -> set[str]:
 def encrypt_plaintext_api_keys() -> int:
     """Move legacy plaintext rows to ciphertext; returns how many were rewritten.
 
-    Idempotent and resumable (NR0007 §3 recommendation 4): rows that already carry the enc:v1:
+    Idempotent and resumable: rows that already carry the enc:v1:
     prefix are skipped, so a half-finished pass — or a second boot — simply continues.
     Runs at startup for every dialect, because "UPDATE ... SET api_key = encrypt(...)"
     is not something SQL alone can do safely.
@@ -376,7 +376,7 @@ def get_system_default_provider_id() -> Optional[str]:
 
 def get_project_ai_state(project_id: str) -> Optional[dict]:
     """The project's tri-state columns, or None when no project_settings row exists
-    (row absence = inherit, L0004 §2.4)."""
+    (row absence = inherit, the earlier implementation)."""
     return get_store()._fetch_one(
         "SELECT ai_mode, ai_default_provider_id, updated_at FROM project_settings "
         "WHERE project_id = ?",
@@ -390,7 +390,7 @@ def upsert_project_ai_state(
     ai_default_provider_id: Optional[str],
 ) -> None:
     """Persist the tri-state mode + project default. Mode-only transitions call this
-    directly and never touch ai_providers rows (list preservation, L0004 §3)."""
+    directly and never touch ai_providers rows (list preservation, the earlier implementation)."""
     get_store()._execute(
         "INSERT INTO project_settings (project_id, ai_mode, ai_default_provider_id, tr_self_check_enabled, updated_at) "
         "VALUES (?, ?, ?, 1, ?) "

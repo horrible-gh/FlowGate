@@ -1,4 +1,4 @@
-"""Manual merge, per-target merge results and their follow-up push (0066 D#1 §3-6, §3-8).
+"""Manual merge, per-target merge results and their follow-up push.
 
 E8/E9: ``manual_merge_admission`` replaces finalize()'s approval gates with technical
 guards only (no wf_done, AC or Graph gate). An admitted merge is a ``base_publish`` job
@@ -55,7 +55,7 @@ def _public_error(exc: GitServiceError) -> dict:
     return out
 
 
-# ── Graph execution (D#1 §3-6(3)) ─────────────────────────────────────────────
+# ── Graph execution (the earlier implementation) ─────────────────────────────────────────────
 
 def graph_state(group_id: str) -> dict:
     """``run_present``, ``blocker`` (None or a §3-6(3) reason) and ``gate_open`` (info only)."""
@@ -81,7 +81,7 @@ def graph_state(group_id: str) -> dict:
     return {"run_present": True, "blocker": reason, "gate_open": gate_open}
 
 
-# ── Uncommitted files (D#1 §3-6(4)) ───────────────────────────────────────────
+# ── Uncommitted files (the earlier implementation) ───────────────────────────────────────────
 
 def _excluded_new_untracked(row: dict) -> bool:
     """A new artifact outside the index under an exclusion rule whose policy class is not
@@ -139,7 +139,7 @@ def _uncommitted_error(summary: dict) -> GitServiceError:
                            details=details)
 
 
-# ── Target and merge need (D#1 §3-6(2) 6, 12) ─────────────────────────────────
+# ── Target and merge need (the earlier implementation 6, 12) ─────────────────────────────────
 
 def _readonly_target(group_id: str, project_id: str, cfg: dict,
                      requested: Optional[str]) -> merge_target.MergeTargetContext:
@@ -207,7 +207,7 @@ def merge_need(project_id: str, group_id: str, cfg: dict, state: dict, base_root
     return 0, recovery
 
 
-# ── Admission (D#1 §3-6(1)(2)) ────────────────────────────────────────────────
+# ── Admission (the earlier implementation) ────────────────────────────────────────────────
 
 @dataclass
 class Admission:
@@ -314,7 +314,7 @@ def _judge(group_id: str, requested: Optional[str], *, collect: bool, readonly: 
 
 
 def manual_merge_admission(group_id: str, target: Optional[str], push: bool) -> Admission:
-    """D#1 §3-6(1): technical guards only; raises the first refusal."""
+    """: technical guards only; raises the first refusal."""
     if not isinstance(push, bool):
         raise GitServiceError(422, "invalid_request", "push must be a boolean")
     adm, _, _ = _judge(group_id, merge_target.normalize_requested_target(target),
@@ -407,7 +407,7 @@ def merge_view(group_id: str, target: Optional[str] = None) -> dict:
 
 def _run_job(project_id: str, group_id: str, req: dict, payload: dict) -> dict:
     """base_publish's request run; a queued answer also names the job phase and, for a
-    Group an approval froze, the D#1 reason ``group_frozen_for_approval``."""
+    Group an approval froze, the the earlier implementation reason ``group_frozen_for_approval``."""
     try:
         return base_publish._run_request(project_id, group_id, req, payload)
     except GitServiceError as exc:
@@ -510,7 +510,7 @@ def _redact(value, forms: list[str]):
 
 
 def _public_conflict(r: dict) -> dict:
-    """D#1 §3-1(3): an E9 answer (first run, resume, the stored job result) names no
+    """: an E9 answer (first run, resume, the stored job result) names no
     hidden path. Hidden conflict files are counted only; the conflict session keeps the
     real paths the resolution needs. Any other nested string is filtered the same way.
 
@@ -629,7 +629,7 @@ def run(ctx: store.JobContext, entry: str) -> Optional[store.RunResult]:
     return _run_merge(ctx)
 
 
-# ── E10 (D#1 §3-8(4)) ─────────────────────────────────────────────────────────
+# ── E10 (the earlier implementation) ─────────────────────────────────────────────────────────
 
 def _group_blocker(group_id: str, state: dict) -> Optional[str]:
     gs = _gs()
@@ -716,7 +716,7 @@ def merge_results_view(group_id: str) -> dict:
             "group_blocker": blocker}
 
 
-# ── E11 (D#1 §3-8) ────────────────────────────────────────────────────────────
+# ── E11 ────────────────────────────────────────────────────────────
 
 def _require_group_valid(group_id: str) -> None:
     gs = _gs()
@@ -824,7 +824,7 @@ def _origin_contains(project_id: str, repo: Path, branch: str, sha: str) -> Opti
 
 
 def _revalidate(project_id: str, group_id: str, p: dict) -> Path:
-    """D#1 §3-8(2) 1..5 under G, B/W and R (first run and every resume). Returns the
+    """ 1..5 under G, B/W and R (first run and every resume). Returns the
     repository the push runs from."""
     gs = _gs()
     _require_group_valid(group_id)

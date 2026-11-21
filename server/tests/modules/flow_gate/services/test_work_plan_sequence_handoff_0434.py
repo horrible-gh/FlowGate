@@ -1,4 +1,4 @@
-"""Regression coverage for flowgate.default.0434 T0004 handoff defects."""
+"""Regression coverage for the earlier change the earlier implementation handoff defects."""
 from __future__ import annotations
 
 from contextlib import contextmanager

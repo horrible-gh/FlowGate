@@ -9,7 +9,7 @@ import { createConversationSession } from '@/features/conversation/conversationS
 import type { ChatSummary } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0135 T#2 — the conversation notice line belongs to the Flow and the chat (or the
+// the conversation notice line belongs to the Flow and the chat (or the
 // draft) it was raised for. B0001 §1.C: a "새 채팅을 만들지 못했습니다" raised in one Flow stayed on
 // top of another Flow's open chat, because the session-wide notice was never cleared on a Flow
 // change and late answers of the previous Flow could still raise one.
@@ -22,7 +22,7 @@ const FLOW_A = { projectId: 'p', groupId: 'p.m.0001' } // Test: no chat yet
 const FLOW_B = { projectId: 'p', groupId: 'p.m.0002' } // Flow follow-up: one chat with history
 const B1 = 'p.m.0002.0002-CH'
 const B2 = 'p.m.0002.0003-CH'
-// flowgate.v02gui.0028: unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
+// unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
 beforeEach(() => localStorage.clear())
 
 function deferred<T>() {
@@ -124,7 +124,7 @@ describe('a notice stays with its Flow', () => {
     await flushPromises()
     expect(session.state.notice).toBeNull()
 
-    // flowgate.v02test.0024 B: a send failure is a line of the chat's own history, not a notice: it stays with the
+    // B: a send failure is a line of the chat's own history, not a notice: it stays with the
     // chat (also when it is opened again) and a new draft does not show it.
     source.postTurn.mockRejectedValueOnce(httpError(422, 'nope'))
     expect(await session.send('again')).toBe(false)
@@ -167,7 +167,7 @@ describe('late answers of a previous Flow or chat (scopeGen / chatGen races)', (
     await session.setScope(FLOW_B)
     await flushPromises()
     slow.resolve({ id: 'p.m.0001.0099-CH', title: '새 대화', updatedAt: '2026-11-05T05:00:00Z' })
-    // flowgate.v02gui.0009: the message whose send started is delivered to the chat its create made (off screen).
+    // the message whose send started is delivered to the chat its create made (off screen).
     expect(await sending).toBe(true)
     await flushPromises()
     expect(session.state.chats.map((c) => c.id)).toEqual([B1, B2])

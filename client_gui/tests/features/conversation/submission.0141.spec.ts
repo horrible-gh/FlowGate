@@ -7,7 +7,7 @@ import { draftUserId, type DraftSendSnapshot } from '@/features/conversation/dra
 import { createFakeSource, httpError } from './fakeConversationSource'
 
 const scope = { projectId: 'p', groupId: 'p.m.0001' }
-// flowgate.v02gui.0028: unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
+// unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
 beforeEach(() => localStorage.clear())
 function deferred<T>() {
   let resolve!: (value: T) => void

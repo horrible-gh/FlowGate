@@ -44,10 +44,10 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free non-blocking overlay shell (T0006 §6). Coexists with the base screen —
+// Domain-free non-blocking overlay shell. Coexists with the base screen —
 // no backdrop, no focus trap, background stays fully interactive. Owns only position/
 // size/minimized/open-close/drag-resize lifecycle; it knows nothing about Git branches,
-// AI runs, Projects, Documents or Approvals (T0006 §6/§15).
+// AI runs, Projects, Documents or Approvals.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import i18n from '@shared/i18n'
 import IconButton from './IconButton.vue'
@@ -67,11 +67,11 @@ const props = withDefaults(
     draggable?: boolean
     resizable?: boolean
     closeOnEscape?: boolean
-    // Optional `v-model:minimized` (flowgate.v02.0033 C1): a caller that owns the minimized
+    // Optional `v-model:minimized`: a caller that owns the minimized
     // state (e.g. a window list shown elsewhere) passes it in and hears every toggle. Left
     // unset, the shell keeps minimized state to itself exactly as before.
     minimized?: boolean
-    // flowgate.v02.0088 F06: explicit accessible names for the shell's own controls. Each one
+    // explicit accessible names for the shell's own controls. Each one
     // given wins over the default, which follows the app's current language (gui.common.*).
     minimizeLabel?: string
     restoreLabel?: string
@@ -97,7 +97,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ close: []; 'update:minimized': [value: boolean] }>()
 
-// flowgate.v02.0088 F06: the default accessible names read the shared i18n instance directly
+// the default accessible names read the shared i18n instance directly
 // (this shell is domain-free and is mounted with or without the app's i18n plugin), so they
 // follow a language switch while the window stays open. The English words remain only as the
 // last resort when the app catalog is not registered at all.
@@ -133,7 +133,7 @@ function setMinimized(value: boolean): void {
 }
 
 // Keeps at least this many px of the titlebar reachable so a panel dragged toward an
-// edge can never fully leave the viewport (T0006 §6 "Minimum constraints to prevent disappearing
+// edge can never fully leave the viewport (the earlier implementation "Minimum constraints to prevent disappearing
 // completely outside the viewport").
 const MIN_VISIBLE = 80
 
@@ -227,7 +227,7 @@ function onResizeEnd(): void {
 }
 
 /* ────────────────────────────────── ESC ─────────────────────────────────── */
-// A separate contract from ModalShell (T0006 §6): this listens on the panel itself,
+// A separate contract from ModalShell: this listens on the panel itself,
 // not on `document`, so ESC only closes the panel while focus is inside it and never
 // while the user is typing somewhere else on the still-interactive base screen.
 function onEscape(): void {
@@ -236,7 +236,7 @@ function onEscape(): void {
 }
 
 /* ───────────────────────────── open / close ─────────────────────────────── */
-// No focus trap and no forced initial focus (T0006 §6 "No focus trap" /
+// No focus trap and no forced initial focus (the earlier implementation "No focus trap" /
 // "Explicit focus policy"): opening never steals focus from whatever the user is doing on
 // the base screen. Closing returns focus to the trigger only as a courtesy, and only
 // if focus was still inside this panel — if the user had already moved on, forcing
@@ -274,7 +274,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onResizeEnd)
 })
 
-// flowgate.v02.0067 T#1: `geometry()` / `setGeometry()` let a caller read and set the panel's place
+// `geometry()` / `setGeometry()` let a caller read and set the panel's place
 // and size after it was created (the initial props are read once) — the Git window fits itself to a
 // smaller viewport this way without re-creating its body. `setGeometry` takes the size as given, so
 // a caller may go below `minWidth` / `minHeight` to stay on a small screen; the position is clamped
@@ -291,7 +291,7 @@ function setGeometry(next: { x: number; y: number; width: number; height: number
   clampPosition()
 }
 
-// flowgate.v02.0053 T#3: the optional `actions` slot puts a caller's own titlebar buttons right before
+// the optional `actions` slot puts a caller's own titlebar buttons right before
 // minimize / close (the document window's ✎), and `bringToFront()` lets a caller raise a panel that is
 // already open (a second request for the same document). Both stay domain-free.
 defineExpose({ bringToFront, geometry, setGeometry })

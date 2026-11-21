@@ -77,7 +77,7 @@ describe('check card target and push controls — 0098', () => {
     expect(optionNames(w)).toEqual(raw.merge_target_options)
     expect(optionNames(w)).not.toContain('origin'); expect(optionNames(w)).not.toContain('—')
     expect(selected(w)).toBe('feature/v0.2.0'); expect(http.patch).not.toHaveBeenCalled()
-    // T0012 rework: no default button and no text about it.
+    // no default button and no text about it.
     expect(w.find('[data-test="check-settings-default"]').exists()).toBe(false)
     expect(w.text()).not.toContain('기본값 사용')
     await w.get('[data-test="check-settings-target"]').setValue('release/local'); await flushPromises()
@@ -168,7 +168,7 @@ describe('check card target and push controls — 0098', () => {
       expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
       expect(optionNames(w)).toEqual([])
     } else {
-      // flowgate.v02test.0020 (replaces 0006-T §3.5's lock): the first read failed and nothing is kept, but the stored /
+      // (replaces the earlier implementation's lock): the first read failed and nothing is kept, but the stored /
       // inherited names stay choosable, marked unverified, and the refresh is open.
       const names = [...new Set([stored ? name : null, raw.default_target_branch].filter((n): n is string => !!n))]
       expect(control.attributes('disabled')).toBeUndefined()
@@ -283,7 +283,7 @@ describe('check card target and push controls — 0098', () => {
     raw.fields.push = field(false); raw.default_target_branch = 'main'; targets(null)
     await w.setProps({ node: toSettingsNode(raw) })
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
-    // flowgate.v02test.0002 R0001 #1: the recorded push=true no longer draws the "missing remote branches are created" line.
+    // #1: the recorded push=true no longer draws the "missing remote branches are created" line.
     expect(w.find('[data-test="gate-summary-push-create"]').exists()).toBe(false)
     expect(w.text()).not.toContain('없는 원격 브랜치는 새로 생성')
     // The card's document tab (GateSlots) passes hideTarget: neither the target line nor a substitute is drawn.
@@ -397,7 +397,7 @@ describe('0119 refresh icon and field help', () => {
 })
 
 
-// flowgate.v02test.0002 T-b (0006-T, R0001 requirement 3): before the confirmation, a lookup timeout / failure keeps the
+// T-b (T, the requirement requirement 3): before the confirmation, a lookup timeout / failure keeps the
 // last candidates the server confirmed (memory only, 5 minutes, same project / flow / card / work base). The live lookup
 // status stays as answered, no name is invented, and every choice is still judged by the PATCH.
 describe('0006-T T-b: kept confirmed merge targets before the confirmation', () => {
@@ -407,7 +407,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
   const control = (w: VueWrapper) => w.get('[data-test="check-settings-target"]')
   const refresh = (w: VueWrapper) => w.get('[data-test="check-settings-refresh"]')
   /**
-   * flowgate.v02test.0020 (replaces 0006-T §3.5's lock): nothing confirmed is kept, so the list holds only the stored and
+   * (replaces the earlier implementation's lock): nothing confirmed is kept, so the list holds only the stored and
    * the inherited name, marked unverified; the control stays open (the server judges a choice on PATCH) with the lookup
    * error and the refresh.
    */
@@ -633,7 +633,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
       lookupFails('timeout'); back(); await flushPromises()
       expect(kept.settings.value?.mergeTargetState?.status).toBe('timeout')
       expect(kept.cachedTargets()).toBeNull()
-      // No list from before the move: only the saved name, unverified (flowgate.v02test.0020); the refusal stays as the
+      // No list from before the move: only the saved name, unverified; the refusal stays as the
       // control error.
       expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
       expect(control(w).attributes('disabled')).toBeUndefined()
@@ -681,7 +681,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
         expect(optionNames(w)).toEqual(LIST)
         expect(selected(w)).toBe('feature/v0.2.0')
       } else {
-        // the kept list is dropped: only the inherited name, unverified (flowgate.v02test.0020)
+        // the kept list is dropped: only the inherited name, unverified
         expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
         expect(context.value!.targetCache.value).toBeNull()
         expect(selected(w)).toBe('feature/v0.2.0')
@@ -784,7 +784,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
 })
 
 
-// flowgate.v02test.0020: after a lookup timeout / failure the card reads its settings again by itself (plain reads that pick
+// after a lookup timeout / failure the card reads its settings again by itself (plain reads that pick
 // up the server's background computation), a few times with growing waits, until a confirmed list arrives. Leaving the
 // card ends it; nothing is written.
 describe('flowgate.v02test.0020: automatic re-read after a lookup timeout', () => {

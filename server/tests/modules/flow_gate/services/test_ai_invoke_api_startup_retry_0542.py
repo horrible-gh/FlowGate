@@ -1,4 +1,4 @@
-"""flowgate.default.0542 T0008: bounded same-provider API startup retry."""
+"""bounded same-provider API startup retry."""
 from __future__ import annotations
 
 import socket

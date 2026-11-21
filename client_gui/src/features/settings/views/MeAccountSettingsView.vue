@@ -135,7 +135,7 @@ const selected = ref<number | null>(null)
 // The last value the server confirmed (GET or a successful PATCH); a failed save returns here.
 const confirmed = ref<number | null>(null)
 const loading = ref(true)
-// flowgate.v02.0088 F17: the errors this screen keeps on display are kept as their key (or, for an unexpected
+// the errors this screen keeps on display are kept as their key (or, for an unexpected
 // error, its own words) and translated when they render, so the language buttons right above change them too.
 const LOAD_FAILED = 'gui.settings.self.errors.load_failed'
 const loadError = ref<UiText | null>(null)

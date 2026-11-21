@@ -10,6 +10,22 @@ come from actual NR0003 runs on 2026-08-08; later measurements are dated separat
 
 Comments, docs and commit messages must be in English.
 
+Do not put internal document/task IDs in comments; put them in commit messages.
+Keep the reason and constraints when shortening comments. Preserve runtime strings,
+CLI help, immutable migrations, archived fixtures and existing Korean comment lines.
+Run `python tools/internal_comment_baseline.py --check` after comment changes.
+Its content baseline may only shrink; a removed reference does not permit a new one.
+The read-only `--dump-baseline --offset N --limit M` command emits baseline rows
+for review; concatenate all pages before replacing the baseline. Never add entries
+to make a check pass.
+
+Use `python tools/verify_comment_changes.py` to compare modified runtime syntax
+with HEAD, including parser diagnostics. `--compare-client-tests` runs Vitest
+against a temporary HEAD export and the current tree using installed dependencies.
+It reports added failures and test counts; a clean comparison does not mean an
+already failing suite passes. Use `--client-test tests/path.spec.ts` to narrow a
+follow-up comparison. Test-consumed comment markers must remain unchanged.
+
 Keep Korean UI copy, localization dictionaries, templates, SQL data, and test
 expectation strings unchanged. Translate explanatory comments and docstrings,
 including inline comments. When a comment quotes an actual UI label, retain the

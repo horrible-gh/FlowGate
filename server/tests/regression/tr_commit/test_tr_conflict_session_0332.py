@@ -1,4 +1,4 @@
-"""Do revert/reapply conflicts avoid dead ends? (0332 TR0019, the final deferred part.)
+"""Do revert/reapply conflicts avoid dead ends? (the final deferred part.)
 
 The preceding three suites cover commits on approval, reverts on rewind, and reapplication
 on moving forward. All passed, but **a revert conflict still ended the path**: the loop
@@ -216,7 +216,7 @@ def _stored_status(store):
 
 
 def _parked_cancel(repo):
-    """0009-TR changed f.txt to A, then a person overlaid C. Cancellation conflicts."""
+    """changed f.txt to A, then a person overlaid C. Cancellation conflicts."""
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     row = _ledger_commit(_TR_A, sha_a, "0009-TR: A")
@@ -385,7 +385,7 @@ def test_the_commit_button_finishes_the_cancel_and_writes_the_ledger(
     assert (repo / "f.txt").read_text(encoding="utf-8") == "resolved\n"
     assert svc._revert_in_flight(repo) is False
     assert _git(["status", "--porcelain"], repo).strip() == ""
-    # The ledger holds this as the cancellation commit, preserving the original commit hash (D0005 K5).
+    # The ledger holds this as the cancellation commit, preserving the original commit hash.
     after = db_ledger.get_by_id(row["id"])
     assert (after["state"], after["cancel_commit"]) == ("canceled", sha)
     assert after["commit_sha"] == row["commit_sha"]
@@ -399,7 +399,7 @@ def test_the_reapply_direction_takes_the_same_road_and_ends_in_a_new_live_row(
     real_store, git_active, repo,
 ):
     """Reapplication uses the same session, editing, and button. Only the final ledger row differs:
-    it adds a new live row instead of restoring the canceled row (D0005 K5)."""
+    it adds a new live row instead of restoring the canceled row."""
     row, parked = _parked_reapply(repo)
     assert parked["kind"] == "tr_reapply"
     svc.resolve_conflicts(
@@ -424,7 +424,7 @@ def test_a_resolution_that_changes_nothing_is_recorded_not_treated_as_a_git_erro
 ):
     """Keeping our side unchanged is a valid resolution, and AI often chooses it.
 
-    There is then nothing to stage. An empty commit is history noise (D0005 K3),
+    There is then nothing to stage. An empty commit is history noise,
     but this is not a Git error: the desired result already exists in the tree.
     Record it exactly like an empty revert in the cancellation loop: canceled without a commit.
     """
@@ -467,7 +467,7 @@ def test_committing_the_resolution_carries_on_with_the_rest_of_the_run(
     (repo / "f.txt").write_text("X\n", encoding="utf-8")
     sha_b = _commit(repo, "0011-TR: X")
     row_b = _ledger_commit(_TR_B, sha_b, "0011-TR: X")
-    # A person edited the line touched by the latest commit; canceling 0011-TR conflicts.
+    # A person edited the line touched by the latest commit; canceling the earlier implementation conflicts.
     (repo / "f.txt").write_text("Y\n", encoding="utf-8")
     _commit(repo, "manual fix")
     # The exact state left by rewind: one return-point set and two rewound documents in pending_review.
@@ -589,7 +589,7 @@ def test_the_ai_mention_tells_a_revert_apart_from_a_merge(monkeypatch):
     assert "PUTTING BACK" in reapply
 
 
-# ── 6. NR0025 T0030 §3.7(b): execution evidence for recommendation 2-B's seam ──
+# ── 6. the review the earlier implementation(b): execution evidence for recommendation 2-B's seam ──
 
 def test_open_tr_conflict_session_reads_unmerged_paths_through_the_facade_seam(
     monkeypatch, tmp_path

@@ -1,5 +1,5 @@
 <template>
-  <!-- Thin shared row primitive (D0002 §7.1/§7.2): one treeitem with its caret, depth
+  <!-- Thin shared row primitive: one treeitem with its caret, depth
        indentation, focus and selected/active styling. It knows nothing about Project/Group/
        Flow — each Row decides what select/activate/toggle mean and fills the default slot
        with its own icon/label. -->
@@ -70,12 +70,12 @@ const INDENT_STEP = 14
 const indent = computed(() => 6 + (props.level - 1) * INDENT_STEP)
 
 // A real double click fires click(detail=1), click(detail=2), dblclick. Single click =
-// select, double click = select + activate (0023 TR0004 Q #373): the first click selects at
+// select, double click = select + activate: the first click selects at
 // once, the second click of the same double click (detail>1) adds nothing, and dblclick adds
 // the activate intent on top of the selection already in place. Nothing waits on a timer, so
 // the contract does not depend on the OS double-click speed.
 //
-// flowgate.v02test.0002 R0001 #5 — an expandable row (Project, Group) opens/closes on the single
+// #5 — an expandable row (Project, Group) opens/closes on the single
 // click itself: click(detail=1) = select + toggle, the second click is still ignored and dblclick
 // adds nothing, so one real double click toggles exactly once (never open-then-close). A Flow row
 // (not expandable) keeps the contract above: click = select, dblclick = activate (open) once.
@@ -160,7 +160,7 @@ function focusParentRow(el: HTMLElement) {
 }
 
 /* selected (single click) and active (Designer-opened Flow) are separate states
-   (D0002 §10, 0025 T0006 §5), told apart without any badge or text:
+   , told apart without any badge or text:
    - selected: neutral highlight only;
    - active:   accent left bar + faint accent tint + weight;
    - both:     the accent tint and bar with the neutral highlight layered on top.

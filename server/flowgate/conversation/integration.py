@@ -1,4 +1,4 @@
-"""Chat run hook handlers: how the AI invoke engine reaches this package (D0006 §2.3).
+"""Chat run hook handlers: how the AI invoke engine reaches this package.
 
 ``modules.flow_gate.services.chat_run_hooks`` defines the ports; the composition root
 (``startup.py``) calls :func:`register` once at startup. Each handler is chat-only, and a
@@ -7,16 +7,16 @@ handler failure never fails the AI run (the hook port logs it and moves on).
     on_chat_run_start               admission: command capability, run start seq
     on_chat_run_prepare             worker, before any provider: start snapshot (0152)
     provide_chat_tools              API worker: the ``run_command`` tool (and the attachment
-                                    upload request, flowgate.chat.0017 CH0002; the card question
-                                    list / answer, flowgate.v02gui.0010)
+                                    upload request, the earlier change the discussion; the card question
+                                    list / answer, the earlier change)
     on_chat_run_finalize            finalize: close open commands, record the run change, then
-                                    the chat commit point (flowgate.v02test.0023)
+                                    the chat commit point
     on_chat_run_cancel              cancel: close the run's commands before it is announced
     on_conversation_reply_appended  reply append: move the run's activity anchors
     accept_chat_call                API worker: accept a received tool call (card document
-                                    call ledger, flowgate.v02.0127 L#3 §2.1 W1)
+                                    call ledger, the earlier change L#3 W1)
 
-flowgate.v02.0127 L#3 §2.1 W4: cancel and finalize first close the run's card document edit
+L#3 W4: cancel and finalize first close the run's card document edit
 gate (``card_document_edit.chat_gate``) and only then do what they did before.
 """
 from __future__ import annotations
@@ -34,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 def on_chat_run_start(run: dict) -> None:
-    # The capability that lets this run ask for commands (D0006 §5.3 capability_required):
+    # The capability that lets this run ask for commands (capability_required):
     # only a run whose issued token carries command access -- edit (read_write: edit, or an
-    # edit_once that won its claim) or execute (flowgate.v02test.0026: commands only). A
+    # edit_once that won its claim) or execute (commands only). A
     # reading chat is never offered the tool; the gate itself stays commands._authorize_run,
     # which re-judges the token (and an execute token's command scope) at creation,
     # approval and spawn.
@@ -47,7 +47,7 @@ def on_chat_run_start(run: dict) -> None:
 
 
 def on_chat_run_prepare(run: dict) -> None:
-    """flowgate.v02.0152: the start-tree snapshot, on the worker thread before any provider
+    """the start-tree snapshot, on the worker thread before any provider
     starts. It hashes every file of the worktree, which on a cold file cache took longer
     than the browser's 30s wait for /ai-invoke/start when it ran inside admission. Nothing
     can change files for the run before its provider starts, so the tree means the same."""
@@ -67,22 +67,22 @@ def provide_chat_tools(run) -> list[dict]:
     from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
 
     tools = graph_read_tools.descriptors()
-    # flowgate.v02test.0023 (0002-CH turn 43): control tower stage 1 -- place work cards and start the
+    # (CH): control tower stage 1 -- place work cards and start the
     # Flow's run. Offered in every mode; reading mode is refused by the tool (chat_edit_mode_required).
     tools.extend(chat_control_tools.descriptors())
     if run is None or run.get("chat_command_capability"):
         tools.append(commands.tool_descriptor(
             execute_mode=bool(run) and run.get("chat_command_access") == "execute"))
-    # flowgate.chat.0017 CH0002: offered in reading mode too -- a request registers nothing
+    # offered in reading mode too -- a request registers nothing
     # until a person approves it, and it never waits for that decision.
     tools.append(attachment_request_tools.chat_descriptor())
-    # flowgate.v02gui.0010: the Flow's card questions (Q) — list and answer. Offered in every mode: an answer is
+    # the Flow's card questions (Q) — list and answer. Offered in every mode: an answer is
     # judged by the user's document create permission alone (Q#600), never by the chat's edit mode.
     tools.extend(chat_questions.descriptors())
     return tools + chat_tools.descriptors({
         chat_tools.READ_TOOL: chat_adapter.read_card_document_call_handler,
         chat_tools.REVISE_TOOL: chat_adapter.revise_card_document_call_handler,
-        # 0127 CH0028: doc_id read / existing-body edit / new-document create.
+        # doc_id read / existing-body edit / new-document create.
         chat_tools.READ_DOC_TOOL: chat_documents.read_document_call_handler,
         chat_tools.REVISE_DOC_TOOL: chat_documents.revise_document_call_handler,
         chat_tools.CREATE_DOC_TOOL: chat_documents.create_document_call_handler,
@@ -100,7 +100,7 @@ def _run_was_cancelled(run: dict) -> bool:
 
 def on_chat_run_finalize(run: dict) -> None:
     """Commands first -- nothing of a finished run stays open and the end snapshot must
-    not race a command still writing files -- then the run change (D0006 §3.8.2).
+    not race a command still writing files -- then the run change.
 
     Before both, the card document edit gate closes with ``finished`` (0127 L#3 §2.7, W4);
     a gate already closed by a cancel keeps ``cancelled``. That step never raises."""
@@ -115,14 +115,14 @@ def on_chat_run_finalize(run: dict) -> None:
     except Exception:
         logger.warning("chat command cleanup failed for %s", run.get("run_id"), exc_info=True)
     run_changes.finalize_run(run)
-    # flowgate.v02test.0023: the chat commit point -- after the end snapshot, so the run
+    # the chat commit point -- after the end snapshot, so the run
     # change still compares the run's own trees. Never raises.
     from modules.flow_gate.services import chat_commit_service
     chat_commit_service.commit_on_finalize(run)
 
 
 def on_chat_run_cancel(run: dict, announce) -> None:
-    """0127 L#3 §2.7 (W4): ① close the card document edit gate (``cancelled``; waits at most
+    """L#3 (W4): ① close the card document edit gate (``cancelled``; waits at most
     CANCEL_DRAIN_SEC for edits already past it, a failure never blocks the cancel) ②
     the existing command stop, which announces the cancel under its launch gate."""
     from flowgate.card_document_edit import chat_gate
@@ -136,7 +136,7 @@ def on_conversation_reply_appended(doc_id: str, turn: dict) -> None:
 
 
 def accept_chat_call(run: dict, call: dict):
-    """0127 L#3 §2.1 W1: the server call context of a received tool call (or None)."""
+    """L#3 W1: the server call context of a received tool call (or None)."""
     from flowgate.card_document_edit import call_ledger
 
     return call_ledger.accept_call(run, call)
@@ -166,7 +166,7 @@ def unregister() -> None:
 
 def recover_on_startup() -> dict:
     """Startup recovery: open commands of a dead process are cancelled (never resumed),
-    and activity anchors left behind are repaired (D0006 §3.7, §4.3)."""
+    and activity anchors left behind are repaired."""
     closed = commands.recover()
     moved = activity.reconcile()
     return {"commands_closed": closed, "anchors_moved": moved}

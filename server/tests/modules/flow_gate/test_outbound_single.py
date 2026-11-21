@@ -231,7 +231,7 @@ def seed_data(tmp_db, tmp_storage):
     # Jail document content reads to this storage root so resolve_storage_path()
     # accepts the seeded file (the current contract rejects files outside the root).
     #
-    # 0394 T0004: remember what was here first. The teardown below used to pop the
+    # remember what was here first. The teardown below used to pop the
     # variable outright, which is not the same thing — several other suites publish
     # their own storage root at import time, and popping deletes theirs too. See the
     # teardown for the failure that caused.
@@ -456,7 +456,7 @@ def seed_data(tmp_db, tmp_storage):
 
     yield
 
-    # 0394 T0004: put back what was there, rather than removing the variable.
+    # put back what was there, rather than removing the variable.
     #
     # `pop` left the process with NO storage root at all, so every later test that
     # relied on one set at import time silently fell back to the default location.

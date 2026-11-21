@@ -1,4 +1,4 @@
-"""Group 0257 B0001: one active TSR per workflow slot, and a terminal report failure.
+"""Group the regression: one active TSR per workflow slot, and a terminal report failure.
 
 Every test here fails against the unmodified code (see TR0005 "검증" for the recorded
 red run) — they pin the rerun behaviour, not the behaviour main already had.
@@ -163,10 +163,10 @@ def _seed_active_tsr(env, *, slot_bound=True, review_status="approved"):
         )
 
 
-# ── NR0003 required regressions (a)/(b): two successful runs, one active TSR slot ──
+# ── the review required regressions (a)/(b): two successful runs, one active TSR slot ──
 
 def test_rerun_revises_active_tsr_instead_of_reserving_a_second_number(env):
-    """Main B0001 symptom: rerunning tests created a second TSR document."""
+    """Main the regression symptom: rerunning tests created a second TSR document."""
     _seed_active_tsr(env)
 
     tsr_doc_id = env["svc"].assemble_tsr(TS_DOC, _run(), CASES)
@@ -200,10 +200,10 @@ def test_first_run_still_creates_the_report(env):
     assert len(env["rec"].created) == 1
 
 
-# ── 0441 T0004: blocking manual TSR creation must preserve official assembly ──
+# ── the earlier implementation: blocking manual TSR creation must preserve official assembly ──
 
 def test_manual_tsr_ban_does_not_reach_the_official_assembly(env):
-    """0441 T0004 item 3 — TSR is now refused at every MANUAL creation gate
+    """TSR is now refused at every MANUAL creation gate
     (``/documents/next-empty``, inbox ``action:new``, the ordinary ``'new'`` token). The
     ban is about who is writing the document, not about the type existing: this path is the
     server writing it from a finished run, and it must keep working exactly as before.
@@ -225,7 +225,7 @@ def test_manual_tsr_ban_does_not_reach_the_official_assembly(env):
     assert len(env["rec"].reserved) == 1
 
 
-# ── NR0003 regression (c): repeating completion for one run consumes no new number ──
+# ── the review regression (c): repeating completion for one run consumes no new number ──
 
 def test_same_run_completion_retry_reuses_the_recorded_report(env):
     run = _run(run_id="trun_1", tsr_doc_id=ACTIVE_TSR_ID)
@@ -235,7 +235,7 @@ def test_same_run_completion_retry_reuses_the_recorded_report(env):
     assert env["rec"].created == []
 
 
-# ── NR0003 §3: link rerun reports to their slot, preventing orphans ──
+# ── the review: link rerun reports to their slot, preventing orphans ──
 
 def test_rerun_binds_the_report_to_its_own_slot_when_the_head_moved_on(env):
     """Link rerun reports to the slot even after the first report consumed it."""
@@ -302,7 +302,7 @@ def test_approved_report_is_resubmitted_for_re_review(env):
     assert env["rec"].transitions[0]["doc_id"] == ACTIVE_TSR_ID
 
 
-# ── NR0003 §2 / regression (d): report assembly failure is terminal ──
+# ── the review / regression (d): report assembly failure is terminal ──
 
 @pytest.fixture
 def exec_env(monkeypatch, tmp_path):

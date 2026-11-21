@@ -1,13 +1,13 @@
 <template>
-  <!-- flowgate.v02.0031 — the Conversation part for the Designer's right tool area:
+  <!-- the Conversation part for the Designer's right tool area:
        header (chat list / title / new chat) · participants · one chronological timeline ·
-       composer (flowgate.v02.0047: the v9 order). It owns no tab button, panel header,
-       collapse or width (R0001 §10): a Tool Panel Container puts this element in its body and
+       composer (the v9 order). It owns no tab button, panel header,
+       collapse or width: a Tool Panel Container puts this element in its body and
        gives it the height to fill.
-       flowgate.v02.0061 T#14 (WP answer 2): `sourceLocked` — the Flow's Graph run is running / paused / stopping: the
+       (WP answer 2): `sourceLocked` — the Flow's Graph run is running / paused / stopping: the
        AI source access mode cannot change (the reason on the mode icons); messages, AI calls and read use go on. A
        refused edit / edit-once call (409 graph_run_locked) says so in the notice.
-       flowgate.v02test.0013: `subscribeEvents` (the container's project event stream) keeps the open chat in line with
+       `subscribeEvents` (the container's project event stream) keeps the open chat in line with
        the server while it is open — shown or not — and `active` (the container shows this part) makes coming back to
        the Dock tab a return like the browser tab's. -->
   <section class="conv-panel" data-test="conversation-panel" :aria-label="t('gui.conversation.label')">
@@ -121,7 +121,7 @@
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
 // existing contracts is used. The panel owns modeless run-change windows (0151 T-B); the
 // optional `open-change` event remains a notification. File contents stay outside the log.
-// flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
+// with no chat open the composer starts one — [+] only leaves
 // the open chat, and the chat is created by its first send (chatStart.ts).
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -145,15 +145,15 @@ const props = withDefaults(
     groupId: string | null
     source?: ConversationSource
     readOnly?: boolean
-    /** flowgate.v02.0061 T#14: the Flow's Graph run locks the AI source access mode. */
+    /** the Flow's Graph run locks the AI source access mode. */
     sourceLocked?: boolean
-    /** flowgate.v02test.0013: the project event stream; without it the chat hears no server event. */
+    /** the project event stream; without it the chat hears no server event. */
     subscribeEvents?: SubscribeChatEvents
-    /** flowgate.chat.0017 CH0002: the AI attachment request row the container draws requests with. */
+    /** the AI attachment request row the container draws requests with. */
     attachmentRequestRow?: Component
-    /** flowgate.chat.0017 CH0002: the approve all / reject all bar of a request block. */
+    /** the approve all / reject all bar of a request block. */
     attachmentRequestBulk?: Component
-    /** flowgate.v02test.0013: the container shows this part (false while another Dock tab is shown). */
+    /** the container shows this part (false while another Dock tab is shown). */
     active?: boolean
   }>(),
   { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
@@ -163,7 +163,7 @@ const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
 }>()
 
-// flowgate.chat.0017 CH0002: the attachment request blocks of the timeline draw their rows with the container's component.
+// the attachment request blocks of the timeline draw their rows with the container's component.
 provide(ATTACHMENT_REQUEST_ROW, computed(() => props.attachmentRequestRow ?? null))
 provide(ATTACHMENT_REQUEST_BULK, computed(() => props.attachmentRequestBulk ?? null))
 
@@ -175,7 +175,7 @@ const session = createConversationSession({
   onAutoCopyMention: () => void copyMention(true),
 })
 const state = session.state
-// flowgate.chat.0017 CH0002: a request block reads the activities again after a bulk call (a failed one too).
+// a request block reads the activities again after a bulk call (a failed one too).
 provide(ATTACHMENT_REQUEST_REFRESH, () => session.recover({ activities: true }))
 const start = createChatStart({ session, source, defaultTitle: () => t('gui.conversation.header.new_title') })
 const composerEl = ref<InstanceType<typeof ConversationComposer> | null>(null)
@@ -259,7 +259,7 @@ const noticeText = computed(() => {
   if (!notice) return ''
   const key = `gui.conversation.notice.${notice.code}`
   const label = te(key) ? t(key) : notice.code
-  // flowgate.v02.0088 F12: only a separate server diagnostic is added, never the notice again.
+  // only a separate server diagnostic is added, never the notice again.
   return notice.detail && notice.detail !== label ? `${label} (${notice.detail})` : label
 })
 
@@ -272,7 +272,7 @@ function reloadChat(): void {
   if (state.activeChatId) void session.selectChat(state.activeChatId)
 }
 
-// flowgate.v02gui.0011 B: the stop button from the press of send on. The session owns it once the message is being
+// B: the stop button from the press of send on. The session owns it once the message is being
 // stored (and while the AI call starts or runs); before that, while a new chat is being created, chatStart does.
 const stopState = computed(() => {
   const own = session.startStop.value
@@ -304,7 +304,7 @@ async function copyManualAgain(): Promise<void> {
   if (await copyToClipboard(text)) session.setManualCopyText(null)
 }
 
-// flowgate.v02test.0013: every server event about the open chat (a message, its AI run starting or ending, a command
+// every server event about the open chat (a message, its AI run starting or ending, a command
 // request, a run's changes) and a reconnect of the stream recover what it may have changed — also while the part is
 // hidden behind another Dock tab, so it is current when shown again.
 useChatEvents(
@@ -315,14 +315,14 @@ useChatEvents(
     return scope && chatId ? { projectId: scope.projectId, groupId: scope.groupId, chatId } : null
   },
   (parts) => void session.recover(parts),
-  // flowgate.v02gui.0017 B3: a chat list whose read failed (dropped connection, server restart) used to stay failed
+  // B3: a chat list whose read failed (dropped connection, server restart) used to stay failed
   // until [다시 시도] was pressed. When the stream reconnects or the browser is online again it reads again by itself.
   { projectId: () => state.scope?.projectId ?? null, restored: () => void session.recoverChatList() },
 )
 
-// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): coming back to the panel — the tab visible again, the window focused again —
+// T-A2 (NR ②): coming back to the panel — the tab visible again, the window focused again —
 // catches the open chat up. At most once per REVISIT_CATCHUP_MIN_MS (both events fire on one return), never while
-// hidden. flowgate.v02test.0013: events missed meanwhile (a dropped stream, a throttled background tab) are why the
+// hidden. the earlier change: events missed meanwhile (a dropped stream, a throttled background tab) are why the
 // return recovers everything — the chat's active run included, which the open chat may have missed — and a run
 // being polled is not skipped any more: its poll reads now instead of at the end of its wait. Showing the Dock's
 // chat tab again is a return too; a window focus while another Dock tab is shown is not.
@@ -330,9 +330,9 @@ let lastRevisitCatchUp = Number.NEGATIVE_INFINITY
 
 function onRevisit(): void {
   if (document.visibilityState === 'hidden' || !props.active) return
-  // flowgate.v02gui.0017 B3: a failed chat list reads again on return as well (no-op unless it failed).
+  // B3: a failed chat list reads again on return as well (no-op unless it failed).
   void session.recoverChatList()
-  // flowgate.v02gui.0031 T0005 ③: a chat whose first read failed is read again too (session.recover opens it again).
+  // ③: a chat whose first read failed is read again too (session.recover opens it again).
   if (!state.activeChatId || (state.turnsStatus !== 'ready' && state.turnsStatus !== 'error')) return
   const now = Date.now()
   if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return

@@ -1,4 +1,4 @@
-"""flowgate.v02.0072 T#3 — the work plan (WP) card's settings: the AI pre-instruction writing switch and the run block.
+"""the work plan (WP) card's settings: the AI pre-instruction writing switch and the run block.
 
 The WP card had no settings (``fields.card_kind`` None). The Inspector's WP settings tab now reads and writes them
 through the existing card settings GET / PATCH (one value per change, the same locks and refusals), as values only:
@@ -6,7 +6,7 @@ through the existing card settings GET / PATCH (one value per change, the same l
 - the switch (``pre_instruction_auto``) is its own card value — stored, read again, back to the default with null —
   and turning it off (or on) touches no document: the plan's Steps keep their pre-instructions and attachments;
 - the run block (work AI, restart, review AI, review count, time limit, review basis) is the card's, not the
-  plan's Steps' ``provider_id`` / ``reviewer_provider_id``. flowgate.v02.0083 T#1 — 0072 T#3 revised: a run
+  plan's Steps' ``provider_id`` / ``reviewer_provider_id``. the earlier change the earlier implementation — the earlier implementation revised: a run
   reads it now. ``uses_ai`` is true for a plan card with its work AI stored (or an explicit AI assignee), ``run_plan``
   hands that AI, the time limit and the restarts on (no instruction stage, no result type) and ``after_result`` gives
   its AI result the run cards' review / approval. The switch is still read by nothing (no pre-instruction writer).
@@ -35,7 +35,7 @@ from test_fg_card_settings import (  # noqa: F401  (pytest fixtures and helpers 
     shown,
     stored_rows,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -64,7 +64,7 @@ def _files(root: Path) -> dict[str, str]:
 # ── pure ─────────────────────────────────────────────────────────────────────
 
 def test_a_work_plan_card_has_the_plan_settings_and_its_run_takes_the_run_block_revised_0072_t3():
-    """0072 T#3 revised (flowgate.v02.0083 T#1): the plan settings are as before; the run block now reaches the run."""
+    """revised: the plan settings are as before; the run block now reaches the run."""
     from flowgate.card_settings import fields as f
 
     assert f.card_kind("document", "WP") == f.PLAN and f.card_kind("document", "wp") == f.PLAN
@@ -75,7 +75,7 @@ def test_a_work_plan_card_has_the_plan_settings_and_its_run_takes_the_run_block_
     assert (switch.kind, switch.default) == (f.FLAG, False)
     stored = {"pre_instruction_auto": True, "run_ai": "aip_card", "restart": 1, "review_count": 2,
               "time_limit": 120, "review_basis": "last"}
-    # 0072 T#3 revised: the work AI, time limit and restarts reach the run; the review step follows the review count;
+    # revised: the work AI, time limit and restarts reach the run; the review step follows the review count;
     # still no instruction stage and no result type (the AI writes the WP itself).
     assert f.run_plan(f.PLAN, stored, "document", "WP") == {
         "settings": stored, "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 1}
@@ -167,7 +167,7 @@ def test_the_switch_and_the_run_block_touch_no_document(env, tmp_path):
 
 
 def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env):
-    """0072 T#3 revised (flowgate.v02.0083 T#1; formerly ``test_a_work_plan_node_hands_nothing_to_a_run``): a plan card
+    """revised (formerly ``test_a_work_plan_node_hands_nothing_to_a_run``): a plan card
     with its work AI stored is an AI node and its run takes the work AI, time limit and restarts; it still has no
     result type of its own and no instruction stage. With nothing stored it stays a person's card."""
     from flowgate.card_settings import settings
@@ -187,5 +187,5 @@ def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env
     assert settings.instruction_document(FB, row) == {}
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

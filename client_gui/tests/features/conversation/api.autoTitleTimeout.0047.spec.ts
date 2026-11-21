@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0047 rev3 — the AI title request of a new chat waits for one model answer,
+ * the AI title request of a new chat waits for one model answer,
  * which the server allows up to 90s (server/flowgate/conversation/auto_title.py
  * TIMEOUT_SEC). Under the 30s default the browser gave up first on a CLI model, the error was
  * swallowed and the chat kept its provisional title on screen. Asserted through the real

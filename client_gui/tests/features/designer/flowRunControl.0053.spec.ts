@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#9 — the top band's run buttons on the server Graph run (center/run/flowRunControl.ts):
+ * the top band's run buttons on the server Graph run (center/run/flowRunControl.ts):
  * 전체 실행 starts (or resumes) the run, 다음 단계 runs one step (start / resume, then stop at once), 중지
  * stops it; the edited draft is confirmed first; a refusal is kept with its server code and the run read
  * again; every answer reads the Canvas again. A 중지 pressed while a start / resume is answered (the

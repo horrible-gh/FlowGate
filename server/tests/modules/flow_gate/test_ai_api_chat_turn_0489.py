@@ -1,4 +1,4 @@
-"""Regression coverage for API-provider chat reply registration (0489 TR0010)."""
+"""Regression coverage for API-provider chat reply registration."""
 from __future__ import annotations
 
 import io
@@ -41,7 +41,7 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     monkeypatch.setattr(chat_command_service, "token_allows_commands", lambda run: offered)
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
     monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
-    # 0505 T0006 (DB0005 3.3): _conversation_context now returns (status, body) like its
+    # ( 3.3): _conversation_context now returns (status, body) like its
     # five self-HTTP siblings, not a bare dict.
     monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {
         "head_seq": 1,
@@ -66,7 +66,7 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
 
     assert svc._api_execute({"id": "provider", "kind": kind, "api_base_url": "https://api.example", "api_model": "test"}, "prompt", _run()) == ("started_ok", None)
     expected = [
-        # 0670 T0004: command execution is a chat capability next to the reads -- offered
+        # command execution is a chat capability next to the reads -- offered
         # only to a run whose token may write source; a read-only chat never sees it.
         "read_chat_history", "read_help", "run_command", "send_chat_reply",
     ]
@@ -84,7 +84,7 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
 
 def test_chat_returns_context_unavailable_when_context_cannot_be_loaded(monkeypatch):
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
-    # 0505 T0006 (DB0005 3.3): _conversation_context now returns (status, body); a
+    # ( 3.3): _conversation_context now returns (status, body); a
     # transport failure surfaces as (0, {"error": ...}) like its five self-HTTP siblings.
     monkeypatch.setattr(svc, "_conversation_context", lambda *_: (0, {"error": "boom"}))
 
@@ -127,7 +127,7 @@ def test_conversation_turn_request_binds_token_and_provider(monkeypatch):
     assert (status, payload, captured["timeout"]) == (201, {"ok": True}, 120)
     assert request.full_url == "http://127.0.0.1:8089/flowgate/api/v1/conversation/flowgate.default.0489.0001-B/turn"
     assert request.get_header("Authorization") == "Bearer raw-token"
-    # flowgate.v02gui.0009: the reply carries its token's encoding probe as the last line
+    # the reply carries its token's encoding probe as the last line
     # (ensure_ascii JSON, so the supplementary-plane glyph travels as a surrogate escape).
     from modules.flow_gate.services import encoding_probe
     probe = encoding_probe.probe_for("tok_0489")
@@ -165,7 +165,7 @@ def test_chat_forces_provider_tool_choice(monkeypatch, kind):
 
 
 def test_plain_last_message_is_appended_when_chat_tool_was_never_called(monkeypatch):
-    """T0009: a dying plain response must become the missing assistant chat turn."""
+    """a dying plain response must become the missing assistant chat turn."""
     appended = []
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
     monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)

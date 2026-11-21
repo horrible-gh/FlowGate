@@ -1,8 +1,8 @@
-"""flowgate.v02gui.0019 — a root card with no line holds its document; Run All on it opens nothing, refuses nothing.
+"""a root card with no line holds its document; Run All on it opens nothing, refuses nothing.
 
 0004-CH turns 13-15: a Flow whose only cards are the Bug / 요구사항 start card (and cards not connected to it) was
 refused at Run All with ``root_binding_no_start_node`` (422 ``graph_validation_failed``), because the root binding
-looked only at the run start nodes, and a root card with no outgoing line is no run start (flowgate.v02.0061).
+looked only at the run start nodes, and a root card with no outgoing line is no run start.
 The binding now falls back to the root card with no line when no connected one exists; a connected root card still
 wins (0061). The run scope is not changed: a card with no line is not run.
 """

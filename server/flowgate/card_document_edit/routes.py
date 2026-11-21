@@ -107,7 +107,7 @@ async def post_test_brief_revision(flow_id: str, node_key: str, slot: str, reque
     return await _post_structured(INPUT_TS_BRIEF, flow_id, node_key, slot, request)
 
 
-# flowgate.v02.0157: a standalone (certain non-card) document, by doc_id. User JWT only; a card-bound
+# a standalone (certain non-card) document, by doc_id. User JWT only; a card-bound
 # document keeps the coordinate routes above (its revision POST here is refused, its read says edit_path=card).
 DOC_BASE = "/documents/{doc_id}"
 

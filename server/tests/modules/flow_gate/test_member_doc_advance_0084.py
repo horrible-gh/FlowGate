@@ -1,8 +1,8 @@
-"""0084 TR0005 (B, defensive) — advance / token-mention resolve a non-R member doc.
+"""(B, defensive) — advance / token-mention resolve a non-R member doc.
 
-B0001: copying the next-step mention from the action bar of a non-R document (e.g. a
+copying the next-step mention from the action bar of a non-R document (e.g. a
 chat CH, which is a slot's produced child / result_doc_id) yielded the *chat*-bound
-mention instead of the next-step "new" mention. NR0003 found the server cause: both
+mention instead of the next-step "new" mention. the review found the server cause: both
 ``advance_workflow`` and ``_build_mention_for_token`` resolved the workflow sequence with
 the root-only ``get_sequence_by_doc_id``. A produced child is a member of the sequence
 but not its root, so the lookup returned None → ``sequence_not_decided`` (400) / a head-

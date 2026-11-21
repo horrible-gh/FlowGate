@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F1 — what a slot line draws for its state (0056 CH §5), decided in one place
+ * what a slot line draws for its state (CH), decided in one place
  * (parts/slotStateView.ts): a text badge only for a tone that says something to the operator (a settled one
  * drawn dim), nothing for a neutral or unknown state, and the plain wording of a line without a document.
  */

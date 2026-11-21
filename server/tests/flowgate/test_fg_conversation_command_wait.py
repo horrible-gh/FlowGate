@@ -1,6 +1,6 @@
-"""Approval wait, run time budget and the no-progress watchdog (flowgate.v02.0032 T#1).
+"""Approval wait, run time budget and the no-progress watchdog.
 
-D0006 §3.5 (limits), §3.5.1 (``chat_run_budget_sec`` = hard-ceiling remainder - safety,
+(limits), (``chat_run_budget_sec`` = hard-ceiling remainder - safety,
 never ``_remaining_sec``), §3.5.2 rules 1-7, §3.6 (progress while waiting/running) and
 completion conditions 5 and 7, including the boundary cases of a run that has been
 working for more than its 30-minute hop budget.

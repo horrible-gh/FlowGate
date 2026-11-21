@@ -1,7 +1,7 @@
-"""Root-type conversion R ↔ B (group 0066, NR0003 §5 → T0004).
+"""Root-type conversion R ↔ B (the earlier change, the review → the earlier implementation).
 
-R0066.0001 asked whether a workflow root's requirement(R)/bug(B) type can be
-flipped before the workflow decision, and to make it so if absent. NR0066.0003
+The review asked whether a workflow root's requirement(R)/bug(B) type can be
+flipped before the workflow decision, and to make it so if absent. the review.0003
 found no support path exists (type is part of the doc identity: doc_id, filename,
 inbound references) and recommended a dedicated, atomic, pre-decision-only
 converter. These tests exercise that converter against a REAL temp SQLite DB with
@@ -37,7 +37,7 @@ def env(tmp_path, monkeypatch):
     from modules.flow_gate.db import _SqliteDbAdapter, _SqliteTxnAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    # 0064 T#3: the converter runs inside the Flow guard, whose bump reads the affected-row count.
+    # the converter runs inside the Flow guard, whose bump reads the affected-row count.
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -205,7 +205,7 @@ def test_convert_rewrites_inbound_references(env):
 
 
 def test_convert_succeeds_with_created_event_under_immediate_fk(env):
-    """Reproduces B0108: every document keeps a `created` event referencing it, so
+    """Reproduces the regression: every document keeps a `created` event referencing it, so
     the root is never truly free of inbound FK rows. The portable converter (candidate
     b) drops the in-place rename and the SQLite-only defer pragma, so this test runs
     under IMMEDIATE foreign-key checking — exactly how PostgreSQL/MySQL behave, where
@@ -301,7 +301,7 @@ def test_a_child_document_makes_it_a_succession(env):
         "target_id": root["doc_id"],
     })
 
-    # 0064 T#4 (L0005 2.9): no longer refused — a new B succeeds the root, which keeps its row and body.
+    # no longer refused — a new B succeeds the root, which keeps its row and body.
     result = svc.convert_root_document_type(root["doc_id"], "B", actor_user_id="usr_admin")
     assert (result["doc_id"], result["type_code"]) == ("flowgate.default.0066.0001-B", "B")
     original = db_docs.get_by_id(root["doc_id"])

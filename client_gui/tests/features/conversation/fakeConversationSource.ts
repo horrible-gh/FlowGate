@@ -14,8 +14,8 @@ import type {
   RunFileDiff,
 } from '@/features/conversation/types'
 
-// flowgate.v02.0031 — in-memory ConversationSource for the session / panel specs. Every
-// method is a vi.fn so a spec can assert calls or override one answer. flowgate.v02.0032: it
+// in-memory ConversationSource for the session / panel specs. Every
+// method is a vi.fn so a spec can assert calls or override one answer. the earlier change: it
 // behaves like the server for activities — a decision changes what the next read returns.
 export interface FakeData {
   chats: ChatSummary[]
@@ -31,9 +31,9 @@ export interface FakeData {
   runDetails: Record<string, AiRunState>
   /** `${runId}\n${path}` → stored run change file diff. */
   diffs: Record<string, RunFileDiff>
-  /** flowgate.v02.0152: client_request_id → the run the "server" admitted for that press (a resend gets it back). */
+  /** client_request_id → the run the "server" admitted for that press (a resend gets it back). */
   admitted: Record<string, string>
-  /** flowgate.v02test.0024 B: chat id → the chat errors the "server" recorded (read back with the activities). */
+  /** B: chat id → the chat errors the "server" recorded (read back with the activities). */
   chatErrors: Record<string, ChatErrorRecord[]>
 }
 
@@ -71,7 +71,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       chat.title = title
       return { ...chat }
     }),
-    // flowgate.v02.0047: like the server, the debt is kept here — paid once, ended by a rename;
+    // like the server, the debt is kept here — paid once, ended by a rename;
     // the title is derived from the first user turn.
     autoTitleChat: vi.fn(async (chatId: string, _providerId: string) => {
       const chat = data.chats.find((c) => c.id === chatId)!
@@ -128,7 +128,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       return { ...diff }
     }),
     listProviders: vi.fn(async () => ({ providers: [{ id: 'opus', name: 'Opus 5' }, { id: 'sonnet', name: 'Sonnet 5' }], defaultProviderId: 'opus' })),
-    // flowgate.v02.0152: like the server, a press it has already admitted gets its run back, never a second one.
+    // like the server, a press it has already admitted gets its run back, never a second one.
     startChatRun: vi.fn(async (chatId: string, _providerId?: string | null, clientRequestId?: string) => {
       if (clientRequestId && data.admitted[clientRequestId]) return data.admitted[clientRequestId]
       runCounter += 1
@@ -171,7 +171,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       return { ...data.settings, sourceAccessScope: scope ?? null }
     }),
     issueChatMention: vi.fn(async (chatId: string) => `@mention ${chatId}`),
-    // flowgate.v02test.0024 B: like the server, one record per id (a repeat is answered, not stored twice).
+    // B: like the server, one record per id (a repeat is answered, not stored twice).
     recordChatError: vi.fn(async (chatId: string, record: ChatErrorRecord) => {
       const list = (data.chatErrors[chatId] ??= [])
       if (!list.some((r) => r.id === record.id)) list.push({ ...record })

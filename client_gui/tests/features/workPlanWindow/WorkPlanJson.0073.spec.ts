@@ -1,6 +1,6 @@
 import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanEditModel'
 /**
- * flowgate.v02.0073 T#4 — JSON in and out of the work plan edit window, on the client only (no server API):
+ * JSON in and out of the work plan edit window, on the client only (no server API):
  * - the model (workPlanJson): the export is the body the save sends (bodyOf: wp_version as it is, DS / T2 Steps,
  *   quantities, counted_types, x_* fields, review and pre-instruction); reading it back gives the same body; a JSON
  *   the client can tell is wrong is refused with why (not JSON, not an object, a field missing or of the wrong shape,
@@ -53,7 +53,7 @@ const NONE: ReadonlySet<string> = new Set()
 /** The fixture's started card (readAnswer step_execution_status). */
 const STARTED: ReadonlySet<string> = new Set(['c_d1'])
 
-/** hiddenPlanBody() as JSON, changed by `change`. Steps: DS#1 D#1 T#1 TR#1 T2#1 TR2#1 T#2 TR#2 TS#1 TSR#1. */
+/** hiddenPlanBody as JSON, changed by `change`. Steps: DS#1 the earlier implementation the earlier implementation TR#1 T2#1 TR2#1 the earlier implementation TR#2 TS#1 TSR#1. */
 function json(change?: (body: Record<string, any>) => void): string {
   const body = hiddenPlanBody() as Record<string, any>
   change?.(body)
@@ -191,7 +191,7 @@ describe('the plan as JSON (model, 0073 T#4)', () => {
   })
 
   it('the started cards: up to the last one they stay as they are, in their order; cards after them may move', () => {
-    // T#1 put before the started D#1
+    // put before the started the earlier implementation
     const moved = json((b) => {
       const [ds, d1, ...rest] = b.steps
       b.steps = [ds, rest[0], rest[1], d1, ...rest.slice(2)]
@@ -212,7 +212,7 @@ describe('the plan as JSON (model, 0073 T#4)', () => {
     expect(codes(retyped, draftFrom(), STARTED)).toEqual(['started'])
     // nothing started: the same moves are the server's to check
     expect(codes(moved, draftFrom(), NONE)).toEqual([])
-    // the test set moved before T#1 — after the started cards — is taken
+    // the test set moved before the earlier implementation — after the started cards — is taken
     const after = json((b) => {
       const ts = b.steps.splice(8, 2)
       b.steps.splice(2, 0, ...ts)

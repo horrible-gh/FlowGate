@@ -3,8 +3,8 @@ import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
 
-// flowgate.v02.0024 T0005 — source-level guards for the Designer File Explorer boundary
-// that a DOM test cannot see. Scope adjusted in flowgate.v02.0025 (0003-D §4.2.3): the
+// source-level guards for the Designer File Explorer boundary
+// that a DOM test cannot see. Scope adjusted in the earlier change: the
 // public surface is the whole features/designer boundary (0023 + 0024 + 0025 Shell), the
 // fixed file list covers only what 0024 owns (projectExplorer/ is pinned by the 0023 spec,
 // shell/ by structure.0025), and the import / Base literal guards still cover all of
@@ -29,11 +29,11 @@ describe('features/designer structure (0024 T0005)', () => {
     expect(Object.keys(DesignerFeature).sort()).toEqual(['DesignerFileExplorer', 'DesignerShell', 'ProjectExplorer'])
   })
 
-  // flowgate.v02.0037: the right Tool Panel also mounts the Conversation and Git parts, through
+  // the right Tool Panel also mounts the Conversation and Git parts, through
   // their public surfaces only (each part owns its own API; the Designer still owns none).
-  // flowgate.v02.0048 T#3 (D#1 §2.3, F5): the Inspector features call the document API through
+  // the Inspector features call the document API through
   // the features/document public surface.
-  // flowgate.v02.0053 T#3: the Inspector's openDocument.ts opens the in-tab document window through the
+  // the Inspector's openDocument.ts opens the in-tab document window through the
   // features/documentWindow public surface.
   it('owns no API/transport/store of its own: data comes only through the features/project public surface', () => {
     for (const file of FILES) {

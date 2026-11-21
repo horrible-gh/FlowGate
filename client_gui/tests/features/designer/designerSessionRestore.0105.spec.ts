@@ -1,6 +1,6 @@
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 /**
- * flowgate.v02.0105 T#1 — an F5 brings the Designer's working screen back (NR flowgate.v02.0101.0003 §5.4 / §5.5,
+ * an F5 brings the Designer's working screen back (NR the earlier change /,
  * Q #510 E-1): the current Project, its Explorer Group context (selection and open Groups), the Flow tabs in order,
  * the active Flow and the left / right panel tabs, kept per browser tab for the signed-in user.
  *

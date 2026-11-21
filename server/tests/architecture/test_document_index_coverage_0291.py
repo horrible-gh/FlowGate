@@ -1,11 +1,11 @@
-"""Query-cost indexes for screen refresh (flowgate.default.0291, NR0003 P2).
+"""Query-cost indexes for screen refresh.
 
-NR0003 findings 2/6 identified full scans in documents/events refresh queries.
+findings 2/6 identified full scans in documents/events refresh queries.
 070_documents_events_perf_indexes.sql addresses them. This suite verifies:
 
 1. Indexes actually exist. A CREATE INDEX in a file does not prove the index
    survives in the database: 027_t487 rebuilt documents with DROP/RENAME and
-   silently lost two indexes created by 013/015. NR0003 incorrectly listed
+   silently lost two indexes created by 013/015. the review incorrectly listed
    them as present. Apply every migration in order, then inspect sqlite_master
    rather than grepping files. Future table rebuilds must preserve these indexes.
 2. The affected queries choose those indexes. Predicate shape can prevent use
@@ -154,7 +154,7 @@ def test_query_uses_expected_index(db, label, origin, sql, params, expected):
 def test_created_memo_files_map_uses_covering_scan_without_temp_groupby(db):
     """db/events.py get_created_memo_files_map_by_project().
 
-    NR0003 finding 6 identified this as the fastest-degrading query. Both
+    The review identified this as the fastest-degrading query. Both
     expected improvements come from idx_events_type_doc_event: aggregation
     uses (event_type, doc_id, event_id), and doc_id ordering removes the GROUP BY
     temporary B-tree that grew with the number of event rows.

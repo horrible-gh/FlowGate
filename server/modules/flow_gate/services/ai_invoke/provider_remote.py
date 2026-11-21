@@ -1,4 +1,4 @@
-"""Remote CLI execution boundary (flowgate.v02.0129 T#2, D0005 §3-3 ~ §3-6).
+"""Remote CLI execution boundary.
 
 An AI connection whose ``exec_location`` is ``remote`` never spawns a process on this
 server. It runs only as an Agent Job addressed to the connection's ``target_agent_id``:
@@ -14,7 +14,7 @@ chain stops on it and nothing else (the next connection, another Agent, this ser
 runs the same request. The result keeps the local classification vocabulary
 (started_ok / fast_fail / spawn_failed) so judging and records are unchanged.
 
-Job creation is closed until the Agent working-directory contract (Q1 #555, D0005 §3-5)
+Job creation is closed until the Agent working-directory contract
 is verified on a deployed Agent: ``AGENT_WORKDIR_CONTRACT_VERIFIED`` (D0005 §9 (마)).
 Until then every remote CLI request ends at the pre-check with a visible final failure.
 
@@ -53,9 +53,9 @@ REMOTE_COMMAND_FALLBACK = "remote_command_missing"
 
 # D0005 §9 (마): Job creation is gated on the deployed Agent honouring the working-directory
 # contract (create the directory it is sent when missing, report a concrete cause when it
-# cannot). flowgate.v02.0135 CH0006: the directory is no longer the fixed relative
+# cannot). the earlier change the discussion: the directory is no longer the fixed relative
 # ``flowgate-runs/<job_id>``; it is the Agent's own ``remote_workdir`` setting.
-# flowgate.v02.0131 CH0004 (admin instruction, 2026-11-04): opened by the operator so remote
+# (admin instruction, 2026-11-04): opened by the operator so remote
 # CLI connections run. The deployed-Agent contract verification and the cross-path-system
 # acceptance run are still outstanding (the Agent is not in this repository); the server
 # side only ever sends the Agent's configured directory. Set back to False to close the
@@ -81,7 +81,7 @@ CANCELLED = "remote_cancelled_before_start"
 NOT_STARTED = "remote_agent_failed_before_start"
 FAST_FAIL = "remote_fast_fail"
 
-# flowgate.v02.0135 CH0006: the Agent setting's placeholder for the Job id.
+# the Agent setting's placeholder for the Job id.
 JOB_ID_VARIABLE = "${AGENT_JOB_ID}"
 # Causes of an Agent's refusal / pre-start failure, read from its own end_reason and
 # diagnostics (first match wins). The GUI words each one; anything else stays the
@@ -136,14 +136,14 @@ def _binding(provider: dict) -> dict:
     owner_scope = source.get("owner_scope") or "system"
     return {
         "target_agent_id": source.get("target_agent_id") or None,
-        # D0005 §3-1: a personal connection's Job is requested by its owner; a shared
+        # a personal connection's Job is requested by its owner; a shared
         # (system/project) connection's Job has no requester and needs a system Agent.
         "requester": source.get("owner_user_id") if owner_scope == "user" else None,
     }
 
 
 def agent_failure(target_agent_id: Optional[str], requester: Optional[str]) -> Optional[tuple[str, str]]:
-    """Execution-time availability of the target Agent (D0005 §3-3 ①/③). None = usable."""
+    """Execution-time availability of the target Agent (①/③). None = usable."""
     if not target_agent_id:
         return UNASSIGNED, "no_target_agent"
     from modules.flow_gate.services.agent_registry import AgentError, AgentService
@@ -188,9 +188,9 @@ def api_base_failure(api_base: Optional[str]) -> Optional[str]:
 
 def _final(run: dict, provider: dict, code: str, reason: str, *, cause: Optional[str] = None,
            message: Optional[str] = None) -> tuple[str, str]:
-    """Mark a remote final failure: the chain must stop here (D0005 §3-3).
+    """Mark a remote final failure: the chain must stop here.
 
-    ``cause`` / ``message`` (flowgate.v02.0135 CH0006): the classified cause and the Agent's
+    ``cause`` / ``message``: the classified cause and the Agent's
     own (secret-free) words, kept with the Job's working directory so the GUI can say what
     actually went wrong instead of only ``all_providers_failed``.
     """
@@ -208,7 +208,7 @@ def _final(run: dict, provider: dict, code: str, reason: str, *, cause: Optional
 
 
 def _agent_workdir(target_agent_id: Optional[str]) -> Optional[str]:
-    """The target Agent's ``remote_workdir`` setting (flowgate.v02.0135 CH0006); None = not set."""
+    """The target Agent's ``remote_workdir`` setting; None = not set."""
     from modules.flow_gate.services.agent_registry import AgentError, AgentService
     try:
         value = AgentService(_store()).get(target_agent_id).get("remote_workdir")
@@ -269,7 +269,7 @@ def _agent_reported(run: dict, result: dict, default_cause: str, fallback: str) 
 
 
 def _sanitize_prompt(prompt: str, run: dict) -> str:
-    """No server scratch absolute path may reach the remote Agent (D0005 invariant 10)."""
+    """No server scratch absolute path may reach the remote Agent (invariant 10)."""
     for key in ("token_scratch_dir", "scratch_dir"):
         path = run.get(key)
         if path and str(path) in prompt:
@@ -292,7 +292,7 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     run["remote_job"] = info
 
     # ① pre-check: no launch call, no Job.
-    # flowgate.v02.0129 CH0012 (approved (B)): a user's own AI runs only for its owner. Admission
+    # (approved (B)): a user's own AI runs only for its owner. Admission
     # already refuses another requester; this keeps the remote boundary closed on its own.
     if requester is not None and run.get("issued_to") != requester:
         return _final(run, provider, UNAVAILABLE, "requester_not_owner")
@@ -314,7 +314,7 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     # (마) is not active before the Agent working-directory contract is verified (§9).
     if not AGENT_WORKDIR_CONTRACT_VERIFIED:
         return _final(run, provider, WORKDIR_UNVERIFIED, "agent_workdir_contract_unverified")
-    # flowgate.v02.0135 CH0006: the Job runs in the Agent's own configured directory.
+    # the Job runs in the Agent's own configured directory.
     if _agent_workdir(target) is None:
         return _final(run, provider, WORKDIR_UNSET, "remote_workdir_not_set", cause=CAUSE_WORKDIR_UNSET)
 
@@ -349,7 +349,7 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
             cwd=workdir, timeout_seconds=timeout_seconds,
             job_id=job_id, attempt_id=attempt_id, target_agent_id=target,
             # The requester follows the connection's owner rule (§3-1); the project is the
-            # run's own, for personal and shared connections alike (T0008 item 1).
+            # run's own, for personal and shared connections alike.
             requested_by_user_id=requester, project_id=run.get("project_id") or None,
             ai_run_id=str(run.get("run_id") or ""), graph_exec_id=run.get("graph_exec_id"),
             retrieval_owner=owner, ai_group_id=run.get("group_id") or None,
@@ -557,7 +557,7 @@ def _settle(run, provider, kind, result, launched, role_invocations):
             return _final(run, provider, CANCELLED, "cancelled_before_claim")
         if run.get("timed_out"):
             return _final(run, provider, NO_CLAIM, "timeout_before_claim")
-        # flowgate.v02test.0022 CH0002: the code/reason stay as before; the server's verdict
+        # the code/reason stay as before; the server's verdict
         # on why the target Agent never claimed (agent_offline, claim_refused, agent_busy,
         # claim_polling_stopped, polled_not_taken, agent_missing) rides in cause/message.
         return _final(run, provider, NO_CLAIM, "not_claimed",

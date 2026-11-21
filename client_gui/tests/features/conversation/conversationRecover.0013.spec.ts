@@ -11,7 +11,7 @@ import {
 import type { ConversationActivity, TurnsPage, WorkChangeActivity } from '@/features/conversation/types'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// flowgate.v02test.0013 — the chat stayed still while its AI run worked: a run missed when the chat opened was never
+// the chat stayed still while its AI run worked: a run missed when the chat opened was never
 // polled, and nothing but that poll brought new turns / activities in. session.recover() is the one way back to the
 // server's state after a signal (server event, reconnect, return to the panel). These specs pin: a missed run is
 // adopted (and the open-time lookup is retried), a polled run is woken instead of read beside, signals during a

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0127 T#5 — the client editing session of a card document (0009-L §2.12 / §2.13 / §3.1).
+ * the client editing session of a card document.
  * The transitions of the table are exercised one by one on the pure model: the own-ACK base advance, REJECTED for
  * 401 / 403 token_kind_not_allowed, no automatic rebase and no new key for an uncertain request.
  */

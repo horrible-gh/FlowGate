@@ -53,7 +53,7 @@ def _parse_rejection_history(raw: Any) -> list:
     if not isinstance(parsed, list):
         return []
     from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
-    # flowgate.v02.0119 T#2 (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
+    # (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
     return [db_reviews.rejection_actors(item) for item in enrich_rejection_history_provenance(parsed)]
 
 
@@ -81,10 +81,10 @@ def _shape_review(row: dict) -> dict:
         "id": row.get("id"),
         "revision_no": row.get("revision_no"),
         "reviewer_id": row.get("reviewer_id"),
-        # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
+        # one shared builder for both read surfaces, so the key set and
         # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": db_reviews.review_provider_payload(row),
-        "actor": db_reviews.review_actor(row),          # flowgate.v02.0119 T#2 (T-1)
+        "actor": db_reviews.review_actor(row),          # (T-1)
         "review_intent": row.get("review_intent"),
         "superseded_review_id": row.get("superseded_review_id"),
         "verdict": row.get("verdict"),
@@ -220,7 +220,7 @@ def _compose_group_doc_ids(project: str, module: str, group: str, doc: str) -> t
     return group_id, doc_id
 
 
-# _fallback_file_path was removed in L0054.0002 §4 — the branch-segment-drift
+# _fallback_file_path was removed in the earlier implementation.0002 — the branch-segment-drift
 # fallback is now absorbed into storage.paths.resolve_storage_path().
 
 
@@ -576,7 +576,7 @@ def get_document_by_path(
         "created_at": document.get("created_at"),
         "updated_at": document.get("updated_at"),
     }
-    # group 0022: Q&A is sub-data of every document. Attach the answers key only to
+    # Q&A is sub-data of every document. Attach the answers key only to
     # documents that have a container (query) — Q doc-type gating removed (Q type retired).
     qa_pairs = get_answers_for_document(doc_id)
     if qa_pairs:
@@ -642,15 +642,15 @@ def get_document_reviews(request: Request, doc_id: str):
     })
 
 
-# ── 0370 R0001 / P0002 / L0003: the four partial-read endpoints ─────────────────
+# ── the requirement / the plan / the earlier implementation: the four partial-read endpoints ─────────────────
 #
 # Until now, opening a document dragged the entire body along. The four endpoints below are
 # ways to fetch only the part you need, and they are **all additive**: no field is removed
-# from, and no meaning changed in, the existing `GET /document/{doc_id}` response (P0002 §0).
+# from, and no meaning changed in, the existing `GET /document/{doc_id}` response.
 #
 # Not one line of computation lives here. Outlines, sections and coordinates are all done by
-# document_outline_service, and this file only repackages the result into the shape P0002
-# fixed — so one named number never differs per screen (L0003's purpose).
+# document_outline_service, and this file only repackages the result into the shape the plan
+# fixed — so one named number never differs per screen ('s purpose).
 
 
 def _fail_with(status: int, message: str, extra: Optional[dict] = None) -> JSONResponse:

@@ -1,14 +1,14 @@
-"""ai_invoke_runs CRUD (group 0359 DB0008).
+"""ai_invoke_runs CRUD.
 
 One row = one finished AI-invoke hop, written exactly once at finalize (upsert on
-run_id -- see L0007 2.10.1 persist_run_record). Live runs never appear here; they
+run_id -- see the earlier implementation 2.10.1 persist_run_record). Live runs never appear here; they
 stay in server memory until they finish (DB0008 1.1). Callers pass native Python
 values for the array fields (reached_doc_ids / fallback_history / register_errors)
 -- this module owns JSON (de)serialization and the write-time value caps from
 DB0008 2.4, so a read always yields back the same shape it was given, or [] on a
 corrupt/legacy value (DB0008 5.1 invariant 10).
 
-0446 T0016 (migration 086) adds the exit diagnostics the same way: the timeout kind,
+(migration 086) adds the exit diagnostics the same way: the timeout kind,
 its one-line human reading, the two output tails and the unfinished-source path list.
 Before it, all four existed only on the in-memory run, so a restarted process could
 not tell "worked and ran out of clock" from "hung" for the hop it just lost.
@@ -27,18 +27,18 @@ _REACHED_DOC_IDS_MAX_ITEMS = 200
 _HISTORY_MAX_ITEMS = 20
 _HISTORY_MAX_SERIALIZED_BYTES = 16384
 
-# 0446 T0016 2 and 5.2: the write-side floor for the exit diagnostics. The tails arrive
+# 2 and 5.2: the write-side floor for the exit diagnostics. The tails arrive
 # already cut to ai_invoke_service.OUTPUT_TAIL_BYTES and finalize already hands over at
 # most 20 paths -- these are not a second, looser budget but the same one restated where
 # the row is actually built, so no other caller can widen either of them.
 _OUTPUT_TAIL_MAX_CHARS = 8192
 _SOURCE_DIRTY_FILES_MAX_ITEMS = 20
-# 0505 T0006 (DB0005 3.3): last_tool_error's own write-time cap, separate from
+# ( 3.3): last_tool_error's own write-time cap, separate from
 # _OUTPUT_TAIL_MAX_CHARS above -- that one keeps the END of a raw process tail, this one
 # keeps the FRONT of an already-short human-readable summary (do not reuse the name).
 _LAST_TOOL_ERROR_MAX_CHARS = 500
 
-# flowgate.default.0481 T0008 item 1 (migration 105): the write-plan submission
+# (migration 105): the write-plan submission
 # endpoint (git_service._submit_review_write_plan) already rejects a plan bigger
 # than this many serialized bytes with 422 before it ever reaches here -- this is
 # a second, storage-side floor (MySQL TEXT's 65,535-byte ceiling), not the primary
@@ -68,7 +68,7 @@ _BOUND_COLUMNS = (
     "oracle_mismatch", "source_dirty", "scratch_retained", "hop_item_seq",
     "token_id", "issued_to", "started_at", "finished_at", "duration_ms",
     "timeout_sec", "deadline_at",
-    # ── 0406 T0022 items 3 and 5 (migration 080) ────────────────────────────
+    # ── the earlier implementation items 3 and 5 (migration 080) ────────────────────────────
     # Who ran this hop, what the server handled instead, and whether the user's handoff note
     # actually made it into the prompt. The text is not stored — only kind, length and sha256.
     "worker_document_type",
@@ -82,17 +82,17 @@ _BOUND_COLUMNS = (
     "prompt_user_message_sha256",
     "prompt_final_length",
     "prompt_final_sha256",
-    # -- 0446 T0016 2 (migration 086) --------------------------------------
+    # -- the earlier implementation 2 (migration 086) --------------------------------------
     # Why this hop's clock ran out, said once for a machine (timeout_kind) and once for a
     # person (timeout_diagnosis), plus what the worker last printed and which files it left
     # behind. `timeout_kind` NULL on a timeout row is not "unknown kind" -- it means the
     # watchdog left no mark at all (a legacy row, or a plain communicate() expiry).
     "timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail",
     "source_dirty_files",
-    # -- 0505 T0006 (DB0005 2-3, migration 095) -----------------------------
+    # -- the earlier implementation ( 2-3, migration 095) -----------------------------
     # API provider server-mediated self-HTTP diagnostics: which internal base a hop
     # used, its last mediated tool call's outcome, and its turn/model-call/tool-call
-    # counters -- 095's ten, plus transport_fallback_kind (migration 101, 0496 T0006
+    # counters -- 095's ten, plus transport_fallback_kind (migration 101, the earlier implementation
     # §3.2), which records WHY that transport base was chosen. All eleven are read with
     # .get() at every write site, so a run with none of this (CLI, spawn failure, a row
     # from before the matching migration) stores NULL.
@@ -100,9 +100,9 @@ _BOUND_COLUMNS = (
     "last_tool_name", "last_tool_status", "last_tool_error",
     "api_turns_used", "model_http_calls", "model_last_http_status",
     "tool_calls_received", "tool_calls_executed", "api_turn_trace",
-    # -- flowgate.default.0481 T0008 item 1 (migration 105) -----------------
-    # The anchored write-plan engine's bound contract (L0007 §2.5-§2.6, Q&A on
-    # 0009-TR): a review-message write turn's policy (was it requested at all,
+    # -- the earlier change the earlier implementation (migration 105) -----------------
+    # The anchored write-plan engine's bound contract (the earlier implementation, Q&A on
+    # ): a review-message write turn's policy (was it requested at all,
     # was test-path editing allowed) and the plan the worker-token submission
     # endpoint (`POST .../git/merge/{merge_id}/write-plan`) attaches before the
     # run exits. NULL on all three for every run that is not such a turn.
@@ -111,17 +111,17 @@ _BOUND_COLUMNS = (
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
-# flowgate.v02.0113 T#1 (DB-1 §2.7 W-15, migration 165): the run's invocation origin kind and its Graph ledger
+# (DB-1 W-15, migration 165): the run's invocation origin kind and its Graph ledger
 # execution. Bound only when the row carries a value AND the column exists: before migration 165 an INSERT naming
 # them would fail and the finished run's row would be lost, so a row without them writes exactly as before.
 _LINK_COLUMNS = ("invocation_origin_kind", "graph_exec_id")
 
-# flowgate.v02test.0030 (migration 193): how the browser picked a chat call's AI (user_pick / stored /
+# (migration 193): how the browser picked a chat call's AI (user_pick / stored /
 # last_answered / default_fallback). Bound like the link columns above: only when the row carries a value
 # AND the column exists, so a server ahead of its migration still writes the finished run's row.
 _CLIENT_ORIGIN_COLUMNS = ("client_provider_origin",)
 
-# flowgate.v02.0129 T#2 (migration 172): the remote Job identity of a remote CLI run (target /
+# (migration 172): the remote Job identity of a remote CLI run (target /
 # claiming Agent, job_id / attempt_id, states). Bound like the link columns above: only when
 # the run used a remote connection AND the column exists.
 _REMOTE_JOB_COLUMN = "remote_job_json"
@@ -241,7 +241,7 @@ def _row_to_payload(row: dict) -> dict:
 
 
 def upsert(row: dict[str, Any]) -> None:
-    """Persist a finished run -- one call per run_id, ever (L0007 2.10.1).
+    """Persist a finished run -- one call per run_id, ever.
 
     `row` carries native values for the array fields; this function handles JSON
     encoding and the DB0008 2.4 truncation rules. `created_at` is bound on INSERT
@@ -290,7 +290,7 @@ def upsert(row: dict[str, Any]) -> None:
         "duration_ms": row.get("duration_ms"),
         "timeout_sec": row.get("timeout_sec"),
         "deadline_at": row.get("deadline_at"),
-        # ── 0406 T0022 items 3 and 5 (migration 080) ───────────────────────
+        # ── the earlier implementation items 3 and 5 (migration 080) ───────────────────────
         "worker_document_type": row.get("worker_document_type"),
         "continuation_instruction_mode_requested": row.get(
             "continuation_instruction_mode_requested"
@@ -312,7 +312,7 @@ def upsert(row: dict[str, Any]) -> None:
         "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
         "prompt_final_length": int(row.get("prompt_final_length") or 0),
         "prompt_final_sha256": row.get("prompt_final_sha256"),
-        # -- 0446 T0016 3.2: every caller that has no diagnostics -- a spawn failure, an
+        # -- the earlier implementation 3.2: every caller that has no diagnostics -- a spawn failure, an
         # API-mode run, the orphaned-lease record written from a bare lease row -- reaches
         # here through .get() and stores NULL. Absence is a value, and it must never be the
         # reason a finished hop fails to leave a row behind.
@@ -321,7 +321,7 @@ def upsert(row: dict[str, Any]) -> None:
         "stdout_tail": _clip_tail(row.get("stdout_tail")),
         "stderr_tail": _clip_tail(row.get("stderr_tail")),
         "source_dirty_files": _dump_array("source_dirty_files", row.get("source_dirty_files")),
-        # -- 0505 T0006 (DB0005 3.3): every caller reaches these through .get(), so a
+        # -- the earlier implementation ( 3.3): every caller reaches these through .get, so a
         # run with none of this diagnostic (CLI, spawn failure, orphaned-lease record)
         # stores NULL exactly like the 086c exit diagnostics above do.
         "operator_api_base": row.get("operator_api_base"),
@@ -336,7 +336,7 @@ def upsert(row: dict[str, Any]) -> None:
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
         "api_turn_trace": _dump_array("api_turn_trace", row.get("api_turn_trace")),
-        # -- flowgate.default.0481 T0008 item 1 (migration 105) -------------
+        # -- the earlier change the earlier implementation (migration 105) -------------
         "write_requested_by_human": (
             None if row.get("write_requested_by_human") is None
             else (1 if row.get("write_requested_by_human") else 0)
@@ -399,7 +399,7 @@ def upsert(row: dict[str, Any]) -> None:
 
 def max_serial_for_date(date_str: str) -> int:
     """Highest NNNNNN serial already used by a FINISHED run whose run_id starts with
-    ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 item 7).
+    ``aiv_<date_str>_``.
 
     Paired with group_ai_leases.max_serial_for_date (which covers a run still open,
     with no row here yet) to floor the in-memory run-id counter after a restart --
@@ -420,8 +420,8 @@ def max_serial_for_date(date_str: str) -> int:
 
 
 def set_write_plan(run_id: str, write_plan: dict) -> bool:
-    """Attach a write plan to an ALREADY-PERSISTED row (flowgate.default.0481
-    T0008 item 1). The ordinary path is the in-memory one (the run is still
+    """Attach a write plan to an ALREADY-PERSISTED row (the earlier change
+    ). The ordinary path is the in-memory one (the run is still
     live when the worker submits): `ai_invoke.runtime.record_run_write_plan`
     sets it on the live run dict, and the next `upsert()` at finalize carries it
     over. This UPDATE-only fallback only matters for the race where the run
@@ -448,7 +448,7 @@ def get(run_id: str) -> Optional[dict]:
 
 
 def latest_finished_for_group(group_id: str, doc_ref: Optional[str] = None) -> Optional[dict]:
-    """The ONE most recent finished run of a group (0446 T0016 4.1).
+    """The ONE most recent finished run of a group.
 
     Ordered exactly like :func:`list_by_group` -- newest `started_at`, then `run_id` as the
     tie-break -- and limited to one row on purpose. The caller (the rework prompt) asks
@@ -494,7 +494,7 @@ def list_by_group(group_id: str, limit: int) -> list[dict]:
 
     The caller pads `limit` with the live-run count before merging with in-memory
     runs, so a page never shrinks just because some of its slots are still running
-    (L0007 2.10.3).
+.
     """
     rows = get_store()._fetch_all(
         "SELECT * FROM ai_invoke_runs WHERE group_id = ? "

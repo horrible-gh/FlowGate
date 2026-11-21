@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0083 T#4 rev1 — the run band never shows an older run read's facts beside a newer Canvas read's status:
+ * the run band never shows an older run read's facts beside a newer Canvas read's status:
  *
  * - the Canvas read's `run` block carries the band's facts of the same read (command, idle reason, AI executions, waiting
  *   cards); flowCanvasApi / serverFlowGraphSource keep each only when sent.

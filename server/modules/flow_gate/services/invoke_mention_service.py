@@ -1,4 +1,4 @@
-"""Server-side ports of the client-only mention builders (group 0223).
+"""Server-side ports of the client-only mention builders (the earlier change).
 
 The in-app AI invoke must feed the worker the SAME text a human would have
 copied from the matching [copy mention] button (byte-identical principle,
@@ -8,7 +8,7 @@ through the generic token mention would diverge from the copy flow. Each
 function here mirrors its client counterpart exactly — if you change one
 side, change the other.
 
-0293 T0005: build_conversation_mention is no longer one of those mirrors. Its client
+build_conversation_mention is no longer one of those mirrors. Its client
 twin was deleted and /token/issue serves this text to the copy path, so the chat
 mention now has exactly one implementation.
 
@@ -57,7 +57,7 @@ _DESIGN_SINGLE_TEMPLATE = {
     "ja": "ワーカーさん、次のステップは{label}({code})です。次のステップを開始してください。\n対象: {docRef}",
 }
 
-# ── 0446 T0016 §4: the previous-run handoff block ────────────────────────────
+# ── the earlier implementation: the previous-run handoff block ────────────────────────────
 # Added to a rework prompt ONLY when the run right before it on the same document was
 # stopped by the clock. Everything here is a label around data the server already
 # stored; the diagnosis sentence itself comes from the `ai_invoke_runs` row and, like
@@ -121,13 +121,13 @@ def _chat_lookup_sections(
     *, base: str, raw_token: str, project: str, group_name: str,
     source_access: Optional[str] = None,
 ) -> list[str]:
-    """Read-only source + document search block for the chat mention (0334 R0001).
+    """Read-only source + document search block for the chat mention.
 
-    R0001's symptom: asked to check something in the source, the chat worker had no
+    's symptom: asked to check something in the source, the chat worker had no
     API for anything outside its own CH document, so it guessed at a local directory
     and reported the guess as fact. The scopes were never the problem — a chat token
     already resolves to ["read", "grep"] (glob shares grep's scope), and verify_bearer
-    accepts it on /search/documents* — the mention simply never said so (NR0003 finding
+    accepts it on /search/documents* — the mention simply never said so (the review finding
     1/4). So this adds text, not permission.
 
     The source section is the same builder N/NR mentions use, asked for a "CH" step so
@@ -135,7 +135,7 @@ def _chat_lookup_sections(
     project runs in local mode there is no remote source API to advertise (finding 3).
     Document search stays either way — it reads storage, not the source tree.
 
-    Kept deliberately small. TR0044.0010 rev4 rejected a chat mention padded with
+    Kept deliberately small. the earlier implementation.0010 rejected a chat mention padded with
     non-chat sections, and compactness is still the rule here (finding 9).
     """
     # Lazy: mention_service pulls in the full mention stack, and this module is
@@ -149,16 +149,16 @@ def _chat_lookup_sections(
         # stays English-only by design — see its docstring); pin "en" explicitly rather
         # than falling through to the shared function's ko default.
         #
-        # action_scope must be "chat", not the default "new" (0392 B0001/NR0003): passing
+        # action_scope must be "chat", not the default "new": passing
         # the real scope is what keeps this judge matching whatever remote_tool_service
         # actually grants a chat token, instead of guessing from the step type alone.
         # Under 0392's chat=none policy the two diverged — default "new" judged "read"
         # while a real chat token got "none" — so this call used to render the section
-        # empty. 0431 T0004/NR0003 flips that policy: kind_for_step now returns "read"
+        # empty. the earlier implementation/the review flips that policy: kind_for_step now returns "read"
         # for "chat" at the same early branch as "review"/"workflow_decide", so the
         # section renders the four read-only tools, still matching what the token can
         # actually call.
-        # 0515 T0009 §8: the just-issued token's real capability, when known, wins over
+        # the just-issued token's real capability, when known, wins over
         # the generic chat default (kind_for_step("chat", ...) always answers "read",
         # blind to this user's edit/edit_once setting). None/damaged falls through to
         # that same default via _remote_source_crud_section's own kind=None branch.
@@ -197,7 +197,7 @@ def _chat_lookup_sections(
 
 
 def _command_section(*, base: str, raw_token: str) -> str:
-    """0670 T0004: how a CLI chat worker runs tests/builds/git through FlowGate.
+    """how a CLI chat worker runs tests/builds/git through FlowGate.
 
     Only an in-app AI invocation has a live run for a command to belong to, so the
     copy-mention path (no run) never shows this. API providers get the same contract
@@ -246,7 +246,7 @@ def _fold_notice(
 ) -> list[str]:
     """Say which turns this invocation received and how to read the earlier ones.
 
-    flowgate.v02test.0041: only the range actually delivered is stated. Whatever decided it
+    only the range actually delivered is stated. Whatever decided it
     (the latest-N limit or the user's checkpoint) is a user-side way of keeping the context
     small and is not the AI's business; naming it made the notice carry two different
     starting points whenever the limit was narrower than the checkpoint.
@@ -275,13 +275,13 @@ def _fold_notice(
         "If `prev_before_seq` is not null, call again with that value to keep going further back.",
         # Said again here on purpose. The paragraph above carries the same rule, but the
         # place where "am I allowed to read further back" is actually decided is this
-        # one (D0008 §3-3).
+        # one.
         "Paging back does not consume this token either.",
     ]
 
 
 def _encoding_probe_paragraph(token_id: str) -> list[str]:
-    """flowgate.v02gui.0009: the per-token encoding probe and the transport rule.
+    """the per-token encoding probe and the transport rule.
 
     The probe proves the path, whatever language the body is in
     (``encoding_probe``); with it the question-mark heuristic never runs.
@@ -371,18 +371,18 @@ def build_conversation_mention(
     provider: Optional[str] = None,
     provider_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    # 0515 T0009 §8: the just-minted token's own `source_access` ("read"/"read_write"/
+    # the just-minted token's own `source_access` ("read"/"read_write"/
     # None) -- both call sites (token_routes, ai_invoke_routes) already hold it on the
     # token they just issued/inspected. Threaded to _chat_lookup_sections so the CRUD
     # section this mention advertises matches the real grant, not a generic chat guess.
     source_access: Optional[str] = None,
-    # 0670 T0004 / flowgate.v02.0032 T#1 (D0006 §3.4): True only from the in-app AI invoke
+    # True only from the in-app AI invoke
     # path, whose token is bound to a live run that a command request can belong to. The
     # sections come from the chat run hook port (or, with none registered, the in-module
     # command section); the copy path (no run) never shows them, and neither does a token
     # whose token carries no command access (reading mode).
     command_execution: bool = False,
-    # flowgate.v02test.0026: the token's own `command_access` ("execute" for an execute-mode
+    # the token's own `command_access` ("execute" for an execute-mode
     # chat: commands allowed while source_access stays "read"; None otherwise).
     command_access: Optional[str] = None,
     locale: Optional[str] = None,
@@ -400,8 +400,8 @@ def build_conversation_mention(
     settings = chat_settings_service.resolve_chat_settings_safe(user_id)
     # [all] (and a set checkpoint) adds no head query. With a fixed start the head cannot change
     # the answer, and costing exactly what it cost before is what keeps "put it back on
-    # [all] and compare" usable as a way to diagnose anything (L0010 §2-3).
-    # flowgate.v02test.0025: the same window helper as the API worker, so [checkpoint] (from / after the
+    # [all] and compare" usable as a way to diagnose anything.
+    # the same window helper as the API worker, so [checkpoint] (from / after the
     # chat's checkpoint, or the last 5 turns without one) is sent identically on both paths.
     window = chat_doc_settings_service.context_window(
         user_id, doc_id, settings, head_seq_of=conversation_turns.current_head_seq,
@@ -425,7 +425,7 @@ def build_conversation_mention(
         '  "force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>"',
         "}",
     ]
-    # flowgate.v02test.0023: an edit-mode chat names its commit; FlowGate commits at the run end.
+    # an edit-mode chat names its commit; FlowGate commits at the run end.
     can_write = source_access == "read_write"
     if can_write:
         payload_lines[-2] += ","
@@ -444,7 +444,7 @@ def build_conversation_mention(
     ]
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
-    # at the end of the document it reads the first half and moves on (P0009 scenario 11).
+    # at the end of the document it reads the first half and moves on (scenario 11).
     if folded > 0:
         lines += [""] + _fold_notice(
             api_base=api_base,
@@ -464,7 +464,7 @@ def build_conversation_mention(
         lines += ["", section]
     # A reading-mode chat token can never run a command (commands._authorize_run refuses it),
     # so its mention does not offer the endpoint either: only a token with command access --
-    # read_write (edit / edit_once) or execute (flowgate.v02test.0026). The other chat tool
+    # read_write (edit / edit_once) or execute. The other chat tool
     # sections (graph read, attachment request, card document) stay in reading mode too.
     may_run = can_write or (source_access == "read" and command_access == "execute")
     from modules.flow_gate.services.prompt_selection import chat_situation
@@ -499,7 +499,7 @@ def build_conversation_mention(
     return terminal_prompt.finalize(text + ("\n\n" + notice if notice else ""))
 
 def _single_line(value: Optional[str]) -> str:
-    """Collapse stored text to one safe line for a bullet (0446 T0016 §4-3).
+    """Collapse stored text to one safe line for a bullet.
 
     Both the diagnosis sentence and the spilled paths are DATA. `git status` will report a
     path containing a newline or a backtick without complaint, and either one, printed
@@ -511,7 +511,7 @@ def _single_line(value: Optional[str]) -> str:
 
 
 def build_previous_run_section(handoff: Optional[dict], locale: Optional[str]) -> str:
-    """The previous-run handoff block for a rework prompt (0446 T0016 §4-3).
+    """The previous-run handoff block for a rework prompt.
 
     `handoff` is exactly what `ai_invoke_service.previous_timeout_handoff()` returned, so
     it has ALREADY been narrowed to "the newest finished run on this document ended on the
@@ -563,7 +563,7 @@ def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     """Port of buildRejectionSection (useFlowGateToken.ts).
 
     history items: {rejected_at, reason}. The final history entry duplicates
-    `last`, so only the PRIOR entries are listed as context (R0001 #2 / T0004).
+    `last`, so only the PRIOR entries are listed as context.
     """
     if not last and not history:
         return ""
@@ -642,10 +642,10 @@ def build_rework_mention(
     if not base:
         return None
     mention = section + "\n" + base if section else base
-    # 0554 T0014 §9: rework re-applies the same item's WorkPlan pre-instruction — the
+    # re-applies the same item's WorkPlan pre-instruction — the
     # reviewer never sees this (its own prompt is a different assembly, review_mention.py),
     # only the worker being asked to fix the document does. May raise
-    # PreInstructionAttachmentError (fail-closed, T0014 §5); the caller decides cleanup.
+    # PreInstructionAttachmentError (fail-closed, the earlier implementation); the caller decides cleanup.
     pre = _resolve_rework_pre_instruction(doc_id)
     if pre:
         mention = prepend_pre_instruction_section(
@@ -659,7 +659,7 @@ def _resolve_rework_pre_instruction(doc_id: str) -> Optional[dict]:
 
     A rework hop's ``doc_id`` is always a result document already sitting in a slot
     (``result_doc_id``), never the sequence root — so the reverse lookup used by note
-    resolution's fold (D0004) is unnecessary here: the slot IS the row to read.
+    resolution's fold is unnecessary here: the slot IS the row to read.
     """
     from modules.flow_gate.db import workflow_sequences as db_wfseq
     from modules.flow_gate.services import work_plan_attachment_service
@@ -677,12 +677,12 @@ def issue_rework_request(
     ai_run_id: Optional[str] = None,
     reject_reason: Optional[str] = None,
 ) -> dict:
-    """Mint an edit token bound to doc_id and build its rework mention (0414 L0008 §2.6).
+    """Mint an edit token bound to doc_id and build its rework mention.
 
     The issue_builder contract start_run expects, so the engine's rework hop launches through
     exactly the same path every other scope does. ``ai_run_id`` is not optional in practice:
     a token that cannot name its own run is refused by the group lease that run is holding
-    (0393 B0001), which would make the rework hop fail against itself.
+    , which would make the rework hop fail against itself.
 
     Raises
     ------
@@ -720,7 +720,7 @@ def issue_rework_request(
             reject_reason=reject_reason,
         )
     except Exception:
-        # 0554 T0014 §5: fail-closed means the token this call already minted must not be
+        # fail-closed means the token this call already minted must not be
         # left behind unrevoked — the caller (admission.start_run) only learns of this
         # failure through the exception, never through a token id it could clean up itself.
         try:
@@ -748,9 +748,9 @@ def prepend_messages_section(mention_text: str, messages: list[str], locale: Opt
     return section + SECTION_SEPARATOR + mention_text
 
 
-# 0554 T0014 §2: the WorkPlan pre-instruction section header — deliberately its own
+# the WorkPlan pre-instruction section header — deliberately its own
 # constant, not _MM_SECTION_HEADER, so this section can never merge with the step note
-# (a different provenance per D0007 §3.1) into one indistinguishable block (T0014 §14).
+# (a different provenance per the design) into one indistinguishable block.
 _PRE_INSTRUCTION_SECTION_HEADER = {
     "ko": "WorkPlan 사전지시",
     "en": "WorkPlan pre-instruction",
@@ -786,11 +786,11 @@ def prepend_pre_instruction_section(
     attachment: Optional[dict],
     locale: Optional[str],
 ) -> str:
-    """Prepend the WorkPlan pre-instruction as its own section (0554 T0014 §2/§4).
+    """Prepend the WorkPlan pre-instruction as its own section.
 
     ``attachment`` must already be a validated reference — callers resolve it through
     :func:`modules.flow_gate.services.work_plan_attachment_service.resolve_pre_instruction`,
-    which raises rather than returning an invalid one (T0014 §5). This function only formats.
+    which raises rather than returning an invalid one. This function only formats.
     """
     loc = _locale(locale)
     parts: list[str] = []

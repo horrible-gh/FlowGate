@@ -1,4 +1,4 @@
-"""0145: isolated legacy attribution and explicit re-review through the real Graph ledger.
+"""isolated legacy attribution and explicit re-review through the real Graph ledger.
 
 SQLite fixture setup models the old new-token submission. External AI admission
 is a recorder; fresh review rows and run-end contacts exercise normal completion.

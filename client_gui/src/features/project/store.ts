@@ -1,33 +1,33 @@
-// Project store (WP0005 T#1 §5). Minimal responsibilities only: projects, loading/error,
+// Project store. Minimal responsibilities only: projects, loading/error,
 // current project, Dialog open/close state, list fetch, current-project change, create
 // orchestration, and the public interface App/future Dialog UI consumes. Dialog-local state
 // (search text, hover, create-form input, row selection) does NOT belong here — that is
-// T#2's ProjectDialog/ProjectCreateDialog concern (D0004 §2.1/§5.2).
+// 's ProjectDialog/ProjectCreateDialog concern.
 //
 // Stale-response guard: every write this store performs because of an async result is
 // gated by `requestEpoch`, a counter bumped by every new `fetchProjects()` call and by
 // `closeDialog()`. A response only applies if its captured epoch still matches the current
 // one, so a slow earlier fetch that resolves after a newer fetch (or after the Dialog
 // closed) can never revert `loading`/`error`/`projects`/`currentProjectId` to a stale state,
-// and it never reopens a closed Dialog (WP0005 T#1 §5, flowgate.v02.0008.0001-R §13).
+// and it never reopens a closed Dialog.
 //
-// flowgate.v02.0023 adds the current project's group tree (fetch/cache/inflight-join) here
+// adds the current project's group tree (fetch/cache/inflight-join) here
 // rather than in a Designer-only store: it is project context that the Designer Project
 // Explorer and File Explorer (0024) both read. Only the canonical flat node list is cached;
 // each consumer derives its own display shape and keeps its own view state (expansion,
 // selection, search) locally.
 //
-// flowgate.v02.0043 adds what the Designer File menu needs: the Recent Project / Group / Flow
+// adds what the Designer File menu needs: the Recent Project / Group / Flow
 // lists (recentStorage.ts), closing the current Project, opening a recent Project the way the
 // Dialog's "열기" does, a Dialog open that asks for the create child, and the Group / Flow
 // creates (api.ts) that invalidate the cached group tree of their Project.
 //
-// flowgate.v02.0060 T#2 adds the Designer context menu's existing server commands (0006-D rev2 §4.3 2-B): Group / Flow
+// adds the Designer context menu's existing server commands: Group / Flow
 // rename and Flow dispose (each invalidating the Project's cached tree, and keeping the recent lists' names — a
 // disposed Flow leaves the recent Flow list), and the Flow worktree's folder / file create, download, upload and
 // delete. Stateless pass-throughs like the loaders: the dialogs own their own submit / stale guards.
 //
-// flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4) adds the Designer's F5 snapshot of this browser tab
+// (NR the earlier change) adds the Designer's F5 snapshot of this browser tab
 // (designerSessionStorage.ts, kept per signed-in user), the Project an F5 restore sets without it counting as an
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
@@ -201,7 +201,7 @@ export const useProjectStore = defineStore('project', () => {
     optionRequests.set(key, request)
     return request
   }
-  /** flowgate.v02gui.0020: fetch one remote-only branch into a local tracking branch, then drop the cached options
+  /** fetch one remote-only branch into a local tracking branch, then drop the cached options
    * so the next read lists it as an ordinary branch. Failures keep the server's status/code for the screen's words. */
   async function importRemoteBranch(projectId: string, name: string): Promise<void> {
     await importRemoteBranchApi(projectId, name)
@@ -211,7 +211,7 @@ export const useProjectStore = defineStore('project', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const dialogOpen = ref(false)
-  // flowgate.v02.0040 (0001-R §1/§2): the current Project is the one the person opened with
+  // the current Project is the one the person opened with
   // the Dialog's "열기" in this app session — nothing else. It is not seeded from the stored
   // `fg_current_project_id` (written by v0.1 and by an earlier session): that id is not a
   // choice the person made here, and the Designer, which shows the current Project's tree,
@@ -237,7 +237,7 @@ export const useProjectStore = defineStore('project', () => {
     else clearStoredCurrentProjectId()
   }
 
-  // flowgate.v02.0040 (0001-R §1): the list refresh never picks a Project on its own. A current
+  // the list refresh never picks a Project on its own. A current
   // Project that is still in the active list stays; one that has left it is cleared (its stored
   // id too); with no current Project there is nothing to do — the v0.1 fallback to the first
   // active project is gone, because that made a Project current (and so shown in the Designer)
@@ -252,7 +252,7 @@ export const useProjectStore = defineStore('project', () => {
   // generation the caller already owns (fetchProjects mints a fresh one; createProject
   // reuses its own so the refresh can't outlive a close/reopen that happened after create
   // resolved but before this refresh finishes). `reconcile` is false for the post-create
-  // refresh: creating a Project must never set currentProjectId as a side effect (D0004
+  // refresh: creating a Project must never set currentProjectId as a side effect (the design
   // §3.6/§5.4), even when the active list was empty beforehand.
   async function refreshProjects(epoch: number, reconcile: boolean): Promise<void> {
     loading.value = true
@@ -265,7 +265,7 @@ export const useProjectStore = defineStore('project', () => {
     } catch (err) {
       if (epoch !== requestEpoch.value) return
       projects.value = []
-      // flowgate.v02.0088 F10: only the server's own words ('' when there are none) — ProjectList
+      // only the server's own words ('' when there are none) — ProjectList
       // shows the localized general text itself.
       error.value = err instanceof Error ? err.message.trim() : ''
     } finally {
@@ -278,9 +278,9 @@ export const useProjectStore = defineStore('project', () => {
     await refreshProjects(epoch, true)
   }
 
-  // Create orchestration only (WP0005 T#1 §5). Whether/how a caller turns the created
-  // Project into a Dialog-local "selected" candidate is T#2's ProjectCreateDialog concern
-  // (D0004 §3.6) — this store never sets currentProjectId as a side effect of creating.
+  // Create orchestration only. Whether/how a caller turns the created
+  // Project into a Dialog-local "selected" candidate is the earlier implementation's ProjectCreateDialog concern
+  // — this store never sets currentProjectId as a side effect of creating.
   //
   // Shares `requestEpoch`/`loading` with fetchProjects so the two request kinds cannot
   // corrupt each other's generation: bumping the epoch here invalidates an in-flight fetch's
@@ -323,7 +323,7 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  // ── Recent Project / Group / Flow (flowgate.v02.0043) ───────────────────────────────
+  // ── Recent Project / Group / Flow ───────────────────────────────
   // Newest first, one entry per id, capped (recentStorage.ts). A Project is recorded when it
   // is opened ("열기" / a recent entry); Groups and Flows are recorded by the Designer when it
   // opens them. Nothing here is ever derived from the stored current Project id.
@@ -351,7 +351,7 @@ export const useProjectStore = defineStore('project', () => {
     writeRecentFlows(recentFlows.value)
   }
 
-  // flowgate.v02.0060 T#2: a renamed Group / Flow keeps its place in the recent lists with the new name; a disposed
+  // a renamed Group / Flow keeps its place in the recent lists with the new name; a disposed
   // Flow leaves the recent Flow list (it can no longer be opened from there).
   function renameRecent(kind: 'group' | 'flow', id: string, name: string): void {
     if (kind === 'group') {
@@ -397,7 +397,7 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   // The only place currentProjectId is ever assigned from a Dialog-driven "open" action
-  // (D0004 §3.4). Row selection alone must never call this — that distinction lives in the
+  //. Row selection alone must never call this — that distinction lives in the
   // future ProjectDialog's Dialog-local `selected` state, not in this store.
   function setCurrentProject(project: Project): void {
     applyCurrentProjectId(project.id)
@@ -413,13 +413,13 @@ export const useProjectStore = defineStore('project', () => {
     recordRecentProject(entry)
   }
 
-  // flowgate.v02.0043: File › Project Close. The Designer loses its Project context (its Explorers
+  // File › Project Close. The Designer loses its Project context (its Explorers
   // and Center clear); the stored id goes too, as when a current Project leaves the active list.
   function closeCurrentProject(): void {
     applyCurrentProjectId(null)
   }
 
-  // ── Designer F5 snapshot (flowgate.v02.0105 T#1) ─────────────────────────────────────────
+  // ── Designer F5 snapshot ─────────────────────────────────────────
   // The user the snapshot belongs to; none is kept or read while nobody is signed in.
   const designerSessionOwner = computed<string | null>(() => useCurrentUser().user.value?.username ?? null)
 
@@ -451,12 +451,12 @@ export const useProjectStore = defineStore('project', () => {
     return { status: typeof mark?.status === 'number' ? mark.status : null, network: mark?.network === true }
   }
 
-  // flowgate.v02.0040: one-shot "this Project was explicitly opened" signal for the Designer.
+  // one-shot "this Project was explicitly opened" signal for the Designer.
   // Only the Dialog's "열기" raises it (right after setCurrentProject); the Designer's Project
   // Explorer takes it on entry to start with that Project selected. Taking it clears it, so a
   // later Designer entry from the Sidebar/Dashboard card (which never raises it) still starts
-  // unselected (0039 T#3). Not persisted: it only bridges the Dialog -> Designer move.
-  // flowgate.v02.0043: readable, so an Explorer already showing that Project can react to a
+  // unselected. Not persisted: it only bridges the Dialog -> Designer move.
+  // readable, so an Explorer already showing that Project can react to a
   // "열기" of the same Project (File › Project Open… / Recent Project from inside the Designer).
   const explicitOpenProjectId = ref<string | null>(null)
 
@@ -470,7 +470,7 @@ export const useProjectStore = defineStore('project', () => {
     return projectId
   }
 
-  // ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────
+  // ── Group tree ───────────────────────────────────────────────
   // Keyed per project + variant (pruned vs include_terminal): the two variants are different
   // node lists and must never answer for each other. Kept apart from `requestEpoch`, which
   // belongs to the Project list/Dialog session and is bumped by closeDialog().
@@ -524,7 +524,7 @@ export const useProjectStore = defineStore('project', () => {
     return promise
   }
 
-  // flowgate.v02.0043: a Group / Flow was created, so every cached tree of that Project is
+  // a Group / Flow was created, so every cached tree of that Project is
   // stale. Dropping them makes the next non-forced read go to the server; a consumer that
   // already shows the tree re-reads with `force` on its own (the Explorer's refreshToken).
   function invalidateGroupTree(projectId: string): void {
@@ -572,7 +572,7 @@ export const useProjectStore = defineStore('project', () => {
     return result
   }
 
-  // flowgate.v02.0107 (D §3.1): the Designer Git display read of the same work-base. Only the answer:
+  // (D): the Designer Git display read of the same work-base. Only the answer:
   // unlike loadFlowWorkBase it writes or invalidates no shared state (knownGitEnabled, the options
   // session / versions, the group trees, the project Git status), so a late, inactive or mismatched
   // answer changes nothing here. Uncached; the Git worktree session owns its staleness.
@@ -586,7 +586,7 @@ export const useProjectStore = defineStore('project', () => {
     invalidateWorkBaseOptions(projectId)
   }
 
-  // ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────
+  // ── Group / Flow creation ──────────────────────────────────────
   // Stateless like the loaders below: the create dialogs own their own submit / stale guards.
   // The Project list session's `requestEpoch` does not gate these.
   async function createGroup(projectId: string, input: CreateGroupInput): Promise<CreatedGroup> {
@@ -602,7 +602,7 @@ export const useProjectStore = defineStore('project', () => {
     return created
   }
 
-  // ── Designer context menu server commands (flowgate.v02.0060 T#2) ───────────────────────────────
+  // ── Designer context menu server commands ───────────────────────────────
   // A Group / Flow name or a dispose changes the Project's tree: its cached trees are dropped (the Explorer re-reads
   // with its refreshToken). A refusal is thrown as the api.ts Error with its `refusal`; nothing is dropped then.
   async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<GroupRenameResult> {
@@ -660,7 +660,7 @@ export const useProjectStore = defineStore('project', () => {
     return suggestProjectSlug(text)
   }
 
-  // Flow file context (flowgate.v02.0024 T0005). The Designer File Explorer reaches the
+  // Flow file context. The Designer File Explorer reaches the
   // project Git status and the active Flow's tree / Base-relative changes / diff / AI
   // activity only through these loaders, so features/designer owns no API or store of its
   // own. They are stateless on purpose: Flow-scoped staleness (seq guard, scope switch) is
@@ -691,7 +691,7 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowAiActivity(groupId)
   }
 
-  // flowgate.v02.0033: the Designer Git part's file reads. A conflict / uncommitted file is a
+  // the Designer Git part's file reads. A conflict / uncommitted file is a
   // Base checkout file (HEAD vs working tree); a merge review file is read from the frozen
   // review candidate. Stateless like the loaders above.
   function loadBaseFileDiff(projectId: string, path: string): Promise<BaseFileDiff> {
@@ -702,7 +702,7 @@ export const useProjectStore = defineStore('project', () => {
     return fetchMergeReviewFileDiff(groupId, mergeId, path)
   }
 
-  // flowgate.v02.0045: the Designer Canvas Graph loader / saver (P0008 §3 / §4). Stateless like
+  // the Designer Canvas Graph loader / saver. Stateless like
   // the loaders above: per-Flow staleness and save batching belong to the Center session.
   function loadFlowCanvas(flowId: string, view?: string, collapse?: readonly string[]): Promise<FlowCanvas> {
     return fetchFlowCanvas(flowId, view, collapse)
@@ -712,12 +712,12 @@ export const useProjectStore = defineStore('project', () => {
     return saveFlowCanvasLayoutApi(flowId, input)
   }
 
-  // flowgate.v02.0064 T#4 (P0006 §4.2.2): one card's title save; the version order of what is shown is the Center's.
+  // one card's title save; the version order of what is shown is the Center's.
   function saveFlowNodeTitle(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState> {
     return nodeTitleSave(flowId, nodeKey, title)
   }
 
-  // flowgate.v02.0045 S3+S4: the Graph definition saver (P0008 §5 / §6). Draft batching, version
+  // S3+S4: the Graph definition saver. Draft batching, version
   // tracking and key remapping belong to the Center session's draft editor.
   function loadFlowGraph(flowId: string): Promise<FlowGraphDefinition> {
     return fetchFlowGraph(flowId)
@@ -735,7 +735,7 @@ export const useProjectStore = defineStore('project', () => {
     return confirmFlowGraphRevisionApi(flowId, draftVersion, baseRevisionNo)
   }
 
-  // flowgate.v02.0053 T#9: the Graph run of a Flow (P0008 §7 S5). Stateless like the loaders above: which
+  // the Graph run of a Flow. Stateless like the loaders above: which
   // run the top band shows, and the "다음 단계" / "전체 실행" / "중지" sequences, belong to the Center session.
   function loadFlowRun(flowId: string): Promise<FlowRun | null> {
     return fetchCurrentFlowRun(flowId)
@@ -758,12 +758,12 @@ export const useProjectStore = defineStore('project', () => {
     return resumeFlowRunApi(runId)
   }
 
-  // flowgate.v02.0113 T#5: what one step / full command did (its latest, or the one starting at `commandSeq`).
+  // what one step / full command did (its latest, or the one starting at `commandSeq`).
   function loadFlowCommandResult(runId: string, commandSeq?: number): Promise<FlowCommandResult> {
     return fetchFlowCommandResult(runId, commandSeq)
   }
 
-  // flowgate.v02.0061 T#15: the Graph Time Machine of a done card (its context menu); the run it answers goes to the band.
+  // the Graph Time Machine of a done card (its context menu); the run it answers goes to the band.
   function timeMachineFlowRunNode(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }> {
     return timeMachineFlowRunNodeApi(runId, nodeKey)
   }
@@ -773,13 +773,13 @@ export const useProjectStore = defineStore('project', () => {
     return subscribeFlowCanvasChangesApi(projectId, handlers)
   }
 
-  // flowgate.v02.0048 T#2: any event of one project over the same shared stream as the Canvas
+  // any event of one project over the same shared stream as the Canvas
   // (projectEvents.ts, one EventSource per project). Returns the unsubscribe.
   function subscribeProjectEvents(projectId: string, subscription: ProjectEventSubscription): () => void {
     return subscribeProjectEventsApi(projectId, subscription)
   }
 
-  // flowgate.v02.0043: set by openDialog({ create: true }) and read once by ProjectDialog when it
+  // set by openDialog({ create: true }) and read once by ProjectDialog when it
   // opens. Not persisted; a Dialog open without the option clears it.
   const createRequested = ref(false)
 
@@ -814,7 +814,7 @@ export const useProjectStore = defineStore('project', () => {
     // Read-only id view: `currentProject` needs the active list loaded, but a screen that
     // only needs "which project" (e.g. the Designer) must not wait for or trigger it.
     currentProjectId: computed(() => currentProjectId.value),
-    // Read-only views of the recent lists and the explicit-open signal (flowgate.v02.0043).
+    // Read-only views of the recent lists and the explicit-open signal.
     recentProjects: computed(() => recentProjects.value),
     recentGroups: computed(() => recentGroups.value),
     recentFlows: computed(() => recentFlows.value),

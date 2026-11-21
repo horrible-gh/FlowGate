@@ -1,4 +1,4 @@
-"""flowgate.v02test.0030 (0001-B) -- a chat AI call says how the browser picked its AI.
+"""a chat AI call says how the browser picked its AI.
 
 On stg a chat run went to the system default AI although the user had picked their own, and the run row only
 said ``selected_provider_source = 'request'``: the browser named that AI, but nothing told which screen path

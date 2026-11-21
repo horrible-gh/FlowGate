@@ -1,5 +1,5 @@
 /**
- * flowgate.v02gui.0027 (0008-T) — Delete Group (empty Groups only) on the client: the Group menu part (danger item, one line,
+ * Delete Group (empty Groups only) on the client: the Group menu part (danger item, one line,
  * no hint under it — v02test.0027 0005-T), the Explorer display tree / ⋯ target carrying `flowTotal`, and the store /
  * API path (DELETE, 409 `module_not_empty` with its count). The Shell end to end (window, Archive instead, refresh) is in
  * contextMenuServerActions.0060.spec.ts; the server side in server/tests/.../test_group_delete_v02gui_0027.py.

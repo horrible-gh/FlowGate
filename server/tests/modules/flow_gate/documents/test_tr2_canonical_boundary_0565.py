@@ -69,7 +69,7 @@ def test_file_and_revision_rollback_when_writer_fails(tmp_path, monkeypatch):
                 row["filename"] = params[2]
 
         def _execute_affected(self, sql, params):
-            # The writer's CAS authority is the driver's affected-row count (T0030 §8).
+            # The writer's CAS authority is the driver's affected-row count.
             before = row["revision_no"]
             self._execute(sql, params)
             return int(row["revision_no"] != before)

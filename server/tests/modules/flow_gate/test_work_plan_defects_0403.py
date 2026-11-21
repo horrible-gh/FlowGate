@@ -1,6 +1,6 @@
-"""flowgate.default.0403 T0005: regressions for defects reproduced in NR0004.
+"""regressions for defects reproduced in the review.
 
-Follow the priority order in NR0004 §5:
+Follow the priority order in the review:
 
 1. F1: file writes and DB revision updates form one save operation (§3 F1).
 2. F2: stale applied plans cannot be saved (§3 F2).
@@ -130,7 +130,7 @@ def wired(monkeypatch, tmp_path):
 
 
 def _write_plan(wired: dict, counts: dict) -> None:
-    """0649 T#2 (NR0003 O5): a pouring save is checked against the plan's card order, so
+    """a pouring save is checked against the plan's card order, so
     the plan file holds a real (legacy, fixed-order) body with these quantities."""
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -146,7 +146,7 @@ def _write_plan(wired: dict, counts: dict) -> None:
 
 
 def test_f2_a_plan_that_moved_since_the_dialog_opened_stops_the_save(wired):
-    """NR0004 F2: the workflow fingerprint is unchanged but the plan revision advanced."""
+    """the workflow fingerprint is unchanged but the plan revision advanced."""
     with pytest.raises(wds.PlanRevisionChanged) as exc:
         wds.edit_workflow_pending(
             OWNER_DOC_ID,
@@ -214,7 +214,7 @@ def test_f3_an_ordinary_edit_writes_no_application_row(wired):
 
 @pytest.fixture
 def wired_without_sequence(wired, monkeypatch):
-    """The same wiring, but this group has no workflow yet (NR0004 F4)."""
+    """The same wiring, but this group has no workflow yet."""
     created: list[str] = []
     sequence: dict = {}
 
@@ -251,7 +251,7 @@ def test_f4_an_undecided_workflow_still_refuses_an_ordinary_edit(wired_without_s
 
 
 def test_f4_pouring_a_plan_builds_the_first_sequence(wired_without_sequence):
-    """NR0004 F4: candidate generation could create plan rows without a sequence,
+    """candidate generation could create plan rows without a sequence,
     but saving immediately rejected them, blocking workflow creation from a plan."""
     _write_plan(wired_without_sequence, {"N": 1})
     result = wds.edit_workflow_pending(
@@ -477,7 +477,7 @@ def _create_plan(client, doc_code: str, title: str = "0403 작업계획"):
 def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
     seed, storage_root, monkeypatch,
 ):
-    """NR0004 F1: two requests read the same revision and both pass the initial check.
+    """two requests read the same revision and both pass the initial check.
 
     After A saves, B still presents revision_no=0 from when its window opened.
     Previously B overwrote the canonical file before losing the DB race with 409:
@@ -540,7 +540,7 @@ def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
 
 
 def test_f6_a_suggestion_asked_against_a_stale_revision_is_refused(seed):
-    """NR0004 F6: the suggestion route accepted base_revision_no but never inspected it."""
+    """the suggestion route accepted base_revision_no but never inspected it."""
     client = _client()
     created = _create_plan(client, "0003-WP")
     doc_id = created["doc_id"]
@@ -561,7 +561,7 @@ def test_f6_a_suggestion_asked_against_a_stale_revision_is_refused(seed):
 
 
 def test_f7_the_read_view_states_whether_the_plan_can_be_edited(seed):
-    """NR0004 F7: replace client-only approval-state locking with the server decision."""
+    """replace client-only approval-state locking with the server decision."""
     from modules.flow_gate.db import documents as db_docs
 
     client = _client()
@@ -613,7 +613,7 @@ def test_f7_the_read_view_reports_where_a_plan_was_last_applied(seed, storage_ro
 
 
 def test_f8_legacy_request_title_is_ignored_and_canonical_totals_own_the_title(seed):
-    """0591 T#2: deprecated request titles cannot reject or name a canonical WP."""
+    """deprecated request titles cannot reject or name a canonical WP."""
     client = _client()
     calls: list = []
 

@@ -1,11 +1,11 @@
 <template>
-  <!-- Final container for the center work area. flowgate.v02.0026: holds the Designer Center
+  <!-- Final container for the center work area. the earlier change: holds the Designer Center
        (Flow Tabs + read-only Canvas); the tab strip and the Canvas scroll / pan themselves.
-       flowgate.v02.0039 T#3: with no work target the work area is an empty frame — no Flow
+       with no work target the work area is an empty frame — no Flow
        tabs, no guide text, no Canvas (confirmed initial-state design). The Center session
        lives in the Shell, so nothing is lost while the frame is shown.
-       flowgate.v02.0066 T#6 drew the Shell's Git Center Diff here over the hidden Designer Center; flowgate.v02.0067
-       T#4 moved that diff into the Git modeless (`Diff` tab), so the Workspace holds the Designer Center only. -->
+       drew the Shell's Git Center Diff here over the hidden Designer Center; the earlier change
+       moved that diff into the Git modeless (`Diff` tab), so the Workspace holds the Designer Center only. -->
   <section class="designer-workspace" data-test="designer-workspace">
     <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
     <DesignerCenter v-else :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" @open-document="(flowId, doc) => emit('open-document', flowId, doc)" />
@@ -20,9 +20,9 @@ withDefaults(
   defineProps<{
     center: DesignerCenterSession
     placing?: boolean
-    /** No work target yet (0039 T#3): show the empty frame instead of the Designer Center. */
+    /** No work target yet: show the empty frame instead of the Designer Center. */
     unselected?: boolean
-    /** flowgate.v02.0059 0017-T: the density's card drag step, passed to the Canvas; null = freeform. */
+    /** the density's card drag step, passed to the Canvas; null = freeform. */
     moveStep?: number | null
   }>(),
   { unselected: false, placing: false, moveStep: null },
@@ -31,7 +31,7 @@ withDefaults(
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
-  /** flowgate.v02.0061 T#14: a card's merge conflict asks for the Git tool panel. */
+  /** a card's merge conflict asks for the Git tool panel. */
   'show-tool': [tool: 'git']
   'open-document': [flowId: string, document: import('../center/canvas/cardDocumentButtons').CardDocumentOpen]
 }>()

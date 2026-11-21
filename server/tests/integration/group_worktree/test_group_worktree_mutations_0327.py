@@ -1,4 +1,4 @@
-"""flowgate.default.0327 T0004 — creating, uploading and downloading while a group
+"""creating, uploading and downloading while a group
 branch is selected in the file explorer.
 
 B0001: "브랜치를 변경하면 우측 마우스 버튼이 거의 동작을 안한다 / 폴더·파일 생성이나
@@ -7,14 +7,14 @@ with "read-only", even though the server already knows which groups own a live
 worktree. These tests pin the server half of the fix:
 
   1. the group-slot payload says whether a slot is writable, so the client can stop
-     guessing (NR0003 finding 3);
+     guessing;
   2. create / upload / download / DELETE accept a group_id and resolve it to THAT
      group's worktree — fail-closed, never silently falling back to the base checkout,
-     which would dirty base and block every other group's finalize (NR0003 recommendation 1·2·3);
+     which would dirty base and block every other group's finalize;
   3. a folder created in a worktree is visible in the group tree even though git can
      express no empty directory — otherwise "새 폴더" appears to do nothing.
 
-Delete (§4 below) supersedes NR0003 recommendation 4. That recommendation kept delete blocked in
+Delete (below) supersedes the review. That recommendation kept delete blocked in
 every group context because it assumed delete meant "hard-delete in the BASE checkout",
 entangling it with the finalize E3 base-contamination guard. Resolved against the
 group's own worktree, base is never touched, so delete now follows exactly the same rule
@@ -71,7 +71,7 @@ def _worktree(monkeypatch, tmp_path: Path, *, registered: bool = True) -> Path:
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     wt = tmp_path / "src" / "FlowGate Live" / "fg-0327"
     wt.mkdir(parents=True)
-    # 0287 NR0004: a worktree is a directory WITH its .git link.
+    # a worktree is a directory WITH its .git link.
     (wt / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
     monkeypatch.setattr(
         git_service,
@@ -94,7 +94,7 @@ def test_build_tree_nodes_renders_a_folder_that_holds_no_file():
     nodes = git_service._build_tree_nodes(["docs/a.md"], ["docs/brand_new", "top_new/deep"])
     by_path = {n["path"]: n for n in nodes}
 
-    # The whole point of B0001: the folder the user just created is in the tree.
+    # The whole point of the regression: the folder the user just created is in the tree.
     assert by_path["docs/brand_new"]["type"] == "folder"
     assert by_path["top_new"]["type"] == "folder"
     assert by_path["top_new/deep"]["type"] == "folder"
@@ -153,7 +153,7 @@ def test_group_worktree_writable_tracks_the_live_worktree(monkeypatch, tmp_path)
 
 
 def test_group_worktree_writable_is_false_once_the_slot_is_released(monkeypatch, tmp_path):
-    """NR0003 recommendation 5: a group whose worktree was released (merge/push cleanup) stays
+    """a group whose worktree was released (merge/push cleanup) stays
     fully read-only — this signal is what keeps that promise."""
     from modules.flow_gate.services import git_service
 
@@ -248,7 +248,7 @@ def test_upload_root_resolution_is_fail_closed_for_a_group(monkeypatch, tmp_path
 
     assert file_transfer_routes._get_src_root("flowgate", "flowgate.default.0327") == wt
 
-    # Worktree gone → 409, NOT a base-checkout upload (NR0003 recommendation 2 / the 0115
+    # Worktree gone → 409, NOT a base-checkout upload (the review / the 0115
     # shared resolver would have fallen back here).
     _worktree(monkeypatch, tmp_path / "b", registered=False)
     with pytest.raises(HTTPException) as excinfo:
@@ -258,7 +258,7 @@ def test_upload_root_resolution_is_fail_closed_for_a_group(monkeypatch, tmp_path
 
 
 def test_download_reads_the_group_worktree_not_the_base_checkout(monkeypatch, tmp_path):
-    """NR0003 recommendation 3: download is a read and is allowed in a group view — but it has
+    """download is a read and is allowed in a group view — but it has
     to return the GROUP's bytes, or the user silently gets the base version."""
     from fastapi import HTTPException
     from modules.flow_gate.api.v1 import tree_routes
@@ -277,7 +277,7 @@ def test_download_reads_the_group_worktree_not_the_base_checkout(monkeypatch, tm
     assert excinfo.value.status_code == 403
 
 
-# ── 4. delete is symmetric with create/upload (supersedes NR0003 recommendation 4) ───────
+# ── 4. delete is symmetric with create/upload (supersedes the review) ───────
 
 GID = "flowgate.default.0327"
 DEL_URL = "/flowgate/api/v1/projects/flowgate/files"

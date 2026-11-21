@@ -1,4 +1,4 @@
-"""flowgate.v02.0053 T#2 — a Graph node's card restarts reach the AI invoke engine.
+"""a Graph node's card restarts reach the AI invoke engine.
 
 A Graph node starts its AI as one single 'new' run (``ai_node_starter``), and a single run was always
 one-shot: the no-output retry (0359 / 0443) was continuous-only. The card's restart setting rides the start
@@ -36,7 +36,7 @@ from tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 import (  # noq
 
 @pytest.fixture
 def run_identity_db(migrated_sqlite_db, monkeypatch):
-    """flowgate.v02.0146 T#2: the 0359 harness has no database, but ``start_run`` allocates its run id from the run-id
+    """the 0359 harness has no database, but ``start_run`` allocates its run id from the run-id
     allocator contract and claims it (``ai_run_identity``), both of which read the database. Run on its own (or in
     another order, as ``--dist loadfile`` does) it used to fail with ``'NoneType' ... 'execute'`` and only passed when
     an earlier module had left a store behind. Give it its own migrated SQLite store with the contract initialized, the

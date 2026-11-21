@@ -18,30 +18,30 @@ EVT_COMMENT_ADDED = "comment_added"
 EVT_PROMPT_COPIED = "prompt_copied"
 EVT_GROUP_COMPLETION_CANDIDATE = "group_completion_candidate"
 EVT_GROUP_APPROVED = "group_approved"
-# R0001 group 0125 / NR0003: present-tense work-STATE signals. Originally recorded for the dashboard
-# state board (work-status aggregation) only. NR0003 recommendation 4: re-introducing per-transition state changes into the
+# present-tense work-STATE signals. Originally recorded for the dashboard
+# state board (work-status aggregation) only. the review: re-introducing per-transition state changes into the
 # past-tense feed would undo the 0118 noise reduction ("a notification flood on every state change"). The investigation
 # found that workflow start and continuous-run end had no backend signal at all;
-# these constants close that gap (NR0003 §finding 3, recommendation 1).
+# these constants close that gap.
 #
 # EVT_WORK_STARTED — still state-board ONLY; MUST stay out of _NOTIFICATION_EVENT_TYPES (it is a
 #   present-tense per-start signal; promoting it revives the flood).
-# EVT_CONTINUOUS_WORK_ENDED — R0001 group 0135 / N0008: now ALSO on the notification feed. Unlike a
+# EVT_CONTINUOUS_WORK_ENDED — the requirement the earlier change / N0008: now ALSO on the notification feed. Unlike a
 #   per-transition state change it fires exactly ONCE per unmanned run (at the target-reached stop),
 #   so promoting just this terminal event gives a distinct "continuous work finished" alarm without the flood.
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_WORK_STARTED = "work_started"
 EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
-# EVT_CONTINUOUS_WORK_FAILED — R0001 group 0154 / NR0004 Gap A: the failure-path counterpart of
+# EVT_CONTINUOUS_WORK_FAILED — the requirement the earlier change / the review Gap A: the failure-path counterpart of
 #   CONTINUOUS_WORK_ENDED. When an unmanned chain's server-side test_run finishes RED, no TSR is
 #   assembled (tsr_doc_id stays null) and the chain stops with NO persistent signal of any kind — only
 #   a transient SSE `test_run_finished` broadcast — so the chain went silent and nobody knew until the
-#   run record was opened by hand (NR0004 §2.4, the exact "stuck on the test report" R0001 reported). Like
+#   run record was opened by hand (the exact "stuck on the test report" the requirement reported). Like
 #   ENDED it fires exactly ONCE per unmanned run (at the failed-run stop), so promoting just this
 #   terminal event yields a distinct "continuous work failed" alarm without reviving the 0118 per-step flood.
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
-# EVT_TEST_RUN_REPAIR / EVT_TEST_RUN_REPAIR_EXHAUSTED — flowgate.default.0157 (R0001→…→T0006): the
+# EVT_TEST_RUN_REPAIR / EVT_TEST_RUN_REPAIR_EXHAUSTED — the earlier change: the
 #   test-run auto-recovery loop (engine_recipe_service.handle_run_failure). When an unmanned chain's
 #   server-side test_run dies on an ENVIRONMENT failure (setup/tool/PATH — the test never ran), the
 #   system re-fires it up to MAX_REPAIR_ATTEMPTS with a fresh repair token instead of stopping. Each
@@ -51,41 +51,41 @@ EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
 #   MAX_REPAIR_ATTEMPTS repair rows + one exhausted row per doc, so no 0118 per-step flood.
 EVT_TEST_RUN_REPAIR = "test_run_repair"
 EVT_TEST_RUN_REPAIR_EXHAUSTED = "test_run_repair_exhausted"
-# EVT_CONTINUATION_HEAD_AUTO_HANDLED — flowgate.default.0406 T0022 item 3. The fact that, in an
+# EVT_CONTINUATION_HEAD_AUTO_HANDLED — the earlier change the earlier implementation. The fact that, in an
 #   unmanned chain, the server wrote and approved the N/T instruction itself and attached no AI
 #   worker at all. On the user's screen that step simply looks gone, and until now the fact was
 #   recorded nowhere, so a "the note never arrived" report could not be judged afterwards. At most
 #   one row per hop, so unrelated to 0118's per-step flood, and it is **not** raised onto the
 #   notification feed — it records normal behaviour, not an incident needing human action.
 EVT_CONTINUATION_HEAD_AUTO_HANDLED = "continuation_head_auto_handled"
-# EVT_WORKFLOW_SLOT_CONFLICT — flowgate.default.0457 B0001 / NR0003 §7-4. A registration
+# EVT_WORKFLOW_SLOT_CONFLICT — the earlier change the regression / the review A registration
 #   that tried to put a document into a slot another document already holds, and was
 #   refused. Before 0457 the opposite happened — the eviction went through and left no
 #   event at all, so the only way to learn a document had been pushed out of its slot was
 #   to read the workflow_item_results ledger afterwards and notice the slot had changed
-#   hands (NR0003 §3). This records the attempt itself, with the slot and both document
+#   hands. This records the attempt itself, with the slot and both document
 #   ids. It fires only on a refused write, so it cannot flood; it is deliberately NOT in
 #   dashboard_service._NOTIFICATION_EVENT_TYPES — the caller already gets a 409/exception,
 #   and this row exists for the operator reconstructing what happened afterwards.
 EVT_WORKFLOW_SLOT_CONFLICT = "workflow_slot_conflict"
-# 0468 T0013: an "annotation" is the automatic-review linkage between a
+# an "annotation" is the automatic-review linkage between a
 # document_reviews row and the rejection_history item produced from it.
 EVT_REVIEW_ANNOTATION_READ_FAILED = "review_annotation_read_failed"
 EVT_REVIEW_ANNOTATION_WRITE_FAILED = "review_annotation_write_failed"
 EVT_DEPLOYMENT_STARTED = "deployment_started"
 EVT_CHANGE_SUMMARY_RECORDED = "change_summary_recorded"
-# EVT_QNA_RESPONDER_FAILED / EVT_QNA_USER_DECISION_REQUIRED — flowgate.default.0661 T0004
-#   (0003-NR F3/F5). The automatic Q responder could not register an answer: either a
+# EVT_QNA_RESPONDER_FAILED / EVT_QNA_USER_DECISION_REQUIRED — the earlier change the earlier implementation
+#   (NR F3/F5). The automatic Q responder could not register an answer: either a
 #   TECHNICAL failure (provider unavailable, admission/lease conflict, timeout, the run ended
 #   without an answer) or the responder's EXPLICIT "a human must decide this" signal. Before
 #   this the first case was a single logger.warning and the second had no representation at
-#   all, so a parked chain waited on a Q nobody knew was stuck (0003-NR §2.6 table). Both are
+#   all, so a parked chain waited on a Q nobody knew was stuck (NR table). Both are
 #   on the notification feed (dashboard_service._NOTIFICATION_EVENT_TYPES); each fires at most
 #   once per responder attempt and the chain never re-dispatches the same item on its own, so
 #   neither can flood.
 EVT_QNA_RESPONDER_FAILED = "qna_responder_failed"
 EVT_QNA_USER_DECISION_REQUIRED = "qna_user_decision_required"
-# EVT_QNA_ANSWERS_DELIVERED -- flowgate.default.0688 T#2. Which answers to an AI question a
+# EVT_QNA_ANSWERS_DELIVERED -- the earlier change the earlier implementation. Which answers to an AI question a
 #   chain's review / rework hop was given in its mention, keyed by that hop's run and the
 #   answer ids. The review gate reads it back (review._answers_checked_by_reviews): a review
 #   round checked an answer only when its own run's row names it, so an answer that landed
@@ -153,7 +153,7 @@ def log_continuation_head_auto_handled(
     mode_fallback_applied: bool,
 ) -> dict:
     """Record the N/T slots the server auto-wrote and approved, and whether mode
-    normalisation fired (flowgate.default.0406 T0022 items 2 and 3)."""
+    normalisation fired (items 2 and 3)."""
     return log_event(
         event_type=EVT_CONTINUATION_HEAD_AUTO_HANDLED,
         project_id=project_id,
@@ -247,7 +247,7 @@ def log_work_started(
     doc_id: str | None = None,
     group_id: str | None = None,
 ) -> dict:
-    """Record an explicit workflow-"start" signal (R0001 group 0125, NR0003 recommendation 1).
+    """Record an explicit workflow-"start" signal (the earlier change, the review).
 
     Emitted when a requirement's workflow is decided and the document flips to
     doc_review_status='wf_in_progress'. Used only for the state board aggregation
@@ -276,10 +276,10 @@ def log_continuous_work_ended(
     group_id: str | None = None,
     target_seq: int | None = None,
 ) -> dict:
-    """Record an explicit "continuous-work ended" signal (R0001 group 0125, NR0003 recommendation 1).
+    """Record an explicit "continuous-work ended" signal (the earlier change, the review).
 
     Emitted when the server-driven continuous (unmanned) self-chain reaches its target and stops.
-    Before this, the system had no signal at all for which document ended a continuous run (NR0003 §finding 3).
+    Before this, the system had no signal at all for which document ended a continuous run.
     Used only for the state board aggregation; never added to the notification feed whitelist.
     """
     meta: dict[str, Any] = {}
@@ -309,17 +309,17 @@ def log_continuous_work_failed(
     case_failed: int | None = None,
     error: str | None = None,
     target_seq: int | None = None,
-    # 0359 L0007 §2.11: additional metadata keys from the AI-engine caller (stop_code,
+    # additional metadata keys from the AI-engine caller (stop_code,
     # token_id, item_seq, provider_id, attempts_used). Kept as an open bag rather than five
     # more parameters — the test-run caller has no use for any of them.
     extra: dict[str, Any] | None = None,
 ) -> dict:
-    """Record an explicit "continuous-work failed/paused" signal (R0001 group 0154, NR0004 Gap A).
+    """Record an explicit "continuous-work failed/paused" signal (the earlier change, the review Gap A).
 
     Emitted when a server-driven continuous (unmanned) run's test_run finishes RED: no TSR is assembled
     and the chain has nothing to hand to the next step, so it stops for a human. Before this, that stop
     produced no persistent signal at all — only a transient SSE `test_run_finished` broadcast — so the
-    unmanned chain went silent (NR0004 §2.4). Fires once per failed run; promoted to the notification
+    unmanned chain went silent. Fires once per failed run; promoted to the notification
     feed as the "continuous work failed" counterpart of continuous_work_ended.
     """
     meta: dict[str, Any] = {}
@@ -363,7 +363,7 @@ def log_question_responder_event(
     message: str | None = None,
     requested_provider_id: str | None = None,
 ) -> dict:
-    """Record one automatic-Q-responder outcome that needs a human (0661 T0004 F3/F5).
+    """Record one automatic-Q-responder outcome that needs a human.
 
     ``event_type`` is EVT_QNA_RESPONDER_FAILED (technical: the item stays unanswered and
     can be re-dispatched from the Q&A panel) or EVT_QNA_USER_DECISION_REQUIRED (the AI
@@ -411,7 +411,7 @@ def log_test_run_repair(
     token: str | None = None,
     mention: str | None = None,
 ) -> dict:
-    """Record one test-run auto-recovery repair delivery (flowgate.default.0157, L §2-6).
+    """Record one test-run auto-recovery repair delivery.
 
     Emitted when an unmanned chain's test_run failed for an ENVIRONMENT reason and the loop re-fires it.
     Carries the fresh repair token + fix mention so a worker (or the user) can re-fire from the feed.
@@ -453,7 +453,7 @@ def log_test_run_repair_exhausted(
     group_id: str | None = None,
     attempts: list[dict] | None = None,
 ) -> dict:
-    """Record the test-run repair-exhausted escalation (flowgate.default.0157, L §2-6 / P §cap reached).
+    """Record the test-run repair-exhausted escalation (L / P §cap reached).
 
     Emitted once when a doc hits MAX_REPAIR_ATTEMPTS consecutive environment failures — the auto-recovery
     loop stops re-firing and hands the attempt history to the user. The one case a human must intervene.
@@ -495,7 +495,7 @@ def log_answer_delivery(
     revision_no: int | None, stage: str, run_id: str | None, chain_id: str | None,
     items: list[dict],
 ) -> dict:
-    """Record the answers a chain hop's mention carries (flowgate.default.0688 T#2).
+    """Record the answers a chain hop's mention carries.
 
     Raises on a write failure: the caller does not launch a hop whose delivery is not on
     record.

@@ -1,4 +1,4 @@
-// flowgate.v02.0073 T#2 — where the main window's review popover goes, with no screen: it is fixed on the page
+// where the main window's review popover goes, with no screen: it is fixed on the page
 // (teleported to <body>, so the window's scroll area does not clip it) and placed from its trigger's rect. Beside the
 // trigger first, inside the window the trigger is in, so the rows below stay reachable (the mockup's order); else
 // below it, else above it; always kept inside the viewport, on every path — also for a trigger scrolled or dragged

@@ -1,10 +1,10 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Toolbar (0001-R §4): undo / redo, alignment / layout ▾, the two run
+  <!-- Designer Toolbar: undo / redo, alignment / layout ▾, the two run
        buttons, fit / zoom out / zoom in, the zoom value and the layout density. No select / add
        node / connect modes (0001-R §4.2) and no standing stop button: the run button that was
        used turns into ■ 중지 in place and the other one is disabled until the run stops
        (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
-       the same command. flowgate.v02.0039 T#3: `disabled` (no work target yet) keeps every tool
+       the same command. the earlier change the earlier implementation: `disabled` (no work target yet) keeps every tool
        on screen but dimmed and unavailable, as the confirmed initial-state design draws it.
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
@@ -13,11 +13,11 @@
        the Edit menu's 정렬 / 배치 submenu — six 정렬 and two 균등 분배 of the selected cards, then 자동 배치 —
        each unavailable while too few cards are selected (`targets`, the Menu Bar's). A choice, Escape or a
        press outside closes it.
-       flowgate.v02.0059 0017-T: the zoom is one control — it shows the Canvas zoom (also one that is no
+       the zoom is one control — it shows the Canvas zoom (also one that is no
        preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
        step a card drag moves in.
-       flowgate.v02.0061 T#14: runPhase controls the run buttons; runBusy disables commands while pending.
-       flowgate.v02.0083 T0024 revision: the entire status area beside the run buttons is removed.
+       runPhase controls the run buttons; runBusy disables commands while pending.
+       the entire status area beside the run buttons is removed.
        Run state and command handling remain unchanged. -->
   <div
     class="designer-toolbar"
@@ -203,24 +203,24 @@ import {
 
 const props = withDefaults(
   defineProps<{
-    /** flowgate.v02.0061 T#14: the open Flow's run phase (which two run buttons show). */
+    /** the open Flow's run phase (which two run buttons show). */
     runPhase: DesignerRunPhase
     density: DesignerDensity
     /** The Canvas zoom, in percent: what the zoom control shows. */
     zoom: number
-    /** True while the Designer has no work target (0039 T#3): every tool is unavailable. */
+    /** True while the Designer has no work target: every tool is unavailable. */
     disabled?: boolean
-    /** flowgate.v02.0045 TR0020 rev2: the open Flow's edited structure can be checked now. */
+    /** the open Flow's edited structure can be checked now. */
     canValidate?: boolean
     canArchive?: boolean
     archiveBusy?: boolean
     archiveReason?: string
-    /** flowgate.v02.0059 T#2: the open Flow's structure edits can be undone / redone (Edit menu follows the same). */
+    /** the open Flow's structure edits can be undone / redone (Edit menu follows the same). */
     canUndo?: boolean
     canRedo?: boolean
     /** flowgate.v02.0059 T#1: the [선택] mode is on. */
     selectMode?: boolean
-    /** flowgate.v02.0059 T#2: what the alignment / layout ▾ commands act on (the Menu Bar's targets). */
+    /** what the alignment / layout ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
     /** Retained input contract for run state; the toolbar renders no status area. */
     runBand?: DesignerRunBand | null
@@ -242,7 +242,7 @@ const zoomOptions = computed(() =>
   ZOOM_PRESETS.includes(props.zoom) ? ZOOM_PRESETS : [...ZOOM_PRESETS, props.zoom].sort((a, b) => a - b),
 )
 
-// flowgate.v02.0059 0017-T: a chosen preset goes to the Canvas; the control then shows the zoom the Canvas
+// a chosen preset goes to the Canvas; the control then shows the zoom the Canvas
 // reports back (`zoom`), so it never keeps showing a choice the Canvas did not take.
 function chooseZoom(event: Event) {
   const select = event.target as HTMLSelectElement
@@ -294,7 +294,7 @@ const runButtons = computed(() =>
   })),
 )
 
-// flowgate.v02.0059 T#2: alignment / layout ▾ — the Edit menu's alignment / layout commands, then auto-layout. The drop-down
+// alignment / layout ▾ — the Edit menu's alignment / layout commands, then auto-layout. The drop-down
 // is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
 // flowgate.v02.0068 T#2: auto-layout is 가로 자동정렬 / 세로 자동정렬 (0004-D §6.3), one group after a separator.
 const ARRANGE_MENU = DESIGNER_LAYOUT_GROUPS
@@ -433,7 +433,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   color: #fff;
 }
 
-/* flowgate.v02.0059 T#2: alignment / layout ▾ and its drop-down (fixed under the button, over the work area). */
+/* alignment / layout ▾ and its drop-down (fixed under the button, over the work area). */
 .designer-tool-menu {
   display: flex;
 }
@@ -492,7 +492,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   background: #20364e;
 }
 
-/* flowgate.v02gui.0030: attachments (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
+/* attachments (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
 .designer-tool-attachment {
   position: relative;
   color: #d8ebfa;
@@ -542,7 +542,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   outline-offset: 1px;
 }
 
-/* No work target (0039 T#3, confirmed design v7): the whole band dims once; the buttons inside
+/* No work target (confirmed design v7): the whole band dims once; the buttons inside
    do not dim a second time. */
 .designer-toolbar.is-unavailable > .designer-tool-group {
   opacity: 0.38;
@@ -565,7 +565,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   cursor: default;
 }
 
-/* flowgate.v02.0059 0017-T: the one zoom control — the current zoom in a box, presets on opening it. */
+/* the one zoom control — the current zoom in a box, presets on opening it. */
 .designer-tool-zoom {
   height: 36px;
   margin: auto 2px;

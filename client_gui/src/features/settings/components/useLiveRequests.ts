@@ -27,12 +27,12 @@ function checkToken(): void {
 }
 
 /**
- * The lifetime of a settings view's answers (flowgate.v02.0076 T#5, D §2.3 / §3.2 / §5.2 V23): every
+ * The lifetime of a settings view's answers: every
  * request belongs to the epoch it was sent in. Leaving the screen, another person signing in, the
  * administrator role going away, a pending /auth/me or a lost token ends the epoch; `onExpire`
  * then drops what the view holds, and an answer arriving afterwards is dropped too — it is never
  * rendered, kept or followed by another request. The rule is the one System Agent applies
- * (SystemAgentSettingsView, T#4), with the same access decision as the router guard.
+ * (SystemAgentSettingsView, the earlier implementation), with the same access decision as the router guard.
  *
  * A lost session (no token, or the settings access no longer `allow`) is not this view's alone:
  * whichever view sees it — before sending (begin), when an answer arrives (live) or on the periodic

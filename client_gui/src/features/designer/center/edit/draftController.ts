@@ -1,29 +1,29 @@
-// flowgate.v02.0045 S3+S4 — Graph draft editing of the open Flows (D0004 §2.3 center/edit, §3.3):
+// S3+S4 — Graph draft editing of the open Flows (center/edit):
 // one draft editor per Flow whose shown Graph is an editable draft, the Palette drop / connect /
-// remove / undo commands, and the draft actions — validate (S3-5) and confirm (S4). TR0020 rev3:
+// remove / undo commands, and the draft actions — validate (S3-5) and confirm (S4). the earlier implementation:
 // no start-draft / switch-view actions — the Center session picks the shown definition, and a
 // Graph Flow's revision is edited as is (its first save creates the draft).
 //
 // The Center session is the host: it owns the shown Graph, the layout queue and the reads; this
 // controller only hands it edited Graphs and asks for reads. A Palette drop arrives as the raw
 // drag data; the host's `readDrop` (given by the Shell) says which node it means, so the Canvas
-// and the Palette never know each other (D0004 §4.2).
+// and the Palette never know each other.
 //
 // An editor stopped mid-save (tab closed, project changed) keeps its new nodes' shown positions
 // and stores them through `keepPositions` once the save answers their keys, Graph gone or not.
 //
-// TR0020 rev4: nothing about saving is shown. A save the server refuses (`conflict`: saved
+// nothing about saving is shown. A save the server refuses (`conflict`: saved
 // elsewhere first; `error`) is not dropped: the editor keeps the edit, retries it and rebases a version conflict
 // onto the stored draft, so the Flow is not read again for it.
-// flowgate.v02gui.0019: a read shown while such a refused save still waits keeps the cards and edges the person
+// a read shown while such a refused save still waits keeps the cards and edges the person
 // placed and the refused save did not store (`carry`): they go onto the read draft and are saved again, so a placed
 // card never vanishes. Once only: when that save is refused too, a later read drops them; any stored save allows it
-// again. A save that got no answer at all (`save_failed`: it may still be stored, flowgate.v02.0135) carries nothing.
+// again. A save that got no answer at all (`save_failed`: it may still be stored, the earlier change) carries nothing.
 //
-// flowgate.v02.0053 T#5: a stored save's card lines (the documents the server made for a placed card,
-// T#1) go onto the shown Graph at once, so the Inspector's documents tab has them without a read.
+// a stored save's card lines (the documents the server made for a placed card,
+// ) go onto the shown Graph at once, so the Inspector's documents tab has them without a read.
 //
-// flowgate.v02.0059 T#2 (0011-CH contract C): card moves (`recordMove`) share the Flow's undo / redo with
+// (CH contract C): card moves (`recordMove`) share the Flow's undo / redo with
 // the structure edits; a stepped move goes back through the host's `placeNodes` (Graph + layout save). A
 // Flow whose Graph is no editable draft keeps a moves-only history (an editor without save).
 import { pendingKey } from './pendingDraft'
@@ -62,7 +62,7 @@ export interface DraftHost {
   /** Renames the selected node after a save issued its key. */
   renameSelection(flowId: string, keyMap: Readonly<Record<string, string>>): void
   queuePosition(flowId: string, nodeId: string, x: number, y: number): void
-  /** flowgate.v02.0059 T#2: puts cards where an undone / redone move has them; whether any card went. */
+  /** puts cards where an undone / redone move has them; whether any card went. */
   placeNodes(flowId: string, placements: readonly NodePlacement[]): boolean
   /** Stores positions of new nodes whose editor was stopped (the tab / project may be gone). */
   keepPositions?(projectId: string, flowId: string, positions: ReadonlyArray<{ nodeId: string; x: number; y: number }>): void
@@ -78,12 +78,12 @@ export interface DraftHost {
 
 export function createDraftController(host: DraftHost, edits: Record<string, DraftEditState>) {
   const editors = new Map<string, DraftEditor>()
-  // flowgate.v02.0059 T#2: the move history of each open Flow with no editable draft.
+  // the move history of each open Flow with no editable draft.
   const moveOnly = new Map<string, DraftEditor>()
   const historyOf = (flowId: string) => editors.get(flowId) ?? moveOnly.get(flowId)
   // Stopped editors whose save still runs: their Flow and the positions of their `tmp_` nodes.
   const stopped = new Map<DraftEditor, { flowId: string; positions: Map<string, { x: number; y: number }> }>()
-  // flowgate.v02gui.0019: the editor model of a refused save, waiting for the Flow's next read (`carry`), and the
+  // the editor model of a refused save, waiting for the Flow's next read (`carry`), and the
   // Flows whose carried edits were not stored yet (a second refusal drops them).
   const carried = new Map<string, DraftModel>()
   const carriedOnce = new Set<string>()
@@ -104,7 +104,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     state.canUndo = historyOf(flowId)?.canUndo() ?? false
     state.canRedo = historyOf(flowId)?.canRedo() ?? false
     // Unacknowledged edits stay visible; the editor retries and rebases version conflicts (no read again).
-    // flowgate.v02gui.0019: a refusal the server answered also keeps the editor model, so a read shown before the
+    // a refusal the server answered also keeps the editor model, so a read shown before the
     // retry is stored puts the placed cards back (`carry`). A save with no answer may still be stored (v02.0135).
     if (editor && refused(state.status) && !refused(before) && !carriedOnce.has(flowId) && state.errorCode !== 'save_failed') {
       carried.set(flowId, editor.model())
@@ -118,7 +118,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   }
 
   /**
-   * flowgate.v02gui.0019: the cards (`tmp_` nodes) and edges a refused save left unsaved, put onto the draft just read
+   * the cards (`tmp_` nodes) and edges a refused save left unsaved, put onto the draft just read
    * and saved again. An edge whose card is gone from the read draft stays out.
    */
   function carry(flowId: string, kept: DraftModel) {
@@ -151,7 +151,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     }
   }
 
-  /** flowgate.v02.0053 T#5: the card lines a save answered, on the shown Graph (no read again). */
+  /** the card lines a save answered, on the shown Graph (no read again). */
   function showLines(flowId: string, lines: NonNullable<FlowDraftSaveResult['cardDocuments']>) {
     const graph = host.graph(flowId)
     if (graph) host.setGraph(flowId, withCardDocuments(graph, lines))
@@ -294,7 +294,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
 
   function stepHistory(flowId: string, move: 'undo' | 'redo'): boolean {
     const editor = historyOf(flowId)
-    if (!editor || !editor[move]()) return false // undo / redo of the structure edits and moves (v02.0059 T#2)
+    if (!editor || !editor[move]()) return false // undo / redo of the structure edits and moves (v02.0059 the earlier implementation)
     stateOf(flowId).check = null
     if (editors.get(flowId) === editor) show(flowId, editor)
     mirror(flowId)
@@ -302,7 +302,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   }
 
   /**
-   * flowgate.v02.0117 T#2: takes the draft's self edges (a card connected to itself) out, saved and not offered to undo.
+   * takes the draft's self edges (a card connected to itself) out, saved and not offered to undo.
    * Such an edge is always a `cycle` validation error and is never drawn (vueFlowMapping), so a draft stored with one
    * — before the connection pre-check refused it — could not be confirmed, and no run of its Flow started, while the
    * Canvas showed nothing to remove. Whether any edge was taken out.
@@ -314,7 +314,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     return dropped
   }
 
-  // The validate / confirm actions (draftActions.ts, flowgate.v02.0059 T#2: moved there as they were).
+  // The validate / confirm actions (draftActions.ts, the earlier change the earlier implementation: moved there as they were).
   const { validate, confirm } = createDraftActions({
     host, stateOf, editor: (flowId) => editors.get(flowId), stop, tidy: dropSelfEdges,
   })
@@ -336,12 +336,12 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     connect,
     removeNode: (flowId: string, nodeId: string) => run(flowId, { type: 'remove_node', key: nodeId }),
     removeEdge: (flowId: string, edgeId: string) => run(flowId, { type: 'disconnect', key: edgeId }),
-    /** flowgate.v02.0045 T0019: a new Flow's default node at (0, 0), not offered to undo. */
+    /** a new Flow's default node at , not offered to undo. */
     seed: (flowId: string, spec: CanvasNodeSpec) => addNode(flowId, spec, 0, 0, false),
     /** TR0020 rev2: the Flow's editor has something saved or being saved (실행 confirms it first). */
     drawn: (flowId: string) => !!editors.get(flowId) && (editors.get(flowId)!.version() > 0 || editors.get(flowId)!.busy()),
     undo: (flowId: string) => stepHistory(flowId, 'undo'), redo: (flowId: string) => stepHistory(flowId, 'redo'),
-    /** flowgate.v02.0059 T#2: cards were moved by one action (one undo entry) / were put somewhere (no entry). */
+    /** cards were moved by one action (one undo entry) / were put somewhere (no entry). */
     recordMove: (flowId: string, moves: readonly NodeMove[]) => historyOf(flowId)?.record(moves) ?? false,
     placed: (flowId: string, placements: readonly NodePlacement[]) => editors.get(flowId)?.place(placements),
     validate,

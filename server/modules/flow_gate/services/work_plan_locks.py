@@ -1,6 +1,6 @@
-"""The work plan save lock, shared by the WP routes and the v0.2 deploy (flowgate.v02.0074 T#4, D0006 §3.6.3).
+"""The work plan save lock, shared by the WP routes and the v0.2 deploy.
 
-0403 NR0004 F1 — an advisory lock allowing only one save per document at a time. Same mechanism and same reason as
+an advisory lock allowing only one save per document at a time. Same mechanism and same reason as
 document-number reservation (numbering_service._get_lock): every invariant of the form "two concurrent requests,
 only one wins" rests on this in-process lock. The lock is per document, so requests saving different plans never
 wait on each other.

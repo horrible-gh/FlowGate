@@ -1,5 +1,5 @@
-"""Group worktree provisioning job (flowgate.default.0669 unit 7b; 0666 0008-D §3.6.1,
-0009-L §2.23, §2.28, §4.4).
+"""Group worktree provisioning job (the earlier change unit 7b; the design,
+).
 
 ``ensure_worktree`` no longer takes the old project mutex to create a Group's slot. It
 registers a ``worktree_provision`` job and, as L 2.28 asks of a synchronous path, runs it
@@ -9,7 +9,7 @@ until then. Phases (L 2.28):
 
     start -> intent_recorded (G) -> fetched (R) -> registered (M) -> populated (G) -> done
 
-* start recheck (flowgate.v02.0104 D0004 §3.3.3): before G and any Git effect, the
+* start recheck: before G and any Git effect, the
   effective work base is read again under the group row lock; one that is no longer the
   payload's ends the job PERMANENT ``work_base_changed`` with no Git effect.
 * intent_recorded: path P and branch b, checked under G (ledger not ready, P free).
@@ -27,10 +27,10 @@ Scope (deviations recorded as design changes, 0669 chat):
 
 * A project whose base checkout is not established yet keeps the old mutex path. The
   base clone/adopt is project_provision's (a later unit).
-* 0669 unit 7d: a Time Machine terminal reopen's re-provision (``start_point`` = the
+* unit 7d: a Time Machine terminal reopen's re-provision (``start_point`` = the
   terminal commit C1) runs as this job too. C1 is recorded in the payload and checked
   where the old path checked it: present in the base repo, contained by the existing
-  local/origin branch, or by the base tip the fork starts from (T0007 §4, §11). A
+  local/origin branch, or by the base tip the fork starts from. A
   mismatch is PERMANENT, never a silent fork from base HEAD. Until a provision
   succeeds, a later plain request inherits the C1 of a failed reopen job, so the slot
   cannot come back without it. The floor is the reopen floor.
@@ -202,7 +202,7 @@ def _generation(group_id: str) -> str:
 
 def _inherited_start_point(group_id: str) -> str:
     """C1 of the newest terminal provision job when that job was a reopen that did not
-    succeed: a plain request must not bring the slot back without C1 (T0007 §11)."""
+    succeed: a plain request must not bring the slot back without C1."""
     done = db.jobs_of_group(group_id, KIND, db.TERMINAL_STATUSES)
     if not done or done[-1].get("status") == "succeeded":
         return ""
@@ -326,7 +326,7 @@ def _phase(ctx: store.JobContext, phase: str, **evidence) -> None:
 
 
 def _recheck_work_base(s: _Slot) -> None:
-    """D0004 §3.3.3: the payload's work base must still be the group's effective one.
+    """the payload's work base must still be the group's effective one.
 
     A short group row lock transaction reads the stored ref (and the project base it
     falls back to) and closes; nothing is written. A change committed after this job
@@ -357,7 +357,7 @@ def _recheck_work_base(s: _Slot) -> None:
 
 def _intent(ctx: store.JobContext, s: _Slot) -> None:
     """start -> intent_recorded, under G: the slot is not ready yet and P is free.
-    Every run of this step rechecks the work base first (D0004 §3.3.3); a job past
+    Every run of this step rechecks the work base first; a job past
     ``start`` passed it already and the group's change is refused busy meanwhile."""
     from modules.flow_gate.services import git_service as _gs
     from .refs import _commits_present
@@ -402,7 +402,7 @@ def _contains(repo: Path, ancestor: str, tip: str) -> bool:
 
 def check_start_point(base_root: Path, branch: str, work_base_ref: str,
                       start_point: str) -> Optional[str]:
-    """The terminal reopen rules on C1 (T0007 §4 condition 1, §11) against the refs as
+    """The terminal reopen rules on C1 (condition 1) against the refs as
     they are now: None when the slot can come back holding C1, else the failure code.
     Read-only; raises _Stop (transient) when a ref cannot be read. The job applies the
     rules after its fetch; the reopen request runs them before its transaction commits
@@ -456,7 +456,7 @@ def _fetch(ctx: store.JobContext, s: _Slot) -> None:
     try:
         cfg = _gs.db_git.get_config(s.project_id) or {}
         try:
-            # 0361 NR0003 §5.2: a slot created right after a repo_url change must not
+            # a slot created right after a repo_url change must not
             # fetch the old remote.
             _gs.ensure_origin_matches_config(s.base_root, (cfg.get("repo_url") or "").strip())
         except GitServiceError as exc:

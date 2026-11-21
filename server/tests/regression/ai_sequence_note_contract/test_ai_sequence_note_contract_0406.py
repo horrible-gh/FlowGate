@@ -1,4 +1,4 @@
-"""0406 T0011: AI sequence-edit metadata and stored step-note contracts."""
+"""AI sequence-edit metadata and stored step-note contracts."""
 from __future__ import annotations
 
 import json
@@ -68,7 +68,7 @@ def sequence_world(monkeypatch):
         lambda request: {"_is_user_jwt": True, "issued_to": "usr_test", "is_admin": True},
     )
     monkeypatch.setattr(workflow_decision_routes, "_active_ai_run_response_for_user", lambda d, a: None)
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(workflow_decision_routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(wf_svc.db_documents, "get_by_id", lambda doc_id: dict(owner) if doc_id == ROOT else None)
@@ -122,12 +122,12 @@ def issue_mention() -> str:
 
 PAYLOAD_KEYS = {
     "type", "label", "note", "source_doc_id", "source_revision_no",
-    # 0444 T0007 (NR0003 §4-6): note/source were not the only values edit_workflow_pending()
+    # note/source were not the only values edit_workflow_pending
     # rewrites from the payload — the provider pair is rewritten the same way, and until this
     # change it was in none of the five places that tell a worker what to send back. Widened
     # from five keys to seven; the three this test is named for still round-trip below.
     "provider_id", "provider_display_name",
-    # 0649 T#1 (NR0003 O1): a row sent back is recognised by its id only, so the contract
+    # a row sent back is recognised by its id only, so the contract
     # names that id in every place that tells a worker what to send back — the mention
     # payload carries each stored row's item_id and the help example shows the key.
     "item_id",
@@ -192,15 +192,15 @@ def test_metadata_free_mention_is_byte_identical_to_legacy_shape():
 def test_help_submit_declares_the_same_seven_keys_and_rules(locale):
     """The help example and the mention payload must describe ONE contract.
 
-    Old expectation (0406 T0011): exactly the five keys
+    Old expectation: exactly the five keys
     type/label/note/source_doc_id/source_revision_no, and a rules sentence naming the three
     metadata values.
 
-    New expectation (0444 T0007): those five plus provider_id/provider_display_name, and a
+    New expectation: those five plus provider_id/provider_display_name, and a
     rules sentence that also says what an omitted provider key means (keep what is stored)
     and how to actually clear it (an explicit null).
 
-    Basis: NR0003 §4-6 / 0444 T0007 §4-1. The five coordinates that describe this PATCH to an
+    Basis: the review / the earlier implementation The five coordinates that describe this PATCH to an
     AI worker — request_sequence_edit's row list, the mention payload, the mention rules, this
     help example and its guidance note — all named the same five keys, so the worker had no
     way to return a provider, and edit_workflow_pending() then deleted it for not being sent.
@@ -284,7 +284,7 @@ def test_unrelated_single_retry_prompt_is_byte_identical(monkeypatch, scope):
 
 
 def test_stored_note_lookup_failure_is_swallowed(monkeypatch):
-    # 0554 T0014 §5 rework (rej_01M338WJ83A3JTZJ finding 1): get_sequence_for_member_doc is no
+    # (rej_01M338WJ83A3JTZJ finding 1): get_sequence_for_member_doc is no
     # longer JUST the note's own lookup — _inject_hop_notes also uses it to learn which
     # sequence row's pre-instruction must be checked before the AI is allowed to start.
     # Swallowing this exception used to mean "best effort, carry on with no note" for BOTH

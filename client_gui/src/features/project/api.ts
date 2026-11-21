@@ -1,19 +1,19 @@
-// Project API adapter (WP0005 T#1 §1/§3). Reuses the existing `@shared/api` transport
+// Project API adapter. Reuses the existing `@shared/api` transport
 // (same helper client/src's v0.1 screens already call) instead of a new client — this file
 // only adds the request shape + snake_case-to-frontend-model normalization boundary that
-// D0004 §1.2/§4.3 assigns to features/project. WP0005 T#1 §3 scoped it to three endpoints:
-// active project list, create, and identifier suggestion. flowgate.v02.0023 adds the
+// assigns to features/project. the plan the earlier implementation scoped it to three endpoints:
+// active project list, create, and identifier suggestion. the earlier change adds the
 // read-only project group tree (fetchProjectGroupTree) so the Designer and later v0.2 screens
-// share one tree request path instead of each growing one. flowgate.v02.0024 T0005 adds the
+// share one tree request path instead of each growing one. the earlier change the earlier implementation adds the
 // read-only Flow file context the Designer File Explorer needs (project Git status, Flow
-// tree, Base-relative changes, one-file diff, AI activity) below. flowgate.v02.0033 widens the
+// tree, Base-relative changes, one-file diff, AI activity) below. the earlier change widens the
 // Git status / AI activity normalization with the fields the Designer Git part reads and adds
-// the Base file and merge review file diff reads. flowgate.v02.0066 adds the Base remote state
+// the Base file and merge review file diff reads. the earlier change adds the Base remote state
 // (ahead/behind, unpushed) of git/status and the scope floor / line counts / tool artifact count
 // of the group change list, and keeps the transport error of the change list and file diff.
 // archive/restore/source-path and Git mutation endpoints are still not called here (the Git
 // part's own api.ts owns those).
-// flowgate.v02.0060 T#2 adds the existing server contracts the Designer context menu runs (0006-D rev2 §4.3 2-B):
+// adds the existing server contracts the Designer context menu runs:
 // Group title (PATCH modules), Flow title (PUT groups), Flow dispose (DC), and the Flow worktree's folder / file
 // create, download, upload and delete — each with the Flow's group_id, never a Base fallback. No permanent delete,
 // document delete or branch delete is called.
@@ -63,7 +63,7 @@ import type {
   GroupRenameResult,
 } from './types'
 
-// flowgate.v02.0088 F10: the Project / Group / Flow list and create calls below throw an Error whose
+// the Project / Group / Flow list and create calls below throw an Error whose
 // message is only the server's own diagnostic ('' when it sent none). The screen that shows the
 // failure owns the localized general text (gui.project.* / gui.designer.file_menu.* /
 // gui.designer.project_explorer.*), so an English transport line or an English default from this
@@ -89,7 +89,7 @@ interface RawProjectListResponse {
   projects?: RawProject[]
 }
 
-// Every current backend/v0.1 list response filters this row out (NR0003 §3.1) — it is a
+// Every current backend/v0.1 list response filters this row out — it is a
 // bookkeeping project, not a real one a user can select.
 const SYSTEM_PROJECT_ID = '__SYSTEM__'
 
@@ -128,7 +128,7 @@ export async function fetchActiveProjects(): Promise<Project[]> {
  * POST /api/v1/projects with exactly the fields the backend reads (project_name/
  * project_id/description/color) — the v0.1 create form's unconnected decorative fields
  * (structure/storage type/custom path/members) are not part of this input type at all
- * (D0004 §2.4, NR0003 §3.3).
+ *.
  */
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   try {
@@ -144,7 +144,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   }
 }
 
-/** POST /api/v1/slug/romanize — the existing project-id suggestion endpoint (NR0003 §3.3). */
+/** POST /api/v1/slug/romanize — the existing project-id suggestion endpoint. */
 export async function suggestProjectSlug(text: string): Promise<string | null> {
   const trimmed = text.trim()
   if (!trimmed) return null
@@ -159,7 +159,7 @@ export async function suggestProjectSlug(text: string): Promise<string | null> {
   }
 }
 
-// ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────────
+// ── Group tree ───────────────────────────────────────────────────
 interface RawGroupTreeNode {
   archived_at?: string | null
   flow_total?: number | null
@@ -222,7 +222,7 @@ export async function fetchProjectGroupTree(
     const raw = response.data?.data?.nodes ?? []
     return raw.map(toGroupTreeNode).filter((n): n is GroupTreeNode => n !== null)
   } catch (error) {
-    // flowgate.v02.0105 T#1: the HTTP status and a network failure stay on the error (`status` / `network`, the
+    // the HTTP status and a network failure stay on the error (`status` / `network`, the
     // transport error as `cause`), so the Designer's F5 restore tells a refused Project (403 / 404) apart from a
     // passing failure. The message is unchanged.
     const { status, network } = normalizeApiError(error)
@@ -230,7 +230,7 @@ export async function fetchProjectGroupTree(
   }
 }
 
-// ── Flow file context (flowgate.v02.0024 T0005) ─────────────────────────────────────────
+// ── Flow file context ─────────────────────────────────────────
 // Same server contracts the v0.1 Dashboard explorer reads (git/status, group tree,
 // group changes/diff, ai-invoke/active); only the transport shapes and normalization live
 // here. In-flight GET coalescing comes from `@shared/api` getRequest itself.
@@ -249,7 +249,7 @@ interface RawGitPendingRow {
   ac_doc_id?: string | null
   review_state?: string | null
   final_approval_bound?: boolean | null
-  // S1 (flowgate.v02.0033-D §4.6) working names; absent on a server without S1.
+  // S1 working names; absent on a server without S1.
   planned_action?: string | null
   planned_target_branch?: string | null
 }
@@ -257,7 +257,7 @@ interface RawGitPendingRow {
 interface RawGitStatus {
   enabled?: boolean
   // The server fills an unset Base with its legacy main branch; base_branch_configured says
-  // whether base_branch is the stored Project Base or that fallback (0024 TR0006).
+  // whether base_branch is the stored Project Base or that fallback.
   base_branch?: string | null
   base_branch_configured?: boolean | null
   slots?: RawGitSlot[] | null
@@ -273,7 +273,7 @@ interface RawGitStatus {
     // S2 working name; absent on a server without S2.
     total?: number | null
   } | null
-  // flowgate.v02.0066: Base against its remote (local refs only).
+  // Base against its remote (local refs only).
   ahead_count?: number | null
   behind_count?: number | null
   unpushed?: RawGitUnpushed | null
@@ -319,7 +319,7 @@ interface RawChangeSet {
   commit?: string | null
   base_branch?: string | null
   changes?: { path: string; status: string; insertions?: number | null; deletions?: number | null }[] | null
-  // flowgate.v02.0066: the scope floor and the tool artifacts left out of the list.
+  // the scope floor and the tool artifacts left out of the list.
   work_base_ref?: string | null
   scope_base_sha?: string | null
   work_base_sha?: string | null
@@ -380,7 +380,7 @@ const pathList = (files: string[] | null | undefined) =>
 const countOrNull = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null
 
-// flowgate.v02.0066 — an unmeasured Base keeps its counts null, never 0 (0066 D#2 §4-2).
+// an unmeasured Base keeps its counts null, never 0.
 function toUnpushed(raw: RawGitUnpushed | null | undefined): ProjectGitUnpushed | null {
   if (!raw || typeof raw !== 'object') return null
   const measured = raw.measured === true
@@ -429,7 +429,7 @@ function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
       truncated: untracked.truncated === true,
       total: typeof untracked.total === 'number' && Number.isFinite(untracked.total) ? untracked.total : null,
     },
-    // flowgate.v02.0066: only what the server sends; an absent field stays out of the model.
+    // only what the server sends; an absent field stays out of the model.
     ...('ahead_count' in raw ? { aheadCount: countOrNull(raw.ahead_count) } : {}),
     ...('behind_count' in raw ? { behindCount: countOrNull(raw.behind_count) } : {}),
     ...('unpushed' in raw ? { unpushed: toUnpushed(raw.unpushed) } : {}),
@@ -438,7 +438,7 @@ function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
 
 const FLOOR_FIELDS = ['work_base_ref', 'scope_base_sha', 'work_base_sha', 'work_base_sync_sha', 'work_base_state'] as const
 
-// flowgate.v02.0066 — the group scope floor of a /changes answer; undefined when the server
+// the group scope floor of a /changes answer; undefined when the server
 // sends none of its fields (a server before the floor).
 function toScopeFloor(raw: RawChangeSet): GroupScopeFloor | undefined {
   if (!FLOOR_FIELDS.some((key) => key in raw)) return undefined
@@ -511,7 +511,7 @@ export async function fetchFlowFileTree(projectId: string, groupId: string): Pro
 /**
  * GET /api/v1/projects/{pid}/git/groups/{gid}/changes — committed + worktree + untracked
  * ('?') changes of the Flow since its merge-base. `base` asks the server to compare against
- * that branch instead of the group's own work base (server `base` parameter, 0024 TR0004
+ * that branch instead of the group's own work base (server `base` parameter, the earlier implementation
  * rev2); without it the server answers against the group work base. `baseBranch` in the
  * result is what the server says it actually compared against.
  */
@@ -541,7 +541,7 @@ export async function fetchFlowChangeSet(
       ...(Array.isArray(data.tool_artifacts) ? { toolArtifactCount: data.tool_artifacts.length } : {}),
     }
   } catch (error) {
-    // flowgate.v02.0066: the transport error stays as `cause` (a floor 409, 403, 404 or a
+    // the transport error stays as `cause` (a floor 409, 403, 404 or a
     // network failure must be told apart); the message is unchanged.
     throw loadError(error, 'Failed to load the Flow changes.')
   }
@@ -576,7 +576,7 @@ export async function fetchFlowFileDiff(
       new: data.new,
     }
   } catch (error) {
-    // flowgate.v02.0066: `cause` keeps the transport error (floor 409 / 404 / 403 / network).
+    // `cause` keeps the transport error (floor 409 / 404 / 403 / network).
     throw loadError(error, 'Failed to load the file diff.')
   }
 }
@@ -603,7 +603,7 @@ export async function fetchFlowAiActivity(groupId: string): Promise<FlowAiActivi
   }
 }
 
-// ── Base / merge review file diff (flowgate.v02.0033) ─────────────────────────────────
+// ── Base / merge review file diff ─────────────────────────────────
 
 interface RawBaseFileDiff {
   branch?: string | null
@@ -664,7 +664,7 @@ export async function fetchMergeReviewFileDiff(
   }
 }
 
-// ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────────
+// ── Group / Flow creation ──────────────────────────────────────────
 // The same two server contracts the v0.1 explorer create modal calls
 // (client/src/main/components/CreateEditGroupModal.vue): module create (T505) and group create
 // (T191). Only the request shape and the id normalization live here.
@@ -782,7 +782,7 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
   }
 }
 
-// ── Group / Flow / source file commands (flowgate.v02.0060 T#2, 0006-D rev2 §4.3 2-B) ──────────────────────────
+// ── Group / Flow / source file commands ──────────────────────────
 // The same server contracts the v0.1 explorer calls (CreateFileFolderModal, FileTreeNode, useFileUpload,
 // GroupTreeNode / DocHeader dispose, module / group edit). Each Flow worktree call sends the Flow's group_id, so
 // the server resolves that worktree or refuses (no silent Base fallback). A refusal is thrown as an Error whose

@@ -1,4 +1,4 @@
-// flowgate.v02.0059 T#2 (0011-CH contract D) — alignment / distribution of the selected cards: where each movable
+// (CH contract D) — alignment / distribution of the selected cards: where each movable
 // selected card goes. Every card has the one size FlowNodeCard fixes, so lining up their left / centre /
 // right edges is lining up their x (top / middle / bottom: y), and equal gaps are equal steps of x (y).
 // - alignment (2 or more selected): left / top = the smallest x / y of the selection, right / bottom = the

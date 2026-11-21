@@ -138,7 +138,7 @@ const props = defineProps<{
   busy: boolean; closeBusy: boolean; canSave: boolean; nameProblem: string; error: string; saved: boolean; stateLabel: string
   maxJobs: string; maxJobsProblem: string; enabled: boolean
   enrollment: AgentEnrollment | null; enrollmentError: string; expired: boolean; refreshError: string
-  /** flowgate.v02test.0019: workspace cleanup policy of a remote Agent; hours as typed. */
+  /** workspace cleanup policy of a remote Agent; hours as typed. */
   cleanupEnabled?: boolean; cleanupHours?: string; cleanupHoursProblem?: string
   /** Inputs that differ from the saved values (edit only), shown next to the buttons. */
   changeCount?: number
@@ -197,7 +197,7 @@ async function copy() {
 </script>
 
 <style>
-/* flowgate.v02test.0043 CH0004: draft 5 trims repeated help text and the section headings (hairlines only).
+/* draft 5 trims repeated help text and the section headings (hairlines only).
    draft 4 (one status chip, section headings with hairlines, switches,
    narrow number inputs with units, cleanup hours inside its sentence, change count in the footer). */
 .ui-modal-surface.agent-settings-dialog { max-width: 520px; border-radius: 14px; }

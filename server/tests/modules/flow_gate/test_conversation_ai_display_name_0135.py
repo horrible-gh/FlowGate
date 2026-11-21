@@ -1,4 +1,4 @@
-"""flowgate.v02.0135 CH0006 -- a personal AI's turns carry its name, not its provider id.
+"""a personal AI's turns carry its name, not its provider id.
 
 The name lookup of a token-bound AI read project and system rows only, so a personal AI
 (owner_scope='user') was stored as "aip_..." on both the turn and the participant row.

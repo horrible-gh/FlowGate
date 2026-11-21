@@ -1,6 +1,6 @@
-"""Specification TS / TSR test-report model (flowgate.default.0549 T0008).
+"""Specification TS / TSR test-report model.
 
-0549 D0006 redefines the two test documents without adding a third type:
+redefines the two test documents without adding a third type:
 
 * **TS** — a human-approved, structured *test specification*. Each case carries a Case ID,
   category, requirement/AC reference, precondition, input, procedure, expected result, check
@@ -12,7 +12,7 @@
 
 The two TS grammars are separated by an explicit contract marker in the document's own
 frontmatter (``test_contract_version: 2``), never by creation time or by guessing from the
-body (D0006 §4). A TS without the marker is a legacy executable TS (contract 1) and keeps
+body. A TS without the marker is a legacy executable TS (contract 1) and keeps
 using ``test_run_service.parse_test_plan`` and the server-side runner unchanged (§5).
 
 This module is pure: parsing, validation, result normalisation (explicit payload and JUnit
@@ -59,9 +59,9 @@ SPEC_FIELDS = (
     "test_assets",
 )
 # Optional fields rendered only when set, so a document without them round-trips unchanged.
-# run_command is the program and arguments that run an automated Case (0094 B0005); the
+# run_command is the program and arguments that run an automated Case; the
 # test files it names, if any, are recorded in the run's basis. automation_ref (a target) and run_cwd (where it runs) are kept for Cases
-# saved with them (0094 B0001); the editor no longer writes them for a new command.
+# saved with them; the editor no longer writes them for a new command.
 OPTIONAL_SPEC_FIELDS = ("automation_ref", "run_command", "run_cwd", "test_assets")
 # ``required`` is not listed: an absent flag means required (stop the next step on failure),
 # the same default the structured editor gives a new case and the client reads.
@@ -95,7 +95,7 @@ _FIELD_ALIASES = {
 }
 # Legacy executable-TS field names. Inside a contract-2 TS they are a boundary violation,
 # not a silently ignored extra: the whole point of the marker is that a specification TS is
-# never half-read as an executable one (D0006 §5 "legacy parser fallback must not misread").
+# never half-read as an executable one ("legacy parser fallback must not misread").
 _LEGACY_FIELDS = {"cmd", "assert", "기동", "start", "대기", "wait"}
 
 _TRUE_WORDS = {"true", "yes", "y", "1", "required", "필수", "必須", "o"}
@@ -402,7 +402,7 @@ _RUN_SETTINGS = ("execution_mode", "automation_ref", "run_command", "run_cwd")
 
 
 def unrunnable_case_errors(cases: list[dict], previous: list[dict]) -> list[dict]:
-    """The editor's run check (0094 B0005): an automated Case it changed must be runnable.
+    """The editor's run check: an automated Case it changed must be runnable.
 
     Only a Case that is new or whose execution settings differ from ``previous`` (the
     stored cases) is judged, so a save never fails on a Case it did not touch. The judgment
@@ -572,8 +572,8 @@ def _normalize_source_identity(raw: Any) -> dict:
     keys = (
         "bundle_id", "bundle_hash", "git_revision", "tree", "worktree", "branch",
         "runner", "runner_version", "tool", "tool_version", "executed_at", "ci_url",
-        # 0682 T#1 Basis identity; bundle_sha256 is read only from v2 rows recorded before
-        # 0684 T#4 removed Source Bundle (stored results stay as written, D#1 §7).
+        # Basis identity; bundle_sha256 is read only from v2 rows recorded before
+        # removed Source Bundle (stored results stay as written, the earlier implementation).
         "kind", "basis_id", "content_fingerprint", "bundle_sha256", "exclusion_policy_version",
     )
     return {key: _clip(raw.get(key), 500) for key in keys if raw.get(key) not in (None, "")}
@@ -906,7 +906,7 @@ def _counts(rows: list[dict]) -> dict:
 
 
 def compute_overall(rows: list[dict]) -> dict:
-    """Server-authoritative verdict (D0006 §10), computed from REQUIRED cases only.
+    """Server-authoritative verdict, computed from REQUIRED cases only.
 
     required FAIL → FAIL; else required BLOCKED → BLOCKED; else required NOT_RUN → NOT_RUN
     (gate blocked); else PASS. Optional cases are counted and shown but never move the gate.
@@ -1128,7 +1128,7 @@ def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: d
     return "\n".join(lines)
 
 
-# 0684 T#1 (D#1 §3-4): the report a run opens before it has results. PENDING is a display
+# the report a run opens before it has results. PENDING is a display
 # state only -- never a stored verdict -- so this body carries no overall and no gate line.
 PENDING = "PENDING"
 
@@ -1189,7 +1189,7 @@ def render_pending_report_markdown(*, doc: dict, run: dict, cases: list[dict],
                                    state: str = "queued", reason: Optional[str] = None,
                                    kept: Optional[dict] = None, reported: Optional[dict] = None,
                                    locale: str = "ko") -> str:
-    """The TSR body of a run that has no result record yet (0684 D#1 §3-4).
+    """The TSR body of a run that has no result record yet.
 
     ``state`` is ``queued`` (admitted, nothing reported), ``running`` (some Cases reported),
     ``prepare_refused``, ``cancelled`` or ``failed``. Selected Cases show PENDING while the

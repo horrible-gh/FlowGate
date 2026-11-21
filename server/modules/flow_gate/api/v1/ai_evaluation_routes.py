@@ -1,13 +1,13 @@
-"""AI Evaluation API (flowgate.v02.0017 T0002 §3).
+"""AI Evaluation API.
 
 An evaluation names a target AI and a judge AI. The judge prepares a real task in Scratch,
 the target performs it, and the judge scores it per criterion with a review. An evaluation set
 fixes the task; a human review may be added to a completed evaluation.
 
-Evaluations and sets belong to no project (CH0006 (4)): one list for every signed-in user on the
+Evaluations and sets belong to no project (the discussion ): one list for every signed-in user on the
 AI 관리 screen, the same way the system AI they evaluate is shared.
 
-Who may act follows the owner of the evaluated AI (CH0006 #48): a system AI's evaluation is run,
+Who may act follows the owner of the evaluated AI: a system AI's evaluation is run,
 cancelled and human-reviewed by an administrator (system.settings.manage) and read by everyone;
 evaluation sets are administrator-managed for the same reason. A user's own AI never runs on the
 server (db/ai_providers.py), so it cannot be evaluated yet: starting one answers 409

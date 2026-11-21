@@ -1,4 +1,4 @@
-"""flowgate.v02.0111 T#2 (T-A1, NR flowgate.v02.0111.0003 §2 A-1) — an AI card run that asked questions and ended before its
+"""(T-A1, NR the earlier change A-1) — an AI card run that asked questions and ended before its
 document was (fully) submitted (``exited`` / ``question_pending``) waits for its answers and then goes on, once.
 
 On the same real SQLite DB, routes and fixtures as ``test_fg_card_settings`` / ``test_fg_instruction_stage_0056`` (the
@@ -26,7 +26,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
 from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _review_status, _start_ai, _through_instruction, _write_written,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -41,7 +41,7 @@ QUESTION = {"id": 901, "anchor_doc_id": ROOT, "asker_kind": "ai", "responder_sta
 
 @pytest.fixture(autouse=True)
 def card_outputs_port():
-    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    """(T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
     registered as ``startup`` registers it — it replaced the removed card approval port."""
     from flowgate.card_completion import outputs
     from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
@@ -67,7 +67,7 @@ def questions(monkeypatch):
                         lambda doc_id, item_id, issued_to, provider, source, **kw:
                         state["responders"].append((item_id, provider)) or {"run_id": RESPONDER_RUN})
     monkeypatch.setattr(legacy, "askers_answered_by", lambda run_id: set(state["answered_by"].get(run_id, ())))
-    # flowgate.v02gui.0010: the questions a chat run answered itself (its answer rows' author_ai_run_id)
+    # the questions a chat run answered itself (its answer rows' author_ai_run_id)
     monkeypatch.setattr(legacy, "askers_answered_as_author",
                         lambda run_id: set(state["answered_as_author"].get(run_id, ())))
     return state
@@ -186,7 +186,7 @@ def _answer(questions, asker, how):
         questions["answered_by"][RESPONDER_RUN] = {asker}
         question_wait.follow({"run_id": RESPONDER_RUN, "group_id": FA})
     if how == "chat":
-        # flowgate.v02gui.0010: a chat AI's answer (author_kind ai) is skipped by the person hook and followed at the
+        # a chat AI's answer (author_kind ai) is skipped by the person hook and followed at the
         # chat run's end instead
         question_wait.on_question_answered({"author_kind": "ai", "group_id": FA, "asker_ai_run_id": asker})
         questions["answered_as_author"][CHAT_RUN] = {asker}
@@ -281,7 +281,7 @@ def test_a_written_instruction_answered_while_the_run_is_judged_idle_still_start
     _answer(questions, INSTRUCTION_RUN, "human")
     job = _after_answers(env, key, execs, attempts)
     assert job["stage"] == "result" and _review_status(line_doc) == "approved"
-    # 0111 T#3: a refusal's run event carries its node only in its payload — read the run's events by cause
+    # a refusal's run event carries its node only in its payload — read the run's events by cause
     causes = [r["cause"] for r in _sql(env["db"], "SELECT cause FROM graph_run_events")]
     assert "attempt_inactive" not in causes
 
@@ -471,7 +471,7 @@ def test_a_clean_instruction_stage_that_wrote_nothing_and_asked_nothing_still_fa
     assert env["jobs"] == []
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the retry is told by a new node token; an assigned attempt's RETRY_SAME_ATTEMPT starts the same AI with no new node token (L-2 §2.6/§2.10) — test_fg_ai_roles_l2_reconcile.py::test_an_explicit_command_retries_a_no_result_writer_*
+# (T) pre-feature contract: the retry is told by a new node token; an assigned attempt's RETRY_SAME_ATTEMPT starts the same AI with no new node token (L-2) — test_fg_ai_roles_l2_reconcile.py::test_an_explicit_command_retries_a_no_result_writer_*
 def test_a_result_writer_with_no_result_and_no_question_is_still_an_error_a_resume_retries(pre_feature_attempts, env, decided, monkeypatch,
                                                                                            questions):
     """The 0063 ``no_result``: idle ``error`` with the wire's ``error_code``, and an explicit command dispatches again."""
@@ -515,7 +515,7 @@ def test_the_continuation_is_the_new_entry_point_never_the_ended_run_judged_agai
 @pytest.mark.parametrize("stage", ["instruction", "result"])
 def test_exhausted_responder_leaves_card_and_run_in_question_wait_without_redispatch(
         env, decided, monkeypatch, questions, stage):
-    """0111 T-A3: responder exhaustion is an item failure, never a card/run error.
+    """T-A3: responder exhaustion is an item failure, never a card/run error.
 
     The Q-answer engine's exhaustion is covered by test_q_responder_startup_0111;
     here the real Graph run read/settle and repeated end/Resume see its failed item.

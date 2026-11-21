@@ -42,10 +42,10 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — the Designer Center Diff screen (0066 D#2 §3-10, §6-6): a head line (path,
+// the Designer Center Diff screen: a head line (path,
 // state letter, what is compared, read again, close) and the body — line diff, or one line saying
 // why there is none. The server message is never shown; an error code is a tooltip only.
-// flowgate.v02.0067 T#4 — the detail of the Git modeless `Diff` tab (0067-R §6-2–§6-5, v27
+// the detail of the Git modeless `Diff` tab (the earlier implementation–, v27
 // `workDiff()`): `‹ 목록으로` (the tab decides where back is), then `파일 경로` with the full path
 // once — no separate file name — and `비교 기준`, each a label of its own; then the body. The code
 // keeps its columns: every line is as wide as its text and the code area scrolls sideways inside

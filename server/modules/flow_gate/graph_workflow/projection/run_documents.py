@@ -1,4 +1,4 @@
-"""v0.1 records a run reads back (L0009 §2.6.8 reconciliation). Never writes v0.1 tables.
+"""v0.1 records a run reads back (reconciliation). Never writes v0.1 tables.
 
 - the documents registered with a node's work tokens: the inbox consumes the token after the
   document is stored and records ``workflow_events.token_consumed`` with ``{token_id, doc_id}``
@@ -16,7 +16,7 @@ from modules.flow_gate.db.connection import get_store
 
 def registered_documents(flow_id: str, token_ids: Iterable[str], upto_event_id: Optional[int] = None) -> list[dict]:
     """Documents registered with any of ``token_ids``, in registration order (event id, doc_id) — only those
-    registered by an event at or before ``upto_event_id`` when it is given (flowgate.v02.0056 T#2: a node run's
+    registered by an event at or before ``upto_event_id`` when it is given (the earlier change the earlier implementation: a node run's
     registration boundary)."""
     found: list[tuple[int, str]] = []
     for token_id in dict.fromkeys(t for t in token_ids if t):

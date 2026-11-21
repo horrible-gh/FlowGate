@@ -1,4 +1,4 @@
-"""0128 T#2: a failed review consumes its latest ended pass before opening a seq.
+"""a failed review consumes its latest ended pass before opening a seq.
 
 Real SQLite ledger, assignment CAS, review evidence and approval contacts. AI
 launching alone is recorded; no production data or AI runs are used.

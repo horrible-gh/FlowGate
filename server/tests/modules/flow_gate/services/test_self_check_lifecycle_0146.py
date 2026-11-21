@@ -1,4 +1,4 @@
-"""0146 T#3: durable exact ownership, admission fence, result and retry isolation."""
+"""durable exact ownership, admission fence, result and retry isolation."""
 from __future__ import annotations
 
 import threading

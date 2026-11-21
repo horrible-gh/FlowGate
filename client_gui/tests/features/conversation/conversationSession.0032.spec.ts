@@ -4,7 +4,7 @@ import { RUN_POLL_MS, createConversationSession } from '@/features/conversation/
 import type { CommandRequestActivity, ConversationActivity, WorkChangeActivity } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0032 — the session on the Conversation production contract (D0006 §3.9.2,
+// the session on the Conversation production contract (the design,
 // §6.2, §6.3): activity re-reads on the AI-run polling ticks, decision and new-chat recovery.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
@@ -84,7 +84,7 @@ describe('activity re-read during an AI run (D0006 §3.9.2)', () => {
     await clock.tick()
     expect(source.listActivities).toHaveBeenCalledTimes(2)
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
-    // flowgate.v02.0047 rev3: no run_started line next to it — flowgate.v02test.0024 D: only the one run in progress
+    // no run_started line next to it — the earlier change D: only the one run in progress
     // line, after everything, until the run ends.
     expect(session.timeline.value.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'command:k1', 'status:local-status-run-running'])
 
@@ -246,7 +246,7 @@ describe('command decision recovery (D0006 §6.2)', () => {
     source.decideCommand.mockRejectedValueOnce(httpError(502, 'bad gateway'))
     await session.decideCommand('k1', 'approve')
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
-    // flowgate.v02test.0024 B: a line of the chat's history; the server answered, so the server keeps it.
+    // B: a line of the chat's history; the server answered, so the server keeps it.
     expect(session.state.notice).toBeNull()
     const errorLines = () => session.state.activities.filter((a) => a.kind === 'status' && a.chatError)
     expect(errorLines()).toMatchObject([{ code: 'command_decision_failed', text: 'bad gateway' }])

@@ -1,4 +1,4 @@
-/** T0017: reversible instruction configuration, preserved document data and design instruction access.
+/** reversible instruction configuration, preserved document data and design instruction access.
  * Uses the real document windows with mocked work-plan reads and writes.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'

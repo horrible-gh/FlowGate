@@ -1,4 +1,4 @@
-"""Chat document tools by doc_id (flowgate.v02.0127 CH0028).
+"""Chat document tools by doc_id.
 
 The user and the model name a document only by its ``doc_id``. The server decides the rest:
 
@@ -232,7 +232,7 @@ class NonCardRule:
             raise _not_editable(fresh, "body_unreadable", body_state=body.state)
         if self.size_guard is not None:
             self.size_guard(fresh, body)
-        # flowgate.v02gui.0009: a worker's body may end with its encoding probe line.
+        # a worker's body may end with its encoding probe line.
         probe = common_checks.split_probe(req.content, req.origin)
         text = probe.text
         if len(text) > CONTENT_MAX_CHARS:

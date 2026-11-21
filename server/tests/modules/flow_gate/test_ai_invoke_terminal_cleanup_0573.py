@@ -1,4 +1,4 @@
-"""0573 T0008: terminal convergence, ownership, and secondary failure injection."""
+"""terminal convergence, ownership, and secondary failure injection."""
 from __future__ import annotations
 
 import os
@@ -59,7 +59,7 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "_execute_provider_chain", lambda *a: True)
     monkeypatch.setattr(svc, "_classify_end_reason", lambda r, ok: None)
     monkeypatch.setattr(svc, "_judge_hop", lambda r: None)
-    # 0688 T#2: no hop here asks anything -- the group has no open question container. The
+    # no hop here asks anything -- the group has no open question container. The
     # hand-off's own-question probe lists them, and parks the chain when it cannot.
     monkeypatch.setattr(db_questions, "list_open_doc_ids_by_group", lambda group_id: [])
     monkeypatch.setattr(project_leases, "_memory_mode", lambda: True)

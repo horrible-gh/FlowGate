@@ -1,13 +1,13 @@
-"""HTTP adapter of the Graph Time Machine (0061 T#13). Mounted under the ``/flowgate`` context next to the Graph run
+"""HTTP adapter of the Graph Time Machine. Mounted under the ``/flowgate`` context next to the Graph run
 routes, whose path rule it follows (``/runs/{run_id}/nodes/{node_key}/gate-decision``, ``.../approval``); same
-envelope (P0008 §1.2 / §1.3), user JWT only, RBAC write.
+envelope, user JWT only, RBAC write.
 
     POST /api/v1/runs/{run_id}/nodes/{node_key}/time-machine        (no body, or {})
 
-200 ``{"time_machine": {...}, "run": {...}}``; 409 ``graph_time_machine_blocked`` (the T#12 assessment with its
+200 ``{"time_machine": {...}, "run": {...}}``; 409 ``graph_time_machine_blocked`` (the the earlier implementation assessment with its
 reasons, nothing changed), ``graph_time_machine_in_progress`` (another operation unfinished, via the blocked reason
 ``previous_operation_incomplete``) or ``graph_time_machine_partial_failed`` (Git applied, the DB step failed: the Flow
-stays refused until the server start finishes it). The entry point on the screen is a done card's context menu (T#15).
+stays refused until the server start finishes it). The entry point on the screen is a done card's context menu.
 """
 from __future__ import annotations
 

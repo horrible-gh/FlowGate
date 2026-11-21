@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0031 T0005 §3/§5 — isolated connection-recovery scenarios (Playwright, no real server touched).
+"""isolated connection-recovery scenarios (Playwright, no real server touched).
 
 Run (cwd client_gui, after `npm ci`):  python tests/browser/connection_recovery_v02gui0031.py
 
@@ -13,7 +13,7 @@ same Flow and in another Flow, with chat and Flow switches during the outage. Ev
 the event stream, the Designer reads and a new send come back WITHOUT a page reload, that the recovery itself sent no
 AI start / stop request and resent no message, and records one row per phase (time, request kinds/status, SSE state,
 turnsStatus/sending/runId, run history, Designer reads). F5 is compared in both Flows and while a run is in progress.
-Every request is also logged one by one on one clock (NR0003 §6), from both ends: the browser's view
+Every request is also logged one by one on one clock, from both ends: the browser's view
 (connection-recovery.v02gui0031.netlog.js: start, method, path with the query reduced to known keys, HTTP status or
 failure kind - offline / network / timeout / abort / stream error - and duration, including requests the offline
 browser never sent and client timeouts) and the fake server's view (start, method, path, status or `hang` /
@@ -566,7 +566,7 @@ def check(name: str, ok: bool, detail: object = None) -> bool:
     return ok
 
 
-# -- the per-request log (NR0003 §6: time, path, status, latency, failure kind of every request, on one clock) -------------
+# -- the per-request log (time, path, status, latency, failure kind of every request, on one clock) -------------
 TSV_COLUMNS = ('id', 't', 'side', 'scenario', 'step', 'fault', 'kind', 'via', 'method', 'path', 'status', 'error', 'ms',
                'extra')
 
@@ -888,7 +888,7 @@ def drive(page_url: str, port: int) -> int:
             return all(v != 200 for v in result['status'].values())
 
         def no_recovery_calls(sc: str, before: dict) -> bool:
-            # T0005 §4: a recovery reads only; it never starts or stops an AI run (start / stop request counts).
+            # a recovery reads only; it never starts or stops an AI run (start / stop request counts).
             now = FAKE.calls()
             return check(f'{sc}: the recovery sent no AI start / stop request', now == before, {'before': before, 'after': now})
 
@@ -1070,7 +1070,7 @@ def drive(page_url: str, port: int) -> int:
         check(f'{sc}: one stored row, same key re-sent', len(rows) == 1 and FAKE.key_posts.get(key, 0) >= 2,
               {'rows': len(rows), 'posts_for_key': FAKE.key_posts.get(key)})
 
-        # S7 — an outage while an AI run is in progress (T0005 §4, B §3-A): the run is not stopped or started again;
+        # S7 — an outage while an AI run is in progress: the run is not stopped or started again;
         # the existing run is kept or found again (/ai-invoke/active) and adopted, and its messages, history (command
         # state) and progress come back. Three outages during one run: network offline (the poll keeps the run), a 503
         # with a chat switch away and back (the reopened chat adopts the run), an F5 (the reloaded page adopts it).

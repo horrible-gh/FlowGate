@@ -1,4 +1,4 @@
-"""Node title text rules (0062 L0006 1.1 / 1.3 / 2.1 / 2.2, 0064 L0005 1.5 / 2.17-1).
+"""Node title text rules.
 
 - ``normalize_title``: NFC, control characters and line / paragraph / space separators as one space, zero-width
   space and BOM removed, runs of spaces collapsed, trimmed. Person titles and AI candidates are stored as this.
@@ -91,7 +91,7 @@ def name_key(text: Optional[str]) -> str:
 
 
 def default_names(node_row: dict) -> set[str]:
-    """The name keys a card shows by default (0062 L0006 2.2 + 0064 L0005 2.17-1)."""
+    """The name keys a card shows by default."""
     names: set[str] = set()
     doc_type = cm.normalize_type(node_row.get("doc_type"))
     item = node_row.get("palette_item_id")

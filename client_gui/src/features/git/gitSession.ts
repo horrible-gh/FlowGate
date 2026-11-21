@@ -1,4 +1,4 @@
-// flowgate.v02.0033 — Git session: the single owner of the Designer Git part's state
+// Git session: the single owner of the Designer Git part's state
 // (0033-D §4.2). Not a Pinia store: DesignerGitPanel creates one and it lives and dies with the
 // panel, like the Conversation / Designer Center sessions. Cards read `state` and the derived
 // views and change them only through the actions; every server call goes through GitSource.
@@ -61,12 +61,12 @@ const NOTICE_CODES: readonly string[] = [
   'base_dirty',
   'base_untracked_conflict',
   'final_approval_bound',
-  // flowgate.v02gui.0004 — direct resolve refusals.
+  // direct resolve refusals.
   'conflict_markers_remain',
   'conflict_side_dropped',
   'conflict_supersede_invalid',
   'conflict_source_changed',
-  // flowgate.v02test.0052 — the server refuses a resolve on a session whose workspace is no longer merging, and the
+  // the server refuses a resolve on a session whose workspace is no longer merging, and the
   // administrator's forced cleanup refuses to guess (HEAD moved / another branch / not a managed workspace).
   'merge_not_in_progress',
   'force_cleanup_head_moved',
@@ -165,7 +165,7 @@ export interface GitSession {
   readonly badge: ComputedRef<GitBadge | null>
   readonly workBranch: ComputedRef<string | null>
   readonly defaultProviderId: ComputedRef<string | null>
-  /** flowgate.v02gui.0004 — the AI the picker starts on: last used here, else the project default, else the first. */
+  /** the AI the picker starts on: last used here, else the project default, else the first. */
   readonly preferredProviderId: ComputedRef<string | null>
   /** False while read-only, forbidden or another action runs. */
   readonly canAct: ComputedRef<boolean>
@@ -185,7 +185,7 @@ export interface GitSession {
   abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
   /**
-   * flowgate.v02test.0052 (0008 task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
+   * (task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
    * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
    * the session. `target` names another group's session (the admin list); default is the shown group's conflict.
    */
@@ -229,7 +229,7 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
 
-// flowgate.v02gui.0004 — the AI last pinned for a conflict in a project, kept in this browser so
+// the AI last pinned for a conflict in a project, kept in this browser so
 // the picker starts on it next time. Storage failures (private mode, quota) only lose the hint.
 const LAST_PROVIDER_KEY = 'flowgate.git.conflictAi.'
 function lastProvider(projectId: string | null): string | null {
@@ -312,7 +312,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (!row || state.statusLoad === 'error') return null
     if (row.status === 'waiting') return 'hold'
     if (row.status !== 'conflict' || row.mergeId === null) return null
-    // flowgate.v02test.0042: a Graph card result's merge is handled in its card — the conflict card only points there.
+    // a Graph card result's merge is handled in its card — the conflict card only points there.
     if (state.conflict?.mergeId === row.mergeId && state.conflict.graphMerge) return 'unsupported'
     // A running resolver wins over any review state (§3.3).
     if (isResolving(state.ai)) return 'ai'
@@ -465,7 +465,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
     if (err.code && NOTICE_CODES.includes(err.code)) return setNotice(card, { code: err.code })
     if (err.code?.startsWith('merge_target_')) return setNotice(card, { code: 'merge_target' })
-    // flowgate.v02test.0052 (0001-B section 1, completion criterion 1): git's own reason line is shown, never `git_error` alone. A failed
+    // (B section 1, completion criterion 1): git's own reason line is shown, never `git_error` alone. A failed
     // abort that the administrator's forced cleanup can get out of (`details.recovery`) says so.
     const reason = gitReasonOf(err)
     const code = err.code ?? String(err.status ?? '')
@@ -604,7 +604,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     const endedRun = aiEnded ? { status: state.ai?.status ?? null, providerId: state.aiProviderId } : null
     const reads: Promise<void>[] = []
     if (forceConflicts || aiEnded || state.conflict?.mergeId !== mergeId) reads.push(loadConflictsFor(myCtx, gid, mergeId))
-    // flowgate.v02gui.0004: the conflict card's AI picker needs the list too, not only reject.
+    // the conflict card's AI picker needs the list too, not only reject.
     if (state.projectId && !row.reviewState) reads.push(loadProviders(myCtx, state.projectId))
     if (!resolving && row.reviewState && REVIEW_STATES.includes(row.reviewState)) {
       reads.push(loadReviewFor(myCtx, gid, mergeId))
@@ -818,7 +818,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (state.projectId) void loadProviders(ctx, state.projectId)
   }
 
-  // flowgate.v02gui.0004 — direct resolve: one file's chunks, then the conflicts / status read
+  // direct resolve: one file's chunks, then the conflicts / status read
   // again so the file's state (and, once nothing is left, the review card) follows the server.
   async function resolveFile(path: string, chunks: GitChunkResolution[]): Promise<boolean> {
     const target = activeConflict()
@@ -1161,7 +1161,7 @@ export interface GitConfirmRequest {
 
 export interface GitPanelContext {
   session: GitSession
-  /** flowgate.v02test.0052: whether the person is a system administrator (forced cleanup is theirs only). Absent = no. */
+  /** whether the person is a system administrator (forced cleanup is theirs only). Absent = no. */
   isAdmin?: () => boolean
   openDiff(origin: GitFileOrigin, path: string, status: GitFileLetter | null): void
   openSettings(): void

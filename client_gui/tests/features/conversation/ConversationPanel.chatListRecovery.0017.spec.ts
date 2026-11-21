@@ -7,7 +7,7 @@ import type { ConversationSession } from '@/features/conversation/conversationSe
 import type { ChatEventSubscription, SubscribeChatEvents } from '@/features/conversation/conversationEvents'
 import { createFakeSource, httpError } from './fakeConversationSource'
 
-// flowgate.v02gui.0017 B3: a chat list whose read failed (a dropped connection, a server restart) stayed on
+// B3: a chat list whose read failed (a dropped connection, a server restart) stayed on
 // "채팅 목록을 불러오지 못했습니다" until [다시 시도] was pressed — the open-chat recovery (SSE resync, revisit) does
 // not cover the list, and with the list failed no chat is open. Now the list reads again by itself when the event
 // stream reconnects, when the browser is online again and when the tab is shown again; a list that loaded is left alone.

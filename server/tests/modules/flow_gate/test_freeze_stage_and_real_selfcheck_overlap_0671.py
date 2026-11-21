@@ -1,5 +1,5 @@
 """Real F1-F5 freeze-stage observation, and real Self-check / real-Git approval overlap
-(flowgate.default.0671 TR0003's last rejection, findings 2-4).
+('s last rejection, findings 2-4).
 
 Everything that actually does Git or approval work is real and unstubbed on this file:
 ``approval_freeze.run_freeze`` (all of F1-F5), ``git_service.finalize`` /
@@ -470,7 +470,7 @@ class TestRealSelfCheckOverlap:
         run = _start_check(selfcheck_stubs, tr_sc, _worktree(g_sc), 25.0)
         _wait_running(selfcheck_stubs, tr_sc, run["self_check_run_id"])
         assert not any(r["domain"] == "G" and r["holder_kind"] == "selfcheck"
-                       for r in gc.list_locks_in_scope(PROJECT))    # 0053 1-B: no G
+                       for r in gc.list_locks_in_scope(PROJECT))    # no G
 
         base = _base()
         origin_before = _origin_head(origin_repo)
@@ -493,7 +493,7 @@ class TestRealSelfCheckOverlap:
     def test_same_group_approval_does_not_wait_for_a_running_selfcheck(
         self, origin_repo, selfcheck_stubs,
     ):
-        """0053 1-B: the run executes in its snapshot and holds no G, so the same Group's real
+        """the run executes in its snapshot and holds no G, so the same Group's real
         HTTP approve proceeds at once (it used to wait the run out on G), removes the Group's
         worktree, and the self-check still ends with its own result."""
         from modules.flow_gate.db import git_concurrency as gc

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#5 — the documents tab lines of a card just placed (0053 CH; T#1 made its documents).
+ * the documents tab lines of a card just placed (CH; the earlier implementation made its documents).
  * The real Frame and registry on a draft node as the server answers it after the save (its card lines and,
  * for the Inspector's document tabs, the first line a person writes as the node's document):
  *
@@ -9,7 +9,7 @@
  *   테스트: instruction · 시나리오 · report;
  * - each line is `name · [state] · [history] · [document icon] · ✎`: the name and the document icon (tooltip
  *   열기) open the document window, ✎ opens it straight in the editor — the report too, before any run; a
- *   draft draws no state badge (flowgate.v02.0056 F1), and the history button opens the review·rejection history window;
+ *   draft draws no state badge, and the history button opens the review·rejection history window;
  * - no type code in a name, no "아직 없음", no ↗ and no "설명 대기" note on the tab;
  * - a card whose settings omit the instruction has no instruction line (v7); a card not saved yet reads nothing.
  */
@@ -88,11 +88,11 @@ interface PlacedCard {
   readonly section: string
   readonly node: FlowGraphNode
   readonly names: readonly string[]
-  /** flowgate.v02.0072 T#3: the documents of the lines shown, when not every card line is shown (the WP card). */
+  /** the documents of the lines shown, when not every card line is shown (the WP card). */
   readonly docs?: readonly string[]
 }
 
-/** Every kind of card the palette places, with the lines T#1 makes for it. */
+/** Every kind of card the palette places, with the lines the earlier implementation makes for it. */
 const CARDS: readonly PlacedCard[] = [
   { card: '요구사항', section: 'requirementCard', node: placed('gn_r', 'document', 'R', [line('requirement', 'R', doc('0001', 'R'), 'human')]), names: ['요구사항'] },
   {
@@ -152,14 +152,14 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
   // flowgate.v02.0074 T#1 (R §1.3): the 작업계획 line has no ✎ — its document icon / name are the one way in.
   it.each(CARDS.filter(({ node }) => node.docType !== 'TS'))('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎ (작업계획: no ✎)', async ({ card, node, section, names, docs }) => {
     const w = await mountFrame(node)
-    // flowgate.v02.0056 F2-2: the card's memos follow its lines in a draft (unassigned) Flow too.
+    // the card's memos follow its lines in a draft (unassigned) Flow too.
     expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section, 'cardMemo'])
     const shown = lines(w)
     expect(shown.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual([...names])
     expect(shown.map((row) => row.attributes('data-doc'))).toEqual(docs ?? node.cardDocuments!.map((own) => own.docId))
     for (const row of shown) {
       expect(row.attributes('data-empty')).toBe('false')
-      // flowgate.v02.0056 F1: a document being written asks nothing of the operator — no badge.
+      // a document being written asks nothing of the operator — no badge.
       expect(row.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
       const history = row.get('[data-test="inspector-slot-history"]')
       expect([history.attributes('data-icon'), history.attributes('title'), history.text()]).toEqual(['history', '검수·반려 이력', ''])

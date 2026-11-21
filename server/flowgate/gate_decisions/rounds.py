@@ -1,4 +1,4 @@
-"""0085 T#4: Time Machine rounds preserve decisions, effects and checkpoints.
+"""Time Machine rounds preserve decisions, effects and checkpoints.
 
 Only the caller's Flow-guard transaction writes. No Git/remote read or rollback is
 performed here: external effects and archive refs survive the round split.

@@ -1,6 +1,6 @@
-"""flowgate.default.0187 T: AI invoke engine (D0004 / P0005 / L0006).
+"""T: AI invoke engine.
 
-Covers the termination-pattern measurement harness L0006 §4.3 demands —
+Covers the termination-pattern measurement harness the earlier implementation demands —
 ① normal exit ② forced tree-kill ③ provider error — asserting the §4.1/§4.3
 classifications against real subprocess behavior, with ⓐ document-reach and
 ⓑ message-receipt recorded as independent columns in every case. Plus the
@@ -50,7 +50,7 @@ def _provider(name="cli-1", kind="claude", cmd=None, exec_type="cli", pid="aip_t
 
 
 class FakeWfseq:
-    """Mutable stand-in for db.workflow_sequences (0226 NR0003 §5-1: docs_target is
+    """Mutable stand-in for db.workflow_sequences (the review: docs_target is
     derived from the decided sequence's items, never a group-doc-seq subtraction)."""
 
     def __init__(self):
@@ -114,7 +114,7 @@ def fake_env(monkeypatch, tmp_path):
     """Patch every collaborator start_run touches; return the mutable doc store."""
     docs = FakeDocs()
     wfseq = FakeWfseq()
-    # registered_count = rows before the enabled filter (0292 T0003): it is what lets
+    # registered_count = rows before the enabled filter: it is what lets
     # admission tell "nothing registered" from "everything switched off".
     chain_holder = {"providers": [], "source": "system", "registered_count": 0}
 
@@ -382,7 +382,7 @@ class TestProviderError:
 
     def test_slow_nonzero_exit_does_not_fall_back(self, fake_env, monkeypatch):
         # Past the fast-fail window a failure means the provider DID start work —
-        # falling back would double-execute the task (D0004 §3-2).
+        # falling back would double-execute the task.
         monkeypatch.setattr(svc, "FAST_FAIL_WINDOW_SEC", 0)
         bad_late = _provider(name="late", cmd=f'"{PY}" -c "import sys; sys.exit(9)"', pid="aip_late1")
         never = _provider(name="never", cmd=f'"{PY}" -c "print(1)"', pid="aip_never1")
@@ -426,7 +426,7 @@ class TestLastMessageRecovery:
         assert run["last_message"] is None
 
 
-# ── Registration diagnostics and no-tool nudges (group 0231) ─────────────────
+# ── Registration diagnostics and no-tool nudges (the earlier change) ─────────────────
 
 def _registration_api_run() -> dict:
     return {
@@ -454,7 +454,7 @@ class TestRegistrationDiagnostics:
         assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
 
         assert len(handler_calls) == 1
-        # 0501 T0004 required item 5: exit_code=None is the API contract even on a normal,
+        # required item 5: exit_code=None is the API contract even on a normal,
         # successful registration -- there is no subprocess to hand back a real code,
         # and this run dict is what the real turn loop produced, not a hand-built one.
         assert run["exit_code"] is None
@@ -588,7 +588,7 @@ class TestRegistrationDiagnostics:
         assert run["model_last_http_status"] == 0
 
     def test_exit_code_none_reads_as_completed_not_failed_on_a_real_run(self, monkeypatch):
-        """0501 T0004 required item 5: test_no_output_detail_branching.py's
+        """required item 5: test_no_output_detail_branching.py's
         test_api_provider_fallback_to_completed_on_exit_none proves the same text on a
         run dict it authors by hand ({"exit_code": None, ...}). This is the same contract
         pinned to a run dict svc._api_execute() itself produced -- no register_errors, no
@@ -620,7 +620,7 @@ class TestRegistrationDiagnostics:
         assert "worker exited" not in detail
 
 
-# ── Workflow-decision API loop (group 0223) ──────────────────────────────────
+# ── Workflow-decision API loop (the earlier change) ──────────────────────────────────
 
 def _workflow_api_run(mode: str, *, target_to_end: bool = False) -> dict:
     return {
@@ -677,7 +677,7 @@ class TestWorkflowDecisionApiLoop:
             "next_token": "doc-token", "next_mention": "next", "continuation_target_seq": 2,
         }))
         monkeypatch.setattr(svc, "_inbox_register", lambda *a: (200, {"ok": True}))
-        # 0226 NR0003 §5-1: the resolved to-end target (an item_seq) is now counted
+        # the resolved to-end target (an item_seq) is now counted
         # against the decided sequence's worker items ([T, TR] ⇒ 1 doc, the TR).
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda s: [
@@ -753,7 +753,7 @@ class TestAdmission:
         assert exc.value.detail["code"] == "no_enabled_provider"
 
     def test_no_provider_registered_is_its_own_code(self, fake_env):
-        """0292 T0003: an install that skipped the provider seed must not be told to go
+        """an install that skipped the provider seed must not be told to go
         toggle rows that do not exist — it is told what to run instead."""
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
@@ -777,7 +777,7 @@ class TestAdmission:
             _wait_finished(res["run_id"])
 
     def test_continuous_requires_decided_sequence(self, fake_env):
-        # 0226 NR0003 §5-1: the target lives in the workflow item_seq space, so a
+        # the target lives in the workflow item_seq space, so a
         # continuous run without a decided sequence has no coordinate system at all.
         from fastapi import HTTPException
         fake_env["wfseq"].sequence = None
@@ -804,7 +804,7 @@ class TestAdmission:
         _wait_finished(res["run_id"])
 
     def test_continuous_docs_target_survives_sparse_item_seq(self, fake_env):
-        # 0226 B0001 ② reproduction: edit_workflow_pending renumbers the pending tail
+        # ② reproduction: edit_workflow_pending renumbers the pending tail
         # past max_item_seq (items 18–21) while the group doc seq sits at 12. The old
         # subtraction targeted 21-12=9 docs for 4 actual steps ("0/9"); item_seq-space
         # counting yields the 3 worker docs (TR·TS·TSR — the T head auto-completes).
@@ -860,12 +860,12 @@ class TestAdmission:
         }
 
 
-# ── SSE contract (P0005) ─────────────────────────────────────────────────────
+# ── SSE contract ─────────────────────────────────────────────────────
 
 class TestWorkerVisibility:
-    """0406 T0022 task 3: identify who executes this hop while it is still running.
+    """task 3: identify who executes this hop while it is still running.
 
-    NR0021 §11 found that auto_approved had the server author/approve N/T without an
+    The review found that auto_approved had the server author/approve N/T without an
     AI worker or any record of that fact. End-of-run records are insufficient:
     the start response and event must let the live UI distinguish instruction folding
     from normal TR worker execution.
@@ -939,7 +939,7 @@ class TestEvents:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0501 T0004 required item 4 -- terminal run lifecycle: lease release
+# required item 4 -- terminal run lifecycle: lease release
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestTerminalLeaseRelease0501:

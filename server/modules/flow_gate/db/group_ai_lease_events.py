@@ -1,13 +1,13 @@
-"""Append-only group AI lease/admission forensic history (flowgate.default.0502 T0004).
+"""Append-only group AI lease/admission forensic history.
 
 `group_ai_leases` is a current-state table: acquire/activate/release/reclaim all
 overwrite or delete the one row a group may hold, so the exact identity of a lease
 that blocked a since-resolved 409 is gone the moment the row moves on. This module is
 the durable history `group_ai_leases` was never meant to keep — one row per lifecycle
-transition, never updated or deleted by normal operation (T0004 §7).
+transition, never updated or deleted by normal operation.
 
 Every append is best-effort from the caller's point of view: a forensic write failure
-must never change an admission or release decision (T0004 §10), so callers in
+must never change an admission or release decision, so callers in
 `group_ai_leases.py` and `ai_invoke/admission.py` wrap `append()` in their own
 try/except and only log a warning on failure. This module itself does not swallow
 errors -- that choice belongs to the caller, exactly like `_record_orphaned_lease_run`
@@ -84,7 +84,7 @@ def append(
     detail: Optional[dict] = None,
 ) -> dict:
     """Append one immutable lifecycle event. Never call UPDATE/DELETE against this
-    table from anywhere else -- that would defeat the entire point (T0004 §7)."""
+    table from anywhere else -- that would defeat the entire point."""
     event_id = f"gale_{_uuid.uuid4().hex}"
     stamp = now_iso()
     row = {
@@ -139,10 +139,10 @@ def list_for_group(
     limit: int = 200,
 ) -> list[dict]:
     """Time-ordered (oldest first) history for one group, optionally narrowed --
-    the read path behind GET /api/v1/ai-invoke/lease-events (T0004 §14).
+    the read path behind GET /api/v1/ai-invoke/lease-events.
 
     ``since``/``until`` are inclusive ISO-8601 bounds on ``created_at`` -- the
-    time-range filter T0004 §14 lists as part of the minimum filter set, so an
+    time-range filter the earlier implementation lists as part of the minimum filter set, so an
     incident window can be isolated instead of always pulling the whole group
     history. ``created_at`` is always stamped via ``now_iso()`` (a fixed-format
     ISO-8601 string), so a plain lexical compare against the caller-supplied

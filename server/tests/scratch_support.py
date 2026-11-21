@@ -1,4 +1,4 @@
-"""Test scratch: create outside the repository and clean up (0382 B0001 / NR0003 proposals 2 and 7).
+"""Test scratch: create outside the repository and clean up (proposals 2 and 7).
 
 The incident began when two executable specs defaulted to ``server/.test-tmp-<number>``.
 Every run outside FlowGate (manual pytest runs by people or AI) then created directories

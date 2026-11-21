@@ -1,4 +1,4 @@
-"""flowgate.v02test.0025: chat AI settings.
+"""chat AI settings.
 
 1. Each chat keeps its own AI pick (per user), validated against what the user may select.
 2. The [checkpoint] context mode: the chat's checkpoint (from this message / from the next message) decides the
@@ -258,7 +258,7 @@ class TestCheckpointReachesBothContextPaths:
         assert after == 24
         assert "This invocation's context starts at seq 25." in text
         assert "before_seq=25" in text  # earlier turns still readable
-        assert "checkpoint" not in text  # flowgate.v02test.0041: the AI sees the range, not why
+        assert "checkpoint" not in text  # the AI sees the range, not why
         assert payload["context_window"]["after_seq"] == 24
         assert "checkpoint_seq" not in payload["context_window"]
         assert "checkpoint_kind" not in payload["context_window"]
@@ -279,7 +279,7 @@ class TestCheckpointReachesBothContextPaths:
         assert route.calls[0] == (25, None)
 
     def test_a_limit_narrower_than_the_checkpoint_states_only_the_delivered_range(self, store, monkeypatch):
-        """flowgate.v02test.0041: one starting point only, the one actually delivered; no checkpoint wording."""
+        """one starting point only, the one actually delivered; no checkpoint wording."""
         self._set(monkeypatch, {"context_checkpoint_seq": 12, "context_checkpoint_kind": "exclude"})
         settings = {"context_mode": "checkpoint_recent", "context_turns": 20, "checkpoint_max_turns": 5}
 

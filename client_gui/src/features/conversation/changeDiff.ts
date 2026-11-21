@@ -1,4 +1,4 @@
-// flowgate.v02.0032 — line diff of one run change file (D0006 §3.8.3, §6.1). The server serves
+// line diff of one run change file. The server serves
 // the stored run start / run end contents of the path (the Group changes diff payload) and no
 // patch text, so the lines are compared here. Pure: no Vue, no server.
 import type { RunFileDiff } from './types'

@@ -91,7 +91,10 @@ function extract(name, text) {
 function astShape(name, text) {
   const kind = /\.[jt]sx$/.test(name) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const tree = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, kind);
-  const shape = [];
+  // Compare diagnostics too: error recovery can hide malformed comment edits.
+  // Existing syntax errors remain visible without treating shifted offsets as changes.
+  const shape = [[tree.parseDiagnostics.map(error => [error.code,
+    ts.flattenDiagnosticMessageText(error.messageText, ' ')])]];
   function visit(node) {
     const value = node.kind !== ts.SyntaxKind.SourceFile && typeof node.text === 'string'
       ? [node.text, node.rawText || null] : null;

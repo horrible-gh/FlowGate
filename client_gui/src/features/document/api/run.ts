@@ -24,11 +24,11 @@ export interface RunNodeState {
   readonly status: string
   readonly attemptId?: string | null
   readonly gate?: RunGateState | null
-  /** flowgate.v02.0056 F2-1: the node's result document; absent when not sent. */
+  /** the node's result document; absent when not sent. */
   readonly resultDocId?: string | null
-  /** flowgate.v02.0056 F2-1: the card waits for its approval; absent when not sent. */
+  /** the card waits for its approval; absent when not sent. */
   readonly awaitingApproval?: boolean
-  /** flowgate.v02.0056 F2-1: `instruction` | `result` | null; absent when not sent. */
+  /** `instruction` | `result` | null; absent when not sent. */
   readonly stage?: string | null
 }
 
@@ -38,7 +38,7 @@ export interface RunCurrent {
   readonly status: string
   readonly idleReason?: string | null
   readonly nodes: readonly RunNodeState[]
-  /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (their successors wait); absent when not sent. */
+  /** cards approved while the run was stopped (their successors wait); absent when not sent. */
   readonly pendingPropagationCount?: number
   readonly pendingNodeKeys?: readonly string[]
 }
@@ -90,7 +90,7 @@ export async function runGateDecide(runId: string, nodeKey: string, decision: Ru
   return toRunCurrent(response.data?.run)
 }
 
-// D0007 §6/7.2: keep the server's gate facts; no client-side success inference.
+// keep the server's gate facts; no client-side success inference.
 export interface RunGateIntent {
   readonly request_id: string
   readonly expected_attempt_id: string
@@ -137,13 +137,13 @@ export interface RunGateState {
   readonly can_decide: boolean
   readonly settings_locked: boolean
   /**
-   * flowgate.v02.0132 T#4: why the settings are locked (the server's `settings_lock_reason`: `decision_reserved`,
+   * why the settings are locked (the server's `settings_lock_reason`: `decision_reserved`,
    * `merge_conflict`, `time_machine`, `run_not_editable`, `gate_decided`, `recovery_reset_required`), kept only when sent.
    */
   readonly settings_lock_reason?: string | null
-  /** flowgate.v02.0132 T#4 (NR §4.4.3): the server's Git work on the decision is going on now (auto sync), kept only when sent. */
+  /** (NR): the server's Git work on the decision is going on now (auto sync), kept only when sent. */
   readonly git_active?: boolean
-  /** flowgate.v02.0132 T#4: the decision waits for a recovery (parked): no Git work, the run idle; kept only when sent. */
+  /** the decision waits for a recovery (parked): no Git work, the run idle; kept only when sent. */
   readonly parked?: boolean
   readonly archived: boolean
   readonly recovery_reset_required: boolean

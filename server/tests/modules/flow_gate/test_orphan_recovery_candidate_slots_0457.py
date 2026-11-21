@@ -1,9 +1,9 @@
-"""0457 T0009 — recover error.code envelope and /relations candidate_slots.
+"""recover error.code envelope and /relations candidate_slots.
 
-NR0003 §9 recommendations 5/6/7: T0007 (TR0008) closed the data-repair half of the
+recommendations 5/6/7: the earlier implementation closed the data-repair half of the
 orphan-slot incident; the 409 response shape, the /relations candidate-slot listing,
 and the client's slot-aware recover button were explicitly left for this T. This suite
-covers the server half — regressions **C**, **D**, **E**, **F** of NR0003 §8 — against a
+covers the server half — regressions **C**, **D**, **E**, **F** of the review — against a
 real SQLite store built from the actual migrations, the same harness shape as
 `test_reject_resubmit_own_slot_0457.py` (regressions A/B/G/H) and
 `test_workflow_duplicate_slot_repair_0457.py` (regression I).
@@ -19,9 +19,9 @@ real SQLite store built from the actual migrations, the same harness shape as
 * **F** — a sequence with no empty slot left answers `no_available_slot`, and
   `/relations` candidate_slots has no `empty: true` entry.
 
-Every scenario asserts the response's `error.code` against the T0009 §1 table and that
+Every scenario asserts the response's `error.code` against the the earlier implementation table and that
 the slot row, its workflow_item_results ledger, and the target document's own row are
-all unchanged on failure (TR0010 rev2: D/E/F previously only compared the slot and/or
+all unchanged on failure (the earlier implementation: D/E/F previously only compared the slot and/or
 ledger, not the document).
 """
 from __future__ import annotations
@@ -429,11 +429,11 @@ def test_F_sequence_fully_consumed_has_no_available_slot():
 # registered handler (server/routers/main.py:124-126, exception_handler(MutationPolicyError)
 # -> mutation_policy.mutation_error_response) really serializes it as HTTP 409 with a
 # {"error": {"code", "message"}} JSON body — a bare app.include_router() with no
-# handler registered would 500 on every one of these paths instead. TS0011 rev0's
+# handler registered would 500 on every one of these paths instead. the earlier implementation's
 # rejection: only 3 of the 7 codes were covered anywhere, and none through real HTTP.
 # The tests below drive a real TestClient through a minimal app carrying only the
 # workflow router plus that one handler, covering all 8 of the endpoint's 409
-# branches (T0009 SS1's table, including the WorkflowSlotConflictError catch) —
+# branches (SS1's table, including the WorkflowSlotConflictError catch) —
 # including the three no earlier regression ever exercised at all: no_group_or_project,
 # no_file_path, and the late-conflict slot_occupied catch.
 

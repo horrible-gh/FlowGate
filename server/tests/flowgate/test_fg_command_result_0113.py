@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#5 — the result of one step / full command (0030-M §5, 0002-D revised §3.14 / §6.5).
+"""the result of one step / full command (M, the design revised).
 
 The harness of ``test_fg_ai_roles_l2_assignment`` / ``test_fg_document_progress_0113`` (real routes, Graph engine, card
 settings / documents / approval ports, a separate SQLite DB; every AI write start is the ``env["jobs"]`` recorder and every

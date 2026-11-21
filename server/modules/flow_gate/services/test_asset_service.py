@@ -1,6 +1,6 @@
 """Specification-authorized test asset reads and CAS edits for approved contract-2 TS.
 
-0684 T#2 (D#1 §3-7): the authority is the approved specification itself -- the Case
+the authority is the approved specification itself -- the Case
 automation_ref and test_assets paths that pass the Test Asset Policy -- not a stored Basis.
 Reads hash only the requested file. An edit swaps one file atomically under the Group's
 source lock and leaves an event; it creates no successor Basis, no capture and no run.
@@ -87,7 +87,7 @@ def _preconditions(ts_id: str, doc: dict) -> dict | None:
     if paired and paired.get("doc_review_status") == "approved":
         raise test_run_service._http_error(409, "tsr_already_approved",
                                           tsr_doc_id=paired["doc_id"])
-    # 0684 T#1 (D#1 §3-7): a queued or running run is measuring/executing this source.
+    # a queued or running run is measuring/executing this source.
     running = db_test_runs.get_running_by_doc(ts_id)
     if running:
         raise test_run_service._http_error(409, "run_in_progress", run_id=running["run_id"])
@@ -123,7 +123,7 @@ def _replace_bytes(target: Path, data: bytes) -> None:
 
 def update(ts_id: str, path: str, *, expected_hash: str, content: str,
            actor_id: str, locale: str = "ko") -> dict:
-    """CAS edit of one specification asset (D#1 §3-7).
+    """CAS edit of one specification asset.
 
     Lock order is the Group's G, then the admission lock. Under G the preconditions and
     the expected hash are checked again and the bytes are swapped atomically; the event is
@@ -170,7 +170,7 @@ def update(ts_id: str, path: str, *, expected_hash: str, content: str,
                 db_events.insert_event(ts_id, "test_spec_asset_updated", note=json.dumps({
                     "actor": actor_id, "path": path, "old_hash": old_hash, "new_hash": new_hash,
                     "tsr_doc_id": (paired or {}).get("doc_id"),
-                    # D#1 §3-7 step 3: earlier results are stale by identity, nothing is rewritten.
+                    # step 3: earlier results are stale by identity, nothing is rewritten.
                     "results": "stale_by_identity",
                 }, ensure_ascii=False))
         except Exception:

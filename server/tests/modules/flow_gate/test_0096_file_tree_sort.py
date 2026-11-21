@@ -1,4 +1,4 @@
-"""R0003 / 0096 — File explorer ordering regression.
+"""File explorer ordering regression.
 
 The file tree must order folders before files (folders-first), and within each
 group use natural, case-insensitive comparison. Previously get_file_tree() used a

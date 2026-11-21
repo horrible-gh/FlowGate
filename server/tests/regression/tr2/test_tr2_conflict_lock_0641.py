@@ -1,4 +1,4 @@
-"""flowgate.default.0641 T2#3 — conflict/history locking and TR2-managed exception."""
+"""#3 — conflict/history locking and TR2-managed exception."""
 from __future__ import annotations
 
 from pathlib import Path

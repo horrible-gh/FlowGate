@@ -1,5 +1,5 @@
-"""Real HTTP approval/finalize with a real Git body and a real push (flowgate.default.0671
-T0002 / 0671 TR0003's own last rejection, finding 1).
+"""Real HTTP approval/finalize with a real Git body and a real push (the earlier change
+'s own last rejection, finding 1).
 
 test_merge_timeout_recovery_0607.py already drives the real final-approval route and a real
 Git body end to end, but it calls ``workflow.document_review_transition_rpc`` directly as a
@@ -20,7 +20,7 @@ runs. This file closes both gaps on the SAME real harness (real bare origin, rea
   the real "[rejected] ... (fetch first)" exit the way origin really answers a stale push).
   The request must come back 200 with the approval queued/deferred (not failed), the real job
   left in ``retry_wait``, and the real Job Runner's next claim (``_drive_jobs``) must finish
-  the SAME approval and really reach origin -- the wait/blocked/reclaim contract T0002 asks
+  the SAME approval and really reach origin -- the wait/blocked/reclaim contract the earlier implementation asks
   for, observed through the HTTP response and the real job/lock state, not a mocked stand-in.
 """
 from __future__ import annotations
@@ -317,7 +317,7 @@ class TestApprovalFinalizeRealHttp0671:
     def test_http_stage_cause_retry_limits_and_per_attempt_audit(
         self, origin_repo, monkeypatch, case, stage, returncode, stderr, code, cause, limit,
     ):
-        """0134 T#1: real approval route, attempt ledger, claim/release and runner.
+        """real approval route, attempt ledger, claim/release and runner.
 
         Only the selected Git command's failure is injected. Both fetch and merge
         git_error remain retryable; ff-only timeout must not become divergence.

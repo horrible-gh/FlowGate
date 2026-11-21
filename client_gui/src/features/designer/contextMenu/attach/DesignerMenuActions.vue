@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0060 T#2 (0006-D rev2 §4.3 2-B) — the windows of the context menu's existing server commands, in the
+  <!-- the windows of the context menu's existing server commands, in the
        look of the v0.2 dialogs (ModalShell, the File menu dialogs' layout): name input for 이름 변경 / 새 폴더 / 새 파일,
        the Flow 삭제 (dispose, DC) confirmation with its required reason and danger look, the delete confirmation that
        names the target and its scope, the upload with its overwrite check and result, the folder download notice, and

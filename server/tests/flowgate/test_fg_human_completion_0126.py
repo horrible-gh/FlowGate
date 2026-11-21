@@ -1,4 +1,4 @@
-"""0126 T#2: real migrated SQLite/HTTP/Graph; only AI and SSE transports are recorded."""
+"""real migrated SQLite/HTTP/Graph; only AI and SSE transports are recorded."""
 import json
 import pytest
 

@@ -3,7 +3,7 @@
        lines, built from the common slot list part. A thin container: researchCardModel decides the lines from
        the target; the document icon (or the line's name) opens a document in its window, ✎ straight in its
        editor. No server call of its own.
-       flowgate.v02.0053 T#5 (0053 CH) — the lines are the card's documents (made when it was placed); the
+       (CH) — the lines are the card's documents (made when it was placed); the
        지시서 line is hidden when the card's settings omit the instruction (useResearchCard). -->
   <section class="inspector-research-card" data-test="inspector-research-card" :data-doc-type="target.docType ?? ''">
     <InspectorSlotList :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
@@ -47,7 +47,7 @@ function lineOf(slot: ResearchSlot): InspectorSlotView {
     key: slot.key,
     kind: slot.kind,
     name: t(k(`slot.${slot.key}`)),
-    // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+    // the kind's key travels with the line (see openCardLineAction).
     nameKey: k(`slot.${slot.key}`),
     id: slot.id,
     empty: slot.empty,
@@ -73,12 +73,12 @@ function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** The history button: the document's review·rejection history window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

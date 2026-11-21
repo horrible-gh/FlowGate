@@ -561,7 +561,7 @@ class TestInboxNew:
                     "module": "__ALL__",
                     "group": "0001",
                     "action": "new",
-                    "target_id": "R0001",  # <- mismatch with token doc_ref (NR0003)
+                    "target_id": "R0001",  # <- mismatch with token doc_ref
                     "doc_type": "NR",
                     "content": "# X",
                 },
@@ -664,7 +664,7 @@ class TestInboxNew:
         assert doc["doc_id"] == expected_canonical
 
     def test_tr_scope_gate_runs_for_ts_new_submission(self, seed_data, tmp_path):
-        """0390 R0001/TR0005: TS is now a MUTATING_STEP_TYPES member, so a new TS
+        """TS is now a MUTATING_STEP_TYPES member, so a new TS
         submission must go through the same Step 5.7 work-scope validation gate as TR — a
         rejecting verdict must 422 the submission before any doc_id is reserved."""
         from modules.flow_gate.api import inbox_routes
@@ -691,7 +691,7 @@ class TestInboxNew:
             "branch": "main",
         }
 
-        # 0110 T#2: the gate hands evaluate() the token's attempt basis verbatim.
+        # the gate hands evaluate the token's attempt basis verbatim.
         attempt_basis = {"attempt_id": "att_inbox_new", "root": tmp_path, "input_commit": "a" * 40}
 
         with patch(
@@ -1076,9 +1076,9 @@ class TestInboxEdit:
         assert resp.status_code == 409
 
     def test_tr_scope_gate_runs_for_ts_edit_resubmission(self, seed_data, tmp_path):
-        """0390 R0001/TR0005: a rejected TS document's edit/resubmission path
+        """a rejected TS document's edit/resubmission path
         (_handle_edit Step 5.7) must also run the work-scope validation gate — this is the
-        bypass TR0005 §2 point 2 called out (B0106-style hole if only _handle_new
+        bypass the earlier implementation point 2 called out (the regression-style hole if only _handle_new
         were widened)."""
         from modules.flow_gate.api import inbox_routes
         from modules.flow_gate.db import documents as db_docs
@@ -1113,7 +1113,7 @@ class TestInboxEdit:
             "branch": "main",
         }
 
-        # 0110 T#2: the edit path passes the attempt basis exactly like the new path.
+        # the edit path passes the attempt basis exactly like the new path.
         attempt_basis = {"attempt_id": "att_inbox_edit", "root": tmp_path, "input_commit": "b" * 40}
 
         with patch(
@@ -1166,7 +1166,7 @@ class TestPhase3TokenCrossDocAccess:
         from modules.flow_gate.api import inbox_routes
         from modules.flow_gate.services import token_service
 
-        # Same conditions as Phase 3 issue_followup_token: action_scope=edit, doc_ref=R0001
+        # Same conditions as Phase 3 issue_followup_token: action_scope=edit, doc_ref=the requirement
         with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "s_phase3"):
             result = token_service.issue(
                 project="testprj",
@@ -1193,7 +1193,7 @@ class TestPhase3TokenCrossDocAccess:
                     "module": "__ALL__",
                     "group": "0001",
                     "action": "edit",
-                    "doc_id": "testprj-__ALL__-0001-NR0001",  # Different document from the token-bound R0001
+                    "doc_id": "testprj-__ALL__-0001-NR0001",  # Different document from the token-bound the requirement
                     "edit_reason": "qna_followup",
                     "content": "# Updated",
                 },
@@ -1230,7 +1230,7 @@ class TestInboxAuth:
         assert resp.status_code == 401
 
 
-# ── 7. Duplicate-body guard (B0106 / NR0003) ────────────────────────────────
+# ── 7. Duplicate-body guard ────────────────────────────────
 
 class TestInboxDuplicateBodyGuard:
     """The submission layer occasionally POSTs a stale/reused body (correct title,
@@ -1345,7 +1345,7 @@ class TestInboxDuplicateBodyGuard:
 
     def test_new_persists_normalized_fingerprint(self, seed_data, tmp_path):
         """A substantial new body persists content_sha256_norm alongside the exact hash,
-        so a whitespace-only near-duplicate becomes detectable (NR0003 §5.1c)."""
+        so a whitespace-only near-duplicate becomes detectable (c)."""
         import json
         from modules.flow_gate.db import documents as db_docs
         body = self._BIG_BODY + " v-norm-persist"
@@ -1356,7 +1356,7 @@ class TestInboxDuplicateBodyGuard:
 
     def test_cross_group_whitespace_near_duplicate_rejected(self, seed_data, tmp_path):
         """A clone that differs only by reflow/indentation evades the byte-exact hash but
-        not the normalized one → 409 naming the original (NR0003 §5.1c)."""
+        not the normalized one → 409 naming the original (c)."""
         self._seed_second_group()
         body = self._BIG_BODY + " v-near-dup"
         first = self._post(tmp_path, "0001", "R0001", "NR8601", body)
@@ -1371,15 +1371,15 @@ class TestInboxDuplicateBodyGuard:
         assert first.json()["doc_id"] in second.json()["error_message"]
 
 
-# ── 8. Duplicate-body guard on the EDIT path (NR0003 → B0107) ───────────────
+# ── 8. Duplicate-body guard on the EDIT path ───────────────
 
 class TestInboxEditDuplicateBodyGuard:
-    """B0106 only defended `new`, so the same cross-group contamination recurred via
-    inbox edit (NR0003, group 0107) — most often on CH conversations the worker
+    """only defended `new`, so the same cross-group contamination recurred via
+    inbox edit (the earlier change) — most often on CH conversations the worker
     rewrites wholesale each turn. The guard must now also fire on edit, and an edited
     body must (re)persist its fingerprint so a grown body becomes a detectable twin.
 
-    0432 T0005 §2-5: every CH document below is LEGACY — ``_create_target_doc`` writes a
+    every CH document below is LEGACY — ``_create_target_doc`` writes a
     ``documents`` row and nothing else, so ``conversation_docs`` has no row and
     ``migration_state`` is ``pending``. That is why the 200 expectations here survive the
     migrated-conversation full-body block added in 0432 (0344.0005-L §2-16 explicitly does
@@ -1482,7 +1482,7 @@ class TestInboxEditDuplicateBodyGuard:
 
     def test_edit_cross_group_identical_body_rejected(self, seed_data, tmp_path):
         """Editing a doc to a body byte-identical to another group's doc → 409 (the
-        exact NR0003 contamination: a CH body overwritten with another group's CH)."""
+        exact the review contamination: a CH body overwritten with another group's CH)."""
         src_id = self._seed_source_group(self._BIG_BODY)
         doc_id = "testprj-__ALL__-0001-CH7101"
         self._create_target_doc(doc_id, tmp_path / "docs" / f"{doc_id}_document.md")
@@ -1493,7 +1493,7 @@ class TestInboxEditDuplicateBodyGuard:
 
     def test_edit_persists_fingerprint(self, seed_data, tmp_path):
         """A substantial edited body persists content_sha256 into meta, so a later
-        cross-group copy of THIS body is detectable as a twin (NR0003 §2b/§4-2)."""
+        cross-group copy of THIS body is detectable as a twin (b)."""
         import json
         from modules.flow_gate.db import documents as db_docs
         doc_id = "testprj-__ALL__-0001-CH7201"
@@ -1571,7 +1571,7 @@ class TestInboxEditDuplicateBodyGuard:
     def test_edit_rejects_foreign_frontmatter_identity_even_without_fingerprint_match(
         self, seed_data, tmp_path
     ):
-        """Regression for group 0128: edit must reject a CH overwrite whose submitted
+        """Regression for the earlier change: edit must reject a CH overwrite whose submitted
         body declares another conversation, even when no source content_sha256 can match."""
         doc_id = "testprj-__ALL__-0001-CH7502"
         stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
@@ -1622,13 +1622,13 @@ class TestInboxEditDuplicateBodyGuard:
 
         resp = self._edit(tmp_path, doc_id, own_body)
         assert resp.status_code == 200, resp.text
-        # 0432 T0005 §3-5: 200 is valid because this conversation has not migrated yet.
+        # 200 is valid because this conversation has not migrated yet.
         # Adding a conversation_docs row makes it migrated and changes this result to 409.
         # Pin that precondition so a fixture change cannot silently alter the contract.
         from modules.flow_gate.db import conversation_turns
         assert conversation_turns.migration_state(doc_id) != "migrated"
 
-    # ── T0004 2.1/2.2/2.3: submission-header normalization + malformed-frontmatter guard ──
+    # ── the earlier implementation 2.1/2.2/2.3: submission-header normalization + malformed-frontmatter guard ──
 
     def _post_new(
         self, tmp_path, group: str, doc_ref: str, doc_code: str,
@@ -1689,9 +1689,9 @@ class TestInboxEditDuplicateBodyGuard:
     ]
 
     def test_new_normalizes_collapsed_header_and_saves_repaired_body(self, seed_data, tmp_path):
-        """R0001's cited collapsed one-liner is repaired to 7 LF lines before any
+        """'s cited collapsed one-liner is repaired to 7 LF lines before any
         guard runs, the repair is reported in the response, and the *saved* file
-        carries the repaired text - not the original collapsed bytes (T0004 2.1/2.2)."""
+        carries the repaired text - not the original collapsed bytes."""
         import hashlib
         resp = self._post_new(tmp_path, "0001", "R0001", "NR7601", content=self._COLLAPSED_HEADER)
         assert resp.status_code == 201, resp.text
@@ -1700,7 +1700,7 @@ class TestInboxEditDuplicateBodyGuard:
         saved = Path(data["stored_path"]).read_text(encoding="utf-8")
         assert saved == self._COLLAPSED_HEADER_NORMALIZED
         # change_summary reflects the *saved* (post-normalization) 7-line body,
-        # not the collapsed one-liner that was sent (T0004 completion criterion 5).
+        # not the collapsed one-liner that was sent (completion criterion 5).
         after = data["change_summary"]["after"]
         assert after["lines"] == len(self._COLLAPSED_HEADER_NORMALIZED.split("\n"))
         assert after["content_sha256"] == hashlib.sha256(
@@ -1727,7 +1727,7 @@ class TestInboxEditDuplicateBodyGuard:
 
     def test_new_doc_path_submission_normalizes_the_same_way(self, seed_data, tmp_path):
         """content and doc_path submissions must be checked and saved identically
-        (T0004 2.2: no second, un-normalized code path for file uploads)."""
+        (2.2: no second, un-normalized code path for file uploads)."""
         scratch = tmp_path / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         src = scratch / "submission.md"
@@ -1742,7 +1742,7 @@ class TestInboxEditDuplicateBodyGuard:
     def test_new_body_fingerprint_is_checked_against_pre_normalization_bytes(
         self, seed_data, tmp_path
     ):
-        """T0004 2.2's contract: body_sha256/body_chars is the caller's integrity
+        """2.2's contract: body_sha256/body_chars is the caller's integrity
         check on what it actually SENT (the collapsed original), computed before
         the server ever normalizes anything. If the guard instead compared against
         the *normalized* (repaired) body, this legitimate request -- whose hashes
@@ -1790,10 +1790,10 @@ class TestInboxEditDuplicateBodyGuard:
     def test_new_rejects_ambiguous_frontmatter_even_when_first_key_is_unchecked(
         self, seed_data, tmp_path
     ):
-        """NR0003's core finding: a collapsed line whose first key is not one of the
+        """'s core finding: a collapsed line whose first key is not one of the
         identity-checked fields (here: title) previously 200'd with every identity
         field silently absent. It must now be rejected as malformed (422), not
-        silently accepted (T0004 task 2.3)."""
+        silently accepted (task 2.3)."""
         malformed = (
             "---\n"
             "title: T next_type_detail: 조사레포트 project: testprj module: __ALL__ "
@@ -1857,7 +1857,7 @@ class TestInboxEditDuplicateBodyGuard:
         resp = self._edit(tmp_path, doc_id, malformed)
         assert resp.status_code == 422, resp.text
 
-    # ── T0004 2.3: recover inside ---, do not false-positive, do not fail-open ──
+    # ── the earlier implementation 2.3: recover inside ---, do not false-positive, do not fail-open ──
 
     _FRONTMATTER_COLLAPSED = (
         "---\n"
@@ -1877,7 +1877,7 @@ class TestInboxEditDuplicateBodyGuard:
     ]
     # Completely well-formed frontmatter whose *values* merely name other keys:
     # a title that describes a field, and list/nested-dict entries that quote one.
-    # T0004 2.3 forbids judging these on the key name alone — they must register.
+    # 2.3 forbids judging these on the key name alone — they must register.
     _INNOCENT_KEY_SHAPED_VALUES = (
         "---\n"
         "project: testprj\n"
@@ -1899,7 +1899,7 @@ class TestInboxEditDuplicateBodyGuard:
     ):
         """The reviewed gap: a complete one-line sequence *inside* ``---`` was never
         a normalization candidate, so frontmatter_parse_is_ambiguous 422'd it before
-        any identity comparison could happen. T0004 2.3 wants the high-confidence
+        any identity comparison could happen. the earlier implementation 2.3 wants the high-confidence
         pattern recovered first; a matching identity then registers normally."""
         resp = self._post_new(
             tmp_path, "0001", "R0001", "NR7621", content=self._FRONTMATTER_COLLAPSED,
@@ -1913,7 +1913,7 @@ class TestInboxEditDuplicateBodyGuard:
     def test_new_doc_path_recovers_collapsed_frontmatter_identically(
         self, seed_data, tmp_path
     ):
-        """Same input, file submission: content and doc_path must agree (T0004 2.2)."""
+        """Same input, file submission: content and doc_path must agree."""
         scratch = tmp_path / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         src = scratch / "fm_submission.md"
@@ -1931,7 +1931,7 @@ class TestInboxEditDuplicateBodyGuard:
         self, seed_data, tmp_path
     ):
         """Recovery is not amnesty: once repaired, a conflicting identity gets the
-        existing 409 — the distinction T0004 2.3 asks for (422 = unrecoverable,
+        existing 409 — the distinction the earlier implementation 2.3 asks for (422 = unrecoverable,
         409 = recovered but declares somebody else)."""
         foreign = self._FRONTMATTER_COLLAPSED.replace(
             "project: testprj module: __ALL__", "project: mailanchor module: ui"
@@ -1947,7 +1947,7 @@ class TestInboxEditDuplicateBodyGuard:
         """Regression for the ambiguity guard's precision: a title that reads
         "project: ..." and list/nested values that quote "target_id: ..." are
         ordinary authored content in a perfectly well-formed frontmatter. Flagging
-        them malformed would 422 valid submissions (T0004 2.3)."""
+        them malformed would 422 valid submissions."""
         resp = self._post_new(
             tmp_path, "0001", "R0001", "NR7624",
             content=self._INNOCENT_KEY_SHAPED_VALUES.format(doc_type="NR"),
@@ -2063,7 +2063,7 @@ class TestInboxEditDuplicateBodyGuard:
         assert stored_path.read_text(encoding="utf-8") == "# Original conversation"
 
     def test_new_normalizer_error_still_reaches_the_guard(self, seed_data, tmp_path):
-        """The two failure kinds are deliberately split (T0004 2.3). A repair is not
+        """The two failure kinds are deliberately split. A repair is not
         a gate, so a broken normalizer must not 500 the request — but it must not
         become a bypass either: the guard still runs on the un-repaired body, so
         this malformed frontmatter is still rejected with 422, not stored."""
@@ -2085,7 +2085,7 @@ class TestInboxEditDuplicateBodyGuard:
         assert resp.status_code == 422, resp.text
         assert db_docs.get_by_id("testprj-__ALL__-0001-NR7629") is None
 
-    # ── T0004 2.1/2.2: the bytes stored are the bytes checked, EOL included ──
+    # ── the earlier implementation 2.1/2.2: the bytes stored are the bytes checked, EOL included ──
     #
     # Path.write_text(..., encoding="utf-8") opens in *text* mode, where every
     # "\n" is translated to os.linesep on the way out. On this Windows
@@ -2141,7 +2141,7 @@ class TestInboxEditDuplicateBodyGuard:
         assert "normalizations" not in resp.json()
         assert Path(resp.json()["stored_path"]).read_bytes() == self._CRLF_DOC.encode("utf-8")
 
-    # ── flowgate.v02.0157: the doc_path source in the token scratch is never deleted ──
+    # ── the earlier change: the doc_path source in the token scratch is never deleted ──
 
     def test_new_doc_path_source_survives_successful_registration(self, seed_data, tmp_path):
         """The stored copy is written and registered; the scratch source stays byte-equal
@@ -2231,7 +2231,7 @@ class TestInboxEditDuplicateBodyGuard:
         assert resp.status_code == 200, resp.text
         assert stored_path.read_bytes() == self._CRLF_DOC.encode("utf-8")
 
-    # ── T0004 2.3: a BOM must not be a way past the frontmatter guards ──
+    # ── the earlier implementation 2.3: a BOM must not be a way past the frontmatter guards ──
 
     _BOM = "\ufeff"
     _FOREIGN_FRONTMATTER = (
@@ -2289,7 +2289,7 @@ class TestInboxEditDuplicateBodyGuard:
         assert resp.status_code == 422, resp.text
         assert stored_path.read_text(encoding="utf-8") == "# Original conversation"
 
-    # ── T0004 2.3: partial chains and fake closing delimiters stay closed ──
+    # ── the earlier implementation 2.3: partial chains and fake closing delimiters stay closed ──
 
     def test_new_rejects_a_two_pair_collapsed_frontmatter_line(self, seed_data, tmp_path):
         """The shortest partial chain — one line, two known keys. It used to fall
@@ -2341,9 +2341,9 @@ class TestInboxEditDuplicateBodyGuard:
 # ── 8-2. Block full-body replacement of migrated CH conversations (0432 NR §7-1) ──
 
 class TestInboxEditConversationFullBodyGuard:
-    """Follow-up to 0344 TR0008. conversation_turns became canonical, but the old inbox
+    """Follow-up to the earlier implementation. conversation_turns became canonical, but the old inbox
     full-body edit path remained (0432.0003-NR §5). The rejected 0344.0008-TR attempt
-    had no follow-up in group 0344 (NR §4).
+    had no follow-up in the earlier change (NR).
 
     Pin the condition/text from 0344.0005-L §2-16 and worker envelope from P §0-5.
     Repeat literal text instead of importing its constant: otherwise both sides
@@ -2520,7 +2520,7 @@ class TestInboxEditConversationFullBodyGuard:
         assert resp.status_code == 200, resp.text
 
 
-# ── 9. Cold-start backfill of body fingerprints (NR0003 §5.2) ───────────────
+# ── 9. Cold-start backfill of body fingerprints ───────────────
 
 class TestBackfillContentFingerprint:
     """Documents created before the dup-body guard shipped carry meta=NULL, so the

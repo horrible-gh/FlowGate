@@ -1,4 +1,4 @@
-"""flowgate.v02.0056 T#2 — the instruction AI and the two stages of a card run (0002-CH turn 5 / 6 §3 / 10 O2).
+"""the instruction AI and the two stages of a card run (CH / 6 / 10 O2).
 
 On the same real SQLite DB, routes and fixtures as ``test_fg_card_settings`` (card documents, card settings and the
 card approval port registered as ``startup`` registers them):
@@ -46,7 +46,7 @@ from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status, _run_ended,
     _source_scopes, _start_ai, _through_instruction, _work_run_ended, _write_written,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -58,7 +58,7 @@ ROOT = f"{FA}.0001-R"
 
 @pytest.fixture(autouse=True)
 def card_outputs_port():
-    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    """(T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
     registered as ``startup`` registers it — it replaced the removed card approval port."""
     from flowgate.card_completion import outputs
     from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
@@ -424,7 +424,7 @@ def test_a_failed_instruction_stage_records_the_ai_failure_and_never_starts_the_
     assert _events(env, key) == ["opened", "dispatch_failed"]             # the AI start failure path
     assert _review_status(job["target_doc_id"]) is None                  # nothing approved
     assert _node_run(env, key)["dispatch"]["error_code"] == "ai_invoke_failed"
-    # L0009 E-23: the node's token is a person's again; their result binds
+    # E-23: the node's token is a person's again; their result binds
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ? ORDER BY rowid",
                  (key,))[0]["token_id"]
     result = _result(82, "TR")
@@ -488,7 +488,7 @@ def test_a_report_the_instruction_stage_registered_never_becomes_the_result(env,
 def test_a_report_a_failed_instruction_stage_registered_never_becomes_the_result(env, decided, monkeypatch, contact):
     """The instruction stage failed after its AI registered a report: the failure keeps that report behind the
     stage — a run read or a resume does not put the node in review — and the report a person registers with the
-    node's token (L0009 E-23) is the result, on its contact or by the reconciliation after a lost one."""
+    node's token is the result, on its contact or by the reconciliation after a lost one."""
     key, job, _token, stray = _new_instruction_start(env, monkeypatch)
     _run_ended(INSTRUCTION_RUN, end_reason="timeout", stop_code="timeout")
     assert env["jobs"] == []
@@ -525,7 +525,7 @@ def test_a_report_the_instruction_ai_registered_as_its_stage_ended_never_becomes
     (``contact_then_end``), the whole request after the end (``end_then_contact``), or a registration whose contact
     saw nothing and whose consume lands after the end (``committed_after_end``: a PostgreSQL commit after the
     boundary). Its token is the instruction stage's, so no contact, run read or resume binds it; the node's real
-    result — the result AI's report, or after a failure a person's with the dispatch token (L0009 E-23) — binds on
+    result — the result AI's report, or after a failure a person's with the dispatch token — binds on
     its contact or by the reconciliation after a lost one."""
     key, job, token, _none = _new_instruction_start(env, monkeypatch, stray=False)
     if end == "result":
@@ -604,7 +604,7 @@ def _before_migration_148(env):
         conn.close()
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2 §2.13, G-14)
+# (T) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2, G-14)
 @pytest.mark.parametrize("contact", [True, False])
 @pytest.mark.parametrize("instruction, written, other", [("use", "T", "TR"), ("omit", "TR", "T")])
 def test_a_card_run_opened_before_migration_148_finishes_with_the_type_its_ai_was_told(pre_feature_attempts, 
@@ -660,7 +660,7 @@ def test_a_stopped_run_finishes_both_stages_of_a_card_it_opened(env, decided, mo
 
 def test_an_issuer_without_document_approve_still_has_the_instruction_and_result_approved_automatically(
         env, decided, monkeypatch):
-    """flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3: 0083 T#4 revised). Before,
+    """expectation revised (NR the earlier change, Q #511 o3: the earlier implementation revised). Before,
     an issuer without ``document.approve`` left the instruction unapproved and the card waiting for a person's approval.
     An AI card's automatic approvals now take the server's automatic approval authority: the instruction and the result
     are approved, the card never awaits approval, the issuer stays the approval's actor and the system's authority is
@@ -807,5 +807,5 @@ def test_migration_148_adds_the_stage_columns_in_every_dialect():
         assert "ALTER TABLE graph_run_token_map ADD COLUMN stage" in sql
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

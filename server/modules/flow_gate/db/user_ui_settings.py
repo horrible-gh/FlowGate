@@ -1,8 +1,8 @@
-"""CRUD for the user_ui_settings table (group 0452, DB0004).
+"""CRUD for the user_ui_settings table (the earlier change, ).
 
 One row per user, holding the non-chat UI preferences.  Today that is a single column,
 ``ai_finished_card_retention_minutes`` — how long a finished AI-run card survives in the
-header monitor (L0003 §1-2).
+header monitor.
 
 The absence of a row is itself the answer to "has this person ever chosen a retention"
 (DB0004 §2-6), so nothing here creates one implicitly: read paths call :func:`get` only,
@@ -49,7 +49,7 @@ def upsert(
     if not columns:
         # An empty patch must not reach storage at all: a row written here would flip
         # "this user has never saved" to false for somebody who chose nothing
-        # (DB0004 §2-6, §4-2, L0003 §2-8).
+        #.
         raise ValueError("upsert requires at least one column")
 
     values = [

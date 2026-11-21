@@ -9,7 +9,7 @@ import {
   withRefreshLock,
 } from '@shared/api'
 
-// Regression (group 0016 / NR0003 Finding C): with "remember me" the refresh token lives
+// Regression: with "remember me" the refresh token lives
 // in shared localStorage, so two tabs that both 401 after idle each POST /auth/refresh with
 // the same token. The server rotates on the first call and treats the second (retired jti)
 // as token reuse, revoking EVERY session -> both tabs are force-logged-out. The fix

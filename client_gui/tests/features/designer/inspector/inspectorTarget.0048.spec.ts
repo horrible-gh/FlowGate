@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — selection context -> InspectorTarget (D#1 §4.3 / §4.4 / §8.5): card
+ * selection context -> InspectorTarget: card
  * kinds, the read-only reason table (ownership 4 × view 3), documentless Nodes and the fields
  * taken from the bound document, the v0.1 slot and the Graph node run.
  */
@@ -92,7 +92,7 @@ describe('toInspectorTarget', () => {
       viewMode: null,
       readOnly: null,
       editLock: null,
-      // flowgate.v02.0070 T#1: a v0.1 document Node has no title state and its title never opens.
+      // a v0.1 document Node has no title state and its title never opens.
       titleState: null,
       canEditTitle: false,
       titleLock: null,

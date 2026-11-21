@@ -165,7 +165,7 @@ describe('AiEvaluationPanel (0015 T0003, judge-scored since 0017)', () => {
   })
 })
 
-// flowgate.v02.0088 F09: evaluation dates follow the app's language, not the browser's default (jsdom's here), and an
+// evaluation dates follow the app's language, not the browser's default (jsdom's here), and an
 // open list / detail re-renders on a language switch; the stored timestamp is not changed.
 describe('evaluation dates follow the app language (0088 F09)', () => {
   const STAMP = '2026-09-30T00:00:00Z'

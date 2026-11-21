@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0045 T0019 — Designer Canvas fixes from the mid-way check:
+ * Designer Canvas fixes from the mid-way check:
  * 1. no empty-Graph text, 2. a new Flow starts with one 요구사항 node (never added twice),
  * 3. wide connection areas on draft cards, 4. 설계 cards purple and named like the Palette,
  * 5. no ownership badge, 6. progressed / not yet progressed Edges drawn apart (actual node states),
  * 7. Edge selection apart from removal — a progressed Edge is never removed.
- * TR0020 rev4 (rejection): 2. only execution Edges are drawn — no dashed reference fan-out from a
+ * (rejection): 2. only execution Edges are drawn — no dashed reference fan-out from a
  * 요구사항 card; 3. a connection starts from any side of a card and an Edge attaches to the sides
  * that face each other (edgeGeometry.ts), never a fixed right side.
  * Pure rules over the model, the session over a fake source, and the screen with the real Vue Flow
@@ -155,7 +155,7 @@ describe('Edge progress from the actual node states (item 6)', () => {
     expect([...progressedEdgeIds(graph)]).toEqual(['seq:r>t'])
     expect(isEdgeProgressed(graph, 'ref:triggered_by:r>t')).toBe(false)
     expect(isEdgeProgressed(graph, 'ref:target:r>t')).toBe(false)
-    // TR0020 rev4 (rejection item 2): the five document relations are not drawn — only the lines
+    // (rejection item 2): the five document relations are not drawn — only the lines
     // in the direction the work goes; an unclassified edge is still drawn (never progressed).
     expect(toVueFlowEdges(graph).map((e) => [e.id, e.data])).toEqual([
       ['plain:r>t', { edgeClass: null, progressed: false, deletable: false }],
@@ -277,7 +277,7 @@ describe('FlowEdgePath look (items 6 and 7)', () => {
   })
 })
 
-// TR0020 rev4 (rejection item 3): an Edge leaves a card on the side that faces the other card.
+// (rejection item 3): an Edge leaves a card on the side that faces the other card.
 describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometry)', () => {
   const rect = (x: number, y: number) => ({ x, y, width: NODE_CARD_WIDTH, height: NODE_CARD_HEIGHT })
 

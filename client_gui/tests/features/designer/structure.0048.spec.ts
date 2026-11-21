@@ -18,20 +18,20 @@ function loadedRegistry(): RegistryModule {
   return registry
 }
 
-// flowgate.v02.0048 T#1 — source-level guards of the bottom Inspector structure (D#1 §3.1 / §3.2).
+// source-level guards of the bottom Inspector structure.
 // Data driven: the rule tables below are applied to every folder found under
 // `inspector/features/`, so a new feature folder is checked without editing this spec. The
 // checks are functions of a root (an Inspector folder, or a fixture shaped like one) returning
 // the violations, run on the real source (expect none) and on the boundary fixtures under
-// fixtures/structure0048/ (expect them to be caught). Owned by T#1; T#3 / T#4 add B9~B11 / B15
+// fixtures/structure0048/ (expect them to be caught). Owned by the earlier implementation; the earlier implementation / the earlier implementation add B9~B11 / B15
 // once, feature sets never edit it.
-// flowgate.v02.0048 T#3: B8 lets composables use `@/features/document` and `useInspectorResource`;
+// B8 lets composables use `@/features/document` and `useInspectorResource`;
 // B9 (no transport in feature screens / declarations), B10 (the Designer reaches features/document
 // only through its index) and B11 (features/document reaches only the shared transport and its own
 // files; its index is `export *` lines) — checked on src/features and on fixtures/structure0048/document.
-// flowgate.v02.0048 T#4: B15 (`window.open` only in openDocument.ts and only with 'noopener', D#1 §9.2 /
+// B15 (`window.open` only in openDocument.ts and only with 'noopener', the earlier implementation /
 // §9.5) — checked on the Inspector root and on fixtures/structure0048/open.
-// flowgate.v02.0053 T#3: B15 now says the Inspector opens no browser tab at all — a document opens in the
+// B15 now says the Inspector opens no browser tab at all — a document opens in the
 // in-tab document window through openDocument.ts; the 'noopener' reading and its fixtures are gone.
 
 const SRC = resolve(__dirname, '../../../src')
@@ -95,7 +95,7 @@ const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[]
     allowed: [/^vue$/, OWN, { re: /^\.\.\/\.\.\/inspectorTarget$/, typeOnly: true }],
     forbidden: API_STORE, body: BODY_IO,
   } },
-  // 0071 D0008 §7: the shared test-card session composes the existing settings feature.
+  // the shared test-card session composes the existing settings feature.
   { kind: 'session', file: /^testCardSession\.ts$/, rule: {
     allowed: [/^vue$/, OWN, /^\.\.\/settings\/(cardSettingsModel|useCardSettings)$/,
       /^\.\.\/\.\.\/(inspectorTarget|openDocument|useInspectorResource)$/, /^@\/features\/document$/],
@@ -166,7 +166,7 @@ const OPENS_DOCUMENT_WINDOW = /^\s*import\s[^'"]*from\s*'@\/features\/documentWi
 const WINDOW_OPEN = /\b(?:window|globalThis|self)\s*\.\s*open\s*\(/g
 
 /**
- * B14 — undecided features (D#1 §8.4). flowgate.v02.0051 (turn 7): an undecided item may be named and
+ * B14 — undecided features. the earlier change: an undecided item may be named and
  * drawn — disabled, as the v7 screen shows it (0051-R §2.3) — but never operated: no feature file calls a
  * function, or wires a template handler, named after one. Comments are not source here.
  */
@@ -277,7 +277,7 @@ function featureViolations(root: string, key: string): string[] {
   for (const name of list(dir)) {
     const label = `features/${key}/${name}`
     if (isDir(join(dir, name))) {
-      // 0071 D0008 §7.1 explicitly owns these five windows and two local helpers.
+      // explicitly owns these five windows and two local helpers.
       // Check every nested file rather than exempting an arbitrary sub-tree.
       if (key === 'testSpec' && name === 'windows') {
         const allowed = /^(BriefWindow|ScenarioWindow|CaseWindow|ReportWindow|FollowWindow)\.vue$|^(scenarioWindowModel|reportWindowModel)\.ts$/
@@ -355,7 +355,7 @@ function documentFeatureViolations(document: string): string[] {
 }
 
 /**
- * B15 (flowgate.v02.0053 T#3) — the Inspector opens no browser tab: `window.open` (or `globalThis.open` /
+ * B15 — the Inspector opens no browser tab: `window.open` (or `globalThis.open` /
  * `self.open`) nowhere under an Inspector root, openDocument.ts included; and openDocument.ts, when it is
  * there, opens the in-tab document window (`@/features/documentWindow`).
  */

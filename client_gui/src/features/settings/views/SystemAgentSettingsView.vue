@@ -369,7 +369,7 @@ async function submitCreate() {
   try {
     await waitForRead(at)
     const created = await live(at, createAgent({
-      // flowgate.v02test.0043 CH0004: the typed parent folder gets /${AGENT_JOB_ID} (one folder per Job).
+      // the typed parent folder gets /${AGENT_JOB_ID} (one folder per Job).
       name: form.name.trim(), remote_workdir: composeWorkdir(form.workdir),
       // Hours hidden while cleanup is off are not checked; an unusable value falls back to the default.
       workspace_cleanup_enabled: form.cleanup, workspace_cleanup_retention_hours: typedHours(form.hours) ?? 24,
@@ -401,7 +401,7 @@ async function submitCreate() {
 }
 
 // ── Name, execution path, and capability ──
-// flowgate.v02test.0019: workspace cleanup (the Agent deletes finished Job folders after these hours).
+// workspace cleanup (the Agent deletes finished Job folders after these hours).
 const CLEANUP_HOURS_MIN = 1
 const CLEANUP_HOURS_MAX = 720
 const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', maxJobs: '4', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
@@ -750,7 +750,7 @@ function onFocus() {
 function onVisibility() { if (document.visibilityState !== 'hidden') onFocus() }
 
 // ── Unsaved changes guard ──
-// flowgate.v02test.0019: hours typed but not valid is still unsaved input.
+// hours typed but not valid is still unsaved input.
 const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value || !!editHoursProblem.value || !!maxJobsProblem.value))
 const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() => formDirty.value || saving.value)
 

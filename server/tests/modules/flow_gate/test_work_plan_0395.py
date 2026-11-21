@@ -1,13 +1,13 @@
-"""Work plan (WP) — flowgate.default.0395 T0011.
+"""Work plan (WP) — the earlier change the earlier implementation.
 
 Covers the three things this task set promised: the SAME validator on both paths, a
 `.json` canonical body with its change summary, and a WP that does not auto-complete.
 
-  1. expansion + canonical form            (L0010 §2.1, P0009 §2.6)
-  2. validation verdicts                    (L0010 §2.3 layers, P0009 §4.7)
-  3. human API create → read → save         (P0009 §4.2 · §4.4 · §4.6 · §4.8)
-  4. AI inbox create                        (P0009 §5.1 · §5.2 · §5.3)
-  5. type registration and the audited sets (D0007 §7)
+  1. expansion + canonical form
+  2. validation verdicts (layers, the plan)
+  3. human API create → read → save
+  4. AI inbox create
+  5. type registration and the audited sets
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def _plan(**over):
 
 
 def _without_card_ids(body):
-    """A body with every step's card_id removed (0649 T#1).
+    """A body with every step's card_id removed.
 
     Used where a test compares a saved body with the body it sent: new cards come back with
     a random server-assigned id, which the comparison of everything else must not depend on.
@@ -80,7 +80,7 @@ def _without_card_ids(body):
 def _legacy_client_steps(counted_types, quantities):
     """Steps as a client that predates card ids rebuilds them on a quantity change.
 
-    0649 T#1 (NR0003 §5.1): server-side expand_steps() stamps ``card_id = key`` on a fresh
+    server-side expand_steps stamps ``card_id = key`` on a fresh
     body, but a save that grows the plan must not invent ids for its new cards — an id the
     previous body never had is ``card_id_unknown``. A body with no card_id at all in the fixed
     order inherits the previous ids and gets server-assigned ids for the new cards.
@@ -94,7 +94,7 @@ def _legacy_client_steps(counted_types, quantities):
 
 
 def test_expand_steps_matches_the_designed_order():
-    """P0009 §2.6: DS · D · D · P · L · N · NR · T · TR ×3 · TS · TSR — 15 steps."""
+    """DS · D · D · P · L · N · NR · T · TR ×3 · TS · TSR — 15 steps."""
     from modules.flow_gate.services import work_plan_service as wp
 
     steps = _plan()["steps"]
@@ -104,7 +104,7 @@ def test_expand_steps_matches_the_designed_order():
         "T#1", "TR#1", "T#2", "TR#2", "T#3", "TR#3",
         "TS#1", "TSR#1",
     ]
-    # A count of 0 expands to nothing but keeps its quantity box (P0009 §2.2).
+    # A count of 0 expands to nothing but keeps its quantity box.
     assert all(not s["key"].startswith("DB#") for s in steps)
     assert wp.totals(_plan())["steps"] == 15
 
@@ -125,7 +125,7 @@ def test_set_steps_are_paired_and_tsr_is_locked():
 
 
 def test_canonical_dump_is_stable():
-    """P0009 §2.6 decision 3·4: fixed key order, 2-space indent, one trailing newline."""
+    """decision 3·4: fixed key order, 2-space indent, one trailing newline."""
     from modules.flow_gate.services import work_plan_service as wp
 
     text = wp.dumps(wp.validate(_plan()))
@@ -169,7 +169,7 @@ def _codes(exc):
 
 
 def test_locked_step_rejects_provider_and_note():
-    """P0009 §4.7: the screen locks the row, and the server refuses it too."""
+    """the screen locks the row, and the server refuses it too."""
     from modules.flow_gate.services import work_plan_service as wp
 
     body = _plan()
@@ -199,7 +199,7 @@ def test_provider_must_be_a_candidate():
 
 
 def test_duplicate_key_stops_before_the_quantity_comparison():
-    """L0010 §2.3 decision 5: one mistake must not be reported as two."""
+    """decision 5: one mistake must not be reported as two."""
     from modules.flow_gate.services import work_plan_service as wp
 
     body = _plan()
@@ -242,7 +242,7 @@ def test_note_limits():
     assert _codes(exc.value) == ["note_too_long"]
 
     # A newline is refused, not silently swallowed — an AI must not believe its
-    # body was stored verbatim when it was not (L0010 §1.5).
+    # body was stored verbatim when it was not.
     body["steps"][0]["note"] = "가\n나"
     with pytest.raises(wp.WorkPlanValidationError) as exc:
         wp.validate(body)
@@ -333,7 +333,7 @@ def test_change_summary_reports_what_changed():
     assert created["kind"] == "work_plan"
     assert "T 4세트" in created["quantities"]
     assert created["steps"] == 17
-    # P0009 §5.1/§5.4: assigned + unassigned must equal the step count. Include locked TSRs
+    # assigned + unassigned must equal the step count. Include locked TSRs
     # so unattended workers can verify that every submitted step was saved.
     assert created["assigned_steps"] + created["unassigned_steps"] == created["steps"]
     assert created["unassigned_steps"] == wp.unassigned_step_count(after)
@@ -345,7 +345,7 @@ def test_change_summary_reports_what_changed():
 
 
 def test_template_is_json_and_valid():
-    """P0009 §6: an AI can send the template back unchanged and be accepted."""
+    """an AI can send the template back unchanged and be accepted."""
     from modules.flow_gate.services import work_plan_service as wp
 
     payload = wp.template_payload("ko")
@@ -356,8 +356,8 @@ def test_template_is_json_and_valid():
 
 
 def test_template_body_stays_zero_count():
-    """flowgate.default.0488 T0005: adding canonical examples must not touch the
-    zero-count template body itself (NR0003 corrected revision §13 — count 0 stays 0; the examples
+    """adding canonical examples must not touch the
+    zero-count template body itself (the review corrected revision — count 0 stays 0; the examples
     live in the separate `examples` field instead).
     """
     from modules.flow_gate.services import work_plan_service as wp
@@ -370,8 +370,8 @@ def test_template_body_stays_zero_count():
 
 
 def test_help_template_examples_match_make_step_and_cover_all_pair_roles():
-    """flowgate.default.0488 T0005: canonical step examples must come from
-    make_step() itself, not hand-authored JSON (NR0003 corrected revision §12 R6 drift guard).
+    """canonical step examples must come from
+    make_step itself, not hand-authored JSON (corrected revision R6 drift guard).
     """
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -427,7 +427,7 @@ def test_help_template_examples_validate_when_inserted_into_a_body():
     assert locked_body["steps"][1]["locked"] is True
 
 
-# ── Part 4: type registration and the audited type sets (D0007 §7) ───────────
+# ── Part 4: type registration and the audited type sets ───────────
 
 def test_work_plan_is_not_auto_complete():
     from modules.flow_gate.documents.constants import (
@@ -444,7 +444,7 @@ def test_work_plan_is_not_auto_complete():
     assert WORK_PLAN_TYPE not in FILELESS_APPROVABLE_TYPES
     # decision 5: several plans per group, at any point — so not pinned to the head type.
     assert WORK_PLAN_TYPE in HEAD_TYPE_GUARD_EXEMPT_TYPES
-    # D0007 §7 explicitly places WP in a normal workflow slot after requirements.
+    # explicitly places WP in a normal workflow slot after requirements.
     # It therefore occupies a slot even though head-type validation exempts it;
     # exemption from head-type checking does not mean it has no slot.
     assert WORK_PLAN_TYPE not in NON_SLOT_WORKFLOW_TYPES
@@ -473,7 +473,7 @@ def test_type_annotation_marks_countable_types():
     assert by_code["D"]["countable"] is True and by_code["D"]["unit"] == "sheet"
     assert by_code["T"]["countable"] is True and by_code["T"]["unit"] == "set"
     assert by_code["T"]["pair_code"] == "TR"
-    # P0009 §4.1: use the paired row name from the same response, preserving locale.
+    # use the paired row name from the same response, preserving locale.
     assert by_code["T"]["pair_name"] == "작업레포트"
     # Without the paired row, omit the item instead of displaying its code as a name.
     lone = wp.annotate_types([{"type_code": "N", "series": "instruction"}])[0]
@@ -484,7 +484,7 @@ def test_type_annotation_marks_countable_types():
 
 
 def test_all_three_dialects_seed_the_type():
-    """D0007 §7: fixing one branch and not the others leaves a DB without the type."""
+    """fixing one branch and not the others leaves a DB without the type."""
     roots = _SERVER_DIR / "sql" / "migrations"
     for dialect in ("sqlite", "postgres", "mysql"):
         # Not named `path`: the repo-scratch guard (0382) tracks names transitively
@@ -708,7 +708,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
             "title": "0402 작업계획",
             "counted_types": ["DS", "D", "P", "L", "N", "T", "TS"],
             "provider_candidates": ["aip_opus"],
-            # flowgate.default.0423 T0005 item 15: this roundtrip test needs real steps
+            # this roundtrip test needs real steps
             # to exercise save/conflict/reject below, so it sends explicit quantities —
             # a request that omits them now defaults to 0, not 1 (see
             # test_human_create_legacy_request_defaults_unspecified_types_to_zero).
@@ -721,7 +721,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     # decision 2: an explicit quantity in the request is honored as-is.
     assert created["body"]["quantities"]["D"]["count"] == 1
     assert created["body"]["binding"] == "advisory"
-    # decision 2 (P0009 §2.6): the canonical body is a .json file, never .md.
+    # decision 2: the canonical body is a .json file, never .md.
     stored = created["stored_path"]
     assert stored.endswith("_document.json"), stored
     assert (storage_root / stored).is_file()
@@ -749,7 +749,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     body = view["body"]
     body["steps"][0]["provider_id"] = "aip_opus"
     body["steps"][0]["provider_display_name"] = "Claude Opus"
-    # flowgate.default.0533 T0004: T#1/TR#1 stay unassigned here. provider_id=null is a
+    # TR#1 stay unassigned here. provider_id=null is a
     # normal, unassigned WP state and must not trigger the capability confirmation gate
     # (that gate is only for a provider that is actually specified but incapable), so
     # this save succeeds directly without any capability_warning_acks.
@@ -784,7 +784,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert rejected.json()["code"] == "wp_validation_failed"
     assert rejected.json()["errors"][0]["code"] == "provider_not_allowed"
     assert rejected.json()["errors"][0]["key"] == "TSR#1"
-    # flowgate.default.0576 T0004 (NR0003 §9): the client's JSON upload leans on this same
+    # the client's JSON upload leans on this same
     # PUT to mean "invalid input never touches the plan" — pin that the rejected save left
     # both the file and the revision exactly where the last successful save put them.
     assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk
@@ -823,7 +823,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
 def test_save_http_localizes_validation_from_x_locale(
     seed, locale, doc_code, expected_message, expected_errors,
 ):
-    """0589 T#1: header -> route locale -> validator -> localized HTTP response."""
+    """header -> route locale -> validator -> localized HTTP response."""
     client = _client()
     with patch(
         "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
@@ -854,7 +854,7 @@ def test_save_http_localizes_validation_from_x_locale(
 
 
 def test_save_http_validation_errors_carry_substituted_params():
-    """0589 T0007 §1.1: each errors[] item also carries the substituted `params` a client
+    """each errors item also carries the substituted `params` a client
     can re-render under a different locale without a new request — `code`/`loc`/`key`/`msg`
     stay exactly as before for existing consumers."""
     client = _client()
@@ -887,7 +887,7 @@ def test_save_http_validation_errors_carry_substituted_params():
 
 
 def test_empty_selection_error_params_stay_locale_independent():
-    """0589 T0007 rev1 §1: `empty_selection`'s translated noun must not be baked into
+    """`empty_selection`'s translated noun must not be baked into
     `params` at the request's locale. Before this fix, a ko request's `params` carried
     `{"what": "수량을 확인할 타입"}`; re-rendering that same params dict under `ja` produced a
     Korean noun glued to a Japanese sentence. `params` must instead carry the stable
@@ -928,9 +928,9 @@ def test_empty_selection_error_params_stay_locale_independent():
 
 
 def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
-    """flowgate.default.0533 T0004: provider_id=None is a normal unassigned WP state and
+    """provider_id=None is a normal unassigned WP state and
     must not be treated like a specified-but-incapable/unknown/disabled provider by the
-    0492 T0014 capability confirmation gate."""
+    capability confirmation gate."""
     from modules.flow_gate.services import work_plan_service as wp
 
     effective = {
@@ -1030,7 +1030,7 @@ def test_human_create_assigns_work_provider_to_report_pair_but_not_locked_tsr(se
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["T", "TS"],
             "provider_candidates": ["aip_opus"],
-            # flowgate.default.0423 T0005 item 15: an omitted quantity now defaults to 0,
+            # an omitted quantity now defaults to 0,
             # so this test (about provider assignment, not the default) states its own.
             "quantities": {"T": 1, "TS": 1},
             "type_providers": {"T": "aip_opus", "TS": "aip_opus"},
@@ -1051,7 +1051,7 @@ def test_human_create_rejects_assignment_outside_provider_candidates(seed):
         "parent_doc_id": ROOT_DOC,
         "counted_types": ["D"],
         "provider_candidates": ["aip_opus"],
-        # flowgate.default.0423 T0005 item 15: a D step must actually exist for the
+        # a D step must actually exist for the
         # provider-candidate rejection below to have anything to reject.
         "quantities": {"D": 1},
         "type_providers": {"D": "aip_not_a_candidate"},
@@ -1061,7 +1061,7 @@ def test_human_create_rejects_assignment_outside_provider_candidates(seed):
 
 
 def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown(seed):
-    """0411 T0004: manual assignment is candidate ∪ currently registered, never arbitrary."""
+    """manual assignment is candidate ∪ currently registered, never arbitrary."""
     client = _client()
     effective = {
         "providers": [
@@ -1083,7 +1083,7 @@ def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["D"],
             "provider_candidates": ["aip_opus"],
-            # flowgate.default.0423 T0005 item 15: the save-time provider check below
+            # the save-time provider check below
             # needs an actual D step; an omitted quantity now defaults to 0.
             "quantities": {"D": 1},
         })
@@ -1128,8 +1128,8 @@ def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown
 
 
 def test_human_create_legacy_request_defaults_unspecified_types_to_zero(seed):
-    """flowgate.default.0423 T0005 item 5/15: a legacy request that omits ``quantities``
-    entirely used to fill every counted type with 1 (NR0003's all-1 defect). It now
+    """a legacy request that omits ``quantities``
+    entirely used to fill every counted type with 1 ('s all-1 defect). It now
     falls back to the group's workflow_type_counts derivation, or 0 when the group has
     no sequence yet (this fixture's ROOT_DOC) — never a guessed 1."""
     client = _client()
@@ -1152,7 +1152,7 @@ def test_human_create_legacy_request_defaults_unspecified_types_to_zero(seed):
 
 
 def test_human_create_uses_workflow_type_counts_when_quantities_omitted(seed, storage_root):
-    """flowgate.default.0423 T0005 item 6/7/16: an omitted quantity prefers the group's
+    """an omitted quantity prefers the group's
     workflow_type_counts derivation over the bare 0 fallback, when the group's sequence
     already has decided items to derive from. An explicit request value still wins, and
     a type with neither an explicit value nor a derivation still lands at 0."""
@@ -1226,7 +1226,7 @@ def test_suggest_returns_the_documented_shape(seed, storage_root):
 
 
 def test_a_work_plan_body_satisfies_the_approval_body_guard(seed, storage_root):
-    """D0007 §3.6: the plan uses the EXISTING review pipeline, so its JSON body has to
+    """the plan uses the EXISTING review pipeline, so its JSON body has to
     read as a real body — otherwise every approval would fail with "빈 본문"."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.workflow.pipeline_service import _require_document_body_for_approval
@@ -1246,7 +1246,7 @@ def test_a_work_plan_body_satisfies_the_approval_body_guard(seed, storage_root):
 
 
 def test_regenerate_recovers_a_work_plan_as_json(seed, storage_root):
-    """P0009 §10: a `.json` canonical body is new, so recovery must not write `.md`.
+    """a `.json` canonical body is new, so recovery must not write `.md`.
 
     Generic recovery synthesizes a Markdown frontmatter stub. For a work plan that
     produces a file its own reader can only refuse ("표로 열 수 없습니다"), so the plan
@@ -1290,7 +1290,7 @@ def test_regenerate_recovers_a_work_plan_as_json(seed, storage_root):
 
 
 def test_help_serves_the_work_plan_template(seed):
-    """P0009 §6: the one type whose body an AI cannot guess must have a template."""
+    """the one type whose body an AI cannot guess must have a template."""
     from modules.flow_gate.services import help_catalog
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -1359,8 +1359,8 @@ def test_submit_help_explains_the_work_plan_body_contract(seed, locale, needle):
 
 
 def test_human_create_refuses_an_empty_selection(seed):
-    # flowgate.default.0591 T0005: provider_candidates=[] alone no longer refuses create —
-    # 0411 T0004's registered-project rejection was relaxed once the AI scope dialog's
+    # provider_candidates= alone no longer refuses create —
+    # 's registered-project rejection was relaxed once the AI scope dialog's
     # [전체]/suggest_work_plan.selectable_ids were confirmed to already resolve from the
     # project's LIVE registered providers, never from this saved snapshot (see
     # test_work_plan_proposal_0405.test_create_now_accepts_empty_candidates_when_providers_exist
@@ -1475,7 +1475,7 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     assert len(view["body"]["steps"]) == 15
     assert view["unassigned_step_count"] == 0
 
-    # 0599 T#3 E: the real inbox route must expose and restore its own r0 after
+    # E: the real inbox route must expose and restore its own r0 after
     # canonical corruption, not merely call the snapshot helper.
     inbox_canonical = Path(data["stored_path"])
     inbox_initial_bytes = inbox_canonical.read_bytes()
@@ -1516,7 +1516,7 @@ def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
     doc_id = created["doc_id"]
     assert created["title"] == "Work plan — 2 design sheet(s) · 1 work set(s)"
 
-    # 0649 T#1: an AI that grows the plan sends no card ids (fixed order) — the existing
+    # an AI that grows the plan sends no card ids (fixed order) — the existing
     # cards inherit theirs and the new ones get server-assigned ids.
     uploaded = _without_card_ids(wp.validate(
         _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
@@ -1615,7 +1615,7 @@ def test_ai_inbox_refuses_markdown_and_rule_breaks(seed, tmp_path):
     assert "title" in named.json()["error_message"]
 
 
-# ── Part 6: 0395 T0021: work plans occupying workflow-sequence slots ──
+# ── Part 6: the earlier implementation: work plans occupying workflow-sequence slots ──
 
 
 @contextmanager
@@ -1653,9 +1653,9 @@ def _decide_sequence(root_doc_id: str, types: list[str]) -> int:
 
 
 def test_human_create_fills_a_pending_WP_slot(seed, storage_root):
-    """T0021: the human path must fill WP workflow slots too.
+    """the human path must fill WP workflow slots too.
 
-    D0007 §7 puts WP in a workflow slot, deliberately outside NON_SLOT_WORKFLOW_TYPES.
+    puts WP in a workflow slot, deliberately outside NON_SLOT_WORKFLOW_TYPES.
     The AI path already fills its head at inbox step 7.5. Previously the human dialog
     left the WP step pending forever and created an orphaned member plan instead.
     """
@@ -1749,7 +1749,7 @@ def test_ai_inbox_is_not_blocked_by_a_mismatched_workflow_head(seed, tmp_path):
         assert "DS" in control.json()["error_message"]
 
 
-# ── Part 7: 0395 T0026 rework: plans created without the creation dialog ──
+# ── Part 7: the earlier implementation rework: plans created without the creation dialog ──
 #
 # Reported case: [빈 문서 만들기] created a plan when the workflow head was WP.
 # Opening it repeatedly showed:
@@ -1883,7 +1883,7 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
     # 4. Derive the title from canonical totals; request text "ww" is not canonical.
     assert payload["title"] == "작업계획 — 설계 2장 · 작업 2세트"
 
-    # 0599 T#3 E: this is deliberately the connected POST /documents/next-empty
+    # E: this is deliberately the connected POST /documents/next-empty
     # route. Corrupting its result must expose the route-created r0 as restorable.
     next_empty_canonical = storage_root / stored
     next_empty_initial_bytes = next_empty_canonical.read_bytes()
@@ -1979,7 +1979,7 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
     # Opening it again returns the same table: recovery happens only once.
     assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
-    # 0127: preserve the actual raw r0 before-image, never today's generated plan.
+    # preserve the actual raw r0 before-image, never today's generated plan.
     [before] = db_revisions.list_by_doc(doc_id)
     assert before["revision_no"] == 0
     assert (storage_root / before["backup_path"]).read_bytes() == stub_path.read_bytes()
@@ -2033,8 +2033,8 @@ def test_template_includes_real_candidates_and_note_rules(monkeypatch):
         "display_name": "Provider A",
         "group_label": "Openai · API",
     }]
-    # flowgate.default.0423 T0005 item 4/16: the template example is a format sample,
-    # never the all-1 shape NR0003 flagged — every countable type renders at 0.
+    # the template example is a format sample,
+    # never the all-1 shape the review flagged — every countable type renders at 0.
     assert {code: item["count"] for code, item in body["quantities"].items()} == {
         code: 0 for code in body["counted_types"]
     }
@@ -2043,7 +2043,7 @@ def test_template_includes_real_candidates_and_note_rules(monkeypatch):
         assert "steps[].note" in rules
         assert "defaults.note" in rules
         assert "provider_candidates" in rules
-        # flowgate.default.0423 T0005 item 3/16: a quantity-basis rule that points to
+        # a quantity-basis rule that points to
         # workflow_type_counts as evidence (and forbids guessing 1) must be present.
         assert "workflow_type_counts" in rules
 
@@ -2087,7 +2087,7 @@ def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monke
     assert "D#1 · D" not in mention
     assert "prov-a · Provider A" in mention
     assert "scratch_dir" not in mention
-    # flowgate.default.0506 TR0005 rev1: a label-only check ("scratch_dir" not in mention)
+    # a label-only check ("scratch_dir" not in mention)
     # still passes if the real path leaks without its key (e.g. inside a sentence). Assert
     # the sentinel path itself is absent, matching the other worker-facing surfaces.
     assert sentinel_scratch_dir not in mention
@@ -2141,11 +2141,11 @@ def test_suggest_scope_validates_and_echoes_the_exact_boundary(seed, storage_roo
 
 
 def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snapshot(seed, storage_root):
-    """flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+    """locks the pipeline the T relies on before relaxing
     create_work_plan()'s provider_candidates pre-check: an empty provider_candidates snapshot
-    must not narrow suggest_work_plan's selectable_ids. 0411 T0004 already unions the live
+    must not narrow suggest_work_plan's selectable_ids. the earlier implementation already unions the live
     registered providers in (candidate_ids | registered_provider_ids); this pins that union
-    for the specific case (candidate_ids is empty) T0005's create-time relaxation produces.
+    for the specific case (candidate_ids is empty) the earlier implementation's create-time relaxation produces.
     """
     from unittest.mock import patch as mock_patch
 
@@ -2185,7 +2185,7 @@ def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snaps
     # registered_provider_ids already includes both.
     assert resp.status_code == 200, resp.text
 
-# ── flowgate.default.0591 T#2: canonical totals own the WP title ─────────────
+# ── the earlier change the earlier implementation: canonical totals own the WP title ─────────────
 
 @pytest.mark.parametrize(
     ("locale", "expected"),
@@ -2355,7 +2355,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     assert (storage_root / after_failure["file_path"]).read_text(encoding="utf-8") == before_file
 
 
-# ── flowgate.default.0599 T#1: durable r0 recovery contract ──────────────────
+# ── the earlier change the earlier implementation: durable r0 recovery contract ──────────────────
 
 def test_r0_snapshot_survives_first_save_without_duplicate_or_overwrite(seed, storage_root):
     from modules.flow_gate.db import document_revisions as db_revisions
@@ -2483,7 +2483,7 @@ def test_revision_snapshot_fails_closed_for_missing_corrupt_and_ambiguous(seed, 
         db_revisions.get_single_by_doc_revision(ambiguous_doc["doc_id"], 0)
 
 
-# ── flowgate.default.0599 T#2: connected creation and r0 restore ──────────────
+# ── the earlier change the earlier implementation: connected creation and r0 restore ──────────────
 
 def test_created_r0_restores_before_first_save_and_preserves_broken_raw(
     seed, storage_root,
@@ -2682,7 +2682,7 @@ def test_restore_listing_fails_closed_for_ambiguous_revision(seed, storage_root)
     assert canonical.read_text(encoding="utf-8") == '{"wp_version":'
 
 
-# ── flowgate.default.0599 T#3: connected recovery regression ────────────────
+# ── the earlier change the earlier implementation: connected recovery regression ────────────────
 
 def _create_connected_r0(client, storage_root, doc_code: str):
     from modules.flow_gate.db import documents as db_docs
@@ -2828,7 +2828,7 @@ def test_restore_bad_r0_backup_fails_closed_without_partial_mutation(
     ))
 
 
-# ── 0597 T0004: unreadable revision restore regression ───────────────────────
+# ── the earlier implementation: unreadable revision restore regression ───────────────────────
 
 def test_unreadable_revision_restore_contract(seed, storage_root):
     """Connected regression: unreadable listing -> CAS restore -> N+1 history."""

@@ -1,6 +1,6 @@
 // flowgate.v02gui.0002 A — one 전체 실행 / 다음 단계 click confirms the drawn draft AND starts the run.
 //
-// Reported on flowgate.v02test.0026 (stg): the draft was confirmed at 16:28:17 but the run started only at 16:29:13, on a
+// Reported on the earlier change (stg): the draft was confirmed at 16:28:17 but the run started only at 16:29:13, on a
 // second click. The confirmation re-reads the Canvas (draftActions `host.reread`), and every Canvas read re-reads the
 // archive state (designerCenterSession `refreshFlowArchive`: unknown = read only until it answers). The run control then
 // asked `canProceed` once, got false for "not answered yet" and dropped the click with no word. "Not answered yet" is not

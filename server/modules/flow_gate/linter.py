@@ -13,8 +13,8 @@ VALID_TYPES = {
     "TV", "TVR",
     "V", "VR",
     "M", "AC", "RJ",
-    "CH",  # L0044.0008 §2: conversation (chat) — auto-approve like M, non-gate
-    "WP",  # 0395 D0007 §7: work plan — advisory general-series document
+    "CH",  # : conversation (chat) — auto-approve like M, non-gate
+    "WP",  # work plan — advisory general-series document
 }
 REQUIRED_FIELDS = {"type", "project", "title"}
 CONFIRM_REQUIRED = {"type", "target", "action"}
@@ -72,7 +72,7 @@ def parse_yaml_header(content: str) -> tuple[dict | None, str]:
     """
     # A UTF-8 BOM survives str.strip() (U+FEFF is not whitespace), so without
     # this a BOM-prefixed body reports "no YAML header" and every frontmatter
-    # guard downstream reads it as "nothing declared" — the fail-open T0004 2.3
+    # guard downstream reads it as "nothing declared" — the fail-open the earlier implementation 2.3
     # closes. strip_bom is the one place that knowledge lives.
     content = strip_bom(content.strip())
     if not content.startswith("---"):
@@ -135,7 +135,7 @@ def parse_yaml_header(content: str) -> tuple[dict | None, str]:
     return header, ""
 
 
-# ── Submission header normalization (group 0460 T0004) ──────────────────────
+# ── Submission header normalization ──────────────────────
 # Pure function: repairs a *complete, high-confidence* collapsed
 # "next_type -> next_type_detail -> project -> module -> group/group_id ->
 # title -> target_id" sequence back into 7 separate lines — in the block's own
@@ -145,7 +145,7 @@ def parse_yaml_header(content: str) -> tuple[dict | None, str]:
 # heading. This is a targeted
 # display/storage repair for a known-good pattern, not a generic YAML/text
 # parser — ambiguous, partial, reordered, or duplicated-key input is left
-# byte-for-byte untouched (NR0003 finding: global `breaks`/`key:` splitting
+# byte-for-byte untouched (the review finding: global `breaks`/`key:` splitting
 # is explicitly out of scope; it would touch unrelated prose).
 
 _NEXT_HEADER_SECTION_MARKER = "Instruction to include next document header"
@@ -202,7 +202,7 @@ def _header_value_is_plausible(key: str, token: str) -> bool:
     """Could `token` really be the value of header field `key`?
 
     This is what separates "a title that happens to name a field" from "a
-    second, real field collapsed into the line". T0004 2.1/2.3 forbid judging a
+    second, real field collapsed into the line". the earlier implementation 2.1/2.3 forbid judging a
     colon on the key name alone: a title reading "project: <a Korean phrase>"
     names `project`, but that phrase is not a project token, so it stays
     authored prose — while "module: default group: 0460" carries a real group
@@ -237,7 +237,7 @@ _TITLE_FOREIGN_FIELD_RE = re.compile(
 
 def _title_repeats_a_header_key(title: str) -> bool:
     """True when the title slice carries a *second* real occurrence of a header
-    key (T0004 2.1: repair only when every key appears exactly once).
+    key (2.1: repair only when every key appears exactly once).
 
     `target_id` is deliberately absent from the scan: a repeated target id is
     resolved by the end-boundary rule (last valid id wins), not by aborting.
@@ -307,7 +307,7 @@ def _header_candidate_positions(text: str) -> list[int]:
     bom = 1 if text.startswith("\ufeff") else 0
     if text.startswith("next_type:", bom):
         positions.append(bom)
-    # T0004 2.3: the very same collapsed sequence routinely arrives *inside* a
+    # 2.3: the very same collapsed sequence routinely arrives *inside* a
     # real ``---`` frontmatter. It has to be repaired here, before
     # frontmatter_parse_is_ambiguous() ever sees it — otherwise a recoverable,
     # high-confidence body is blanket-rejected as malformed (422) and the
@@ -329,12 +329,12 @@ def _match_header_sequence(window: str) -> dict | None:
     """Match one collapsed/partial header sequence at the start of `window`.
 
     The end boundary must be *confirmed*, not merely "the first thing that
-    looks like a target id" (T0004 2.1: repair only when every key appears once
+    looks like a target id" (the earlier implementation 2.1: repair only when every key appears once
     and the end boundary is settled). The block ends with the line carrying the
     first `target_id:` label, so that line is the entire search region:
 
     * a title may legitimately contain the literal text "target_id: <id>", so
-      the boundary is the *last* validating candidate on that line (T0004 2.1
+      the boundary is the *last* validating candidate on that line (the earlier implementation 2.1
       states this rule explicitly) and everything before it stays title text;
     * nothing but whitespace may follow the chosen value on that line, so a
       trailing stray key or sentence aborts the repair;
@@ -364,7 +364,7 @@ def _match_header_sequence(window: str) -> dict | None:
     if line_break == -1:
         region_end = len(window)
     else:
-        # Idempotency: once "title: X target_id: R0001 target_id: R0002" has been
+        # Idempotency: once "title: X target_id: the requirement target_id: the requirement" has been
         # repaired, the *title* line carries the first target_id label and the
         # real boundary has moved onto the next line. Whole target_id-only lines
         # following it therefore belong to the same region, or a second pass
@@ -398,7 +398,7 @@ def _match_header_sequence(window: str) -> dict | None:
     if _title_repeats_a_header_key(title):
         # A second title/project/module/group/next_type field is hiding in what
         # would become the title. Folding a duplicate label into a value is
-        # exactly what T0004 2.1 forbids: leave the text alone.
+        # exactly what the earlier implementation 2.1 forbids: leave the text alone.
         return None
     return {
         "next_type": next_type,
@@ -419,7 +419,7 @@ def _header_span_eol(span: str, text: str) -> str:
     An already-correct submission has to come back byte-for-byte, and that
     includes its EOL: rebuilding a valid CRLF block with LF would rewrite bytes
     the caller never asked to change and report a phantom normalization, which
-    T0004 2.1 ("leave already-correct multi-line input byte-for-byte alone")
+    2.1 ("leave already-correct multi-line input byte-for-byte alone")
     forbids. A genuinely collapsed block inherits the document's dominant EOL
     so the repair does not introduce a second line-ending style either.
     """
@@ -500,7 +500,7 @@ _FRONTMATTER_EMBEDDED_KEY_RE = re.compile(
 # that got swallowed into its value. Two traces is the smallest chain that can
 # exist ("module: default group: 0460"), and any longer chain trips the same
 # test. A lone key-shaped fragment inside a value is ordinary authored text — a
-# title naming the field, a note, a URL, a doc excerpt — and T0004 2.3
+# title naming the field, a note, a URL, a doc excerpt — and the earlier implementation 2.3
 # explicitly forbids judging it on the key name alone, so the embedded pair
 # must also carry a *plausible value* for that key before it counts.
 _FRONTMATTER_MIN_KEY_TRACES = 2
@@ -511,7 +511,7 @@ def _frontmatter_embedded_fields(value: object) -> set[str]:
     key/value pair.
 
     Lists and nested dicts are deliberately not inspected: normal list/nested
-    handling is a preserved parse contract (T0004 2.3), and a list item such as
+    handling is a preserved parse contract, and a list item such as
     "- target_id: <an example>" is authored content, not evidence of a collapse.
     """
     if not isinstance(value, str):
@@ -562,7 +562,7 @@ def frontmatter_parse_is_ambiguous(text: str) -> bool:
     """True when `text` opens a real ``---``-delimited frontmatter block whose
     parse is unclosed, truncated, or plausibly *partial* — one or more collapsed
     "key: value" pairs swallowed into a single line's greedy value (the
-    NR0003 finding: parse_yaml_header's first-key + greedy-rest-of-line regex
+    finding: parse_yaml_header's first-key + greedy-rest-of-line regex
     accepts this silently, so a later identity check on a field that never
     made it into the header dict sees "absent" rather than "conflicting" and
     fail-opens). Callers use this to turn that fail-open into an explicit

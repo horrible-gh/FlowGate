@@ -1,7 +1,7 @@
-"""0110 T#3 rework: a Graph attempt run's W follows the run's proof, like its Group's G.
+"""a Graph attempt run's W follows the run's proof, like its Group's G.
 
 An attempt token's source writes (``graph_run.workspace.mutation``) take the attempt's W alone -- no G.
-0053 1-B: a Self-check run of an attempt is queued with a snapshot of the attempt tree and runs in that snapshot,
+a Self-check run of an attempt is queued with a snapshot of the attempt tree and runs in that snapshot,
 so it takes neither G nor the attempt's W:
 
 1. while the run executes, an attempt write goes through; what it writes does not reach the run;
@@ -18,7 +18,7 @@ test_tr_self_check_recover_proof_0080 (migrated SQLite, real ``lock_manager`` / 
 whose tree is a throwaway repository: the port's mapping, root handler and attempt row read are answered here, and no
 Stop gate handler is registered (the gate has its own cases in test_graph_attempt_workspaces_0061). An attempt write
 is the W acquire ``workspace.mutation`` makes (same key from ``workspace.location``, same holder kind). Injected, as in
-0080: a failing spawn (``executor.spawn``) and an unreadable identity (``executor.probe_start_identity``).
+a failing spawn (``executor.spawn``) and an unreadable identity (``executor.probe_start_identity``).
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""0066 T#3 — manual merge (D#1 §3-6, E8/E9) on real Git, real jobs and real locks.
+"""manual merge on real Git, real jobs and real locks.
 
 The approval gate is replaced by technical guards only; nothing uncommitted is absorbed;
 the merge need is counted against the target three times (request, under the job's locks,
@@ -521,7 +521,7 @@ def test_push_rejection_rewinds_the_fresh_merge_keeps_the_slot_and_heals_to_none
     assert state(gid)["status"] == "waiting" and state(gid)["worktree_registered"]
     assert _ctx(merge_sessions(gid)[0]["merge_id"])["attempt_state"] == "failed"
     assert results(gid)["results"] == []
-    svc.project_git_status(proj.pid)                        # T0009 self-heal (root not wf_done)
+    svc.project_git_status(proj.pid)                        # self-heal (root not wf_done)
     assert state(gid)["status"] == "none"
     assert manual(gid, push=True)["pushed"] is True         # the next try just works
     assert held_locks(proj.pid) == []
@@ -582,7 +582,7 @@ def _job_of(job_id: str) -> dict:
 @pytest.mark.parametrize("secret", [SECRET, SECRET_KO], ids=["ascii", "non_ascii"])
 @pytest.mark.parametrize("managed", [False, True])
 def test_conflict_answer_and_stored_result_never_name_a_hidden_path(proj, monkeypatch, managed, secret):
-    """Rework P1 (D#1 §3-1(3)): a committed hidden file in conflict is counted, never named,
+    """Rework P1 (the earlier implementation): a committed hidden file in conflict is counted, never named,
     in the E9 answer and the job result; the conflict session keeps finalize's own line.
     Rework 2: a non-ASCII hidden name arrives Git-quoted and is judged by its real path."""
     from modules.flow_gate.db import git_integration as db_git

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B, §9.5) — the context menu's 11 existing server commands in the
+ * the context menu's 11 existing server commands in the
  * real Designer Shell: 그룹 / Rename Flow, Delete Flow (= the existing dispose, DC), New folder / 새 파일, Download folder /
  * 업로드 / 삭제, Download file / Git › Review changes / 삭제. Each through its window (confirmation, re-check right before the
  * request, the server's refusal shown and nothing changed) and the existing server contract (features/project →
@@ -778,7 +778,7 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     expect(downloadBlobRequest).toHaveBeenCalledWith('/api/v1/projects/p/files/download', { path: 'src/app.ts', group_id: 'p.ui.0002' })
     expect(saved).toEqual(['app.ts'])
     expect(document.body.textContent).toContain('다운로드했습니다: app.ts')
-    // flowgate.v02.0088 F16: the toast still on screen is said again in the language switched to; the file name stays.
+    // the toast still on screen is said again in the language switched to; the file name stays.
     i18n.global.locale.value = 'ja'
     await settle()
     expect(document.body.textContent).toContain('ダウンロードしました: app.ts')

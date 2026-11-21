@@ -1,13 +1,13 @@
 """The single gate every attachment path goes through.
 
-flowgate.default.0060 L0012 §2-1 (``resolve_attach_dir``) and §2-6
+(``resolve_attach_dir``) and
 (``resolve_registered_attachment``).
 
-D0010 §2-4 required that path assembly live in exactly one place, because the moment each
+required that path assembly live in exactly one place, because the moment each
 route assembles its own path one of them ends up returning an absolute path or missing a
-guard — that is literally how NR0003 G4 happened. Both functions here are that one place.
+guard — that is literally how the review G4 happened. Both functions here are that one place.
 
-NR0015 §5 measured that ``tree_routes``' download guard cannot be reused wholesale: its
+The review measured that ``tree_routes``' download guard cannot be reused wholesale: its
 resolver is built on the project source root and git worktrees and has no concept of a
 storage room, a registry row, or per-document ownership. Nothing in this module imports
 ``tree_routes``. What IS shared is the per-component symlink check idea from
@@ -30,7 +30,7 @@ _DRIVE_RE = storage_paths._DRIVE_RE  # same drive-letter test the storage layer 
 def within_storage_jail(path: Path, project_id: Optional[str]) -> bool:
     """The storage-jail test, bound at call time instead of at import time.
 
-    0060 TR0017 rev2. NR0015 §7 directive 5 told this package to reuse the storage jail through a
+    directive 5 told this package to reuse the storage jail through a
     PUBLIC name, so 0060 added the wrapper ``within_allowed_roots()`` to ``storage/paths.py``
     and called it from here. That is still the binding we want — it names the reuse boundary
     instead of reaching into ``_within_allowed_roots``.
@@ -60,7 +60,7 @@ def within_storage_jail(path: Path, project_id: Optional[str]) -> bool:
 
 
 def doc_code_of(doc_id: str) -> str:
-    """``flowgate.default.0060.0001-R`` → ``0001-R``."""
+    """``the earlier change`` → ``the earlier implementation``."""
     return (doc_id or "").rsplit(".", 1)[-1]
 
 
@@ -181,7 +181,7 @@ def resolve_registered_attachment(
 
     # J4 — inside the storage jail?
     #      We do NOT call resolve_storage_path(): it collapses "outside the jail" and
-    #      "file missing" into a single None, and P0011 needs 403 for the first and 404 for
+    #      "file missing" into a single None, and the plan needs 403 for the first and 404 for
     #      the second. Same ingredients, two branches.
     root = storage_paths.get_storage_root(project_id).resolve()
     candidate = (root / stored).resolve(strict=False)
@@ -189,7 +189,7 @@ def resolve_registered_attachment(
         raise outside
 
     # J5 — the key defence. Being inside the storage root is not enough; the row must point
-    #      into THIS document's room (D0010 §1).
+    #      into THIS document's room.
     room = resolve_attach_dir(doc).resolve(strict=False)
     if candidate.parent != room:
         raise outside
@@ -206,8 +206,8 @@ def resolve_registered_attachment(
         if current.is_symlink():
             raise outside
 
-    # J7 — the row exists but the file does not. Externally a 404 (P0011 §4); a ghost_row
-    #      internally (L0012 §3-1), which the next delete self-heals.
+    # J7 — the row exists but the file does not. Externally a 404; a ghost_row
+    #      internally, which the next delete self-heals.
     if require_file and not candidate.is_file():
         raise AttachmentError(
             404, "ATTACHMENT_NOT_FOUND", "Attachment was not found.",
@@ -218,5 +218,5 @@ def resolve_registered_attachment(
 
 
 def storage_relative(path: Path, project_id: Optional[str]) -> str:
-    """The only form of a path that leaves this module (P0011 §9)."""
+    """The only form of a path that leaves this module."""
     return storage_paths.to_storage_relative(path, project_id)

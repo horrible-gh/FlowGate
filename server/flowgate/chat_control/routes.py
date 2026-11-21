@@ -1,9 +1,9 @@
 """CLI chat transport of the control tower (stage 1). Authentication runs before the body is parsed.
 
-flowgate.v02gui.0028: ``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles`` — the AI roles of a work
+``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles`` — the AI roles of a work
 card this chat placed (``card_roles``).
 
-flowgate.v02gui.0032: ``GET /api/v2/chat/flows/{flow_id}/ai-options`` — the AIs (and AI groups with role profiles) a
+``GET /api/v2/chat/flows/{flow_id}/ai-options`` — the AIs (and AI groups with role profiles) a
 chat may pick before it places cards (``placement_roles.options``), any mode."""
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ async def get_ai_options(flow_id: str, request: Request):
     return await run_in_threadpool(response, request, handle)
 
 
-# flowgate.v02gui.0028: the AI roles of a card this chat placed (``card_roles``).
+# the AI roles of a card this chat placed (``card_roles``).
 
 @router.get("/flows/{flow_id}/nodes/{node_key}/roles")
 async def get_card_roles(flow_id: str, node_key: str, request: Request):

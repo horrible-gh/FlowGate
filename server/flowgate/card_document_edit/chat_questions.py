@@ -1,4 +1,4 @@
-"""Chat-only card question (Q) list and answer (flowgate.v02gui.0010, NR0003 §8, Q#600 / Q#601).
+"""Chat-only card question (Q) list and answer.
 
 A chat AI answers the questions a card's AI left on a card document of the chat's own Flow, on the user's behalf.
 The general Q routes (``/api/v1/q/...``) keep their binding rule (a token answers only on its own ``doc_ref``); this
@@ -223,7 +223,7 @@ def _options(item):
         parsed = json.loads(raw) if isinstance(raw, str) else (raw or [])
     except ValueError:
         return []
-    # flowgate.v02gui.0015 T3: ``requires`` only when the option has one (selecting it holds the card until then)
+    # ``requires`` only when the option has one (selecting it holds the card until then)
     return [{"id": o.get("id"), "label": o.get("label", ""), **({"requires": o["requires"]} if o.get("requires") else {})}
             for o in parsed if isinstance(o, dict)]
 
@@ -245,7 +245,7 @@ def _item_view(item, include_answer):
     view = {"item_id": item["id"], "seq": item.get("seq"), "title": item.get("title"), "body": body,
             "options": _options(item), "asker_kind": item.get("asker_kind"), "answered": answered,
             "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state"),
-            # flowgate.v02gui.0028: why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
+            # why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
             # the chat can tell the user the cause (None when it did not fail). Only the code: the stored message is
             # internal text.
             "responder_error_code": item.get("responder_error_code")}

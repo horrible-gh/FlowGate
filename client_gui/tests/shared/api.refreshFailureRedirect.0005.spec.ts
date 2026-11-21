@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// 0005 T#1 rework (last rejection, finding 3): a stale access token plus a missing/invalid
+// (last rejection, finding 3): a stale access token plus a missing/invalid
 // refresh token used to always bounce the browser to '/', even from an /app/* deep link —
 // throwing away the return path before installAuthGuard's /login?next=/app/... logic ever
 // got a chance to run. buildRefreshFailureRedirect() and the 401 interceptor that calls it
 // reuse resolveSafeReturnPath (the same allow-list installAuthGuard and the sign-in page
 // enforce) so an /app location survives the round trip.
 //
-// flowgate.v02gui.0024: v0.1 is gone — /main is no longer allow-listed (the server redirects
+// v0.1 is gone — /main is no longer allow-listed (the server redirects
 // it to /app) and every location outside the allow-list goes to plain /login.
 
 const postMock = vi.fn()
@@ -138,7 +138,7 @@ describe('401 refresh-failure redirect round trip (0005)', () => {
   })
 })
 
-// flowgate.v02gui.0017 B1: a refresh that never reached a verdict (network error, timeout, 5xx —
+// B1: a refresh that never reached a verdict (network error, timeout, 5xx —
 // e.g. the server restarting) used to take the same path as a rejected one: every token was
 // deleted and the browser sent to /login although the session was valid. Only a definitive
 // answer (401/403 from /auth/refresh, or no refresh token) may end the session now.

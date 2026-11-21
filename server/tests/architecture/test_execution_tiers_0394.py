@@ -1,9 +1,9 @@
-"""Execution-tier/parallel contracts: 0394 T0014 (NR0003 sections 13-12/13-13).
+"""Execution-tier/parallel contracts: the earlier implementation (sections 13-12/13-13).
 
-T0004 added tier selection and pytest-xdist without tests protecting either.
+added tier selection and pytest-xdist without tests protecting either.
 Tier behavior depended on server/pytest.ini and conftest hooks; parallel safety
 existed only in requirements.txt comments and TESTING.md. Removing those rules
-would trigger no failure, the global-rule/local-check gap noted in NR0003 5.3.
+would trigger no failure, the global-rule/local-check gap noted in the review 5.3.
 
 Protect five contracts: tier configuration/markers exist; rules classify modules
 and explicit markers override them; tier deferrals are reported separately from
@@ -13,7 +13,7 @@ and worker observations of environment leakage reach the controller report.
 Contracts 3/5 came from a real bug: --tier=fast -n 2 skipped 117 tests without
 warning that the run was incomplete, because collection hooks ran inside workers
 and their state never reached the controller. Parallelism must not bring back
-the silent skips NR0003 5.2 intended to eliminate.
+the silent skips the review 5.2 intended to eliminate.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _write_module(directory: Path, name: str, body: str) -> Path:
 
 class TestTierConfigurationExists:
     def test_pytest_ini_exists_and_registers_three_tiers(self):
-        """NR0003 10.4: originally no configuration file existed to define tiers."""
+        """10.4: originally no configuration file existed to define tiers."""
         assert _PYTEST_INI.is_file(), (
             "server/pytest.ini 가 없다. 계층 마커를 등록할 자리가 사라지면 "
             "--tier 는 남아도 `@pytest.mark.fast` 는 unknown marker 경고가 된다."
@@ -104,7 +104,7 @@ class TestTierConfigurationExists:
 
 
 class TestTierIsDerivedNotListed:
-    """NR0003 10.4: a file-list policy can leave new files outside every tier."""
+    """10.4: a file-list policy can leave new files outside every tier."""
 
     def test_plain_module_is_fast(self, conf, tmp_path):
         module_file = _write_module(
@@ -286,7 +286,7 @@ class TestTierSkipsAreAccountedSeparately:
 
 class TestParallelExecutionIsFileWise:
     def test_xdist_is_pinned_and_installed(self):
-        """NR0003 10.3: reduce total runtime without deleting tests through parallelism."""
+        """10.3: reduce total runtime without deleting tests through parallelism."""
         requirements = _REQUIREMENTS.read_text(encoding="utf-8")
         assert "pytest-xdist==" in requirements, "requirements.txt 에 pytest-xdist 핀이 없다"
         assert importlib.util.find_spec("xdist") is not None, "pytest-xdist 가 설치돼 있지 않다"
@@ -394,7 +394,7 @@ class TestUsageIsWrittenDown:
 
 # 7. Shared connections are clean for the next borrower.
 #
-# 0394 T0014: regression for a defect exposed by parallel execution.
+# regression for a defect exposed by parallel execution.
 #
 # During --tier=standard -n auto --dist loadfile,
 # `test_auto_approved_locale_0099.py::test_migration_051_adds_column_and_round_trips`

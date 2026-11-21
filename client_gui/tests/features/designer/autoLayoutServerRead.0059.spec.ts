@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0016-TR rework) — auto-layout from the server's own Canvas responses to the server's own
+ * (TR rework) — auto-layout from the server's own Canvas responses to the server's own
  * coordinates, on the real read path: the project store's Canvas loader (fetchFlowCanvas with
  * `collapse=conversation`, as every Designer read asks) -> toFlowCanvas -> the server Graph source -> the Center
  * session -> autoLayout. Only `@shared/api` is mocked: it answers SERVER_CANVAS for the query it gets, and the
@@ -462,7 +462,7 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     expect(SERVER_CANVAS['p.ui.0013'].collapsed.collapsed.hidden_counts).toEqual({ conversation: 1 })
   })
 
-  // flowgate.v02.0068 T#2 (0004-D §4): the explicit auto-layout is no longer the server's own placement — the read and
+  // the explicit auto-layout is no longer the server's own placement — the read and
   // the server's input (the whole Flow, the supersede chain) stay the same; the last column is where 가로 자동정렬
   // puts the shown cards (0005-L §2.6: the chain first, the documents in one row below it, a hidden document keeping
   // its slot and its real place as an obstacle).

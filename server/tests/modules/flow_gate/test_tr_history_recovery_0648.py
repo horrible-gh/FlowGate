@@ -1,4 +1,4 @@
-"""flowgate.default.0648 T2#2 — durable reapply recovery and fail-closed lifecycle."""
+"""#2 — durable reapply recovery and fail-closed lifecycle."""
 from __future__ import annotations
 
 from contextlib import contextmanager

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#1 — reason line of an unavailable operation (D#1 §2.2 parts, §8.1): a
+  <!-- reason line of an unavailable operation (parts): a
        visible but disabled operation shows why. The feature resolves its own reason key to text;
        this part only shows it. -->
   <p class="inspector-reason" role="note" data-test="inspector-reason" :data-tone="tone">{{ text }}</p>

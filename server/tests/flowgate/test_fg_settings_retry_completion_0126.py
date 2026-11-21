@@ -1,4 +1,4 @@
-"""0126 T#5: completion repair precedes AI after settings changes; actual HTTP/SQLite."""
+"""completion repair precedes AI after settings changes; actual HTTP/SQLite."""
 import pytest
 from test_fg_human_completion_0126 import (  # noqa: F401
     FA,_h,_sql,db_path,decided,env,legacy_cards,decisions_env,completions,

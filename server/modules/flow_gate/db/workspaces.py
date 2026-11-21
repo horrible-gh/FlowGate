@@ -1,4 +1,4 @@
-"""Workspace CRUD (flowgate.v02.0020, migration 136).
+"""Workspace CRUD (migration 136).
 
 Every function reads the store through the `connection` module attribute, so a test that swaps
 `connection.get_store` reaches these queries as well.

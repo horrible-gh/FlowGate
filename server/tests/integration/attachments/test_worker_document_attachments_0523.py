@@ -1,6 +1,6 @@
-"""flowgate.default.0523 T0004 -- worker-token attachment discovery/read/copy.
+"""worker-token attachment discovery/read/copy.
 
-Root cause (0523 NR0003): the attachment subsystem
+Root cause: the attachment subsystem
 (``modules/flow_gate/documents/attachments``) was wired only into the Console
 ``/documents/...`` surface. The worker surface (``/api/v1/document/...``) had no
 discovery, read or copy-to-source bridge at all -- an AI worker could not learn an
@@ -41,12 +41,12 @@ GROUP_ID = "flowgate.default.0523"
 DOC_ID = "flowgate.default.0523.0001-R"
 MISSING_DOC_ID = "flowgate.default.0523.9999-R"
 
-# A second, unrelated group -- used only by the wrong-document-scope test (T0004 s.24/s.36.8).
+# A second, unrelated group -- used only by the wrong-document-scope test (s.24/s.36.8).
 OTHER_GROUP_ID = "flowgate.default.0599"
 OTHER_DOC_ID = "flowgate.default.0599.0001-R"
 
 # A sibling document in DOC_ID's OWN group -- proves the scope check is group-wide,
-# not doc_ref-exact (T0004 s.24's "token/group A -> doc/group A attachments -> allowed").
+# not doc_ref-exact (s.24's "token/group A -> doc/group A attachments -> allowed").
 SIBLING_DOC_ID = "flowgate.default.0523.0002-R"
 
 
@@ -275,7 +275,7 @@ def _post(path: str, token_rec: dict, json: dict | None = None):
         return _client().post(path, headers={"Authorization": "Bearer x"}, json=json or {})
 
 
-# ── document GET discovery (T0004 s.5 / s.36.1 / s.36.2) ────────────────────────
+# ── document GET discovery (s.5 / s.36.1 / s.36.2) ────────────────────────
 
 def test_document_get_reports_attachment_metadata(env):
     upload([FakePart("config.json", b'{"a":1}')])
@@ -300,7 +300,7 @@ def test_document_get_reports_empty_attachments_list_when_none_uploaded(env):
 
 
 def test_document_get_propagates_an_attachment_service_failure_instead_of_reporting_empty(env):
-    """T0004 s.19/s.38.1: ``attachments == []`` must mean a confirmed-empty list, never
+    """s.19/s.38.1: ``attachments == []`` must mean a confirmed-empty list, never
     an unknown one. Automated-review regression: ``_attachment_briefs`` used to catch
     every exception from ``list_attachments()`` and return ``[]``, making a registry/
     storage failure indistinguishable from a document that genuinely has no
@@ -317,7 +317,7 @@ def test_document_get_propagates_an_attachment_service_failure_instead_of_report
     assert resp.json()["error"]["code"] == "ATTACHMENT_OPERATION_FAILED"
 
 
-# ── permission gating (T0004 s.6 / s.36.3-36.7) ──────────────────────────────────
+# ── permission gating (s.6 / s.36.3-36.7) ──────────────────────────────────
 #
 # kind_for_step (tool_registry.py) is the real, unstubbed judge here:
 #   action_scope "review"                -> "read"       (N/NR/review workers)
@@ -356,7 +356,7 @@ def test_none_kind_is_denied_list_read_and_copy(env):
 
 
 def test_read_write_kind_can_copy_into_the_callers_own_group_worktree(env, src_root):
-    """T0004 s.6/s.34/s.36.6/s.36.11 -- destination is the TOKEN's own group, and the
+    """s.6/s.34/s.36.6/s.36.11 -- destination is the TOKEN's own group, and the
     base checkout is never touched."""
     upload([FakePart("schema.json", b"{}")])
     token = _token("resolve_base_dirty")
@@ -373,7 +373,7 @@ def test_read_write_kind_can_copy_into_the_callers_own_group_worktree(env, src_r
 
 
 def test_copy_ignores_a_request_supplied_group_id(env, src_root, tmp_path, monkeypatch):
-    """T0004 s.12/s.34 -- unlike the console contract, the worker body carries no
+    """s.12/s.34 -- unlike the console contract, the worker body carries no
     group_id field at all; even if a caller adds one, only the token's own group is
     ever used as the destination."""
     from modules.flow_gate.services import git_service
@@ -426,7 +426,7 @@ def test_groupless_read_write_token_cannot_copy_into_the_base_checkout(env, tmp_
     assert not (base_root / "assets" / "schema.json").exists()
 
 
-# ── the group-lease principal bug (0523 T0004) ───────────────────────────────────
+# ── the group-lease principal bug ───────────────────────────────────
 #
 # attachments.assert_mutable used to build a MutationPrincipal via human_principal(actor)
 # unconditionally. A worker mid-run always holds an active group_ai_leases row for its
@@ -492,7 +492,7 @@ def test_attachment_routes_404_for_a_missing_document(env):
     ).status_code == 404
 
 
-# ── document scope security (T0004 s.24 / s.36.8) ────────────────────────────────
+# ── document scope security (s.24 / s.36.8) ────────────────────────────────
 #
 # A token bound to DOC_ID/GROUP_ID must not reach an unrelated document's attachments,
 # even a valid one that simply belongs to a different group -- neither its doc_ref nor
@@ -517,7 +517,7 @@ def test_wrong_document_scope_is_denied_for_list_read_and_copy(env):
 
 
 def test_a_tokens_own_group_may_read_a_sibling_documents_attachment(env):
-    """The scope check is group-wide, not doc_ref-exact (T0004 s.24's group-A example):
+    """The scope check is group-wide, not doc_ref-exact (s.24's group-A example):
     a token bound to DOC_ID may still list a DIFFERENT document in its OWN group."""
     upload([FakePart("shared.txt", b"ok")], doc_id=SIBLING_DOC_ID)
 
@@ -528,7 +528,7 @@ def test_a_tokens_own_group_may_read_a_sibling_documents_attachment(env):
 
 
 def test_document_get_hides_attachments_for_a_token_outside_the_documents_scope(env):
-    """T0004 s.24 applies to the general document GET's attachment discovery too, not
+    """s.24 applies to the general document GET's attachment discovery too, not
     just the three dedicated endpoints: a token whose doc_ref/group_id don't match
     OTHER_DOC_ID must not learn OTHER_DOC_ID's attachment filenames this way either.
     The document's own content (unrelated to attachments) still comes back 200 --
@@ -543,7 +543,7 @@ def test_document_get_hides_attachments_for_a_token_outside_the_documents_scope(
 
 def test_document_get_reports_attachments_for_a_user_jwt(env):
     """Console/human callers authenticate via user JWT, not a doc-scoped worker
-    token -- T0004 s.24's scope binding is a worker-token concept, so a user JWT
+    token -- the earlier implementation s.24's scope binding is a worker-token concept, so a user JWT
     (no doc_ref/group_id to match) must still see attachment metadata."""
     upload([FakePart("config.json", b'{"a":1}')])
 
@@ -555,7 +555,7 @@ def test_document_get_reports_attachments_for_a_user_jwt(env):
     assert [a["filename"] for a in resp.json()["attachments"]] == ["config.json"]
 
 
-# ── copy target_path guards (T0004 s.36.9 / s.36.10) ─────────────────────────────
+# ── copy target_path guards (s.36.9 / s.36.10) ─────────────────────────────
 # _validate_target_path runs before any worktree/git resolution, so these reject on
 # format alone -- no src_root fixture, no prior upload needed.
 
@@ -580,7 +580,7 @@ def test_copy_absolute_target_path_is_rejected(env, target_path):
     assert resp.json()["error"]["code"] == "INVALID_PATH"
 
 
-# ── copy lands as a real, git-visible source change (T0004 s.36.12 / s.36.13) ────
+# ── copy lands as a real, git-visible source change (s.36.12 / s.36.13) ────
 #
 # Not a mock: a real git repo backs the worktree, the same harness
 # test_tr_scope_0299.py's work_repo fixture uses for collect_scope_changes. This proves
@@ -645,7 +645,7 @@ def test_copy_appears_git_dirty_and_in_the_trs_scope_changes(env, git_src_root):
     assert "assets/schema.json" in scope["paths"]
 
 
-# ── binary read regression (T0004 s.36.15) ────────────────────────────────────────
+# ── binary read regression (s.36.15) ────────────────────────────────────────
 
 def test_binary_attachment_read_returns_base64_content(env):
     payload = b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03binary-body"
@@ -661,7 +661,7 @@ def test_binary_attachment_read_returns_base64_content(env):
     assert _b64.b64decode(body["content"]) == payload
 
 
-# ── help/tools advertises the attachment operations (T0004 s.17 / s.38.14) ──────
+# ── help/tools advertises the attachment operations (s.17 / s.38.14) ──────
 # The 2026-09-04 rejections of this TR were both the same finding: a worker asked to
 # control a document's attachments called GET /help/tools -- the surface its own ment
 # tells it to call first -- saw only the /remote/* source tools, and concluded that
@@ -723,7 +723,7 @@ def test_help_tools_read_kind_names_copy_as_denied_not_missing(env):
     body = _help_get("/api/v1/help/tools", _token("review")).json()
     block = body["document_attachments"]
 
-    # flowgate.chat.0017 CH0002: a read kind may also ask a person to approve an attachment it produced.
+    # a read kind may also ask a person to approve an attachment it produced.
     assert [op["name"] for op in block["operations"]] == ["attachment_list", "attachment_read", "attachment_upload_request"]
     assert [op["name"] for op in block["denied"]] == ["attachment_copy"]
     assert "read" in block["denied"][0]["reason"]
@@ -776,7 +776,7 @@ def test_what_help_advertises_is_exactly_what_the_worker_routes_allow(
     env, src_root, action_scope, kind
 ):
     """Executable parity: every advertised operation really answers, and every
-    operation help calls denied really answers 403 (T0004 s.6/s.25)."""
+    operation help calls denied really answers 403 (s.6/s.25)."""
     from modules.flow_gate.services import tool_registry
 
     upload([FakePart("parity.txt", b"parity")])

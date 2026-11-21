@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 origin badge (0035 insp-v7 `.org-badge`): who put the Node on the
+  <!-- the v7 origin badge (insp-v7 `.org-badge`): who put the Node on the
        Canvas — 🤖 AI (AI delegation expanded it) or ⇉ WP (a human work plan expanded it). A Node a
        person placed from the Palette has none. Shown in the header and on the settings origin line;
        `label` replaces the default text (the WP card's "작성 사람 / AI"). -->

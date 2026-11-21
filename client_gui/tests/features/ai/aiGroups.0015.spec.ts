@@ -153,7 +153,7 @@ describe('AiGroupsPanel (0015 T0003, teams since 0017)', () => {
   })
 })
 
-// flowgate.v02.0088 F07: the team and role delete confirms name their actions with gui.common.delete / cancel in the
+// the team and role delete confirms name their actions with gui.common.delete / cancel in the
 // current language (ConfirmDialog's own default stays as it is); 취소 sends nothing.
 describe('AiGroupsPanel delete confirms (0088 F07)', () => {
   beforeEach(() => {

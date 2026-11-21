@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#1 — the document window with the upload / download (0068 D §3.1, §6.2, §7 A; L §2.13, §5.4
+ * the document window with the upload / download (0068 D,, A; L,
  * U5 ~ U7) as the App Shell mounts it (DocumentWindows), `@/features/document` mocked: the header's
  * [업로드][다운로드] │ before the existing icons and hidden while minimized, the bottom bars unchanged; the
  * upload's hold of unsaved text, the guard (no edit entry, no input, no save; an Inspector edit request opens the
@@ -47,7 +47,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentDownload: (...args: unknown[]) => download(...args),
-    // flowgate.v02.0074 T#2: a work plan's download, edit window and body view read the plan
+    // a work plan's download, edit window and body view read the plan
     workPlanEditRead: (...args: unknown[]) => planEditRead(...args),
     workPlanDocumentRead: (...args: unknown[]) => planDocRead(...args),
   }
@@ -169,7 +169,7 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
       (node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'),
     )
     expect(order.slice(0, 3)).toEqual(['document-io-upload', 'document-io-download', 'document-io-divider'])
-    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    // the shell's controls are named in the app's language (ko in this spec).
     expect(order.slice(-2)).toEqual(['최소화', '닫기'])
     const up = q(titlebar(DOC), 'document-io-upload')!
     expect(up.getAttribute('aria-label')).toBe('업로드')
@@ -180,7 +180,7 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
   it('in the editor the group comes before ✎ (the edit icon); the group acts on the edited document', async () => {
     await open(DOC, 'edit')
     const order = [...titlebar(DOC).querySelectorAll('button')].map((node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'))
-    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    // the shell's controls are named in the app's language (ko in this spec).
     expect(order).toEqual(['document-io-upload', 'document-io-download', 'document-window-edit', '최소화', '닫기'])
     expect(q(titlebar(DOC), 'document-io')!.getAttribute('data-doc')).toBe(DOC)
   })
@@ -192,7 +192,7 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
     await flushPromises()
     expect(q(titlebar(DOC), 'document-io')).toBeNull()
     const after = [...titlebar(DOC).querySelectorAll('button')].map((node) => node.getAttribute('aria-label'))
-    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    // the shell's controls are named in the app's language (ko in this spec).
     expect(after.slice(-2)).toEqual(['복원', '닫기'])
     expect(after.slice(0, -2)).toEqual(before.slice(2, -2))
     setDocumentWindowMinimized(DOC, false)
@@ -642,7 +642,7 @@ describe('Q3 review regression — clean editor survives Designer exit during sa
   })
 })
 
-// --- flowgate.v02.0074 T#2: a work plan in the window's header ----------------------------------------------------------
+// --- the earlier change the earlier implementation: a work plan in the window's header ----------------------------------------------------------
 
 describe('a work plan’s header [업로드][다운로드] (flowgate.v02.0074 T#2, D#1 §6.3 / §7.5)', () => {
   const PLAN = WP_DOC

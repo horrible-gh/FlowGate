@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0013 (S3) — pure Graph draft editing: edit commands and their undo, the
+ * (S3) — pure Graph draft editing: edit commands and their undo, the
  * connection pre-check (server validator criteria, L0009 §2.5), the draft taken from / put back
  * into the shown Graph, and the draft editor's saves (P0008 S3-1 whole replacement, one save on
  * the wire per Flow, key remapping, S3-2 conflict). No DOM, no Vue.
@@ -71,7 +71,7 @@ describe('connection pre-check', () => {
     expect(checkConnection(m, 'gn_a', 'gn_c')).toEqual({ ok: true, warnings: ['branch'] })
     expect(checkConnection(m, 'gn_c', 'gn_b')).toEqual({ ok: true, warnings: ['join'] })
     expect(checkConnection(m, 'gn_b', 'gn_a')).toEqual({ ok: true, warnings: ['cycle'] })
-    // flowgate.v02.0117 T#2: a card connected to itself is refused (never drawn, always a `cycle` error).
+    // a card connected to itself is refused (never drawn, always a `cycle` error).
     expect(checkConnection(m, 'gn_c', 'gn_c')).toEqual({ ok: false, reason: 'self_edge' })
   })
 })

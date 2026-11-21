@@ -1,4 +1,4 @@
-"""0610 token scratch ownership, rollback, and retention regressions."""
+"""token scratch ownership, rollback, and retention regressions."""
 from __future__ import annotations
 
 import json
@@ -328,7 +328,7 @@ def test_startup_sweeps_after_lease_recovery(monkeypatch):
     real_start = startup.start_scratch_sweeps
     monkeypatch.setattr(startup, "start_scratch_sweeps", lambda: threads.append(real_start()) or threads[-1])
     startup.run_all()
-    # flowgate.v02.0090 T0015: the sweeps run on one background thread started after lease recovery.
+    # the sweeps run on one background thread started after lease recovery.
     assert len(threads) == 1 and threads[0].name == "startup-scratch-sweep"
     threads[0].join(10)
     assert not threads[0].is_alive()

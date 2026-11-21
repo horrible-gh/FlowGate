@@ -1,4 +1,4 @@
-"""Durable, atomic group mutation leases for AI runs (flowgate.default.0378)."""
+"""Durable, atomic group mutation leases for AI runs."""
 from __future__ import annotations
 
 import os
@@ -83,7 +83,7 @@ def _append_now(**kwargs) -> None:
 
 
 def _append_event(**kwargs) -> None:
-    """Best-effort forensic append (flowgate.default.0502 T0004 SS10): a write failure
+    """Best-effort forensic append: a write failure
     here must never change an admission or release decision, so the append only ever
     logs a warning on failure instead of letting it propagate.
 
@@ -181,7 +181,7 @@ def recover_expired(group_id: Optional[str] = None) -> int:
 
 def reclaim_orphaned(before: str, keep_run_ids=frozenset(), owns_run_id=None) -> list[dict]:
     """Reclaim every lease acquired before *before* -- the startup dead-lease sweep
-    (flowgate.default.0401 NR0003 SS6-1 / T0004 item 1).
+.
 
     Unlike :func:`recover_expired`, this ignores ``expires_at``: a lease can sit
     orphaned for its whole 4h05m TTL before that check would ever touch it. It is
@@ -192,10 +192,10 @@ def reclaim_orphaned(before: str, keep_run_ids=frozenset(), owns_run_id=None) ->
     process may be mid-admission for it). Returns the reclaimed rows (group/run/
     acquired_at and the rest) so the caller can explain each one's disappearance.
 
-    flowgate.v02.0129 T#2: a lease whose run is in *keep_run_ids* (its remote Job is
+    a lease whose run is in *keep_run_ids* (its remote Job is
     not settled yet) is not reclaimed; the remote supervisor releases it later.
 
-    flowgate.v02.0139: *owns_run_id* (``run_id -> bool``) limits the sweep to leases this
+    *owns_run_id* (``run_id -> bool``) limits the sweep to leases this
     server issued. FlowGate v0.1 shares the table, and its leases are not this
     process's orphans even though they predate its start.
     """
@@ -269,7 +269,7 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
     conflict -- an existing lease that is not a matching-chain handoff, or a
     concurrent writer winning the insert race -- returns the BLOCKING row's
     snapshot as captured at that exact decision point (``row["run_id"] !=
-    run_id``), not bare ``None`` (flowgate.default.0502 T0004 rev2). Reusing
+    run_id``), not bare ``None``. Reusing
     this snapshot lets a caller attribute a 409 to its true blocker without a
     second query: a caller-side re-fetch (e.g. get_active()) runs its own
     recover_expired() sweep and can reclaim -- and blank out -- the very lease
@@ -288,7 +288,7 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
                 _log_expired_reclaim(current)
                 current = None
             if any(row.get("run_id") == run_id for gid, row in _memory.items() if gid != group_id):
-                # 0401 NR0003 §4 / T0004 item 7: mirrors the DB-path pre-check below so the
+                # mirrors the DB-path pre-check below so the
                 # in-memory contract direct service tests run against (PYTEST_CURRENT_TEST
                 # forces _using_memory() True) matches production's.
                 raise RunIdCollision(run_id)
@@ -332,7 +332,7 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
             store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, current["run_id"]])
             _log_expired_reclaim(current)
             current = None
-        # 0401 NR0003 §4 / T0004 item 7: neither write below is protected against the
+        # neither write below is protected against the
         # run_id UNIQUE index (migration 077) -- only group_id has an ON CONFLICT target.
         # Check first so a colliding run_id (two runs minted the same today-serial) comes
         # back as RunIdCollision for the caller to retry, instead of an unhandled DB
@@ -466,9 +466,9 @@ def begin_handoff(group_id: str, run_id: str) -> bool:
 
 def update_token(group_id: str, run_id: str, token_id: Optional[str],
                   action_scope: Optional[str] = None) -> None:
-    """Re-point the lease at a reissued token (0359 L0007 §2.9).
+    """Re-point the lease at a reissued token.
 
-    0417 T0013: a document_review_loop hop reissues a token with a DIFFERENT action_scope
+    a document_review_loop hop reissues a token with a DIFFERENT action_scope
     than the one activate() first recorded (review <-> edit as the loop alternates stages) —
     without also refreshing action_scope here, mutation_policy's owner-match check compares
     the new token's real scope against this lease's stale one and 403s every rework hop.
@@ -500,7 +500,7 @@ def update_token(group_id: str, run_id: str, token_id: Optional[str],
 
 def release(group_id: str, run_id: str, reason: str = "released") -> bool:
     """reason distinguishes a normal worker-finish release from a manual/forced one
-    (flowgate.default.0502 T0004 SS7) -- see the callers in admission.py, chain.py,
+    -- see the callers in admission.py, chain.py,
     finalize.py and review.py for the concrete reasons each path uses."""
     if _using_memory():
         with _memory_lock:
@@ -532,7 +532,7 @@ def release(group_id: str, run_id: str, reason: str = "released") -> bool:
 
 def max_serial_for_date(date_str: str) -> int:
     """Highest NNNNNN serial already claimed by an OPEN lease whose run_id starts
-    with ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 item 7).
+    with ``aiv_<date_str>_``.
 
     A run still admitting or running has no ai_invoke_runs row yet (that table is
     written once, at finalize), but its lease already reserves the serial -- so the

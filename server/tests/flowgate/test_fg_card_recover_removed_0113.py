@@ -1,4 +1,4 @@
-"""0113 T#2: the removed manual card endpoint cannot mutate a run in any node state."""
+"""the removed manual card endpoint cannot mutate a run in any node state."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

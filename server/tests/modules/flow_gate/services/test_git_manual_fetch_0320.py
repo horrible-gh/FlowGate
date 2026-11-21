@@ -1,10 +1,10 @@
-"""manual_fetch clean-base fast-forward (flowgate.default.0320 — B0001/NR0003/TR0005).
+"""manual_fetch clean-base fast-forward.
 
 B0001 ("Git 연동 시 뒤쳐짐...... 영원히 안가져올건가?"): the operator-facing "Fetch"
 (``manual_fetch``) only moved the remote-tracking ref ``refs/remotes/origin/{base}``
 and then *reported* ``behind_count`` — the local base branch (``refs/heads/{base}``)
 never advanced, so the base checkout stayed behind upstream forever and the Fetch
-action was a no-op recovery. TR0005 makes ``manual_fetch`` fast-forward a CLEAN base
+action was a no-op recovery. the earlier implementation makes ``manual_fetch`` fast-forward a CLEAN base
 to ``origin/{base}`` after the fetch, reusing finalize's verified
 ``merge --ff-only origin/{base}`` pattern.
 
@@ -98,7 +98,7 @@ def _merge_ran(calls) -> bool:
 
 def test_clean_base_fast_forwards_to_origin(monkeypatch):
     # Clean base + origin/main present and ahead -> ff-only runs, base advances,
-    # behind drops to 0. This is the core B0001 fix.
+    # behind drops to 0. This is the core the regression fix.
     calls = _install(
         monkeypatch, dirty=False, origin_ref=True, ff_ok=True, ahead_behind=(0, 0)
     )
@@ -152,7 +152,7 @@ def test_diverged_base_reports_without_destructive_reset(monkeypatch):
 
 
 def test_query_remote_ref_reads_secret_through_the_facade_seam(monkeypatch):
-    # NR0025 T0030 §3.7(a): _query_remote_ref must resolve `_load_secret_for` through
+    # (a): _query_remote_ref must resolve `_load_secret_for` through
     # `_gs.` at call time, not an early-bound copy imported at refs.py's top. Before
     # §3.1 the early binding made the real (unpatched) function run and `secret` come
     # back "" regardless of what the facade attribute was set to.

@@ -1,4 +1,4 @@
-"""Query budget for document-read responses (flowgate.default.0291 T3).
+"""Query budget for document-read responses.
 
 _parse_doc_workflow first queried the root (type_code=R, limit=1, falling back to B),
 then fetched the same group's document list (limit=100). Both sort by updated_at DESC,

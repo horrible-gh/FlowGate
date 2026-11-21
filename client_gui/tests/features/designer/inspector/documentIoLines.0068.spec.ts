@@ -230,7 +230,7 @@ describe('card document lines on the Frame', () => {
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[id, 'edit']])
   })
 
-  // flowgate.v02.0074 T#2 (D#1 §6.3 / §7.5, R §1.4): the WP card's plan line — the same group, a work plan's presses.
+  // the WP card's plan line — the same group, a work plan's presses.
   describe('a work plan card’s plan line (0074 T#2)', () => {
     const plan = doc('0006', 'WP')
 

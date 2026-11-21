@@ -1,13 +1,13 @@
-// flowgate.v02.0048 T#3 — skeleton of the review document API (D#1 §6.3). Owned by T#6 (actions), which
+// skeleton of the review document API. Owned by the earlier implementation (actions), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `review`. index.ts already re-exports it.
 //
-// flowgate.v02.0048 T#6 — the Inspector header actions' calls, all existing v0.1 endpoints (NR0003
+// the Inspector header actions' calls, all existing v0.1 endpoints (the review
 // §2.3 / §2.5, no new server API):
 //   approve / reject   POST /api/v1/documents/{doc_id}/review_transitions/{approve|reject}
 //                      body { comment } (reject: the reason, required -> rejection_reason)
 //                      -> { document, tr_commit? } (tr_commit only on a TR approval)
-//   mark_revised       POST /api/v1/documents/{doc_id}/review_transitions/mark_revised (flowgate.v02.0083 T#3:
+//   mark_revised POST /api/v1/documents/{doc_id}/review_transitions/mark_revised (the earlier change the earlier implementation:
 //                      the work plan window's [제출] of a rejected plan — rejected -> pending_review, document.update)
 //   run / rework       POST /api/v1/ai-invoke/start  { project, module, group, doc_ref,
 //                      action_scope: edit | rework, mode: single } -> { run_id, status, … }
@@ -100,7 +100,7 @@ export function reviewReject(docId: string, reason: string): Promise<ReviewTrans
   return reviewTransition(docId, 'reject', reason)
 }
 
-/** flowgate.v02.0083 T#3 — puts a rejected document back in review after its author revised it (rejected -> pending_review). */
+/** puts a rejected document back in review after its author revised it (rejected -> pending_review). */
 export function reviewMarkRevised(docId: string): Promise<ReviewTransitionResult> {
   return reviewTransition(docId, 'mark_revised')
 }

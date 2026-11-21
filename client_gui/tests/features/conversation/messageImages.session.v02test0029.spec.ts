@@ -5,7 +5,7 @@ import { createConversationSession, readStoredSends } from '@/features/conversat
 import { draftUserId, type DraftSendSnapshot } from '@/features/conversation/drafts'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02test.0029 T0005 — the ids of the message images ride the send pipeline (bubble, retry, F5 record, first
+// the ids of the message images ride the send pipeline (bubble, retry, F5 record, first
 // message of a new chat) and reach POST /conversation/turn as `images: [image_id…]`, under one idempotency key.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'

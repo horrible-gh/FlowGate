@@ -1,4 +1,4 @@
-"""flowgate.default.0624 T0004: connected FK regression for snapshot audit actors.
+"""connected FK regression for snapshot audit actors.
 
 `test_snapshot_materialization_0517.py` mocks `workflow_events.create` with a plain
 list append (see its `snapshot_env` fixture), so a snapshot actor that is a free-text
@@ -6,7 +6,7 @@ label instead of a real `users.user_id` never touches the real `workflow_events`
 table and its `actor_user_id ... REFERENCES users(user_id)` FK. That is exactly how
 `snapshot-recovery` / `snapshot-ttl-cleanup` / `snapshot-run-cleanup` /
 `snapshot-group-cleanup` / `group-close:<id>` / `ai-run:<run-id>` reached production
-unnoticed (flowgate.default.0624 NR0003).
+unnoticed.
 
 These tests run the real `modules.flow_gate.db.workflow_events.create()` and the real
 `modules.flow_gate.db.snapshot_requests` functions against a fully migrated sqlite

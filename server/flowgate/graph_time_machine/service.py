@@ -1,4 +1,4 @@
-"""Graph Time Machine assessment, reused by the T#13 API and T#15 response.
+"""Graph Time Machine assessment, reused by the the earlier implementation API and the earlier implementation response.
 
 inspect() is an internal read service, NOT a preview endpoint.
 require_safe() is called inside the executing API's existing Flow guard. It

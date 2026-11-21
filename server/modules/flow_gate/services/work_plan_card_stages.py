@@ -1,4 +1,4 @@
-"""v0.2 card-owned instruction/result steps (0074 T0017; supersedes D0006 single-step design).
+"""v0.2 card-owned instruction/result steps (supersedes the design single-step design).
 
 The optional card_stage_model marker isolates this shape from v0.1 plans. DS remains a document
 kind, never a standalone v0.2 card. Legacy standalone DS records are retained as compatibility data.

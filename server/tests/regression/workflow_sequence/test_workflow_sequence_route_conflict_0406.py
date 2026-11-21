@@ -1,4 +1,4 @@
-"""0406 T0005: query-form workflow sequence has one canonical GET contract."""
+"""query-form workflow sequence has one canonical GET contract."""
 from __future__ import annotations
 
 import json

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0072 T#3 — the settings tab of a Graph work plan (WP) card. `@/features/document` is mocked as a small
+ * the settings tab of a Graph work plan (WP) card. `@/features/document` is mocked as a small
  * card settings server with the plan fields the server keeps (`fields.PLAN`: pre_instruction_auto, run_ai, restart,
  * review_ai, review_count, time_limit, review_basis); every other call of `@shared/api` is offline and recorded:
  *
@@ -283,7 +283,7 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     expect(isOn(w)).toBe(false)
   })
 
-  // flowgate.v02.0113 T#1 (0002-D revision §3.13): the Flow's run lock alone no longer locks a card's settings — its node run's
+  // the Flow's run lock alone no longer locks a card's settings — its node run's
   // node_running (actual running) does; a waiting card under a running run stays editable.
   it('a running card (server lock / node_running), an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
     locked = true
@@ -294,7 +294,7 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     w.unmount()
     locked = false
     const running = { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }
-    // flowgate.v02.0130: an unconfirmed run status no longer holds a card whose settings the server answered (below).
+    // an unconfirmed run status no longer holds a card whose settings the server answered (below).
     for (const fields of [running, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()

@@ -1,4 +1,4 @@
-// flowgate.v02.0031 — unsent composer text per chat. Same browser key as the v0.1
+// unsent composer text per chat. Same browser key as the v0.1
 // ConversationView (`flowgate.user.<user>.chat.drafts.<docId>`), so a draft typed in one
 // generation of the screen is still there in the other. Best effort: storage failures never
 // block typing or sending.
@@ -27,7 +27,7 @@ export interface DraftSendSnapshot {
   owner: DraftOwner
   body: string
   revision: number
-  /** flowgate.v02test.0029: ids of the uploaded message images sent with the text (the composer's ready thumbnails). */
+  /** ids of the uploaded message images sent with the text (the composer's ready thumbnails). */
   images?: string[]
   createIntentId?: string
   createdChatId?: string
@@ -87,7 +87,7 @@ export function saveDraft(target: DraftTarget | null, value: string): void {
   }
 }
 
-// flowgate.v02test.0029: the draft's attached message images are kept as their image ids only (the bytes live on the
+// the draft's attached message images are kept as their image ids only (the bytes live on the
 // server for 24 hours; one the server already cleaned up is shown as gone when the draft is read again). A separate key
 // beside the text, so the v0.1 text key keeps its format.
 const imagesKey = (target: DraftTarget) => `${draftKey(target)}.images`

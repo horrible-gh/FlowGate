@@ -1,4 +1,4 @@
-"""v0.1 contact delegation (D0004 §3.5 / §4.3, L0009 §2.2.3 / §2.2.4, P0008 §9).
+"""v0.1 contact delegation.
 
 The v0.1 routes call these through ``api.v01_contact`` — one thin call per contact, placed after
 the existing v0.1 guards (``group_disposed``, AI run in progress). For an unassigned or v0.1 Flow
@@ -6,13 +6,13 @@ the v0.1 behaviour and result are unchanged; a Graph or conflict Flow is refused
 engine moves it.
 
 - decide / sequence save (``guarded_v01_assignment``): on an unassigned Flow the v0.1 call runs
-  inside the Flow guard, so it and a Graph confirmation cannot both assign the Flow (L0009 E-05).
+  inside the Flow guard, so it and a Graph confirmation cannot both assign the Flow.
 - advance (``progress_refusal``): read-only judgement.
 - inbox registration / review decision (``after_document_event``): after v0.1 committed; a Graph
   Flow hands the event to the result binder, never changing the v0.1 response.
 - R↔B root conversion (``follow_root_conversion``): called by ``documents.root_conversion`` inside its
-  Flow guard after the identity rewrite, so a card line holding the root follows its new id (flowgate.v02.0053
-  T#1) and the draft cards holding it take the new type (0064 T#3).
+  Flow guard after the identity rewrite, so a card line holding the root follows its new id (the earlier change
+  ) and the draft cards holding it take the new type.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def _refusal(own: Ownership, doc_id: str, flow_id: str) -> Optional[V01Rejection
 
 
 def guarded_v01_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None) -> Any:
-    """decide and sequence save (L0009 §2.2.3). Returns the v0.1 call's result or a V01Rejection.
+    """decide and sequence save. Returns the v0.1 call's result or a V01Rejection.
 
     ``doc`` is the v0.1 document row the request names (None when it does not exist). A v0.1
     exception propagates unchanged (the guard transaction rolls back, the Flow stays unassigned
@@ -95,7 +95,7 @@ def ownership_refusal(own: Ownership, doc_id: str, flow_id: str) -> Optional[V01
 
 def follow_root_conversion(doc: Optional[dict], converted: Any, *, old_type: str, new_type: str,
                            actor: Optional[str] = None) -> list[str]:
-    """After the R↔B identity rewrite, in its transaction (``root_conversion``, 0064 L0005 2.8): the card
+    """After the R↔B identity rewrite, in its transaction (``root_conversion``, the earlier implementation 2.8): the card
     lines holding the converted root take its new id and kind, then the draft cards holding it as their
     requirement line take the new type. Returns the node keys whose draft card changed."""
     flow_id = (doc or {}).get("group_id")
@@ -107,7 +107,7 @@ def follow_root_conversion(doc: Optional[dict], converted: Any, *, old_type: str
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[V01Rejection]:
-    """advance / sequence edit of an existing sequence (L0009 §2.2.4): refusal or None (pass)."""
+    """advance / sequence edit of an existing sequence: refusal or None (pass)."""
     flow_id = (doc or {}).get("group_id")
     if not flow_id:
         return None
@@ -121,5 +121,5 @@ def after_document_event(kind: str, flow_id: Optional[str], payload: dict) -> No
     try:
         if read_ownership(flow_id).state == "graph":
             result_binder.on_document_event(kind, flow_id, payload)
-    except Exception:  # noqa: BLE001 — L0009 §2.2.4: the v0.1 response stays a success
+    except Exception:  # noqa: BLE001 — the earlier implementation: the v0.1 response stays a success
         _log.exception("graph result delegation failed kind=%s flow=%s", kind, flow_id)

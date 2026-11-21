@@ -1,12 +1,12 @@
 /**
- * flowgate.v02.0066 T#6 — C14: Center Diff in the real Designer (0066 D#2 §3-10). The real Shell,
+ * C14: Center Diff in the real Designer. The real Shell,
  * right Dock, DesignerGitPanel (HTTP Git source), Center column and Workspace; only the HTTP layer
  * (`@shared/api`) is mocked. A changed-file row of the Git tab opens its group diff in the Center
  * over the hidden (still mounted) Flow tabs and Canvas; ✕ brings the Flow back; another Flow closes
  * it; a 0033 conflict file opens nothing and keeps its intent as it was.
- * T#7 — (b): a row of the Base apply `Diff` pane (target comparison list) opens the diff against
+ * (b): a row of the Base apply `Diff` pane (target comparison list) opens the diff against
  * that target (`base=<target>`, "<target> 기준 ↔ 작업 파일"); changing the target closes it (C23 c).
- * flowgate.v02.0067 T#4 — the same cases with the diff where it is now: the detail of the Git modeless
+ * the same cases with the diff where it is now: the detail of the Git modeless
  * `Diff` tab (0067-R §6). The Designer Center is never hidden or replaced, nothing goes up to the
  * Shell, and `목록으로` goes back to where the file was opened (`파일 관리` or the `Diff` list).
  */
@@ -115,7 +115,7 @@ beforeEach(() => {
     const group = /^\/api\/v1\/projects\/p\/git\/groups\/([^/]+)\/(tree|changes|diff)$/.exec(url)
     if (group?.[2] === 'tree') return { data: { data: { branch: 'flow', commit: 'c0ffee', nodes: [] } } }
     if (group?.[2] === 'changes') {
-      // The target comparison list (T#7 `Diff` pane): one file against `release`.
+      // The target comparison list (`Diff` pane): one file against `release`.
       const changes = params.base === 'release' ? [{ path: 'src/rel.ts', status: 'M' }] : []
       return { data: { data: { group_id: group[1], branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes } } }
     }
@@ -222,7 +222,7 @@ const find = (test: string) => document.body.querySelector<HTMLElement>(`[data-t
 const diffCalls = () => getRequest.mock.calls.filter(([url]) => /\/git\/groups\/[^/]+\/diff$/.test(String(url)))
 const hidden = (el: HTMLElement | null) => !!el && el.style.display === 'none'
 
-// flowgate.v02.0067 T#1 — the Git tab entries open the Git modeless on their tab; its top tabs switch.
+// the Git tab entries open the Git modeless on their tab; its top tabs switch.
 async function openGitWindow(tab: string) {
   const selector = `[data-test="git-worktree-entry"][data-tab="${tab}"], [data-test="git-window-tab"][data-tab="${tab}"]`
   document.body.querySelector<HTMLElement>(selector)!.click()
@@ -244,7 +244,7 @@ async function chooseTarget(name: string) {
   await settle()
 }
 
-// flowgate.v02.0067 T#4 — the diff is the Git modeless `Diff` tab detail; the Center stays the Flow's.
+// the diff is the Git modeless `Diff` tab detail; the Center stays the Flow's.
 const inGitWindow = (el: HTMLElement | null) => !!el && !!find('git-window')?.contains(el)
 const centerUntouched = (canvas: HTMLElement | null) => {
   expect(hidden(find('designer-center'))).toBe(false)
@@ -342,7 +342,7 @@ describe('Designer Shell x Git tab — the diff in the Git modeless `Diff` tab (
     expect(find('designer-canvas')?.getAttribute('data-flow-id')).toBe('p.ui.0002')
   })
 
-  // flowgate.v02gui.0004: a conflict file opens the Git part's own direct resolver, not the Center diff / an intent.
+  // a conflict file opens the Git part's own direct resolver, not the Center diff / an intent.
   it('(e) a 0033 conflict file opens no diff; it opens the conflict resolver instead', async () => {
     pending = [{ group_id: 'p.ui.0001', status: 'conflict', merge_id: 7, ac_doc_id: null, review_state: null, final_approval_bound: false }]
     const w = await mountShell()

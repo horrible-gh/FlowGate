@@ -1,12 +1,12 @@
 /**
- * flowgate.v02.0061 T#14 — the run commands, the run band and the run lock on screen:
+ * the run commands, the run band and the run lock on screen:
  * - flowRunControl: 다음 단계 / 전체 실행 are one step / full command (no stop after it, the draft confirmed on an idle
  *   Flow only); 일시정지 / 재개 / 중지 are one call each; a refusal keeps the server's code and message.
  * - designerTop: the run buttons and the Run menu follow the run phase (idle / running / paused / stopping); 재실행
  *   never; every run command waits while one is answered; the band names status, command, idle reason, executions.
  * - flowRunLock: running / paused / stopping lock the structure; done / open / review nodes and their incoming lines
  *   are protected; a line into a node the work is going through is running.
- * - TR0031 rev1: a draft view keeps the cards' result integration / Hold from the run read (a card added to the draft
+ * - the earlier implementation: a draft view keeps the cards' result integration / Hold from the run read (a card added to the draft
  *   gets none); a run status not confirmed yet (being read, read failed) is not idle — the structure and the run commands
  *   wait (the Canvas read's run status confirms it too), and a Graph's load never lifts a lock.
  */

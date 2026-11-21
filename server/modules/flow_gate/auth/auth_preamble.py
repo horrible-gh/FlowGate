@@ -1,4 +1,4 @@
-"""Fold the per-request auth preamble into a single query (0291 T1, CH0016).
+"""Fold the per-request auth preamble into a single query.
 
 Problem
 ----
@@ -9,7 +9,7 @@ One authenticated request spends a fixed three queries before the handler even s
     SELECT * FROM auth_sessions WHERE session_id=?   -- is this session still alive
     SELECT * FROM users WHERE user_id=?              -- is this user active
 
-0276 T0009 added a 5-second TTL cache here, yet the measured dump posted in CH0016 still
+added a 5-second TTL cache here, yet the measured dump posted in the discussion still
 shows each of the three queries four times. There are two reasons; this file and
 ``utils/ttl_cache.py`` each take one.
 
@@ -37,13 +37,13 @@ Had the merged result been cached separately, no hook could have cleared that co
 It is therefore safe to fail. If the prefetch ends in an exception it fills nothing and
 returns quietly, and callers query three times as before. No new failure point is added to the auth path.
 
-Numbers (from the CH0016 dump)
+Numbers (from the the discussion dump)
 -----------------------
 
 * One cold request: 3 queries → 1.
 * N concurrent requests (N=4 in the dump): 3N → 1. Single-flight turns N into 1, and this
   merge turns 3 into 1.
-* A warm request: 0 queries (true since 0276 T0009, unchanged here).
+* A warm request: 0 queries (true since the earlier implementation, unchanged here).
 """
 from __future__ import annotations
 

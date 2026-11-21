@@ -1,4 +1,4 @@
-"""TR2 re-approval after a Time Machine rewind (flowgate.default.0658 T0004), connected.
+"""TR2 re-approval after a Time Machine rewind, connected.
 
 Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration, a
 real Git worktree in scratch, the real HTTP routes. The rewind is the one the workflow

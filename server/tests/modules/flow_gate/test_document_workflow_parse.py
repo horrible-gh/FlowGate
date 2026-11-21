@@ -363,7 +363,7 @@ def test_non_r_viewing_sibling_shows_t_doc_as_head(monkeypatch):
     assert parsed["workflow_head_doc_review_status"] == "pending_review"
     # The in-progress T head is the last slot but still an advanceable step (the action
     # bar points the viewer to it); next_step_exists=True. (Was False under b39f6b8's
-    # `head_idx < step_count-1`; group 0104 restore.)
+    # `head_idx < step_count-1`; the earlier change restore.)
     assert parsed["next_step_exists"] is True
 
 
@@ -524,7 +524,7 @@ def test_head_type_filled_for_pending_with_unrealized_step(monkeypatch):
 
 
 def test_head_type_pending_m_is_head_not_skipped(monkeypatch):
-    """B0001 (group 0105): a PENDING (not-yet-created) auto-approve slot (M) is an
+    """(the earlier change): a PENDING (not-yet-created) auto-approve slot (M) is an
     actionable 'create next document' step and must surface as the head, matching the
     SSOT workflow_sequences.get_effective_head (which does not type-filter unrealized
     slots). Previously (T831) the pending M was skipped to DS, diverging the action-bar
@@ -553,7 +553,7 @@ def test_head_type_pending_m_is_head_not_skipped(monkeypatch):
 
 
 def test_head_type_pending_memo_tail_offers_create_not_final_approval(monkeypatch):
-    """B0001 (group 0105) core repro: seq=[R(realized), M(pending)]. The only remaining
+    """(the earlier change) core repro: seq=[R(realized), M(pending)]. The only remaining
     slot is a memo that has not been created yet -> head must be M ([create document]),
     NOT the synthetic AC final-approval gate. Was head_type='AC' before the fix."""
     GROUP_ID = "G001"
@@ -584,7 +584,7 @@ def test_head_type_pending_memo_tail_offers_create_not_final_approval(monkeypatc
 def test_head_final_approval_gate_when_only_m_approved(monkeypatch):
     """T831 / M042: seq=["M"], M approved -> no actionable document step remains, but final
     approval (AC) is not yet done -> head = AC/pending so the action bar shows [final approval]
-    (group 0104 restore; was status='done' / head_type unset under b39f6b8's auto-finalize)."""
+    (restore; was status='done' / head_type unset under b39f6b8's auto-finalize)."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
@@ -608,7 +608,7 @@ def test_head_final_approval_gate_when_only_m_approved(monkeypatch):
     assert parsed.get("workflow_head_type") == "AC"
     # Synthetic AC (no AC slot in seq_items, head_idx == len(steps)) must still report
     # an advanceable next step, so the action bar surfaces [final approval] rather than
-    # blanking to 'info' (group 0104 regression part 2).
+    # blanking to 'info' (regression part 2).
     assert parsed["next_step_exists"] is True
 
 
@@ -676,7 +676,7 @@ def test_n158_non_r_two_unrealized_steps(monkeypatch):
 
     The final-approval gate (AC) is itself the advanceable action — viewing the last
     approved doc must surface [final approval]. b39f6b8 had reported False here (AC is
-    the last slot), blanking that action bar; restored to True (group 0104)."""
+    the last slot), blanking that action bar; restored to True (the earlier change)."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001",  "type_code": "R",  "doc_review_status": "wf_in_progress", "seq": 0},
@@ -792,7 +792,7 @@ def test_n158_non_r_no_seq_items_fallback_done(monkeypatch):
     assert parsed.get("workflow_head_doc_id") is None
 
 
-# ── 0119 B0001 / NR0009 §6.1: decided-but-empty sequence → 'empty', not 'done' ───
+# ── the regression / the review: decided-but-empty sequence → 'empty', not 'done' ───
 #
 # A decided workflow whose sequence ROW exists but has zero items (every step deleted)
 # must NOT be reported as a finished workflow. Reporting 'done' here let the strip paint

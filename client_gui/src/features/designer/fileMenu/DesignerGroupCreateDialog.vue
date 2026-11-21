@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0043 — File › New Group: the v0.1 module create (features/project createGroup)
+  <!-- File › New Group: the v0.1 module create (features/project createGroup)
        with the two fields that contract reads — display name and key — and the existing key
        suggestion (POST /slug/romanize), as the v0.1 create modal and the Project create child
        offer them. Emits the created Group; the Shell re-reads the tree and opens it. -->
@@ -88,7 +88,7 @@ const name = ref('')
 const nameTouched = ref(false)
 const suggesting = ref(false)
 const submitting = ref(false)
-// flowgate.v02.0088 F10: the server's own words raw, otherwise the localized fallback key —
+// the server's own words raw, otherwise the localized fallback key —
 // rendered in the current locale while it stays on screen. (The adapter leaves only the server's
 // words in Error.message; an empty one means there were none.)
 type SubmitError = { readonly key: string } | { readonly raw: string }

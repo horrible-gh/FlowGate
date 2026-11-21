@@ -1,6 +1,6 @@
-"""WP proposal-dialog server contracts (flowgate.default.0405 T0007).
+"""WP proposal-dialog server contracts.
 
-Pin the contracts fixed by P0004's complete scope-and-authoring mention:
+Pin the contracts fixed by the plan's complete scope-and-authoring mention:
 
 1. Content, placement, and empty values in '## 작업계획 맡길 범위'. T0011 rev1 removes
    the obsolete step-selection line because the UI has no such selector.
@@ -41,7 +41,7 @@ SCOPE = {
     "provider_ids": ["aip_opus", "aip_sonnet"],
 }
 EMPTY_SCOPE = {"quantity_type_codes": [], "provider_ids": []}
-# 0416 T0004: planner-note input added after B0001 reported no way to pass a note.
+# planner-note input added after the regression reported no way to pass a note.
 # Keep the existing SCOPE/EMPTY_SCOPE fixtures without notes so their existing tests
 # continue to exercise the previous contract.
 SCOPE_WITH_NOTE = {**SCOPE, "note": "기존 코드 스타일을 따르고 테스트를 함께 작성하십시오."}
@@ -86,13 +86,13 @@ def test_scope_section_body_follows_p0004(seed):
     assert lines[1] == "---"
     assert lines[2] == "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오."
     assert "장수를 셀 타입: DS " in section
-    # flowgate.default.0423 T0005 item 8/15: the workflow_type_counts derivation this
+    # the workflow_type_counts derivation this
     # section shows for the worker to use as evidence (empty here — no parent_doc_id).
     assert "workflow_type_counts 제시값: (없음)" in section
     assert "후보 공급자:" in section
     # 0405 T0011 rev1: remove '맡길 단계' from both the UI and the mention.
     assert "맡길 단계" not in section
-    # flowgate.default.0423 T0005 item 1/15: NR0003 §8 phrasing replaces the old
+    # phrasing replaces the old
     # "각각 1" command — this is no longer the story the mention tells the worker.
     assert "고른 타입의 수량은 각각 1입니다." not in section
     assert "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다." in section
@@ -111,7 +111,7 @@ def test_scope_section_draws_none_for_empty_arrays(seed):
 
 
 def test_a_stale_step_keys_field_is_ignored(seed):
-    """0405 T0011 rev1: legacy step_keys input must not restore the removed steps line."""
+    """legacy step_keys input must not restore the removed steps line."""
     from modules.flow_gate.services import mention_service
 
     section = mention_service._work_plan_scope_section(
@@ -166,7 +166,7 @@ def test_scope_section_note_label_localises(seed):
         EMPTY_SCOPE, PROJECT, "ja")
 
 
-# flowgate.default.0416 TR0005: the newly restored execution-provider selection
+# the newly restored execution-provider selection
 # appears on its own line in the section and remains independent of
 # the provider_ids candidate multiselect.
 
@@ -223,14 +223,14 @@ def test_default_provider_renders_even_without_candidate_providers(seed):
     assert "후보 공급자: (없음)" in section
 
 
-# flowgate.default.0416 TR0005 rev2: review findings 3 and 4.
+# review findings 3 and 4.
 # rev1 merely listed the two values without telling the worker where to use them.
 # That failed to ensure the note reached defaults.note and left an execution provider
 # outside the candidates contradicting the tail instruction to use only candidates.
 # Pin the two clarifying instructions in the section.
 
 def test_scope_section_tells_the_worker_to_author_defaults_note_from_the_delivery_note(seed):
-    """0421 NR0003/T0005: replace verbatim-copy instructions with new-authoring guidance."""
+    """replace verbatim-copy instructions with new-authoring guidance."""
     from modules.flow_gate.services import mention_service
 
     section = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ko")
@@ -245,7 +245,7 @@ def test_scope_section_tells_the_worker_to_author_defaults_note_from_the_deliver
 
 
 def test_note_authoring_instruction_localises(seed):
-    """0421 NR0003/T0005: en and ja must also omit verbatim-copy instructions."""
+    """en and ja must also omit verbatim-copy instructions."""
     from modules.flow_gate.services import mention_service
 
     en = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "en")
@@ -290,7 +290,7 @@ def test_execution_provider_rule_localises(seed):
 
 
 def test_template_rules_say_where_the_two_values_go(seed):
-    """T0004 acceptance criterion 2 also reaches workers through canonical WP template rules.
+    """acceptance criterion 2 also reaches workers through canonical WP template rules.
 
     rev1 had no defaults.provider_id rule and only defined defaults.note as a shared
     one-line note; it did not instruct workers how to use the delivery note.
@@ -305,7 +305,7 @@ def test_template_rules_say_where_the_two_values_go(seed):
         rules = "\n".join(wp.TEMPLATE_RULES[locale])
         assert "defaults.provider_id" in rules
         assert "defaults.note" in rules
-        # flowgate.default.0423 T0005 item 3/15: the quantity-basis rule (evidence
+        # the quantity-basis rule (evidence
         # first, workflow_type_counts as backup, never guess 1) must also be there.
         assert "workflow_type_counts" in rules
 
@@ -372,7 +372,7 @@ def test_wp_mention_without_scope_has_no_section(seed):
 
 @pytest.mark.parametrize("head_type", ["D", "T", "TR", "N", "TS"])
 def test_non_wp_mention_is_byte_identical_with_a_scope(seed, head_type):
-    """P0004: preserve every byte of non-WP mentions."""
+    """preserve every byte of non-WP mentions."""
     assert _mention(head_type, work_plan_scope=SCOPE) == _mention(head_type)
 
 
@@ -514,7 +514,7 @@ def test_non_ai_create_preserves_the_planner_note_verbatim_in_defaults(seed, sto
 
 
 def test_create_still_accepts_an_empty_planner_note(seed, storage_root):
-    """Empty notes remain valid; T0004 does not require input."""
+    """Empty notes remain valid; the earlier implementation does not require input."""
     from unittest.mock import patch as mock_patch
 
     client = _client()
@@ -609,7 +609,7 @@ def test_issued_wp_mention_carries_the_scope_section(issued_wp_mention):
 
 
 def test_issued_wp_mention_carries_how_to_write_it(issued_wp_mention):
-    """Include both authoring-guidance entry points in the actual issued mention (P0004)."""
+    """Include both authoring-guidance entry points in the actual issued mention."""
     mention = issued_wp_mention["mention"]
     assert TEMPLATE_HEADER in mention
     assert "/help/items/design_template/WP" in mention
@@ -660,7 +660,7 @@ def test_the_submit_pointer_states_the_work_plan_body_format(seed):
 
 
 def test_issued_wp_mention_carries_the_planner_note(seed, storage_root):
-    """T0004: include the UI-entered note in the actual issued mention.
+    """include the UI-entered note in the actual issued mention.
 
     The shared module fixture uses note-free SCOPE for other tests, so issue a separate
     advance request with SCOPE_WITH_NOTE here.
@@ -701,7 +701,7 @@ def test_issued_wp_mention_carries_the_planner_note(seed, storage_root):
     assert resp.status_code == 201, resp.body
     mention = json.loads(resp.body)["mention"]
     assert "전달 멘트: 기존 코드 스타일을 따르고 테스트를 함께 작성하십시오." in mention
-    # 0416 TR0005 rev2, findings 3/4: the issued mention carries both values and usage
+    # findings 3/4: the issued mention carries both values and usage
     # instructions; unit tests alone cannot prove insertion into the final mention.
     assert "실행 프로바이더: aip_opus" in mention
     assert "그대로 옮겨 적으십시오" not in mention
@@ -712,9 +712,9 @@ def test_issued_wp_mention_carries_the_planner_note(seed, storage_root):
 
 
 def test_create_leaves_every_step_unassigned_when_defaults_provider_is_null(seed):
-    """0416 TR0005 rev2, finding 2: defaults.provider_id propagates to every generated step.
+    """defaults.provider_id propagates to every generated step.
     Using the execution provider there would silently assign steps and remove the
-    unassigned option. T0004 task 3 leaves step/default assignment to WorkPlanEditor.vue
+    unassigned option. the earlier implementation task 3 leaves step/default assignment to WorkPlanEditor.vue
     after creation.
     """
     from modules.flow_gate.services import work_plan_service as wp
@@ -745,7 +745,7 @@ def test_create_leaves_every_step_unassigned_when_defaults_provider_is_null(seed
 
 def test_ai_authored_wp_body_preserves_defaults_note(seed):
     """AI-authored WP inbox submissions use the same validate() call as _handle_new;
-    validation must preserve defaults.note (T0004).
+    validation must preserve defaults.note.
     """
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -767,7 +767,7 @@ def test_issued_token_is_a_new_scope_token(issued_wp_mention):
     assert issued_wp_mention["scratch_dir"]
 
 
-# ── 7. Project without registered AI providers (0405 T0011 rev2) ──
+# ── 7. Project without registered AI providers ──
 #
 # The user requested creation with only the first field when no provider exists.
 # Hiding candidate field 2 in the UI is insufficient:

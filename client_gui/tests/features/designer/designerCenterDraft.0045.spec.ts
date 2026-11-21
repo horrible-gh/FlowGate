@@ -1,15 +1,15 @@
 /**
- * flowgate.v02.0045 T0013 (S3+S4) — Center session Graph draft editing over a fake source:
+ * (S3+S4) — Center session Graph draft editing over a fake source:
  * Palette drop -> draft node (the Shell's `readDrop`), the first draft save (version 0), key
  * remapping with the node's position stored only after it has its key, connect / remove / undo,
  * re-reads deferred while a draft save waits, validation, confirmation (S4-1) and its refusal
  * with issues (S4-4). No DOM.
- * TR0020 rev3: no start-draft / switch-view actions — a Graph Flow's latest revision is edited as
+ * no start-draft / switch-view actions — a Graph Flow's latest revision is edited as
  * is (its first save creates the draft), a stored draft is shown without asking, and 실행 shows
  * the run again. A refused save (conflict / error) keeps its edits and is retried (a version conflict
- * rebased on the stored draft) instead of reading the Flow again; flowgate.v02gui.0019: the placed card is
+ * rebased on the stored draft) instead of reading the Flow again; the earlier change: the placed card is
  * saved again.
- * Rework (TR0014 r1): a tab closed / project changed while a new node's draft save runs still
+ * Rework (r1): a tab closed / project changed while a new node's draft save runs still
  * stores the node's position once the save answers its key, and a reopened tab reads it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

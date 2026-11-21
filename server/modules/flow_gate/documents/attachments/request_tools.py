@@ -1,4 +1,4 @@
-"""How AI runs reach the attachment upload request (flowgate.chat.0017 CH0002 §2).
+"""How AI runs reach the attachment upload request.
 
 One capability, four ways in, one service behind them (``requests``):
 

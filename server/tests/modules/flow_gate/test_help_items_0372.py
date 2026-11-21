@@ -96,7 +96,7 @@ def _hidden(body):
     return {entry["name"]: entry["reason"] for entry in body["hidden"]}
 
 
-# 0684 T#4: Source Bundle is removed. Its two help items (source_bundles and the
+# Source Bundle is removed. Its two help items (source_bundles and the
 # source_snapshots alias that carried the Bundle policy) and the Bundle notice are gone from
 # the catalog for every step -- the TS/TSR steps that used to keep them included.
 _BUNDLE_WORDS = ("Source Bundle", "source_bundle", "Bundle/Scratch")
@@ -179,7 +179,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert "changed_files_format" in _names(body)
     assert "step_verification_format" not in _names(body)
     assert "authoring_guide" in _names(body)
-    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists, so the item is listed.
+    # a TR(new) worker runs Self-check before its TR exists, so the item is listed.
     assert "tr_self_check" in _names(body)
     assert _hidden(body) == {
         **{name: "not_chat" for name in help_catalog.chat_help_content.ITEMS},
@@ -188,7 +188,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     }
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
-    # 0092 adds move to the twelve kind-wide tools; resolve_base_dirty stays scope-bound.
+    # adds move to the twelve kind-wide tools; resolve_base_dirty stays scope-bound.
     assert counts["source_tools"] == 12
     assert counts["authoring_guide"] == 1
 
@@ -198,7 +198,7 @@ def test_index_for_a_ts_token_shows_the_verified_commands(monkeypatch):
     body = client.get("/api/v1/help").json()
     assert "test_commands" in _names(body)
     assert "authoring_guide" in _names(body)
-    # group 0390 R0001: TS is now a mutating step type, so it gets write tools and
+    # TS is now a mutating step type, so it gets write tools and
     # must report `## 변경 파일` like T/TR/TSR do.
     assert "changed_files_format" in _names(body)
     assert body["context"]["tool_kind"] == "read_write"
@@ -419,7 +419,7 @@ def test_chat_document_access_exposes_backward_conversation_history(monkeypatch)
 def test_document_attachments_advertises_the_copy_request_body(monkeypatch):
     """Automated-review regression: the help item used to name the copy URL without
     saying what to send it. A worker relying on help alone must be able to build the
-    request without guessing (T0004 s.11/s.17/completion condition 14)."""
+    request without guessing (s.11/s.17/completion condition 14)."""
     client = _client(monkeypatch, _token(action_scope="resolve_base_dirty"), step_type="TR")
     content = client.get("/api/v1/help/items/document_attachments").json()["content"]
     copy = content["copy"]
@@ -440,7 +440,7 @@ def test_submit_carries_this_token_own_identity(monkeypatch):
     assert content["body"]["doc_type"] == "TR"
     assert content["body"]["prev_doc_id"] == "flowgate.default.0372.0001-R"
     assert "commit_message" in content["body"]
-    # T0004 (0506): source_choice keeps the generic scratch-directory guidance but no
+    # : source_choice keeps the generic scratch-directory guidance but no
     # longer interpolates the actual server-local absolute path.
     assert r"C:\work\tok_1" not in content["source_choice"]
     assert "scratch directory" in content["source_choice"]
@@ -595,7 +595,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands", *help_catalog.chat_help_content.ITEMS}  # 0638 T#1: TR(new) lists tr_self_check
+    assert set(_hidden(body)) == {"design_template", "test_commands", *help_catalog.chat_help_content.ITEMS}  # TR(new) lists tr_self_check
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
@@ -841,7 +841,7 @@ def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypa
     assert "tr_self_check" in items
 
 
-# 0049 T0009: chat help is documentation even for read/execute mode.
+# chat help is documentation even for read/execute mode.
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
 @pytest.mark.parametrize("source_access,command_access", [
     ("read", None), ("read", "execute"), ("read_write", "execute"),

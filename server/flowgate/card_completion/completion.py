@@ -1,4 +1,4 @@
-"""Card completion (flowgate.v02.0119 T#2, T-1; 0004-CH seq 9 §1 · seq 11 replacement 2 · seq 13 correction 2).
+"""Card completion (T-1; the discussion seq 9 · seq 11 replacement 2 · seq 13 correction 2).
 
 The completion record is the only source of "this node is done" in a Graph run. A node's ``review -> done`` has three
 submission causes, plus revision-bound Graph human approval:

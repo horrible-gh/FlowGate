@@ -1,4 +1,4 @@
-"""0116: live settings transactions and deterministic admission/evaluation races.
+"""live settings transactions and deterministic admission/evaluation races.
 
 No provider subprocess or network call is made. Real repositories and SQLite FK
 and rollback semantics run behind fake workers, leases and token revocation.
@@ -324,7 +324,7 @@ def test_real_start_run_checks_other_loop_role_before_launch(world,monkeypatch,t
     monkeypatch.setattr(service,'_create_scratch',lambda *a:tmp_path)
     monkeypatch.setattr(service,'compute_review_baseline',lambda _:dict(
         starts_with_rework=bool(first),review_baseline_id=0,baseline_revision_no=0))
-    # flowgate.v02.0136 T0004 T#1: start_run now binds a review loop's first token to the run
+    # start_run now binds a review loop's first token to the run
     # before registration and refuses the start when it cannot (fail-closed). The tokens here are
     # fakes ('fake'/'token') the real token_service cannot verify, so that binding is stubbed like
     # the rest of this test's token world (revoke is stubbed in `world`). The binding itself is

@@ -15,7 +15,7 @@
           </IconButton>
         </div>
       </div>
-      <!-- System AI is evaluated by an administrator; everyone reads the results (CH0006 #48). -->
+      <!-- System AI is evaluated by an administrator; everyone reads the results. -->
       <div v-if="isAdmin" class="detail-actions">
         <Button variant="secondary" @click="setsOpen = true">{{ t('gui.ai.evaluation.sets_manage') }}</Button>
         <Button variant="primary" @click="openStart">＋ {{ t('gui.ai.evaluation.new_evaluation') }}</Button>
@@ -297,7 +297,7 @@ function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'su
   return 'info'
 }
 
-// flowgate.v02.0088 F09: the app's language, not the browser's. Called from the template, so
+// the app's language, not the browser's. Called from the template, so
 // reading `locale` here makes an open list / detail re-render on a language switch; the stored
 // timestamp itself is never changed.
 function formatDate(value?: string | null): string {

@@ -1,9 +1,9 @@
-"""flowgate.default.0688 T#1: a hop that SUBMITTED its document but left a question of its own
+"""a hop that SUBMITTED its document but left a question of its own
 open is held at its hand-off on question_pending, the responder is dispatched (the asking
 step's reviewer first, else the header pick, else the default chain), and the answer resumes
 the chain exactly once through resume_chain's paused-row CAS.
 
-0688 NR0003 §0 (H1): the responder dispatch only ever saw a hop that stopped WITHOUT its
+(H1): the responder dispatch only ever saw a hop that stopped WITHOUT its
 document. A worker that followed the help text -- register the Q, state the assumption,
 submit -- completed, handed off, and its question reached nobody but a person.
 
@@ -36,8 +36,8 @@ _system_pause_row_is_stale). Two harnesses:
                                its run holds no [검수] maps): the runtime reviewer and review
                                count still choose who answers Q1, Q2 and after a restart
 
-0688 T#2 added an answer check to the gate's approvals (review.resolve_review_gate). These
-cases replay the gate T#1 held, so the module's autouse `_t1_gate_without_answer_check` passes
+added an answer check to the gate's approvals (review.resolve_review_gate). These
+cases replay the gate the earlier implementation held, so the module's autouse `_t1_gate_without_answer_check` passes
 that check through (`review._answer_check_gate` returns the gate it was given).
 test_q_answer_check_0688.py drives the same harness with the real check -- the answer
 delivery ledger, the answer-check round, its holds and an unreadable record holding instead
@@ -117,7 +117,7 @@ class FakeQuestions:
         return pk
 
     def answer(self, pk, *, at=None, body="answered", author_kind="ai") -> int:
-        """Add an answer row (``at`` is its created_at) and return its id. The T#2 answer
+        """Add an answer row (``at`` is its created_at) and return its id. The the earlier implementation answer
         check keys what a review was given to check on the answer id, never on ``at``
         (test_q_answer_check_0688.py)."""
         self._next_answer += 1
@@ -176,7 +176,7 @@ class FakeQuestions:
 
 @pytest.fixture(autouse=True)
 def _t1_gate_without_answer_check(monkeypatch):
-    """This module replays the gate T#1 held; the 0688 T#2 answer check on its approvals is
+    """This module replays the gate the earlier implementation held; the the earlier implementation answer check on its approvals is
     covered by test_q_answer_check_0688.py (see the module docstring)."""
     monkeypatch.setattr(review, "_answer_check_gate", lambda gate, bundle: gate)
 
@@ -414,7 +414,7 @@ class TestHandoffPark:
     @pytest.mark.parametrize("hop_kind", [REVIEW_HOP_KIND, REWORK_HOP_KIND])
     def test_a_gate_owned_hop_with_its_own_question_parks_before_the_gate(
             self, handoff, monkeypatch, hop_kind):
-        # 0688 TR0006 review: a review/rework hop of the chain is held exactly like a work
+        # review: a review/rework hop of the chain is held exactly like a work
         # hop -- its queued gate bundle must not reach the gate (approve / next hop) first.
         handoff["probe"] = lambda group_id, run_id: list(OWN_Q)
         monkeypatch.setattr(review, "_pending_review_slot", lambda doc_ref: {
@@ -448,7 +448,7 @@ class TestHandoffPark:
         assert run["stop_code"] == "question_pending"
 
     def test_an_unreadable_probe_parks_instead_of_handing_off(self, handoff):
-        # 0688 T#2 (TR0008 rev1 review): whether the hop left a question open cannot be told,
+        # (review): whether the hop left a question open cannot be told,
         # and the gate past the hand-off may approve -- parked on the gate's unreadable stop.
         def _probe(group_id, run_id):
             raise RuntimeError("questions table unavailable")
@@ -764,7 +764,7 @@ class TestResumeOfHandoffPark:
 
     def test_a_park_on_an_unreviewed_last_step_is_resumable_into_its_settlement(self,
                                                                                 last_step):
-        # 0688 T#2: the inbox keeps an unreviewed step's document unapproved while its hop's
+        # the inbox keeps an unreviewed step's document unapproved while its hop's
         # own question is open, so the answer's resume has that slot to settle (approve it,
         # or hold it for a human when the answer cannot be checked automatically).
         last_step["value"] = 0
@@ -786,7 +786,7 @@ class TestResumeOfHandoffPark:
 
 # ═══════════════════════════ a rework hop's own question: park → answer → the gate it held ═══════════════════════════
 #
-# 0688 TR0006 review: a continuous chain's rework hop runs mode="single", hop_kind="rework".
+# review: a continuous chain's rework hop runs mode="single", hop_kind="rework".
 # It used to hand its queued gate bundle straight to run_review_gate with its question open,
 # so the LAST round of a finite budget approved the reworked document and moved on (or ended
 # the chain) before anybody answered. Now it parks like a work hop, and the answer's resume
@@ -1080,7 +1080,7 @@ class TestQuestionParkGateProgress:
 
 # ═══════════════════════════ the answered resume hands the chain to a waiting server test ═══════════════════════════
 #
-# 0688 TR0006 rev1 review: a specification TS's rework hop parks on its own Q; the answer's
+# review: a specification TS's rework hop parks on its own Q; the answer's
 # resume approves the TS (approve_first) and the next head is the TSR whose server run IS the
 # next step. run_review_gate binds the chain to that run and waits on test_run_pending
 # (park_for_server_test_run); the resume used to fall through to start_run instead, starting
@@ -1302,7 +1302,7 @@ class TestQuestionParkServerTest:
 
 # ═══════════════════════════ engine: the runtime [검수] picks of a real single-mode hop ═══════════════════════════
 #
-# 0688 TR0006 rev1 review: admission.start_run stores None for continuation_reviewer_overrides
+# review: admission.start_run stores None for continuation_reviewer_overrides
 # and continuation_review_count_overrides when mode="single" -- every review/rework hop. The
 # first responder of such a hop's own question read both maps off that run, so the reviewer
 # named for THIS run lost to the stored reviewer (or the header pick), and the step's review

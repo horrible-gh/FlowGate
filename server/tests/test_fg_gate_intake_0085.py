@@ -1,4 +1,4 @@
-"""flowgate.v02.0085 T#2 (D0007 §3.1~§3.3, §7.1, §7.2; §8-1, 2, 3 (reject part), 5, 14 (decision / GET), 16) — the
+"""(the design~,;, 2, 3 (reject part), 5, 14 (decision / GET), 16) — the
 product gate rule ``human_confirm_v1`` and the gate decision intake.
 
 On the real SQLite DB and routes of ``test_fg_card_settings`` with the product policies registered as ``startup``
@@ -187,7 +187,7 @@ def _finish(env, key, seq, typ="T"):
 
 
 def _confirm_next(after: str, new_key: str) -> None:
-    """Revision 2 = revision 1 plus a card after ``after`` (confirmed as P0008 S4 does)."""
+    """Revision 2 = revision 1 plus a card after ``after`` (confirmed as the plan S4 does)."""
     from modules.flow_gate.db.connection import get_store
     from modules.flow_gate.graph_workflow.services import confirm_service
     from modules.flow_gate.graph_workflow.store import definition_store
@@ -226,7 +226,7 @@ def test_the_product_rule_is_registered_for_the_validator_and_the_run(product):
     assert run_policies.implementation("gate_node", "human_confirm_v1", "1") is gate.HUMAN_CONFIRM_V1
     assert policies.current()["gate_node"] is gate.HUMAN_CONFIRM_V1                 # validator: no rule_undecided
     assert gate.HUMAN_CONFIRM_V1.judge("g", "confirm", None) == "confirmed"
-    with pytest.raises(gate.GateDecisionRemoved):                     # 0119 T-3: no new gate rejection
+    with pytest.raises(gate.GateDecisionRemoved):                     # T-3: no new gate rejection
         gate.HUMAN_CONFIRM_V1.judge("g", "reject", "x")
     with pytest.raises(ValueError):
         gate.HUMAN_CONFIRM_V1.judge("g", "maybe", None)
@@ -241,7 +241,7 @@ def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_c
                                   "WHERE run_id = ? AND policy_key = 'gate_node'", (run_id,))
     assert entries == [{"policy_value": "human_confirm_v1", "impl_version": "1"}]
     current = _current(product)
-    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_confirm")     # 0119 T-2: the confirm wait
+    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_confirm")     # T-2: the confirm wait
     nodes = _nodes(current)
     assert (nodes[g]["status"], nodes[t]["status"]) == ("open", "pending")
     wire = nodes[g]["gate"]
@@ -326,7 +326,7 @@ def test_a_running_or_idle_run_takes_the_decision(product, status):
     _set_run(product, status, None if status == "running" else "waiting_approval")
     before = _marks(product)
     refused = _decide(product, run_id, g, {"decision": "reject", "request_id": f"rj-{status}"}, 409)
-    assert refused["error"]["code"] == "gate_reject_removed"            # 0119 T-3: a gate has no rejection
+    assert refused["error"]["code"] == "gate_reject_removed"            # T-3: a gate has no rejection
     _nothing_written(product, before)
     body = _decide(product, run_id, g, {"decision": "confirm", "request_id": f"rs-{status}"})
     assert _nodes(body["run"])[g]["status"] == "done"
@@ -432,10 +432,10 @@ def test_an_idle_run_whose_command_did_not_wait_keeps_idle_with_the_publish_reas
     assert settle.idle_reason(ctx, run_store.node_runs(run_id), run_apply.read_run_state(ctx)) == "gate_publish"
 
 
-# ── §8-3 (reject) — removed by flowgate.v02.0119 T#4 (T-3): a reject is refused and writes nothing ──
+# ── (reject) — removed by the earlier change the earlier implementation (T-3): a reject is refused and writes nothing ──
 
 def test_a_reject_is_refused_writes_nothing_and_the_gate_waits_for_its_confirm(product):
-    """0119 T-3 (0004-CH seq 9 D-2): a confirm card has no rejection any more (the Time Machine and a memo stand in for
+    """T-3 (CH seq 9 D-2): a confirm card has no rejection any more (the Time Machine and a memo stand in for
     it). A reject is refused with 409 ``gate_reject_removed`` after the run / gate checks and before anything is
     written: no decision, no job, no ``gate_rejected`` event; the gate stays open, decidable, and its confirm goes on.
     The other branch goes on as ever. A gate rejected before keeps its history (``test_an_undecided_snapshot_shows_its_
@@ -558,7 +558,7 @@ def test_a_new_round_is_not_touched_by_an_old_requests_resend(product, slot):
     assert _states(product)[g] == "done"
 
 
-# ── D0007 §7.1: the confirm's checks before anything is accepted ─────────────
+# ── the design: the confirm's checks before anything is accepted ─────────────
 
 def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypatch, slot):
     from flowgate.gate_decisions import legacy_adapter
@@ -572,7 +572,7 @@ def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypa
     before = _marks(product)
     nogit = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-1"}, 409)  # an unavailable slot
     assert (nogit["error"]["code"], nogit["error"]["params"]["reason"]) == ("gate_git_unavailable", "git_disabled")
-    # flowgate.v02.0098 T#1 (D0004 §3.5): push true now saves the origin remote with it; an old client's single
+    # push true now saves the origin remote with it; an old client's single
     # remote write still leaves push on with no remote chosen, which the confirm keeps refusing (fail closed)
     setting(product, FA, g, "push", True)
     setting(product, FA, g, "merge_target", None)                          # push with no remote chosen
@@ -641,7 +641,7 @@ def test_the_history_pages_with_a_stable_cursor(product, slot):
     _set_run(product, "running")
     assert product["client"].post(f"/api/v1/runs/{run_id}/stop", json={}, headers=_h()).status_code == 200
     assert product["client"].post(f"/api/v1/runs/{run_id}/resume", json={"mode": "full"}, headers=_h()).status_code == 200
-    later = _decide(product, run_id, g, {"decision": "confirm", "request_id": "hp-2"}, 202)   # 0119 T-3: no reject
+    later = _decide(product, run_id, g, {"decision": "confirm", "request_id": "hp-2"}, 202)   # T-3: no reject
     url = f"/api/v1/runs/{run_id}/nodes/{g}/gate-decisions"
     first = product["client"].get(url + "?limit=1", headers=_h()).json()
     assert [i["decision_id"] for i in first["items"]] == [accepted["decision"]["decision_id"]]
@@ -718,7 +718,7 @@ def test_a_time_machine_or_a_conflict_session_holds_the_decision_back(product, m
     _nothing_written(product, before)
 
 
-# ── D0007 §3.1 / §7.2: a stored ``undecided`` snapshot is read, never decided ──
+# ── the design /: a stored ``undecided`` snapshot is read, never decided ──
 
 def _legacy_event(env, run_id, key, cause, actor, reason):
     """An old ``gate_rejected`` / ``gate_confirmed`` node event as runs wrote it before migration 158 (no decision link)."""
@@ -782,7 +782,7 @@ def test_a_decided_snapshot_still_reads_the_gate_when_the_registered_rule_has_no
     assert (wire["can_decide"], wire["policy_undecided"]) == (True, False)
 
 
-# ── D0007 §7.2: a bad ``limit`` is 422, whatever its characters ──────────────
+# ── the design: a bad ``limit`` is 422, whatever its characters ──────────────
 
 @pytest.mark.parametrize("limit", ["²", "１", "١", "9" * 5000, "1" + "0" * 400, "201", "-1", "+5", "1.0",
                                    "", " "])
@@ -806,7 +806,7 @@ def test_the_raw_superscript_limit_of_the_url_is_422(product):
     assert ok.status_code == 200 and ok.json()["items"] == [], ok.text
 
 
-# ── D0007 §8-5: requests that really race (own threads, clients, DB connections) ──
+# ── the design: requests that really race (own threads, clients, DB connections) ──
 
 def _race(env, monkeypatch, calls, first):
     """``calls``: ``{name: (run_id, node_key, body)}`` posted together, each from its own thread with its own
@@ -890,7 +890,7 @@ def _race(env, monkeypatch, calls, first):
 @pytest.mark.parametrize("first", ["confirm", "reject"])
 @pytest.mark.parametrize("merge_mode", [None, "commit"])
 def test_a_confirm_and_a_reject_racing_on_one_gate_keep_one_decision(product, slot, monkeypatch, merge_mode, first):
-    """0119 T-3: a reject never decides (409 ``gate_reject_removed`` when it comes first, writing nothing); the confirm is
+    """T-3: a reject never decides (409 ``gate_reject_removed`` when it comes first, writing nothing); the confirm is
     the gate's one decision whichever request takes the guard first."""
     g, t = _linear(product)
     run_id = _start(product)["run_id"]
@@ -964,7 +964,7 @@ def test_two_gates_confirmed_at_once_store_one_decision_and_one_job_each(product
     assert wires[g1]["gate"]["decision_in_progress"] and wires[g2]["gate"]["decision_in_progress"]
 
 
-# flowgate.v02.0098 T#2: the shown intent and the interpreted target are independent.
+# the shown intent and the interpreted target are independent.
 @pytest.mark.parametrize("mode", ["merge", "commit", "hold", None])
 def test_0098_effective_preserves_branch_intent_only_for_merge(mode):
     from flowgate.gate_decisions import preflight
@@ -972,7 +972,7 @@ def test_0098_effective_preserves_branch_intent_only_for_merge(mode):
         "review/x" if mode == "merge" else None)
 
 
-@pytest.mark.parametrize("decision", ["confirm"])                    # 0119 T-3: a reject stores no decision
+@pytest.mark.parametrize("decision", ["confirm"])                    # T-3: a reject stores no decision
 def test_0098_immediate_decisions_store_the_new_shown_and_effective_key(product, decision):
     g, _ = _linear(product)
     run_id = _start(product)["run_id"]
@@ -1003,7 +1003,7 @@ def test_0098_preflight_preserves_the_common_target_rejection(product, slot, mon
     assert not _decisions(product) and not _jobs(product)
 
 
-# 0119 T-4: the run read and replay expose the same publish reason as recovery.
+# T-4: the run read and replay expose the same publish reason as recovery.
 @pytest.mark.parametrize("note,code", [
     ("gate_conflict", "merge_conflict"), ("gate_failed", "group_branch_missing"),
     ("gate_recovery", "push_result_unknown"),

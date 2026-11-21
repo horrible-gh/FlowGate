@@ -1,8 +1,8 @@
 """Authenticated account AI role API (P-1 §2); mounted under the application context.
 
-flowgate.v02.0113 T#2 rework: ``POST /api/v1/flows/{flow_id}/ai-roles/first-setup`` saves the account's first AI setup and
+``POST /api/v1/flows/{flow_id}/ai-roles/first-setup`` saves the account's first AI setup and
 applies it to the Flow's AI-settings cards in one transaction (``first_setup``). Being a Flow write it answers in the
-Graph envelope (P0008 §1.2 / §1.3) with the Flow's user JWT and RBAC write, like the card settings routes.
+Graph envelope with the Flow's user JWT and RBAC write, like the card settings routes.
 """
 from typing import Any
 from fastapi import APIRouter, Body, Depends, Request

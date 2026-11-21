@@ -21,7 +21,7 @@ export function resolveSessionStorage(): Pick<Storage, 'getItem' | 'setItem'> | 
 }
 
 /**
- * flowgate.v02.0156 T5 (E1): two separate things.
+ * (E1): two separate things.
  * - observation (`ids`/`objects`): which failures this target observation already handed out. `clear()` resets it on
  *   Flow/Project/session-owner changes and nothing else.
  * - consumed record: failures already shown once. `clear()` never touches it, so a tab round trip, which re-reads the

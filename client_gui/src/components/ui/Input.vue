@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free text input (T0004 §5.3): visual + v-model contract only. It never calls an
+// Domain-free text input: visual + v-model contract only. It never calls an
 // API or knows what the value means — that belongs to the feature that owns the field.
 withDefaults(
   defineProps<{

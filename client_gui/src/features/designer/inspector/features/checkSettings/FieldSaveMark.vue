@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0148 T#2: one field's own save state beside its control - "saving" while its value is queued / on its way,
+  <!-- one field's own save state beside its control - "saving" while its value is queued / on its way,
        "saved" only after the server's answer carried the requested value, and a retry for a refused one (the refusal itself
        is the failure icon). Text and button only; nothing here locks another control. -->
   <span v-if="state === 'saving' || state === 'saved'" class="inspector-field-state" :data-field-state="state" :data-mark-field="field" role="status">{{ state === 'saving' ? saving : saved }}</span>

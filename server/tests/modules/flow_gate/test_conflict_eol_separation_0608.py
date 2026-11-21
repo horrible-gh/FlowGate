@@ -1,6 +1,6 @@
-"""0608 T0005 — EOL-only conflicts and the tool-driven conflict mention.
+"""EOL-only conflicts and the tool-driven conflict mention.
 
-NR0003 found the 0594 resolver prompt (1.8M chars) was 83% line-ending noise: 0599's merge
+The review found the 0594 resolver prompt (1.8M chars) was 83% line-ending noise: 0599's merge
 98 wrote its resolved files through a Windows text-mode ``write_text`` (6132cf58), the LF
 i18n files came out CRLF, and every later merge touching them became one whole-file
 conflict. This file pins the three fixes:
@@ -12,14 +12,14 @@ conflict. This file pins the three fixes:
   3. the conflict mention carries chunk LOCATIONS plus the Remote source section instead
      of pre-loading every chunk's text once the set is large.
 
-TR0006 rejection fixes are pinned at the end: a failing ``git merge-file`` (any exit
+rejection fixes are pinned at the end: a failing ``git merge-file`` (any exit
 outside the 0..127 conflict count) leaves the conflict and the index untouched; the
 mention's read instruction never produces a start_line below 1 and a chunk on line 1
 reads back through the real ``/remote/read`` pipeline; and ``.gitattributes`` appears in
 the reviewed manifest and in the commit alike.
 
 ``TestReplay0594`` replays the real 0594 merge from this repository's own history (the
-same inputs as NR0003 §1.2) and measures files / chunks / mention size. The connected
+same inputs as the review) and measures files / chunks / mention size. The connected
 finalize → session → resolve-token path is in
 test_git_integration_0115.py::TestGitEndToEnd::test_eol_only_conflict_is_separated_and_lf_survives_resolution_0608.
 """
@@ -302,7 +302,7 @@ def _conflict_mention(repo: Path, paths: list[str], eol_only: list[str], refs: d
 
 
 class TestReplay0594:
-    """NR0003 §1.2 inputs: sessions 100 (ours 8fd51466) and 103 (ours e40a3ae0)."""
+    """inputs: sessions 100 (ours 8fd51466) and 103 (ours e40a3ae0)."""
 
     @pytest.mark.parametrize("ours_rev", ["8fd51466", "e40a3ae0"])
     def test_0594_becomes_6_files_24_chunks_and_a_small_mention(self, tmp_path, ours_rev):
@@ -318,7 +318,7 @@ class TestReplay0594:
         )
         refs = {"ours": ours_rev, "theirs": _0594_THEIRS}
 
-        # as git produced it: the recorded session shape (NR0003 §1.2 table)
+        # as git produced it: the recorded session shape (table)
         assert _unmerged(repo) == sorted(_0594_PATHS)
         assert sum(len(_chunks(repo, p)) for p in _0594_PATHS) == 28
 
@@ -445,7 +445,7 @@ class TestToolDrivenConflictMention:
         assert r"C:\scratch\tok" not in mention
 
 
-# ── 5. TR0006: a failing merge-file must not touch the conflict ──────────────────────
+# ── 5. the earlier implementation: a failing merge-file must not touch the conflict ──────────────────────
 
 
 def _index_stages(repo: Path) -> bytes:
@@ -511,7 +511,7 @@ class TestMergeFileFailureLeavesTheConflictAlone:
         assert _unmerged(repo) == ["eol.ts", "plain.txt", "real.py"]
 
 
-# ── 6. TR0006: the read instruction works for a chunk on line 1 ──────────────────────
+# ── 6. the earlier implementation: the read instruction works for a chunk on line 1 ──────────────────────
 
 
 def _remote_read(monkeypatch, root: Path, body: dict) -> tuple[int, dict]:
@@ -562,7 +562,7 @@ class TestReadInstructionIsValidAtTheTopOfTheFile:
         assert envelope["error"]["details"]["reason"] == "invalid_line_range"
 
 
-# ── 7. TR0006: tracked repo config is in the manifest AND the commit ─────────────────
+# ── 7. the earlier implementation: tracked repo config is in the manifest AND the commit ─────────────────
 
 
 class TestRepoConfigFileIsReviewedAndCommitted:
@@ -602,7 +602,7 @@ class TestRepoConfigFileIsReviewedAndCommitted:
 
         monkeypatch.setattr(git_service, "effective_src_root_ex",
                             lambda project_id, group_id: (repo, git_service.SRC_ROOT_WORKTREE))
-        # 0665 T0004: the manifest is measured from the group's recorded floor.
+        # the manifest is measured from the group's recorded floor.
         from modules.flow_gate.services.git import scope_base
         floor = _git(["rev-parse", "main"], repo).stdout.decode().strip()
         monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {

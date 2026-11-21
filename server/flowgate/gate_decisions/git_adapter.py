@@ -1,7 +1,7 @@
-"""The Git steps of a confirm gate's ``gate_publish`` job (flowgate.v02.0085 T#3, D0007 §4 / §7.1 / §7.3).
+"""The Git steps of a confirm gate's ``gate_publish`` job.
 
 The internal adapter that reuses the v0.1 finalize's checks, merge, push and evidence pieces without its AC approval /
-root ``wf_done`` premise, its absorb commit, its slot cleanup or its push rollback (D0007 §4):
+root ``wf_done`` premise, its absorb commit, its slot cleanup or its push rollback:
 
 - the slot and its guards are finalize's (``_finalize_context``: an enabled Git integration and a registered group
   worktree; ``guard_base_free``, ``raise_if_base_checkout_off_branch``, the tracked-dirty refusal of the base checkout);
@@ -38,7 +38,7 @@ REF_ARCHIVE = "refs/flowgate/gate-archive/"
 REF_RECOVERY = "refs/flowgate/gate-recovery/"
 ATTEMPT_ACTION = "merge_only"
 CONTEXT_KEY = "gate_decision_id"
-# 0132 T#2 (NR §4.2/§4.3): a push-phase remote sync attempt names its decision under its own key, so the decision's
+# (NR): a push-phase remote sync attempt names its decision under its own key, so the decision's
 # original merge attempt (``_session_rows``: CONTEXT_KEY) is never confused with a sync attempt and never re-run.
 SYNC_CONTEXT_KEY = "gate_sync_decision_id"
 (MERGED, CONTAINED, CONFLICT) = ("merged", "contained", "conflict")
@@ -154,7 +154,7 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> Optional[bool]:
 
 
 def covers(repo: Path, basis_sha: Optional[str], head: Optional[str]) -> Optional[bool]:
-    """``basis_sha`` is ``head`` or has it as an ancestor (D0007 §7.1: the basis must contain the real HEAD; the other
+    """``basis_sha`` is ``head`` or has it as an ancestor (the design: the basis must contain the real HEAD; the other
     direction - an old SHA that is only an ancestor of HEAD - is not enough)."""
     if not basis_sha or not head:
         return False
@@ -192,7 +192,7 @@ def delete_ref(repo: Path, ref: str, expected: str) -> bool:
 
 def uncommitted(wt_path: Path) -> Optional[int]:
     """How many entries of the work tree are not committed (None: unreadable). They are never taken into a gate's
-    result (D0007 §7.1: no automatic stage / commit)."""
+    result (no automatic stage / commit)."""
     if not wt_path.is_dir():
         return None
     proc = _git(wt_path, ["status", "--porcelain", "--untracked-files=all"])
@@ -532,7 +532,7 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
             mt.finish_manual_attempt(attempt, merge_commit=short, merge_commit_sha=full, pushed=False)
             return {"outcome": MERGED, "pre_head": pre_head, "merge_commit": full, "merge_id": attempt.merge_id}
         if not files:
-            # flowgate.v02test.0052 T0003 task 3(b): audited on the attempt's session.
+            # task 3(b): audited on the attempt's session.
             gs._abort_merge(root, merge_id=getattr(attempt, "merge_id", None),
                             reason="gate_merge_failed_abort")
             _log.warning("gate merge failed for %s: %s", slot.group_id, redact.scrub(proc.stderr, *slot.secrets))
@@ -572,7 +572,7 @@ def _hand_off_conflict(slot: Slot, attempt, root: Path, target_branch: str, file
         "gate_decision_id": decision_id})
 
 
-# ── 0132 T#2: the push phase's remote sync (NR §4.2 / §4.3) ───────────────────
+# ── the earlier implementation: the push phase's remote sync (NR) ───────────────────
 
 def target_checkout(slot: Slot, branch: str, is_base: bool):
     """``C`` of NR §4.2: the checkout(s) of the local target branch, read under its B / W. READ_ERROR when Git cannot
@@ -743,7 +743,7 @@ def sync_merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, pr
             mt.finish_manual_attempt(attempt, merge_commit=short, merge_commit_sha=full, pushed=False)
             return {"outcome": MERGED, "pre_head": pre_head, "merge_commit": full, "merge_id": attempt.merge_id}
         if not files:
-            # flowgate.v02test.0052 T0003 task 3(b): audited on the attempt's session.
+            # task 3(b): audited on the attempt's session.
             gs._abort_merge(root, merge_id=getattr(attempt, "merge_id", None),
                             reason="gate_sync_failed_abort")
             _log.warning("gate remote sync failed for %s: %s", slot.group_id, redact.scrub(proc.stderr, *slot.secrets))

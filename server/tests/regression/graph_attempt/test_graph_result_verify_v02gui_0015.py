@@ -1,8 +1,8 @@
-"""v02gui.0015 T4 (0006-NR §6-4): the integration gate's syntax check of an attempt's result commit.
+"""v02gui.0015 T4 (NR): the integration gate's syntax check of an attempt's result commit.
 
 Done criterion: a damaged result (a file that no longer parses) is never merged into the group branch, whichever
 approval it had (a person's or the automatic one: both reach ``result_merge.integrate`` through ``defer_done``).
-The check itself (``result_verify.check``) runs on real Git commits; ``integrate`` runs on the 0061 T#9 SQLite
+The check itself (``result_verify.check``) runs on real Git commits; ``integrate`` runs on the the earlier implementation SQLite
 fixture with the merge replaced by a probe (the gate must decide before any merge starts).
 """
 from pathlib import Path
@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 from tests.regression.graph_workflow.test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
-from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: F401 — T#8 result fixture
+from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: F401 — the earlier implementation result fixture
 from tests.regression.graph_attempt.test_graph_attempt_integration_0061 import merge_db, status  # noqa: F401
 from flowgate.graph_run import result_merge, result_verify, workspace
 from modules.flow_gate.services import remote_write_guard
@@ -266,7 +266,7 @@ def test_unchanged_result_is_not_checked(merge_db, monkeypatch, repo):
 
 def test_failed_verification_holds_the_run_like_any_failed_integration(merge_db, monkeypatch, repo):
     """``failed`` is HELD: the node stays in review, nothing below opens, the run goes idle (``merge_conflict``) once
-    nothing else works; a Stop invalidates the attempt (0061 T#7) and the next run opens a new one."""
+    nothing else works; a Stop invalidates the attempt and the next run opens a new one."""
     armed(merge_db, monkeypatch, repo, {"server/app.py": masked_python()})
     assert result_merge.integrate(merge_db.attempt) == "failed"
     assert result_merge.held("run") and not result_merge.in_progress("run")

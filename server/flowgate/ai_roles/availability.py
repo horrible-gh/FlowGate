@@ -9,7 +9,7 @@ def lookup(provider_id):
 
 
 def _personal_runnable(row):
-    """flowgate.v02.0129 CH0012: a user's own CLI AI assigned to a remote Agent runs on that Agent.
+    """a user's own CLI AI assigned to a remote Agent runs on that Agent.
     The card's run start (admission.start_run, requester = the run starter) still refuses it
     unless the starter owns it, so a card never runs another user's AI nor swaps it for one."""
     return ((row.get("exec_type") or "cli") == "cli" and row.get("exec_location") == "remote"

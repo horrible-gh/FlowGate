@@ -1,10 +1,10 @@
-"""Cursor-based conversation reads (L0004 §2-9 / §2-10 / §2-8, T2).
+"""Cursor-based conversation reads.
 
 The write side lives in ``conversation_turn_service``; this module is the read side
 and shares that module's actor resolution and wire builders so a turn looks the same
-whichever route produced it (P0003 §0-1).
+whichever route produced it.
 
-Nothing here creates a participant row for a plain session read: L0004 §5 says a human
+Nothing here creates a participant row for a plain session read: the earlier implementation says a human
 merely looking at a conversation is not yet a participant.  A worker read DOES create
 one, because the server has just handed that worker a range and must remember it did.
 """
@@ -27,7 +27,7 @@ from modules.flow_gate.services.conversation_turn_service import (
     turn_wire,
 )
 
-# ── L0004 §1-1 page size / §1-3 read position ───────────────────────────────
+# ── the earlier implementation page size / read position ───────────────────────────────
 # Single source of truth for the read-side numbers.  Do not inline these values.
 TURN_LIMIT_DEFAULT = 50
 TURN_LIMIT_MAX = 200
@@ -54,7 +54,7 @@ def _readable_document(doc_id: str) -> dict:
     """Resolve a CH document for reading.
 
     Reading is deliberately NOT gated on group disposal or final approval: disposal
-    stops future change, it does not hide the record (D0002 §3-6 / L0004 §5).
+    stops future change, it does not hide the record.
     """
     doc = document_service.get_document(doc_id)
     if doc is None:
@@ -65,7 +65,7 @@ def _readable_document(doc_id: str) -> dict:
 
 
 def _ensure_readable_rows(doc_id: str) -> str:
-    """Lazily migrate a legacy CH on first read (L0004 §3-1: a read/append request arrives).
+    """Lazily migrate a legacy CH on first read (a read/append request arrives).
 
     A read must never fail because the old markdown has not been moved yet — that
     would make every pre-existing conversation look empty the moment this screen ships.
@@ -85,7 +85,7 @@ def _ensure_readable_rows(doc_id: str) -> str:
 
 
 def intro_text(doc: dict) -> str:
-    """L0004 §2-10 intro_text_of — makes a migrated and a native conversation identical.
+    """intro_text_of — makes a migrated and a native conversation identical.
 
     Public: the markdown render path (T4 / conversation_markdown_service) shares this
     exact source so the screen and the rendered artifact never disagree on the head.
@@ -107,7 +107,7 @@ def intro_text(doc: dict) -> str:
 
 
 def _synthesized_intro(doc: dict) -> str:
-    """Fallback head when the markdown file is gone (L0004 §5: document file missing)."""
+    """Fallback head when the markdown file is gone (document file missing)."""
     fields = [
         ("project", doc.get("project_id")),
         ("module", doc.get("module")),
@@ -125,17 +125,17 @@ def _synthesized_intro(doc: dict) -> str:
 def _carried_over_from(doc: dict) -> Optional[str]:
     """Only conversations already split by the retired carry-over have a predecessor.
 
-    The now-removed byte-cap carry-over (inbox_routes, group 0351 T5) created the
+    The now-removed byte-cap carry-over (inbox_routes, the earlier change T5) created the
     successor with ``triggered_by`` pointing at the CH it continued; a CH triggered
     by any other document type is not a continuation. No NEW carry-over happens
-    (D0002 §3-6) — this only interprets documents split before the removal.
+    — this only interprets documents split before the removal.
     """
     origin = (doc.get("triggered_by") or "").strip()
     return origin if origin.upper().endswith("-CH") else None
 
 
 def build_head(doc: dict) -> dict:
-    """L0004 §2-10. Stable document metadata; conversation messages live in turns."""
+    """Stable document metadata; conversation messages live in turns."""
     doc_id = doc["doc_id"]
     intro = intro_text(doc)
     if _byte_len(intro) > INTRO_BYTE_MAX:
@@ -156,7 +156,7 @@ def build_head(doc: dict) -> dict:
 
 
 def apply_budget(rows: list[dict], limit: int) -> tuple[list[dict], Optional[str], bool]:
-    """Cut on whichever of count / bytes trips first (L0004 §2-9).
+    """Cut on whichever of count / bytes trips first.
 
     ``rows`` is expected to hold up to limit+1 entries so "is there more" is decided
     without a second query.  The first row is always admitted regardless of size —
@@ -186,7 +186,7 @@ def _me_wire(doc_id: str, resolved: dict) -> dict:
     row = turn_store.get_participant(doc_id, resolved["participant_key"])
     if row is not None:
         return participant_wire(row)
-    # Virtual row (L0004 §5): a participant who has not spoken yet reads from 0.
+    # Virtual row: a participant who has not spoken yet reads from 0.
     return {
         "participant_key": resolved["participant_key"],
         "kind": resolved["speaker"],
@@ -208,7 +208,7 @@ def list_turns(
     include_head: bool = False,
     through_seq: Optional[int] = None,
 ) -> dict:
-    """Return one page of turns around a cursor (P0003 scenarios 1, 2, 7, 9 and 13)."""
+    """Return one page of turns around a cursor (scenarios 1, 2, 7, 9 and 13)."""
     if after_seq is not None and before_seq is not None:
         raise ConversationTurnError(422, "after_seq and before_seq are mutually exclusive.")
     if after_seq is not None and after_seq < 0:
@@ -222,7 +222,7 @@ def list_turns(
     effective_limit = TURN_LIMIT_DEFAULT if limit is None else int(limit)
     if effective_limit < 1:
         raise ConversationTurnError(422, "limit must be >= 1.")
-    # Over the ceiling is trimmed, not rejected (P0003 §0-6).  The response reports the
+    # Over the ceiling is trimmed, not rejected. The response reports the
     # value actually applied.
     effective_limit = min(effective_limit, TURN_LIMIT_MAX)
 
@@ -263,7 +263,7 @@ def list_turns(
 
     # Delivered is recorded only for a worker, only forward, and only up to the LAST
     # TURN ACTUALLY IN THIS RESPONSE — advancing past a truncated range would skip
-    # turns that were never handed to anyone (L0004 §2-8).
+    # turns that were never handed to anyone.
     if not backward and picked and actor.get("kind") == "worker":
         record_read(
             doc_id=doc_id, actor=actor, last_read_seq=int(picked[-1]["seq"]),
@@ -286,7 +286,7 @@ def list_turns(
         "head": build_head(doc) if include_head else None,
         "turns": [turn_wire(row, images=page_images.get(int(row["seq"]), [])) for row in picked if actor.get("kind") != "worker" or not row.get("deleted_at")],
         # The participant row and the read boundary must be complete after the single
-        # entry call (D0002 §6); scroll-up pages leave them alone.
+        # entry call; scroll-up pages leave them alone.
         "participants": (
             [participant_wire(row) for row in turn_store.list_participants(doc_id)]
             if include_head
@@ -304,7 +304,7 @@ def record_read(
     last_read_seq: int,
     reason: str = "viewed",
 ) -> dict:
-    """Advance a participant's cursor monotonically (L0004 §2-8, P0003 scenario 5).
+    """Advance a participant's cursor monotonically (scenario 5).
 
     A value that would move a cursor backwards is silently ignored rather than
     rejected: a scrolled-up screen or a late-arriving notice legitimately carries one.

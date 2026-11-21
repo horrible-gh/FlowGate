@@ -1,6 +1,6 @@
-"""flowgate.v02.0114 T#3: result block summary and baseline judgement on synthetic record pairs.
+"""result block summary and baseline judgement on synthetic record pairs.
 
-D 0006 9.2-5 / 9.2-6: the judge is fed two stored run rows (baseline, after) built here, the
+9.2-5 / 9.2-6: the judge is fed two stored run rows (baseline, after) built here, the
 after-run's pre-change anchor and an ancestry answer. Each case changes one thing and checks
 that "reusable" is refused with the right reason, or that the failure split is right. The
 real pytest side (the block the plugin prints) is pinned by

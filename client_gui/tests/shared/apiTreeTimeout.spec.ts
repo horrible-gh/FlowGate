@@ -1,11 +1,11 @@
 /**
- * 0283 TS0006 — tree GETs get the 130s ceiling, not the 30s default (TR0005 §A).
+ * tree GETs get the 130s ceiling, not the 30s default.
  *
  * Root cause of bug 0283.0001-B: the base file-tree and group-tree GETs do a synchronous
  * recursive directory walk of the storage root, but fell under the 30s `DEFAULT_TIMEOUT_MS`,
  * so axios aborted healthy-but-slow walks on remote/UNC storage with ECONNABORTED.
  *
- * 0394 T0016 (NR0003 §6.2-d): this suite used to read the committed `shared/api.ts` as
+ * (d): this suite used to read the committed `shared/api.ts` as
  * text, pull the `LONG_RUNNING_PATHS` array literal out with a regex, rebuild each entry
  * into a real RegExp and re-implement the interceptor's decision
  * (`LONG_RUNNING_PATHS.some((re) => re.test(path))`) inside the test. Two things were
@@ -30,7 +30,7 @@ const LONG_TIMEOUT_MS = 130_000
 // The exact URLs the explorer store builds (src/main/stores/explorer.ts).
 const FILE_TREE_URL = '/api/v1/projects/flowgate/files/tree?branch=main'
 const GROUP_TREE_URL = '/api/v1/projects/flowgate/groups/tree?branch=main'
-// 0454 T0006 §2.1 — the store now always spells the display variant out in the query. The
+// the store now always spells the display variant out in the query. The
 // policy matches on `/groups/tree`, so the extra parameter must not slip a tree GET back onto
 // the 30s default; both variants are asserted below rather than assumed.
 const GROUP_TREE_URL_FULL = '/api/v1/projects/flowgate/groups/tree?branch=main&include_terminal=true'
@@ -114,7 +114,7 @@ describe('shared/api timeout policy', () => {
   })
 })
 
-// flowgate.v02gui.0017 B4: transient GET failures (network drop, gateway 502/503/504, timeout) are
+// B4: transient GET failures (network drop, gateway 502/503/504, timeout) are
 // re-sent a bounded number of times. A re-sent request must keep the timeout its path was given —
 // a tree GET retried on the 30s default would fail exactly the walks the 130s ceiling exists for.
 describe('shared/api GET retry keeps the per-path timeout (v02gui.0017 B4)', () => {

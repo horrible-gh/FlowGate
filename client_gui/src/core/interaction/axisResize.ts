@@ -1,4 +1,4 @@
-// Shared single-axis drag/keyboard resize interaction (T0010 §7/§12).
+// Shared single-axis drag/keyboard resize interaction.
 //
 // SplitPane's splitter and ResizablePane's edge handle both resize one numeric value
 // along one axis: mousedown starts a drag, document-level mousemove/mouseup track and
@@ -6,7 +6,7 @@
 // That lifecycle -- listener registration, delta tracking, min/max clamping through a
 // caller-supplied function, and listener cleanup -- is identical between the two
 // components; only *how* a pointer coordinate maps to "this axis" and *how* a value is
-// clamped differ, so those are the only two things a caller supplies (T0010 §7: extract
+// clamped differ, so those are the only two things a caller supplies (the earlier implementation: extract
 // only because the duplication is real, not to build a general layout manager).
 export interface AxisResizeCallbacks {
   /** Current value, read fresh each time (so `onEnd` reports the true final value). */

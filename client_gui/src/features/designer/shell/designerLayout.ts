@@ -1,4 +1,4 @@
-// flowgate.v02.0025 — Designer Shell layout state (0003-D §3.8).
+// Designer Shell layout state.
 //
 // Screen state owned by one DesignerShell instance: which left Explorer is showing, whether
 // the left Dock is collapsed, and the Dock sizes the Body / CenterColumn apply. It is not a
@@ -7,12 +7,12 @@
 // through events.
 //
 // The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
-// values. flowgate.v02.0046: the Body / CenterColumn resize handles change these same fields
+// values. the earlier change: the Body / CenterColumn resize handles change these same fields
 // (leftWidth / rightWidth / bottomHeight) within the bounds below.
-// flowgate.v02.0036: the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
+// the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
 // header + tabs above its content) keeps a usable Content area next to the Canvas.
 // The bottom Dock keeps its established 320px initial height for Inspector content.
-// flowgate.v02.0037: the right Dock became the Tool Panel; which tool it shows is layout state
+// the right Dock became the Tool Panel; which tool it shows is layout state
 // too, so the choice survives a collapse the same way the left Explorer mode does.
 
 export type DesignerLeftMode = 'project' | 'file'
@@ -43,7 +43,7 @@ export const DESIGNER_RAIL_WIDTH = 40
 export const DESIGNER_CENTER_MIN_WIDTH = 360
 
 /**
- * flowgate.v02.0036 — the bottom Dock splits Inspector 7 : Minimap 3 (0035 v7). The Inspector
+ * the bottom Dock splits Inspector 7: Minimap 3 (v7). The Inspector
  * track never drops below this, so at the 360px Center minimum it still holds every v7 tab
  * (see inspectorTabStripMinWidth); the Minimap placeholder gives way first.
  */
@@ -69,7 +69,7 @@ export function createDesignerLayout(): DesignerLayoutState {
 }
 
 /**
- * flowgate.v02.0046 — drag resize bounds. A Dock never goes below its minimum; it only grows
+ * drag resize bounds. A Dock never goes below its minimum; it only grows
  * while the Center keeps DESIGNER_CENTER_MIN_WIDTH (the Workspace DESIGNER_WORKSPACE_MIN_HEIGHT
  * above the bottom Dock). When there is no such room left (a narrow window) the Dock can still
  * shrink but not grow past its current size, and the Body scrolls sideways as before.

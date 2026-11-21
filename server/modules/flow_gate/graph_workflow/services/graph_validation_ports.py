@@ -1,7 +1,7 @@
-"""Graph validation port (flowgate.v02.0061, D0006 §2.1 / §2.3 / §4.1).
+"""Graph validation port.
 
 What a draft must look like before it is confirmed — and so before any run of it — has decided rules since 0061
-(0002-CH turn 13): an isolated node and a path not starting from a root node (R / B) are no error but left out
+(CH): an isolated node and a path not starting from a root node (R / B) are no error but left out
 of a run, a left-out path joining the run path is refused, a cycle is refused, a branch and an AND join are
 allowed. Those rules are a v0.2 feature (``flowgate.graph_validation``), and ``modules.flow_gate`` never imports
 ``flowgate``, so this module offers the port ``graph_service.check_draft`` validates through and the composition

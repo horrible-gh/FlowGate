@@ -139,7 +139,7 @@ def test_terminal_cleanup_all_failures_persist_failed_snapshot(monkeypatch):
 
 
 def test_terminal_cleanup_busy_group_stays_pending_and_others_are_cleaned(monkeypatch):
-    # 0669: the sweep no longer takes one project mutex, so a busy Group no longer fails the
+    # the sweep no longer takes one project mutex, so a busy Group no longer fails the
     # whole sweep with git_busy. Only that Group stays pending; the next one is cleaned.
     monkeypatch.setattr(git_service, "_require_enabled_config", lambda _p: {})
     monkeypatch.setattr(git_service, "git_available", lambda: True)
@@ -213,7 +213,7 @@ def test_base_dirty_project_admission_blocks_same_project_but_allows_other(monke
 
 
 def test_base_dirty_mention_unavailable_releases_the_project_lease(monkeypatch):
-    """T0011 acceptance criterion 2: an empty mention_builder result raises 409 mention_unavailable.
+    """acceptance criterion 2: an empty mention_builder result raises 409 mention_unavailable.
     ai_invoke_service.start_run owns token revocation; this route explicitly releases the
     project lease and propagates the same 409."""
     monkeypatch.setattr(ai_invoke_routes, "_require_user", lambda _r: {"issued_to": "u", "is_admin": True})
@@ -239,7 +239,7 @@ def test_base_dirty_mention_unavailable_releases_the_project_lease(monkeypatch):
 
 
 def test_base_dirty_activate_null_cancels_the_run_without_releasing_a_stolen_row(monkeypatch):
-    """T0011 acceptance criterion 2: activate() returning null means another owner replaced
+    """acceptance criterion 2: activate returning null means another owner replaced
     the acquiring row. Cancel only the newly started run and return 409 run_lease_lost;
     releasing someone else's lease would break the concurrency guarantee."""
     monkeypatch.setattr(ai_invoke_routes, "_require_user", lambda _r: {"issued_to": "u", "is_admin": True})

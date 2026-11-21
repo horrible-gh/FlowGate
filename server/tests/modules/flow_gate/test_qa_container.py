@@ -1,6 +1,6 @@
-"""Document-bound query/answer container — integration tests (group 0022 Q/A/V revamp).
+"""Document-bound query/answer container — integration tests (Q/A/V revamp).
 
-Covers DB0006 §3/§4 + L0007 §3 against a real (in-memory file) sqlite with all migrations:
+Covers  / + the earlier implementation against a real (in-memory file) sqlite with all migrations:
   - ensure_container lazy create + idempotency (keyed by doc_id, q_id := doc_id)
   - add_questions human / ai (asker_kind, title), done→pending re-open
   - register_answer atomicity + author_kind/author_id (AI → author_id NULL)
@@ -321,7 +321,7 @@ def test_list_open_items(store):
                             asker_kind="human", created_by="u1")
     items = q_service.list_open_items(project_id="p")
     assert any(it["doc_id"] == DOC and it["title"] == "열린질의" for it in items)
-    # TR0005 rework: each row carries the host document's type_code so the dashboard
+    # each row carries the host document's type_code so the dashboard
     # opens the real document (not a Q-tree viewer). DOC is a 'D' document.
     row = next(it for it in items if it["doc_id"] == DOC)
     assert row["type_code"] == "D"
@@ -373,7 +373,7 @@ def test_list_open_items_excludes_completed_or_inactive_groups_but_keeps_history
                             asker_kind="human", created_by="u1")
     store.execute("UPDATE groups SET deleted_at='2026-06-13T00:00:00Z' WHERE group_id='p.none.0003'")
 
-    # (D) B0001 core case: a COMPLETED workflow group whose root R is wf_done, but
+    # (D) the regression core case: a COMPLETED workflow group whose root R is wf_done, but
     #     whose still-open question lives on a NON-root child doc (T, merely
     #     'approved'). The group was never manually closed (status stays 'draft').
     #     Keying the exclusion off the group root — not the child doc — is what
@@ -420,7 +420,7 @@ def test_list_open_items_excludes_completed_or_inactive_groups_but_keeps_history
     # kept: genuinely active work
     assert active_doc in returned_doc_ids
     assert active_child_doc in returned_doc_ids
-    # excluded: completed / inactive work (incl. the B0001 child-doc leak)
+    # excluded: completed / inactive work (incl. the the regression child-doc leak)
     assert wf_done_doc not in returned_doc_ids
     assert closed_doc not in returned_doc_ids
     assert deleted_doc not in returned_doc_ids
@@ -439,10 +439,10 @@ def test_migration_040_retires_qav(store):
     assert all(r["is_active"] == 0 for r in rows)
 
 
-# ── Q options (group 0243 R0001 / D0006 / DB0007 / L0008) ──
+# ── Q options ──
 
 def test_options_stored_with_server_assigned_ids_and_returned_parsed(store):
-    """Assign stored options IDs o1..oN and return them as parsed arrays (L0008 §2.3/§2.1)."""
+    """Assign stored options IDs o1..oN and return them as parsed arrays."""
     from modules.flow_gate.services import q_service
     q_service.add_questions(
         DOC, [{"title": "배포", "body": "어느 쪽?", "options": ["무중단 배포", "점검창 배포"]}],
@@ -464,7 +464,7 @@ def test_options_stored_with_server_assigned_ids_and_returned_parsed(store):
 
 
 def test_answer_by_selection_only_fills_body_with_label(store):
-    """Selection-only answers copy the original label into body, preserving NOT NULL (L0008 §2.4)."""
+    """Selection-only answers copy the original label into body, preserving NOT NULL."""
     from modules.flow_gate.services import q_service
     res = q_service.add_questions(
         DOC, [{"body": "어느 쪽?", "options": ["A안", "B안"]}],
@@ -483,7 +483,7 @@ def test_answer_by_selection_only_fills_body_with_label(store):
 
 
 def test_answer_with_body_and_selection_keeps_body_as_written(store):
-    """With selection and prose, prose is the body and selections remain in selected_options (L0008 §4)."""
+    """With selection and prose, prose is the body and selections remain in selected_options."""
     from modules.flow_gate.services import q_service
     res = q_service.add_questions(
         DOC, [{"body": "어느 쪽?", "options": ["A안", "B안"]}],
@@ -524,7 +524,7 @@ def test_question_without_options_is_unchanged(store):
     ],
 )
 def test_invalid_options_rejected_400(store, options, detail_fragment):
-    """Reject validation failures with 400 before saving; without DB CHECK this is the only enforcement (L0008 §5)."""
+    """Reject validation failures with 400 before saving; without DB CHECK this is the only enforcement."""
     from fastapi import HTTPException
     from modules.flow_gate.services import q_service
     with pytest.raises(HTTPException) as exc:
@@ -536,7 +536,7 @@ def test_invalid_options_rejected_400(store, options, detail_fragment):
 
 
 def test_strip_applied_to_labels(store):
-    """Strip label whitespace before saving (L0008 §2.2)."""
+    """Strip label whitespace before saving."""
     from modules.flow_gate.services import q_service
     q_service.add_questions(DOC, [{"body": "q?", "options": ["  여백 있는 보기  "]}],
                             asker_kind="human", created_by="u1")
@@ -560,7 +560,7 @@ def test_unknown_option_id_rejected_400(store):
 
 
 def test_selection_on_option_less_item_rejected_400(store):
-    """An item without options accepts no selected ID (L0008 §5)."""
+    """An item without options accepts no selected ID."""
     from fastapi import HTTPException
     from modules.flow_gate.services import q_service
     res = q_service.add_questions(DOC, [{"body": "선택지 없음"}], asker_kind="human", created_by="u1")
@@ -572,7 +572,7 @@ def test_selection_on_option_less_item_rejected_400(store):
 
 
 def test_multi_select_rejected_400(store):
-    """v1 allows one selection; the array schema supports expansion by relaxing validation (L0008 §1 MAX_SELECTED)."""
+    """v1 allows one selection; the array schema supports expansion by relaxing validation (MAX_SELECTED)."""
     from fastapi import HTTPException
     from modules.flow_gate.services import q_service
     res = q_service.add_questions(DOC, [{"body": "q?", "options": ["A", "B"]}],
@@ -586,7 +586,7 @@ def test_multi_select_rejected_400(store):
 
 
 def test_blank_body_without_selection_still_rejected_400(store):
-    """Empty submissions remain rejected under the existing rule (L0008 §4 default)."""
+    """Empty submissions remain rejected under the existing rule (default)."""
     from fastapi import HTTPException
     from modules.flow_gate.services import q_service
     res = q_service.add_questions(DOC, [{"body": "q?", "options": ["A"]}],

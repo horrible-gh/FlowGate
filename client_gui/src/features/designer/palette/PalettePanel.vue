@@ -1,10 +1,10 @@
 <template>
-  <!-- flowgate.v02.0030 — Designer Palette part (R0001, MirageGlass 03-designer-shell right
+  <!-- Designer Palette part (the requirement, MirageGlass 03-designer-shell right
        Palette). It owns only its own content: the category sections, the cards and the add
        dialog. The surrounding Tool Panel (팔레트 / 대화 / Git tabs, header, collapse, width) mounts
-       it and owns all of that chrome (R0001 §4). It never drops, places or creates a Node: it
-       hands the Designer a select intent and a drag intent (R0001 §2.3).
-       flowgate.v02.0060 T#2: inside the Designer a right click on a card goes to the Designer context menu with that
+       it and owns all of that chrome. It never drops, places or creates a Node: it
+       hands the Designer a select intent and a drag intent.
+       inside the Designer a right click on a card goes to the Designer context menu with that
        card's definition (its 카드 추가 selects it only when chosen); the blank Palette is no menu target. -->
   <section class="designer-palette" data-test="designer-palette" :aria-label="t('gui.designer.palette.label')">
     <div
@@ -121,7 +121,7 @@ function onDragStart(item: PaletteItem, event: DragEvent) {
   emit('drag-start', definition, event)
 }
 
-/** flowgate.v02.0060 T#2: the Designer context menu's Palette side, provided by the Designer Shell; null elsewhere. */
+/** the Designer context menu's Palette side, provided by the Designer Shell; null elsewhere. */
 interface PaletteContextMenu {
   palette(event: MouseEvent, entry: { definition: PaletteItemDefinition; alive?: () => boolean; fallback?: HTMLElement | null }): boolean
 }

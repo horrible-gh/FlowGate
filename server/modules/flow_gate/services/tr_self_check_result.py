@@ -1,6 +1,6 @@
-"""Read the pytest result block out of a finished Self-check run's stdout tail (flowgate.v02.0114 T#3).
+"""Read the pytest result block out of a finished Self-check run's stdout tail.
 
-D 0006 3.2 / 8-1: the block is what the test process printed, so it is untrusted input. It is
+3.2 / 8-1: the block is what the test process printed, so it is untrusted input. It is
 summarized only for a run that ended normally, never changes the run's status, exit_code or
 timed_out, and anything that does not parse exactly is "no structured result" / "incomplete"
 -- nothing is guessed. The block's environment evidence and test definition evidence are only
@@ -87,7 +87,7 @@ def _failures(raw: Any) -> list[dict]:
 
 
 def _parallel(raw: Any) -> Optional[dict]:
-    """0114 T#4 (D 5): the worker slot pool's account the block reports -- requested and applied
+    """(D 5): the worker slot pool's account the block reports -- requested and applied
     workers, slot source, pool size, the run tree's processor limit. Evidence only; None when
     absent or malformed, and it never changes the summary's status."""
     if not isinstance(raw, dict) or set(raw) != {"requested", "applied", "slot_source", "pool_size", "cpu_limit"}:

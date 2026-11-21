@@ -1,4 +1,4 @@
-// flowgate.v02.0127 T#5 — the client editing session of a card document (0009-L §2.12 / §2.13 / §3.1).
+// the client editing session of a card document.
 // Pure state, no Vue and no HTTP: the window / upload / TS sessions hold one `EditSession` and move it only
 // through the functions below, so the §3.1 transitions are one tested place.
 //
@@ -9,7 +9,7 @@
 //   automatic_retry_with_new_key = 0    an UNCERTAIN or 401-REJECTED request is resent as it is (same key, same bytes);
 //                                       a new key exists only for an explicit new intent
 //   401 unauthorized / 403 token_kind_not_allowed are REJECTED (rejected before commit), never UNCERTAIN.
-// flowgate.v02.0157: a session's target is a card line (`CardDocumentContext`) or a standalone document
+// a session's target is a card line (`CardDocumentContext`) or a standalone document
 // (`StandaloneDocumentTarget`, doc_id only). A standalone base is adopted only when the server's read says
 // edit_path=non_card; a card / unavailable answer keeps the editor BLOCKED (binding_required) as before.
 import {

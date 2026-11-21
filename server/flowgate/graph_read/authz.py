@@ -1,4 +1,4 @@
-"""0145 T#3: authority for AI Graph reads. No write/execution capability is inferred."""
+"""authority for AI Graph reads. No write/execution capability is inferred."""
 from dataclasses import dataclass
 import re
 

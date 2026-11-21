@@ -1,8 +1,8 @@
-"""Shared fixtures for the test_fg_conversation_* suites (flowgate.v02.0032 T#1).
+"""Shared fixtures for the test_fg_conversation_* suites.
 
 Not a test module (no ``test_`` prefix): a real temp SQLite store with every migration
 applied, seed rows, a live chat run record, a throwaway Git worktree and a controllable
-fake process executor. Kept flat in tests/ like ``_korean_allowlist.py`` (D0006 §2.4).
+fake process executor. Kept flat in tests/ like ``_korean_allowlist.py``.
 """
 from __future__ import annotations
 
@@ -277,7 +277,7 @@ def make_run(*, run_id: str = RUN_ID, doc_id: str = CHAT_DOC, issued_to: str = U
     from modules.flow_gate.services import ai_invoke_service as svc
 
     # command_access="execute" (with source_access="read") is an execute-mode token
-    # (flowgate.v02test.0026); None everywhere else, as token_service.issue leaves it.
+    # ; None everywhere else, as token_service.issue leaves it.
     add_run_token(run_id, source_access=source_access, doc_id=doc_id, issued_to=issued_to,
                   command_access=command_access)
     run = {

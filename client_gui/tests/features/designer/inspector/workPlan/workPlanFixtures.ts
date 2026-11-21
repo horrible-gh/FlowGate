@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#13 — local helper of the WP summary's specs (D#1 §12.3: a feature keeps its own helpers
+ * local helper of the WP summary's specs (the earlier implementation: a feature keeps its own helpers
  * in its own folder). Server-shaped `GET /documents/{doc_id}/work-plan` answers (work_plan.py _read_view: body
  * steps, step_execution_status, assignment_summary, totals) and Canvas selections of a WP Node in each
  * ownership, built from the shared support fixtures.
@@ -45,7 +45,7 @@ export function pairRows(type: string, result: string, ordinal: number, fields: 
   ]
 }
 
-/** The default plan: D#1 (claude), D#2 (unassigned), T#1→TR#1 (codex, review 1), T#2→TR#2 (claude). */
+/** The default plan: the earlier implementation (claude), the earlier implementation (unassigned), the earlier implementation→TR#1 (codex, review 1), the earlier implementation→TR#2 (claude). */
 export function planSteps(): Record<string, unknown>[] {
   return [
     stepRow('D', 1, { provider_id: 'claude', provider_display_name: 'Claude (old)' }),

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 segmented choice (0035 insp-v4 `.seg`): two or three exclusive
+  <!-- the v7 segmented choice (insp-v4 `.seg`): two or three exclusive
        options side by side (사용 / 생략 · 실행 방식 따름 / 사람 확인 필요 · 끄기 / 켜기 · 끝까지 /
        계획 확인 후). A radio group: one option is on; `disabled` keeps the look and refuses changes. -->
   <span class="inspector-segment" :class="`inspector-segment--${size}`" role="radiogroup" :aria-label="ariaLabel" data-test="inspector-segment">

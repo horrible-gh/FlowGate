@@ -1,4 +1,4 @@
-// flowgate.v02test.0029 T0005 — the images attached to the composer's message, per draft owner (a chat, or a new-chat
+// the images attached to the composer's message, per draft owner (a chat, or a new-chat
 // draft): picked → shrunk when too large → uploaded at once as temp images of the Flow (by flow id, so a message
 // before its chat exists can carry them) → sent as `images: [image_id…]` with the text.
 //

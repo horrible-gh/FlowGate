@@ -1,4 +1,4 @@
-"""Each user's display order of AI (flowgate.v02test.0025, migration 185).
+"""Each user's display order of AI (migration 185).
 
 One list over the system AI and the user's own AI. It orders every AI selection list the user
 sees; it is never a fallback order (that stays ai_providers.sort_order of the system rows).

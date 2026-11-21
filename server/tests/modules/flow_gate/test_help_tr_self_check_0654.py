@@ -1,4 +1,4 @@
-"""0654 T0004: the tr_self_check help item (0684 T#4 removed the source_bundles item).
+"""the tr_self_check help item (removed the source_bundles item).
 
 The item is documentation only. These tests pin it to the contracts it describes
 (``api_server_tools.SCHEMAS["run_self_check"]``, ``tr_self_check_service`` and
@@ -26,7 +26,7 @@ SELF_CHECK_ERROR_CODES = {
     "selfcheck_invalid_cwd", "selfcheck_disabled", "selfcheck_already_running",
     "selfcheck_source_busy", "selfcheck_worktree_unavailable",
 }
-# 0053 1-B: a start is no longer refused with selfcheck_recovery_incomplete (a queued request runs in
+# a start is no longer refused with selfcheck_recovery_incomplete (a queued request runs in
 # its own snapshot, without the Group lock), so the help no longer documents it as an error.
 
 
@@ -50,7 +50,7 @@ def test_visible_only_for_a_worker_on_a_tr_edit_step():
 
 
 def test_visible_for_a_worker_on_a_tr_new_step():
-    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists (doc_type is the head type).
+    # a TR(new) worker runs Self-check before its TR exists (doc_type is the head type).
     assert help_catalog.decide_visibility("tr_self_check", _ctx(action_scope="new")).visible is True
     assert "tr_self_check" in help_catalog.visible_names(_ctx(action_scope="new"))
 
@@ -88,7 +88,7 @@ def test_catalog_registration_is_complete():
 def test_request_field_set_matches_the_tool_schema(locale):
     fields = {f["name"] for f in _content(locale)["request"]["fields"]}
     schema = api_server_tools.SCHEMAS["run_self_check"]
-    # 0114 T#4: parallel_share (the wished processor share) joined the request contract.
+    # parallel_share (the wished processor share) joined the request contract.
     assert fields == {"program", "args", "cwd", "timeout_seconds", "parallel_share"}
     assert fields == set(schema["properties"])
     assert {f["name"] for f in _content(locale)["request"]["fields"] if f["required"]} == set(schema["required"])
@@ -157,7 +157,7 @@ def test_lifecycle_describes_run_read_cancel_and_terminal_states(locale):
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_no_fallback_names_no_other_backend(locale):
-    # 0684 T#4: Source Bundle, AI Scratch and run_test no longer exist, so the help stops
+    # Source Bundle, AI Scratch and run_test no longer exist, so the help stops
     # naming them as refused fallbacks; "no other execution path" is the whole rule.
     text = " ".join(_content(locale)["no_fallback"])
     for token in ("Source Bundle", "AI Scratch", "run_test", "access_source_bundle", "run_source_bundle"):
@@ -191,7 +191,7 @@ def test_documented_error_codes_exist_in_the_service_or_policy_source():
         assert f'"{row["code"]}"' in source, row["code"]
 
 
-# ── H7 / H8 (0684 T#4) ───────────────────────────────────────────────────────
+# ── H7 / H8 ───────────────────────────────────────────────────────
 
 def test_source_bundle_recovery_item_is_retired():
     assert "source_bundles" not in help_catalog.CATALOG_ORDER
@@ -267,7 +267,7 @@ def _registered_draft_routes():
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_tr_new_http_operations_match_the_registered_draft_routes(locale):
-    # 0638 T#1: the TR(new) help points at the token-owned draft routes, never a document path.
+    # the TR(new) help points at the token-owned draft routes, never a document path.
     content = help_catalog.build_item("tr_self_check", _ctx(locale, action_scope="new"))["content"]
     assert content["stage"] == "new"
     http = content["http"]

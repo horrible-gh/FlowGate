@@ -55,7 +55,7 @@ const base = (docId: string) => ({
 })
 
 /**
- * The v0.1 document responses (the history parts as the server sends them — flowgate.v02.0056 F2-2: the AI reviews
+ * The v0.1 document responses (the history parts as the server sends them — the earlier change F2-2: the AI reviews
  * newest first, the rejections oldest first, O3 0009-TR §4-4).
  */
 const RESPONSES: Record<string, Record<string, unknown>> = {

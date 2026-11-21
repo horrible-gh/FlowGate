@@ -1,7 +1,7 @@
-// flowgate.v02.0031 — pure timeline rules. Messages, command requests, work changes and status
-// events are ONE flow (R0001 §3, §9-5): nothing is pinned under the log, and a new message after
-// an activity pushes that activity up like any other entry. flowgate.v02.0032: command requests
-// and run changes are placed by their server anchor (D0006 §3.9.1), not by their time.
+// pure timeline rules. Messages, command requests, work changes and status
+// events are ONE flow: nothing is pinned under the log, and a new message after
+// an activity pushes that activity up like any other entry. the earlier change: command requests
+// and run changes are placed by their server anchor, not by their time.
 import type {
   AttachmentRequestActivity,
   CommandRequestActivity,
@@ -15,7 +15,7 @@ import type {
 } from './types'
 
 /**
- * flowgate.v02gui.0007 A: why a send failed, shown briefly on its bubble — a class of the HTTP status (no answer =
+ * A: why a send failed, shown briefly on its bubble — a class of the HTTP status (no answer =
  * `network`) and the status itself. The server's own wording is not shown there: it is written for an AI / API caller.
  */
 export type SendFailureReason = 'rejected' | 'forbidden' | 'not_found' | 'conflict' | 'server' | 'network'
@@ -43,28 +43,28 @@ export interface PendingTurn {
   createdAt: string
   failed: boolean
   /**
-   * flowgate.v02.0142 T#1: the AI (`selectedProviderId`) chosen at the moment the message was sent. Empty = no
+   * the AI (`selectedProviderId`) chosen at the moment the message was sent. Empty = no
    * selection. Set once when the pending turn is made and never changed: the send action of the first try and of
    * every retry runs on this AI, whatever the picker shows later.
    */
   providerId: string
-  /** flowgate.v02test.0030: how `providerId` was chosen, pinned with it (sent with the AI call). Absent = not known. */
+  /** how `providerId` was chosen, pinned with it (sent with the AI call). Absent = not known. */
   providerOrigin?: ProviderOrigin
   /**
-   * flowgate.v02gui.0009: the send-time action (action after sending) of the message's own Flow at the moment it was sent. Set
+   * the send-time action (action after sending) of the message's own Flow at the moment it was sent. Set
    * once like `providerId`: the action runs on this value even when the screen shows another Flow by the time the
    * server accepts the message. Absent = read the current setting (a pending turn made before this field existed).
    */
   sendAction?: SendAction
-  /** flowgate.v02gui.0007 A: why the last attempt failed (set with `failed`, cleared when a retry starts). */
+  /** A: why the last attempt failed (set with `failed`, cleared when a retry starts). */
   failure?: SendFailure | null
   /**
-   * flowgate.v02gui.0028: the first message of a new chat, shown from the press of send on (before its chat exists):
+   * the first message of a new chat, shown from the press of send on (before its chat exists):
    * the create intent its chat is made with, kept so a try after a failure or an F5 asks for the same chat.
    */
   createIntentId?: string
   /**
-   * flowgate.v02test.0029: ids of the uploaded message images this message carries (kept with the message, so a retry
+   * ids of the uploaded message images this message carries (kept with the message, so a retry
    * and an F5 send the same images under the same idempotency key).
    */
   images?: string[]
@@ -106,7 +106,7 @@ export function upsertActivity(current: readonly ConversationActivity[], activit
 }
 
 /**
- * The activity list after a full server read (D0006 §3.9.2): this client's status events stay,
+ * The activity list after a full server read: this client's status events stay,
  * every command request / run change is the server's, and one the server no longer lists is
  * dropped. A command in `held` keeps the card on screen as it is — an in-flight decision's
  * optimistic state stands until that decision answers. A 403 the user already got for a
@@ -125,7 +125,7 @@ export function replaceServerActivities(
     if (now && held.includes(activity.id)) return now
     return now?.decisionForbidden ? { ...activity, decisionForbidden: true } : activity
   })
-  // flowgate.v02test.0024 B: a recorded chat error comes back from the server as a status line; the server's copy
+  // B: a recorded chat error comes back from the server as a status line; the server's copy
   // replaces the one this client placed (same id), so it is never shown twice.
   const serverIds = new Set(fromServer.map((a) => a.id))
   return [...current.filter((a) => a.kind === 'status' && !serverIds.has(a.id)), ...fromServer]
@@ -141,13 +141,13 @@ function activityItem(activity: ConversationActivity): TimelineItem {
 
 /**
  * One list. Turns keep their server order (seq). A command request or run change goes where
- * the server anchored it — before or after turn `anchor.seq` (D0006 §3.9.1) — and never by its
+ * the server anchored it — before or after turn `anchor.seq` — and never by its
  * `createdAt`: an anchor older than the loaded turns lands before them, one past the loaded
  * turns after them, and an activity the server could not place yet stays after every turn
  * until a later read places it. Status events are this client's own (run started / finished):
  * they keep the time rule — in front of the first turn later than them, an untimed one last.
  *
- * flowgate.v02gui.0007 A: a failed message goes where it was sent — right after the turn its `basedOnSeq` saw (and
+ * A: a failed message goes where it was sent — right after the turn its `basedOnSeq` saw (and
  * that turn's after-anchors), in front of every later turn — so a message that succeeded after it never shows above
  * it. The place is the seq, never `createdAt` (client and server clocks differ). Failed messages at one place keep
  * their outbox order. A message still on its way, and a failed one sent after the last loaded turn, stays last in
@@ -244,7 +244,7 @@ function kindRank(activity: ConversationActivity): number {
   return activity.kind === 'command' ? 0 : activity.kind === 'attachments' ? 2 : 1
 }
 
-/** Seq of the first unread turn when some turn above it was read (D0002 §6), else 0. */
+/** Seq of the first unread turn when some turn above it was read, else 0. */
 export function firstUnreadSeq(turns: readonly ConversationTurn[], readSeq: number): number {
   if (readSeq <= 0) return 0
   if (!turns.some((t) => t.seq > 0 && t.seq <= readSeq)) return 0
@@ -252,7 +252,7 @@ export function firstUnreadSeq(turns: readonly ConversationTurn[], readSeq: numb
 }
 
 /**
- * Totals of a run change (R0001 §6: file count, added / removed, representative file). The
+ * Totals of a run change (file count, added / removed, representative file). The
  * server totals win; a total it leaves null is summed from the files that have numbers, and
  * stays null when none has (binary only) — "no numbers" is not "0 lines".
  */

@@ -1,4 +1,4 @@
-// flowgate.v02.0064 T-B1d — body diagnosis / recovery client contract (P0006 §2.6~§2.8, §6.2) and the
+// T-B1d — body diagnosis / recovery client contract and the
 // MdViewer [복구] flow. The server is mocked at @shared/api.
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

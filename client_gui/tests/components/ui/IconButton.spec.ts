@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import IconButton from '@/components/ui/IconButton.vue'
 
-// T0004 §5.2/§9: icon-only control — render, click, disabled, keyboard focus, accessible label.
+// icon-only control — render, click, disabled, keyboard focus, accessible label.
 describe('components/ui/IconButton (T0004)', () => {
   it('requires an accessible label and renders it as aria-label', () => {
     const wrapper = mount(IconButton, { props: { label: '알림' }, slots: { default: '<svg />' } })

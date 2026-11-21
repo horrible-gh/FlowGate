@@ -1,7 +1,7 @@
 <template>
   <p class="notification-context">{{ t('gui.designer.top.notifications.project_only', { name: projectName }) }}</p>
   <p v-if="!rows.length && !mergeItems.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_runs') }}</p>
-  <!-- flowgate.v02test.0042 (mockup v7 item 3): card result merges — a red-framed row with the conflict mark when a person
+  <!-- (mockup v7 item 3): card result merges — a red-framed row with the conflict mark when a person
        must choose, a blue hourglass while it waits (a spinner while it catches up); [열기] opens the card's '병합 · 충돌' tab. -->
   <ul v-if="mergeItems.length" class="notification-list" data-test="notification-merges">
     <li v-for="item in mergeItems" :key="`${item.flowId}:${item.nodeKey}`" class="notification-card notification-merge" :class="{ 'is-choice': choice(item) }" data-test="notification-merge" :data-state="item.state">

@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0048 T#7 — the Q&A rules as tables (D#1 §8.5 form, §10.4): which question waits for
+ * the Q&A rules as tables (form): which question waits for
  * the user and the tab number (asker_kind × answer_count × answers), the display order, who asked /
  * answered, answering availability with the read-only rows (ownership conflict, revision view),
  * disposed, AI running and an answer in flight, an answer's readiness, and the reason / failure /
  * error keys in the three locales.
- * flowgate.v02.0070 T#5 (B5) — the body context (card line × history × superseded), answering and asking an AI closed
+ * (B5) — the body context (card line × history × superseded), answering and asking an AI closed
  * by it with the window's one line, the item view's created_at and document id, and the new keys in the three locales.
  */
 import { describe, expect, it } from 'vitest'
@@ -144,7 +144,7 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
   })
 
   it.each([
-    // D#1 §8.5 read-only rows. flowgate.v02.0063: a revision view answers as the draft view does; a Flow whose
+    // read-only rows. the earlier change: a revision view answers as the draft view does; a Flow whose
     // answers stay closed (conflict, disposed) shows no answer, question or AI line.
     ['v01 / draft (none)', { readOnly: null }, true, null, true],
     ['ownership conflict', { readOnly: 'conflict' }, false, 'reason.read_only_conflict', false],
@@ -163,9 +163,9 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
     expect(qnaAvailability(input)).toEqual({
       read: { visible: true, enabled: true, reason: null },
       answer: { visible: shown, enabled, reason },
-      // flowgate.v02.0053 T#6: asking closes on the same reasons (no question is on its way here).
+      // asking closes on the same reasons (no question is on its way here).
       ask: { visible: shown, enabled, reason: reason === null ? null : reason.replace('reason.', 'ask_reason.') },
-      // flowgate.v02.0056 F1: asking an AI closes on the same reasons (no request is on its way here).
+      // asking an AI closes on the same reasons (no request is on its way here).
       ai_request: { visible: shown, enabled, reason: reason === null ? null : reason.replace('reason.', 'ai_reason.') },
     })
   })
@@ -206,7 +206,7 @@ describe('keys and wording (flowgate.v02.0048 T#7)', () => {
       ...['read_only_conflict', 'disposed', 'ai_running', 'busy'].map((reason) => `reason.${reason}`),
       ...kinds.map(qnaFailureKey),
       ...kinds.map(qnaErrorKey),
-      // 0052 T#1: the tab shows two chips for the three model states (waiting / open -> unanswered).
+      // the tab shows two chips for the three model states (waiting / open -> unanswered).
       ...['unanswered', 'answered'].map((state) => `state.${state}`),
       'side.human',
       'side.ai',

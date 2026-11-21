@@ -17,7 +17,7 @@ vi.mock('@/features/conversation/api', async (original) => ({
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0029 T0005 — the composer side of message images: paste / drop → thumbnail → upload at once (by flow
+// the composer side of message images: paste / drop → thumbnail → upload at once (by flow
 // id, also before the chat exists) → send holds until every image is ready → `images: [image_id…]` goes with the text.
 const FLOW = 'p.m.0001'
 const CHAT = 'p.m.0001.0002-CH'

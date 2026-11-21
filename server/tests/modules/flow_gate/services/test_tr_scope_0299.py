@@ -1,6 +1,6 @@
-"""TR work-scope validation (flowgate.default.0299 — R0001 → D0004 → NR0006 → T0007).
+"""TR work-scope validation.
 
-Cover NR0006 §5 scenarios verifiable through pure functions: section parsing,
+Cover the review scenarios verifiable through pure functions: section parsing,
 path normalization/rejection, exclusions, verdict matrix, actual change collection
 using a real Git repository mixing committed/staged/unstaged/untracked/delete/rename,
 and the required rejection-notice structure.
@@ -16,7 +16,7 @@ import pytest
 from modules.flow_gate.services import tr_scope_service as trs
 
 
-# ── Reported-file list parser (D0004 §3.2) ──
+# ── Reported-file list parser ──
 
 def test_section_absent_is_not_found():
     parsed = trs.parse_reported_files("# TR\n\n본문만 있고 섹션이 없다.\n")
@@ -32,7 +32,7 @@ def test_section_stops_at_next_heading():
     assert parsed.format_errors == []
 
 
-# ── T0004: Markdown horizontal rule as a Changed Files section boundary ─────
+# ── the earlier implementation: Markdown horizontal rule as a Changed Files section boundary ─────
 
 def test_horizontal_rule_ends_section_before_verification_footer():
     """R1 -- the real-world symptom: a '---' separated verification footer must not be
@@ -160,7 +160,7 @@ def test_item_count_cap():
     assert any(str(trs.MAX_ITEMS) in e for e in parsed.format_errors)
 
 
-# ── Exclusion rules (D0004 §3.3 / N0005 Q2 decision) ──
+# ── Exclusion rules (N0005 Q2 decision) ──
 
 @pytest.mark.parametrize("path", [
     ".git/config", ".venv/lib/x.py", "server/app.db", "server/app.sqlite3",
@@ -182,7 +182,7 @@ def test_kept_paths(path):
     assert trs.is_excluded_path(path) is False
 
 
-# ── Verdict matrix (D0004 §3.7) ──
+# ── Verdict matrix ──
 
 @pytest.mark.parametrize("stage,expected", [
     (trs.STAGE_OBSERVE, trs.VERDICT_PASS),
@@ -218,7 +218,7 @@ def test_clean_report_passes_in_every_stage():
         assert trs._verdict_for([], stage) == trs.VERDICT_PASS
 
 
-# ── Rejection notice (D0004 §3.8) ──
+# ── Rejection notice ──
 
 def test_notice_carries_all_five_blocks():
     notice = trs.build_notice({
@@ -237,7 +237,7 @@ def test_notice_carries_all_five_blocks():
     assert "[3]" in notice and "server/x.py" in notice
     assert trs.SECTION_HEADING in notice          # Resubmission format
     assert "[5]" in notice                        # How to revert
-    # Phrase this as an inference, not a certainty (D0004 §3.8).
+    # Phrase this as an inference, not a certainty.
     assert "대개" in notice
 
 
@@ -285,7 +285,7 @@ def test_revert_block_is_omitted_when_nothing_was_written_elsewhere():
     assert "[5]" not in notice
 
 
-# ── Locale propagation (0355 T2/TR2, NR0003 §1-4) ──
+# ── Locale propagation ──
 
 import re as _re
 
@@ -328,7 +328,7 @@ def test_notice_ja_has_japanese_no_korean_and_english_grammar_heading():
     assert not _HANGUL.search(notice), "ja notice must not contain Korean"
     assert _KANA.search(notice), "ja notice must contain Japanese"
     assert "flowgate_default_0355" in notice
-    # No Japanese alias exists (0355 T0009); use the canonical English heading.
+    # No Japanese alias exists; use the canonical English heading.
     assert trs.SECTION_HEADING_EN in notice
     assert trs.SECTION_HEADING not in notice
 
@@ -380,7 +380,7 @@ def test_evaluate_threads_locale_into_rejected_notice(monkeypatch):
     assert "TRV-002" in result["notice"]
 
 
-# ── Collect actual changes (D0004 §3.3) ──
+# ── Collect actual changes ──
 
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
@@ -391,7 +391,7 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _pin_recorded_floor(monkeypatch, repo: Path, floor_ref: str = "main") -> None:
-    """0665 T0004: collect_scope_changes measures from the group's RECORDED floor."""
+    """collect_scope_changes measures from the group's RECORDED floor."""
     from modules.flow_gate.services import git_service
     from modules.flow_gate.services.git import scope_base
 
@@ -447,7 +447,7 @@ def test_collect_scope_changes_unions_every_source(work_repo, monkeypatch):
     assert result["available"] is True
     paths = set(result["paths"])
     assert {"committed.py", "staged.py", "edited.py", "untracked.py", "deleted.py"} <= paths
-    # Renames include only the new path (D0004 §3.2); --no-renames breaks this.
+    # Renames include only the new path; --no-renames breaks this.
     assert "renamed_to.py" in paths
     assert "renamed_from.py" not in paths
     assert "kept.py" not in paths
@@ -474,7 +474,7 @@ def test_parse_name_status_z_stays_in_sync_across_renames():
     assert git_service._parse_name_status_z(stdout) == ["a.py", "new.py", "b.py"]
 
 
-# ── evaluate() integration (D0004 §3.4) ──
+# ── evaluate integration ──
 
 def _stub_scope(monkeypatch, stage, actual_paths, available=True):
     monkeypatch.setattr(trs, "resolve_stage", lambda project_id: stage)
@@ -488,7 +488,7 @@ def _stub_scope(monkeypatch, stage, actual_paths, available=True):
 
 
 def test_evaluate_reports_every_applicable_code_at_once(monkeypatch):
-    """Reporting only one problem at a time adds round trips (D0004 §3.4)."""
+    """Reporting only one problem at a time adds round trips."""
     _stub_scope(monkeypatch, trs.STAGE_ENFORCE, ["server/real.py"])
     result = trs.evaluate("p", "g", "## 변경 파일\n\n- server/ghost.py\n- /abs/x.py\n- 산문 한 줄\n")
     assert set(result["codes"]) >= {trs.TRV_FORMAT, trs.TRV_OUT_OF_SCOPE, trs.TRV_UNCONFIRMED, trs.TRV_UNREPORTED}
@@ -572,7 +572,7 @@ def test_evaluate_is_skipped_when_git_integration_is_off(monkeypatch):
 
 
 def test_missing_section_is_only_a_warning_below_enforce(monkeypatch):
-    """Already-issued work lacks this section (D0004 §3.6 staged rollout rationale)."""
+    """Already-issued work lacks this section (staged rollout rationale)."""
     _stub_scope(monkeypatch, trs.STAGE_OBSERVE, ["server/a.py"])
     result = trs.evaluate("p", "g", "# TR\n\n섹션 없는 옛 서식\n")
     assert trs.TRV_MISSING_SECTION in result["codes"]
@@ -660,7 +660,7 @@ def test_prior_tr_declared_unions_group_meta_and_excludes_current_document(monke
 
 
 def test_prior_tr_declared_includes_other_mutating_types_like_ts(monkeypatch):
-    """0390 TR0005 rev1: a TS document's declared changed-files must also feed the
+    """a TS document's declared changed-files must also feed the
     prior-declared pool -- before this fix the function hard-compared type_code ==
     "TR", so a sibling TS's report was invisible and could make a later TR/TS
     submission touching the same path come back flagged "unconfirmed" even though a
@@ -712,7 +712,7 @@ def test_verdict_from_meta_accepts_both_text_and_dict():
     assert trs.verdict_from_meta("not json") is None
 
 
-# ── Sidebar for documents without stored verdicts (0390 TR0005 rev2) ──
+# ── Sidebar for documents without stored verdicts ──
 #
 # meta['tr_scope'] is calculated once on submission. Earlier documents lack the key.
 # If document detail omits tr_scope entirely, the sidebar hides its
@@ -760,7 +760,7 @@ def test_unevaluated_verdict_is_only_for_mutating_types():
     # Non-target types still hide the section because they are never validated.
     assert trs.unevaluated_verdict("NR", _TS_BODY_WITH_SECTION) is None
     assert trs.unevaluated_verdict("R", _TS_BODY_WITH_SECTION) is None
-    # 0427 T0004: T lost write/patch/remove privileges and is no longer a target type.
+    # T lost write/patch/remove privileges and is no longer a target type.
     assert trs.unevaluated_verdict("T", "작업지시 가 승인되었습니다.") is None
     # A single '없음' line counts as a present section and produces a zero-item verdict.
     none_verdict = trs.unevaluated_verdict("TR", "## 변경 파일\n\n없음\n")
@@ -774,7 +774,7 @@ def test_unevaluated_verdict_still_shows_a_card_when_the_body_has_no_section():
     rev2 returned None and hid the card, prompting the same rejection again.
     TS documents submitted before validation never received the instruction to add
     '## 변경 파일', so its absence is normal. Hiding the area in that normal state
-    violates R0001's requirement to provide scope validation in the sidebar.
+    violates the requirement's requirement to provide scope validation in the sidebar.
     """
     for type_code, body in (
         ("TS", _TS_BODY_NO_SECTION),          # Body shape of the TS document actually opened by the reviewer
@@ -887,10 +887,10 @@ def test_document_detail_still_prefers_the_stored_verdict(monkeypatch, tmp_path)
     assert "evaluated" not in out["tr_scope"]
 
 
-# ── 0493 T0005: per-file actual status manifest ──────────────────────────────
+# ── the earlier implementation: per-file actual status manifest ──────────────────────────────
 
 def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_repo, monkeypatch):
-    """Reviewers need per-file status, not just a bare path list (0493 T0005)."""
+    """Reviewers need per-file status, not just a bare path list."""
     from modules.flow_gate.services import git_service
 
     monkeypatch.setattr(
@@ -917,7 +917,7 @@ def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_rep
 def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exclusively(monkeypatch):
     """reporting_state is mutually exclusive; a current declaration always wins over a
     prior one, and prior-reported must never explain away this body's own unconfirmed
-    report (0493 T0005 acceptance criteria)."""
+    report (acceptance criteria)."""
     monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
     monkeypatch.setattr(
         trs.git_service, "collect_scope_changes",
@@ -957,7 +957,7 @@ def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exc
     assert trs.TRV_UNCONFIRMED in result["codes"]
 
 
-# ── 0110 T#2: Graph attempt basis (NR0003 §2 T-A) ────────────────────────────
+# ── the earlier implementation: Graph attempt basis ────────────────────────────
 
 def _forbid_group_measurement(monkeypatch):
     """An attempt basis must never read the group worktree or its recorded floor."""

@@ -1,9 +1,9 @@
-"""0061 T#13 rework (rej_01M4W2J62CDJRF6G): while a Graph Time Machine operation of the Flow is unfinished no execution
+"""(rej_01M4W2J62CDJRF6G): while a Graph Time Machine operation of the Flow is unfinished no execution
 is requested, admitted or replayed — not a person's explicit review (which would take the idle run back to running),
 not the write of a node a person's approval opens, not a durable request at its admission or at the server start's
 replay. TR Self-check only; formal PASS/gate belongs to TS/TSR.
 
-The execution ledger is the real SQLite fixture of T#4 / T#8 (migrations 151/152/086d/153a, ``result_db``); the
+The execution ledger is the real SQLite fixture of the earlier implementation / the earlier implementation (migrations 151/152/086d/153a, ``result_db``); the
 unfinished operation (``operation.busy``), the fence's run event and the run settlement are stood in.
 """
 from contextlib import nullcontext
@@ -14,7 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 from test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
-from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: F401 — T#8 result fixture (migration 153a)
+from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: F401 — the earlier implementation result fixture (migration 153a)
 from flowgate.graph_run import execution, execution_store as ledger, fencing, scheduling
 from flowgate.graph_time_machine import operation
 from modules.flow_gate.graph_workflow.services import run_apply

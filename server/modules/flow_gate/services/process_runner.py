@@ -1,5 +1,5 @@
 """Subprocess execution primitives for the AI-invoke engine
-(flowgate.default.0187 L0006 §2.5).
+.
 
 Collects the pieces that are easy to get subtly wrong when spawning and
 supervising a child process: process-group creation (the precondition for tree
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Windows Job Object constants.  Kept here (rather than in provider orchestration)
 # so every lifecycle action uses the same ownership primitive.
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-# flowgate.v02.0114 T#4: the processor limit of a Self-check run's Job (D 0006 3.5 (2)).
+# the processor limit of a Self-check run's Job (the earlier implementation 3.5 ).
 _JOB_OBJECT_LIMIT_AFFINITY = 0x00000010
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _CREATE_SUSPENDED = 0x00000004
@@ -74,7 +74,7 @@ class _JobBasicLimitInformation:
         return ctypes, wintypes, JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 
 
-# JobObjectBasicProcessIdList (T0004 §2): a read-only query, unrelated to the
+# JobObjectBasicProcessIdList: a read-only query, unrelated to the
 # kill-boundary limit information above. JOBOBJECT_BASIC_PROCESS_ID_LIST is a
 # variable-length struct -- the trailing array is sized per query attempt.
 _JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS = 3
@@ -124,10 +124,10 @@ class WindowsProcessOwner:
     def __init__(self, run_id: Optional[str] = None, *, job_name: Optional[str] = None,
                  cpu_limit: Optional[int] = None):
         self.run_id = run_id
-        # A named Job (Self-check, flowgate.v02.0080 T#1) outlives this handle's owner in the
+        # A named Job (Self-check, the earlier change the earlier implementation) outlives this handle's owner in the
         # object namespace for as long as it has members, so a restarted server can open it.
         self.job_name = job_name
-        # flowgate.v02.0114 T#4: a Self-check run's reservation R. The Job's limit information
+        # a Self-check run's reservation R. The Job's limit information
         # then also carries an affinity of R processors, set before any member exists, so the
         # whole tree runs on those R processors only. None (AI runs) sets no limit, as before.
         self.cpu_limit = cpu_limit
@@ -302,7 +302,7 @@ class WindowsProcessOwner:
     def process_ids(self) -> Optional[frozenset]:
         """Read-only PID membership of this Job Object, or None if unavailable.
 
-        T0004 §2: queried under the SAME `_handle_lock` as `terminate()`/`close()` so a
+        queried under the SAME `_handle_lock` as `terminate()`/`close()` so a
         query never races handle teardown. `JOBOBJECT_BASIC_PROCESS_ID_LIST` is a
         variable-length struct -- when the job holds more processes than the buffer has
         room for, Win32 does NOT necessarily return TRUE with a truncated list: it commonly
@@ -410,7 +410,7 @@ def communicate_with_cleanup(
     return result.get("value", (None, None))
 
 
-# Child environment policies (flowgate.v02.0089 T0004 / NR0003 §3). The server's own
+# Child environment policies. The server's own
 # os.environ carries its signing key, token/Agent peppers, storage encryption keys and DB
 # credentials (stg.py/dev.py load_dotenv, config.py mirroring, docker-entrypoint exports);
 # none of that may reach a child by inheritance. Only the INHERITED part is filtered --
@@ -567,7 +567,7 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
 def _linux_process_group_snapshot(pgid: int) -> Optional[frozenset]:
     """PIDs whose process group equals *pgid*, or None if `/proc` is unreadable.
 
-    T0004 §3: `pgid` is `proc.pid` itself -- `popen_kwargs` starts the CLI provider with
+    `pgid` is `proc.pid` itself -- `popen_kwargs` starts the CLI provider with
     `start_new_session=True`, which makes the launcher the leader of a brand-new session
     and process group, and `kill_process_tree` already reaps that same boundary with
     `os.killpg(proc.pid, ...)`. A PID that exits mid-enumeration is a normal race, not a
@@ -591,7 +591,7 @@ def _linux_process_group_snapshot(pgid: int) -> Optional[frozenset]:
 
 
 def process_tree_snapshot(proc: subprocess.Popen) -> Optional[frozenset]:
-    """Read-only PID-set snapshot of proc's ownership boundary (T0004 §1).
+    """Read-only PID-set snapshot of proc's ownership boundary.
 
     Windows reads the Job Object `owner.attach()` already assigned the process to;
     Linux reads `/proc` + `os.getpgid()` against the launcher's own PID, the same
@@ -610,7 +610,7 @@ def process_tree_snapshot(proc: subprocess.Popen) -> Optional[frozenset]:
 def _decode_candidates() -> tuple[str, ...]:
     """Encodings to try, in order, for child-process output on this host.
 
-    On Windows the console codepage comes FIRST (0277 B0001 -> NR0003 §5 S1). cmd.exe and
+    On Windows the console codepage comes FIRST. cmd.exe and
     most native tools emit the ANSI/OEM codepage (cp949, cp932, cp1252 ...), and a short
     run of those bytes is often accidentally valid UTF-8 — trying UTF-8 first therefore
     succeeds with mojibake rather than failing over. os.device_encoding(1) returns None
@@ -649,7 +649,7 @@ def unc_safe_shell(cmd: str, root: Path) -> tuple[str, Optional[str]]:
     cmd.exe refuses a UNC path (``\\host\share\...``) as its current directory:
     it prints a localized "UNC paths are not supported" message and
     silently resets CWD to ``C:\Windows``, breaking every relative path the
-    command relies on (0285 B0001 -> NR0004). When *root* is a UNC path we
+    command relies on. When *root* is a UNC path we
     therefore do NOT pass it to cmd.exe as ``cwd``; instead we prefix ``pushd``,
     which maps the share to a temporary drive letter and cd's into it. The temp
     mapping is released automatically when the ``cmd /c`` session exits, so no

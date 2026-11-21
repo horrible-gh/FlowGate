@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#3 — openDocument opens the document in this tab, in its own modeless document
+ * openDocument opens the document in this tab, in its own modeless document
  * window (features/documentWindow), never in a browser tab: `view` (↗) or straight to the editor
  * (`edit`, ✎); one window per document — a second request brings the open window back (restored, in
  * front) and an edit request turns it to the editor without dropping an editor that is open.

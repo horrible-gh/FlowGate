@@ -91,20 +91,20 @@
 </template>
 
 <script setup lang="ts">
-// Project creation child Modal (WP0005 T#2 §2.1/§2.4/§5-§7). Opens nested inside
-// ProjectDialog via ModalShell's existing nested-modal contract (D0004 §2.4/§4.2) --
+// Project creation child Modal. Opens nested inside
+// ProjectDialog via ModalShell's existing nested-modal contract --
 // this component never reimplements backdrop/ESC/focus-trap/nesting-order itself, and
 // relying on ModalShell's own `isTopmostModal` guard is what keeps an ESC on this
-// (topmost) child from also closing the parent Project Dialog underneath it (T#2 §7).
+// (topmost) child from also closing the parent Project Dialog underneath it.
 //
 // Fields are exactly the four the backend create endpoint reads -- name/id/description/
-// color (T#1 §1/§3, D0004 §2.4/§5.3) -- the v0.1 structure/storage-type/custom-path/
+// color -- the v0.1 structure/storage-type/custom-path/
 // member fields that never reached that endpoint are not reproduced here.
 //
 // This component owns the create request itself (via the Project store) and its own
 // dirty/duplicate-submit guards; it never decides what the caller does with the created
 // Project or with `open` -- it only emits `created`/`close` and lets ProjectDialog own
-// both (T#1 §5 "Dialog-local state does not belong in the store" extends to "child open/close state is
+// both (the earlier implementation "Dialog-local state does not belong in the store" extends to "child open/close state is
 // the parent's").
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -143,7 +143,7 @@ const color = ref(DEFAULT_COLOR)
 
 const suggesting = ref(false)
 const submitting = ref(false)
-// flowgate.v02.0088 F01/F10: kept as meaning (the server's own words raw, otherwise the localized
+// kept as meaning (the server's own words raw, otherwise the localized
 // fallback key) so an error still on screen follows a language switch.
 const submitError = ref<UiText | null>(null)
 const submitErrorText = computed(() => renderUiText(t, submitError.value))
@@ -151,7 +151,7 @@ const attemptedSubmit = ref(false)
 const confirmDiscardOpen = ref(false)
 
 const nameValid = computed(() => name.value.trim() !== '')
-// Project ID is a required v0.2 frontend contract (T0012 §3.1) -- backend's own ability
+// Project ID is a required v0.2 frontend contract -- backend's own ability
 // to slugify a missing project_id is a backend capability only and is never grounds to
 // treat an empty id as submittable here.
 const idEmpty = computed(() => id.value.trim() === '')
@@ -183,13 +183,13 @@ function resetForm(): void {
 }
 
 // Independent of the Project store's own request epoch (which only tracks
-// fetchProjects/createProject/closeDialog on the *parent* Project Dialog, T#1 §5): this
+// fetchProjects/createProject/closeDialog on the *parent* Project Dialog, the earlier implementation): this
 // child Modal can itself be closed and reopened (a fresh create session) while a
 // previous submit from an earlier session is still in flight, since the store's
 // createProject() call already started is not cancelled by that. `generation` bumps on
 // every open-state change so a stale submit's eventual resolution can recognize it no
 // longer belongs to the session now on screen and never emits `created`/shows its error/
-// touches `submitting` for it (T#2 §9 "child ... a late response after the Dialog lifecycle changes
+// touches `submitting` for it (the earlier implementation "child ... a late response after the Dialog lifecycle changes
 // must not overwrite the latest selection/current/open state").
 const generation = ref(0)
 
@@ -197,7 +197,7 @@ const generation = ref(0)
 // the "제안" button did -- takes a ticket from this single counter. A response only ever
 // applies id/idTouched if its ticket is still the latest one taken, so two overlapping
 // calls (auto vs manual, or two names typed in quick succession) always resolve in
-// request order, never in whichever order their network responses happen to land (T#2 §9
+// request order, never in whichever order their network responses happen to land (the earlier implementation
 // "Results from newer requests take precedence over older requests"). `cancelPendingSuggest` both clears any debounce
 // timer that has not fired yet and burns a fresh ticket so an already in-flight call's
 // eventual resolution is recognized as stale too.
@@ -212,7 +212,7 @@ let suggestDebounce: ReturnType<typeof setTimeout> | null = null
 // immediately here rather than left for that request's own eventual `finally` to notice --
 // once the ticket no longer matches `latestSuggestTicket`, that `finally`'s own check never
 // fires, and without this the "제안" Button's loading→disabled contract would otherwise
-// leave it permanently disabled (T#2 §9 stale response must not reverse the latest UI
+// leave it permanently disabled (the earlier implementation stale response must not reverse the latest UI
 // state).
 let suggestingOwnerTicket: number | null = null
 
@@ -254,7 +254,7 @@ function onNameChange(value: string): void {
 // A direct id edit always wins over whatever suggestion request (auto or manual "제안")
 // is still outstanding -- without cancelling it here first, that request's own ticket is
 // still the latest one when it resolves, and its eventual response would overwrite the
-// value just typed by hand (T#2 §9 latest-request/state precedence contract).
+// value just typed by hand (latest-request/state precedence contract).
 function onIdChange(value: string): void {
   cancelPendingSuggest()
   idTouched.value = true
@@ -349,7 +349,7 @@ async function handleSubmit(): Promise<void> {
     if (myGeneration !== generation.value) return
     // `created` is null only when this request was superseded at the store level by a
     // close/reopen of the *parent* Dialog or a newer fetch/create (store.ts's
-    // stale-response guard, T#1 §5) -- in that case the session that now owns the
+    // stale-response guard, the earlier implementation) -- in that case the session that now owns the
     // Dialog has already moved on, so there is nothing left for this (stale) call to
     // report either.
     if (created) emit('created', created)
@@ -361,7 +361,7 @@ async function handleSubmit(): Promise<void> {
   }
 }
 
-// flowgate.v02.0152: a name/id already taken -- above all by an archived project, which this
+// a name/id already taken -- above all by an archived project, which this
 // Dialog's active-only list never shows -- is named in the person's language, with the holder.
 function conflictText(err: unknown): UiText | null {
   if (!(err instanceof ProjectCreateConflictError)) return null

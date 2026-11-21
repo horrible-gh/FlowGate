@@ -1,6 +1,6 @@
-"""flowgate.v02.0089 T0004: server secrets never reach a child process by inheritance.
+"""server secrets never reach a child process by inheritance.
 
-NR0003 §5. Fake server secrets (`FAKE_*_DO_NOT_USE`) are put into the parent env and
+Fake server secrets (`FAKE_*_DO_NOT_USE`) are put into the parent env and
 every fixed spawn path is checked twice where it matters:
 
 A. the env handed to Popen / executor.spawn is captured right before the spawn: env is

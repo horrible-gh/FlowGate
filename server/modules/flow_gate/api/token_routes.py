@@ -43,7 +43,7 @@ from config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["TokenIssue"])
 
-# 0449 T0004 item 6 (NR0003 §3): this module had NO logger at all, so the incident's
+# this module had NO logger at all, so the incident's
 # /token/issue call — which the client used to reach as a silent fallback after an advance
 # refusal — left no trace whatsoever and could not be told apart from "never called". Arrival
 # and final status are recorded now, under the same correlation id the advance route uses.
@@ -114,7 +114,7 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
                 "chat_one_shot_commit_failed token_id=%s user_id=%s",
                 token_id, user_id, exc_info=True,
             )
-            # T0009 §9 "exception: token revoke + rollback": the marker's post-failure shape
+            # "exception: token revoke + rollback": the marker's post-failure shape
             # is unknown, so roll it back to edit_once explicitly rather than leaving a
             # CLAIMED row nothing will ever recover (the token itself is being revoked,
             # so it can never come back to finish this commit itself).
@@ -141,7 +141,7 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
                 "chat_one_shot_claim_superseded token_id=%s user_id=%s",
                 token_id, user_id,
             )
-            # A user PATCH or a stale-recovery sweep cleared the marker first (T0009
+            # A user PATCH or a stale-recovery sweep cleared the marker first (the earlier implementation
             # §3.4, §9) -- handoff never proceeds for this token regardless of cause.
             token_service.revoke(token_id, reason="chat_one_shot_claim_superseded")
             raise HTTPException(
@@ -166,7 +166,7 @@ class TokenIssueRequest(BaseModel):
     action_scope: Optional[str] = None
     doc_ref: Optional[str] = None
     selected_docs: Optional[list] = None  # T384: selected document list (for mention reference doc inclusion)
-    # Continuous work (group 0086 R0001 / NR0003 option B): when continuation_target_seq is set,
+    # Continuous work (option B): when continuation_target_seq is set,
     # the minted token carries the unmanned-chain stop point + AI-review-mode flag and the
     # mention swaps its Q-guard for the delegation/unmanned block. This is the fallback path;
     # the FE primarily issues the first continuation token via /workflow/advance.
@@ -174,7 +174,7 @@ class TokenIssueRequest(BaseModel):
     continuation_review_mode: bool = False
     merge_id: Optional[int] = None
     continuation_instruction_mode: Optional[str] = None
-    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection —
+    # the ai_direct chain's per-item_seq N/T auto-approve selection —
     # this is the fallback direct-issue path, so a fresh selection is validated (422) here
     # too, exactly like /workflow/advance and /ai-invoke/start.
     continuation_auto_approve_item_seqs: Optional[list[int]] = None
@@ -248,7 +248,7 @@ def issue_token(
         _log_issue("refused", status=exc.status, code=f"git_{exc.code}")
         raise
     except Exception as exc:
-        # 0449 TR0005 rev2 — see the same guard in workflow_decision_routes: a
+        # see the same guard in workflow_decision_routes: a
         # `logger.exception` record carries `str(exc)` and the whole traceback, and this is the
         # one endpoint where the exception in flight is most likely to have a raw token in its
         # message. The signature keeps the triage value without the text.
@@ -360,17 +360,17 @@ def _issue_token(
             )
 
     # The dialog request carries the chosen locale in x-locale; persist it on a continuation
-    # token so the unmanned self-chain honors it on every hop (group 0099 B0001).
+    # token so the unmanned self-chain honors it on every hop.
     req_locale = request.headers.get("x-locale") or "ko"
     is_continuous = body.continuation_target_seq is not None
 
-    # 0441 T0004 item 3: this is the direct-issue fallback for an ordinary action_scope='new'
+    # this is the direct-issue fallback for an ordinary action_scope='new'
     # token — "here is a token, go write the next document". When the workflow head is a type
     # the server assembles (TSR, from a test run) there is no document for a person to write,
     # so the token would only ever be spent on a submission the inbox now refuses. Refused
     # here too, matching /workflow/advance, so no dead token is ever minted.
     #
-    # 0441 TR0005 rev10: this used to skip the check whenever `is_continuous` was true, on the
+    # this used to skip the check whenever `is_continuous` was true, on the
     # theory that an unmanned chain reaching a TSR head is always handed a test_run-scoped
     # token by advance_workflow instead. That theory does not hold *here*: advance_workflow
     # mints its token via a direct in-process call to token_service.issue (see
@@ -396,7 +396,7 @@ def _issue_token(
                 ),
             )
 
-    # 0352 T0004 §2/§3.4: a fresh selection arriving here is validated (422) the same way
+    # a fresh selection arriving here is validated  the same way
     # /workflow/advance and /ai-invoke/start do — this endpoint is the fallback direct-issue
     # path (T244 §1-2 docstring on issue_token above).
     continuation_auto_approve_item_seqs: list[int] = []
@@ -435,10 +435,10 @@ def _issue_token(
     )
 
     # Step 8: build M020 mention (when doc_ref + sequence head exist)
-    # Continuous work (group 0086): a continuation token swaps the mention's Q-guard for the
+    # Continuous work (the earlier change): a continuation token swaps the mention's Q-guard for the
     # delegation/unmanned/no-stop/autonomous block (mention_service continuous branch).
     if wire_scope == "chat":
-        # 0293 NR0004 finding 3: the browser used to assemble this text itself and throw the
+        # the browser used to assemble this text itself and throw the
         # server's mention away. It is served from here now, so the [copy mention] path and the
         # in-app AI-invoke path cannot drift. No provider is passed: this mention goes to
         # whoever the user pastes it to, which the server cannot know — the worker fills
@@ -451,15 +451,15 @@ def _issue_token(
             raw_token=result["raw_token"],
             token_id=result["token_id"],
             api_base_url=_build_api_base(request),
-            # 0362 T0012: the range is this user's own setting and the server reads it
+            # the range is this user's own setting and the server reads it
             # from their authentication. The request body still carries nothing about it.
             user_id=user_id,
-            # 0515 T0009 §8: the capability token_service.issue() just fixed on this
+            # the capability token_service.issue just fixed on this
             # token, so the mention's CRUD section matches the real grant.
             source_access=result.get("source_access"),
             locale=req_locale,
         )
-        # 0515 T0009 §9: mention-build failure/empty always revokes the just-minted CH
+        # mention-build failure/empty always revokes the just-minted CH
         # token; a one-shot claim that won additionally has to commit before the token
         # (and its mention) may leave this function.
         mention = _finish_chat_handoff(result, mention, user_id)
@@ -577,18 +577,18 @@ def _build_mention_for_token(
     continuous: bool = False,
     merge_id: Optional[int] = None,
     continuous_review_mode: bool = False,
-    # 0414 L0008 §2.6: the ENGINE has no Request object — it builds the rework hop's mention
+    # the ENGINE has no Request object — it builds the rework hop's mention
     # from a background thread. The only thing `request` was ever used for here is the API
     # base, so callers that already know it hand it over directly and pass no Request.
     api_base_url: Optional[str] = None,
-    # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful with
+    # only meaningful with
     # action_scope="resolve_conflict" — whether this run is the merge review's
     # explicit [수정 적용] write turn, which gets an EXTRA mention section (the
     # bound write-plan submission endpoint) that an ordinary resolve/[반려]/
     # propose-only run does not.
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
-    # 0481 T0010 rev6 (rejection 3): only meaningful with action_scope="resolve_conflict" -
+    # (rejection 3): only meaningful with action_scope="resolve_conflict" -
     # whether this run is a merge-review CONVERSATION turn (a question typed at the approval
     # screen) rather than a resolver run. It gets a different prompt entirely.
     review_conversation: bool = False,
@@ -604,7 +604,7 @@ def _build_mention_for_token(
         if merge_id is None:
             return None
         if not group_id:
-            # 0630 T0005: an ordinary branch merge has no group — its resolver run is
+            # an ordinary branch merge has no group — its resolver run is
             # project-scoped and its session is addressed by project.
             _owner_group, owner_project = git_service.merge_session_owner_args(merge_id)
             if not owner_project or owner_project != project_id:
@@ -618,7 +618,7 @@ def _build_mention_for_token(
                 api_base_url=resolved_api_base,
                 write_requested_by_human=write_requested_by_human,
                 allow_test_edits=allow_test_edits,
-                # 0578 T0006 §3 work item 4-3 / D0005 §3.6: the history is rendered in the
+                # work item 4-3 / the design: the history is rendered in the
                 # locale of the run that is about to CONSUME it -- the one this mention is
                 # being built for -- never in an earlier turn's `source_locale`.
                 locale=locale,
@@ -646,11 +646,11 @@ def _build_mention_for_token(
     # Fetch workflow sequence head — proceed with placeholder if absent
     head_type = ""
     head_status = ""
-    # Predecessor document for Section 1 'Document information' (R0001 / T0004): the
+    # Predecessor document for Section 1 'Document information': the
     # document the current step builds upon. Defaults to the spine doc for the first
     # step or a sequence-less doc; threading fields keep using parent_doc regardless.
     head_context_doc = parent_doc
-    # R0001 #1 / T0004: Section 3 'Reference documents' should carry the two most
+    # #1 / the earlier implementation: Section 3 'Reference documents' should carry the two most
     # recent predecessor documents (the previous step's result + the one before it)
     # so the worker receives "previous + previous-previous + R" = 3 docs. This mirrors
     # advance_workflow (workflow_decision_service) — the client (NextActionModal) only
@@ -659,10 +659,10 @@ def _build_mention_for_token(
     # TR). build_mention dedupes by slash-path, so a predecessor that coincides with an
     # already-selected doc collapses to one line.
     merged_ref_ids = list(ref_doc_ids or [])
-    # 0084 TR0005 (B, defensive): resolve the sequence from the doc_ref even when it is a
+    # (B, defensive): resolve the sequence from the doc_ref even when it is a
     # produced child (a slot's result_doc_id, e.g. an approved CH/N) rather than the root
     # R. The root-only get_sequence_by_doc_id returned None for such a doc_ref, dropping
-    # head_type/head_status and degrading the mention to a non-next-step copy (B0001). The
+    # head_type/head_status and degrading the mention to a non-next-step copy. The
     # FE now passes the parent R (A fix), but resolving members here keeps the token mention
     # correct if any caller still hands a child doc_ref.
     seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
@@ -717,13 +717,13 @@ def _build_mention_for_token(
         locale=locale,
         head_context_doc=head_context_doc,
         continuous=continuous,
-        # 0226 NR0003 §4 (incidental): forward the review-mode flag so a continuous
+        # (incidental): forward the review-mode flag so a continuous
         # review-phase mention carries the Q-allowed review variant, not no-stop.
         continuous_review_mode=continuous_review_mode,
     )
 
 
-# 0608 T0007: the marker patterns resolve_conflicts' own parser uses
+# the marker patterns resolve_conflicts' own parser uses
 # (git_service._CONFLICT_OPEN_RE/_CLOSE_RE, git/conflict.py _CONFLICT_BASE_RE/_SEP_RE), so
 # chunk N in the mention is chunk N when a `chunks` submission is assembled.
 _CHUNK_BASE_RE = re.compile(r"^\|{7}( |$)")
@@ -738,7 +738,7 @@ def _split_conflict_chunks(content: str) -> list[dict]:
     theirs_label = ""
     start_line = 0
     # Line numbers count the way `/remote/read` start_line/end_line do (str.splitlines),
-    # so a chunk's range can be read back as-is (0608 T0005).
+    # so a chunk's range can be read back as-is.
     for line_no, line in enumerate(content.splitlines(), start=1):
         if git_service._CONFLICT_OPEN_RE.match(line):
             state = "ours"
@@ -782,10 +782,10 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     commit the person just asked to cancel.
     """
     if kind not in ("tr_revert", "tr_reapply"):
-        # flowgate.default.0481 T0010 #5 (the resolution came back wrong). This branch used to say two
+        # #5 (the resolution came back wrong). This branch used to say two
         # sentences — resolve autonomously, strip the markers — which is a description of a
         # SYNTACTICALLY finished file, not of a correct merge. It also still described the
-        # pre-T0008 world where a submission committed: since T0008 a general merge stops at
+        # pre-the earlier implementation world where a submission committed: since the earlier implementation a general merge stops at
         # `resolved_pending_review` and a person reads the whole candidate diff, exactly as
         # the tr_* branch below has always told its worker. Both facts belong in the task.
         return (
@@ -836,7 +836,7 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     )
 
 
-# flowgate.default.0578 T0012 §2.1: the ko/en/ja procedure copy for the merge-review
+# the ko/en/ja procedure copy for the merge-review
 # write-plan channel's ONLY instructional text -- the JSON schema, URL, and header lines
 # below stay identical across locales (an API contract, not product copy).
 _WRITE_PLAN_COPY = {
@@ -1026,7 +1026,7 @@ def _build_write_plan_section(
     )
 
 
-# 0481 T0010 rev6 (rejection 3): how much of the approval screen's chat is replayed to
+# (rejection 3): how much of the approval screen's chat is replayed to
 # the run answering it, and how much of one turn survives the replay. Both caps exist so a
 # long review cannot push the task section out of a model's context, not for privacy.
 _REVIEW_CONVERSATION_MAX_TURNS = 20
@@ -1085,14 +1085,14 @@ def _build_review_conversation_mention(
         body = " ".join((turn.get("message") or "").split())
         if len(body) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
             body = body[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
-        # 0578 T0006 §3 work item 4 / D0005 §3.2: two shapes live in this log at once and
+        # work item 4 / the design: two shapes live in this log at once and
         # both have to replay. A turn WITH `message_code` is a server notice -- rendered
         # here, in this run's locale -- and its `message`, when there is one, is the
         # previous run's own answer, which is content and stays verbatim on its own line.
         # A turn WITHOUT a code is a legacy record (or a human/AI message) and is read
         # exactly as it was stored. Neither shape may produce an empty line: a turn with
         # no code and no text still says what state it ended in.
-        # Rejection finding (T0006 §4-5): only `body` used to be bounded here, so a large
+        # Rejection finding: only `body` used to be bounded here, so a large
         # write plan's `paths` -- interpolated verbatim into the rendered notice -- made
         # this line unbounded where the old stored `message` sentence would have been
         # truncated. The rendered notice gets the SAME cap, applied separately from body's.
@@ -1199,7 +1199,7 @@ def _build_review_conversation_mention(
 
 
 _SUPERSEDE_MENTION_SECTION = (
-    # 0604 D0005 §3.4 — the one case where the correct result equals one side verbatim.
+    # the one case where the correct result equals one side verbatim.
     # Worded as a narrow exception with server-side evidence, never as a shortcut.
     "For a target-side move, use companion_candidates from the conflict payload. On the original "
     "file send companion_files: [{path, content}] with the moved file in full, preserving the "
@@ -1234,7 +1234,7 @@ def _build_conflict_mention(
     allow_test_edits: bool = False,
     locale: str = "ko",
 ) -> Optional[str]:
-    # 0630 T0005: an ordinary branch merge is listed and resolved through its project-scoped
+    # an ordinary branch merge is listed and resolved through its project-scoped
     # routes; everything else in this mention (chunks, inline limit, reading contract,
     # supersede, write plan) is the same contract.
     _owner_group, owner_project = git_service.merge_session_owner_args(merge_id, group_id)
@@ -1258,7 +1258,7 @@ def _build_conflict_mention(
                 "path": file.get("path"),
                 "reason": "eol_only" if file.get("path") in eol_only else "resolved",
             })
-    # 0608 T0005: chunk TEXT rides along only while the whole set is small. Past that the
+    # chunk TEXT rides along only while the whole set is small. Past that the
     # mention carries where each chunk is and the worker reads it through the remote
     # source tools — 0594's real conflicts (24 chunks, ~53k chars of chunk JSON) would
     # otherwise make the first prompt scale with the conflict, not with the task.
@@ -1351,7 +1351,7 @@ def _build_conflict_mention(
     )
 
 
-# 0608 T0005: the most chunk JSON the mention still inlines as text. A single small
+# the most chunk JSON the mention still inlines as text. A single small
 # conflict (the everyday case) keeps its chunks in the prompt; 0594's 24 real chunks
 # (~53k chars) do not.
 CONFLICT_INLINE_CHUNKS_MAX_CHARS = 4_000

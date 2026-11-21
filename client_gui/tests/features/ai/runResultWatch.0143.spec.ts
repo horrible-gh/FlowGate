@@ -4,7 +4,7 @@ import { toFlowCommandResult } from '@/features/project/commandResultApi'
 import { parseDesignerSession } from '@/features/project/designerSessionStorage'
 import { createRunResultWatch, readFailureKind, runResultKey, RUN_RESULT_RETRY } from '@/features/ai/runResult/runResultWatch'
 
-// flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §7 isolation scenarios, T §3 R1~R7) — the real createRunResultWatch driven by a
+// (NR the earlier change isolation scenarios, T R1~R7) — the real createRunResultWatch driven by a
 // stand-in load (the server's command result) and a stand-in timer (`schedule`): when the result window opens, a read
 // that fails, a past result read while the run went on again, another command's answer and an F5.
 
@@ -324,7 +324,7 @@ describe('R5 / R6 / R6b — a result is taken only while it is still the command
   })
 })
 
-// flowgate.v02.0143 TR#1 rework (review rej_01M6SBRB5MN4DCTT): the races the review reproduced on the real watch.
+// TR#1 rework (review rej_01M6SBRB5MN4DCTT): the races the review reproduced on the real watch.
 describe('TR rework — a retry, an answer not taken and another run never open a past window', () => {
   /** A timer whose cancel comes too late: the callback still runs (a retry firing just as the run went on). */
   function lateTimers() {

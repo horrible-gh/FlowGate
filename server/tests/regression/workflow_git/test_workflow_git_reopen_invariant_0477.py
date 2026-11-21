@@ -1,6 +1,6 @@
-"""Workflow root ↔ Git finalize state invariant (0477 NR0003 R1/R2/R5, T#1).
+"""Workflow root ↔ Git finalize state invariant.
 
-NR0003 §7-13's follow-up investigation found that after final approval
+'s follow-up investigation found that after final approval
 (root=wf_done → Git=awaiting_choice/waiting), returning the root to wf_in_progress
 through Time Machine/rework made ``reopen_group_git()`` reset only merged/pushed
 terminal states, leaving awaiting_choice/waiting intact. The header Git menu could
@@ -73,7 +73,7 @@ def git_state(monkeypatch):
     monkeypatch.setattr(svc.db_git, "get_state", _get_state)
     monkeypatch.setattr(svc, "_set_status", _set_status)
     monkeypatch.setattr(svc, "ensure_worktree", MagicMock())
-    # T0007's terminal dirty-guard (0532) makes raise_if_git_session_blocks_reopen take a
+    # 's terminal dirty-guard  makes raise_if_git_session_blocks_reopen take a
     # real project lock for merged/pushed. This fixture stays DB-state-only, so fake a
     # clean, lock-free terminal check here; the dirty/lock-contention paths themselves are
     # covered directly against real locking in test_tr_commit_cancel_0332.py.
@@ -242,7 +242,7 @@ def reopen_store(tmp_path, monkeypatch):
 
 def _seed_finally_approved_group(storage_root: Path, suffix: str) -> dict:
     """A group that already reached final approval: root=wf_done, AC approved — the exact
-    precondition NR0003 §7 walks back from wf_done to wf_in_progress."""
+    precondition the review walks back from wf_done to wf_in_progress."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.db import projects, users
@@ -397,7 +397,7 @@ def test_8_merging_blocks_while_awaiting_choice_reopens_cleanly(reopen_store):
     # flips doc_review_status while leaving the lifecycle status 'active'.
     assert ac_busy["doc_review_status"] == ac_before["doc_review_status"] == "approved"
 
-    # 8b — awaiting_choice is the actual stale-state bug from NR0003 §9: the reopen must
+    # 8b — awaiting_choice is the actual stale-state bug from the review: the reopen must
     # go through AND the invariant (Git pending ⇒ root wf_done) must hold again afterward.
     ids_ok = _seed_finally_approved_group(reopen_store, "ok")
     db_git.set_status(ids_ok["group_id"], "awaiting_choice")
@@ -412,12 +412,12 @@ def test_8_merging_blocks_while_awaiting_choice_reopens_cleanly(reopen_store):
     assert db_git.get_state(ids_ok["group_id"])["status"] == "none"
 
 
-# ── Part C — finalize() stale pending defense (T#2) ──────────────────────────────
+# ── Part C — finalize stale pending defense ──────────────────────────────
 
 
 @pytest.fixture
 def finalize_pending_state(tmp_path, monkeypatch, lock_store):
-    """A deterministic finalize context that exposes every ledger field T#2 protects."""
+    """A deterministic finalize context that exposes every ledger field the earlier implementation protects."""
     state = {
         "status": "awaiting_choice",
         "merge_id": "merge-stays-put",
@@ -519,11 +519,11 @@ def test_11_wf_done_none_lazy_transition_still_finalizes(finalize_pending_state)
     )
 
 
-# ── Part E — project status stale-pending recovery (T#3) ─────────────────────────
+# ── Part E — project status stale-pending recovery ─────────────────────────
 
 
 def test_14_project_status_recovers_stale_pending_before_header_aggregation(monkeypatch):
-    """T0009: status polling repairs only stale awaiting_choice/waiting rows.
+    """status polling repairs only stale awaiting_choice/waiting rows.
 
     The test supplies root-missing/non-wf_done stale rows, approved pending
     controls, a conflict control, and a normal lazy-none row. It pins the
@@ -595,7 +595,7 @@ def test_14_project_status_recovers_stale_pending_before_header_aggregation(monk
     assert rows[4]["status"] == "conflict"
 
 
-# ── Part D: router/HTTP envelope for the stale-pending 409 (0007-T acceptance criterion 3) ──
+# ── Part D: router/HTTP envelope for the stale-pending 409 (T acceptance criterion 3) ──
 
 
 def test_12_stale_pending_finalize_409_reaches_router_envelope(
@@ -616,8 +616,8 @@ def test_12_stale_pending_finalize_409_reaches_router_envelope(
     `git_service_exception_handler`. That is a real, separate mechanism and this test
     intentionally targets it: it is the actual HTTP contract a client of the real
     finalize endpoint observes. Coverage of the *global* handler itself — for
-    endpoints that reuse git_service without a local guard, per flowgate.default.0233
-    B0001 — is test_13 below.
+    endpoints that reuse git_service without a local guard, per the earlier change
+    is test_13 below.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -657,10 +657,10 @@ def test_12_stale_pending_finalize_409_reaches_router_envelope(
 def test_13_stale_pending_finalize_409_reaches_global_exception_handler(
     finalize_pending_state,
 ):
-    """0007-T acceptance criterion 3 targets routers/main.py's global
+    """acceptance criterion 3 targets routers/main.py's global
     `git_service_exception_handler` specifically — the handler installed for
     endpoints that call into git_service *without* a local `except GitServiceError`
-    guard (flowgate.default.0233 B0001: token_routes' /token/issue and
+    guard (the earlier change the regression: token_routes' /token/issue and
     ai_invoke_routes' /ai-invoke/start build their conflict mention via
     git_service.list_conflicts with no such guard, so an uncaught GitServiceError
     reaches FastAPI's exception dispatch and is converted there). The real

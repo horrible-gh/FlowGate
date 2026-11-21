@@ -1,9 +1,9 @@
 <template>
-  <!-- flowgate.v02.0061 T#15 — the Graph Time Machine of a done card (WP answer 3: its entry is the card's context menu).
+  <!-- the Graph Time Machine of a done card (WP answer 3: its entry is the card's context menu).
        Before it runs, the confirmation names the card it starts from and says that the cards below it are the server's
        to find by the execution history (never the shown Graph or its draft); a confirmation whose basis changed, or a
        card that cannot be rewound now, says so (`notice`) and asks again. After it, the same dialog shows the server's
-       answer (T#13): the impact and what changed, or — when it was blocked — the server's reasons (nothing changed).
+       answer: the impact and what changed, or — when it was blocked — the server's reasons (nothing changed).
        The run is never started from here: the next step / full command opens the pending cards again. -->
   <ModalShell
     :open="dialog !== null"

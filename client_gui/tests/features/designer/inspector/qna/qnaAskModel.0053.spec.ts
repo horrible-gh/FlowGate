@@ -1,9 +1,9 @@
 /**
- * flowgate.v02.0053 T#6 — the Q&A rules for a person's question (0053 CH §2): asking is a change closed
+ * the Q&A rules for a person's question (CH): asking is a change closed
  * on the answering reasons (worded for a question), then on a question or an answer on its way; a
  * question is ready when it is not blank; the refusal keys of a question and their wording in the three
  * locales; no empty-list sentence is left.
- * flowgate.v02.0056 F1 (0056 CH §3) — asking an AI to answer is its own change (`ai_request`): closed on the
+ * (CH) — asking an AI to answer is its own change (`ai_request`): closed on the
  * same reasons (worded for the request), then on a request, a question or an answer on its way; its refusal
  * keys (every kind the q routes and the ai-request admission answer) and their wording.
  */

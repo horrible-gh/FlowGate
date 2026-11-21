@@ -1,6 +1,6 @@
-"""Remote tool patch / read offset / stat — pipeline tests (group 0347 R0001).
+"""Remote tool patch / read offset / stat — pipeline tests.
 
-Covers P0004 (message format) · L0005 (processing logic) · DB0006 (op enum):
+Covers the plan (message format) · the earlier implementation (processing logic) ·  (op enum):
   patch  — exact match, zero matches: 404 / multiple matches: 409, all-or-nothing, two-phase CRLF handling, strict decode
   read   — offset/length byte window, character-boundary correction, legacy compatibility
   stat   — metadata only, absence returns 200(exists=false), non-mutating operation
@@ -37,14 +37,14 @@ def _read(env, rel: str) -> bytes:
 def test_ops_and_scopes_registered():
     from modules.flow_gate.services import remote_tool_service as svc
 
-    # 0482 T0011 added the group-less base-dirty decision op; it is a real entry in the
+    # added the group-less base-dirty decision op; it is a real entry in the
     # op registry (scope "write"), advertised only to its own action_scope.
     assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat", "diff", "log",
                             "show", "merge_preview", "move", "resolve_base_dirty"}
-    # P0004 §0.4 — no new scope value, so remote_tool_grant_scope needs no migration.
+    # no new scope value, so remote_tool_grant_scope needs no migration.
     assert svc.OP_SCOPE["patch"] == "write"
     assert svc.OP_SCOPE["stat"] == "read"
-    # P0004 §0.5 — patch mutates, stat does not.
+    # patch mutates, stat does not.
     assert svc._MUTATING_OPS == {"write", "remove", "patch", "move", "resolve_base_dirty"}
     assert "stat" not in svc._MUTATING_OPS
     assert svc._PATH_VALIDATE_SINGLE_FIELD_OPS >= {"patch", "stat"}
@@ -131,7 +131,7 @@ def test_patch_emits_explorer_refresh(env, monkeypatch):
 
 
 def test_patch_success_carries_the_continuation_ment(env):
-    """Third and last `_MUTATING_OPS` site (⑦, L0006 §6.1). The gate and the SSE
+    """Third and last `_MUTATING_OPS` site (⑦, the earlier implementation). The gate and the SSE
     are asserted above; without this the ment site could still read the old
     ("write", "remove") literal and patch would silently answer without a ment."""
     env.make_grant(["write"], report_doc_id="flowgate.default.0347.0010-TR")
@@ -159,7 +159,7 @@ def test_patch_failure_carries_no_continuation_ment(env):
 
 
 def test_patch_uses_the_mutation_root_gate_not_the_read_fallback(env, monkeypatch):
-    """P0004 §0.5: patch must go through _resolve_root_for_mutation, or a missing
+    """patch must go through _resolve_root_for_mutation, or a missing
     group worktree would silently drop the edit into the base checkout (0205)."""
     from modules.flow_gate.services import remote_tool_service as svc
 
@@ -230,7 +230,7 @@ def test_patch_multiple_matches_is_409_and_file_untouched(env):
 
 
 def test_patch_worktree_conflict_and_match_conflict_are_distinguishable(env):
-    """Both are 409; P0004 §1.3 says the client tells them apart by details.reason."""
+    """Both are 409; the plan says the client tells them apart by details.reason."""
     env.make_grant(["write"])
     _write(env, "app/dup.py", b"x = 1\nx = 1\n")
     _, payload = _call("patch", {"path": "app/dup.py", "old_string": "x = 1", "new_string": "y"})
@@ -352,7 +352,7 @@ def test_patch_result_over_size_limit_is_413_and_file_untouched(env, monkeypatch
     assert _read(env, "app/main.py") == before
 
 
-# ── patch — EOL handling (P0004 §1.5) ─────────────────────────────────────────
+# ── patch — EOL handling ─────────────────────────────────────────
 
 def test_patch_crlf_file_matches_lf_old_string_via_second_pass(env):
     env.make_grant(["write"])
@@ -667,7 +667,7 @@ def test_stat_binary_file(env):
 
 
 def test_stat_unsafe_path_is_422_not_exists_false(env):
-    """'unsafe path' is not 'path that does not exist' (P0004 §9.2)."""
+    """'unsafe path' is not 'path that does not exist'."""
     env.make_grant(["read"])
     status, payload = _call("stat", {"path": "../outside.txt"})
     assert status == 422
@@ -691,7 +691,7 @@ def test_stat_requires_read_scope(env):
 
 
 def test_stat_is_not_a_mutating_op(env, monkeypatch):
-    """No worktree gate, no explorer SSE, no continuation ment (P0004 §0.5)."""
+    """No worktree gate, no explorer SSE, no continuation ment."""
     from modules.flow_gate.services import remote_tool_service as svc
 
     env.make_grant(["read"])

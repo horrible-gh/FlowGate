@@ -90,7 +90,7 @@ def post_answer(
         return _fail(exc.status_code, exc.detail)
 
     # ── Step 3.5: Reject disposed (DC) group ────────────────────────────────────────────
-    # TR0079.0003 rework (3rd pass): answering a Q (writing a Q&A answer) creates an A
+    # (3rd pass): answering a Q (writing a Q&A answer) creates an A
     # document in the group — a forward write that must be rejected once the group is
     # disposed. Shares process_service.is_group_disposed (fail-open for live groups).
     from modules.flow_gate import process_service
@@ -225,7 +225,7 @@ def post_answer(
 
     if body.dispatch_mode == "ai":
         # The token is issued by start_run's builder so it can be bound to the new run,
-        # and remains server-side under the P0005 display rule.
+        # and remains server-side under the the plan display rule.
         from modules.flow_gate.services import ai_invoke_service
 
         base = str(request.base_url).rstrip("/")
@@ -274,7 +274,7 @@ def post_answer(
 
         issued_holder: dict = {}
 
-        # Declaring ai_run_id is required: group 0378 made _call_issue_builder inspect
+        # Declaring ai_run_id is required: the earlier change made _call_issue_builder inspect
         # this signature. Without it the token has no run owner and this worker is
         # rejected by its own lease with 403 GROUP_AI_RUN_OWNER_MISMATCH, exactly as in
         # q_answer_invoke_service.dispatch_answer_run.
@@ -354,7 +354,7 @@ def post_answer(
         resp["ment_text"] = ment_text
     if ai_run_id is not None:
         resp["ai_run_id"] = ai_run_id
-        # 0252 P0008 S7: tell the widget whether the answer resumed a chain or started
+        # S7: tell the widget whether the answer resumed a chain or started
         # the existing single follow-up (the resume path returns "continuous" above).
         resp["ai_run_mode"] = "single"
     return JSONResponse(content=resp)
@@ -375,7 +375,7 @@ def _execute_command(command_id: str, raw_token: str, scratch_dir: str) -> None:
     except Exception:
         return
 
-    # The template may launch an AI CLI: CLI allowlist, never the server env (v02.0089 T0004).
+    # The template may launch an AI CLI: CLI allowlist, never the server env (v02.0089 the earlier implementation).
     env = process_runner.child_env({
         "FLOWGATE_TOKEN": raw_token,
         "FLOWGATE_SCRATCH": scratch_dir,

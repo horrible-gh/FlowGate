@@ -1,5 +1,5 @@
 /**
- * flowgate.v02gui.0020 — a card held in a drag stays under the pointer while the Graph is drawn again.
+ * a card held in a drag stays under the pointer while the Graph is drawn again.
  *
  * Reported (0004-CH #32): place a card, grab it at once and move it without letting go — the card jumps back to
  * where it was placed. The placed card's draft save goes out 0.4 s after the drop; its answer renames the card

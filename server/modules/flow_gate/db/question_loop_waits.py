@@ -1,4 +1,4 @@
-"""Parked document review loops waiting for their own questions (flowgate.v02test.0051 T0005 A1, migration 200).
+"""Parked document review loops waiting for their own questions (A1, migration 200).
 
 One row per AI run whose review loop reached a hop boundary while questions that run asked were still unanswered.
 Every transition is a compare-and-swap on ``status`` so a repeated answer event, a second process or a restart can
@@ -92,7 +92,7 @@ def list_open_by_group(group_id: str) -> list[dict]:
 
 def list_by_loop_runs(loop_run_ids) -> list[dict]:
     """Every wait (any status) parked by one of ``loop_run_ids`` -- the runs one review loop was carried by
-    (flowgate.v02test.0051 T0007 A2: the loop's question wait time and its question-caused reviews)."""
+    (A2: the loop's question wait time and its question-caused reviews)."""
     ids = sorted({str(i) for i in loop_run_ids or () if i})
     if not ids:
         return []

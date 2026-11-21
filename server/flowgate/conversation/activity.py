@@ -1,4 +1,4 @@
-"""Command + run change activity of a CH and its conversation anchors (D0006 §3.9).
+"""Command + run change activity of a CH and its conversation anchors.
 
 Command requests and run change summaries are stored apart from the conversation
 turns. Their place in the conversation is a persisted, server-decided anchor, so a
@@ -180,7 +180,7 @@ def list_for_doc(doc_id: str, *, from_seq: Optional[int] = None, to_seq: Optiona
 
 
 def attachment_request_groups(doc_id: str) -> list[dict]:
-    """flowgate.chat.0017 CH0002: the AI attachment upload requests this chat made, one block
+    """the AI attachment upload requests this chat made, one block
     per run, placed right after that run's (last) AI reply. Requests outlive their run, so a
     pending block stays where it is until a person decides. A failure here never fails the
     activity read (the rest of the timeline still loads)."""

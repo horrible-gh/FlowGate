@@ -1,4 +1,4 @@
-// Shared ref-counted body scroll lock (T0006 §5/§9).
+// Shared ref-counted body scroll lock.
 //
 // More than one ModalShell can be open at once, and the lock must only lift once the
 // last one closes, regardless of open/close order. A plain top-level `let` inside

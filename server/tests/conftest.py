@@ -24,7 +24,7 @@ _REPO_ROOT = _SERVER_DIR.parent
 # Some suites import `modules.*` without adding server/ themselves; make single-file runs work.
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
-# flowgate.v02.0146 T#2: the tests/test_fg_gate_*_0085-style suites import the shared harness of tests/flowgate/
+# the tests/test_fg_gate_*_0085-style suites import the shared harness of tests/flowgate/
 # (``from test_fg_card_settings import ...``) by module name. That only resolved once pytest had already collected a
 # file of tests/flowgate, so the same selection errored at collection ("No module named 'test_fg_card_settings'")
 # or not depending on the order of its arguments. Appended, never prepended: nothing that resolves today changes.
@@ -33,7 +33,7 @@ if _FLOWGATE_TESTS_DIR not in sys.path:
     sys.path.append(_FLOWGATE_TESTS_DIR)
 
 
-# ── Repository pollution guard (0382 B0001 / NR0003 proposal 2-b) ──────────
+# ── Repository pollution guard (proposal 2-b) ──────────
 #
 # The incident began when a test created a directory inside the repository.
 # Its hidden type made it invisible in the UI. Detect this mechanically: fail
@@ -94,13 +94,12 @@ def repo_pollution_guard():
 
 # ── Host capabilities and what they silently take with them ──────────────────
 #
-# flowgate.default.0394 T0004 (NR0003 §5.2 / §13-10).
 #
 # Nine places in this suite skip when the host cannot do something — no git binary, no
 # symlinks, no run.bat, an unimportable module. Skipping is the right behaviour; being
 # quiet about it is not. `test_git_integration_0115.py` alone is 107 cases, and on a host
 # without git all 107 vanish and the run still ends "failed 0" — the same words a full
-# green run prints. R0001 §8 calls for a green suite AND for intentional skips to be
+# green run prints. the requirement calls for a green suite AND for intentional skips to be
 # explicit, and a bare skip count cannot tell "we meant to skip this" from "this host
 # could not run it".
 #
@@ -166,7 +165,7 @@ def _classify_skip(reason: str) -> str:
     lowered = (reason or "").lower()
     # Tier deferrals are not missing host capabilities. Counting them as 'other'
     # would bury unexpected skips under 1,800 planned deferrals in one
-    # --tier=fast run (0394 T0014).
+    # --tier=fast run.
     if _TIER_SKIP_MARK in lowered:
         return "tier"
     for needle, capability in _REASON_TO_CAPABILITY:
@@ -177,11 +176,10 @@ def _classify_skip(reason: str) -> str:
 
 # ── Execution tiers: Fast / Standard / Full ───────────────────────────────
 #
-# flowgate.default.0394 T0004 (R0001 §6, NR0003 §10.4 / §13-12).
 #
-# NR0003 §10.1 measured where the 474 seconds go: the 40 slowest tests together are 15%
+# The review measured where the 474 seconds go: the 40 slowest tests together are 15%
 # of it, and the other 85% is spread thinly across 3,223 cases. Deleting slow tests
-# therefore buys nothing, which is why R0001 §6 asks for tiers instead — and why this is
+# therefore buys nothing, which is why the requirement asks for tiers instead — and why this is
 # a selection mechanism, not a cleanup.
 #
 # A test's tier is decided in two steps:
@@ -190,12 +188,12 @@ def _classify_skip(reason: str) -> str:
 #      the module's `pytestmark`) always wins. That is the escape hatch for anything the
 #      rule below gets wrong, and the only thing a new test has to know about.
 #   2. Otherwise the tier is derived from what the module's source actually does, using
-#      the classification NR0003 §10.2 measured:
+#      the classification the review measured:
 #        fast      — no TestClient, no subprocess/git, no sleep
 #        standard  — everything except git/subprocess work and e2e/dialect/migration files
 #        full      — the rest
 #
-# Deriving rather than keeping a list is the point. NR0003 §10.4 warned that a list of
+# Deriving rather than keeping a list is the point. the review warned that a list of
 # files leaves new files in no tier at all; here a new file is classified the moment it
 # is written, by the same rule as everything else, and a file that needs to say otherwise
 # says so in one line at the top of itself.
@@ -220,7 +218,7 @@ _TIER_SKIP_MARK = "(--tier)"
 # With pytest-xdist, collection hooks run in workers; their module globals
 # are invisible to the controller printing the summary. In practice,
 # `--tier=fast -n auto` skipped 117 cases without printing "이 실행은 전체가 아닙니다".
-# Parallel execution had reintroduced the silent skips described in NR0003 §5.2.
+# Parallel execution had reintroduced the silent skips described in the review
 # Reports reach the controller, so counting here works in both execution modes.
 _items_started = 0
 _tier_deferred = 0
@@ -263,7 +261,6 @@ def _declared_tier(item) -> "str | None":
 
 # ── Parallel execution must keep each file intact ────────────────────────
 #
-# flowgate.default.0394 T0014 (NR0003 §10.3 / §13-13).
 #
 # pytest-xdist's default (`--dist load`) distributes individual tests to workers.
 # This repository shares module fixtures (temporary DBs and FLOWGATE_* restoration)
@@ -295,7 +292,7 @@ def _dist_mode_problem(numprocesses, dist) -> "str | None":
     )
 
 
-# ── Per-run worker slot pool (flowgate.v02.0114 T#4, D 0006 3.5 (3)) ───────
+# ── Per-run worker slot pool (the earlier change the earlier implementation, the earlier implementation 3.5 ) ───────
 #
 # Self-check reserves R processors per run and binds the entire process tree
 # to them through OS enforcement. This cooperative guard prevents creating
@@ -480,7 +477,7 @@ def pytest_configure(config):
     for name, (_label, probe, _required) in CAPABILITIES.items():
         _capability_state[name] = _safe_probe(probe)
 
-    # flowgate.v02.0114 T#3 (D 0006 7.1): the Self-check result block. Composed at
+    # the Self-check result block. Composed at
     # pytest_terminal_summary like the reports below and printed as the very last output,
     # with the capability judgement above as its host evidence and the test definition
     # fingerprints taken when collection finishes (tests/selfcheck_evidence.py). A copy of
@@ -492,7 +489,7 @@ def pytest_configure(config):
         selfcheck_evidence = None
     if selfcheck_evidence is not None:
         selfcheck_evidence.register(config, capabilities=lambda: dict(_capability_state))
-        # 0114 T#4: the slot pool's requested / applied / source and the run tree's processor
+        # the slot pool's requested / applied / source and the run tree's processor
         # limit go into the result block as well (read when the block is composed).
         selfcheck_evidence.register(config, parallel=lambda: dict(_slot_state) or None)
 
@@ -505,11 +502,11 @@ def pytest_configure(config):
         if problem:
             raise pytest.UsageError(problem)
 
-    # 0114 T#4: the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
+    # the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
     # lowered worker count is what xdist starts.
     _apply_slot_pool(config)
 
-    # flowgate.v02.0146 T#2: a per-test hang limit (tests/hang_guard.py), so one hanging test fails by name
+    # a per-test hang limit (tests/hang_guard.py), so one hanging test fails by name
     # instead of consuming the whole Self-check ceiling. Missing in a synthetic tree (test_repo_scratch_guard_0382).
     try:
         import hang_guard
@@ -587,13 +584,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     workers = getattr(config.option, "numprocesses", None)
     if _tier_deferred:
         # State explicitly that zero failures in a tier run do not mean all tests passed.
-        # NR0003 §5.2 explains this distinction.
+        # explains this distinction.
         #
         # Subtract ALL skips from the executed count, including missing host capabilities.
         # Previously --tier=fast printed "1614건 실행" while pytest reported
         # 1613 passed / 1654 skipped: the extra case lacked run.bat.
         # The line intended to expose silent skips was itself hiding one,
-        # making that single counting error especially significant (0394 T0014).
+        # making that single counting error especially significant.
         other_skipped = sum(_skips_by_capability.values()) - _tier_deferred
         ran = _items_started - _tier_deferred - other_skipped
         extra = f" 그 밖의 사유로 {other_skipped}건 더 건너뜀." if other_skipped else ""
@@ -669,7 +666,7 @@ def _safe_probe(probe) -> bool:
 
 # ── FLOWGATE_* variables are borrowed: restore them at module boundaries ──
 #
-# flowgate.default.0394 T0004 (R0001 §5.1: order/environment-dependent tests).
+# (order/environment-dependent tests).
 #
 # Many suites publish their storage roots at import time using
 # `os.environ["FLOWGATE_STORAGE_DIR"] = tempfile.mkdtemp(...)`. Pytest imports
@@ -682,11 +679,11 @@ def _safe_probe(probe) -> bool:
 # deleted FLOWGATE_STORAGE_DIR during cleanup. The later
 # test_worktree_resolution_e2e_0280.py lost its temporary root, and
 # ensure_worktree created files in the wrong location and returned "failed":
-# seven setup errors, although all eight tests passed in isolation. NR0003 §4.1
+# seven setup errors, although all eight tests passed in isolation. the review
 # missed this order dependency because errors, unlike failures, did not appear
 # in the -rf summary.
 #
-# Those two files were fixed separately. NR0003 §5.3 calls for a global check
+# Those two files were fixed separately. the review calls for a global check
 # of the global rule: modules borrow the environment and return it unchanged.
 #
 # Restore and report instead of failing. Restoration prevents the incident
@@ -773,7 +770,7 @@ def migrated_sqlite_db(tmp_path_factory, pytestconfig):
     Each execution uses a fresh basetemp, so templates are never reused across
     runs or sessions; pytest may retain recent temporary directories on disk.
 
-    flowgate.default.0394 T0004: test_auth.py once replayed only migrations
+    test_auth.py once replayed only migrations
     001/002/005 and missed auth_sessions when 067a arrived. Keep one full-chain
     builder: never freeze a per-suite subset or swallow migration errors, which
     would hide the schema drift this fixture exists to detect.
@@ -875,7 +872,7 @@ def all_migrations_db():
 def test_db(all_migrations_db):
     """Lend the shared connection to one test, with no open transaction; roll back its writes.
 
-    flowgate.default.0394 T0014 (NR0003 §13-13: parallel safety validation).
+    (parallel safety validation).
 
     Four files share the session-scoped `all_migrations_db` connection.
     `test_tokens_resolve_conflict_scope_0233.py` inserts into tokens without
@@ -887,7 +884,7 @@ def test_db(all_migrations_db):
     with FKs disabled, instead raises IntegrityError because of the earlier file.
 
     Alphabetical serial execution placed these files in the opposite order,
-    hiding the issue and supporting NR0003 §4.1's conclusion of no order dependency.
+    hiding the issue and supporting the review's conclusion of no order dependency.
     Distributing files to workers changes the order: this case failed under
     `--tier=standard -n auto --dist loadfile`. Parallel execution exposed existing
     cross-file shared state rather than introducing the defect.
@@ -904,7 +901,7 @@ def test_db(all_migrations_db):
 
 
 
-# ── flowgate.v02.0119 T#2 (T-1): the completion stand-in of the Graph engine suites ──────────────────────────────────
+# ── the earlier change the earlier implementation (T-1): the completion stand-in of the Graph engine suites ──────────────────────────────────
 #
 # Production has no completion fallback any more: with no handler registered the Graph's ``card_completion_ports``
 # answers "no completion" whatever the document's review status, and the server's start fails when it cannot register

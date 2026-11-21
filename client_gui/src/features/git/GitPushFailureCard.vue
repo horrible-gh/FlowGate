@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — remote apply failure card, minimal as v7 fixes it (0033-D §3.6): title,
+// remote apply failure card, minimal as v7 fixes it: title,
 // `!` (details window only) and `다시 반영`, which resends the recorded request as it was. No
 // stderr, no long text, no cause guessed on the client.
 import { computed } from 'vue'
@@ -63,11 +63,11 @@ const noticeText = computed(() => {
   const notice = session.state.notices.push
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
 })
-// flowgate.v02.0132 T#4: syncing automatically / waiting for a recovery, and how an accepted retry ended.
+// syncing automatically / waiting for a recovery, and how an accepted retry ended.
 const stateText = computed(() => props.operation?.gate.git_active ? t('gui.inspector.checkSettings.target.syncing')
   : props.operation?.gate.parked ? t('gui.inspector.checkSettings.target.parked') : null)
 const retryText = computed(() => retryOutcomeText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
-// flowgate.v02test.0052 (0008 task 5): why trying again does not help and where to press next, under the outcome line.
+// (task 5): why trying again does not help and where to press next, under the outcome line.
 const retryNext = computed(() => retryNextText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
 const closed = computed(() => !!props.operation && isClosedSessionOperation(props.operation.gate))
 const cancelBlocked = computed(() => !props.operation?.gate.recovery?.cancelable || !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)

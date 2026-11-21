@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0056 F1 — a document's review·rejection history in its own modeless window (0056 CH §2): the v0.1
+// a document's review·rejection history in its own modeless window (CH): the v0.1
 // '검수·반려 전체보기' dialog (QaReviewHistoryDialog.vue — rejections, AI reviews and the AI responses to the
 // rejections on one timeline, newest first, with the "전체" / "반려" / "AI 검수" filter and the fold of each entry)
 // brought to v0.2 on ModelessShell, the document windows' look. Opened from the history button of a

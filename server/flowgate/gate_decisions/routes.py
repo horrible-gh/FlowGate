@@ -1,6 +1,6 @@
-"""HTTP adapter of the gate decision history (flowgate.v02.0085 T#2, D0007 §7.2). Mounted under the ``/flowgate``
+"""HTTP adapter of the gate decision history. Mounted under the ``/flowgate``
 context next to the Graph run routes, whose path rule it follows (``/runs/{run_id}/nodes/{node_key}/gate-decision``);
-same envelope (P0008 §1.2 / §1.3), user JWT only, RBAC read - checked on every call, so a user whose permission was
+same envelope, user JWT only, RBAC read - checked on every call, so a user whose permission was
 withdrawn sees nothing of the history any more.
 
     GET /api/v1/runs/{run_id}/nodes/{node_key}/gate-decisions?cursor=<opaque>&limit=<1..200>
@@ -11,7 +11,7 @@ decisions in decision order (``history.history``: every round of the gate in the
 current result whatever the page. 404 ``run_not_found`` / ``gate_node_not_found`` (no gate of that key in the run's
 revision), 422 for a bad cursor or limit.
 
-flowgate.v02.0085 T#3 (D0007 §7.2): the recovery actions of an accepted decision, RBAC write - checked on every call,
+the recovery actions of an accepted decision, RBAC write - checked on every call,
 also for a replayed request key, before anything is read of the decision:
 
     POST /api/v1/runs/{run_id}/nodes/{node_key}/gate-decisions/{decision_id}/retry
@@ -83,7 +83,7 @@ def get_gate_decisions(run_id: str, node_key: str, request: Request, cursor: Opt
     return legacy.run(request, handle)
 
 
-# ── flowgate.v02.0085 T#3: retry / cancel / resolve ──────────────────────────
+# ── the earlier change the earlier implementation: retry / cancel / resolve ──────────────────────────
 
 REQUEST_ID_MAX_LEN = 128
 REASON_MAX_LEN = 2000
@@ -132,7 +132,7 @@ def parse_recovery(action: str, body: Any) -> tuple[dict, list[dict]]:
             errors.append({"field": "resolution", "reason": "not_in:" + ",".join(recovery.RESOLUTIONS)})
         out["resolution"] = resolution
         out["reason"] = _text(body, "reason", REASON_MAX_LEN, errors, required=True)
-        # T#3 rework (D0007 §7.2): the evidence the person reviewed - its version and its references - is required.
+        # the evidence the person reviewed - its version and its references - is required.
         out["evidence_version"] = _version(body, "evidence_version", errors, required=True)
         out["evidence_refs"] = _refs(body, "evidence_refs", errors)
     return out, errors

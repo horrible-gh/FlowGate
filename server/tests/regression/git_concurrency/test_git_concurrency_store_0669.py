@@ -1,4 +1,4 @@
-"""Unit 1a of the group-lock migration (flowgate.default.0669 chat seq 18; 0666 0010-DB / 0009-L).
+"""Unit 1a of the group-lock migration (chat seq 18; 0666 0010-DB / the earlier implementation).
 
 Pins the storage layer the lock manager (unit 1b) will build on:
 

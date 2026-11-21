@@ -1,8 +1,8 @@
-"""flowgate.default.0482 T0011 acceptance criterion 2: real SQL persistence regressions.
+"""acceptance criterion 2: real SQL persistence regressions.
 
 Close finding 2 from rej_01M1HZBVZ61GG8H9. Earlier terminal-cleanup snapshot/project-lease
 tests used process-local dictionaries because _using_memory() returned True without a DB.
-They never exercised initial/repeated migration 097/098 application (093/094 before T0016)
+They never exercised initial/repeated migration 097/098 application (093/094 before the earlier implementation)
 or actual INSERT/UPSERT/SELECT/DELETE on git_terminal_cleanup_snapshots/project_ai_leases.
 
 Install a file-backed sqloader.sqlite3.SQLiteWrapper in FlowGateStore._db so _using_memory()
@@ -120,7 +120,7 @@ class TestSnapshotDurableSqlPath:
 
     def test_snapshot_survives_a_brand_new_store_instance(self, real_store, monkeypatch):
         """'The last completed snapshot remains readable after a new tab or server restart'
-        (T0011 preservation requirement 3): a fresh FlowGateStore over the SAME db file — no
+        (preservation requirement 3): a fresh FlowGateStore over the SAME db file — no
         shared Python object, no process-local `_memory` dict — must still read it back."""
         store, db_path = real_store
         monkeypatch.setattr(snapshots, "get_store", lambda: store)
@@ -242,7 +242,7 @@ class TestProjectLeaseDurableSqlPath:
         assert project_ai_leases.get_active("other")["run_id"] == "owner-b"
 
 
-# ── migration apply/rerun safety (T0011 acceptance criteria 2) ──────────────────────────
+# ── migration apply/rerun safety (acceptance criteria 2) ──────────────────────────
 #
 # `migrated_sqlite_db` (conftest.py) applies every .sql file with plain
 # `executescript` and keeps no ledger — it is the right tool for "give me a schema",
@@ -260,7 +260,7 @@ def _migrate_fresh(db_path: Path):
 
 class TestMigrationApplyAndRerunSafety:
     def test_a_fresh_db_applies_097_and_098_exactly_once(self, tmp_path):
-        # T0016 (main merge): origin/main had already claimed 093-096, so this group's
+        # (main merge): origin/main had already claimed 093-096, so this group's
         # two files moved to the next free ordinals and are carried across by
         # migration_renames.RENAMES. The ordinal is the only thing that changed.
         db_path = tmp_path / "fresh.db"

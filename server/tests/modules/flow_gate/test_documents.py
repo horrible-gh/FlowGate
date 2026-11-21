@@ -175,9 +175,9 @@ class TestDocumentCRUD:
         assert doc["status"] == "draft"
 
     def test_create_document_persists_origin_snapshot(self, seed_project_user):
-        """0410 T0008: the two nullable AI-origin snapshot fields survive
+        """the two nullable AI-origin snapshot fields survive
         create() -> get() without being silently dropped by the cols whitelist
-        (the exact failure mode NR0003/WP0005 flagged for db/documents.py:create)."""
+        (the exact failure mode the review/the plan flagged for db/documents.py:create)."""
         from modules.flow_gate.documents import document_service
 
         doc = document_service.create_document(

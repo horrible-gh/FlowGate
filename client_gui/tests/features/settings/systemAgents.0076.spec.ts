@@ -30,11 +30,11 @@ interface Rec {
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
   remote_workdir?: string | null
-  /** flowgate.v02test.0019: workspace cleanup policy (server default ON / 24 h). */
+  /** workspace cleanup policy (server default ON / 24 h). */
   maxJobs?: number
   cleanup?: boolean
   hours?: number
-  /** flowgate.v02test.0019: a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
+  /** a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
   activeJobs?: boolean
   configured: Caps
   reported: Caps | null
@@ -217,7 +217,7 @@ vi.mock('@shared/api', async (importOriginal) => {
       if (m[1] === 'GET') return { data: detail(find(id)) }
       if (m[1] === 'PATCH') return patch(id, body as Record<string, unknown>)
       const r = find(id)
-      // flowgate.v02test.0019: registration history no longer blocks deleting; Jobs in progress do.
+      // registration history no longer blocks deleting; Jobs in progress do.
       if (r.activeJobs) throw agentError(409, 'agent_has_active_jobs', 'Agent has Jobs in progress; delete it after they finish')
       net.agents = net.agents.filter((a) => a !== r)
       return { status: 204, data: '' }
@@ -369,7 +369,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  // D §2.6 / T#4 instruction 1·6: only the /system/agents management family, never the Agent runtime
+  // D / the earlier implementation instruction 1·6: only the /system/agents management family, never the Agent runtime
   // (/agent/enrollments, /agent/heartbeat), no other registry or personal-Agent API, and no PATCH
   // ever carries location / connection_mode.
   for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/users')) {

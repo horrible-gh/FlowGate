@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-1 — the card approval and the run's new fields in features/project (O1 0005-TR §4-1 /
+ * the card approval and the run's new fields in features/project (O1 the earlier implementation /
  * §4-2, O2 0007-TR §4-2): the run's pending propagation ("멈춤 · 다음 카드 N개 대기") and each node's
  * awaiting_approval / stage, the Canvas node run's awaiting_approval / stage / instruction_doc_id, the
  * POST …/approval request (path, body with the shown result, the tab's x-canvas-client-id), its answer and a

@@ -1,7 +1,7 @@
-"""Q&A service — document-bound query/answer container (group 0022 Q/A/V rework).
+"""Q&A service — document-bound query/answer container.
 
 Queries and answers are treated as sub-data hung off a document (`documents.doc_id`)
-(DB0006 §3, L0007 §3).
+.
 - One container per document (`questions.doc_id` UNIQUE), `q_id := doc_id`.
 - A query (`question_items`) has a title, body, and asker (`asker_kind` human|ai).
 - An answer (`answers`) is bidirectional human/AI (`author_kind`/`author_id`; AI has author_id NULL).
@@ -29,20 +29,20 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, publish_event_t
 
 # Reserved system user (DB0006 §4.1 seed). Used as the container created_by for paths
 # with no human subject (AI registration / artifact-accompanied) to satisfy the
-# created_by FK and NOT NULL constraints (L0007 §3.1).
+# created_by FK and NOT NULL constraints.
 AI_SYSTEM_USER = "u-system"
 
 logger = logging.getLogger(__name__)
 
 QuestionInput = Union[str, dict]
 
-# ── Option limits (L0008 §1) ─────────────────────────────────────────────────────
+# ── Option limits ─────────────────────────────────────────────────────
 # question_items.options / answers.selected_options carry no DB-level CHECK — JSON
 # validation has no common syntax across the three dialects (DB0007 §2) — so the
 # validation below is the ONLY enforcement of every invariant in DB0007 §5.
 MAX_OPTIONS = 10          # hard cap on options per question item (abuse guard)
 MAX_OPTION_LABEL = 200    # max label length (after strip); long proposals go in the question body
-# flowgate.v02gui.0015 T3: what an option may require before the asking card goes on when an answer selects it
+# what an option may require before the asking card goes on when an answer selects it
 # (``flowgate.card_settings.action_guard``): ``new_attempt`` — the card's work cannot go on in the attempt that asked.
 OPTION_REQUIREMENTS = ("new_attempt",)
 MAX_SELECTED = 1          # v1 is single-select
@@ -53,7 +53,7 @@ MAX_SELECTED = 1          # v1 is single-select
 def _notify_q_registered(
     audience: Optional[str], doc_id: str, project_id: Optional[str], titles: list[str]
 ) -> None:
-    """Notice event announcing a query registration to the console/UI (L0007 §4).
+    """Notice event announcing a query registration to the console/UI.
 
     Conveys only the fact that something was 'registered', with no choice menu,
     recommendation, or default selection. A delivery failure does not affect
@@ -71,7 +71,7 @@ def _notify_q_registered(
     # add_questions runs inside a sync FastAPI route (POST /q/{doc_id}/questions),
     # i.e. a worker thread with no running event loop. The old asyncio.get_event_loop()
     # path raised RuntimeError there and was swallowed, so this event was never emitted
-    # and the worker's Q stayed invisible until F5 (0059 B0001). publish_event_threadsafe
+    # and the worker's Q stayed invisible until F5. publish_event_threadsafe
     # schedules onto the captured main loop — the same mechanism the working
     # workflow-decision broadcast uses.
     publish_event_threadsafe(event)
@@ -112,7 +112,7 @@ def _notify_responder_state(
     message: Optional[str],
     run_id: Optional[str],
 ) -> None:
-    """The automatic responder left this item unanswered — refresh + toast (0661 T0004 F3/F5).
+    """The automatic responder left this item unanswered — refresh + toast.
 
     Carries the state so the toast can tell a technical failure from an explicit
     hand-off, but the panel re-reads the item (`fg:qa_refresh`) for the durable truth.
@@ -139,11 +139,11 @@ def _notify_responder_state(
 # ── Input normalization ──────────────────────────────────────────────────────────
 
 def _option_entries(raw_options: Any) -> list[tuple[str, Optional[str]]]:
-    """Validate a query item's raw options payload → [(stripped label, requires or None)] (L0008 §2.2).
+    """Validate a query item's raw options payload → [(stripped label, requires or None)].
 
     The request carries plain label strings; ids are always server-assigned
     (_assign_option_ids), so the request surface never accepts one.
-    flowgate.v02gui.0015 T3: an option may also be ``{"label": ..., "requires": "new_attempt"}`` — the asking card does
+    an option may also be ``{"label": ..., "requires": "new_attempt"}`` — the asking card does
     not go on after an answer selects it until that action happened (``OPTION_REQUIREMENTS``). No other key is taken.
     """
     if not isinstance(raw_options, list):
@@ -195,7 +195,7 @@ def _validate_options(raw_options: Any) -> list[str]:
 
 
 def _assign_option_ids(labels: list[str], requires: Optional[list[Optional[str]]] = None) -> list[dict]:
-    """Labels → [{"id": "o1", "label": ...}, ...] (L0008 §2.3).
+    """Labels → [{"id": "o1", "label": ...}, ...].
 
     An id only has to be unique within its item (an answer references it in item scope),
     and the 1-based position makes that structural. Options are immutable once registered
@@ -214,7 +214,7 @@ def _assign_option_ids(labels: list[str], requires: Optional[list[Optional[str]]
 
 def _dump_json(value: Any) -> str:
     """Serialize to compact JSON, keeping non-ASCII as-is so a stored label matches its
-    original text byte for byte (L0008 §2.4)."""
+    original text byte for byte."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -225,7 +225,7 @@ def _normalize_questions(
 
     Options are normalized HERE rather than at the call site: the tuple this returns is the
     only thing add_questions writes, so an option normalized anywhere else would be dropped
-    silently instead of raising (NR0004 §6). A plain-string question (legacy worker payload)
+    silently instead of raising. A plain-string question (legacy worker payload)
     normalizes to options=[] — byte-identical behaviour to before this extension.
     """
     out: list[tuple[Optional[str], str, list[dict]]] = []
@@ -249,7 +249,7 @@ def _normalize_questions(
 
 
 def _parse_options(item: dict) -> list[dict]:
-    """Stored options JSON → [{"id", "label"}]. Unparseable → [] (L0008 §5).
+    """Stored options JSON → [{"id", "label"}]. Unparseable →.
 
     Unreachable on the live path (the single write gate validates before storing), but a
     malformed row must not take down a read.
@@ -264,7 +264,7 @@ def _parse_options(item: dict) -> list[dict]:
     return parsed if isinstance(parsed, list) else []
 
 
-# ── Lazy container creation (keyed by doc_id, L0007 §3.1) ────────────────────────
+# ── Lazy container creation (keyed by doc_id, the earlier implementation) ────────────────────────
 
 def ensure_container(
     doc_id: str,
@@ -306,7 +306,7 @@ def ensure_container(
     return container
 
 
-# ── Question anchor correction (B0001 / NR0003, group 0059) ──────────────────────
+# ── Question anchor correction (the earlier change) ──────────────────────
 
 def _resolve_non_ch_predecessor(
     sequence_id: int,
@@ -371,7 +371,7 @@ def add_questions(
 
     asker_kind: 'human'([+query]) | 'ai' (§3.3/§3.4 AI registration). A done container
     reverts to pending.
-    ``asker_provenance`` (0582 T0005 §D) is the AI run/provider snapshot the caller
+    ``asker_provenance`` is the AI run/provider snapshot the caller
     already resolved via ai_invoke.provenance.resolve_run_provenance — ignored for a
     human query, and legitimately {} for an AI query whose token carried no bound run.
     Returns {"doc_id", "added_item_ids": [...]}.
@@ -442,17 +442,17 @@ def add_questions(
     return precheck.response(doc_id, results)
 
 
-# ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
+# ── Last-answer → paused-chain continuation ────────
 
 def _park_waits_on_open_question(row: dict, open_doc_ids: list[str]) -> bool:
-    """Does the parked chain still wait on one of the group's open questions? (0688 T#2)
+    """Does the parked chain still wait on one of the group's open questions?
 
     A question_pending park waits on the questions ITS hop raised: both parks key on
     ``asker_ai_run_id`` (the Q-only probe in worker._retry_eligible and the hand-off park,
-    0688 T#1), and ``stop_run_id`` is that hop. Any other open item in the group -- a
+    ), and ``stop_run_id`` is that hop. Any other open item in the group -- a
     person's own question, another run's, an older one, on this container or another --
     is not what the chain stopped for, yet the group-wide rule kept it parked until somebody
-    answered that too (0688 NR0003 §5). A row without a stop run, a container that cannot
+    answered that too. A row without a stop run, a container that cannot
     be read, or an open document whose container is missing keep the group-wide rule.
     """
     requester_run_id = row.get("stop_run_id")
@@ -514,7 +514,7 @@ def auto_resume_answered_chain(
             return None
         # A container can be done while another document in the same group still has
         # an unanswered item, so the group's open containers are read -- but only the
-        # parked hop's OWN open items hold the chain (0688 T#2, _park_waits_on_open_question).
+        # parked hop's OWN open items hold the chain (_park_waits_on_open_question).
         open_doc_ids = db_questions.list_open_doc_ids_by_group(group_id)
         if open_doc_ids and _park_waits_on_open_question(row, open_doc_ids):
             return None
@@ -569,7 +569,7 @@ def auto_resume_answered_chain(
         trace["resumed_run_id"] = resumed.get("run_id")
         trace["resumed_chain_id"] = resumed.get("chain_id")
         if resumed.get("answer_check_item_ids"):
-            # 0688 T#2: the resumed review round checks the document against these answers.
+            # the resumed review round checks the document against these answers.
             trace["answer_check_item_ids"] = list(resumed["answer_check_item_ids"])
         resumed["question_resume_trace"] = trace
         # Keep the correlation on the live run too, so GET status exposes the same
@@ -601,7 +601,7 @@ def auto_resume_answered_chain(
         return None
 
 
-# ── Register answer (human/AI bidirectional, atomicity L0007 §3.2/§3.3) ──────────
+# ── Register answer (human/AI bidirectional, atomicity the earlier implementation) ──────────
 
 def register_answer(
     doc_id: str,
@@ -622,15 +622,15 @@ def register_answer(
     in a single transaction to block partial commits. When author_kind='ai', author_id
     is NULL. When every item has answer_count≥1, status=done.
 
-    An answer may pick an option, write freely, or do both (L0008 §4). Picking alone fills
+    An answer may pick an option, write freely, or do both. Picking alone fills
     body with the chosen option's label, so answers.body stays non-blank and every existing
     body-only reader (ment assembly, the answer list) works unchanged (DB0007 §5).
 
-    ``writer_ai_run_id`` (0661 T0004 F6) is the server-verified run bound to the AI
+    ``writer_ai_run_id`` is the server-verified run bound to the AI
     token that is answering — NOT a request field. The run that registered the question
     (``question_items.asker_ai_run_id``) may not close its own question with it: a worker
     answering itself would mark the Q done and auto-resume the chain it parked, which is
-    exactly the contract B0001 ruled out. A human session passes None. An AI token with
+    exactly the contract the regression ruled out. A human session passes None. An AI token with
     no bound run (the [Copy Mention] hand-off) also passes None and is not checked — it
     has no run identity to compare, and that path is already shown as external/unconfirmed.
     """
@@ -688,7 +688,7 @@ def register_answer(
         if int(item.get("answer_count") or 0) > 0:
             raise HTTPException(status_code=409, detail="This question already has an answer.")
     elif item.get("responder_state") and int(item.get("answer_count") or 0) > 0:
-        # TR0005 rev1 review: an item the automatic responder took on takes one answer from
+        # review: an item the automatic responder took on takes one answer from
         # anyone — a person answering after the responder's answer landed is refused, not
         # stacked as a second answer. The guarded increment below holds the same rule
         # against a read that is already stale.
@@ -707,7 +707,7 @@ def register_answer(
     if not body or not body.strip():
         if not selected:
             raise HTTPException(status_code=400, detail="body must not be empty")
-        # Picked-only: the label verbatim becomes the body (BODY_FILL, L0008 §1).
+        # Picked-only: the label verbatim becomes the body (BODY_FILL, the earlier implementation).
         body = labels_by_id[selected[0]]
     # A body that is already written stays as written: submitting a pick alongside prose
     # keeps the prose as the body and records the pick in selected_options only.
@@ -746,7 +746,7 @@ def register_answer(
             author_fallback_used=_provenance.get("fallback_used"),
         )
         if item.get("responder_state"):
-            # 0661 T0004 F2/F3: whoever answered (the dispatched AI responder, a manual
+            # whoever answered (the dispatched AI responder, a manual
             # [AI 답변 요청] run or a person), the item is no longer waiting on a responder.
             db_question_items.set_responder_state(
                 item_id, db_question_items.RESPONDER_ANSWERED, None, None,
@@ -774,7 +774,7 @@ def register_answer(
         "author_kind": author_kind,
         "status": q_status,
     }
-    # 0688 T#2: an AI-asked item can be the one a parked chain waits on even while other,
+    # an AI-asked item can be the one a parked chain waits on even while other,
     # unrelated items keep its container open; auto_resume_answered_chain decides that.
     if auto_resume_api_base_url and (not unanswered or (item.get("asker_kind") or "") == "ai"):
         trace = auto_resume_answered_chain(
@@ -784,7 +784,7 @@ def register_answer(
         )
         if trace is not None:
             result["question_resume_trace"] = trace
-    # flowgate.v02.0063: a Graph card whose AI asked this goes on after its last answer (no handler: nothing).
+    # a Graph card whose AI asked this goes on after its last answer (no handler: nothing).
     from modules.flow_gate.services import ai_run_end_hooks
     ai_run_end_hooks.question_answered({
         "group_id": (db_documents.get_by_id(doc_id) or {}).get("group_id"), "doc_id": doc_id, "item_id": item_id,
@@ -794,15 +794,15 @@ def register_answer(
     return result
 
 
-# ── Automatic responder outcomes (flowgate.default.0661 T0004 F3/F5) ────────────────
+# ── Automatic responder outcomes ────────────────
 #
-# Three outcomes of a responder run are kept apart on purpose (T0004 "failure ≠ normal answer ≠
+# Three outcomes of a responder run are kept apart on purpose (the earlier implementation "failure ≠ normal answer ≠
 # human judgment needed"): an answer row (register_answer above), a TECHNICAL failure
 # (mark_responder_failed — the item stays open and can be re-dispatched from the panel),
 # and the responder's EXPLICIT hand-off to a person (escalate_to_user — nothing retries
 # it; a human answers). None of them touches the container status or the parked chain:
 # `auto_resume_answered_chain`'s open-Q gate keeps the original run parked until the LAST
-# of its own hop's items carries an answer (0688 T#2: unrelated open items do not count).
+# of its own hop's items carries an answer (unrelated open items do not count).
 
 RESPONDER_ERROR_USER_DECISION = "user_decision_required"
 _RESPONDER_MESSAGE_MAX = 2000
@@ -881,7 +881,7 @@ def mark_responder_failed(
     ``run_id`` (an admission refusal: this attempt never claimed the item) it never
     touches a 'dispatched' claim or a 'user_decision' hand-off at all -- a claim is
     written inside the issue builder BEFORE the run is registered live, so a liveness
-    probe cannot tell a dead claim from one that is just starting (TR0005 rev2 review).
+    probe cannot tell a dead claim from one that is just starting (review).
     The reads below only pick the early exits; the write itself is one CAS
     (``fail_responder``: answer_count = 0, plus the owner's 'dispatched' claim with
     ``run_id``, or the very state/run the caller read without it), so an answer or a new
@@ -921,7 +921,7 @@ def escalate_to_user(
     actor_user_id: Optional[str] = None,
     notify_audience: Optional[str] = None,
 ) -> dict:
-    """The assigned AI responder says a HUMAN must decide this question (0661 T0004 F5).
+    """The assigned AI responder says a HUMAN must decide this question.
 
     A separate signal from an answer POST: no answer row is written, answer_count stays 0,
     the container stays 'pending' and the parked chain stays parked. Only the responder
@@ -959,7 +959,7 @@ def escalate_to_user(
             "state": db_question_items.RESPONDER_USER_DECISION, "status": container["status"],
             "already": True,
         }
-    # One CAS (TR0005 rev1 review): only this run's 'dispatched' claim on a still
+    # One CAS (review): only this run's 'dispatched' claim on a still
     # unanswered item becomes 'user_decision' — a person's answer that committed after the
     # checks above wins and the hand-off is refused instead of overwriting 'answered'.
     changed = db_question_items.escalate_responder(
@@ -1003,7 +1003,7 @@ def is_question_responder_run(run_id: Optional[str]) -> bool:
 
 
 def startup_recover_question_responders() -> int:
-    """Settle responder items whose run died with the previous process (0661 T0004 F3).
+    """Settle responder items whose run died with the previous process.
 
     At startup nothing is live, so every item still 'dispatched' belongs to a run that
     never finalized. An item that received an answer meanwhile is closed as 'answered';
@@ -1024,7 +1024,7 @@ def startup_recover_question_responders() -> int:
             from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
 
             if ai_run_identity.foreign_run_id(run_id):
-                continue  # 0139: dispatched by FlowGate v0.1 on the shared DB, not ours
+                continue  # dispatched by FlowGate v0.1 on the shared DB, not ours
             if run_id and ai_runtime.is_run_live(run_id):
                 continue
             if int(row.get("answer_count") or 0) > 0:
@@ -1051,7 +1051,7 @@ def startup_recover_question_responders() -> int:
 # ── Lookup ───────────────────────────────────────────────────────────────────────
 
 def _parse_selected_options(answer: dict) -> list[str]:
-    """Stored selected_options JSON → list of option ids. Unparseable → [] (L0008 §5)."""
+    """Stored selected_options JSON → list of option ids. Unparseable →."""
     raw = answer.get("selected_options")
     if not raw:
         return []
@@ -1063,7 +1063,7 @@ def _parse_selected_options(answer: dict) -> list[str]:
 
 
 def _provider_view(run_id: Any, provider_id: Any, provider_name: Any) -> Optional[dict]:
-    """Nest one AI run/provider snapshot into the canonical public shape (0582 T0005 §6).
+    """Nest one AI run/provider snapshot into the canonical public shape.
 
     None when there is no evidence at all — a human item, or an AI item whose token
     carried no bound run (legacy row / [Copy Mention] hand-off) — so the UI can render
@@ -1075,7 +1075,7 @@ def _provider_view(run_id: Any, provider_id: Any, provider_name: Any) -> Optiona
 
 
 def _responder_view(item_dict: dict) -> Optional[dict]:
-    """Pop the migration-142 responder columns into one nested block (0661 T0004 F3/F5).
+    """Pop the migration-142 responder columns into one nested block.
 
     None when no in-app responder ever touched the item (legacy rows, human-only Q&A), so
     the UI shows nothing rather than an empty state machine.
@@ -1103,7 +1103,7 @@ def _responder_view(item_dict: dict) -> Optional[dict]:
 
 
 def _answer_provenance_view(answer_dict: dict) -> Optional[dict]:
-    """Pop the requested-provider half of an AI answer's evidence (0661 T0004 F6).
+    """Pop the requested-provider half of an AI answer's evidence.
 
     `author_provider` (above) keeps its 0582 shape — the ACTUAL provider. This sibling
     says what was ASKED for and whether a fallback ran, so a row can prove on its own
@@ -1127,10 +1127,10 @@ def get_qa_detail(doc_id: str) -> dict:
     Returns {doc_id, status, items: [{...item, options: [{id, label}], answers: [...]}]}.
     options / selected_options are handed to the UI parsed, never as the stored JSON text.
     Each AI item (asker_kind/author_kind='ai') nests its raw asker_*/author_* columns
-    into ``asker_provider``/``answer.provider`` (0582 T0005 §D) — the same
+    into ``asker_provider``/``answer.provider`` — the same
     {ai_run_id, ai_provider_id, ai_provider_name} shape every other AI-provenance
     surface uses, rather than exposing the raw column names to the API.
-    Every answer also carries ``author_name`` (``_attach_author_names``, flowgate.v02.0064 T-B5).
+    Every answer also carries ``author_name`` (``_attach_author_names``, the earlier change T-B5).
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
@@ -1175,7 +1175,7 @@ def get_qa_detail(doc_id: str) -> dict:
 
 
 def _attach_author_names(answers: list[dict]) -> None:
-    """Add ``author_name`` to every answer (flowgate.v02.0064 T-B5, P0006 §5.1, DB0007 §2.6).
+    """Add ``author_name`` to every answer.
 
     A person's answer gets ``users.username`` of its ``author_id`` (there is no display-name
     column), looked up once for the whole list; an AI answer, a person not found (a removed
@@ -1201,7 +1201,7 @@ def get_answers_for_document(doc_id: str) -> list[dict]:
 
     Returns [{"id": item_id, "doc_id": doc_id, "Q": item_body, "A": latest_answer_body_or_null}, ...].
     """
-    # 0288 NR0003 finding 5 / recommendation 3: this was 2 + N queries (container, items, then
+    # this was 2 + N queries (container, items, then
     # one answers SELECT per item) on the GET /document path, which every worker
     # hits. question_items.qa_bundle_by_doc is the same data as one LEFT JOIN
     # already ordered by (seq, answer created_at), so the whole thing is one
@@ -1238,12 +1238,12 @@ def project_open_items(rows: list[dict]) -> list[dict]:
 
 
 def list_open_items(project_id: Optional[str] = None) -> list[dict]:
-    """Aggregate of 'open queries' (items being answered, D0005 §3.7). project_id=None → all."""
+    """Aggregate of 'open queries' (items being answered, the design). project_id=None → all."""
     return project_open_items(open_item_snapshot(project_id))
 
 
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:
-    """Q&A bundle for ment assembly (L0007 §6)."""
+    """Q&A bundle for ment assembly."""
     return db_question_items.qa_bundle_by_doc(doc_id)
 
 

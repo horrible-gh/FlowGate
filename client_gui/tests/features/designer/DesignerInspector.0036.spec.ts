@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0036 — bottom Inspector Frame (0036-R §4 / §7, 0035 v7). The Frame is mounted
+ * bottom Inspector Frame (R /, 0035 v7). The Frame is mounted
  * on its own with plain Graph Nodes, and inside the real Center column with a real Center
  * session (fake Graph source) whose Workspace is stubbed, so no Canvas is needed: selecting a
  * Node through the session must reach the Inspector.
  *
- * flowgate.v02.0048 T#1 (D#1 §3.3, F4): the Frame takes the selection context and lays out a
+ * the Frame takes the selection context and lays out a
  * feature registry; the tab / placeholder / `has-settings` / slot cases now run on a fixture
  * registry with the same intent — fixed tab order, 설정 (right after 문서) may be missing, the
  * selected tab is kept, a missing 설정 sends the selection back to 문서, the 360px width.
@@ -130,7 +130,7 @@ describe('Inspector tab rules', () => {
 })
 
 describe('DesignerInspector — Node not selected', () => {
-  // flowgate.v02.0042: the empty Inspector carries no guidance text.
+  // the empty Inspector carries no guidance text.
   it('shows an empty area with no text and no header, tabs or Content area', () => {
     const w = mountInspector({ selection: null })
     expect(get(w, 'designer-inspector').attributes('data-selected')).toBe('false')
@@ -152,7 +152,7 @@ describe('DesignerInspector — Node selected', () => {
     expect(get(w, 'designer-inspector-title').text()).toBe('토큰 갱신 로직 수정')
     expect(get(w, 'designer-inspector-title').attributes('title')).toBe('토큰 갱신 로직 수정')
     expect(get(w, 'designer-inspector-state').text()).toBe('진행 중')
-    // No feature action is registered: the actions area is not rendered. flowgate.v02.0051: the v7
+    // No feature action is registered: the actions area is not rendered. the earlier change: the v7
     // header's own controls — ✎ 메모 (no memo API yet: disabled) and the ⋯ menu — are on every card.
     expect(w.find('[data-test="designer-inspector-actions"]').exists()).toBe(false)
     expect(get(w, 'designer-inspector-memo').attributes('disabled')).toBeDefined()
@@ -366,7 +366,7 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
     return { w: wrapper, center }
   }
 
-  // flowgate.v02.0049: the Minimap placeholder became the real Minimap (nothing to draw yet).
+  // the Minimap placeholder became the real Minimap (nothing to draw yet).
   it('lays the Inspector and the Minimap side by side in the Bottom Dock', async () => {
     const { w } = await mountColumn()
     const dock = get(w, 'designer-bottom-dock')

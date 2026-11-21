@@ -1,4 +1,4 @@
-"""AI start body precheck (0064 T-B1e: D0004 §3.6, L0005 2.14 / 2.15, P0006 §2.9 ① / §2.10, DB0007 §2.4).
+"""AI start body precheck (T-B1e: the design, the earlier implementation 2.14 / 2.15, the plan ① /, ).
 
 Before a Flow node AI or a Q&A answer AI starts, the server checks that the documents it hands over can be read:
 the start document, the instruction / target document, the reference documents and the documents the card's lines
@@ -36,12 +36,12 @@ from modules.flow_gate.storage.body import body_read_state
 
 _log = logging.getLogger(__name__)
 
-PRECHECK_BATCH = 200                         # rows read at a time; every target is checked (L0005 1.1)
-EVENT_TYPE = "ai_start_unreadable_docs"      # L0005 1.4 / P0006 §2.10
+PRECHECK_BATCH = 200                         # rows read at a time; every target is checked
+EVENT_TYPE = "ai_start_unreadable_docs"      # 1.4 / the plan
 KIND_NODE, KIND_QNA = "node", "qna"
 SECTION_HEADER = "[읽을 수 없는 문서]"
 READABLE, READ_ERROR = "readable", "read_error"
-#: The server mention wording of each reason (P0006 §1.3).
+#: The server mention wording of each reason.
 REASON_TEXT = {
     "file_path_missing": "본문 파일 경로가 기록되지 않음",
     "file_not_found": "본문 파일이 없음",

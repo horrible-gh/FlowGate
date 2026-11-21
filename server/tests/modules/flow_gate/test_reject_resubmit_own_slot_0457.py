@@ -1,22 +1,22 @@
-"""0457 B0001 — a rejected resubmit goes back to its OWN slot, and no registration
+"""a rejected resubmit goes back to its OWN slot, and no registration
 may evict the document already sitting in a slot.
 
-NR0003 §1: `inbox_routes.py` Step 7.5 asked `get_in_progress_head_by_group()` which slot
+`inbox_routes.py` Step 7.5 asked `get_in_progress_head_by_group()` which slot
 to re-register a rejected document into. That selector is the only one ordered by
 `updated_at DESC` instead of `sort_order ASC`, so it answered "the slot touched most
 recently" — and when a work plan pours two sets, a sequence holds two TR slots, so the
-`head.type == doc_type` guard passed on a *stranger's* slot. `0005-TR`'s resubmit took
-slot 6 away from `0007-TR`, which became a document belonging to no slot at all. The
+`head.type == doc_type` guard passed on a *stranger's* slot. `the earlier implementation`'s resubmit took
+slot 6 away from `the earlier implementation`, which became a document belonging to no slot at all. The
 failure left no event, and the registration sat inside `except Exception: logger.warning`,
 so nothing surfaced anywhere.
 
-The four regressions NR0003 §8 asks for:
+The four regressions the review asks for:
 
 * **A** — two TR slots, the earlier document is rejected and resubmitted. Its own slot is
   re-registered; the later slot is untouched, down to its `updated_at`; nothing is
   orphaned. The precondition pins the in-progress head onto the *later* slot, which is
   what the pre-fix code would have written to.
-* **B** — the B0046 misaligned-head shape. With an own slot, only that slot is
+* **B** — the the regression misaligned-head shape. With an own slot, only that slot is
   re-registered; with no own slot, nothing is registered at all and the document still
   goes `rejected → revised` with its `DOC_REVIEW_STATUS_CHANGED` broadcast.
 * **G** — registering into a slot another document holds raises
@@ -496,7 +496,7 @@ def test_A_rejected_resubmit_returns_to_own_slot_and_spares_the_later_tr(tmp_pat
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Regression B — B0046 misaligned head: own slot, or no slot at all
+# Regression B — the regression misaligned head: own slot, or no slot at all
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_B_misaligned_head_registers_only_the_documents_own_slot(tmp_path, monkeypatch):

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0032 — the Conversation production contract in the adapter (D0006 §5.1, §5.5):
+// the Conversation production contract in the adapter:
 // activity list, command decision and run change file diff, and their snake_case answers.
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())

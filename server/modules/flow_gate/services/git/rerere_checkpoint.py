@@ -154,7 +154,7 @@ def _run(root: Path) -> None:
 def _restore(root: Path, originals: dict[str, bytes], keep: set[str]) -> None:
     """Put ``originals`` back on disk, except ``keep``.
 
-    flowgate.v02test.0052 T0003 (the confirmed cause of merge 457's stuck abort): a file
+    (the confirmed cause of merge 457's stuck abort): a file
     whose bytes are already the original is NOT rewritten. ``start_session`` runs right
     after ``apply_eol_separation`` has staged an EOL-only file, reads it as an "original"
     and, seconds later (``git rerere`` in between), wrote the identical bytes back — the
@@ -367,7 +367,7 @@ def hold(group_id: str, merge_id: int) -> dict:
     session, _cfg, project_id, root = gs._session_context(group_id, merge_id)
     if gs.db_git.session_kind(session) != gs.db_git.SESSION_KIND_MERGE:
         raise GitServiceError(409, "hold_not_supported", "Only finalize merge conflicts can be held")
-    # 0669 unit 8a (D §3.11, §7 "rerere checkpoint"): the session target's W or B, and M
+    # unit 8a (D, "rerere checkpoint"): the session target's W or B, and M
     # only for the moment the shared rerere cache is written — not the project mutex.
     from . import branch_merge_publish
     from . import lock_manager as locks
@@ -440,7 +440,7 @@ def hold(group_id: str, merge_id: int) -> dict:
         })
         # No abort can happen before the checkpoint INSERT has committed. If Git
         # refuses the abort, restore the previous active ledger entry atomically.
-        # flowgate.v02test.0052 T0003 task 3(b): the session's abort is audited
+        # task 3(b): the session's abort is audited
         # (``ref_operations[].stderr_tail`` on failure) like the user [abort].
         proc = gs._abort_merge(root, merge_id=merge_id, reason="hold_abort")
         if proc.returncode:

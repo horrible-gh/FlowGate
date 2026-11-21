@@ -1,4 +1,4 @@
-"""flowgate.default.0594 T0012 — selected finalize target + managed target workspace.
+"""selected finalize target + managed target workspace.
 
 Real git end-to-end (bare origin + service clone, like test_git_integration_0115.py)
 on a temporary SQLite with the real migrations. Every test builds its OWN project
@@ -63,7 +63,7 @@ class _MockTxn:
 
     def execute(self, sql, params=None):
         # No commit here: a transaction that commits every statement cannot roll
-        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # anything back, and then an atomic unit of work (the design INV-6: AC
         # approval + root completion + intent consume, all or nothing) silently
         # tests as "each write landed on its own". begin_transaction below owns
         # the commit/rollback.
@@ -77,7 +77,7 @@ class _MockTxn:
         transaction's cursor (that is the one portable place all three real
         adapters expose it). A mock that hides its cursor makes every CAS write
         raise "database driver did not expose affected row count" — a harness
-        gap, not a product one (0555 T0008).
+        gap, not a product one.
         """
         return self._cur
 
@@ -293,7 +293,7 @@ def proj(tmp_path, monkeypatch):
     p = Proj(tmp_path)
     yield p
     from modules.flow_gate.services.git import merge_target as mt
-    mt.settle_check_targets(30)          # flowgate.v02test.0020: no background candidate computation outlives a test
+    mt.settle_check_targets(30)          # no background candidate computation outlives a test
     svc.delete_config(p.pid)
 
 
@@ -421,7 +421,7 @@ def test_B_non_base_clean_finalize_uses_managed_workspace(proj, monkeypatch):
     assert done.target_branch == "develop" and not done.is_project_base
     assert svc.get_finalize_state(gid)["state"]["finalize_target"]["target_branch"] == "develop"
 
-    # T0014 connected edge: the result just pushed by group finalize is then
+    # connected edge: the result just pushed by group finalize is then
     # promoted through the real ordinary-branch merge service into main.
     promoted = svc.merge_branches(proj.pid, "develop", "main")
     assert promoted["pushed"] is True and promoted["workspace_cleaned"] is True
@@ -615,7 +615,7 @@ def test_E3_live_in_progress_attempt_is_not_a_conflict_and_not_swept(proj):
     proj.local_branch("develop")
     proj.ready(gid)
     proj.ready(gid2)
-    # 0669: the live runner is the attempt job; while it is not terminal it owns the attempt
+    # the live runner is the attempt job; while it is not terminal it owns the attempt
     job_id = _live_job(proj.pid, "live")
     holder = f"job:{job_id}"
     attempt = _open_attempt(proj, gid, "develop", holder)
@@ -894,7 +894,7 @@ def test_E4_crash_after_the_merge_landed_is_reconciled_to_completed(
     merge_id = int(session["merge_id"])
     landed = _git(["rev-parse", "develop"], cwd=proj.base).strip()
     assert "feature.txt" in _git(["ls-tree", "-r", "--name-only", "develop"], cwd=proj.base).split()
-    # 0669 unit 9a: the finalize job owns the attempt while its lease is valid, so a restart or
+    # unit 9a: the finalize job owns the attempt while its lease is valid, so a restart or
     # a periodic sweep must not take it away ...
     if recover == "startup":
         svc.startup_recovery()
@@ -1081,7 +1081,7 @@ def test_I_legacy_session_without_target_falls_back_to_base(proj):
     ctx = _ctx(merge_id)
     for key in ("merge_target", "target_branch", "attempt_state"):
         ctx.pop(key, None)
-    db_git.set_session_context(merge_id, ctx)          # = a row written before T0012
+    db_git.set_session_context(merge_id, ctx)          # = a row written before the earlier implementation
 
     resolved = mt.resolve_session_target(_session(merge_id))
     assert resolved.legacy and resolved.is_project_base and resolved.target_branch == "main"
@@ -1291,7 +1291,7 @@ def test_target_carrier_through_route_and_approval_seam(proj):
 
 
 # ── N ────────────────────────────────────────────────────────────────────────
-# flowgate.default.0594 T0016 §8.2 — a v0.2-style integration branch is not a
+# a v0.2-style integration branch is not a
 # one-shot target: several DIFFERENT groups finalize into it in turn, and each
 # later merge builds on what the previous one just pushed, never touching main.
 
@@ -1329,7 +1329,7 @@ def test_N_sequential_groups_grow_the_same_integration_branch(proj):
 
 
 # ── O ────────────────────────────────────────────────────────────────────────
-# T0016 §2.2/§3.2 — the last non-base target a finalize actually merged into
+# the last non-base target a finalize actually merged into
 # becomes this project's persisted suggestion for the NEXT finalize dialog
 # (surfaced through list_branches), and the same setting can be changed or
 # cleared directly (a distinct action from running an actual branch merge).
@@ -1352,7 +1352,7 @@ def test_O_default_merge_target_persists_and_is_settable_directly(proj):
     assert db_git.get_config(proj.pid)["default_merge_target"] == "integration-v2"
     assert svc.list_branches(proj.pid)["default_merge_target"] == "integration-v2"
 
-    # T0016 §3.2's own action: set/clear the suggestion directly, no merge involved.
+    # 's own action: set/clear the suggestion directly, no merge involved.
     proj.local_branch("integration-v3")
     result = mt.set_project_default_target(proj.pid, "integration-v3")
     assert result == {"ok": True, "default_merge_target": "integration-v3"}
@@ -1367,7 +1367,7 @@ def test_O_default_merge_target_persists_and_is_settable_directly(proj):
     assert cleared == {"ok": True, "default_merge_target": None}
     assert db_git.get_config(proj.pid)["default_merge_target"] is None
 
-    # T0016 §6.1 — the branch currently pinned as the merge-target suggestion
+    # the branch currently pinned as the merge-target suggestion
     # is itself undeletable, both through the guard and the catalog's can_delete
     # flag, until it is retargeted or cleared.
     mt.set_project_default_target(proj.pid, "integration-v3")
@@ -1464,7 +1464,7 @@ def test_held_checkpoint_is_consumed_after_base_advance_and_clean_finalize(proj)
     assert db_git.get_resolution_checkpoint(checkpoint["checkpoint_id"])["state"] == "consumed"
     assert db_git.active_resolution_checkpoint(proj.pid, gid) is None
 
-# ── flowgate.default.0683 T0004 — group finalize blocker / plan-time recovery ────
+# ── the earlier change the earlier implementation — group finalize blocker / plan-time recovery ────
 
 @needs_git
 def test_0683_group_blocker_details_name_the_group_finalize(proj):
@@ -1515,7 +1515,7 @@ def test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize(proj):
     assert held_locks(proj.pid) == []
 
 
-# ── flowgate.v02.0086 — base checkout off the project base branch (NR0003 §5.3) ──
+# ── the earlier change — base checkout off the project base branch ──
 
 def _merge_rows(gid: str) -> list[dict]:
     from modules.flow_gate.db.connection import get_store
@@ -1626,7 +1626,7 @@ def test_0086_open_attempt_keeps_its_pinned_target_off_branch(proj):
     assert fixed.target_branch == "develop" and fixed.merge_id == merge_id
 
 
-# ── flowgate.v02.0098 T#1: the check card's common merge target judgement (D0004 §3.2 / §7) ──────────────────────
+# ── the earlier change the earlier implementation: the check card's common merge target judgement ──────────────────────
 
 def _check_view(p: Proj, gid: str, selected=None, refresh=True) -> dict:
     from modules.flow_gate.services.git import merge_target as mt
@@ -1729,7 +1729,7 @@ def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, ch
 
     gid = _feature_group(proj, 3)
     view = _check_view(proj, gid)
-    # flowgate.v02test.0020 rev2: the list no longer reads the work base history a target lacks (the scope floor);
+    # the list no longer reads the work base history a target lacks (the scope floor);
     # main lacks the v0.2 commit, is listed, and the single judgement of a save / confirm / run refuses it
     assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
     assert view["default_target_branch"] == "feature/v0.2.0"
@@ -1784,7 +1784,7 @@ def test_0098_base_and_non_base_targets_take_their_own_slot_checks(proj, check_b
     _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
     assert {_judge(proj, gid, n)["target_branch"] for n in ("main", "feature/v0.2.0")} == {"main", "feature/v0.2.0"}
     # the project base checkout off its branch (or detached) refuses every target, the inherited one too.
-    # flowgate.v02test.0020 rev2: the list does not read the checkout's branch; the names stay listed and the
+    # the list does not read the checkout's branch; the names stay listed and the
     # single judgement of a save / confirm / run refuses them
     for off in (["checkout", "feature/v0.2.0"], ["checkout", "--detach", "main"]):
         _git(off, cwd=proj.base)
@@ -1868,7 +1868,7 @@ def test_0098_the_candidate_cache_is_shared_served_stale_and_revalidated(proj, c
     monkeypatch.setattr(mt, "_compute_snapshot", counted)
     first = _check_view(proj, gid, refresh=False)
     assert _check_view(proj, gid, refresh=False) == first and len(computed) == 1     # fresh: the cache
-    # flowgate.v02test.0020 rev2: a server change marks it stale; it is still served and recomputed behind it
+    # a server change marks it stale; it is still served and recomputed behind it
     mt.invalidate_check_targets(proj.pid, gid)
     assert _check_view(proj, gid, refresh=False) == first
     assert mt.settle_check_targets(60) and len(computed) == 2
@@ -1917,7 +1917,7 @@ def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, mo
     proj.local_branch("develop")
     mt.reset_check_targets()
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.01)
-    # flowgate.v02test.0020: the computation has a budget of its own; here it runs out too (a host where even that
+    # the computation has a budget of its own; here it runs out too (a host where even that
     # one is not enough), so nothing finishes behind the timed-out view
     monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.01)
     view = _check_view(proj, gid)
@@ -1928,7 +1928,7 @@ def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, mo
     assert mt.settle_check_targets(10)
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
     monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 60.0)
-    # 0148: a timeout is now negative-cached for 5 s; explicit refresh must bypass and replace it.
+    # a timeout is now negative-cached for 5 s; explicit refresh must bypass and replace it.
     assert _check_view(proj, gid, refresh=False)["merge_target_state"]["status"] == "timeout"
     assert _check_view(proj, gid, refresh=True)["merge_target_options"] == ["develop", "main"]
     # one name's judgement failing for a reason of its own basis drops the whole list, never a partial one
@@ -1993,7 +1993,7 @@ def test_0098_the_judgement_reads_a_legacy_group_without_recording_anything(proj
     before = rows()
     assert before[0]["work_base_ref"] is None and before[1]["work_base_state"] is None
     view = _check_view(proj, gid, "develop", refresh=False)
-    # flowgate.v02test.0020 rev2: the list reads no floor; develop is listed and refused when saved (below)
+    # the list reads no floor; develop is listed and refused when saved (below)
     assert view["merge_target_options"] == ["develop", "main"]
     assert view["default_target_branch"] == "main"
     assert view["merge_target_state"]["current"]["error"] is None
@@ -2024,7 +2024,7 @@ def test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed
     assert mt.preview_target(gid, "main")["incoming_work_base_commits"] == 0      # the preview's tip fallback
     assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
     view = _check_view(proj, gid, "main")
-    # flowgate.v02test.0020 rev2: the list reads no floor; main is listed and refused when saved / confirmed / run
+    # the list reads no floor; main is listed and refused when saved / confirmed / run
     assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
     assert view["merge_target_state"]["current"]["error"] is None
     assert _refused(proj, gid, "main", scope_floor_sha=b).code == "merge_target_incoming_work_base"
@@ -2079,7 +2079,7 @@ def test_0098_a_base_status_that_cannot_be_read_is_no_clean_base(proj, check_bud
             failed = _refused(proj, gid, "main")
             assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", "probe_failed")
             assert _judge(proj, gid, "develop")["is_project_base"] is False      # a non-base target never reads it
-            # flowgate.v02test.0020 rev2: the list does not read the base checkout's status
+            # the list does not read the base checkout's status
             view = _check_view(proj, gid)
             assert view["merge_target_options"] == ["develop", "main"]
             assert view["merge_target_state"]["status"] == "ok"
@@ -2128,7 +2128,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     with monkeypatch.context() as m:
         # each step alone stays inside the 1 s budget; the basis and the stored target's judgement together do not
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 1.0)
-        # flowgate.v02test.0020: the background computation does not finish either (its own budget runs out)
+        # the background computation does not finish either (its own budget runs out)
         m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.3)
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         m.setattr(mt, "_verdict", lambda *a, **k: _time.sleep(0.6) or real_verdict(*a, **k))
@@ -2139,7 +2139,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     assert (state["status"], state["code"]) == ("timeout", mt.CHECK_OPTIONS_TIMEOUT)
     assert (state["current"]["branch"], state["current"]["checked"], state["default"]["checked"]) == (
         "gone", False, False)
-    # 0148: an unfinished added judgement also replaces the candidate view with a short timeout cache.
+    # an unfinished added judgement also replaces the candidate view with a short timeout cache.
     again = _check_view(proj, gid, "gone", refresh=False)
     assert again["merge_target_options"] == []
     assert (again["merge_target_state"]["status"], again["merge_target_state"]["current"]["checked"]) == (
@@ -2154,7 +2154,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     mt.reset_check_targets()
     with monkeypatch.context() as m:
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.5)
-        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.0)     # flowgate.v02test.0020: nothing finishes behind it
+        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.0)     # nothing finishes behind it
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         missed = _check_view(proj, gid, "gone", refresh=False)
         assert mt.settle_check_targets(10)
@@ -2173,7 +2173,7 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
 
 @needs_git
 def test_0020_a_lookup_that_outlives_the_view_budget_ends_in_the_background(proj, monkeypatch):
-    """flowgate.v02test.0020: a slow lookup used to be dropped at the 3 s budget and computed again from nothing by
+    """a slow lookup used to be dropped at the 3 s budget and computed again from nothing by
     every retry and refresh, so on a slow host the list never came. Now the view still answers ``timeout`` in its own
     budget, but the computation (real Git) ends in the background; the next plain read gets the list without
     computing again, and a save never waited for any of it."""

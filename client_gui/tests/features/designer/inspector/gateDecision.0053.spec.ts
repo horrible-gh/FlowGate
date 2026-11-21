@@ -1,4 +1,4 @@
-/** D0007 §8-10: the confirmed mockup and the live gate/settings contracts. */
+/** the confirmed mockup and the live gate/settings contracts. */
 import { defineComponent, h } from 'vue'
 import { createPinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'

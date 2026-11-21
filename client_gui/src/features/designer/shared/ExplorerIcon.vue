@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0025 T0006 §4 — the one set of Designer Explorer glyphs, so the same meaning
+// the one set of Designer Explorer glyphs, so the same meaning
 // is never drawn twice: Project = workspace window, Group and file folders = the folder pair
 // (closed / open), Flow = node graph. Shape only; the owning row picks the colour through
 // `color` (stroke = currentColor).

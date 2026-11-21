@@ -1,4 +1,4 @@
-"""Card line store: which document fills each line of a card (flowgate.v02.0053 T#1).
+"""Card line store: which document fills each line of a card.
 
 Migration 145_graph_node_documents.sql. One row per (Flow, node, line, document type). ``owned`` = 1
 when the card created the document (it may delete it again while it is a draft); 0 when the line
@@ -21,7 +21,7 @@ _COLUMNS = "node_key, slot, doc_type, doc_id, owned, ordinal, created_at, create
 
 
 def _now() -> str:
-    """ISO 8601 UTC with milliseconds, like the other Graph rows (P0008 §1.1)."""
+    """ISO 8601 UTC with milliseconds, like the other Graph rows."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 

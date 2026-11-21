@@ -1,4 +1,4 @@
-"""Empty-remote base provisioning bootstrap (flowgate.default.0313 — B0001).
+"""Empty-remote base provisioning bootstrap.
 
 Bug: connecting a brand-new EMPTY remote (no commits, no base branch) to a fresh
 project left the operator unable to do anything. `_provision_base_locked` judged
@@ -26,7 +26,7 @@ import pytest
 from scratch_support import remove_tree, session_scratch
 
 _SERVER_DIR = Path(__file__).resolve().parents[4]
-# 0382 B0001: the old default was _SERVER_DIR / ".test-tmp-0313".
+# the old default was _SERVER_DIR / ".test-tmp-0313".
 # FLOWGATE_TEST_SCRATCH is set only for FlowGate-managed runs. Manual pytest runs
 # created directories inside the repository even during collection, and final
 # git add -A absorbed them. The default now resides outside the repository.
@@ -53,7 +53,7 @@ def scratch_path():
     FlowGate host's managed workspace that can produce an unreadable ACL, so this
     stays a plain directory instead of pytest's tmp_path.
 
-    0382 proposal 7: the case directory used to be kept on purpose — "read-only Git objects prevent cleanup on Windows". That is exactly what remove_tree's
+    proposal 7: the case directory used to be kept on purpose — "read-only Git objects prevent cleanup on Windows". That is exactly what remove_tree's
     permission-restoring retry fixes, so there is no reason to hoard them.
     """
     path = _TEST_SCRATCH / f"case-{uuid.uuid4().hex}"
@@ -143,7 +143,7 @@ class TestBootstrapEmptyRemote:
         assert "refs/heads/main" not in remote_refs
 
     def test_born_base_can_spawn_a_group_worktree(self, scratch_path):
-        """The exact 0313 B0001 state: empty slot + empty remote must end in a base
+        """The exact the regression state: empty slot + empty remote must end in a base
         checkout a group worktree can fork from (previously impossible)."""
         from modules.flow_gate.services import git_service as svc
         bare = _empty_bare(scratch_path)

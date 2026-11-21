@@ -35,7 +35,7 @@ BASE = {
 def review(rid, verdict, run_id="current-run", attempt=3, findings=None, revision=3):
     # `revision_no` is what tells one ROUND from the next: a rework hop only hands the loop
     # back to review after the document's revision has moved, so rows sharing a revision are
-    # the same round and rows with different revisions are different rounds (0486 NR0028 F1).
+    # the same round and rows with different revisions are different rounds.
     return {
         "id": rid,
         "verdict": verdict,
@@ -73,7 +73,7 @@ def test_late_foreign_issues_never_overrides_owned_terminal_verdict(owned, stop_
 
 
 def test_previous_round_verdict_is_not_this_round_progress():
-    # 0486 NR0028 F1 side effect 1: progress is "this ROUND left a verdict", counted against
+    # side effect 1: progress is "this ROUND left a verdict", counted against
     # round_no. The provenance shortcut this replaces asked only "does the loop own any
     # verdict at all", so round 2's review hop could produce nothing and still be read as
     # progress because round 1's row was still sitting there.
@@ -92,7 +92,7 @@ def test_previous_round_verdict_is_not_this_round_progress():
 
 
 def test_legacy_duplicate_rows_of_one_round_still_read_as_one_round():
-    # 0583 T0004 section 6. Two verdicts for one round is NOT a shape this server writes
+    # Two verdicts for one round is NOT a shape this server writes
     # any longer -- the registration barrier (db/document_review_rounds.py) refuses the
     # second INSERT for a given (review_run_id, doc_id, revision_no), and the loop no
     # longer relaunches a round whose verdict it already owns. What this pins is the

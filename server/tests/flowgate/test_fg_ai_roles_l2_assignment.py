@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 — L-2 stage assignments: the opening, the start of each stage, atomicity and the node token.
+"""L-2 stage assignments: the opening, the start of each stage, atomicity and the node token.
 
 On the real SQLite DB and routes of ``test_fg_card_settings`` with the stage assignment feature on (the shared ``env``
 fixture applies every migration, so every suite runs its new attempts on the assigned path; ``STAGE_ASSIGNMENTS`` only

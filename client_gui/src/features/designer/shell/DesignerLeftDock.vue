@@ -1,19 +1,19 @@
 <template>
-  <!-- flowgate.v02.0025 — left navigation Dock (0003-D §3.3/§3.4). Assembles the real 0023
+  <!-- left navigation Dock. Assembles the real 0023
        Project Explorer and 0024 File Explorer behind a [프로젝트] [파일] switch, which is also
        the Dock's one header row (with the collapse button on its right).
        Mount policy: an Explorer is mounted the first time its mode is shown and is only
        hidden afterwards (mode switch or collapse), so its search / expansion / selection /
        loaded tree survive. The Dock element itself always stays; collapsing turns it into a
        rail that keeps the expand button and the current mode name.
-       flowgate.v02.0039 T#3: while the Designer has no work target (`unselected`) the mode
+       while the Designer has no work target (`unselected`) the mode
        switch, the collapse button and the Explorer refresh are unavailable as the confirmed
        initial-state design draws them, but the Project tree stays shown and clickable — a
        click there is how the user makes the first selection (0001-R §2). The Explorer search
-       is available whenever a Project is open (flowgate.v02.0044).
+       is available whenever a Project is open.
        flowgate.v02.0043: the Shell's Explorer state request (File menu: Group / Flow 열기,
        Group 닫기) and refresh token (a new Group / Flow) pass through to the Project Explorer.
-       flowgate.v02.0060 T#2: the File Explorer's refresh token (a context menu command changed the worktree) passes too. -->
+       the File Explorer's refresh token (a context menu command changed the worktree) passes too. -->
   <aside
     class="designer-left-dock"
     :class="{ 'is-collapsed': collapsed, 'is-unselected': unselected }"
@@ -88,15 +88,15 @@ const props = withDefaults(
     activeFlow: FlowRef | null
     mode: DesignerLeftMode
     collapsed: boolean
-    /** No work target yet (0039 T#3): navigation chrome unavailable, tree still usable. */
+    /** No work target yet: navigation chrome unavailable, tree still usable. */
     unselected?: boolean
     /** What the Designer asks the Project Explorer to select / open / close (0043). */
     explorerRequest?: ExplorerStateRequest | null
     /** Bumped to make the Project Explorer re-read its tree (0043). */
     refreshToken?: number
-    /** Bumped to make the File Explorer re-read the open Flow's worktree (0060 T#2). */
+    /** Bumped to make the File Explorer re-read the open Flow's worktree. */
     fileRefreshToken?: number
-    /** flowgate.v02.0105 T#1: the F5 restore's failed tree read, shown with the Project Explorer's retry. */
+    /** the F5 restore's failed tree read, shown with the Project Explorer's retry. */
     restoreError?: string | null
   }>(),
   { unselected: false, explorerRequest: null, refreshToken: 0, fileRefreshToken: 0, restoreError: null },

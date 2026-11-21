@@ -1,10 +1,10 @@
 """The `attachments` table — every query DB0013 §4 lists, plus the AI request overwrite (181).
 
-flowgate.default.0060 DB0013 §4. Same shape as the other db submodules
+. Same shape as the other db submodules
 (``get_store()._fetch_one/_fetch_all/_execute`` with ``?`` placeholders), so the dialect
 translator rewrites these for MySQL/PostgreSQL exactly as it does everywhere else.
 
-This is the only persistent store for attachment metadata (L0012 preamble). If a query is
+This is the only persistent store for attachment metadata (preamble). If a query is
 not in DB0013 §4 it is not here.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ def registry_count(doc_id: str) -> int:
 
 
 def registry_list(doc_id: str) -> list[dict]:
-    """P0011 §3 list order: uploaded_at ASC, then filename ASC.
+    """list order: uploaded_at ASC, then filename ASC.
 
     That is exactly ``idx_attachments_doc_uploaded``'s column order, so the index returns
     the rows already sorted.
@@ -115,7 +115,7 @@ def registry_replace(
     uploaded_at: str,
     store=None,
 ) -> int:
-    """Overwrite of an approved AI attachment request (flowgate.chat.0017 CH0002 §4).
+    """Overwrite of an approved AI attachment request.
 
     The row keeps its name and path (the file was replaced in place); only the content
     columns change. A compare-and-set on the content hash the person saw, so a concurrent

@@ -101,7 +101,7 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
 
   it('reorders any card into my own order from the keyboard and disables reordering while searching', async () => {
     mockLists()
-    // flowgate.v02test.0025: system AI and my AI share one order of mine; it is saved as my order, not as either list.
+    // system AI and my AI share one order of mine; it is saved as my order, not as either list.
     vi.spyOn(api, 'fetchMyAiOrder').mockResolvedValue({ order: [] })
     const saveOrder = vi.spyOn(api, 'saveMyAiOrder').mockImplementation(async (order: string[]) => ({ order, system_order_changed: false }))
     const saveMine = vi.spyOn(api, 'saveMyAi')

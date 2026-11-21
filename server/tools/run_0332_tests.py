@@ -1,19 +1,19 @@
-"""flowgate.default.0332 TS gate for the TR-commit-point + cancel-on-revert pair.
+"""TS gate for the TR-commit-point + cancel-on-revert pair.
 
 Run from ``server/`` as::
 
     python tools/run_0332_tests.py                    # the whole gate
     python tools/run_0332_tests.py --check-capability  # just the git probe
 
-R0001 has two sections and this group built both: T#1 (``0012-TR``) makes TR
-approval leave a commit, T#2 (``0014-TR``) makes a timeline revert cancel it.
+has two sections and this group built both: the earlier implementation (``the earlier implementation``) makes TR
+approval leave a commit, the earlier implementation (``the earlier implementation``) makes a timeline revert cancel it.
 Neither TR is a full answer alone — a TS that only re-runs ``test_tr_commit_
 point_0332.py`` never proves cancel honors the ``already_merged``/conflict
-gates T#2 added, and one that only re-runs ``test_tr_commit_cancel_0332.py``
-never proves the commits it cancels are the ones T#1 actually creates. This
-gate runs both suites together, plus 0332 T0018's third section (``test_tr_
+gates the earlier implementation added, and one that only re-runs ``test_tr_commit_cancel_0332.py``
+never proves the commits it cancels are the ones the earlier implementation actually creates. This
+gate runs both suites together, plus the earlier implementation's third section (``test_tr_
 commit_reapply_0332.py`` — a forward restore puts the canceled source back,
-D0005 K11) and the 0382 finalize-absorb gate the design (D0005 §2) requires to
+K11) and the 0382 finalize-absorb gate the design requires to
 keep sharing its exclusion rule with TR commits, so "the three sections work as
 one set, and finalize is unaffected" is one process exit code instead of four
 separate green runs a reader has to trust line up. The three are one set on
@@ -104,39 +104,39 @@ def _check_capability() -> int:
     return 0
 
 
-# The three sections (0012-TR commit-on-approval / 0014-TR cancel-on-rewind / T0018
+# The three sections (the earlier implementation commit-on-approval / the earlier implementation cancel-on-rewind / the earlier implementation
 # forward-restore reapply) plus already_merged, the conflict fallback and finalize
 # coexistence, pinned BY NAME. A rename, a silent deselect or a skip does not count as
 # coverage.
 _REQUIRED = [
-    # A TR approval leaves a commit (0012-TR §1-1~§1-2)
+    # A TR approval leaves a commit (TR ~)
     "test_a_tr_approval_commits_and_leaves_one_live_row",
     "test_the_commit_really_lands_and_debris_stays_out",
-    # A rewind cancels it (0014-TR §1-2~§1-3)
+    # A rewind cancels it (TR ~)
     "test_a_cancel_writes_onto_the_row_it_cancels_and_never_deletes_it",
     "test_the_cancel_lays_one_revert_commit_per_tr_newest_first",
-    # Already merged - no cancel is made, fail-closed (0014-TR §1-3, D0005 K7-①)
+    # Already merged - no cancel is made, fail-closed (TR, the design K7-①)
     "test_the_preview_calls_a_merged_group_merged_not_worktree_less",
     "test_the_group_state_gates_answer_in_the_documented_order",
-    # Conflict fallback - stop there, leave the rest not_attempted (0014-TR §1-3), and
-    # since TR0019 keep the conflict as a session instead of wiping it, with the old
+    # Conflict fallback - stop there, leave the rest not_attempted (TR), and
+    # since the earlier implementation keep the conflict as a session instead of wiping it, with the old
     # destroy still reachable behind the give-up button.
     "test_a_conflict_is_parked_as_a_session_and_leaves_the_rest_untried",
     "test_giving_up_on_a_parked_conflict_restores_the_worktree_exactly_as_before",
-    # finalize coexistence - TR commit/cancel do not break the 0382 absorb gate (D0005 §2)
+    # finalize coexistence - TR commit/cancel do not break the 0382 absorb gate
     "test_the_finalize_absorb_still_behaves_exactly_as_before",
     "test_tool_debris_does_not_block_a_cancel",
     "test_absorb_commits_real_work_but_not_tool_debris",
-    # The forward restore puts the source back (T0018 K11) - round trip and order / no
+    # The forward restore puts the source back - round trip and order / no
     # double application / blocked-and-retried / the stale live row left by a re-approval.
-    # This is the third section R0001 asked for; the first two green on their own are the
+    # This is the third section the requirement asked for; the first two green on their own are the
     # half that follows a rewind backwards but not forwards.
     "test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first",
     "test_a_step_redone_by_hand_is_never_double_applied",
     "test_a_blocked_reapply_leaves_the_rows_canceled_and_says_why",
     "test_the_reapply_retry_works_after_the_return_point_is_gone",
     "test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval",
-    # A conflict is no longer a dead end (TR0019). The three that matter are: the
+    # A conflict is no longer a dead end. The three that matter are: the
     # conflict survives as a session both directions can resolve, the resolution stops
     # short of a commit until a person presses, and an abandoned session is reclaimed.
     # The mention case is here because "resolve it like a merge" is the one AI answer

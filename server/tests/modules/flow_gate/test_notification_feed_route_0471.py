@@ -1,4 +1,4 @@
-"""TS group 0471 (target R0001) — server scenarios for the 🔔 notification feed:
+"""TS the earlier change (target the requirement) — server scenarios for the 🔔 notification feed:
 
 1. the 3-section response shape (recent_activities / ai_invoke_runs / open_questions),
 2. the AI section's final-state derivation (ai_run_succeeded),

@@ -1,4 +1,4 @@
-// flowgate.v02gui.0004 — the direct resolver's view of one conflict file. Splits the working file
+// the direct resolver's view of one conflict file. Splits the working file
 // the conflicts answer carries into alternating common text and marker chunks exactly as the
 // server does (services/git/conflict.py `_split_content_segments`: same markers, same order, a
 // malformed file = null), so chunk N here is chunk N of POST …/resolve `files[].chunks`.

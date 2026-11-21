@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#6 — the header actions' calls in features/document/api/review.ts (D#1 §6.3,
+ * the header actions' calls in features/document/api/review.ts (the earlier implementation,
  * §12.1): the request each one sends to the existing v0.1 endpoint (path, body, query), the
  * snake_case answers -> camelCase (review_transitions with and without tr_commit, ai-invoke start /
  * active, the document's group_disposed), and how a refusal is read for each server shape — the

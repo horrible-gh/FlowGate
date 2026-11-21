@@ -1,4 +1,4 @@
-"""flowgate.v02.0156 T1 W6 (R4-B) / W7 — a real browser on an insecure LAN origin against a real graph run server.
+"""W6 (R4-B) / W7 — a real browser on an insecure LAN origin against a real graph run server.
 
 Not collected by default (no ``test_`` file prefix): it launches Vite and headless Chrome. Run it explicitly, with the
 pytest temporary root inside the work scratch directory:
@@ -328,7 +328,7 @@ def _r4b(env, tmp_path, inject: bool) -> dict:
                 if key.startswith("flowgate.runCommand.v1."):
                     stored.add(data["commandRequestId"])
                 elif key.startswith("flowgate.runCommandOrphan.v1."):
-                    # 0156 rework: one journal key per identity (<scope prefix><commandRequestId>).
+                    # one journal key per identity (<scope prefix><commandRequestId>).
                     stored.add(data["commandRequestId"])
         lost = [c for c in accepted if c not in confirmed and c not in stored]
         v = {"a": bool(lost), "b": any(c not in confirmed for c in accepted) or bool(resent),

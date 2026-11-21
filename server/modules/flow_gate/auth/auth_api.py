@@ -16,7 +16,7 @@ from .totp_service import TOTP_LOCK_MAX_ATTEMPTS,TOTP_LOCK_MINUTES,encrypt_totp_
 from modules.flow_gate.settings import security_policy_service as _security
 from modules.flow_gate.api.request_observability import current_request_id
 router=APIRouter()
-# 0275 T0005 (NR0003 cause 2): every handler here does sync DB work (and login/
+# every handler here does sync DB work (and login/
 # password_change run bcrypt, ~100ms+ of CPU), so they are plain `def` — FastAPI
 # runs them in the threadpool instead of blocking the event loop.
 def _now_utc():return datetime.now(timezone.utc)
@@ -138,7 +138,7 @@ def invite_accept(body:InviteAcceptRequest):
     except SystemUserError as exc:
         if exc.code=="invalid_password_policy":raise HTTPException(400,{"code":"invalid_password_policy","violations":validate_password(body.password)})
         raise HTTPException(exc.status,exc.code)
-# flowgate.v02gui.0017 (NR 0003 B-R8): every refused refresh leaves one WARNING line with a reason
+# every refused refresh leaves one WARNING line with a reason
 # code, the user/session ids when known, the request id (X-Request-ID) and the client address --
 # never the token. Before this a refused refresh left no application log at all, so "why did this
 # browser get logged out" could not be answered. Response status/detail are unchanged.

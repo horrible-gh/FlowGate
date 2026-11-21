@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0012 (0004-CH turn 60) — an R↔B number swap repoints the references with one UPDATE per table.
+"""(CH) — an R↔B number swap repoints the references with one UPDATE per table.
 
 A number swap gives the root a new doc_id, so every column that stores a doc_id (``_DOC_REFERENCE_COLUMNS``) moves
 from the old id to the new one. It used to send one UPDATE per column (22): ``documents`` scanned six times,

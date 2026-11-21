@@ -2,7 +2,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { currentSettingsAccess } from '../access'
 
-// Unsaved changes guard (flowgate.v02.0076 D §3.2), shared by the settings screens that edit something
+// Unsaved changes guard, shared by the settings screens that edit something
 // (시스템 › 일반 since T#3, System Agent since T#4). While `unsaved()` holds:
 //
 // - leaving by the app (another route) is held and `open` asks first; `answer(false)` keeps the

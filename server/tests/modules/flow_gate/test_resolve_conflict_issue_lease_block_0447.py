@@ -1,4 +1,4 @@
-"""flowgate.default.0447 T0005 — resolve_conflict token admission lease guard."""
+"""resolve_conflict token admission lease guard."""
 from __future__ import annotations
 import sys
 from pathlib import Path

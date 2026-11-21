@@ -1,4 +1,4 @@
-// flowgate.v02test.0029 T0005 — what the screen knows about message images apart from the requests (those are in
+// what the screen knows about message images apart from the requests (those are in
 // api.ts): the limits, which mirror the server constants (message_image_service.py), and how a refusal is told to the
 // user. One place, so the composer, the shrink step and the notices read the same values.
 import { ConversationRequestError } from './api'

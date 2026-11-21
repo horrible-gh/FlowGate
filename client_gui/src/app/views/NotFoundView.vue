@@ -10,7 +10,7 @@
 
 <script setup lang="ts">
 // Unknown /app/* path. Rendered in place (no redirect) so the requested URL stays in the
-// address bar exactly as typed — the T#1 deep-link contract.
+// address bar exactly as typed — the the earlier implementation deep-link contract.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'

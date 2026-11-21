@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#13 — the WP summary's state (D#1 §7.2 / §7.3, §8, §10.2 T#13 row). The WP read view of
+// the WP summary's state (the earlier implementation row). The WP read view of
 // the selected plan (its Steps with their started cards, the unassigned count) is read through
 // useInspectorResource and read again when the plan changes on the server — a save, a restore or an AI fill
 // of the plan sends document_explorer_refresh / group_view_refresh for the WP (`documents/routers/
 // work_plan.py` _emit), a review sends doc_review_status_changed — when a document of the same Flow is added
 // or updated (a card of the plan may have started), and on a reconnect. Nothing here changes the server:
 // the plan opens in its document window from its slot line (openDocument).
-// flowgate.v02.0056 F1 (0056 CH §5) — the tab keeps only what an operator acts on: the progress (cards the
+// (CH) — the tab keeps only what an operator acts on: the progress (cards the
 // workflow started) and the Steps without an AI; the rev / totals / assignment / per-card rows and the
 // "where to edit" line went with the 0048 details.
 import { computed, type ComputedRef, type Ref } from 'vue'

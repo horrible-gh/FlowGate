@@ -196,7 +196,7 @@ def diagnostic_precheck(doc_id: str) -> dict:
 
 
 def readiness(doc: dict, body: dict) -> dict:
-    """Would approval admit this revision right now? The read model's authority (T0030 §7).
+    """Would approval admit this revision right now? The read model's authority.
 
     Runs, without the source lock and without recording anything, every check the
     approval path performs before it writes: review state, running/blocked attempts,
@@ -212,12 +212,12 @@ def readiness(doc: dict, body: dict) -> dict:
     if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
         return {**result, "reason": "review_status"}
     if db_recovery.has_unresolved(doc["group_id"]):
-        # 0658 T0004: approval refuses an interrupted Time Machine reapply before anything
+        # approval refuses an interrupted Time Machine reapply before anything
         # else; the read model must not call the revision ready while it would.
         return {**result, "reason": "history_recovery_required",
                 "code": "tr_history_recovery_required"}
     if tr2.revert_pending(doc):
-        # 0660 T0004 §3 (RC3): the reopen's commit cancel has not happened yet.
+        # (RC3): the reopen's commit cancel has not happened yet.
         return {**result, "reason": "revert_pending", "code": "tr2_revert_pending"}
     if db_attempts.recovery_required(doc["doc_id"]):
         return {**result, "reason": "recovery_required", "code": "tr2_recovery_required"}

@@ -1,7 +1,7 @@
-"""T#2 manifest, run-copy identity, CAS and approved TSR regressions.
+"""manifest, run-copy identity, CAS and approved TSR regressions.
 
-flowgate.default.0682 T#1 replaced the compat identity (HEAD + dirty refusal + manifest
-overlay on ``git archive HEAD``) with a Basis captured into a Source Bundle; 0684 T#2
+replaced the compat identity (HEAD + dirty refusal + manifest
+overlay on ``git archive HEAD``) with a Basis captured into a Source Bundle; the earlier implementation
 replaced that with the run's own copy-and-fingerprint (no Bundle, no Basis on the TS).
 These cases keep the 0632 contract (specification membership authorizes edits, CAS,
 approved TSR immutability, product_defect lock-out) on top of it.
@@ -34,7 +34,7 @@ def repo(env):
 
 def _approved(env, monkeypatch, paired=None, latest=None):
     doc = env.ts()
-    stored = env.run_basis(doc)[0]  # the Basis a run measured (0684 T#2)
+    stored = env.run_basis(doc)[0]  # the Basis a run measured
     monkeypatch.setattr(assets, "_load", lambda ts_id: (env.doc(ts_id), {"cases": env.cases}))
     monkeypatch.setattr(assets.test_run_service, "_active_tsr_for_ts", lambda doc: paired)
     monkeypatch.setattr(assets.db_test_runs, "get_pending_failure_origin", lambda ts_id: None)
@@ -132,7 +132,7 @@ def test_reopened_tsr_edit_stales_the_results_without_a_successor(env, repo, mon
                              expected_hash=hashlib.sha256(old).hexdigest(),
                              content='{"v":2}\n', actor_id="u")
     assert response["tsr_doc_id"] == paired["doc_id"] and response["results_stale"] is True
-    # 0684 T#1/T#2: the edit starts no run, writes no initialization run, no successor Basis.
+    # the edit starts no run, writes no initialization run, no successor Basis.
     assert "initialization_run_id" not in response and "basis_id" not in response
     events = [event for _doc, event, _note in env.store.events]
     assert events == ["test_spec_asset_updated"]
@@ -169,7 +169,7 @@ def test_execution_copy_is_the_live_worktree_copy_not_head_plus_overlay(env, rep
     assert (copied / "tests" / "fixture.json").read_text() == '{"v":2}\n'
     assert (copied / "server" / "app.py").read_text() == "VALUE = 1\n"
     assert (copied / "server" / "untracked.py").read_text() == "U = 1\n"
-    # 0684 T#2: a later change is not a refusal -- the next run copies and measures it.
+    # a later change is not a refusal -- the next run copies and measures it.
     (repo / "server" / "app.py").write_text("VALUE = 2\n")
     second, copied_again, _ = env.run_basis(env.doc(doc["doc_id"]), "run-2")
     assert (copied_again / "server" / "app.py").read_text() == "VALUE = 2\n"

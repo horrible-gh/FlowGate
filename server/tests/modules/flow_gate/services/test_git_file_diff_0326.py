@@ -1,10 +1,10 @@
-"""Single-file change view endpoints (flowgate.default.0326 — R0001 / NR0005 §4).
+"""Single-file change view endpoints.
 
 R0001: "파일 익스플로러에 파일이 변경됐다 까지는 나오는데 해당 파일이 어디가 어떻게
 바뀌었는지 까지는 나오지 않는다." No endpoint returned the *content* of a change —
 ``git/status`` and ``git/groups/{gid}/changes`` return paths and status letters only.
 ``read_base_file_diff`` / ``read_group_file_diff`` add the missing half: the old and
-new content of ONE path, which the client turns into a line diff (NR0005 option b).
+new content of ONE path, which the client turns into a line diff (option b).
 
 Like test_git_manual_fetch_0320, the git plumbing is monkeypatched so the branch logic
 runs identically on every host (the real-git E2E suite skips on git-for-Windows). The
@@ -205,7 +205,7 @@ def _group_env(monkeypatch, tmp_path: Path, *, worktree: bool = True) -> tuple[P
     )
     monkeypatch.setattr(svc.db_git, "get_config", lambda pid: {"base_branch": "main"})
     monkeypatch.setattr(svc, "_run_git", lambda args, **kw: _Proc(0, "mergebase\n"))
-    # 0665 T0004: the old side is the group's RECORDED scope floor.
+    # the old side is the group's RECORDED scope floor.
     monkeypatch.setattr(svc, "resolve_scope_floor", lambda *a, **k: {
         "floor_sha": "mergebase", "work_base_ref": "main", "work_base_sha": "mergebase",
         "work_base_sync_sha": None, "work_base_state": "verified",
@@ -280,7 +280,7 @@ def test_group_diff_rejects_a_non_sha_ref_pin(monkeypatch, tmp_path):
 
 
 def test_group_diff_fails_explicitly_when_the_scope_floor_is_unusable(monkeypatch, tmp_path):
-    """0665 T0004: no recorded/verified floor is an explicit error -- the diff never
+    """no recorded/verified floor is an explicit error -- the diff never
     falls back to a merge-base with the project base."""
     _group_env(monkeypatch, tmp_path)
     _blobs(monkeypatch, {})

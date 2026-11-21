@@ -1,4 +1,4 @@
-// flowgate.v02.0088 F10/F11 (D0004 §3.1): the server's own diagnostic of a failed request, kept
+// the server's own diagnostic of a failed request, kept
 // apart from the app's localized general text. A network failure, an empty body or a body that
 // only repeats the transport's own English line (axios "Request failed with status code …",
 // "Network Error") carries no diagnostic, so the screen shows its localized fallback instead.

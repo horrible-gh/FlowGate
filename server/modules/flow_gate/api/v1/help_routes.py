@@ -1,4 +1,4 @@
-"""API help endpoints (D021 §4-1, group 0372 P-0004).
+"""API help endpoints (D021, the earlier change P-0004).
 
 GET /api/v1/help
 No authentication required. Without a bearer token this is the endpoint catalog;

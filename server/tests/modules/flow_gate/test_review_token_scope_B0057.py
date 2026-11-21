@@ -1,7 +1,7 @@
 """Regression: review-request tokens must be scoped "review", not "edit".
 
-Covers B0057.0001 ("copying a review mention let you modify the document") whose
-root cause (NR0057.0003) was that request_review() issued an action_scope="edit"
+Covers the regression.0001 ("copying a review mention let you modify the document") whose
+root cause was that request_review issued an action_scope="edit"
 token while advertising "review", so the recipient could replay it as action:edit
 and overwrite the target document.
 
@@ -22,7 +22,7 @@ from store_transaction_support import build_live_sqlite_db, install_live_sqlite_
 
 os.environ.setdefault("TESTING", "1")
 
-# 0394 T0004 (NR0003 §13-5): invariants 2 and 3 below are about who the inbox lets
+# invariants 2 and 3 below are about who the inbox lets
 # through, which is an HTTP-level contract. They used to assert it by calling the private
 # `_handle_review` / `_handle_edit` under `asyncio.run(...)`, and broke when those became
 # plain `def`s dispatched onto a worker thread — while the 403s they guard never moved.
@@ -71,7 +71,7 @@ def test_request_review_issues_review_scope(monkeypatch):
         api_base_url="http://localhost/flowgate/api/v1",
     )
 
-    # The issued scope must be "review" — NOT "edit" (the B0057.0001 defect).
+    # The issued scope must be "review" — NOT "edit" (the the regression.0001 defect).
     assert issue.call_args.kwargs["action_scope"] == "review"
     # And the advertised scope in the response must match what was actually issued.
     assert result["action_scope"] == "review"
@@ -97,7 +97,7 @@ def test_handle_review_rejects_non_review_scope_token(monkeypatch):
         "token_id": "tok-1",
         "project": "flowgate",
         "issued_to": "user-1",
-        "action_scope": "edit",  # the dangerous case from NR0057.0003
+        "action_scope": "edit",  # the dangerous case from the review.0003
         "doc_ref": "flowgate.default.0057.0001-B",
     })
 
@@ -204,7 +204,7 @@ def test_tokens_table_accepts_review_scope(all_migrations_db):
 def test_handle_edit_rejects_review_scope_token(monkeypatch):
     """The original exploit: a review token used for action:edit is rejected (403).
 
-    This is what closes B0057.0001 end-to-end — _handle_edit's existing `!= "edit"`
+    This is what closes the regression.0001 end-to-end — _handle_edit's existing `!= "edit"`
     scope guard now sees a "review" scope and refuses the overwrite.
     """
     from modules.flow_gate.api import inbox_routes

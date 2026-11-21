@@ -1,4 +1,4 @@
-"""flowgate.v02.0125 T#1 (Q #544, 0005-NR §3.4 / §3.5 / §5) — a card whose result review count was spent on a revision
+"""a card whose result review count was spent on a revision
 its loop then reworked (``revised``, no review of it) is reviewed again by the person's menu command (다음 단계 = step,
 전체 실행 = full), and by nothing else.
 
@@ -132,7 +132,7 @@ def _spend(env, result, rr, run_id=REVIEW_RUN, rounds=None):
 
 
 def _spent(env, monkeypatch, starts, mode, follow=True):
-    """An AI card whose review count 3 was spent (0005-NR §1's case). ``follow``: R -> a -> a2, R -> b (b a person's
+    """An AI card whose review count 3 was spent (NR 's case). ``follow``: R -> a -> a2, R -> b (b a person's
     report, completed here), else R -> a alone. The run started with ``mode``. -> (a, a2, result, latest revision)."""
     if follow:
         a, a2, b = _branches(env)

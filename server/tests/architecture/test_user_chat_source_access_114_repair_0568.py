@@ -1,10 +1,10 @@
 """Regression for 114: repair user_chat_source_access.one_shot_token_id's FK target.
 
-flowgate.default.0568 TR0005 rejection 2 reported a live 500 on Quick Mode's actual save
+rejection 2 reported a live 500 on Quick Mode's actual save
 path (PATCH /me/chat-settings -> chat_settings_service.save_chat_settings ->
 user_chat_source_access.upsert): sqlite3.OperationalError: no such table:
 main.tokens_before_base_dirty_scope. Reproduced directly against a copy of the live dev
-database (flowgate.default.0568 TR0005 rev2): every INSERT/UPDATE against
+database: every INSERT/UPDATE against
 user_chat_source_access failed at statement-compile time, because its
 `one_shot_token_id TEXT REFERENCES tokens(...)` clause had been silently rewritten by
 SQLite to `REFERENCES "tokens_before_base_dirty_scope"(...)`.
@@ -23,7 +23,7 @@ points elsewhere); the migration then drops its own intermediate table once the 
 `tokens`; it never touched the table now pointing at a name that no longer exists. This
 means the corruption reproduces on *every* SQLite deployment that has applied 110 --
 already merged to main -- regardless of merge order, not only the inverted 108/108 ledger
-flowgate.default.0568 TR0005 found live.
+The review found live.
 
 Tests below run the real sqloader.migrator.DatabaseMigrator against a real sqlite3
 database, reproduce the corruption from the actual migration files (not an authored
@@ -102,7 +102,7 @@ def test_114_body_targets_the_correct_table_and_ships_for_every_dialect():
 
 
 def test_114_repairs_the_fk_when_108_tokens_rename_runs_after_ucsa_create(tmp_path):
-    """Reproduces the real deployment ledger flowgate.default.0568 TR0005 found on a live
+    """Reproduces the real deployment ledger the earlier change the earlier implementation found on a live
     dev database copy: 108_user_chat_source_access.sql and 109 applied 2026-09-08 12:46:54,
     108_tokens_resolve_base_dirty_scope.sql applied later the same day at 21:01:24, and
     110_repair_tokens_after_base_dirty_rebuild.sql applied later still on 2026-09-10.

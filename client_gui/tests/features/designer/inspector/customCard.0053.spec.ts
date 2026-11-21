@@ -50,7 +50,7 @@ const FLOW = 'flowgate.v02.0060'
 const NAME = 'API 오류 코드 설계'
 
 /**
- * The run card fields of the server (T#2 fields.py), nothing stored: the server keeps both cards as run cards.
+ * The run card fields of the server (fields.py), nothing stored: the server keeps both cards as run cards.
  * flowgate.v02.0056 F2-1: the progress-after-review field is gone (O1 0005-TR §4-3), the 지시 AI is added (O2 §4-1).
  */
 const RUN_FIELDS: readonly [string, unknown, readonly unknown[] | null][] = [
@@ -101,7 +101,7 @@ function line(slot: string, docType: string, docId: string, author: 'human' | 'r
   return { slot, docType, author, docId, title: `카드 · ${slot}`, status: 'draft', docReviewStatus: null }
 }
 
-/** A card just placed, as the Canvas has it once its save answered (T#1 lines, the instruction as its document). */
+/** A card just placed, as the Canvas has it once its save answered (lines, the instruction as its document). */
 function placed(
   key: string,
   spec: { nodeType: string; docType: string | null; paletteItemId: string; label: string; kind: string },

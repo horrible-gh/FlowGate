@@ -301,7 +301,7 @@
 // by invitation link or temporary password. The server has no mail transport, so the one-time link
 // or password is shown here for the administrator to hand over.
 //
-// flowgate.v02.0076 T#3 (D §2.7): only the existing /system/users routes. Workspace is gone from
+// (D): only the existing /system/users routes. Workspace is gone from
 // this screen — no tile, filter, column, drawer chips or create-time picker — and the create body
 // carries no workspace_id (not even an empty one). The server still reports memberships and keeps
 // them; nothing here removes one. The disabled "활동 기록 · 준비 중" row is gone as well. The

@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — the commit line outside the accordion (0066 D#2 §6-3): one-line message,
+// the commit line outside the accordion: one-line message,
 // AI 🤖 draft, `커밋 · M`. Always in the same place, folded list or not. Enter never commits; the
 // commit asks first with the E1 count and sends the index token that dialog showed (§3-3). Both
 // dialogs are bound to the context they were opened in (the snapshot / draft ticket).

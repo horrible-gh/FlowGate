@@ -1,4 +1,4 @@
-"""0406 T0007: canonical GET metadata survives a no-edit PATCH round trip."""
+"""canonical GET metadata survives a no-edit PATCH round trip."""
 from __future__ import annotations
 
 import json

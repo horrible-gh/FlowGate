@@ -189,7 +189,7 @@
           </div>
         </template>
 
-        <!-- flowgate.chat.0017 CH0002: System default limits for AI attachment approval requests (inherited unless the project overrides them). -->
+        <!-- System default limits for AI attachment approval requests (inherited unless the project overrides them). -->
         <AttachmentRequestSettingsCard scope="system" />
       </div>
     </section>
@@ -250,7 +250,7 @@
 // by the app (another route) asks first and a refresh / tab close gets the browser's own question.
 // It never holds the screen once the session or the administrator role is gone (sign-out, a lost
 // token, the role taken away): those moves go through at once (../components/useUnsavedLeaveGuard,
-// shared with System Agent since T#4).
+// shared with System Agent since the earlier implementation).
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -491,7 +491,7 @@ async function rereadRepeat(): Promise<string | null> {
   }
 }
 
-// ── verification defaults (flowgate.v02test.0053 0003-T, 1-A) ──
+// ── verification defaults ──
 // Two separate saves, each its own PATCH with its one key: 검증 최대 횟수 (`verify_max_runs`, a whole number from 1) and
 // 검증 1per-run time limit (`verify_run_timeout_sec`, the screen types minutes 1~30 and the API stores seconds). A save is
 // complete only when the PATCH answer and a re-read GET carry exactly the sent value, as for the repeat ceiling.

@@ -1,6 +1,6 @@
-"""Rejection-item identity helpers (P0005 / T0006).
+"""Rejection-item identity helpers.
 
-P0005 fixes the rejection_history item identifier contract: a time-sortable,
+fixes the rejection_history item identifier contract: a time-sortable,
 stable id assigned by the server on the reject-creation path. Pointing at an
 item by array index or timestamp alone is forbidden — concurrent rejections or
 history edits would mis-link the AI response to the wrong item.
@@ -41,7 +41,7 @@ def new_rejection_id() -> str:
 
 
 def legacy_rejection_id(rejected_at: str, index: int) -> str:
-    """Deterministic backfill id for a pre-existing item lacking an id (T0006).
+    """Deterministic backfill id for a pre-existing item lacking an id.
 
     Mirrors the SQL backfill rule exactly so Python and the migration agree:
     ``rej_legacy_<YYYYMMDDHHMMSS>_<index>`` where the timestamp is the item's

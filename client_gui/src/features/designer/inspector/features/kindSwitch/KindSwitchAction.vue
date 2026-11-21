@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#10 — the R↔B kind switch (D#1 §10.2 kind switch row, D#2 §3.4): on an unassigned
+  <!-- the R↔B kind switch (kind switch row, the earlier implementation): on an unassigned
        Flow's requirement / bug root, the root turns into the other kind (the doc_id
        changes; no confirmation since 0070, below). A thin container: useKindSwitch reads and calls, kindSwitchModel decides what is shown
        and usable. A refused switch shows why and the state is read again.
@@ -7,7 +7,7 @@
        itself is the trigger, its menu lists 📄 요구사항 / 🐞 버그 with ✓ on the current kind, and picking
        the other switches. A switch that is not usable now shows the locked badge with the
        reason as its hover text (v7 `.kind-badge.locked`).
-       flowgate.v02.0064 T#4 (P0006 §6.1): the server judges the switch (a number swap or a succession); a refused
+       the server judges the switch (a number swap or a succession); a refused
        judgement locks the badge with its reason. The link of a succeeded document to the document it came from
        ("전환 전 문서") is not the switch's: features/kindSwitchOrigin, on every ownership.
        flowgate.v02.0070 (0015-T T2): picking 요구사항 ↔ 버그 in the menu asks the server at once — no confirmation,
@@ -87,7 +87,7 @@ const { availability, to, busy, failureKey, done, run, clearFailure } = useKindS
 
 /** The current kind: the one the switch leaves; the document type when there is no switch. */
 const from = computed<KindSwitchKind | null>(() => {
-  // flowgate.v02gui.0003: the server answered the switch — the badge shows the new kind at once (it stays locked, as
+  // the server answered the switch — the badge shows the new kind at once (it stays locked, as
   // before, until the Canvas read the switch asked for moves the target; `done` is forgotten then).
   if (done.value) return done.value.document.typeCode === 'B' ? 'B' : 'R'
   if (to.value === 'B') return 'R'
@@ -108,7 +108,7 @@ const badgeTitle = computed(() => {
   return t(k('badge_hint'))
 })
 
-/** One line beside the badge: only a refusal (the disabled reason is the badge's hover text). flowgate.v02gui.0012:
+/** One line beside the badge: only a refusal (the disabled reason is the badge's hover text). the earlier change:
  *  a finished switch shows no line — the badge already shows the new kind (`from`), locked until the Canvas read. */
 const line = computed(() => {
   if (failureKey.value) return { kind: 'failure', tone: 'danger' as const, text: t(k(failureKey.value)) }

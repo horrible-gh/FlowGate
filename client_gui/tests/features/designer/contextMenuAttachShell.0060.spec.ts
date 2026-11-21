@@ -1,12 +1,12 @@
 /**
- * flowgate.v02.0060 T#2 (WP 0012, 2-B): the 11 2-B items are connected in the Shell; here only their states — their
+ * the 11 2-B items are connected in the Shell; here only their states — their
  * windows and requests are contextMenuServerActions.0060.
- * flowgate.v02.0060 T#2 — the Designer context menu in the real Designer Shell (0006-D rev2 §9.3 ① ② ③ ⑤, §3.4):
+ * the Designer context menu in the real Designer Shell (D ① ② ③ ⑤):
  * the host installed by the Shell, the project tree / File Explorer / Flow tab / Palette entry points with their real
  * data, the commands reaching the Shell's existing paths (File › New Group, the New Flow dialog with the right-clicked
  * Group), what must not open a menu, and the Minimap / Escape rules. Scaffold as DesignerShellSelection.0059: the real
  * Shell, project store, Center session and server Graph source; only `@shared/api` is mocked.
- * flowgate.v02.0060 T#1 (WP 0012, Q item 459): every mockup item shows — the ones not connected disabled with
+ * every mockup item shows — the ones not connected disabled with
  * awaiting integration / unimplemented (tooltip) and no API call — so the Flow row, the file row and the root folder open their menus.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -226,7 +226,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
 
   it('a Group removed by a tree re-read closes its menu: no 새 Flow dialog opens and nothing is created', async () => {
     const w = await mountShell()
-    // The Explorer's refresh waits for a work target (0039 T#3): a Flow of another Group is open.
+    // The Explorer's refresh waits for a work target: a Flow of another Group is open.
     await openFlow(w, 'Canvas')
     rightClick(explorerRow(w, '서버').element)
     await settle()
@@ -289,7 +289,7 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
     rightClick(folder(w, 'src'))
     await settle()
-    // T#2: the 2-B items are connected; this Flow's slot is not writable (git/status slots: []), so canMutate is false and
+    // the 2-B items are connected; this Flow's slot is not writable (git/status slots:), so canMutate is false and
     // the write items are disabled by their own condition (no awaiting integration reason) — 다운로드 needs read permission only.
     expect(states()).toEqual([
       ['folder.open', 'true', ''], ['folder.newFolder', 'true', ''], ['folder.newFile', 'true', ''],
@@ -302,7 +302,7 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
   })
 
-  // Q item 459: the file row and the root folder (the blank tree) open their mockup menus. T#2: the 2-B items follow their
+  // Q item 459: the file row and the root folder (the blank tree) open their mockup menus. the earlier implementation: the 2-B items follow their
   // own conditions (a read-only Flow here, a file without a change) — the unimplemented ones request nothing.
   it('a file row opens its menu (열기 / 이름 변경 / Git 되돌리기 / 이력 미구현; 다운로드 enabled, 수정 확인 / 삭제 by condition); nothing is called', async () => {
     const w = await fileExplorer()

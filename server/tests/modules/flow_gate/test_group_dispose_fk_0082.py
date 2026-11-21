@@ -1,6 +1,6 @@
-"""Regression: group dispose / close 500 — events FK constraint failure (B0001, group 0082).
+"""Regression: group dispose / close 500 — events FK constraint failure (the earlier change).
 
-NR0003 root cause: group-level terminal events (group_disposed / group_closed) were written
+root cause: group-level terminal events (group_disposed / group_closed) were written
 into the document-scoped `events` table with doc_id = group_id, but `events.doc_id` is
 `NOT NULL REFERENCES documents(doc_id)`. A group_id can never equal a documents.doc_id, so
 with FK enforcement ON (connection.transaction() forces `PRAGMA foreign_keys = ON`) the write
@@ -12,7 +12,7 @@ so they reproduce the exact failure: with the pre-fix code dispose_group()/close
 IntegrityError; with the fix (dedicated group_events table, migration 048) they succeed.
 
 Environment mirrors test_mention_copies_0015.py but uses the real _SqliteDbAdapter so the
-transactional rollback (NR0003 §6 atomicity) is genuinely exercised.
+transactional rollback (atomicity) is genuinely exercised.
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def test_close_group_succeeds_under_fk_enforcement(real_store):
 
 
 def test_dispose_is_atomic_no_zombie_dc_on_event_failure(real_store, monkeypatch):
-    """NR0003 §6: if the event write fails mid-dispose, the DC document must roll back.
+    """if the event write fails mid-dispose, the DC document must roll back.
 
     Pre-fix the DC doc committed independently and a later failure left a 'zombie' half-
     disposed group that the idempotency guard then refused to retry. The fix wraps the whole

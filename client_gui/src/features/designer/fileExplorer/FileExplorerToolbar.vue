@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — Designer toolbar (0024-D §3): refresh and find only. The v0.1
+// Designer toolbar: refresh and find only. The v0.1
 // Dashboard explorer's branch/group selector and Git update row are deliberately absent.
 // "찾기" filters the tree already loaded for the Flow (name match), so it needs no API.
 // 0025 T0006 §2/§6: no title text (the Dock tab already says 파일); the default slot holds

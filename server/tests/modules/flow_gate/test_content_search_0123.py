@@ -1,4 +1,4 @@
-"""Body full-text search (R0001 Phase 2 / group 0123 T0006).
+"""Body full-text search (Phase 2 / the earlier implementation).
 
 Exercises GET /api/v1/search/documents/content end to end with real files on a
 temporary storage root, so the mtime-cached filesystem read path in
@@ -37,19 +37,19 @@ _TITLE_ONLY = "titlematchonlyzz"
 _HDR_BODY_MARKER = "headerandbodymarkerzz"
 # A unique token that lives ONLY inside the YAML frontmatter of a document file —
 # it must NOT count as a body hit (the frontmatter is the header, not the body) and
-# must never appear in any snippet (group 0123 rev6).
+# must never appear in any snippet.
 _FRONTMATTER_ONLY = "frontmatteronlymarkerzz"
 # A token in the body of a frontmatter-bearing doc — its snippet must start from the
-# body content, never the leading ``---`` header fence (group 0123 rev6).
+# body content, never the leading ``---`` header fence.
 _FM_BODY_MARKER = "frontmatterbodymarkerzz"
 # A token that lives ONLY inside a markdown section heading (``## …``) in the body —
-# it is body content, so the match must still produce a snippet (group 0123 rev7: the
+# it is body content, so the match must still produce a snippet (the earlier change: the
 # excerpt went missing whenever the only hit was a heading, "본문이 있는 문서도 나오지
 # 않는다"). The snippet must carry the heading *text* but none of the ``#`` markup.
 _HEADING_ONLY_MARKER = "headingonlymarkerzz"
 # A body marker for a doc whose stored ``file_path`` is a STALE ABSOLUTE path from a
-# previous host (B0054 host-migration class). The real file lives at the canonical tail
-# under the current storage root; the body must still be searchable (group 0123 rev8:
+# previous host (host-migration class). The real file lives at the canonical tail
+# under the current storage root; the body must still be searchable (the earlier change:
 # "본문이 있는 문서의 경우도 [검색에] 나오지 않는다" — a body-bearing doc must not silently
 # drop out just because its stored path points at a dead host prefix).
 _MIGRATED_BODY_MARKER = "hostmigratedbodymarkerzz"
@@ -311,7 +311,7 @@ def seed_data(tmp_db, storage_root):
     })
 
     # Doc whose stored file_path is a STALE ABSOLUTE path from a previous host
-    # (B0054 host-migration class). The actual file is written at the canonical tail
+    # (host-migration class). The actual file is written at the canonical tail
     # under the *current* storage root; the stored path keeps a dead ``/home/<olduser>``
     # prefix that no longer resolves. Proves rev8: the body is recovered by re-basing
     # the ``documents/<project>/…`` tail, so a document that HAS the body content still
@@ -563,7 +563,7 @@ def test_content_search_doc_id_fallback_includes_body_preview(seed_data, tmp_pat
     """Searching by a full doc id must still show the simplified body in content mode.
 
     This is the rev9 rejection in concrete form: rows such as
-    ``flowgate.default.0094.0001-R`` matched by identifier, but the detail line that
+    ``the earlier change`` matched by identifier, but the detail line that
     should show the document body (e.g. ``test 1234``) was absent because snippet was
     only populated for direct body matches.
     """
@@ -590,7 +590,7 @@ def test_meta_search_doc_id_includes_body_preview(seed_data, tmp_path):
     The reviewer searches in the default explorer mode ("내용까지 검색" OFF), which hits
     ``GET /search/documents`` — NOT the content endpoint. For rev1–rev9 that endpoint
     returned only id/title with no body, so a doc_id search like
-    ``flowgate.default.0094.0001-R`` showed the row but never the brief body
+    ``the earlier change`` showed the row but never the brief body
     (``test 1234``). Every prior fix patched the wrong (content) endpoint. The body
     preview must now come back on this default endpoint as well.
     """

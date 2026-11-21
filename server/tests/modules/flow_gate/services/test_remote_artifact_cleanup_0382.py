@@ -1,4 +1,4 @@
-"""Remote deletion tooling fixes (0382 B0001 §3 / NR0003 proposal 5).
+"""Remote deletion tooling fixes (proposal 5).
 
 The worker trying to remove 261 artifacts encountered three obstacles:
 

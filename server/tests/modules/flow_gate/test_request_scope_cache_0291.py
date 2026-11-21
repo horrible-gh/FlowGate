@@ -1,6 +1,6 @@
-"""Request-scoped read cache and query accounting (flowgate.default.0291, NR0003 P3-1 / 4-8).
+"""Request-scoped read cache and query accounting.
 
-NR0003 finding 5 observed over 15 identical reads of a row within one request.
+observed over 15 identical reads of a row within one request.
 The cache in db/request_cache.py absorbs this duplication within request boundaries.
 
 These tests protect correctness, not just performance. Most verify that caching
@@ -200,7 +200,7 @@ def test_reads_inside_a_transaction_are_not_cached(store, monkeypatch):
 def test_disabled_cache_still_counts_but_never_serves(store, monkeypatch):
     """Keep accounting active when caching is disabled.
 
-    Counters must not depend on the cache setting: NR0003 4-8 requires the same
+    Counters must not depend on the cache setting: the review 4-8 requires the same
     measurement scale before and after P1–P3.
     """
     monkeypatch.setenv("FLOWGATE_REQUEST_CACHE", "0")
@@ -291,7 +291,7 @@ def test_scope_is_torn_down_even_when_the_request_raises(store):
 
 
 def test_summary_reports_the_numbers_4_8_asked_for(store):
-    """The per-endpoint query counts marked estimated in NR0003 §1-2 become measured
+    """The per-endpoint query counts marked estimated in the review become measured
     values here because the scope coincides with the request boundary."""
     s, _ = store
     with request_cache.request_scope("GET /flowgate/api/v1/tree") as scope:
@@ -334,7 +334,7 @@ def _app_with_middleware():
 
 
 def test_scope_reaches_a_sync_def_endpoint():
-    """Most endpoints are synchronous def functions (NR0003 finding 3: 40 AnyIO threads
+    """Most endpoints are synchronous def functions (the review: 40 AnyIO threads
     compete for a semaphore of 20). Without contextvar propagation into the pool,
     every test could pass while no real endpoint benefits from caching."""
     from fastapi.testclient import TestClient

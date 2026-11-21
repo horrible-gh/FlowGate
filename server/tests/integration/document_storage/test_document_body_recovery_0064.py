@@ -1,4 +1,4 @@
-"""0064 T-B1d — body diagnosis and recovery (L0005 2.11~2.13, P0006 §2.6~§2.8, DB0007 §2.4).
+"""T-B1d — body diagnosis and recovery.
 
 On the real SQLite DB and temp storage root of the card document suite (``test_fg_card_documents.env``): every
 test builds its own fixture documents and files; no real environment's data is diagnosed or recovered (the
@@ -271,7 +271,7 @@ def test_diagnosis_requests_and_an_all_readable_flow(env):
 
 
 def test_project_diagnosis_reads_every_page(env, monkeypatch):
-    """L0005 2.11.1: DIAG_SCAN_PAGE rows at a time, to the end; cancelled documents are skipped."""
+    """2.11.1: DIAG_SCAN_PAGE rows at a time, to the end; cancelled documents are skipped."""
     monkeypatch.setattr(body_recovery, "DIAG_SCAN_PAGE", 2)
     made = [plain(seq) for seq in range(1, 6)]
     documents.update(made[2], {"status": "cancelled"})
@@ -351,7 +351,7 @@ def test_each_method_recovers_a_readable_body_and_changes_only_the_path(env, tmp
     row = documents.get_by_id(doc_id)
     expected = dict(before)
     if method == "regenerate_card_draft":
-        expected["revision_no"] += 1  # 0127: existing card bodies now use the common revision store.
+        expected["revision_no"] += 1  # existing card bodies now use the common revision store.
     assert stable(row) == stable(expected) and row["file_path"] == after and out["data"]["file_path"] == after
     state, content, outline = token_reads(env, doc_id)
     assert (state, outline) == ("readable", 200) and content == out["content"]
@@ -374,7 +374,7 @@ def test_each_method_recovers_a_readable_body_and_changes_only_the_path(env, tmp
 
 
 def test_a_final_approved_closed_document_recovers(env):
-    """L0005 2.12: recovery applies no editability check; the old call without a body still works."""
+    """2.12: recovery applies no editability check; the old call without a body still works."""
     doc_id = plain(4, review="wf_done")
     documents.update(doc_id, {"status": "closed"})
     response = env["client"].post(f"/api/v1/documents/{doc_id}/regenerate")
@@ -478,7 +478,7 @@ def test_a_missing_target_another_row_points_at_is_refused_without_change(env, s
 
 
 def test_an_unused_file_at_the_target_is_moved_aside_not_overwritten(env):
-    """L0005 2.12: nobody uses it, so it is kept as ``.orphan-*`` and the recovery writes next to it."""
+    """2.12: nobody uses it, so it is kept as ``.orphan-*`` and the recovery writes next to it."""
     doc_id = plain(4, file_path="")
     target = write(absolute(rel(doc_id)), b"# precious, no front matter\n")
     response = regenerate(env, doc_id)
@@ -608,7 +608,7 @@ def test_bulk_selection_count(env, count):
 
 
 def test_bulk_target_in_use_and_tr2_are_refusals_not_failures(env):
-    """V-P-18 / P0006 §2.8 table: TR2's single answer stays the old 409 without ``error``."""
+    """V-P-18 / the plan table: TR2's single answer stays the old 409 without ``error``."""
     in_use = plain(1, file_path="")
     target = write(absolute(rel(in_use)), b"used\n")
     _doc(FB, 8, "D", status="draft", file_path=str(target))
@@ -632,7 +632,7 @@ def test_bulk_target_in_use_and_tr2_are_refusals_not_failures(env):
 
 
 def test_bulk_refusal_table_matches_the_single_answers(env, monkeypatch, tmp_path):
-    """P0006 §2.8: each single refusal becomes the same bulk code; an unexpected error is ``failed``."""
+    """each single refusal becomes the same bulk code; an unexpected error is ``failed``."""
     old_root = tmp_path / "storage_old"
     monkeypatch.setattr(paths, "_system_storage_root_value", lambda: str(old_root))
     missing = f"{FB}.0099-D"
@@ -888,7 +888,7 @@ def test_a_lease_or_disposal_while_waiting_for_the_guard_refuses(env, monkeypatc
 
 
 def test_a_rollback_after_the_write_removes_the_new_file(env, monkeypatch):
-    """L0005 2.12: the file is written last with ``write_new_file``; a later failure takes it away again."""
+    """2.12: the file is written last with ``write_new_file``; a later failure takes it away again."""
     from modules.flow_gate.db import events as db_events
 
     doc_id = plain(1, file_path="")

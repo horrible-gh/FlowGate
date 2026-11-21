@@ -68,7 +68,7 @@ def test_a_saved_value_is_what_the_getters_and_the_list_answer(fake_settings):
 
 @pytest.mark.parametrize("value, expected", [("1", 1), ("999", 999), ("1000", 1000), ("100000", 100000)])
 def test_verify_max_runs_has_no_upper_bound(fake_settings, value, expected):
-    service.set_values({RUNS: value})                           # 0003-T: 'a whole number of 1 or more'
+    service.set_values({RUNS: value})                           # 'a whole number of 1 or more'
     assert policy.get_max_runs() == expected
     assert service.get_one(RUNS)["setting_value"] == value
 

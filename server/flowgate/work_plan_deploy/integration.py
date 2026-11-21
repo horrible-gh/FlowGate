@@ -1,4 +1,4 @@
-"""Work plan deploy port handler: how the WP read and saves reach this package (flowgate.v02.0074 T0017).
+"""Work plan deploy port handler: how the WP read and saves reach this package.
 
 ``modules.flow_gate.services.work_plan_card_starts`` defines the port; the composition root (``startup.py``) calls
 :func:`register` once at startup.

@@ -1,14 +1,14 @@
-"""0061 T#3: adopt the latest confirmed revision inside the command's Flow guard.
+"""adopt the latest confirmed revision inside the command's Flow guard.
 
 All checks precede writes. The guard transaction covers the revision, policy entries,
 node rows and audit event; dispatch stays in the existing post-commit job path.
 
-flowgate.v02.0085 T#2 (D0007 §3.2 / §3.4): an unresolved rejected confirm gate refuses the adoption
+an unresolved rejected confirm gate refuses the adoption
 (``graph_revision_migration_blocked``, reason ``gate_rejected``) even though its attempt has ended, and so does a gate
 waiting for a round split after an abandoned recovery (reason ``gate_recovery_reset_required``): the Time Machine
 puts the rework range back first. ``editing.protect_definition`` keeps such a gate and its input edges as well.
 
-flowgate.v02test.0018: open/review cards no longer refuse the adoption as a whole. They stay as they are and
+open/review cards no longer refuse the adoption as a whole. They stay as they are and
 ``protect_definition`` refuses a change to their definition or input edges, so one branch can be extended while the
 other branches wait for review. Only an active attempt outside an open/review row refuses (``active_attempts``).
 """
@@ -154,7 +154,7 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
 
 
 def _refuse_unresolved_gates(flow_id: str, run_id: str, rows: list, old_no: int, latest: int) -> None:
-    """0085 T#2: a rejected gate, or a gate waiting for its round split, blocks the adoption until the Time Machine."""
+    """a rejected gate, or a gate waiting for its round split, blocks the adoption until the Time Machine."""
     from flowgate.gate_decisions import repository as gate_decisions
     gates = gate_nodes(flow_id, old_no)
     params = {"flow_id": flow_id, "run_id": run_id, "from_revision_no": old_no, "to_revision_no": latest}

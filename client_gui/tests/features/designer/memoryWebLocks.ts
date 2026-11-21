@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0156 T1 R4 — an in-memory Web Locks for jsdom Shell suites.
+ * R4 — an in-memory Web Locks for jsdom Shell suites.
  *
  * Without `navigator.locks` the Designer's run commands take the cross-tab lease (runCommandLock), whose localStorage
  * fallback (jsdom has no IndexedDB) waits on real timers. Suites that drive a click to its answer with flushPromises only

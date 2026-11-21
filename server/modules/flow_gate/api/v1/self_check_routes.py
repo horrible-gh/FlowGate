@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["TR Self-check"])
 
 
 def _error(exc: selfcheck.SelfCheckError) -> JSONResponse:
-    # 0080 T#2: already_running also carries the holder's summary (details.run) when known.
+    # already_running also carries the holder's summary (details.run) when known.
     return JSONResponse(status_code=exc.status, content={"ok": False,
         "error": {"code": exc.code, "message": exc.code,
                   "details": {"self_check_run_id": exc.detail, **exc.details}
@@ -30,7 +30,7 @@ def _forbidden() -> JSONResponse:
 
 
 def _auth(request: Request, doc_id: str, mutate: bool):
-    # 0110 T#3: a Graph attempt token is no longer refused here; its run executes in its attempt
+    # a Graph attempt token is no longer refused here; its run executes in its attempt
     # tree (tr_self_check_service.start -> _attempt_target), never in the group worktree.
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -78,7 +78,7 @@ def list_runs(request: Request, tr_doc_id: str, limit: int = Query(20, ge=1, le=
 @router.get("/{tr_doc_id}/self-check/runs/{run_id}")
 def read_run(request: Request, tr_doc_id: str, run_id: str,
              baseline_run_id: str | None = Query(None, min_length=1, max_length=191)):
-    # 0114 T#3 (D 5): a named baseline run adds its reuse judgement to the read (advisory).
+    # (D 5): a named baseline run adds its reuse judgement to the read (advisory).
     auth = _auth(request, tr_doc_id, False)
     if isinstance(auth, JSONResponse):
         return auth
@@ -99,7 +99,7 @@ def cancel_run(request: Request, tr_doc_id: str, run_id: str):
         return _error(exc)
 
 
-# ── 0638 T#1: Self-check before the TR exists ────────────────────────────────
+# ── the earlier implementation: Self-check before the TR exists ────────────────────────────────
 # A TR(new) worker has no TR id to put in the path above, so its runs live here, owned by
 # the token itself (tr_self_check_service.draft_target). The token is the only identity:
 # nothing in the path or body names a document. Registering the TR links these runs to it,
@@ -196,7 +196,7 @@ def cancel_draft_run(request: Request, run_id: str):
         return _error(exc)
 
 
-# ── 0080 T#2: who holds the Group's run slot (NR0007 §5 item 1) ──────────────
+# ── the earlier implementation: who holds the Group's run slot ──────────────
 # The active-run slot is per Group, so a start can be refused for another TR's run or a
 # draft run its caller can neither read nor cancel on the routes above. These two routes
 # let any worker token of that Group (new / edit / review) and a console user with read
@@ -249,7 +249,7 @@ def read_group_run(request: Request, run_id: str):
     return {"ok": True, **selfcheck.summary(row)}
 
 
-# ── 0080 T#3: operator re-verification of a protected run (NR0007 §5 item 6) ──
+# ── the earlier implementation: operator re-verification of a protected run ──
 # A run left recovery_incomplete (owner or tree not proved) keeps its Group closed until a
 # proof exists. A console user with perm_document_update asks the server to run the proof
 # again now; the server refuses when it still proves nothing. No forced release exists, and

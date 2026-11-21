@@ -1,4 +1,4 @@
-"""Hand unsubmitted drafts to the next token (flowgate.v02.0137 T0004 §3, NR0003 A-4/A-5).
+"""Hand unsubmitted drafts to the next token.
 
 A worker can only submit `doc_path` files from its OWN token scratch. Two moments move a
 worker onto a new token while its previous drafts stay behind:
@@ -20,7 +20,7 @@ across servers (0138) — a retained scratch whose owner record does not list th
 token, document, group and requester (or whose manifest does not line up in time with
 the row). The original files are never moved or deleted here.
 
-TR0005 rev1: a token scratch that itself received a carry-over hands it on (flattened by
+a token scratch that itself received a carry-over hands it on (flattened by
 origin, newest copy wins), so drafts survive a chain of reissues or failed runs; and a
 file is refused on content — credential shapes, or any string the tokens table knows —
 not only on the raw tokens the current run issued.
@@ -43,7 +43,7 @@ from modules.flow_gate.storage import paths as storage_paths
 
 from .runtime import _known_run_raw_tokens, logger
 
-# Run scratch top-level entries that are infrastructure, not drafts (T0004 §3-5).
+# Run scratch top-level entries that are infrastructure, not drafts.
 RUN_SCRATCH_EXCLUDE = ("tmp", "cache", "last_message.txt")
 TOKEN_SCRATCH_EXCLUDE = (token_scratch.CARRYOVER_DIR, "source-snapshots")
 # R3 identity cross-check (0138 guard): how far apart the run row and the scratch
@@ -54,7 +54,7 @@ _CARRY_SCOPES = frozenset({"new", "edit", "review", "rework", "failure_origin_re
 
 NOTICE_HEADING = "## Carried-over drafts (not submitted)"
 
-# TR0005 rev1 (0138 guard, review finding 2): who a run scratch belongs to. The run-scratch
+# (guard, review finding 2): who a run scratch belongs to. The run-scratch
 # manifest only names project / run id / path / time, and run ids can repeat across
 # servers while 0138 is open, so "same id, close in time" proved nothing. This record is
 # written next to it when the run's first token exists and gains every token the run is
@@ -86,7 +86,7 @@ def _text(value) -> str:
 def target_token_problem(row: Optional[dict], *, project_id: str, group_id: Optional[str],
                          doc_ref: Optional[str], issued_to: Optional[str],
                          run_id: Optional[str]) -> Optional[str]:
-    """Why the NEW token may not receive drafts, or None (T0004 §3-5)."""
+    """Why the NEW token may not receive drafts, or None."""
     if row is None:
         return "target_token_missing"
     if row.get("revoked_at") or row.get("consumed_at"):
@@ -438,7 +438,7 @@ def _previous_run_problem(row: Optional[dict], *, project_id: str, group_id: str
     if row is None:
         return "no_previous_run"
     if row.get("run_id") == run_id:
-        # 0138: the id this run was just given already names a finished row — that row is
+        # the id this run was just given already names a finished row — that row is
         # another run's, and so may be the directory. Never hand it over.
         return "run_id_collision"
     if row.get("status") != "finished" or not row.get("finished_at"):
@@ -458,7 +458,7 @@ def _previous_run_problem(row: Optional[dict], *, project_id: str, group_id: str
 
         retention = scratch_retention.effective_retention()
     except Exception:
-        # flowgate.v02.0157: no private 7-day fallback. The retained sweep stops on the
+        # no private 7-day fallback. The retained sweep stops on the
         # same settings error, so the source stays where it is; this check fails closed
         # like every other one here instead of judging expiry by a value nobody set.
         return "retention_unavailable"
@@ -495,7 +495,7 @@ def _previous_run_sources(row: dict, project_id: str) -> tuple[list[dict], list[
             created = _aware(manifest.get("created_at"))
             completed = _aware(manifest.get("completed_at"))
             owner_problem = run_owner_problem(_run_owner(project_id, str(run_id), scratch), row)
-            # 0138 (merged after this group's base) stamps an execution_nonce on both the
+            # (merged after this group's base) stamps an execution_nonce on both the
             # manifest and the run row. Where either side carries one they must agree; on a
             # tree without 0138 both are absent and the owner record above decides alone.
             row_nonce, dir_nonce = row.get("execution_nonce"), manifest.get("execution_nonce")
@@ -507,7 +507,7 @@ def _previous_run_sources(row: dict, project_id: str) -> tuple[list[dict], list[
                 # Same id, different run (0138) — or a row this check cannot pin down.
                 notes.append({"path": str(run_id), "reason": "run_scratch_identity_unproven"})
             elif owner_problem is not None:
-                # TR0005 rev1: time alone never proves ownership. The directory must list
+                # time alone never proves ownership. The directory must list
                 # the row's (DB-unique) token and the row's document / group / requester.
                 notes.append({"path": str(run_id), "reason": owner_problem})
             else:

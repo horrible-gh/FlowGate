@@ -1,13 +1,13 @@
-"""Read an execution-history snapshot using existing stores (0061 T#12).
+"""Read an execution-history snapshot using existing stores.
 
 Call under the Flow guard for a deciding read. No Git, Canvas draft, mutations,
 settle, reconciliation or latest-revision adoption happen here.
 
-T#13's durable operation/event contract: graph_run_status_changed events with
+'s durable operation/event contract: graph_run_status_changed events with
 cause=graph_time_machine, payload.operation_id and payload.operation_status.
 started/partial_failed remain blocking until that SAME operation is completed
 or blocked (Git compensation succeeded). A different completed operation cannot
-clear a prior partial failure. Its full recovery journal is T#13's concern.
+clear a prior partial failure. Its full recovery journal is the earlier implementation's concern.
 """
 from __future__ import annotations
 

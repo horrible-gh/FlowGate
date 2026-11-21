@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.chat.0017 CH0002 — AI attachment upload requests on the client: the wire normalization, the refusal kinds,
+// AI attachment upload requests on the client: the wire normalization, the refusal kinds,
 // the chat timeline block (right below the run's AI message, refreshed by its event), the card tab badge and the
 // request row's decision flow (preview / download first, keep both by default, overwrite only when chosen, a changed
 // target confirmed explicitly, never followed silently).
@@ -311,7 +311,7 @@ describe('bulk approve / reject', () => {
     expect(find('tl-attachments-pending').exists()).toBe(false)
   })
 
-  // CH0002 seq 22/24 review fixes.
+  // seq 22/24 review fixes.
   it('the reject confirm keeps the requests it named, whatever is ticked meanwhile', async () => {
     postRequest.mockResolvedValueOnce({ data: { ok: true, decision: 'reject', results: [done(ids[0], 'rejected')] } })
     mountBar({ requests: rows(), selected: [ids[0]] })

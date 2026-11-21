@@ -1,4 +1,4 @@
-"""Registration of the Graph pre-run validation: how the Graph workflow gets its decided rules (D0006 §2.3).
+"""Registration of the Graph pre-run validation: how the Graph workflow gets its decided rules.
 
 ``modules.flow_gate.graph_workflow.services.graph_validation_ports`` defines the port; the composition root
 (``startup.py``) calls :func:`register` once at startup. Registered, ``graph_service.check_draft`` (draft

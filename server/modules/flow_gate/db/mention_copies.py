@@ -1,9 +1,9 @@
-"""CRUD for the document_mention_copies table (R0001 group 0015, NR0003 rev4 — option B).
+"""CRUD for the document_mention_copies table (the earlier change, the review — option B).
 
 One row per (user, doc): the last mention block the user copied to hand the document off to an
 AI worker, so the document header can persistently show "<mention name> · copied HH:MM" across reloads,
 tabs, and devices. A new copy overwrites the previous via UPSERT — the badge shows only the most
-recent (NR0003 §1/§3). The label is derived on the client from mention_kind; the server stores the
+recent. The label is derived on the client from mention_kind; the server stores the
 stable code only, keeping the badge locale-correct.
 
 Follows the get_store() + inline SQL pattern of the sibling child-record tables (document_reviews.py).

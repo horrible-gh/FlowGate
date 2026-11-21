@@ -1,6 +1,6 @@
-"""0370 T0012 — the worker must be able to make bounded document queries.
+"""the worker must be able to make bounded document queries.
 
-0394 T0004 (NR0003 §4.2 S5) rewrote the first case here. 0370 satisfied this by printing
+rewrote the first case here. 0370 satisfied this by printing
 the whole lookup catalogue into every mention; the 0372 mention-reduction chain then took
 that block out of the document-workflow mentions and left the addresses in the help
 catalog, which those mentions link to. The old assertions searched the mention text for

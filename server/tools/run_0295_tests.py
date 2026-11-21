@@ -1,4 +1,4 @@
-"""Portable entry point for the flowgate.default.0295 TS0006 test cases.
+"""Portable entry point for the the earlier change the earlier implementation test cases.
 
 Run from ``server/`` as ``python tools/run_0295_tests.py <pytest args>``, or
 ``python tools/run_0295_tests.py --bootstrap`` to build the virtualenv first.

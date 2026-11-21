@@ -1,6 +1,6 @@
 """A minimal FlowGateStore double for tests that drive a route opening a transaction.
 
-flowgate.default.0535 T0007 §3 made ``POST /inbox action=review`` claim its token and
+made ``POST /inbox action=review`` claim its token and
 store the review inside ONE ``FlowGateStore.transaction()``. Tests that mock the writes
 themselves (``db_reviews.insert_review``, ``token_service.consume``) still need a store
 whose ``transaction()`` opens, because the route now goes through one on the way to

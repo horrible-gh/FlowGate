@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0056 F1 — the review history button of a document line (0056 CH §2): a clock icon that
+  <!-- the review history button of a document line (CH): a clock icon that
        opens the document's 검수·반려 이력 (AI reviews · rejections · AI responses) in its modeless window.
        Display only: the caller hears `click`; the name and tooltip are the Frame's common wording, with
        the number of entries after it when the caller knows it (`count`). -->

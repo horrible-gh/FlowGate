@@ -1,4 +1,4 @@
-"""HTTP/API transport (0501 NR0003 §12/§15 `provider_api.py`).
+"""HTTP/API transport (`provider_api.py`).
 
 The wire, and only the wire: OpenAI- and Anthropic-compatible chat/tool calls, the JSON
 POST helper, and the base-URL resolution (including the diagnostic-safe form that never
@@ -37,7 +37,7 @@ def _resolve_agent_api_base(
 ) -> str:
     """Compute the address this server can reach itself at.
 
-    Shared by external CLI process launch and, since 0505 T0008, the API provider's
+    Shared by external CLI process launch and, since the earlier implementation, the API provider's
     server-mediated self-HTTP (`_resolve_transport_api_base`) -- both ask the same
     question, "what address can this server use to reach itself?", and now get the
     same answer. The browser/operator origin remains in the stored run and in the
@@ -46,7 +46,7 @@ def _resolve_agent_api_base(
     When the operator origin has no explicit port, the trusted local
     ``FLOWGATE_PORT`` is used.
 
-    ``ignore_configured_override`` (0496 T0004): skips the ``FLOWGATE_AGENT_API_BASE``
+    ``ignore_configured_override``: skips the ``FLOWGATE_AGENT_API_BASE``
     branch entirely, as if it were unset, so a caller that already caught this
     function raising on a malformed override can retry for the same safe
     loopback+``FLOWGATE_PORT`` answer the "unset" case computes below -- never
@@ -148,25 +148,25 @@ def _sanitize_diagnostic_base(url: Optional[str]) -> Optional[str]:
 
 
 def _resolve_transport_api_base(run: dict) -> str:
-    """The address this hop's server-mediated self-HTTP should dial (0505 T0008).
+    """The address this hop's server-mediated self-HTTP should dial.
 
     All six mediated self-HTTP call sites (conversation_context, conversation_turn_
     register, api_bound_request, inbox_register, resolve_conflict, workflow_decide)
     used to send `run["api_base_url"]` -- the operator/browser origin -- straight
     back to themselves. That is fine when operator and agent origins coincide, but
-    wrong in exactly the topology 0472 B0001 hit for the CLI path: a public/proxy
+    wrong in exactly the topology the regression hit for the CLI path: a public/proxy
     origin that this server cannot dial as itself. `_resolve_agent_api_base` already
     solved this for CLI launch; this wraps it for the API provider's self-HTTP and
     caches the result on `run` so every site that asks agrees within one hop. (The
-    list above is that history's six; 0505 T0018 has since moved two of them --
+    list above is that history's six; the earlier implementation has since moved two of them --
     conversation_context and read_document -- off self-HTTP to direct in-process
     calls, and they keep resolving here anyway so the per-hop diagnostic does not
     depend on which site runs first. See the branch note below the try/except.)
 
-    0496 T0004: a `FLOWGATE_AGENT_API_BASE` that is configured but unusable (typo,
+    a `FLOWGATE_AGENT_API_BASE` that is configured but unusable (typo,
     missing scheme, a path/query it must not carry) used to make this function fall
     back to `operator_base` -- silently reinstating the exact cross-instance/public
-    topology NR0003 traced the original 401 "Token is invalid" to, just reached
+    topology the review traced the original 401 "Token is invalid" to, just reached
     through a broken override instead of a missing one. The override existing at
     all signals prod-type intent (operator and agent origins do NOT coincide), so
     that fallback is never safe. Retrying with the override ignored degrades to the
@@ -174,7 +174,7 @@ def _resolve_transport_api_base(run: dict) -> str:
     address can be computed at all is there truly nothing safer to fall back to than
     returning the operator base unchanged.
 
-    0496 T0008 (self-review): "no safe address at all" has two causes, not one. The
+    (self-review): "no safe address at all" has two causes, not one. The
     operator base itself failing to parse is the expected one. The other is a
     `FLOWGATE_PORT` that is not a usable port number, reachable only when the operator
     origin also carries no explicit port -- and only on a server whose own listen-port
@@ -210,10 +210,10 @@ def _resolve_transport_api_base(run: dict) -> str:
             )
             resolved = operator_base
     run["_transport_api_base_resolved"] = resolved
-    # 0496 T0006 §3.2: which of the three branches above just ran, so a caller that
+    # which of the three branches above just ran, so a caller that
     # persists transport_api_base (worker.py's seven "FIRST in this hop wins" sites:
     # the five that dial -- conversation_turn_register, api_bound_request,
-    # resolve_conflict, workflow_decide, inbox_register -- plus the two 0505 T0018
+    # resolve_conflict, workflow_decide, inbox_register -- plus the two the earlier implementation
     # moved in-process, the conversation_context prefetch in `_api_execute` and
     # `_api_read_document`, which resolve without dialing so the per-hop value does
     # not depend on call order) can persist WHY that base was
@@ -222,14 +222,14 @@ def _resolve_transport_api_base(run: dict) -> str:
     # the safe loopback+FLOWGATE_PORT answer), or "operator_base_unsafe" (no safe
     # address could be computed -- the operator base itself failed to parse, or
     # FLOWGATE_PORT is unusable -- so the operator base rides through unchanged, the
-    # one branch NR0003 traced the original 401 to). A string, not a boolean: the two
+    # one branch the review traced the original 401 to). A string, not a boolean: the two
     # exception branches are both "a fallback happened" but are not equally safe, and
-    # collapsing them would hide exactly the distinction T0006 exists to surface.
+    # collapsing them would hide exactly the distinction the earlier implementation exists to surface.
     run["_transport_fallback_kind_resolved"] = fallback_kind
     return resolved
 
 
-# ── API adapter: minimal agent loop (L0006 §2.4) ─────────────────────────────
+# ── API adapter: minimal agent loop ─────────────────────────────
 
 def _api_system_prompt() -> str:
     """Non-negotiable API-agent contract shared by OpenAI-compatible providers."""
@@ -273,7 +273,7 @@ def _api_help_prompt(prompt: str) -> str:
 
 
 def _api_conflict_guidance(tool_names: list[str]) -> str:
-    """0608 T0007: how a resolve_conflict API run reaches what its (CLI-shaped) mention
+    """how a resolve_conflict API run reaches what its (CLI-shaped) mention
     addresses over HTTP. Same contract, tool names instead of URLs."""
     return (
         "Here the mention's HTTP addresses are tools; make no HTTP requests: `POST .../remote/read` "

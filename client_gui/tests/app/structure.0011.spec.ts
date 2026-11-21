@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// T0011 §5/§6/§9/§11/§15 "Structure": source-level guards for the v0.2 boundaries that a DOM
+// "Structure": source-level guards for the v0.2 boundaries that a DOM
 // test cannot see.
 const SRC = resolve(__dirname, '../../src')
 
@@ -46,7 +46,7 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
     }
   })
 
-  // flowgate.v02.0053 T#3: plus the one mount of the document windows, through features/documentWindow's
+  // plus the one mount of the document windows, through features/documentWindow's
   // public surface (the in-tab modeless document windows opened from anywhere).
   it('the App Shell only assembles layout: Topbar, Sidebar, RouterView, the Project Dialog and the document windows mounts (T0011 §5, T0010/T#3 §2)', () => {
     const imports = importsOf(read(join(SRC, 'app/App.vue')))

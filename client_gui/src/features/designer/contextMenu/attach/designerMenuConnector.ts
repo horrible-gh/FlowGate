@@ -1,4 +1,4 @@
-// flowgate.v02.0060 T#2 — the Designer context menu attached (0006-D rev2 2 step-A, §3.1, §3.3, §3.4, §4.2, §5.3):
+// the Designer context menu attached (D 2 step-A):
 // the one menu host of the Designer Shell and the connectors of its five areas — ① project tree, ② file explorer,
 // ③ Flow tab strip, ④ Canvas, ⑤ Palette card. An area hands over the event and the real ids it holds (row kind,
 // node path, flowId, card / edge id, palette definition); the connector builds the snapshot and the availability,
@@ -10,10 +10,10 @@
 // open) and the item must still be enabled — the snapshot's availability is never the reason to run. Each command
 // runs through the existing path (the Shell's create dialogs and Edit › 전체 선택, the Center session's closeFlow /
 // dropOnCanvas / removeNode / removeEdge / chooseCardMenu, the File Explorer's folder expansion, the Palette
-// selection the Canvas click places). The card's existing run menu (0061 T#15) is carried into the single card menu
+// selection the Canvas click places). The card's existing run menu is carried into the single card menu
 // so one menu is ever open on a card.
 //
-// flowgate.v02.0060 T#1 (WP 0012, Q item 459): the 11 first-step commands (§5.3 initial wiring) and alignment · layout / alignment are
+// the 11 first-step commands (initial wiring) and alignment · layout / alignment are
 // connected (CLIENT_COMMANDS, 13); every other item of the mockup's 40 is shown disabled where the mockup puts it —
 // awaiting integration for the 11 2-B commands, unimplemented for the 16 others — and never reaches an execute path here (no request,
 // no API call). So the Flow row, the file row, the root folder and a card of a multi-selection open their menus now.
@@ -21,7 +21,7 @@
 // and alignment open the Edit menu's alignment / layout commands (the Shell's DESIGNER_ARRANGE_GROUPS, its isMenuCommandEnabled
 // and its onTopCommand → center.arrangeNodes); no arrange logic of its own.
 //
-// flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B): the 11 2-B commands are connected through the existing server
+// the 11 2-B commands are connected through the existing server
 // contracts the Shell lends (`server`, features/project → the v0.1 routes): 이름 변경 (Group / Flow), Flow Delete = the
 // existing dispose (DC), New folder / 새 파일, Download folder / 업로드 / 삭제, Download file / Git › Review changes / 삭제. A chosen
 // one opens its window (DesignerMenuActions) with the target the menu saw; right before the request the window builds the
@@ -32,7 +32,7 @@
 // The areas reach this through `provide` / `inject` under DESIGNER_CONTEXT_MENU (no import of this folder), so an
 // area mounted outside the Designer Shell keeps its old behaviour.
 //
-// flowgate.v02.0060 0017-T: while the Designer is mounted the browser's own menu never shows (the mockup v2 rule; the
+// while the Designer is mounted the browser's own menu never shows (the mockup v2 rule; the
 // entry's native-menu block on the document) — a place with no target, a target with no item and an excluded one show
 // nothing; only editable areas keep the browser menu. The menu targets and their items are not changed by this.
 
@@ -80,11 +80,11 @@ export const FIRST_STEP_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'project.newGroup', 'group.newFlow', 'folder.open', 'tab.close', 'tab.closeOthers', 'tab.closeAll',
   'canvas.addCard', 'canvas.selectAll', 'node.delete', 'edge.disconnect', 'palette.addCard',
 ])
-/** T#1 (WP 0012 [B]): alignment · layout / alignment through the Edit menu's alignment / layout commands. */
+/** alignment · layout / alignment through the Edit menu's alignment / layout commands. */
 export const ARRANGE_COMMANDS: readonly MenuCommand[] = Object.freeze(['canvas.arrange', 'multi.arrange'])
 /** The commands that run on client paths alone (13: 1 phase 11 + alignment 2). */
 export const CLIENT_COMMANDS: readonly MenuCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...ARRANGE_COMMANDS])
-/** T#2 (0006-D §4.3 2-B): the 11 existing server contracts, run through the windows and the Shell's `server`. */
+/** the 11 existing server contracts, run through the windows and the Shell's `server`. */
 export const SERVER_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
   'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
@@ -184,9 +184,9 @@ export interface DesignerContextMenuDeps {
   readonly openFlowCreate: (groupId: string) => void
   /** The Palette item becomes the Palette selection the next Canvas click places. */
   readonly selectPalette: (definition: PaletteItemDefinition) => void
-  /** alignment · layout / alignment (T#1). */
+  /** alignment · layout / alignment. */
   readonly arrange: DesignerArrangeDeps
-  /** T#2: the 2-B server paths (absent: the 11 stay awaiting integration). */
+  /** the 2-B server paths (absent: the 11 stay awaiting integration). */
   readonly server?: DesignerMenuServerDeps
   /** Anything whose change hides an area (Dock collapse, Explorer mode, Tool tab): the menu closes. */
   readonly layout?: () => unknown
@@ -214,7 +214,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
   const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : []), ...(deps.server?.archiveGroup && deps.server?.restoreGroup ? ['group.archive' as const, 'group.restore' as const] : []), ...(deps.server?.deleteGroup ? ['group.delete' as const] : [])]
-  /** T#2: the one 2-B window open now (a new one replaces it). */
+  /** the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
   function openAction(target: MenuActionTarget, stillValid: () => boolean) {
@@ -318,7 +318,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         return
       }
       if (!SERVER_SET.has(request.command)) return
-      // T#2: the Flow worktree commands open their windows with the node the menu saw (Download file runs at once).
+      // the Flow worktree commands open their windows with the node the menu saw (Download file runs at once).
       const scope = request.target as FileTarget
       if (scope.kind === 'folder' && request.command.startsWith('folder.')) {
         openAction({
@@ -386,7 +386,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     })))
   }
 
-  /** The card's existing run menu (0061 T#15) worded as FlowCanvas worded it. */
+  /** The card's existing run menu worded as FlowCanvas worded it. */
   function runItems(flowId: string, nodeId: string): CardRunItem[] {
     return center.cardMenu(flowId, nodeId).map((entry: FlowCardMenuItem) => {
       const label = t(`gui.designer.center.card_menu.${entry.key}`)
@@ -542,7 +542,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
 
   const api: DesignerContextMenuApi = { project, file, tab, canvas, guardCanvas, palette }
   provide(DESIGNER_CONTEXT_MENU, api)
-  /** T#2: the 2-B windows the Shell mounts (`<component :is="dialogs" :actions="actions" />`) and their state. */
+  /** the 2-B windows the Shell mounts (`<component:is="dialogs":actions="actions" />`) and their state. */
   const actions: DesignerMenuActionsHandle | null = deps.server ? {
     pending,
     server: deps.server,

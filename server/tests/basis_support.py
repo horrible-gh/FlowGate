@@ -1,11 +1,11 @@
-"""Real source harness for Test Basis suites (flowgate.default.0682 T#1, 0684 T#2).
+"""Real source harness for Test Basis suites.
 
-0684 T#2: a run copies the Group worktree into its disposable root and fingerprints the
+a run copies the Group worktree into its disposable root and fingerprints the
 copied bytes (no Source Bundle). These suites run the production fingerprint, copy, manifest
 and verdict code over real git repositories. Only the edges are replaced: the Group ->
 worktree lookup (a dict of temp repositories), the run scratch root (a temp directory),
 the Group lock (``stub_group_lock``), and the documents/events tables (an in-memory dict
-that a failed transaction rolls back together with the SQLite rows). 0684 T#4 removed
+that a failed transaction rolls back together with the SQLite rows). the earlier implementation removed
 Source Bundle and its tables, so the SQLite connection starts empty.
 """
 from __future__ import annotations
@@ -142,7 +142,7 @@ class BasisEnv:
         return copy.deepcopy(doc)
 
     def run_basis(self, doc: dict, run_id: str = "run-1") -> tuple[dict, Path, Path]:
-        """A run's preparing phase (0684 T#2): copy + fingerprint -> (Basis, run root, scratch)."""
+        """A run's preparing phase: copy + fingerprint -> (Basis, run root, scratch)."""
         from modules.flow_gate.services import spec_execution_service as execution
         return execution.ExecutionRootResolver.prepare(
             doc, {"run_id": run_id, "revision_no": doc.get("revision_no") or 0}, self.cases)

@@ -1,4 +1,4 @@
-"""Job Runner, workers and reconciler (flowgate.default.0669 unit 5b; 0666 0009-L §1.4,
+"""Job Runner, workers and reconciler (the earlier change unit 5b; the earlier implementation,
 §2.17.1, §2.17.3, §2.18, §4.4 framework, §4.5).
 
 * Executors — one per job kind, registered by the units that own the kind (6~8). A
@@ -74,7 +74,7 @@ _executors: dict[str, Executor] = {}
 _deciders: dict[tuple[str, str], Callable[[dict], "Decision"]] = {}
 _freeze_reconciler: Optional[Callable[[store.JobContext], None]] = None
 _freeze_releaser: Optional[Callable[[store.JobContext, str, str], None]] = None
-# 0674 T0004 §2-5: per kind, told the job row after a claim/reconcile/recovery body
+# per kind, told the job row after a claim/reconcile/recovery body
 # changed it (status, blocker or error code) — the screen's SSE, never a side effect.
 _observers: dict[str, Callable[[dict], None]] = {}
 _reg_guard = threading.Lock()
@@ -94,7 +94,7 @@ def register_decider(kind: str, phase: str, decide_fn: Callable[[dict], "Decisio
 
 
 def register_observer(kind: str, observe: Callable[[dict], None]) -> None:
-    """0674 T0004 §2-5: ``observe(job)`` after a Runner/Sweeper body moved the job."""
+    """``observe(job)`` after a Runner/Sweeper body moved the job."""
     with _reg_guard:
         _observers[kind] = observe
 

@@ -56,7 +56,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect(all.size).toBe(40)
     expect([...all].join(' ')).not.toMatch(/permanent|base|untracked/)
   })
-  // flowgate.v02.0060 T#1 (Q item 459, replacing "Hide commands that are not wired up"): nothing connected → every mockup item stays
+  // (Q item 459, replacing "Hide commands that are not wired up"): nothing connected → every mockup item stays
   // where the mockup puts it, disabled with its reason, and requests nothing.
   it('with no connected command every part still shows the whole mockup, all disabled with 연결 예정 / 미구현 (Q 459)', () => {
     const models = [
@@ -256,7 +256,7 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
   })
 })
 
-// flowgate.v02.0060 T#2: the card's existing run menu (0061 T#15) carried into the single card menu only (§3.6).
+// the card's existing run menu carried into the single card menu only.
 describe('card run items in the card menu (T#2)', () => {
   const runItems = [
     { command: 'node.run.holdSet' as const, label: 'Hold 설정', disabled: false, danger: false },
@@ -300,7 +300,7 @@ describe('card run items in the card menu (T#2)', () => {
 })
 
 
-// flowgate.v02.0060 T#1 (WP 0012 [B]): alignment · layout / alignment open the Edit menu's alignment / layout commands.
+// alignment · layout / alignment open the Edit menu's alignment / layout commands.
 describe('정렬 · 배치 / 정렬 as the Edit menu 정렬 / 배치 submenu (T#1)', () => {
   const canvas = targets[6]
   const multi = targets[8]
@@ -353,7 +353,7 @@ describe('정렬 · 배치 / 정렬 as the Edit menu 정렬 / 배치 submenu (T#
   })
 })
 
-// flowgate.v02.0060 T#1: the Git parent follows the Git state read, not its children being awaiting integration / unimplemented.
+// the Git parent follows the Git state read, not its children being awaiting integration / unimplemented.
 describe('Git parent of the file / folder menu (T#1)', () => {
   it('linked: the parent opens even though every child is 연결 예정 / 미구현', () => {
     for (const target of [targets[3], targets[4]]) {

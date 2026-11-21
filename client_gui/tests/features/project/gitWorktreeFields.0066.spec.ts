@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0066 T#5 — the features/project field mapping the Git tab's Group worktree area
+// the features/project field mapping the Git tab's Group worktree area
 // reads (0066 D#2 §4-2, C2 / C3): git/status ahead / behind / unpushed, the /changes scope floor,
 // line counts and tool artifact count, and the transport error kept by /changes and /diff.
 const getRequest = vi.hoisted(() => vi.fn())

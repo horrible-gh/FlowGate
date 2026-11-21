@@ -1,6 +1,6 @@
 """Base-slot provisioning, adoption, and direct base operations.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def _domain_locks(project_id: str, *domains: str):
 
 
 def _judge_base_slot(base_root: Path, base_branch: str) -> str:
-    """'empty' | 'occupied' | 'checkout' — L0005 §2.1.
+    """'empty' | 'occupied' | 'checkout' — the earlier implementation
 
     Completion criterion: refs/heads/{base_branch} exists AND no pending-adopt
     marker. Partial debris (.git without the branch, or a leftover marker)
@@ -98,7 +98,7 @@ def _record_attempt(
     snapshot_commit: Optional[str] = None,
     snapshot_at: Optional[str] = None,
 ) -> None:
-    """Best-effort per-project last-attempt ledger (L0005 §2.5 — KV, no DDL).
+    """Best-effort per-project last-attempt ledger (KV, no DDL).
 
     Reasons derived from git stderr arrive here already _scrub-masked (the
     runner scrubs before returning) — the plaintext secret never lands in the DB.
@@ -153,7 +153,7 @@ def _adopt(
     project_id: str,
 ) -> dict:
     """Turn an occupied slot into a repository WITHOUT touching any existing
-    file (L0005 §2.3). Every step is check-then-act, so a run interrupted at
+    file. Every step is check-then-act, so a run interrupted at
     any point (auth failure, timeout) resumes to completion on the next call.
     Forced-checkout class commands (checkout -f / reset --hard / clean / stash)
     are banned on this path by design (DS0002).
@@ -207,7 +207,7 @@ def _adopt(
 
 
 def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict:
-    """Commit the local↔remote difference on the base branch (L0005 §2.4).
+    """Commit the local↔remote difference on the base branch.
 
     After the mixed reset the working tree is the local original and the index
     is the remote tree. Remote-only files show as worktree deletions and MUST
@@ -257,7 +257,7 @@ def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict
 
 def _remote_is_empty(repo_url: str, username: Optional[str], secret: str) -> bool:
     """True only when the remote is reachable AND advertises no refs at all — a
-    brand-new, never-pushed repository (0313 B0001).
+    brand-new, never-pushed repository.
 
     Deliberately narrow: any error, timeout, or non-empty ref advertisement reads
     False, so a genuine fetch/auth failure still flows through the normal clone
@@ -277,7 +277,7 @@ def _remote_lacks_base_branch(
     repo_url: str, username: Optional[str], secret: str, base_branch: str
 ) -> bool:
     """True when the remote is reachable AND advertises no ``refs/heads/<base>`` —
-    a superset of `_remote_is_empty` (0318 B0001).
+    a superset of `_remote_is_empty`.
 
     A fully bare remote is only one way `git clone --branch <base>` can fatal with
     "Remote branch <base> not found in upstream origin". The other — common — way is
@@ -312,7 +312,7 @@ def _bootstrap_empty_remote(
     secret: str,
     project_id: str,
 ) -> dict:
-    """Establish the base checkout for a brand-new EMPTY remote (0313 B0001).
+    """Establish the base checkout for a brand-new EMPTY remote.
 
     `git clone --branch <base>` cannot succeed against a repository with no commits
     and no <base> branch, so a freshly-connected empty remote used to fail
@@ -369,7 +369,7 @@ def _bootstrap_empty_remote(
 
 
 def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigger: str) -> dict:
-    """Judge the base slot and establish it (none / clone / adopt) — L0005 §2.2.
+    """Judge the base slot and establish it (none / clone / adopt) — the earlier implementation
 
     The caller holds B and R (0669 unit 9b: ``provision_base`` takes them).
     """
@@ -378,7 +378,7 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
     base_root = _gs.src_root(project_name, base_branch)
     state = _gs._judge_base_slot(base_root, base_branch)
     if state == "checkout":
-        # flowgate.default.0361 NR0003 §3/§8.1: this used to be a bare pass-through,
+        # this used to be a bare pass-through,
         # so a repo_url change never reached an EXISTING checkout's actual `origin`
         # — only a fresh clone/adopt ever wired it. Sync before returning so every
         # fetch/push that follows (including one issued straight from a group
@@ -389,10 +389,10 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
             # provision_base()/_provision_base_locked() never raise (docstring
             # contract) — a sync failure is a reported failure like any other.
             # The ledger is NOT updated here either, same as the pass-through it
-            # replaces (P0004 scenario 4): an already-established checkout stays put.
+            # replaces (scenario 4): an already-established checkout stays put.
             return {"status": "failed", "mode": "none", "reason": exc.code,
                     "snapshot_commit": None, "snapshot_at": None}
-        # idempotent pass-through — the ledger is NOT updated (P0004 scenario 4)
+        # idempotent pass-through — the ledger is NOT updated (scenario 4)
         return {"status": "ok", "mode": "none", "reason": None,
                 "snapshot_commit": None, "snapshot_at": None}
 
@@ -410,7 +410,7 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
     if state == "empty":
         base_root.parent.mkdir(parents=True, exist_ok=True)
         if _remote_lacks_base_branch(repo_url, username, secret, base_branch):
-            # 0313/0318 B0001: a remote WITHOUT the base branch cannot be cloned with
+            # 0313/the regression: a remote WITHOUT the base branch cannot be cloned with
             # `--branch <base>` — the clone dies with "Remote branch <base> not found
             # in upstream origin", leaving the base checkout uncreated and every
             # downstream op (worktree/base-commit/first push) blocked. This covers a
@@ -443,7 +443,7 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
 
 
 def provision_base(project_id: str, trigger: str) -> dict:
-    """Single provisioning entry shared by hooks and the manual API (L0005 §2.2).
+    """Single provisioning entry shared by hooks and the manual API.
 
     Returns {status, mode, reason, snapshot_commit, snapshot_at}. Provisioning
     failures are reported results, not exceptions (never-raises contract).
@@ -465,7 +465,7 @@ def provision_base(project_id: str, trigger: str) -> dict:
     if not _gs.git_available():
         return _blocked("git_unavailable")
 
-    # 0669 unit 9b: B (the base slot) and R (clone / origin) instead of the project
+    # unit 9b: B (the base slot) and R (clone / origin) instead of the project
     # mutex, held for the whole judge-and-establish. Still synchronous: the manual
     # route and the worktree hook read the result in the same call.
     try:
@@ -478,7 +478,7 @@ def provision_base(project_id: str, trigger: str) -> dict:
 
 
 def provision_view(project_id: str) -> dict:
-    """Status object for GET …/git/provision (P0004) — read-only, no network git."""
+    """Status object for GET …/git/provision — read-only, no network git."""
     from modules.flow_gate.services import git_service as _gs
     if db_projects.get_by_id(project_id) is None:
         raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
@@ -518,7 +518,7 @@ def provision_view(project_id: str) -> dict:
 
 
 def provision_manual(project_id: str) -> dict:
-    """POST …/git/provision — synchronous manual run (P0004 scenarios 2~8)."""
+    """POST …/git/provision — synchronous manual run (scenarios 2~8)."""
     from modules.flow_gate.services import git_service as _gs
     if db_projects.get_by_id(project_id) is None:
         raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
@@ -554,8 +554,8 @@ def manual_fetch(project_id: str) -> dict:
             "git binary not found on server (install git in the runtime image)",
         )
     with _domain_locks(project_id, "R"):
-        # flowgate.default.0361 NR0003 §3/§8.1: this recovery fetch used to trust
-        # whatever `origin` already pointed at — the very entry point B0001's
+        # this recovery fetch used to trust
+        # whatever `origin` already pointed at — the very entry point the regression's
         # symptom (`/remote/show` 404 on a GitHub-only commit) traced back to.
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         proc = _gs._run_git(
@@ -565,10 +565,10 @@ def manual_fetch(project_id: str) -> dict:
         )
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-    # 0669 unit 7c: the fetch ran under R alone; the fast-forward of the base checkout
+    # unit 7c: the fetch ran under R alone; the fast-forward of the base checkout
     # takes B, so a slow network never holds the base slot.
     with _domain_locks(project_id, "B"):
-        # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
+        # a bare `fetch` only moved refs/remotes/origin/{base} and then
         # *reported* behind_count — the local base branch never advanced, so the
         # base checkout stayed behind upstream forever and the operator-facing
         # "Fetch" action was a no-op recovery ("are you never going to fetch it?"). Finalize was
@@ -595,7 +595,7 @@ def manual_fetch(project_id: str) -> dict:
 
 
 def default_base_commit_message(files: list[str]) -> str:
-    """Deterministic default subject for a base-checkout commit (L0002 §2.2).
+    """Deterministic default subject for a base-checkout commit.
 
     "fix: a.py, b.py"; when the joined list overflows COMMIT_SUBJECT_MAX the
     abbreviated "fix: a.py and N more" is used (hard-cut as a last resort so the
@@ -629,11 +629,11 @@ def _base_commit_locked(
 ) -> dict:
     """Body of `base_commit` that runs under an already-held project git lock.
 
-    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
+    Split out so `resolve_base_dirty` can acquire the project lock
     once and hold it across baseline capture, discard, and commit — see the
     `_holder` parameter on `base_commit` below."""
     from modules.flow_gate.services import git_service as _gs
-    _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+    _gs.guard_base_free(project_id)   # — 2nd gate (race close, after lock)
     if _merge_in_progress(base_root):
         raise GitServiceError(
             409, "invalid_state", "a merge is in progress; resolve or abort it first"
@@ -711,16 +711,16 @@ def base_commit(
     project_id: str, message: Optional[str], paths: Optional[list[str]] = None,
     _holder: Optional[str] = None,
 ) -> dict:
-    """POST …/projects/{id}/git/base-commit — commit the base checkout (L0002 §2.3).
+    """POST …/projects/{id}/git/base-commit — commit the base checkout.
 
-    Two modes, and the distinction is the whole point of 0296 T0004:
+    Two modes, and the distinction is the whole point of the earlier implementation:
 
     * `paths` omitted — unchanged legacy behaviour: commit ALL dirty **tracked**
       files via `add -u`. Untracked build artifacts are never swept in; this is
       the E3/_dirty_files scope and 0165.0009 depends on it staying that way.
     * `paths` given — commit exactly those paths via `add -- <paths>`, and they
       MAY be untracked. This is the missing exit hatch from NR
-      flowgate.default.0296.0003 §C3: a group worktree is checked out from a
+      §C3: a group worktree is checked out from a
       commit (§C1), so a file that was never committed is invisible to every
       worker — yet the only in-app commit affordance refused to stage it, leaving
       "commit it and it appears" true but impossible without a terminal.
@@ -736,7 +736,7 @@ def base_commit(
 
     `_holder` (internal): when the caller already holds the base checkout's B
     (its lock key; 0669 unit 9a, before that the project git lock), reuse it
-    instead of acquiring a fresh one — lets `resolve_base_dirty` (0482 T0011) keep
+    instead of acquiring a fresh one — lets `resolve_base_dirty` keep
     baseline capture, discard, and commit atomic under a single lock instead of
     three independently-locked calls that leave a race window between them.
     """
@@ -759,7 +759,7 @@ def base_commit(
             raise GitServiceError(422, "invalid_request", f"invalid path: {raw!r}")
         if p not in selected:
             selected.append(p)
-    _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+    _gs.guard_base_free(project_id)   # — 1st gate (before lock)
     if not _gs.git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -774,11 +774,11 @@ def base_commit(
 def _base_revert_locked(project_id: str, base_root: Path, cleaned: list[str]) -> dict:
     """Body of `base_revert` that runs under an already-held project git lock.
 
-    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
+    Split out so `resolve_base_dirty` can acquire the project lock
     once and hold it across baseline capture, discard, and commit — see the
     `_holder` parameter on `base_revert` below."""
     from modules.flow_gate.services import git_service as _gs
-    _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+    _gs.guard_base_free(project_id)   # — 2nd gate (race close, after lock)
     if _merge_in_progress(base_root):
         raise GitServiceError(
             409, "invalid_state", "a merge is in progress; resolve or abort it first"
@@ -804,7 +804,7 @@ def _base_revert_locked(project_id: str, base_root: Path, cleaned: list[str]) ->
 def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None) -> dict:
     """POST …/projects/{id}/git/base-revert — restore the named files of the
     base checkout to HEAD (worktree + index; undoes edits and deletions alike,
-    L0002 §2.4). Per-file results; a file that is not dirty reports "not_dirty"
+    ). Per-file results; a file that is not dirty reports "not_dirty"
     and counts as success (idempotent against races and double clicks).
 
     `_holder` (internal): when the caller already holds the base checkout's B,
@@ -823,7 +823,7 @@ def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None
         norm = f.replace("\\", "/")
         if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
             raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
-    _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+    _gs.guard_base_free(project_id)   # — 1st gate (before lock)
     if not _gs.git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -837,7 +837,7 @@ def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None
 
 def base_remove(project_id: str, files: list[str]) -> dict:
     """POST …/projects/{id}/git/base-remove — delete untracked files from the base
-    checkout (0350 T0004 / NR0003 §8 R4).
+    checkout.
 
     The `base_untracked_conflict` 409 has always told the operator to "commit or
     remove them", but only the commit half (`base_commit(..., paths=...)`) ever
@@ -867,14 +867,14 @@ def base_remove(project_id: str, files: list[str]) -> dict:
         norm = f.replace("\\", "/")
         if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
             raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
-    _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+    _gs.guard_base_free(project_id)   # — 1st gate (before lock)
     if not _gs.git_available():
         raise GitServiceError(
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
     with _domain_locks(project_id, "B"):
-        _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+        _gs.guard_base_free(project_id)   # — 2nd gate (race close, after lock)
         if _merge_in_progress(base_root):
             raise GitServiceError(
                 409, "invalid_state", "a merge is in progress; resolve or abort it first"

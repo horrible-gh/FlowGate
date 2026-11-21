@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0064 T#4 — the kind switch's judgement read and the new refusals in
+ * the kind switch's judgement read and the new refusals in
  * features/document/api/kindSwitch.ts (P0006 §3.1 / §3.3 / §3.5 / §6.1): GET /documents/{doc_id} with
  * `include=root_conversion` -> camelCase (decision, mode, new / expected number, child count, chain,
  * refusal), the `converted_from` link, the switch answer's `conversion`, and the flat 409 codes.

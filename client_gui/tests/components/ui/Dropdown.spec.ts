@@ -2,14 +2,14 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import Dropdown from '@/components/ui/Dropdown.vue'
 
-// T0004 §5.9/§9: open/close, outside click, ESC, keyboard/focus. The menu is teleported to
+// open/close, outside click, ESC, keyboard/focus. The menu is teleported to
 // <body>, so it is looked up on document rather than inside the mounted wrapper.
 describe('components/ui/Dropdown (T0004)', () => {
   afterEach(() => {
     document.body.querySelectorAll('.ui-dropdown-menu').forEach((el) => el.remove())
   })
 
-  // Documented usage (T0004 §6): the caller wires the scoped `toggle`/`triggerAttrs` onto its
+  // Documented usage: the caller wires the scoped `toggle`/`triggerAttrs` onto its
   // own trigger element via `#trigger="{ toggle, triggerAttrs }"`. Dropdown itself must never
   // also listen for click on the wrapper, or this same click would fire toggle() twice.
   function mountDropdown() {

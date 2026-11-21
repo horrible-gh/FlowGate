@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { resolveSafeReturnPath } from '@shared/auth'
 
-// T0005 §5: resolveSafeReturnPath is the single allow-list gate shared by the sign-in
+// resolveSafeReturnPath is the single allow-list gate shared by the sign-in
 // page's post-auth redirect and (indirectly, by contract) client_gui's guard. It must accept
 // only same-origin paths under /app and reject everything that could turn /login into an
-// open redirect. flowgate.v02gui.0024: v0.1's /main and /settings left the allow-list.
+// open redirect. the earlier change: v0.1's /main and /settings left the allow-list.
 describe('resolveSafeReturnPath', () => {
   it('accepts the allow-listed /app prefix', () => {
     expect(resolveSafeReturnPath('/app')).toBe('/app')

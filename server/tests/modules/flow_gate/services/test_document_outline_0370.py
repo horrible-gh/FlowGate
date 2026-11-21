@@ -1,9 +1,9 @@
-"""Document-query tools: calculation-rule unit tests (group 0370, P0002 / L0003).
+"""Document-query tools: calculation-rule unit tests (the earlier change, the plan / the earlier implementation).
 
 Verify coordinates shared by /outline, /section, search match locations, and saved-change
 summaries. A failure here would make these four views describe the same location differently.
 
-Specifically cover two gaps L0003 explicitly identified as unverified:
+Specifically cover two gaps the earlier implementation explicitly identified as unverified:
 
 * §2-2: 0370.0002-P has no line-leading # inside code fences, so use _FENCED_DOC
   to verify that headings quoted inside a fence are ignored.
@@ -47,7 +47,7 @@ _FRONTMATTER_DOC = (
     "가지 본문 한 줄.\n"   # 13
 )
 
-# Fenced code containing line-leading # characters, required by L0003 §2-2.
+# Fenced code containing line-leading # characters, required by the earlier implementation
 _FENCED_DOC = (
     "# 진짜 제목\n"          # 1  s1
     "\n"                    # 2
@@ -83,7 +83,7 @@ def test_frontmatter_boundary_and_document_size():
 
 
 def test_trailing_newline_is_not_an_extra_line():
-    """A final newline does not imply an extra line after it (L0003 §2-1)."""
+    """A final newline does not imply an extra line after it."""
     assert _doc("a\nb\n").document_lines == 2
     assert _doc("a\nb").document_lines == 2, "개행 없이 끝나도 마지막 줄은 한 줄이다"
     assert _doc("").document_lines == 0
@@ -103,7 +103,7 @@ def test_crlf_and_bom_do_not_change_any_number():
 
 
 def test_unclosed_frontmatter_is_treated_as_no_frontmatter():
-    """Prefer this to treating the whole document as frontmatter and hiding it (L0003 §5)."""
+    """Prefer this to treating the whole document as frontmatter and hiding it."""
     doc = _doc("---\ntitle: 안 닫힘\n\n# 제목\n")
     assert doc.body_line_start == 1
     assert doc.frontmatter_chars == 0
@@ -111,10 +111,10 @@ def test_unclosed_frontmatter_is_treated_as_no_frontmatter():
 
 
 def test_char_end_of_one_section_equals_char_start_of_the_next_sibling():
-    """Exclusive-end convention: one sibling ends where the next starts (P0002 §1-2).
+    """Exclusive-end convention: one sibling ends where the next starts.
 
     This applies to siblings at equal depth. With include_children, a parent contains
-    its children, so its end cannot equal a child start; P0002 examples s3/s4 are siblings.
+    its children, so its end cannot equal a child start; the plan examples s3/s4 are siblings.
     """
     doc = _doc("## 첫째\n\n가\n\n## 둘째\n\n나\n\n## 셋째\n\n다\n")
     items, _ = outline.outline_items(doc, outline.MAX_HEADING_LEVEL)
@@ -124,7 +124,7 @@ def test_char_end_of_one_section_equals_char_start_of_the_next_sibling():
 
 
 def test_body_coordinates_convert_to_file_coordinates():
-    """Convert search body coordinates to file coordinates (L0003 §2-1 / §2-7).
+    """Convert search body coordinates to file coordinates.
 
     Without frontmatter this is an identity and omissions stay invisible.
     Use a document with frontmatter to exercise the conversion.
@@ -143,7 +143,7 @@ def test_body_coordinates_convert_to_file_coordinates():
 # ── 2-2. Heading scan ──
 
 def test_headings_inside_a_code_fence_are_not_sections():
-    """Exercise the separate fixture explicitly required by L0003 §2-2.
+    """Exercise the separate fixture explicitly required by the earlier implementation
 
     A parser ignoring fences counts quoted ## lines as headings and shifts all subsequent
     section IDs. TR documents often quote `## 변경 파일` as a format example.
@@ -189,7 +189,7 @@ def test_atx_heading_edge_cases(line, expected):
 
 
 def test_setext_heading_is_not_counted():
-    """Adding setext headings only here would disagree with the existing parser (L0003 §2-2)."""
+    """Adding setext headings only here would disagree with the existing parser."""
     assert _doc("제목처럼 보이는 줄\n===\n\n또 한 줄\n---\n").items == []
 
 
@@ -261,7 +261,7 @@ def test_outline_truncates_at_the_item_cap():
 # ── 2-4. Heading-name matching ──
 
 def test_normalisation_keeps_underscores_and_asterisks():
-    """Removing this would conflate client_src and clientsrc (L0003 §2-4)."""
+    """Removing this would conflate client_src and clientsrc."""
     assert outline.normalize_heading("client_src") != outline.normalize_heading("clientsrc")
     assert outline.normalize_heading("`코드`") == "코드", "백틱만 지운다"
     assert outline.normalize_heading("  두   칸  ") == "두 칸"
@@ -290,7 +290,7 @@ def test_english_alias_finds_the_korean_section_and_back():
 
 
 def test_numbered_changed_files_reads_but_stays_unreportable_to_tr_scope():
-    """Readable queries and passing TR validation are separate contracts (L0003 §2-4).
+    """Readable queries and passing TR validation are separate contracts.
 
     Lookup strips number prefixes, but reported-section validation stays strict.
     Successful lookup does not imply a valid TR declaration format.
@@ -333,7 +333,7 @@ _DOC_ID = "flowgate.default.0370.9999-TR"
 
 
 def test_lines_and_chars_and_name_resolve_to_the_same_span():
-    """The comparison L0003 §2-5 names as the first implementation check."""
+    """The comparison the earlier implementation names as the first implementation check."""
     doc = _doc(_FRONTMATTER_DOC)
     by_name = outline.resolve_locator(doc, _DOC_ID, 0, section="가지")
     lines = f"{by_name.line_start}-{by_name.line_end}"

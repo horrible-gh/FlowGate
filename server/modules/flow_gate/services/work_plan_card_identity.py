@@ -1,11 +1,11 @@
-"""Which work-plan card a sequence row belongs to — flowgate.default.0649 T#1 (NR0003 O0).
+"""Which work-plan card a sequence row belongs to — the earlier change the earlier implementation.
 
 A WP step carries a ``card_id`` that survives renumbering and revisions (§5.1), and every row
 a pour writes from now on records it as ``workflow_sequence_items.source_wp_card_id``. Rows
 poured before that column existed have ``NULL`` there, and the obvious shortcut — "the row
-counted as T#2 belongs to the card whose key is T#2 today" — is wrong even without the new
-reordering (§3.8, G9): lowering the T quantity deletes T#2, raising it again creates a *new*
-card that gets the key T#2 back. A started row of the deleted card linked to the new card
+counted as the earlier implementation belongs to the card whose key is the earlier implementation today" — is wrong even without the new
+reordering : lowering the T quantity deletes the earlier implementation, raising it again creates a *new*
+card that gets the key the earlier implementation back. A started row of the deleted card linked to the new card
 would make the new card look started, and it would never run.
 
 So a legacy row is classified, not guessed:
@@ -218,7 +218,7 @@ def step_key_for_card(
     *,
     revision_loader: Optional[Callable[[int], Optional[dict]]] = None,
 ) -> Optional[str]:
-    """The key card ``card_id`` had in revision ``revision_no`` — NR0003 O6 (G5).
+    """The key card ``card_id`` had in revision ``revision_no`` — the review O6.
 
     The materializer used to rebuild a row's step key by counting same-type rows of the same
     revision, which is wrong as soon as an earlier revision's row of that type ran before it
@@ -573,7 +573,7 @@ def record_backfill(
     wp_doc_id: str,
     acknowledged_codes: Optional[Iterable[str]] = None,
 ) -> list[tuple[int, str]]:
-    """Write the classification's backfill — ``source_wp_card_id`` only (NR0003 O0).
+    """Write the classification's backfill — ``source_wp_card_id`` only.
 
     Must run inside the caller's reflecting-write transaction. An unresolved started row
     blocks with :class:`LegacyCardUnresolved` unless ``legacy_card_unresolved`` was

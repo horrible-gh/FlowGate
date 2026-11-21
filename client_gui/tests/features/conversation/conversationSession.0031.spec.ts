@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createConversationSession } from '@/features/conversation/conversationSession'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0031 — Conversation session rules with an in-memory source.
+// Conversation session rules with an in-memory source.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
 const B = 'p.m.0001.0004-CH'
@@ -156,7 +156,7 @@ describe('send', () => {
     expect(source.postTurn).toHaveBeenCalledTimes(1)
     const failed = session.state.pending[0]
     expect(failed.failed).toBe(true)
-    // flowgate.v02test.0024 B: a line of the chat's history, recorded on the server (it answered).
+    // B: a line of the chat's history, recorded on the server (it answered).
     expect(session.state.notice).toBeNull()
     expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([
       { code: 'send_failed', tone: 'danger', text: 'corrupted body', chatError: true }])
@@ -349,7 +349,7 @@ describe('command requests', () => {
     source.decideCommand.mockRejectedValueOnce(httpError(500, 'boom'))
     await session.decideCommand('k1', 'approve')
     expect(session.state.activities[0]).toMatchObject({ state: 'pending_approval' })
-    // flowgate.v02test.0024 B: the failure is a line of the chat's history.
+    // B: the failure is a line of the chat's history.
     expect(session.state.notice).toBeNull()
     expect(session.state.activities.find((a) => a.kind === 'status')).toMatchObject({ code: 'command_decision_failed', text: 'boom', chatError: true })
   })
@@ -368,7 +368,7 @@ describe('AI run', () => {
     expect(session.running.value).toBe(false)
     expect(session.state.turns.at(-1)?.body).toBe('reply')
     const statuses = session.state.activities.filter((a) => a.kind === 'status').map((a) => (a.kind === 'status' ? a.code : null))
-    // flowgate.v02.0047 rev3: the reply itself is the news; no run_started / run_finished.
+    // the reply itself is the news; no run_started / run_finished.
     expect(statuses).toEqual([])
     // A delivered answer re-reads the settings (an edit_once mode may have been used up).
     expect(source.fetchChatSettings.mock.calls.length).toBeGreaterThanOrEqual(2)
@@ -396,7 +396,7 @@ describe('AI run', () => {
   })
 
   it('stores a message sent while a run is in flight and warns without providers', async () => {
-    // flowgate.v02test.0029: an AI answering no longer holds the send (sendWhileRunning.v02test0029.spec.ts).
+    // an AI answering no longer holds the send (sendWhileRunning.v02test0029.spec.ts).
     const { session, source } = setup({ activeRun: 'run-live', runs: { 'run-live': ['running'] } }, hold)
     await session.setScope(SCOPE)
     await flushPromises()

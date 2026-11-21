@@ -3,7 +3,7 @@ import i18n from '@shared/i18n'
 import { extractApiErrorMessage, localizeApiError } from '@shared/api'
 
 describe('AI-running 423 API error localization (0378)', () => {
-  // flowgate.default.0578 T0010 §2.3: extractApiErrorMessage no longer returns raw
+  // extractApiErrorMessage no longer returns raw
   // response.data.detail/error.message text. Without a registered code it always
   // returns the caller's fallback verbatim.
   it('never returns raw detail/error.message; returns the fallback when no code is registered', () => {

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#4 — the reads of the document window's special views in features/document: the same
+ * the reads of the document window's special views in features/document: the same
  * v0.1 endpoints as the Inspector sections (GET /documents/{doc_id}/work-plan, GET /documents/{doc_id}/test-document,
  * nothing else), normalized with the parts those views show — the work plan's quantity boxes and Step notes /
  * pre-instructions, the scenario's Case fields and the report rows (the valid result first, as v0.1 does).

@@ -1,6 +1,6 @@
-"""ai_invoke_paused_chains CRUD (group 0252 DB0010).
+"""ai_invoke_paused_chains CRUD.
 
-Single source of truth for the miniplayer pause/resume state (L0009 paused_store).
+Single source of truth for the miniplayer pause/resume state (paused_store).
 One row = one user-paused continuous chain. UNIQUE(group_id) enforces "at most one
 paused row per group" and is the upsert conflict key; pending_q_doc_ids is NEVER
 stored here — it is derived live from the group's open Q documents (DB0010 §4).
@@ -53,7 +53,7 @@ def dump_json_map(value) -> Optional[str]:
 
 
 def load_json_list(value) -> list:
-    """Read the N/T auto-approve item_seq selection back (0352 T0004 §2 / migration 078).
+    """Read the N/T auto-approve item_seq selection back (migration 078).
 
     Same defensive contract as load_json_map: missing/corrupt/non-list text degrades to an
     empty list ("no selection") rather than raising, so one damaged row cannot block a resume.
@@ -72,7 +72,7 @@ def load_json_list(value) -> list:
 
 
 def dump_json_list(value) -> Optional[str]:
-    """Serialize the N/T auto-approve item_seq selection for storage (0352 T0004 §2).
+    """Serialize the N/T auto-approve item_seq selection for storage.
 
     An empty/None list normalizes to NULL — "no selection" has exactly one representation,
     mirroring dump_json_map's invariant I4 for the provider/note maps.
@@ -110,16 +110,16 @@ def upsert(
     stop_code: Optional[str] = None,
     stop_run_id: Optional[str] = None,
     stop_last_message_excerpt: Optional[str] = None,
-    # 0365 DB0004: the provider / handoff-note selections the run was started with. Every
+    # : the provider / handoff-note selections the run was started with. Every
     # caller MUST pass them (invariant I3) — this upsert overwrites every column, so a
     # call that omits them wipes the stored selections and the resume falls back to the
-    # project default chain again, which is the exact bug B0001 reported.
+    # project default chain again, which is the exact bug the regression reported.
     requested_ai_group_id: Optional[str] = None,
     continuation_reworker_provider_id: Optional[str] = None,
     continuation_base_provider_id: Optional[str] = None,
     continuation_provider_pinned: Optional[bool] = None,
     continuation_provider_overrides=None,
-    # flowgate.default.0596 T0004 (NR0003 rev3): the provider that ACTUALLY executed the
+    # the provider that ACTUALLY executed the
     # last work hop, distinct from continuation_base_provider_id (the header/default
     # selection). Every caller that already passes the columns above MUST pass this too --
     # same invariant I3 -- or a resumed rework silently loses the real author and falls back
@@ -127,13 +127,13 @@ def upsert(
     continuation_work_executor_provider_id: Optional[str] = None,
     continuation_default_note: Optional[str] = None,
     continuation_note_overrides=None,
-    # 0352 T0004 §3.6: the N/T authoring mode (auto_approved/ai_direct) and its per-item_seq
+    # the N/T authoring mode (auto_approved/ai_direct) and its per-item_seq
     # auto-approve selection. Every caller (pause_run, the user/system stop-row writers, the
     # restore-on-failed-resume path) MUST pass them too — omitting them is the exact
     # pause->resume mode-loss bug this migration/TR fixes.
     continuation_instruction_mode: Optional[str] = None,
     continuation_auto_approve_item_seqs=None,
-    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) the chain was
+    # the per-hop wall-clock budget (seconds) the chain was
     # started with. Same "every caller MUST pass it" contract as the columns above — this
     # upsert overwrites every column, so a caller that omits it wipes the pick and a resumed
     # hop silently falls back to HOP_TIMEOUT_SEC.
@@ -146,18 +146,18 @@ def upsert(
     # EVERY column, so a caller that omits them wipes the stored selections and the chain
     # resumes with no review gate at all. DB0009 §5-3 calls that out as strictly worse than
     # the 0365 provider loss: losing a provider means "resumed on a pricier provider",
-    # losing these means "approved with nobody reviewing it" (L0008 invariant R1).
+    # losing these means "approved with nobody reviewing it" (invariant R1).
     continuation_review_count_overrides=None,
     continuation_reviewer_overrides=None,
 ) -> None:
     """Record (or refresh) the paused row for a group — idempotent on repeat pause.
 
-    chain_id/chain_docs_target/chain_docs_reached (group 0357 T0004) carry the
+    chain_id/chain_docs_target/chain_docs_reached carry the
     CHAIN-lifetime progress across the per-hop runs an unmanned continuous chain is
     made of, so a resumed chain keeps counting from where the chain — not the last
     hop — left off.
 
-    stop_kind/stop_code/stop_run_id/stop_last_message_excerpt (group 0359 DB0008 Q7)
+    stop_kind/stop_code/stop_run_id/stop_last_message_excerpt
     mark a chain that a *system* stop (not the user) parked here so the miniplayer
     can surface it with the same [resume] affordance. Existing call sites (user
     pauses) omit these and get stop_kind='user' with the other three NULL, matching
@@ -249,7 +249,7 @@ def exists(group_id: str) -> bool:
 
 
 def delete_and_return(group_id: str) -> Optional[dict]:
-    """Atomically consume the paused row (L0009 2.4 step 3).
+    """Atomically consume the paused row (2.4 step 3).
 
     Returns the row when THIS call removed it, None when there was nothing to
     consume (another resume path already took it → resume_conflict). SELECT +
@@ -272,7 +272,7 @@ def delete_and_return(group_id: str) -> Optional[dict]:
 
 
 def delete_by_group(group_id: str) -> None:
-    """Chain-termination cleanup (L0009 §3 transition table): a chain that ends for
+    """Chain-termination cleanup (transition table): a chain that ends for
     any reason other than the user pause must not leave a ghost paused card."""
     get_store()._execute(
         "DELETE FROM ai_invoke_paused_chains WHERE group_id = ?",
@@ -332,9 +332,9 @@ def release_owned(
     stop_kind: Optional[str],
     stop_run_id: Optional[str],
 ):
-    """Compare-and-swap delete for the explicit cancel/release API (0459 T0007).
+    """Compare-and-swap delete for the explicit cancel/release API.
 
-    Also reused by ``resume_chain()`` (0459 TR0008 rev1) to consume the exact row its
+    Also reused by ``resume_chain()`` to consume the exact row its
     own ownership check just read, instead of a group-only ``delete_and_return`` that
     would blindly take whatever row is live at consume time.
 
@@ -347,7 +347,7 @@ def release_owned(
     least one of those columns; the predicate then matches nothing and the newer row
     survives untouched -- unlike a bare ``delete_by_group(group_id)``.
 
-    Returns a TRI-STATE result (0459 TR0008 rev2), and the two failure shapes are NOT
+    Returns a TRI-STATE result, and the two failure shapes are NOT
     interchangeable:
       * the deleted row (dict) on success;
       * ``None`` when nothing exists for this group_id at all -- the only shape a
@@ -375,7 +375,7 @@ def release_owned(
                 clauses.append(f"{column} = ?")
                 params.append(value)
         # This pre-DELETE compare is a fast-path short-circuit, NOT the atomicity
-        # guard (0459 TR0008 rev1 fix): it only rules out the case where the row was
+        # guard (fix): it only rules out the case where the row was
         # already stale when we read it. It cannot see a write that lands *between*
         # this compare and the DELETE below. Either way the row it saw is a REAL,
         # currently-existing row -- report it as superseded, not absent.
@@ -394,7 +394,7 @@ def release_owned(
         except Exception as exc:
             if not _is_mariadb_snapshot_isolation_checkread(exc):
                 raise
-            # MariaDB's default `innodb_snapshot_isolation=ON` (0459 TR0008 rev5,
+            # MariaDB's default `innodb_snapshot_isolation=ON` (the earlier implementation,
             # reproduced against a live MariaDB 12.2 instance) makes this DELETE do
             # something Oracle MySQL and PostgreSQL never do: when its WHERE clause
             # matched the row under this transaction's REPEATABLE READ snapshot, but a
@@ -448,7 +448,7 @@ def release_owned(
 
 
 def list_all_system_stops() -> list[dict]:
-    """Every system-parked row, whoever owns it (0406 T0022 item 4).
+    """Every system-parked row, whoever owns it.
 
     Read at process start, where there is no user to scope by: a handoff row left behind by
     the process that died belongs to whoever was running that chain, and all of them have to
@@ -462,7 +462,7 @@ def list_all_system_stops() -> list[dict]:
 
 
 def mark_stop_code(group_id: str, stop_code: str, *, stop_run_id: Optional[str] = None) -> None:
-    """Re-label a system row without touching anything else (0406 T0022 item 4).
+    """Re-label a system row without touching anything else.
 
     Deliberately NOT the full ``upsert``: that one overwrites every column, and a startup
     recovery that only wants to say "this handoff never landed" must not risk wiping the

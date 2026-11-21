@@ -1,4 +1,4 @@
-// flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B) — what the Designer context menu's 11 existing server
+// what the Designer context menu's 11 existing server
 // commands need besides the menu: the request a chosen item becomes (its target as the menu saw it), the server paths
 // the Designer Shell lends (each the existing contract through features/project — no new API, no store here), the
 // answer shape the dialogs read, and two pure helpers (the name rule the server applies, the line diff of the
@@ -106,7 +106,7 @@ export interface DesignerMenuServerDeps {
   /** One file of the Flow's worktree against the project Base (read from the project's Git status, named in the diff). */
   readonly fileDiff: (projectId: string, flowId: string, path: string) => Promise<MenuActionResult<MenuActionDiff>>
   /**
-   * A short note outside a window (Download file runs without one). flowgate.v02.0088 F16: a function is called each time
+   * A short note outside a window (Download file runs without one). the earlier change F16: a function is called each time
    * the note renders, so its words follow a language switch; a string is shown as given.
    */
   readonly notify?: (message: string | (() => string), tone: 'success' | 'warning' | 'danger') => void

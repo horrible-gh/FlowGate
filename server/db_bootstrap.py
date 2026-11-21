@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
-"""Engine-neutral DB access for the install-time bootstrap scripts.
+"""Engine-neutral database access for installation and readiness checks.
 
-0273 NR0003 P1-1. `create_dev_user.py` and `check_db_ready.py` both talked to
-SQLite through `import sqlite3`, so all three install paths (setup.sh,
-setup.ps1, deploy/docker-entrypoint.sh) skipped the admin bootstrap entirely
-when DB_TYPE was mysql or postgres — a `DB_TYPE=postgres` install ran to
-completion and left ZERO accounts able to log in. Supporting "DB selection"
-(R0001) therefore means making this path engine-neutral, not just accepting the
-connection values.
-
-This module deliberately stays on raw DB-API drivers (the ones already pinned in
-requirements.txt: PyMySQL, psycopg2-binary) rather than importing `config`.
-Importing config constructs DatabaseSetting, which runs the migrator — the
-bootstrap scripts must be able to *inspect* a half-migrated DB without advancing
-it, and check_db_ready.py's whole job is to report on that state.
-
-The scripts share three dialect differences, handled here so callers stay
-readable:
-  - parameter placeholders: "?" (sqlite) vs "%s" (mysql/postgres)
-  - upsert syntax: INSERT OR REPLACE / ON DUPLICATE KEY UPDATE / ON CONFLICT
-  - row access: sqlite3.Row and friends all differ; rows() returns plain dicts
+Use the pinned DB-API drivers directly: importing config runs migrations, while
+bootstrap and readiness checks must inspect partially migrated databases without
+changing their schema. Shared helpers normalize placeholders, upserts and rows
+across SQLite, MySQL and PostgreSQL.
 """
 
 from __future__ import annotations

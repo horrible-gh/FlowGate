@@ -1,4 +1,4 @@
-"""flowgate.default.0541 T0004 R4 — provider exit must not leave a live run forever."""
+"""R4 — provider exit must not leave a live run forever."""
 from __future__ import annotations
 
 import os
@@ -250,7 +250,7 @@ def _configure_stuck_judge(monkeypatch, run, released, persisted):
 
 
 def test_r4_recovery_closes_the_document_review_loop_before_the_lease_release(monkeypatch):
-    """flowgate.v02test.0014: a recovered run never checkpoints its loop again, so the row
+    """a recovered run never checkpoints its loop again, so the row
     used to stay `current_stage='review'` (review_loop_active: True, card locked) after the
     lease was gone. Recovery now closes it -- before the release, once."""
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops

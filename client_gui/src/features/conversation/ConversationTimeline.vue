@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0031 — the one chronological conversation flow (R0001 §3): messages,
+  <!-- the one chronological conversation flow: messages,
        command requests, work changes and status events in a single scrolling log. -->
   <div ref="scrollEl" class="conv-log" data-test="conv-log" @scroll.passive="onScroll">
     <template v-if="status === 'loading' || status === 'error'">
@@ -8,7 +8,7 @@
         {{ t('gui.conversation.timeline.load_failed') }}
         <button type="button" class="conv-log-retry" @click="emit('reload')">{{ t('gui.conversation.retry') }}</button>
       </p>
-      <!-- flowgate.v02gui.0028: this client's own messages not stored yet (the first message of a chat that is opening,
+      <!-- this client's own messages not stored yet (the first message of a chat that is opening,
            or whose opening failed) stay visible under the line: 전송 중, or failed. Their retry waits for the chat to be
            open (the line's 다시 시도 first). -->
       <TimelineMessage
@@ -22,7 +22,7 @@
       />
     </template>
     <template v-else>
-      <!-- Earlier turns are fetched on demand (D0002 §6); never the whole conversation at once. -->
+      <!-- Earlier turns are fetched on demand; never the whole conversation at once. -->
       <button
         v-if="hasMoreBefore"
         type="button"
@@ -117,7 +117,7 @@ const props = defineProps<{
   chatId: string | null
   readOnly?: boolean
   /**
-   * flowgate.v02test.0025: the chat's context checkpoint (message seq, kind) and whether it can be changed here. The
+   * the chat's context checkpoint (message seq, kind) and whether it can be changed here. The
    * panel passes null while the context setting is not "체크포인트 사용" (nothing is drawn then).
    */
   checkpointSeq?: number | null
@@ -141,7 +141,7 @@ const emit = defineEmits<{
   checkpoint: [seq: number | null, kind?: CheckpointKind]
 }>()
 
-// flowgate.v02gui.0028: the messages of this client still on their way or failed (no server seq).
+// the messages of this client still on their way or failed (no server seq).
 const localMessages = computed(() =>
   props.items.filter((item): item is Extract<TimelineItem, { kind: 'message' }> => item.kind === 'message' && item.localId !== null),
 )
@@ -169,11 +169,11 @@ const VIEWED_DEBOUNCE_MS = 1000
 const scrollEl = ref<HTMLElement | null>(null)
 let pinned = true
 let viewedTimer: ReturnType<typeof setTimeout> | null = null
-// flowgate.v02test.0024 A: an earlier page is being put in front of the log. Its entries are not new: the reader keeps
+// A: an earlier page is being put in front of the log. Its entries are not new: the reader keeps
 // their place (loadOlderKeepingScroll adds the prepended height back), and the tail rule below must not pin the log
 // to the bottom over that correction — the v0.1 ConversationView never pinned while loading older turns.
 let prepending = false
-// flowgate.v02test.0024 (stg check): the log's own box changes size without any new entry — the window gets lower, the
+// (stg check): the log's own box changes size without any new entry — the window gets lower, the
 // composer grows, the panel narrows and bubbles re-wrap. Its scrollTop stays where it was, so a reader at the bottom
 // was left with a gap and the last message hidden. A ResizeObserver puts that reader back at the bottom; someone
 // scrolled up keeps their place. `observedSize` is the last size the observer handled ('' until it is observing).
@@ -296,7 +296,7 @@ watch(
   },
 )
 
-// flowgate.v02test.0024 A (v0.1 activitySignature): a card or status line can also change in place — a command
+// A (v0.1 activitySignature): a card or status line can also change in place — a command
 // request running and finishing, its output growing, the run line naming its AI, a result line replacing it. That
 // follows the tail under the same rule: only for a reader already at the bottom, never while older turns load.
 function activitySignature(): string {
@@ -321,7 +321,7 @@ watch(activitySignature, () => {
   if (pinned && !prepending && !props.loadingOlder) scrollToBottom()
 })
 
-// flowgate.v02.0157: the newest message can also grow in place (its body replaced by a longer one, a table or code
+// the newest message can also grow in place (its body replaced by a longer one, a table or code
 // fence completed). That follows the tail under the same rule: only for a reader already at the bottom.
 watch(
   () => {
@@ -382,7 +382,7 @@ defineExpose({ scrollToBottom })
   gap: 8px;
 }
 
-/* flowgate.v02.0147 T0005: .conv-log is a column flex container with overflow:auto; keep every
+/* conv-log is a column flex container with overflow:auto; keep every
    direct child (message, card, boundary, state) at its content height so the log scrolls
    instead of squeezing overflow:hidden cards. */
 .conv-log > * {

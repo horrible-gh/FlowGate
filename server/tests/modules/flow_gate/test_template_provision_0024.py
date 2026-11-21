@@ -1,10 +1,10 @@
-"""Tests for the design-document template body provision feature (group 0024).
+"""Tests for the design-document template body provision feature (the earlier change).
 
-Covers: migrations 043/044 schema, the L0013 resolution algorithm (5 ranks +
-ko fallback + path graceful-degrade), type-default skeletons, P0011 CRUD (E4/E5/E6)
-including the ko-fallback delete guard and idempotent PUT, and P0012 provision meta.
+Covers: migrations 043/044 schema, the the earlier implementation resolution algorithm (5 ranks +
+ko fallback + path graceful-degrade), type-default skeletons, the plan CRUD (E4/E5/E6)
+including the ko-fallback delete guard and idempotent PUT, and the plan provision meta.
 
-flowgate.default.0024.0015-T
+
 """
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def store(migrated_sqlite_db):
 def seeded_store(migrated_sqlite_db):
     """Like `store` but KEEPS the 045 global-template seed — the as-deployed default
     state. Verifies that a fresh DB resolves real standard bodies out of the box,
-    with no manual E4/E5 registration (TR0016 rev3 — 'are you going to keep it from ever showing up' fix)."""
+    with no manual E4/E5 registration ('are you going to keep it from ever showing up' fix)."""
     db_path = migrated_sqlite_db("tpl_seeded.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -394,7 +394,7 @@ class TestHttpRoutes:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Worker-facing template pointer (group 0372 set 2)
+# Worker-facing template pointer (set 2)
 #
 # The complete template body is fetched from the authenticated help item. Mentions
 # and AC/RJ self-contained sections keep only one actionable pointer line.
@@ -469,7 +469,7 @@ class TestWorkerMentionEmbed:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Migration 045 — seeded global standard templates (TR0016 rev3)
+# Migration 045 — seeded global standard templates
 #
 # The rev2 rejection ("so you'll just keep it from ever showing up?"): with 043/044 creating only
 # EMPTY tables, resolution forever fell to the type-default skeleton (the "표준 템플릿
@@ -519,7 +519,7 @@ class TestSeededGlobalTemplates:
                 assert result["locale"] == loc, (tc, loc, result)
 
     def test_every_supported_locale_resolves_directly(self, seeded_store):
-        # R0001 i18n: ko/ja/en are each seeded, so a ja/en request resolves to that
+        # i18n: ko/ja/en are each seeded, so a ja/en request resolves to that
         # locale DIRECTLY — NOT a ko fallback. (rev4 rejection: 'you only did the locale for Korean')
         for tc in ("D", "P", "L", "DB"):
             for loc in ("ko", "ja", "en"):
@@ -551,7 +551,7 @@ class TestSeededGlobalTemplates:
         # resolve entry itself (normalize_locale, landed after 2026-07-04 with the
         # i18n hardening), so the seeded ko row is an EXACT hit for the folded
         # request rather than a per-row fallback (pre-existing stale expectation
-        # fixed alongside flowgate.default.0226 — behavior itself is unchanged).
+        # fixed alongside the earlier change — behavior itself is unchanged).
         r = tp.resolve_active_template("anyproject", "P", "fr")
         assert r["resolution"] == "global-exact"
         assert r["resolved_locale"] == "ko"

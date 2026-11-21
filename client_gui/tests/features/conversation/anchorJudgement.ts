@@ -1,4 +1,4 @@
-// flowgate.v02.0151 T-A2 (NR Rev.4 §2.5, §2.7, §2.8 V6d5 / V6e / V6f) — the read-only check procedure for a reported
+// T-A2 (NR Rev.4,, V6d5 / V6e / V6f) — the read-only check procedure for a reported
 // case, written down as pure functions so its decision table is tested. It is a test-side tool: the product neither
 // imports it nor re-places a card from it (§2.6-3 ⑥ — the server anchor decides, the GUI only reads it sooner).
 // Inputs are values read without writing: the change row (run_id, doc_id, run_start_seq, anchor_*), the AI turns of

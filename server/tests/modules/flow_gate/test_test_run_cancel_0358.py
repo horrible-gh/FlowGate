@@ -1,4 +1,4 @@
-"""flowgate.default.0358 T0004 — immediate cancel: cancel route, cancelling/cancelled
+"""immediate cancel: cancel route, cancelling/cancelled
 status, process-tree kill, and every place a cancelled run must NOT go (auto-recovery,
 chain-failure alarm, TSR assembly, chain auto-approve).
 
@@ -360,7 +360,7 @@ def test_cas_running_to_cancelling_then_cancelling_to_cancelled_roundtrip(store,
 
 
 def test_finish_run_does_not_overwrite_already_cancelled_row(store, all_migrations_db):
-    """0358 T0004 risk 2: a natural completion racing a cancel must not resurrect it."""
+    """risk 2: a natural completion racing a cancel must not resurrect it."""
     from modules.flow_gate.db import test_runs as db_test_runs
 
     conn = all_migrations_db

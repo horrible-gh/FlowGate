@@ -1,4 +1,4 @@
-"""flowgate.v02.0020 — settings mockups 11–14: workspaces, system users, system security.
+"""settings mockups 11–14: workspaces, system users, system security.
 
 Covers the migration 136 data carry-over, the workspace service (membership, project access
 materialised into user_project_roles, policy, AI allowlist enforcement), the system user service
@@ -341,7 +341,7 @@ def _rbac_client(user):
 
 class TestLegacyRbacRoleRoutes:
     """POST /rbac/users/{id}/roles and DELETE /rbac/users/{id}/roles/{project_id} go through the
-    workspace: no project access without workspace membership (R0001 §3.1)."""
+    workspace: no project access without workspace membership."""
 
     def _workspace(self, store, default_member="none"):
         from modules.flow_gate.settings import workspace_service as ws

@@ -1,7 +1,7 @@
 /**
- * flowgate.v02.0053 T#7 — the settings tab of a Graph card, drawn as v7 draws it and kept by the card itself
- * (T#2 `GET / PATCH /flows/{flow_id}/nodes/{node_key}/settings`, one value per change, no save button).
- * `@/features/document` is mocked as a small card settings server with the T#2 fields, defaults and choices:
+ * the settings tab of a Graph card, drawn as v7 draws it and kept by the card itself
+ * (`GET / PATCH /flows/{flow_id}/nodes/{node_key}/settings`, one value per change, no save button).
+ * `@/features/document` is mocked as a small card settings server with the the earlier implementation fields, defaults and choices:
  *
  * - every card kind's blocks, items and order as v7 (run: instruction · 지시 AI · 실행 설정 + 고급 ▾; test:
  *   instruction · 시나리오 작성 · 실행; requirement: AI delegation · scope · AI Team · safety limit; check: purpose ·
@@ -12,9 +12,9 @@
  *   saved yet is drawn off; no sentence, no type code on screen;
  * - a failed first read is the read failure icon (why: its tooltip) with a ↻ retry in place of the form, and
  *   the same card recovers by it; the check summary names the merge target and push shown (or not set).
- * Last, the real Frame and registry on a card just placed (T#1 card documents) and on done cards whose run
+ * Last, the real Frame and registry on a card just placed (card documents) and on done cards whose run
  * bound its result (N → NR, T → TR, TS → TSR — the card keeps its form).
- * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its field (O1 0005-TR §4-3: a PATCH of it
+ * the progress-after-review row is removed with its field (O1 the earlier implementation: a PATCH of it
  * is 422 not_a_setting_of_this_card); a RUN card has the 지시 AI row (`instruction_ai`, O2 0007-TR §4-1) right
  * under instruction, only while the instruction is used — none is the run AI, then the assigned AI — saved as one
  * value (null for none), with its refusals (422 unknown_ai · not_a_text · invalid_text ·
@@ -72,7 +72,7 @@ const i18n = prepareInspectorI18n()
 const PROJECT = 'flowgate'
 const FLOW = 'flowgate.v02.0060'
 
-// --- The card settings server (T#2 fields.py) ------------------------------------------------------
+// --- The card settings server (fields.py) ------------------------------------------------------
 
 const REPEAT = [-1, 0, 1, 2, 3]
 type FieldDef = readonly [name: string, defaultValue: unknown, choices: readonly unknown[] | null]
@@ -127,12 +127,12 @@ let refusal: unknown = null
 const writes: [string, string, string, unknown][] = []
 
 const axiosError = (status: number, code: string) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, message: code, params: {} } } } })
-/** flowgate.v02.0056 F2-1: a 422 refusal naming its reason (O2 0007-TR §4-1 `errors[{field, reason}]`). */
+/** a 422 refusal naming its reason (O2 the earlier implementation `errors[{field, reason}]`). */
 const invalidValue = (reason: string, field = 'value', message = '저장할 수 없는 값') => ({
   isAxiosError: true,
   response: { status: 422, data: { ok: false, error: { code: 'invalid_request', message, params: { errors: [{ field, reason }] } } } },
 })
-/** flowgate.v02.0056 F2-1: a refusal whose message (x-locale) is not its code. */
+/** a refusal whose message (x-locale) is not its code. */
 const refusedWith = (status: number, code: string, message: string) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, message, params: {} } } } })
 
 function answer(nodeKey: string) {
@@ -813,7 +813,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
   })
 
   // The Canvas hands a done card its run's result as the document (N → NR, T → TR, TS → TSR); the settings
-  // stay the card's (T#2 keeps them by the card definition).
+  // stay the card's (keeps them by the card definition).
   it.each([
     [DONE_RESEARCH, 'NR', ['settings'], ['지시서']],
     [DONE_TASK, 'TR', ['settings'], ['지시서']],

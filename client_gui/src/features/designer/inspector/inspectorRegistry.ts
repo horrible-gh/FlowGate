@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#1 — Inspector feature registry (D#1 §5). Every folder
+// Inspector feature registry. Every folder
 // `features/<key>/register.ts` default-exports one registration; this module collects them all
 // (eager import.meta.glob), checks the contract once (key = folder name, unique key and order,
 // condition values inside their sets) and throws on the first broken one — in development, tests
@@ -34,13 +34,13 @@ export type InspectorMessages = Readonly<Record<(typeof INSPECTOR_LOCALES)[numbe
 export type InspectorTabCount = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<number | string | null>>
 
 /**
- * flowgate.v02test.0042 — whether a conditional tab (inspectorTabs INSPECTOR_CONDITIONAL_TABS) is shown: given the target
+ * whether a conditional tab (inspectorTabs INSPECTOR_CONDITIONAL_TABS) is shown: given the target
  * (null whenever the registration does not apply to the selected Node), it answers true while the tab has something to
  * show. Absent = shown whenever the registration applies.
  */
 export type InspectorTabVisible = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<boolean>>
 
-/** flowgate.v02test.0042 — the tab label's colour: `info` (blue, progress only) or `danger` (red, a person must choose). */
+/** the tab label's colour: `info` (blue, progress only) or `danger` (red, a person must choose). */
 export type InspectorTabTone = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<'info' | 'danger' | null>>
 
 export interface InspectorTabContribution {
@@ -48,12 +48,12 @@ export interface InspectorTabContribution {
   /** Tab Content part; its one input is `target`. */
   readonly component: Component
   readonly count?: InspectorTabCount
-  /** flowgate.v02test.0042: a conditional tab's visibility supplier. */
+  /** a conditional tab's visibility supplier. */
   readonly visible?: InspectorTabVisible
-  /** flowgate.v02test.0042: the tab label's colour supplier. */
+  /** the tab label's colour supplier. */
   readonly tone?: InspectorTabTone
   /**
-   * flowgate.v02.0053 T#6 — the Content part takes the tab body's free height (its box reaches the bottom
+   * the Content part takes the tab body's free height (its box reaches the bottom
    * of the tab even with little content), so the whole tab remains available for input.
    */
   readonly fill?: boolean
@@ -76,8 +76,8 @@ export interface InspectorRegistration {
   /** The feature needs a v0.1 sequence slot on the Node (a sequence row); absent = no. */
   readonly requiresSlot?: boolean
   /**
-   * flowgate.v02.0053 T#7 — settings kinds (inspectorSettingsKind) the feature applies to; empty or absent =
-   * every Node. A settings tab part names the card settings it shows (a Graph card's T#2 kind).
+   * settings kinds (inspectorSettingsKind) the feature applies to; empty or absent =
+   * every Node. A settings tab part names the card settings it shows (a Graph card's the earlier implementation kind).
    */
   readonly settingsKinds?: readonly InspectorSettingsKind[]
   readonly tab?: InspectorTabContribution
@@ -107,7 +107,7 @@ export interface InspectorRegistration {
   /** Inline editor below the header, independent of the selected tab. */
   readonly headerPanel?: Component
   /**
-   * flowgate.v02.0150 — the feature's modeless windows host. The Frame draws it for as long as the Frame lives, whatever
+   * the feature's modeless windows host. The Frame draws it for as long as the Frame lives, whatever
    * is selected and whether the registration applies or not (no card, another card, another tab), so a window opened
    * from the feature closes only by its own close / save / cancel, never by a click elsewhere or a selection change. Its
    * one input is `target`: the selected target, or null. A window keeps the target it was opened for.

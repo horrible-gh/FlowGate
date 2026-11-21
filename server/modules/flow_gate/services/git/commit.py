@@ -1,6 +1,6 @@
 """Commit-message pipeline and TR commit point / cancel / revert-reapply helpers.
 
-Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -27,30 +27,30 @@ AUTO_COMMIT_MSG = "chore: finalize workflow changes"
 AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
 
 
-# ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
+# ── Commit message pipeline ────────
 # Finalize-generated commit subjects are resolved through a fallback chain:
 # approved-TR draft → ASCII group title → translated title → fixed English phrase.
-COMMIT_SUBJECT_MAX = 200               # normalized subject max length (L0004 §1)
+COMMIT_SUBJECT_MAX = 200               # normalized subject max length
 
 
 TRANSLATE_TIMEOUT_SEC = 3              # translate HTTP timeout (connect+read)
 
 
-TRANSLATE_SOURCE = "auto"              # auto-detect source language (CH 0168.0008)
+TRANSLATE_SOURCE = "auto"              # auto-detect source language
 
 
 TRANSLATE_TARGET = "en"
 
 
-# TR doc_review_status set whose commit_message draft is accepted (L0004 §1).
+# TR doc_review_status set whose commit_message draft is accepted.
 DRAFT_ACCEPT_STATUSES = ("approved", "wf_done")
 
 
-FIXED_FALLBACK_SUBJECT = "{commit_type}: finalize workflow changes"   # L0004 §1 (D0002 §3-4)
+FIXED_FALLBACK_SUBJECT = "{commit_type}: finalize workflow changes"   # 
 
 
 # Known machine-translation hallucinations / web boilerplate (lowercased, punctuation
-# stripped, exact match) that must never become a commit subject (CH 0168.0008).
+# stripped, exact match) that must never become a commit subject.
 BOILERPLATE_BLACKLIST = frozenset({
     "log in", "login", "sign in", "sign up", "sign out", "skip to content",
     "home", "menu", "search", "about", "contact", "register", "submit",
@@ -58,20 +58,20 @@ BOILERPLATE_BLACKLIST = frozenset({
 })
 
 
-# flowgate.default.0462 T0005 — the TR commit point's ASCII fail-closed fallback. The
+# the TR commit point's ASCII fail-closed fallback. The
 # TR's own draft failed every check (missing / non-ASCII / oversized); this keeps the
 # document identifiable without a translate round-trip.
 TR_FALLBACK_SUBJECT = "chore: approve {doc_code}"
 
 
-# flowgate.default.0462 T0005 — a conventional-commit type prefix, e.g. "fix(git): " or
+# a conventional-commit type prefix, e.g. "fix(git): " or
 # "feat: ". Matched so an already-conventional TR draft is not double-wrapped with a
 # second type (`conventional_subject("chore", "fix(git): x")` would read as noise).
 _CONVENTIONAL_SUBJECT_RE = re.compile(r"^[a-z][a-z0-9]*(\([^()\r\n]+\))?!?: \S")
 
 
 def is_conventional_subject(text: str) -> bool:
-    """flowgate.default.0462 T0005 §4-1 — is ``text`` already ``type(scope): summary``?
+    """is ``text`` already ``type(scope): summary``?
 
     A capital type or a colon with no following space is not conventional and is passed
     through to be wrapped, not mistaken for one already in the right shape.
@@ -80,7 +80,7 @@ def is_conventional_subject(text: str) -> bool:
 
 
 def derive_commit_type(group_id: str) -> Optional[str]:
-    """Conventional-commit type for a group (L0004 §2.3), or None when undecidable.
+    """Conventional-commit type for a group, or None when undecidable.
 
     B-rooted → fix; R-rooted → feat when a design doc exists else chore.
     """
@@ -105,7 +105,7 @@ def derive_commit_type(group_id: str) -> Optional[str]:
 
 def conventional_subject(commit_type: str, summary: str) -> str:
     """``"{commit_type}: {summary}"`` — the one place every conventional-commit subject
-    is assembled. Public since flowgate.default.0462 T0005 §4-1: tr_commit_service uses
+    is assembled. Public since the earlier change the earlier implementation: tr_commit_service uses
     it too, so a TR draft and a finalize auto-title are typed the same way."""
     return f"{commit_type}: {summary}"
 
@@ -131,7 +131,7 @@ def build_auto_commit_message(group_id: str) -> str:
 
 
 def _translate_guard(text: str, source_title: str) -> bool:
-    """Reject empty / non-English / echoed / boilerplate translations (L0004 §2.5).
+    """Reject empty / non-English / echoed / boilerplate translations.
 
     A blacklist, not a whitelist — full hallucination detection is impossible; the
     user confirmation step is the final defense.
@@ -154,7 +154,7 @@ def _translate_guard(text: str, source_title: str) -> bool:
 def _try_translate(project_id: str, title: str) -> Optional[str]:
     """Translate a group title to an English subject fragment, or None on any failure.
 
-    Never raises: translation is best-effort and must not fail finalize (L0004 §5).
+    Never raises: translation is best-effort and must not fail finalize.
     """
     from modules.flow_gate.services import git_service as _gs
     try:
@@ -185,7 +185,7 @@ def _try_translate(project_id: str, title: str) -> Optional[str]:
 
 
 def resolve_commit_message(group_id: str) -> tuple[str, str]:
-    """Resolve the suggested finalize commit subject and its source (L0004 §2.4).
+    """Resolve the suggested finalize commit subject and its source.
 
     Fallback chain: approved-TR draft (tr_draft) → ASCII title (auto_title) →
     translated title (translated) → fixed English phrase (fallback). Side-effect
@@ -245,7 +245,7 @@ def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
 
     Returns ``(excluded_artifacts, has_staged)``. Two callers use it and they must not
     drift apart: the finalize absorb commit below, and the TR commit point
-    (``create_tr_commit``, 0332 D0005 K2). 0382 happened because one rule lived in two
+    (``create_tr_commit``, the design K2). 0382 happened because one rule lived in two
     places — the screen hid what the check caught — so the exclusion decision is made
     exactly once, here, and both commits inherit it.
 
@@ -280,7 +280,7 @@ def _absorb_worker_edits(
 ) -> list[str]:
     """Commit the worker's leftover edits — WITHOUT swallowing tool debris.
 
-    0382 B0001 (NR0003 §2-4 / proposal 1). This used to be a bare ``git add -A``. It has
+    (proposal 1). This used to be a bare ``git add -A``. It has
     no filter, so whatever sat in the worktree went in: commit ``0f502ce`` carries 5
     real files and 261 ``server/.test-tmp-*`` leftovers, and nobody could have caught
     it because the explorer hides exactly those paths (§2-3). One unfiltered line
@@ -335,22 +335,22 @@ def _artifact_payload(
     }
 
 
-# ── TR commit point (flowgate.default.0332 D0005 §3.1 / L0007 §1·§2.6) ────────
+# ── TR commit point ────────
 
-# L0007 §1 tr_commit_lock_wait_sec = 0. The approval does NOT queue behind a
+# tr_commit_lock_wait_sec = 0. The approval does NOT queue behind a
 # finalize: approvals happen many times an hour and a 5-second lock wait would make
 # one finalize stall every approval in the project. Giving up costs nothing — the
 # changes stay in the worktree for the next TR commit or the absorb commit, and the
-# ledger records that this round was skipped for `git_busy` (D0005 §4).
+# ledger records that this round was skipped for `git_busy`.
 TR_COMMIT_LOCK_WAIT_SEC = 0
 
 
 def create_tr_commit(group_id: str, subject: str) -> dict:
     """Commit the group worktree's pending work as one TR's commit point.
 
-    Called right after a TR approval has committed (D0005 K1), so it must **never
+    Called right after a TR approval has committed, so it must **never
     raise and never block**: every refusal is a ``skipped_reason`` from the closed set
-    P0006 §5-2 fixed, and the approval stands either way. Returns::
+    fixed, and the approval stands either way. Returns::
 
         {committed, commit (7-char), commit_sha (40-char), subject,
          skipped_reason, excluded_artifacts, committed_paths}
@@ -359,7 +359,7 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
     tr_commit_service for why trusting that list would let one TR's commit carry (and
     a later rewind revert) another TR's work.
 
-    The gates mirror the cancel side's G2~G9 (L0007 §4.1) in the same order, so the
+    The gates mirror the cancel side's G2~G9 in the same order, so the
     two halves of this feature never disagree about what "this group has git" means.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -400,7 +400,7 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         _log.warning("tr commit precheck failed for %s", group_id, exc_info=True)
         return skip("commit_failed")
 
-    # 0666 D 3.10: the Group's G, one attempt (TR_COMMIT_LOCK_WAIT_SEC = 0). A commit
+    # D 3.10: the Group's G, one attempt (TR_COMMIT_LOCK_WAIT_SEC = 0). A commit
     # on the Group's own branch creates no ref, so no M.
     lock = _acquire_group_lock(project_id, group_id, "tr_commit", no_wait=True)
     if lock is None:
@@ -432,7 +432,7 @@ def _commit_worktree(wt_path: Path, subject: str, cfg: dict, owner: str, *,
 
     artifacts, has_staged = _stage_worker_edits(wt_path)
     if not has_staged:
-        # D0005 K3 / P0006 §1-5: "changed nothing" and "changed only debris" are
+        # K3 / the plan: "changed nothing" and "changed only debris" are
         # two different sentences on screen, so they stay two different codes.
         return skip("artifacts_only" if artifacts else "no_changes", artifacts)
 
@@ -480,13 +480,13 @@ def _attempt_skip(reason: str, artifacts=None) -> dict:
 
 def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_commit: str,
                           attempt_id: str, doc_id: str, subject: str, *, ref: Optional[str] = None) -> dict:
-    """0061 T#8: only the supplied attempt worktree; W, never the group's G.
+    """only the supplied attempt worktree; W, never the group's G.
 
     The Graph caller freezes execution requests and token writes before entering.
     A commit trailer recovers the Git-before-DB crash window without another commit.
     Unexpected history is refused rather than attributed to this attempt.
 
-    0111 T#8: ``ref`` is a ref-layout attempt's dedicated ref (``branch`` is then only
+    ``ref`` is a ref-layout attempt's dedicated ref (``branch`` is then only
     its W key): the tree's HEAD must be detached at the ref or ahead of it, and the
     verified result (a new or a recovered commit) moves the ref (``update-ref`` from
     the tip read under W). A ref left behind by a lost update is moved on the retry.
@@ -526,7 +526,7 @@ def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_com
             return _attempt_skip("attempt_ref_mismatch")
 
         def moved(result: dict) -> dict:
-            # T#8: the ref follows the verified result; a skip keeps it where it was.
+            # the ref follows the verified result; a skip keeps it where it was.
             sha = result.get("commit_sha")
             if tip is None or not result.get("committed") or not sha or sha == tip:
                 return result
@@ -563,7 +563,7 @@ def _acquire_group_lock(project_id: str, group_id: str, holder_kind: str, *,
     """The Group's G for the TR history paths (0666 D 3.10), or None when refused.
 
     Never raises: these callers answer a refusal with ``git_busy`` and must not fail
-    the approval or rewind around them (D0005 K8). A caller bug (LockProgramError, e.g.
+    the approval or rewind around them. A caller bug (LockProgramError, e.g.
     an acquire inside a DB transaction) is logged and refused the same way.
     """
     from . import lock_manager
@@ -598,18 +598,18 @@ def _release_group_lock(lock: Optional[tuple]) -> None:
         _log.warning("group lock release failed for %s", key, exc_info=True)
 
 
-# L0007 §2.6 — the cancel commit's body always names the reverted commit in full, so
+# the cancel commit's body always names the reverted commit in full, so
 # `git log --grep` finds the pair from either side.
 _CANCEL_TRAILER = "FlowGate: TR commit cancel for {code} (group {group_id})."
 
 
-# T0018 K11 — the same idea for the other direction. A distinct wording, because a reader
+# K11 — the same idea for the other direction. A distinct wording, because a reader
 # grepping the log has to be able to tell a cancel from the restore that undid it.
 _REAPPLY_TRAILER = "FlowGate: TR commit reapply for {code} (group {group_id})."
 
 
 def cancel_subject(commit_subject: Optional[str]) -> str:
-    """``Revert "<original subject>"`` clipped to the shared subject cap (L0007 §2.6).
+    """``Revert "<original subject>"`` clipped to the shared subject cap.
 
     Clipping puts the ellipsis INSIDE the quotes so the result still reads as one
     quoted title rather than a truncated sentence.
@@ -631,12 +631,12 @@ def cancel_body(commit_sha: str, doc_code: str, group_id: str) -> str:
 
 
 def reapply_subject(commit_subject: Optional[str]) -> str:
-    """``Reapply "<original subject>"`` — the forward restore's commit (T0018 K11).
+    """``Reapply "<original subject>"`` — the forward restore's commit.
 
     Same clipping rule as :func:`cancel_subject`, ellipsis inside the quotes, so a step
     that went commit → revert → restore reads as three lines of one sentence in the log.
     Named after the ORIGINAL TR, not after the cancel commit it technically reverts:
-    "Revert \"Revert \"0009-TR: ...\"\"" is what git would have written by itself and it
+    "Revert \"Revert \"the earlier implementation: ...\"\"" is what git would have written by itself and it
     tells a reader nothing.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -667,7 +667,7 @@ def reapply_body(
 
 
 def cancel_blocking_dirty(wt_path: Path) -> bool:
-    """Does this worktree hold changes a revert would get mixed up with? (L0007 §2.5)
+    """Does this worktree hold changes a revert would get mixed up with?
 
     NOT the finalize ``_dirty()``: that one calls any untracked file dirty, and the TR
     commit path *deliberately leaves tool debris behind* (0382), so every group would
@@ -692,7 +692,7 @@ def cancel_blocking_dirty(wt_path: Path) -> bool:
 def cancel_dirty_paths(wt_path: Path) -> Optional[list[str]]:
     """The paths :func:`cancel_blocking_dirty` calls dirty — tracked changes (a conflicted
     entry included) and the new files the exclusion rules keep — or None when Git cannot
-    say. 0061 T#13: what an interrupted Graph Time Machine step may claim as its own
+    say. the earlier implementation: what an interrupted Graph Time Machine step may claim as its own
     (``open_cancel_session``'s ``owned_dirt``) is judged path by path against this list.
     """
     from modules.flow_gate.services import git_service as _gs
@@ -710,10 +710,10 @@ def cancel_dirty_paths(wt_path: Path) -> Optional[list[str]]:
 
 
 def _cancel_prelock_gate(group_id: str) -> dict:
-    """L0007 §4.1 G2~G7 — everything that can be judged from the DB alone.
+    """G2~G7 — everything that can be judged from the DB alone.
 
     Split out of :func:`open_cancel_session` because the rewind dialog's preview must
-    answer with the SAME reading in the SAME order (L0007 §3 observed group state); two copies
+    answer with the SAME reading in the SAME order (observed group state); two copies
     of this ladder is exactly how a dialog ends up saying "2 commits will be reverted"
     about a group whose cancel then refuses.
     """
@@ -756,9 +756,9 @@ def _cancel_prelock_gate(group_id: str) -> dict:
     return out
 
 
-# L0007 §3 — the preview's group-level status. `git_busy`/`dirty_worktree` are NOT in
+# the preview's group-level status. `git_busy`/`dirty_worktree` are NOT in
 # it: both are true only at the instant a revert is being laid down, and a dialog that
-# opened ten seconds ago would be stating them as facts (P0006 §2 introduction). A merge in
+# opened ten seconds ago would be stating them as facts (introduction). A merge in
 # flight therefore previews as "active" and the confirm press answers `git_busy` — with
 # a [다시 시도] button, which is the honest sequence.
 _PREVIEW_STATUS_OF_BLOCK = {
@@ -770,7 +770,7 @@ _PREVIEW_STATUS_OF_BLOCK = {
 
 
 def cancel_group_status(group_id: str) -> str:
-    """``active`` | ``already_merged`` | ``no_worktree`` | ``git_inactive`` (P0006 §2)."""
+    """``active`` | ``already_merged`` | ``no_worktree`` | ``git_inactive``."""
     gate = _cancel_prelock_gate(group_id)
     reason = gate["blocked_reason"]
     if not reason:
@@ -779,13 +779,13 @@ def cancel_group_status(group_id: str) -> str:
 
 
 def open_cancel_session(group_id: str, target_shas: Sequence[str], *, owned_dirt=None) -> dict:
-    """Evaluate L0007 §4.1 G2~G11 and, if all pass, hold the Group's G lock.
+    """Evaluate the earlier implementation G2~G11 and, if all pass, hold the Group's G lock.
 
     Returns ``{"ok": True, "session": {...}}`` or
-    ``{"ok": False, "blocked_reason": <P0006 §5-3 code>, "block_sub": <L0007 detail>}``.
+    ``{"ok": False, "blocked_reason": <the plan code>, "block_sub": <the earlier implementation detail>}``.
 
     The gate ORDER is the part that carries meaning, and it is the same order the
-    preview reads (L0007 §3 observed group state) so the dialog never promises something the
+    preview reads (observed group state) so the dialog never promises something the
     press of the button then refuses:
 
     * ``already_merged`` is checked BEFORE ``worktree_registered`` — cleanup unregisters
@@ -796,15 +796,15 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str], *, owned_dirt
       already stale by the time the first revert lands.
 
     The caller MUST call :func:`close_cancel_session` in a ``finally``; the re-arm that
-    follows a rewind takes the same lock and it is not re-entrant (L0007 §2.1 ③).
+    follows a rewind takes the same lock and it is not re-entrant (③).
 
-    T0018 K11: the forward restore opens this SAME session, deliberately un-renamed. Every
+    K11: the forward restore opens this SAME session, deliberately un-renamed. Every
     gate above applies to a reapply word for word — a merged group, a missing worktree, a
     busy lock and a dirty tree block putting source back for exactly the reasons they block
     taking it away — and G11 keeps its meaning because the restore passes the CANCEL
     commits as ``target_shas``: "are the commits I am about to peel off still in this tree".
 
-    0061 T#13: ``owned_dirt`` (a callable taking the worktree path, judged under G) lets
+    ``owned_dirt`` (a callable taking the worktree path, judged under G) lets
     G10 through only for a dirty tree its caller proves to be the uncommitted state of its
     own interrupted step — the Graph Time Machine's resume. None (every other caller) keeps
     G10 as it is.
@@ -867,7 +867,7 @@ def open_terminal_reopen_session(group_id: str) -> dict:
     be overwritten. A missing terminal worktree is valid and needs no cleanliness
     check.
 
-    0669 unit 7d: G (time_machine), like the cancel session. The re-arm no longer
+    unit 7d: G (time_machine), like the cancel session. The re-arm no longer
     provisions inside the workflow transaction: it only checks C1 there, and the
     worktree_provision job is registered under this G after the commit and runs once
     the session is closed (``finish_terminal_reopen``). A worktree_cleanup job still
@@ -986,9 +986,9 @@ def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
 
 def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str,
                      mainline: Optional[int] = None) -> dict:
-    """Lay one revert commit on top of the worktree (L0007 §2.3). One TR, one commit.
+    """Lay one revert commit on top of the worktree. One TR, one commit.
 
-    ``mainline`` (0061 T#13): a merge commit is reverted against that parent (``-m``) — the Graph Time Machine reverts
+    ``mainline``: a merge commit is reverted against that parent (``-m``) — the Graph Time Machine reverts
     an attempt's integration merge against its first parent. None keeps the single-parent revert of every TR commit.
 
     Returns ``{"kind": "ok"|"empty"|"blocked", "commit": <full 40-char sha>|None,
@@ -998,17 +998,17 @@ def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str,
     ``--no-commit`` then our own ``commit``: the subject, the body trailer and the
     commit identity have to match the rest of FlowGate's commits, and ``git revert``'s
     self-generated message follows none of those rules. Reverts are never batched — one
-    revert commit per TR is what lets the ledger point at them one to one (D0005 K6).
+    revert commit per TR is what lets the ledger point at them one to one.
     """
     return _revert_one(session, commit_sha=commit_sha, subject=subject, body=body, mainline=mainline)
 
 
 def reapply_tr_commit(session: dict, *, cancel_commit: str, subject: str, body: str) -> dict:
-    """Peel one cancel commit back off — the forward restore's git step (T0018 K11).
+    """Peel one cancel commit back off — the forward restore's git step.
 
     A reapply IS a revert: reverting the revert is what puts the original TR's source
     back, and it is the only form that keeps the rewind itself visible in the log
-    (D0005 K5). So this is deliberately a two-line wrapper over the same helper
+. So this is deliberately a two-line wrapper over the same helper
     :func:`revert_tr_commit` uses rather than a second copy of the procedure —
     ``--no-commit``, the empty check, our own message, the same three ``kind`` values.
     A copy would drift the moment one of the two learns something, and a clean automatic
@@ -1032,14 +1032,14 @@ def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str,
     )
     if proc.returncode != 0:
         # Conflict, failed application and timeout are one outcome here on purpose:
-        # the person's next move is identical in all three (P0006 §5-4 closed the set),
+        # the person's next move is identical in all three (closed the set),
         # and the difference is kept in the ledger's attempt log, not in the response.
         sub = "timeout" if "timeout_expired" in (proc.stderr or "") else "revert_conflict"
         return {"kind": "blocked", "commit": None, "sub": sub}
     staged = _gs._run_git(["diff", "--cached", "--quiet"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     if staged.returncode == 0:
         # Nothing to undo — the same content was already reverted by another route.
-        # An empty commit would be noise in the history for a no-op (D0005 K3).
+        # An empty commit would be noise in the history for a no-op.
         return {"kind": "empty", "commit": None, "sub": "empty_revert"}
     proc = _gs._run_git(
         [*_gs._GIT_IDENT, "commit", "-m", subject, "-m", body],
@@ -1053,13 +1053,13 @@ def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str,
 
 
 def restore_after_failed_revert(session: dict) -> None:
-    """Put the worktree back the way the failed revert found it (L0007 §2.3).
+    """Put the worktree back the way the failed revert found it.
 
     ``git clean`` is NOT called and never will be on this path — 0382 is what happens
     when a git command that deletes untracked files sits in an automatic flow. Return
     codes are ignored: the outcome is already ``blocked`` and the loop stops here.
 
-    TR0019: this is no longer what a CONFLICT does. A conflict now becomes a session
+    this is no longer what a CONFLICT does. A conflict now becomes a session
     (:func:`open_tr_conflict_session`) so a person or an AI can still see it; this
     stays as the fallback for the failures nobody can resolve by editing a file — a
     timeout, a commit that would not run, a session row that could not be written —
@@ -1073,20 +1073,20 @@ def restore_after_failed_revert(session: dict) -> None:
 
 
 def _merge_commit_subject(branch: str, base_branch: str) -> str:
-    """flowgate.default.0232 B0001 — the `--no-ff` merge commit must NOT reuse the
+    """the `--no-ff` merge commit must NOT reuse the
     work subject. Back when a work branch held exactly ONE absorb commit carrying
     finalize_subject(), wrapping that single commit in a merge commit of the SAME
     memoized subject made origin show identical title+diff twice ("same code committed
     twice"). A conventional Merge subject makes the pair read as a normal work-commit +
     merge-commit instead of a duplicate.
 
-    That "exactly one commit" premise is gone: since flowgate.default.0332 every TR
+    That "exactly one commit" premise is gone: since the earlier change every TR
     approval leaves its own commit point on the branch and the absorb commit only
-    picks up what is left over (D0005 K4). The rule above still stands — with several
+    picks up what is left over. The rule above still stands — with several
     commits on the branch the duplicate-title collision is even less likely — but the
     old sentence stated a fact that no longer holds, and leaving it would have the next
     reader reason from a premise the code abandoned. `--no-ff` (the two-parent
-    topology) is deliberately kept so unmerge's `^2` restore (flowgate.default.0202)
+    topology) is deliberately kept so unmerge's `^2` restore
     still resolves the merged work branch."""
     return f"Merge branch '{branch}' into '{base_branch}'"
 
@@ -1098,7 +1098,7 @@ def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
     for row in _gs.db_git.list_states_of_project_any(project_id):
         if row.get("status") != "merged" or not row.get("merge_commit"):
             continue
-        # 0594 T0012 §15: a merge that landed on a non-base target never maps to a
+        # a merge that landed on a non-base target never maps to a
         # base commit, so the base unmerge list can never offer it (fail closed).
         if not merged_on_project_base(row):
             continue

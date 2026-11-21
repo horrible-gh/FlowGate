@@ -7,7 +7,7 @@ from flowgate.card_settings import fields, legacy_adapter as legacy, repository
 def candidates(flow_id, node, asker, asker_role=None):
     """Who answers a card question: (picks, failure reason, default_tail, card class).
 
-    flowgate.v02test.0051 T0005 (A1, R 0051.0001 "when the worker asks, the reviewer answers"): every card — legacy or new role
+    (A1, the earlier implementation.0001 "when the worker asks, the reviewer answers"): every card — legacy or new role
     card — asks its review AI first; when the card has no review AI, or it is the asker's own provider (the actual AI
     that asked, never the requested one), an independent enabled default AI answers. Every pick differs from the
     asker's provider and is enabled; unknown asker provenance picks nothing (a person answers). ``default_tail`` is

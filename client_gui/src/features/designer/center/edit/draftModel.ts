@@ -2,12 +2,12 @@
 // the draft's nodes and execution edges taken from the shown Graph, the whole-draft content a
 // save sends, key remapping once a save answers the keys of new nodes / edges, and the shown
 // Graph rebuilt from an edited draft. Pure: no Vue, no transport.
-// flowgate.v02.0045 TR0020 rev3: a Graph Flow's latest revision shown with no draft is offered for
+// a Graph Flow's latest revision shown with no draft is offered for
 // editing as is (`editableRevision`) — its first edit saves a new draft (version 0, the revision's
 // nodes and edges with their keys), so 편집 needs no button and the revision itself never changes.
-// flowgate.v02.0053 T#5: the shown Graph keeps a draft node's documents while its kind stays, and takes
+// the shown Graph keeps a draft node's documents while its kind stays, and takes
 // the card lines a save answered (withCardDocuments).
-// flowgate.v02.0064 T#4: a card's title state is no part of the draft — the draft content, its saves and its undo /
+// a card's title state is no part of the draft — the draft content, its saves and its undo /
 // redo history never carry it (a title is saved apart, graph/nodeTitle.ts). A draft node shown again after an edit, an
 // undo or a redo keeps the title and title state it shows now.
 import type {
@@ -110,7 +110,7 @@ export function remapDraft(model: DraftModel, keyMap: Readonly<Record<string, st
 }
 
 /**
- * TR0020 rev3: a Graph Flow showing its latest revision with no draft, made editable — its Graph
+ * a Graph Flow showing its latest revision with no draft, made editable — its Graph
  * nodes and execution edges become the draft part, saved as a new draft (base = that revision) by
  * the first edit. Else null: another ownership or view, a stored draft (it is shown instead), or a
  * run pinned to an older revision (editing it would copy that older structure).
@@ -148,7 +148,7 @@ export function withDraft(graph: FlowGraph, model: DraftModel): FlowGraph {
         nodeType: n.nodeType, docType: n.docType, paletteItemId: n.paletteItemId, label: n.label,
         assignee: n.assignee, rootBound: before?.definition?.rootBound ?? false,
       },
-      // flowgate.v02.0053 T#5: a node keeps its documents while it keeps its kind (an edit elsewhere, a
+      // a node keeps its documents while it keeps its kind (an edit elsewhere, a
       // move); a retyped node shows none until its save answers the new card lines (withCardDocuments).
       ...(sameKind(before, n) ? keptDocuments(before!) : {}),
       ...(before?.titleState !== undefined ? { titleState: before.titleState } : {}),
@@ -172,8 +172,8 @@ const keptDocuments = (node: FlowGraphNode): Pick<FlowGraphNode, 'document' | 'c
 })
 
 /**
- * flowgate.v02.0053 T#5 — the shown Graph after a draft save answered the card lines (stored node key ->
- * lines, T#1 `card_documents`): each draft node takes its lines (none when the answer has none for it). A
+ * the shown Graph after a draft save answered the card lines (stored node key ->
+ * lines, the earlier implementation `card_documents`): each draft node takes its lines (none when the answer has none for it). A
  * draft node without a document shows its first line's document — a line a person writes first — as the
  * Canvas read does (graph_projector.first_line_document), so the placed card's Q&A and attachments work
  * before the Flow is read again.
@@ -209,7 +209,7 @@ function lineDocument(lines: readonly FlowGraphCardDocument[]): FlowGraphNodeDoc
 export function remapGraph(graph: FlowGraph, keyMap: Readonly<Record<string, string>>): FlowGraph {
   return {
     ...graph,
-    // flowgate.v02gui.0020: a renamed node names its `tmp_` key, so a card held in a drag stays the same card.
+    // a renamed node names its `tmp_` key, so a card held in a drag stays the same card.
     nodes: graph.nodes.map((node) => (keyMap[node.id] ? { ...node, id: keyMap[node.id], renamedFrom: node.id } : node)),
     edges: graph.edges.map((edge) => ({
       ...edge, id: mapKey(edge.id, keyMap), source: mapKey(edge.source, keyMap), target: mapKey(edge.target, keyMap),

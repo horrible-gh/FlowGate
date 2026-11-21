@@ -61,20 +61,20 @@ TARGETS = [("mysql", "mysql"), ("postgres", "postgresql")]
 
 # Migrations whose data transform is handled by portable Python at startup
 # (server/modules/flow_gate/db/backfills/) instead of SQL, because the SQLite
-# source uses JSON DML that does not translate (B0091, migration 037). For every
+# source uses JSON DML that does not translate (migration 037). For every
 # non-SQLite target we emit a documented no-op stub in place of the converter's
 # (broken) output. The sqlite source is left untouched.
 _CODE_HANDLED_IDS = {"037"}
 
-# PostgreSQL-only hand-authored migrations (found during group 0542's audit of the full regen).
+# PostgreSQL-only hand-authored migrations (found during the earlier change's audit of the full regen).
 # Each of these rewrites a CHECK constraint or FK in place (ALTER TABLE ... DROP/ADD CONSTRAINT)
 # instead of the SQLite source's rename+recreate+drop table-rebuild idiom, because PostgreSQL can
 # ALTER a CHECK/FK directly and does not need the rebuild dance the SQLite dialect requires. Every
 # one of these has its own NR/T history fixing a real boot failure (e.g. 107 is flowgate.default.
-# 0539 T0004's fix for a schema-drift bug; 075 documents why 074a's PostgreSQL file never renames
+# 's fix for a schema-drift bug; 075 documents why 074a's PostgreSQL file never renames
 # anything). A generic regen from the SQLite source would silently replace the deliberate, already
 # -fixed file with the generic (heavier, and in 107's case, previously *broken*) rebuild — exactly
-# what group 0542 caught happening to itself. Regen skips these exact files entirely on the
+# what the earlier change caught happening to itself. Regen skips these exact files entirely on the
 # postgres target: it neither overwrites nor diffs them, leaving the committed file exactly as
 # authored.
 #
@@ -88,7 +88,7 @@ _PG_HAND_AUTHORED_FILES = {
     "075_test_run_cases_fk_repair.sql",
     "092_ai_invoke_document_review_loop_live_run.sql",
     "107_tokens_failure_origin_review_scope.sql",
-    # flowgate.v02gui.0017: PG-only sequence realign + CH/WP re-seed (no SQLite source; setval is
+    # PG-only sequence realign + CH/WP re-seed (no SQLite source; setval is
     # PostgreSQL-only). Listed so a future same-named SQLite file can never make regen overwrite them.
     "046a_pg_document_types_sequence_realign.sql",
     "189_repair_pg_conversation_work_plan_doctypes.sql",
@@ -98,21 +98,21 @@ _PG_HAND_AUTHORED_FILES = {
 # the aggregate json_group_array / json_array_length). If any file NOT in
 # _CODE_HANDLED_IDS reaches a non-SQLite target still carrying these, fail loudly
 # at regen time instead of silently emitting broken SQL that aborts startup —
-# this is exactly the B0091 root cause (037 slipped through verbatim).
+# this is exactly the the regression root cause (037 slipped through verbatim).
 _UNSUPPORTED_DML = re.compile(r"(?i)\b(json_each|json_group_array|json_array_length)\s*\(")
 
 # SQLite-only procedural SQL the converter passes through verbatim: a CREATE
 # TRIGGER (SQLite's trigger grammar — the WHEN guard clause and the RAISE()
 # function — is not valid MariaDB/PostgreSQL syntax and aborts startup with a
 # 1064 parse error). This is the *same class* of defect as _UNSUPPORTED_DML but
-# for schema rather than data (B0091, group 0091, migration 041). If any file
+# for schema rather than data (the earlier change, migration 041). If any file
 # reaches a non-SQLite target still carrying one, fail loudly at regen time:
 # either re-express the invariant as a portable CHECK (preferred, as 041 does),
 # or author the dialect-specific trigger by hand. Never ship the verbatim SQLite
 # trigger — that just moves the boot failure to the next migration.
 _UNSUPPORTED_TRIGGER = re.compile(r"(?im)^\s*CREATE\s+TRIGGER\b|\bRAISE\s*\(")
 
-# PostgreSQL-only regression guards (B0095, group 0095). After the postgres fix-up steps run,
+# PostgreSQL-only regression guards (the earlier change). After the postgres fix-up steps run,
 # none of these should remain; if one does it means a new migration introduced a JSON construct
 # the post-processor does not yet handle, and shipping it would abort the boot migration.
 #   * an uncast ->/->> JSON access (left operand not produced by a ::jsonb/::json cast)
@@ -123,7 +123,7 @@ _PG_SQLITE_JSON_CTOR = re.compile(r"(?i)\bjson_(?:array|object)\s*\(")
 #     grouping key is the table's PRIMARY KEY (fix_pg_groupby_pk rewrites doc_id -> id)
 _PG_GROUPBY_NONPK = re.compile(r"(?i)\bGROUP\s+BY\s+\w+\.doc_id\b")
 
-# T0006 §7: --verify must not fail solely because an already-committed, already-applied
+# verify must not fail solely because an already-committed, already-applied
 # migration is not byte-identical to *today's* generator output. §1's top-level invariant
 # forbids rewriting/regenerating such a file to match, so a content mismatch on it can never be
 # fixed by "run the tool again" -- treating it as an error would make --verify permanently red
@@ -202,7 +202,7 @@ _INSERT_HEAD = re.compile(r"(?im)^\s*INSERT\b")
 
 # MySQL/MariaDB cannot index a TEXT/BLOB column without a prefix length, so a TEXT
 # column used as PRIMARY KEY / UNIQUE / FOREIGN KEY makes the migration fail outright
-# (group 0088: "MySQL TEXT-PK"). sqloader 0.2.15 convert leaves these as TEXT. Step 3
+# ("MySQL TEXT-PK"). sqloader 0.2.15 convert leaves these as TEXT. Step 3
 # below promotes every *keyed* TEXT column to VARCHAR so the schema applies. 191 is the
 # classic utf8mb4-safe single-column index length (191*4 = 764 B) and keeps the one wide
 # composite key (4 text cols) under MariaDB's 3072-byte InnoDB limit. PostgreSQL indexes
@@ -400,7 +400,7 @@ def build_index_map(text: str, imap: IndexMap) -> None:
 # The optional `ON CONFLICT DO NOTHING` tail absorbs a sqloader 0.2.15 convert defect: when a
 # SQLite file opens with `BEGIN;` immediately followed by an `INSERT OR IGNORE`, the converter can
 # mis-attach that INSERT's idempotency clause onto the BEGIN, emitting `BEGIN ON CONFLICT DO
-# NOTHING;` (B0095, migration 047 — a syntax error on PostgreSQL). It is the same mis-attachment
+# NOTHING;` (migration 047 — a syntax error on PostgreSQL). It is the same mis-attachment
 # class the PRAGMA step documents, and a duplicate of the real INSERT's own clause, so dropping the
 # whole transaction-control line is both required (BEGIN/COMMIT are stripped anyway, the migrator
 # wraps each file in its own transaction) and lossless.
@@ -462,7 +462,7 @@ def fix_pg_create_view(text: str) -> str:
 # SQLite scalar json_extract(col,'$.k') is converted by sqloader to PostgreSQL col->>'k'.
 # But PostgreSQL's -> / ->> operators are defined only when the left operand is json/jsonb;
 # our `meta` (and any JSON-bearing) column is declared TEXT, so `text ->> 'k'` raises
-# "operator does not exist: text ->> unknown" and aborts the migration (B0095 / group 0095).
+# "operator does not exist: text ->> unknown" and aborts the migration (the earlier change).
 # Cast the left operand to jsonb. Matches `col->>'k'` and `tbl.col->'k'`; idempotent (a left
 # operand already produced by a `::jsonb` cast is preceded by ':' and is skipped).
 _PG_JSON_ARROW = re.compile(r"(?i)\b(\w+(?:\.\w+)?)\s*(->>?)\s*('(?:[^']|'')*')")
@@ -482,7 +482,7 @@ def fix_pg_json_text_ops(text: str) -> str:
 # SQLite/MySQL variadic json_array(...) / json_object(k,v,...) are passed through by sqloader
 # verbatim, but PostgreSQL spells these json_build_array(...) / json_build_object(k,v,...).
 # Left verbatim they fail at parse/plan time on PostgreSQL even when the UPDATE matches 0 rows
-# (B0095, migration 031 — the "moving error" that surfaces once the ->> view defect is fixed).
+# (migration 031 — the "moving error" that surfaces once the ->> view defect is fixed).
 _PG_JSON_CTOR_NAME = re.compile(r"(?i)\bjson_(array|object)\s*\(")
 # An UPDATE backfill assigns the constructed json to a TEXT column; PostgreSQL has no
 # assignment cast json→text, so the SET value must be cast ::text. Scope to one statement
@@ -505,7 +505,7 @@ def fix_pg_json_constructors(text: str) -> str:
 # allows the bare columns unconditionally and MySQL extends the relaxation to UNIQUE NOT NULL
 # columns, so both accept it, but PostgreSQL aborts the migration with
 # "column \"d.project_id\" must appear in the GROUP BY clause or be used in an aggregate
-# function" (B0095 — the error that only surfaces once the ->> jsonb fix lets the view body
+# function" (the regression — the error that only surfaces once the ->> jsonb fix lets the view body
 # parse). Group by the real primary key `id` instead: it is 1:1 with doc_id (identical groups,
 # same aggregation) and makes every d.* column functionally dependent, validating the whole
 # SELECT list. Idempotent: a rewritten `GROUP BY d.id` no longer matches.
@@ -527,7 +527,7 @@ def fix_pg_groupby_pk(text: str) -> str:
 # The SQLite "drop & recreate a table to alter it" idiom does a bare ``DROP TABLE x``. SQLite
 # allows it with foreign_keys OFF; MySQL is fenced by fix_mysql_fk_during_recreate. PostgreSQL
 # refuses to drop a table still referenced by a FOREIGN KEY ("cannot drop table x because other
-# objects depend on it … Use DROP … CASCADE", B0095, migration 003). DROP … CASCADE is wrong here:
+# objects depend on it … Use DROP … CASCADE", the regression, migration 003). DROP … CASCADE is wrong here:
 # it would silently drop the dependents' FK constraints and never restore them, leaving the
 # recreated table with weaker integrity than the SQLite/MySQL targets. Instead, fence each
 # non-temp DROP TABLE with a pair of DO blocks that snapshot the inbound FKs from the catalog,
@@ -706,7 +706,7 @@ def pg_unfenced_drop_table(text: str) -> str | None:
 # `... ON CONFLICT DO NOTHING`, but ON CONFLICT only swallows UNIQUE/exclusion conflicts: a CHECK
 # (or NOT NULL / FK) violation still aborts the statement. That diverges on migration 015, which
 # `INSERT OR IGNORE`s document_types rows with series='qna' — a value the series CHECK never admits
-# on any backend, so SQLite/MySQL silently drop those rows while PostgreSQL errors out (B0095). Wrap
+# on any backend, so SQLite/MySQL silently drop those rows while PostgreSQL errors out. Wrap
 # each converted OR-IGNORE insert in a plpgsql block that swallows exactly the violations OR IGNORE
 # swallows, restoring "ignore on any constraint" parity. The inner ON CONFLICT DO NOTHING is kept so
 # UNIQUE idempotency still works per-row; the EXCEPTION subtransaction covers the rest.
@@ -916,7 +916,7 @@ def regenerate(verify_only: bool) -> int:
                     final = fix_mysql_partial_indexes(final)
                     final = fix_mysql_nonunique_partial_indexes(final)
                     final = fix_mysql_fk_during_recreate(final)
-                # Code-handled migrations (B0091): replace the converter's broken
+                # Code-handled migrations: replace the converter's broken
                 # output with a documented no-op stub on non-SQLite targets.
                 if _migration_id(fname) in _CODE_HANDLED_IDS:
                     final = _NOOP_STUB.format(fname=fname, target=out_name)
@@ -940,7 +940,7 @@ def regenerate(verify_only: bool) -> int:
                 src_text = open(os.path.join(SRC, fname), encoding="utf-8").read()
                 final = staged[fname]
 
-                # B0091 guard: any non-code-handled file still carrying SQLite-only
+                # guard: any non-code-handled file still carrying SQLite-only
                 # JSON DML on a non-SQLite target would ship broken and abort startup.
                 if _migration_id(fname) not in _CODE_HANDLED_IDS and _UNSUPPORTED_DML.search(final):
                     rc = 1
@@ -952,7 +952,7 @@ def regenerate(verify_only: bool) -> int:
                         file=sys.stderr,
                     )
 
-                # B0091 (041): a CREATE TRIGGER / RAISE() that survives to a
+                # : a CREATE TRIGGER / RAISE that survives to a
                 # non-SQLite target is untranslatable procedural SQL and aborts
                 # startup with a 1064 parse error. Fail loudly rather than ship it.
                 if _migration_id(fname) not in _CODE_HANDLED_IDS and _UNSUPPORTED_TRIGGER.search(final):
@@ -965,7 +965,7 @@ def regenerate(verify_only: bool) -> int:
                         file=sys.stderr,
                     )
 
-                # B0095 guard: a PostgreSQL file must not ship an uncast ->/->> access or a
+                # guard: a PostgreSQL file must not ship an uncast ->/->> access or a
                 # verbatim SQLite/MySQL json_array/json_object constructor (both abort startup).
                 if out_name == "postgres":
                     if _PG_UNCAST_ARROW.search(final):
@@ -1030,7 +1030,7 @@ def regenerate(verify_only: bool) -> int:
                               f"commit the intended content.")
                     elif label == "DIFF":
                         # Historical, already-committed migration: report the drift for
-                        # visibility but do not fail -- T0006 §1/§7 forbid rewriting an
+                        # visibility but do not fail -- the earlier implementation forbid rewriting an
                         # immutable historical file just to match today's generator output.
                         print(f"~~ DIFF {out_name}/{fname} (committed != regenerated; historical, "
                               f"not failing per T0006 §7)")

@@ -1,4 +1,4 @@
-"""Server WARNING / ERROR records in the DB (flowgate.v02test.0050 T0005).
+"""Server WARNING / ERROR records in the DB.
 
 Nobody reads ``logs/default.log``. Every log record of WARNING and above is kept in one table,
 ``server_logs``, so an AI asked to "look at the server errors" can read it with plain SQL.

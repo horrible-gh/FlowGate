@@ -1,6 +1,6 @@
 """Git per-project config CRUD, validation, and base-branch resolution.
 
-Extracted from git_service.py (flowgate.default.0550 T0007, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _base_root_of(project_id: str) -> Optional[Path]:
     return _gs.src_root(project_name, base_branch)
 
 
-# ── Config CRUD (P0005 §1·§2) ────────────────────────────────────────────────
+# ── Config CRUD ────────────────────────────────────────────────
 
 _URL_HTTP_RE = re.compile(r"^https?://\S+$")
 _URL_SSH_RE = re.compile(r"^(ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
@@ -58,7 +58,7 @@ def _validate_repo_url(repo_url: str) -> None:
             f"repo_url must be an http(s):// or ssh (git@host:path) URL: {repo_url!r}",
         )
     if "@" in url and _URL_HTTP_RE.match(url):
-        # http(s) URLs must not smuggle credentials in userinfo (L0006 §2.3 invariant d).
+        # http(s) URLs must not smuggle credentials in userinfo (invariant d).
         raise GitServiceError(
             422, "invalid_request",
             "repo_url must not embed credentials; store the token separately",
@@ -68,7 +68,7 @@ def _validate_repo_url(repo_url: str) -> None:
 def _resolve_author(
     body: dict, existing: Optional[dict]
 ) -> tuple[Optional[str], Optional[str]]:
-    """Resolve the commit-author override to store (0237 — R0001/NR0003 §5.3).
+    """Resolve the commit-author override to store.
 
     Same exclude_unset protocol as secret/translate_url: field omitted → keep the
     stored value; sent → trim, "" → NULL (= revert to the FlowGate default).
@@ -105,7 +105,7 @@ def _resolve_author(
             f"author_email must be at most {GIT_AUTHOR_EMAIL_MAX} characters",
         )
     # git strips "<", ">" and newlines out of an ident itself (so this can never be
-    # an argv/config injection — NR0003 §4); reject them anyway so the operator gets
+    # an argv/config injection — the review); reject them anyway so the operator gets
     # the identity they typed instead of a silently mangled one.
     if any(ch in name for ch in "<>\n\r"):
         raise GitServiceError(
@@ -120,7 +120,7 @@ def _resolve_author(
 
 
 def _config_view(row: dict) -> dict:
-    """Row → response config object (P0005 §1-1) with the secret masked."""
+    """Row → response config object with the secret masked."""
     has_secret = bool(row.get("secret_enc"))
     masked: Optional[str] = None
     if has_secret:
@@ -142,7 +142,7 @@ def _config_view(row: dict) -> dict:
         # null = not overridden → server commits as the FlowGate default (0237).
         "author_name": row.get("author_name") or None,
         "author_email": row.get("author_email") or None,
-        # TR work-scope check enforcement stage (0299 D0004 §3.6). An existing row with a NULL
+        # TR work-scope check enforcement stage. An existing row with a NULL
         # column predates migration 071, so it is read with the default 'observe'.
         "tr_scope_stage": row.get("tr_scope_stage") or "observe",
         "updated_at": row.get("updated_at"),
@@ -174,13 +174,13 @@ def save_config(project_id: str, body: dict) -> dict:
     existing = _gs.db_git.get_config(project_id)
     secret = body.get("secret", None)
     if secret is None:
-        secret_enc = existing.get("secret_enc") if existing else None  # keep (P0005 §2-1)
+        secret_enc = existing.get("secret_enc") if existing else None  # keep
     elif secret == "":
         secret_enc = None  # clear
     else:
         secret_enc = encrypt_secret(str(secret))
 
-    # translate_url (P0003 §4-1): field omitted → keep stored value; sent → trim,
+    # translate_url: field omitted → keep stored value; sent → trim,
     # empty string stored as NULL (= disabled). Same exclude_unset "keep" protocol
     # as secret above.
     if "translate_url" in body:
@@ -190,7 +190,7 @@ def save_config(project_id: str, body: dict) -> dict:
 
     author_name, author_email = _resolve_author(body, existing)
 
-    # tr_scope_stage (0299 D0004 §3.6): omitted → keep stored (or 'observe' on a new
+    # tr_scope_stage: omitted → keep stored (or 'observe' on a new
     # row). Same exclude_unset "keep" protocol as translate_url/secret above, so an
     # older client that does not know the field cannot silently reset the stage.
     if "tr_scope_stage" in body:
@@ -227,7 +227,7 @@ def save_config(project_id: str, body: dict) -> dict:
 def _pin_legacy_work_bases_before_base_change(
     project_id: str, existing: Optional[dict], new_base: str,
 ) -> list[str]:
-    """flowgate.default.0665 T0004 (NR0003 §5.1/§7.5): a group whose work base is
+    """a group whose work base is
     still NULL follows the CURRENT project base.  Before the base changes, every such
     group that already started Git work is pinned to the base it actually forked
     from, so the change cannot silently move its work base, update source, reopen
@@ -260,7 +260,7 @@ def _pin_legacy_work_bases_before_base_change(
 def delete_config(project_id: str) -> dict:
     from modules.flow_gate.services import git_service as _gs
     deleted = _gs.db_git.delete_config(project_id)
-    # Existing worktrees are intentionally left untouched (P0005 §2-3);
+    # Existing worktrees are intentionally left untouched;
     # source resolution falls back immediately via the enabled/config check (E13).
     return {"ok": True, "deleted": deleted}
 
@@ -277,19 +277,19 @@ def _require_enabled_config(project_id: str) -> dict:
     return cfg
 
 
-# ── Base source-root resolution for the file explorer (0319 B0001) ────────────
+# ── Base source-root resolution for the file explorer ────────────
 # The base file explorer and the editable base-checkout APIs resolved their source
 # directory from project_settings.branch (default "main"), while Git provisioning
 # clones/adopts the connected repo into src/{project}/{base_branch} (the git
 # integration config). When a connected repo's base branch is not "main" these two
 # paths diverge: provisioning lands the existing source under base_branch, but the
-# explorer walks an empty src/{project}/main and shows nothing — the B0001 report
+# explorer walks an empty src/{project}/main and shows nothing — the the regression report
 # ("the branch name is even the same, yet the file explorer is empty"). The source
 # is never actually "not fetched"; the read layer just looks at the wrong branch
 # folder. Resolve the base tree from the Git base_branch whenever integration is
 # ENABLED (mirroring the effective_src_root gate); a non-integrated or disabled
 # project keeps its project_settings.branch folder, so its behaviour never changes
-# (fallback-first, L0006 §2.2).
+# (fallback-first, the earlier implementation).
 def base_branch_for(project_id: Optional[str]) -> Optional[str]:
     """Git base_branch when integration is enabled for the project, else None.
 
@@ -312,7 +312,7 @@ def base_branch_for(project_id: Optional[str]) -> Optional[str]:
 def base_src_root(
     project_id: Optional[str], project_name: str, fallback_branch: str = "main"
 ) -> Path:
-    """Base source-checkout root for base file-explorer reads/edits (0319 B0001).
+    """Base source-checkout root for base file-explorer reads/edits.
 
     Git-integrated (enabled) → ``src_root(project_name, base_branch)``; otherwise
     ``src_root(project_name, fallback_branch)``. ``fallback_branch`` is the value
@@ -328,8 +328,8 @@ def base_src_root(
     return _gs.src_root(project_name, branch)
 
 
-# ── Origin/config invariant for network Git entry points (flowgate.default.0361
-# NR0003 §7/§16) ──────────────────────────────────────────────────────────────
+# ── Origin/config invariant for network Git entry points (the earlier change
+# ) ──────────────────────────────────────────────────────────────
 # save_config() only ever updates the DB row (above); it never touches an
 # existing checkout's actual `origin` remote. A checkout adopted/cloned under an
 # OLDER repo_url therefore keeps pointing at the old remote even after the
@@ -349,11 +349,11 @@ def ensure_origin_matches_config(base_root: Path, repo_url: str) -> None:
     Local-only: this never performs network I/O and never touches the working
     tree, index or HEAD — only the `origin` remote's URL. A blank ``repo_url``
     is a no-op (nothing to compare against). On success, git's own "same value"
-    check makes an already-matching origin a no-op too (NR0003 §12 test I).
+    check makes an already-matching origin a no-op too.
 
     Raises GitServiceError if the `git remote` command itself fails, so a caller
     that has not yet started its fetch/push does not proceed against an origin
-    that may still be stale (NR0003 §11 failure policy).
+    that may still be stale (failure policy).
     """
     from modules.flow_gate.services import git_service as _gs
     expected = (repo_url or "").strip()

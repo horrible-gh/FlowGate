@@ -1,4 +1,4 @@
-"""flowgate.default.0641 T2#1 — durable TR2 ownership and mutation-guard foundation."""
+"""#1 — durable TR2 ownership and mutation-guard foundation."""
 from __future__ import annotations
 
 import json

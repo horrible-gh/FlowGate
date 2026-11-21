@@ -1,11 +1,11 @@
-"""The stage assignments a run read shows (flowgate.v02.0113 T#3, L-2 §2.12, P-1 §6). Reads only.
+"""The stage assignments a run read shows. Reads only.
 
 ``wire`` adds three keys to a node run of the run payload (``run_service.node_run_wire``): ``wait_reason`` (L-2
 ``node_wait_reason``), ``stage_assignments`` (the attempt's assignments, ordered instruction → instruction review →
 result → result review, ``seq`` ascending, the current one marked) and ``approval_wait_submission`` (the submission mark
 of the B-1 row ``approval_wait_reason`` showed). No attempt / the feature off / a read error: null; a pre-feature attempt:
 ``[]`` and null. ``waits_on_person`` is the run's idle judgement of a node of an assigned attempt (L-2 §2.12 table).
-Nothing here resolves a role, writes an assignment or restarts a wait. flowgate.v02.0113 T#3 rework: a pre-feature
+Nothing here resolves a role, writes an assignment or restarts a wait. the earlier change the earlier implementation rework: a pre-feature
 attempt's instruction stage whose written instruction nothing judges any more waits for a person (``_unjudged_instruction``).
 """
 from __future__ import annotations
@@ -115,7 +115,7 @@ def approval_wait_submission(row: dict, attempt_id: Optional[str]) -> Optional[d
 
 
 def _unjudged_instruction(flow_id: str, row: dict) -> bool:
-    """flowgate.v02.0113 T#3 rework (0084: 0004-T ``pending_review`` with no review and no approval, the run idle
+    """(0084: the earlier implementation ``pending_review`` with no review and no approval, the run idle
     ``no_targets``): a pre-feature attempt's node open in its instruction stage whose instruction is written and not
     approved while nothing works on it — no AI run of the node, no review of it, no run-end hand-off
     (``review_stage.ai_working``). Its run-end step is over or lost and the run read's reconciliation took nothing

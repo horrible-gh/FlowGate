@@ -1,4 +1,4 @@
-"""0066 T#3 — per-target merge results and their follow-up push (D#1 §3-8, E10/E11).
+"""per-target merge results and their follow-up push.
 
 The evidence is the latest completed manual merge attempt of each target branch. A push
 names one by ``merge_id``; its ``merge_result_push`` job holds G -> B/W -> R from the

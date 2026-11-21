@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0074 T#5 — the WP→v0.2 card deploy on the client (D#1 §5 · §6.1 · §3.6.1 · §3.6.4; T#4 API, 0014-TR §2),
+ * the WP→v0.2 card deploy on the client (· · ·; the earlier implementation API, the earlier implementation),
  * with `@shared/api` mocked as a small server:
  * - the three wrappers of features/document/api/workPlan.ts: their paths, request bodies and the snake_case → camelCase
  *   answers; the execution sends the preview's baseline exactly as the server sent it (wp_revision_no, plan_digest,

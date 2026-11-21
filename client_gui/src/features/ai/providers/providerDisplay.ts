@@ -3,7 +3,7 @@
 import type { ExecLocation, ProviderExecType, ProviderItem } from '../types'
 
 // The 2x2 execution mode: where (local/remote) x how (CLI/API). Only CLI runs today
-// (flowgate.v02.0017 CH0006): the API cells are shown but cannot be picked.
+// : the API cells are shown but cannot be picked.
 export const EXEC_LOCATIONS: ExecLocation[] = ['local', 'remote']
 export const EXEC_TYPES: ProviderExecType[] = ['cli', 'api']
 

@@ -1,18 +1,18 @@
-"""Does rewind revert TR commits with cancellation commits? (0332 T#2, latter part of R0001.)
+"""Does rewind revert TR commits with cancellation commits? (latter part of the requirement.)
 
-Following T#1, exercise all three layers for real. Reverting is **actual Git behavior**:
+Following the earlier implementation, exercise all three layers for real. Reverting is **actual Git behavior**:
 substitutes prove only that revert was called, not whether conflicts remain conflicts
 or empty reverts avoid empty commits. Those require a real repository.
 
 1. **Ledger (085 cancellation columns)**: run ``mark_canceled``, ``record_cancel_attempt``,
-   and ``record_block`` on fully migrated SQLite. Rows are never deleted (D0005 K5).
+   and ``record_block`` on fully migrated SQLite. Rows are never deleted.
 2. **Revert (Git)**: cancel in a real worktree and check cancellation commits, restoration
-   and stopping on conflicts, and tool artifacts not blocking cancellation (L0007 §2.5).
-3. **Decision table (L0007 §4.1)**: check each G1–G11 code against the closed set and
-   `retryable` table in P0006 §5-3.
+   and stopping on conflicts, and tool artifacts not blocking cancellation.
+3. **Decision table **: check each G1–G11 code against the closed set and
+   `retryable` table in the plan
 
 The governing contract: **rewind always stands; cancellation is best-effort but must
-report everything it could not do** (D0005 K8).
+report everything it could not do**.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ INSERT OR IGNORE INTO group_git_state(
 
 
 class _SqliteStore:
-    """The same minimal contract as T#1. Deliberately omit ``_sql`` so the registered real SQL
+    """The same minimal contract as the earlier implementation. Deliberately omit ``_sql`` so the registered real SQL
     body is used (the lesson from 0393)."""
 
     def __init__(self, db_path: str) -> None:
@@ -220,7 +220,7 @@ def test_an_empty_revert_is_canceled_without_a_cancel_commit(real_store):
 
 
 def test_a_failed_attempt_is_logged_and_the_row_stays_live(real_store):
-    """The response groups failures under ``conflict`` (P0006 §5-4's closed set).
+    """The response groups failures under ``conflict`` ('s closed set).
     Record what actually failed here so it remains available for later inspection."""
     row = db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="x",
@@ -311,7 +311,7 @@ def test_the_cancel_lays_one_revert_commit_per_tr_newest_first(real_store, git_a
 def test_a_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
     real_store, git_active, repo,
 ):
-    """TR0019 changed the outcome here.
+    """changed the outcome here.
 
     Previously a conflict immediately erased evidence with ``revert --quit`` + ``reset --hard``,
     leaving only an instruction to resolve it manually. Now it leaves one conflict-session row:
@@ -339,7 +339,7 @@ def test_a_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
         ("0011-TR", "conflict"), ("0009-TR", "not_attempted"),
     ]
     # Still offer no [다시 시도] that resends the same request, because the answer would be unchanged.
-    # A separate path can now produce a different answer: commit after resolution (L0007 §4.2).
+    # A separate path can now produce a different answer: commit after resolution.
     assert result["retryable"] is False
 
     # The conflict remains live: no commit, but markers remain in the tree and the sequencer is open.
@@ -409,7 +409,7 @@ def test_giving_up_on_a_parked_conflict_restores_the_worktree_exactly_as_before(
 def test_an_empty_revert_is_reported_as_already_canceled_without_a_new_commit(
     real_store, git_active, repo,
 ):
-    """The same content was already reverted through another path. Do not add an empty commit (same reason as D0005 K3)."""
+    """The same content was already reverted through another path. Do not add an empty commit (same reason as the design K3)."""
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     row = _ledger_commit(_GROUP, _TR_A, sha_a, "0009-TR: A")
@@ -432,7 +432,7 @@ def test_an_empty_revert_is_reported_as_already_canceled_without_a_new_commit(
 
 @needs_git
 def test_an_already_canceled_tr_is_skipped_not_reverted_again(real_store, git_active, repo):
-    """D0005 K6: pressing rewind twice must not revert the revert."""
+    """K6: pressing rewind twice must not revert the revert."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
     _ledger_commit(_GROUP, _TR_A, sha_a, "0009-TR: a")
@@ -451,7 +451,7 @@ def test_an_already_canceled_tr_is_skipped_not_reverted_again(real_store, git_ac
 
 @needs_git
 def test_tool_debris_does_not_block_a_cancel(real_store, git_active, repo):
-    """L0007 §2.5: tool artifacts are files deliberately left behind by TR commits and normally exist.
+    """tool artifacts are files deliberately left behind by TR commits and normally exist.
     Reusing finalize's ``_dirty()`` unchanged would make this group impossible to cancel."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
@@ -493,7 +493,7 @@ def test_an_uncommitted_edit_blocks_the_cancel_and_asks_for_a_retry(
 def test_commits_missing_from_this_worktree_cancel_nothing_at_all(
     real_store, git_active, repo,
 ):
-    """G11 fails closed: no cancellation is safer than partial cancellation (L0007 §5)."""
+    """G11 fails closed: no cancellation is safer than partial cancellation."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
     _ledger_commit(_GROUP, _TR_A, sha_a, "0009-TR: a")
@@ -510,11 +510,11 @@ def test_commits_missing_from_this_worktree_cancel_nothing_at_all(
     assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live", "live"]
 
 
-# ── 3. Decision table (L0007 §4.1 / P0006 §5-3) ──────────────────────────────
+# ── 3. Decision table ──────────────────────────────
 
 def test_a_group_that_never_committed_ends_quietly_not_on_an_error(real_store):
     """G1 precedes the gates. Rewinding a documents-only group must end with "취소할 커밋이 없었습니다",
-    not a ``git_inactive`` result screen (L0007 §4.1 note 1)."""
+    not a ``git_inactive`` result screen (note 1)."""
     result = trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
 
     assert result == {
@@ -582,7 +582,7 @@ def test_a_busy_project_lock_is_retryable_and_never_waits_forever(
 
 
 def test_every_block_code_stays_inside_the_closed_protocol_set(real_store):
-    """The five codes in P0006 §5-3's closed set. Adding another code would leave the UI
+    """The five codes in the plan's closed set. Adding another code would leave the UI
     without text to render it."""
     assert set(trc.CANCEL_BLOCK_RETRYABLE) == {
         "already_merged", "no_worktree", "git_inactive", "dirty_worktree", "git_busy",
@@ -594,7 +594,7 @@ def test_every_block_code_stays_inside_the_closed_protocol_set(real_store):
 def test_the_lock_is_released_before_the_rearm_can_ask_for_it(
     real_store, git_active, repo, monkeypatch,
 ):
-    """L0007 §2.1 ③: the lock is not reentrant. If cancellation returns holding it, rearming
+    """③: the lock is not reentrant. If cancellation returns holding it, rearming
     waits five seconds and then silently fails."""
     held: list[str] = []
     stub_group_lock(monkeypatch, held=held)
@@ -607,7 +607,7 @@ def test_the_lock_is_released_before_the_rearm_can_ask_for_it(
     assert held == []
 
 
-# ── 4. Preview (P0006 §2) ──────────────────────────────────────────────────
+# ── 4. Preview ──────────────────────────────────────────────────
 
 def test_the_preview_shows_live_and_canceled_rows_with_the_group_status(
     real_store, git_active,
@@ -638,7 +638,7 @@ def test_the_preview_calls_a_merged_group_merged_not_worktree_less(
 
 
 def test_a_merge_in_flight_previews_as_active(real_store, git_active, monkeypatch):
-    """L0007 §3: preview omits conditions that may become stale seconds after opening the dialog.
+    """preview omits conditions that may become stale seconds after opening the dialog.
     At confirmation, G6 answers ``git_busy`` with retry allowed."""
     monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
         "worktree_registered": 1, "branch": "work", "status": "merging",
@@ -653,7 +653,7 @@ def test_a_git_inactive_group_previews_empty(real_store, monkeypatch):
     assert trc.commit_preview(_GROUP) == {"group_status": "git_inactive", "commits": []}
 
 
-# ── 5. Attachment to the rewind path (L0007 §2.1) ───────────────────────────
+# ── 5. Attachment to the rewind path ───────────────────────────
 
 def test_the_rearm_cancels_first_and_re_arms_second(monkeypatch):
     """Order changes the result. Rearming recreates the worktree from base HEAD;
@@ -675,7 +675,7 @@ def test_the_rearm_cancels_first_and_re_arms_second(monkeypatch):
 
 
 def test_a_cancel_that_blows_up_drops_the_key_but_still_re_arms(monkeypatch):
-    """L0007 §5: rewind succeeds with HTTP 200 and omits the key entirely instead of returning a partial object."""
+    """rewind succeeds with HTTP 200 and omits the key entirely instead of returning a partial object."""
     def _boom(group_id, doc_ids):
         raise RuntimeError("ledger table missing")
 
@@ -691,7 +691,7 @@ def test_a_cancel_that_blows_up_drops_the_key_but_still_re_arms(monkeypatch):
 
 
 def test_a_rearm_failure_does_not_swallow_the_cancel_result(monkeypatch):
-    """Cancellation and rearming do not depend on each other's success (L0007 §5)."""
+    """Cancellation and rearming do not depend on each other's success."""
     def _boom(project_id, group_id):
         raise RuntimeError("worktree gone")
 
@@ -705,7 +705,7 @@ def test_a_rearm_failure_does_not_swallow_the_cancel_result(monkeypatch):
 
 
 def test_the_reopen_result_carries_the_cancel_object(monkeypatch):
-    """P0006 §3: preserve the existing response (``ok``/``reopened``/``return_point``), adding only
+    """preserve the existing response (``ok``/``reopened``/``return_point``), adding only
     one key. The assertions in 0142/0381 must continue to hold."""
     payload = {"ok": True, "reopened": [_TR_A], "return_point": {"exists": False}}
     monkeypatch.setattr(
@@ -723,7 +723,7 @@ def test_the_reopen_result_carries_the_cancel_object(monkeypatch):
     assert result["tr_commit_cancel"]["attempted"] is True
 
 
-# ── 6. Retry cancellation only (P0006 §4 / L0007 §2.7) ───────────────────────
+# ── 6. Retry cancellation only ───────────────────────
 
 def test_the_retry_spares_the_reapproved_commit_but_not_the_document(
     real_store, git_active, monkeypatch,
@@ -731,7 +731,7 @@ def test_the_retry_spares_the_reapproved_commit_but_not_the_document(
     """A step approved again after rewind produced a new commit. Reverting it would erase work
     the person just redid, so exclude that **row**.
 
-    0332 T0018 §3-4 changed this contract. Previously the entire reapproved **document** was
+    changed this contract. Previously the entire reapproved **document** was
     excluded, also hiding old rows still live after failed cancellation from every retry path.
     Keep the document as a target and exclude only the row just created by reapproval.
     (test_tr_commit_reapply_0332.py §7 verifies that the old row remains a target.)"""
@@ -759,7 +759,7 @@ def test_the_retry_spares_the_reapproved_commit_but_not_the_document(
             "VALUES(?, ?, ?, 'approved', 'fp')",
             [rp_id, doc_id, seq],
         )
-    # 0009-TR was approved again in the meantime.
+    # was approved again in the meantime.
     real_store._execute(
         "UPDATE documents SET doc_review_status = 'approved' WHERE doc_id = ?", [_TR_A]
     )
@@ -777,10 +777,10 @@ def test_a_retry_without_a_return_point_is_a_quiet_no_op(real_store):
     assert result["canceled"] == [] and result["skipped"] == []
 
 
-# ── 7. Both routes (P0006 §2·§4) ────────────────────────────────────────────
+# ── 7. Both routes ────────────────────────────────────────────
 
 def test_the_return_point_read_carries_the_preview(real_store, git_active):
-    """Preview extends the query the dialog already makes, rather than adding an endpoint (P0006 §2 introduction)."""
+    """Preview extends the query the dialog already makes, rather than adding an endpoint (introduction)."""
     from modules.flow_gate.documents.routers import documents as doc_routes
 
     _ledger_commit(_GROUP, _TR_A, "a" * 40, "0009-TR: a")
@@ -851,7 +851,7 @@ def test_a_retry_that_blows_up_reports_nothing_attempted_not_a_500(real_store, m
     assert payload == {"ok": True, "tr_commit_cancel": trc.empty_cancel_result()}
 
 
-# ── 8. Audit event (D0005 §4) ──────────────────────────────────────────────
+# ── 8. Audit event ──────────────────────────────────────────────
 
 def test_a_cancel_outcome_reaches_the_audit_trail(monkeypatch):
     """Record cancellation results in rewind auditing. Add a row rather than rewriting the rewind event:
@@ -921,7 +921,7 @@ def test_terminal_dirty_cancel_never_reprovisions_the_worktree(monkeypatch):
     assert reprovisioned == []
 
 
-# ── 9. live rewind uncommit semantics (0532 T0005) ───────────────────────────
+# ── 9. live rewind uncommit semantics ───────────────────────────
 
 @needs_git
 def test_live_rewind_uncommits_single_tr_without_deleting_content_or_revert(
@@ -1054,14 +1054,14 @@ def test_reapproval_creates_new_sha_with_preserved_message_and_content(
     rows = db_ledger.list_by_group(_GROUP)
     assert [r["state"] for r in rows] == ["live", "canceled"]
 
-# ── 5. merged/pushed terminal reopen (flowgate.default.0532 T0007) ──────────
+# ── 5. merged/pushed terminal reopen ──────────
 
 @needs_git
 @pytest.mark.parametrize("status", ["merged", "pushed"])
 def test_terminal_reopen_marks_the_row_terminal_without_touching_git(
     real_store, git_active, repo, monkeypatch, status,
 ):
-    """T0007 §3/§9: merged/pushed rows are not revert/reset targets. Even when the gate answers
+    """merged/pushed rows are not revert/reset targets. Even when the gate answers
     ``already_merged``, record only ``reopened_terminal_at`` rather than falsely marking
     the ledger ``canceled``, and never touch Git."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
@@ -1093,7 +1093,7 @@ def test_terminal_reopen_marks_the_row_terminal_without_touching_git(
 
 
 def test_a_terminal_row_stops_being_a_live_cancel_target(real_store):
-    """T0007 §5: a row marked terminal is excluded from subsequent ordinary rewinds. Otherwise
+    """a row marked terminal is excluded from subsequent ordinary rewinds. Otherwise
     the next rewind selects a commit buried below a merge that no reset can reach,
     then pointlessly blocks on ``unsafe_suffix``."""
     row = db_ledger.record_commit(
@@ -1108,7 +1108,7 @@ def test_a_terminal_row_stops_being_a_live_cancel_target(real_store):
 
 
 def test_terminal_history_is_not_a_marker_or_preview_until_reapproval(real_store):
-    """T0007 §5--6 — C1 is permanent history, not a current live commit.
+    """C1 is permanent history, not a current live commit.
 
     All three read models must agree immediately after terminal reopen: cancel targets,
     strip marker, and Time Machine preview are empty. A subsequent approval's C2 is
@@ -1133,7 +1133,7 @@ def test_terminal_history_is_not_a_marker_or_preview_until_reapproval(real_store
 
 
 def test_group_commit_summary_does_not_count_a_terminal_row_as_live(real_store):
-    """T0007 §5/§6 — ``list_by_group``/``list_by_groups`` used to omit
+    """``list_by_group``/``list_by_groups`` used to omit
     ``reopened_terminal_at``, so a terminal-reopened C1 was counted as ``live`` and sent
     to the status panel as a plain live row, which then rendered it as today's active,
     cancelable commit. The row must stay in the summary (§5 keeps it as history) but stop
@@ -1147,7 +1147,7 @@ def test_group_commit_summary_does_not_count_a_terminal_row_as_live(real_store):
     assert summary["live"] == 0
     assert summary["terminal_reopened"] == 1
     [commit_row] = summary["commits"]
-    # `state` never lies about history (D0005 K5) — it stays 'live' — but the panel
+    # `state` never lies about history — it stays 'live' — but the panel
     # needs the separate flag to avoid rendering this as the active step.
     assert commit_row["state"] == "live"
     assert commit_row["terminal_reopened"] is True
@@ -1196,7 +1196,7 @@ def test_terminal_reopen_preflight_refuses_dirty_worktree_before_workflow_rewind
 
 
 def test_terminal_reopen_dirty_guard_stops_before_ledger_mark(real_store, monkeypatch):
-    """T0007 §4/§11 — terminal status cannot bypass the dirty-worktree guard."""
+    """terminal status cannot bypass the dirty-worktree guard."""
     row = db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="C1",
     )
@@ -1240,7 +1240,7 @@ def test_marking_terminal_twice_is_idempotent(real_store):
 def test_terminal_reopen_reapproval_commits_delta_only_with_reused_message(
     real_store, git_active, repo, monkeypatch,
 ):
-    """T0007 §3/§7/§8: reapproval in a worktree whose base (B1) already contains C1 must produce
+    """reapproval in a worktree whose base (B1) already contains C1 must produce
     a new commit containing only the delta, not C1 again. Reuse C1's message unless an
     explicit draft exists, and always generate a new SHA."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
@@ -1291,7 +1291,7 @@ def test_terminal_reopen_reapproval_commits_delta_only_with_reused_message(
 
 
 def test_terminal_reopen_result_never_carries_a_blocked_reason(real_store):
-    """The screen reads ``blocked_reason`` as \"nothing was attempted\" (P0006 §5-3).
+    """The screen reads ``blocked_reason`` as \"nothing was attempted\".
     A terminal reopen DID attempt something (it marked history) and must never be
     reported through that field, or the UI shows [Git 상태 패널 열기] for a reopen that
     already succeeded."""

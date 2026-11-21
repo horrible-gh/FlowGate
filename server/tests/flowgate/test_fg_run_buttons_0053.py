@@ -1,6 +1,6 @@
 """flowgate.v02.0053 T#9 — the top band's 다음 단계 · 전체 실행 · 중지 on the Graph run API, as the client sends them.
 
-flowgate.v02.0113 T#3 rework (0025-T ⑤): the client sends one command per button since 0061 T#14
+(T ⑤): the client sends one command per button since the earlier implementation
 (``center/run/flowRunControl.ts``), and these tests follow it — no start-then-stop any more:
 
 - 다음 단계: ``POST /flows/{id}/runs {"revision_no": null, "mode": "step"}`` — a new run, or the Flow's idle run going on
@@ -12,8 +12,8 @@ flowgate.v02.0113 T#3 rework (0025-T ⑤): the client sends one command per butt
 
 On the same real SQLite DB and fixtures as ``test_fg_card_settings`` (card documents and card settings registered as
 ``startup`` does): a real run is made, its status and node states change and are published, the run hands out with the
-card's own settings (T#2) and binds its result into the card's document line made when the card was placed (T#1).
-Without decided run rules (the product state: D0004 §8 unanswered, every policy slot ``undecided``) a start is refused
+card's own settings and binds its result into the card's document line made when the card was placed.
+Without decided run rules (the product state: the design unanswered, every policy slot ``undecided``) a start is refused
 with ``run_policy_undecided`` and no run exists — the reason the client shows as a toast. The person cards finish with
 their result registered at the opening (the pre-feature contract, ``pre_feature_attempts``); the assigned path of the
 same buttons is ``test_fg_next_step_wait_0113`` / ``test_fg_ai_roles_l2_*``.
@@ -27,7 +27,7 @@ from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helper
     FA, TEST_VERSION, _TestPolicy, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft, setting,
 )
 
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -187,7 +187,7 @@ def test_stop_refuses_a_run_that_is_not_running(env, decided):
 def test_the_run_hands_out_with_the_card_settings_and_binds_into_the_placed_card_document(env, decided):
     (t1,), body = _confirmed(env, [("T", AI)])
     instruction = next(line["doc_id"] for line in body["card_documents"][t1] if line["slot"] == "instruction")
-    legacy_setting(env, FA, t1, "run_ai", "aip_card")                     # T#2: the card's own run AI
+    legacy_setting(env, FA, t1, "run_ai", "aip_card")                     # the card's own run AI
     legacy_setting(env, FA, t1, "restart", 2)
 
     run = _all(env)
@@ -200,7 +200,7 @@ def test_the_run_hands_out_with_the_card_settings_and_binds_into_the_placed_card
     result = _doc(FA, 92, "T")
     v01_contact.after_inbox_registered(FA, result, "T", job["token"]["token_id"])
     lines = _sql(env["db"], "SELECT slot, doc_id FROM graph_node_documents WHERE node_key = ? ORDER BY ordinal", (t1,))
-    assert lines[0] == {"slot": "instruction", "doc_id": result}      # T#1: the card's line takes the result
+    assert lines[0] == {"slot": "instruction", "doc_id": result}      # the card's line takes the result
     assert _sql(env["db"], "SELECT superseded_by FROM documents WHERE doc_id = ?", (instruction,))[0]["superseded_by"] == result
 
 
@@ -215,7 +215,7 @@ class _GatePolicy(_TestPolicy):
 
 @pytest.fixture()
 def gate_decided(monkeypatch):
-    """Decided test rules with a gate rule; confirming a gate revision needs a validation slot (P0008 S3-5)."""
+    """Decided test rules with a gate rule; confirming a gate revision needs a validation slot."""
     from modules.flow_gate.graph_workflow.domain import policies, run_policies
 
     monkeypatch.setitem(policies._registered, "gate_node", object())
@@ -229,7 +229,7 @@ def gate_decided(monkeypatch):
         policies.set_system_default(key, value, version)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: its person card's result registered at the opening moves the run to the gate; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
+# (T) pre-feature contract: its person card's result registered at the opening moves the run to the gate; an assigned person RUN card writes its instruction first (L-2) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 def test_a_gate_the_run_opened_is_decided_and_completes_the_run(pre_feature_attempts, env, gate_decided):
     (t1, gate), _body = _confirmed(env, [("T", LEE), ("gate", None)])
     run = _all(env)
@@ -246,5 +246,5 @@ def test_a_gate_the_run_opened_is_decided_and_completes_the_run(pre_feature_atte
     assert [(r["status"], r["idle_reason"]) for r in _run_row(env)] == [("idle", "completed")]
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

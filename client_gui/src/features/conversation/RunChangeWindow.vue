@@ -33,7 +33,7 @@
         </li>
       </ul>
       <div class="rc-window-detail">
-        <!-- flowgate.v02test.0031 B: window-local view mode. Switching it re-renders the cached stored diff only. -->
+        <!-- B: window-local view mode. Switching it re-renders the cached stored diff only. -->
         <div v-if="selectedDiff" class="rc-window-modes" data-test="rc-mode" role="group" :aria-label="t('gui.conversation.diff.mode_label')">
           <button
             type="button"
@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0151 T-B: each run owns a modeless viewer. Only recorded run diffs are read;
+// T-B: each run owns a modeless viewer. Only recorded run diffs are read;
 // file states never enter the chat session or its timeline. Closing destroys the cache.
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -85,7 +85,7 @@ const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const minimized = ref(false)
 const closed = ref(false)
 const selectedPath = ref<string | null>(null)
-// flowgate.v02test.0031 B: 'changes' (stored diff) or 'full' (stored run-end text). Owned by this
+// B: 'changes' (stored diff) or 'full' (stored run-end text). Owned by this
 // window instance only: kept across file selection and chat/run invalidation, reset by a new mount,
 // never stored in `files` and never a reason to read the diff again.
 const mode = ref<'changes' | 'full'>('changes')

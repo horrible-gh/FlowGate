@@ -1,10 +1,10 @@
-"""Card order on an existing sequence — flowgate.default.0649 T#2 (NR0003 O2-O6, §11).
+"""Card order on an existing sequence — the earlier change the earlier implementation.
 
 Against a sqlite file with every migration applied and a store whose transaction really
 rolls back:
 
   * O2 — started cards are judged by card id, not by key: the G4 swap (B moved in front of
-    a finished A, so B becomes T#1) is refused on every reflecting path — apply/preview
+    a finished A, so B becomes the earlier implementation) is refused on every reflecting path — apply/preview
     keep and change, pour replace_after/append, P1, a direct plan-reflecting PATCH — and
     nothing is written; the same holds when A and B carry identical values. A started card
     removed from the plan is refused too. Control: reordering only cards that have not
@@ -20,14 +20,14 @@ rolls back:
     another type, is rolled back (plan_order_violation), an ordinary edit is not checked;
     rows a pre-card client sends are placed by the settings they carry, so a same-type
     swap is refused and rows that cannot be told apart are not guessed (ambiguous_card).
-  * O0 legacy history (G9) — a T#2 deleted (r1) and re-added (r2) is a new card: the old
-    started T#2 row is retired, the new card is poured at its position, and the post-write
+  * O0 legacy history  — a the earlier implementation deleted (r1) and re-added (r2) is a new card: the old
+    started the earlier implementation row is retired, the new card is poured at its position, and the post-write
     check does not trip on the retired row; E1 (result provenance) and E3 alike; control
     with no deletion links it. A later move of the new card ahead of the started one is
     refused, a move behind it is allowed.
   * O6 — the materializer's step key comes from the row's card in its revision snapshot (G5).
-  * flowgate.v02.0112 — a paired design card (card_stage_model "paired") is poured as its
-    DS row and its result row; WP0005 rev 1 verbatim saves, saves again without duplicates,
+  * a paired design card (card_stage_model "paired") is poured as its
+    DS row and its result row; the plan verbatim saves, saves again without duplicates,
     and rows that break the card (another card's id, another type, reversed, missing) roll
     back; a started DS row is not mistaken for another card's row.
   * CAS / execution — a stale workflow tag refuses the apply untouched; a change-apply asks
@@ -86,7 +86,7 @@ class _TxStore(_SqliteStore):
 
     def table_exists(self, name: str) -> bool:
         # The real store's sqlite answer (connection.table_exists). P1 asks it before it
-        # writes a v0.1 sequence: is the v0.2 Graph definition table there (0074 T#4)?
+        # writes a v0.1 sequence: is the v0.2 Graph definition table there ?
         return self._fetch_one(
             "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?", [name],
         ) is not None
@@ -254,7 +254,7 @@ def _g4(env: Env, *, same_values: bool = False):
         ("T", "c_a", 0, DOC["T1"]), ("TR", "c_a", 0, DOC["TR1"]),
         ("T", "c_b", 0, None), ("TR", "c_b", 0, None),
     ]))
-    # rev1: B moved in front of the finished A — B is now T#1, A is T#2, ids unchanged.
+    # : B moved in front of the finished A — B is now the earlier implementation, A is the earlier implementation, ids unchanged.
     plan = env.plan(1, _body([("T", "c_b"), ("T", "c_a")], same_values=same_values))
     assert [s["key"] for s in plan["steps"] if s["card_id"] == "c_b"] == ["T#1", "TR#1"]
     return seq_id, plan
@@ -391,7 +391,7 @@ def test_started_prefix_allowed_reorder_keeps_values_on_their_own_cards(env):
         ("T", "c_a"), ("TR", "c_a"), ("T", "c_c"), ("TR", "c_c"), ("T", "c_b"), ("TR", "c_b"),
     ]
     _monotonic(seq_id)
-    # Each card took its own values although its key moved (T#2 <-> T#3).
+    # Each card took its own values although its key moved.
     assert [(r["note"], r["pre_instruction_text"]) for r in after[2:]] == [
         ("note c_c", "brief c_c"), ("report c_c", None),
         ("note c_b", "brief c_b"), ("report c_b", None),
@@ -792,12 +792,12 @@ def test_row_of_another_cards_type_rolls_the_save_back(env):
     order.assert_plan_order(_items(seq_id), plan, _WP, [])  # the untouched rows pass
 
 
-# ══ 0112 — a paired design card is two rows: DS + its result (NR0003 §5.4) ══
+# ══ 0112 — a paired design card is two rows: DS + its result ══
 #
 # plan_to_rows pours a paired design card (card_stage_model "paired") as its DS instruction
 # row and its L/P/DB result row, both of the card. The post-write check used to expect one
 # row of the card's type per card, so the first DS row failed card_type_mismatch and the
-# whole save rolled back. The body is flowgate.v02.0102.0005-WP rev 1, stored verbatim.
+# whole save rolled back. The body is the earlier change, stored verbatim.
 
 _PAIRED_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "work_plan_v02_0102_0005_rev1.json"
 _PAIRED_SHA256 = "13d9d09ca8705f25cf193774af9602ef5d5edac76e2069790e3f55d9f9d3c47a"
@@ -1119,7 +1119,7 @@ def test_paired_row_types_are_the_rows_plan_to_rows_makes_whatever_the_instructi
 def _g9(env: Env, *, evidence: str, deleted: bool = True):
     env.revisions[0] = _legacy({"T": 2})
     env.revisions[1] = _legacy({"T": 1 if deleted else 2})
-    plan = env.plan(2, _legacy({"T": 2}))  # r2: a new T#2 (deleted=True) or the same one
+    plan = env.plan(2, _legacy({"T": 2}))  # r2: a new the earlier implementation (deleted=True) or the same one
     seq_id = _seed_rows([
         {"type": "T", "source": _WP, "rev": 0, "result": DOC["T1"], "label": "T"},
         {"type": "TR", "source": _WP, "rev": 0, "result": DOC["TR1"], "label": "TR"},
@@ -1157,12 +1157,12 @@ def test_g9_deleted_and_re_added_card_is_poured_and_the_old_row_retired(env, evi
     else:
         _apply(env, plan, change=True)
     after = _items(seq_id)
-    # The old T#2 rows (started T + its protected TR) stay exactly where they were.
+    # The old the earlier implementation rows (started T + its protected TR) stay exactly where they were.
     assert [_ident(r) for r in after[:4]] == [_ident(r) for r in before]
     assert [r["source_wp_card_id"] for r in after[:4]] == [
         "T#1", "T#1", "retired:r0:T#2", "retired:r0:T#2",
     ]
-    # The new T#2 is poured at its card position, after the started T#1.
+    # The new the earlier implementation is poured at its card position, after the started the earlier implementation.
     assert _cards_of(seq_id)[4:] == [("T", "T#2"), ("TR", "T#2")]
     _monotonic(seq_id)
 
@@ -1179,12 +1179,12 @@ def test_g9_moving_the_new_card_ahead_of_the_started_one_is_refused_behind_is_al
     seq_id, _plan = _g9(env, evidence="E1")
     _save_candidates(env, _candidates(env, _plan, "replace_after"), "replace_after")
     snapshot = _full(seq_id)
-    # r3 is the first new-format revision: the new T#2 (legacy id "T#2") moved to the front.
+    # r3 is the first new-format revision: the new the earlier implementation (legacy id "the earlier implementation") moved to the front.
     ahead = env.plan(3, _body([("T", "T#2"), ("T", "T#1")], values=False))
     assert _preview(env, ahead)["apply_blockers"]["change_workflow"] == "order_conflicts_started"
     assert _candidates(env, ahead, "replace_after")["blockers"] == ["order_conflicts_started"]
     assert _full(seq_id) == snapshot
-    # r4: a new N card between them — the new T#2 moves behind it, after the started T#1.
+    # r4: a new N card between them — the new the earlier implementation moves behind it, after the started the earlier implementation.
     behind = env.plan(4, _body([("T", "T#1"), ("N", "c_n"), ("T", "T#2")], values=False))
     assert _preview(env, behind)["apply_blockers"]["change_workflow"] is None
     _apply(env, behind, change=True)
@@ -1207,7 +1207,7 @@ def test_o6_step_key_follows_the_card_in_its_revision(env, monkeypatch):
     env.plan(0, _body([("T", "c_a"), ("T", "c_b")], values=False))
     env.plan(1, _body([("T", "c_a"), ("N", "c_n"), ("T", "c_b")], values=False))
     # G5: c_a (rev0) finished; c_b poured from rev1 is the only T row of rev1 — counting
-    # same-revision rows would call it T#1. Its card says T#2.
+    # same-revision rows would call it the earlier implementation. Its card says the earlier implementation.
     items = [
         {"id": 1, "item_seq": 1, "type": "T", "source_doc_id": _WP, "source_revision_no": 0,
          "source_wp_card_id": "c_a", "result_doc_id": DOC["T1"]},
@@ -1236,8 +1236,8 @@ def test_o6_a_card_row_whose_key_cannot_be_read_gets_no_descriptor(env, monkeypa
            "source_wp_card_id": "c_b"}
 
     def refused(head: dict) -> None:
-        # Counting the same-revision T rows would name this row T#2 (another card's key);
-        # a row that records its card never falls back to it (NR0003 O6).
+        # Counting the same-revision T rows would name this row the earlier implementation (another card's key);
+        # a row that records its card never falls back to it.
         with pytest.raises(documents_router.NextApprovedError) as raised:
             _descriptor(monkeypatch, env, [other, head], head)
         assert raised.value.status_code == 409

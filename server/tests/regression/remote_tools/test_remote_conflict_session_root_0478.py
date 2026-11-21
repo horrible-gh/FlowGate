@@ -1,4 +1,4 @@
-"""0478 T0010 — real Git regression coverage for conflict-token read roots."""
+"""real Git regression coverage for conflict-token read roots."""
 from __future__ import annotations
 
 import subprocess

@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0025 — content stand-in for a final Designer container (0003-D §3.6).
+  <!-- content stand-in for a final Designer container.
        It sits INSIDE the container; a later group replaces this one element with the real
        part, without touching the container around it. -->
   <div class="shell-placeholder" :data-test="`designer-placeholder-${area}`">

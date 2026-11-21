@@ -1,5 +1,5 @@
 """AI Evaluation: a judge AI scores a target AI on a real Scratch task
-(flowgate.v02.0017 T0002 §3). Evaluations belong to no project (CH0006 (4)): the AI is the
+. Evaluations belong to no project (the discussion ): the AI is the
 system's, so is its evaluation history, and the Scratch lives under the EVALUATION_SCOPE owner.
 
 One evaluation run:
@@ -84,7 +84,7 @@ MAX_ARTIFACT_FILES = 60
 MAX_ARTIFACT_READ_BYTES = 256 * 1024
 ARTIFACT_EXCERPT_CHARS = 4_000
 REVIEW_ARTIFACT_BUDGET_CHARS = 60_000
-# Evaluation set input (flowgate.v02.0017 T0004 §5). client_gui features/ai/limits.ts mirrors
+# Evaluation set input. client_gui features/ai/limits.ts mirrors
 # these values so the dialog can reject the same input before it is sent.
 SET_NAME_MAX = 200
 SET_INSTRUCTION_MAX = 4000

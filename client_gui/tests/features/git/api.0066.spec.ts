@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0066 T#5 — features/git/api.ts "Group worktree" section: the E1–E12 request
+// features/git/api.ts "Group worktree" section: the E1–E12 request
 // shapes and the snake_case-to-model boundary (0066 D#2 §5-1, C1).
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())

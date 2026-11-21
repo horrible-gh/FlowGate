@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — the thin row frame shared by the Designer left-dock explorers
+// the thin row frame shared by the Designer left-dock explorers
 // (0024-D §8.1/§13): height, depth indentation, hover/selected/focus styling and the
 // lead/main/trail slot layout. It knows nothing about files, folders, Groups or Flows; the
 // meaning-specific rows (FolderRow/FileRow, and the Project Explorer rows) give it meaning.

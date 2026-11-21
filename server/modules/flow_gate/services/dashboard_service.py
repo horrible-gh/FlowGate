@@ -24,7 +24,7 @@ _ACTIVITY_EVENT_TYPES = (
 )
 
 # Notification feed (🔔) shows a deliberately QUIETER subset than the dashboard recent-activity card.
-# R0001 group 0118 ("the notification feature is useless"): a single document registration decomposes into multiple
+# ("the notification feature is useless"): a single document registration decomposes into multiple
 # workflow_events — action_taken/doc_created + state_changed(review_submit) + state_changed(review_approve),
 # plus the parent's child_created / workflow_decide state_changed transitions — and the feed projected
 # EVERY one as its own notification ("3-5 per registration"). The user judged the feature useless because of
@@ -40,13 +40,13 @@ _ACTIVITY_EVENT_TYPES = (
 # parent cascade) and `doc_edited` (every self/rework edit). `qna_answered` and `group_approved` are kept
 # as meaningful milestones.
 #
-# R0001 group 0135 / N0008: `continuous_work_ended` is now ALSO promoted — but ONLY this single terminal
+# N0008: `continuous_work_ended` is now ALSO promoted — but ONLY this single terminal
 # event. It fires exactly once, when an unmanned continuous (self-chaining) run reaches its target and
 # stops (inbox_routes._continuation_self_chain), so it does NOT reintroduce the 0118 per-step noise: a
 # 10-step chain still emits ~10 doc_created rows PLUS one terminal "continuous work finished" row that reads
 # differently from the intermediate inflow. Single-mode work has no such event and is unaffected. The
-# present-tense `work_started` and the raw `state_changed` micro-transitions stay OUT (0118 / group 0125
-# NR0003 recommendation 4 invariant): promoting a per-transition state signal is what caused the notification flood.
+# present-tense `work_started` and the raw `state_changed` micro-transitions stay OUT (0118 / the earlier change
+# invariant): promoting a per-transition state signal is what caused the notification flood.
 _NOTIFICATION_EVENT_TYPES = (
     "doc_created",
     "action_taken",
@@ -54,12 +54,12 @@ _NOTIFICATION_EVENT_TYPES = (
     "group_approved",
     "continuous_work_ended",
     "continuous_work_failed",
-    # flowgate.default.0157: the test-run auto-recovery loop signals. `test_run_repair` fires at most
+    # the test-run auto-recovery loop signals. `test_run_repair` fires at most
     # MAX_REPAIR_ATTEMPTS times per doc (an INFRA failure being re-fired); `test_run_repair_exhausted`
     # fires once at the cap — the single case the user must intervene. Both bounded → no 0118 flood.
     "test_run_repair",
     "test_run_repair_exhausted",
-    # flowgate.default.0661 T0004 (0003-NR F3/F5): the automatic Q responder needs a human.
+    # (NR F3/F5): the automatic Q responder needs a human.
     # `qna_responder_failed` = technical failure (re-dispatch from the Q&A panel);
     # `qna_user_decision_required` = the AI explicitly handed the question over. At most
     # one row per responder attempt and no automatic re-dispatch of the same item → bounded.
@@ -82,7 +82,7 @@ _WORKFLOW_ROOT_TYPES = ("R", "B")
 # sorted the result in Python — only for _page() to slice off the first ~10 rows.
 # Cost grew linearly and without bound as the event log accumulated, on a query that
 # runs on every dashboard load and every 🔔 poll. This is the DB-side answer to
-# R0001 ("is it the DB or the files?"): nothing here is slow at 500 events and all of it
+# ("is it the DB or the files?"): nothing here is slow at 500 events and all of it
 # is slow at 500,000, which is why the stall appeared gradually rather than at once.
 #
 # The ORDER BY is already newest-first and both callers render newest-first from the
@@ -207,12 +207,12 @@ def _document_dto(doc: dict | None) -> dict | None:
         "doc_id": doc["doc_id"],
         "type_code": doc.get("type_code"),
         "title": doc.get("title"),
-        # R0001 group 0135 / N0008 (mockup 3): populated by _attach_review_signals after the item list is
+        # N0008 (mockup 3): populated by _attach_review_signals after the item list is
         # built. `verdict` is the latest AI review verdict (pass|issues|hold|null), `finding_count` the
         # number of AI findings, `status` the doc_review_status. The 🔔 feed uses these to paint the
         # trust colour (🟢🟡🔴) and AI badge on each row so "shown as done but needs checking" (AI issues)
         # is flagged in-list — the source is the same document_reviews the triage cockpit reads
-        # (NR0009 §finding 5). Left as null when the document has no review yet.
+        #. Left as null when the document has no review yet.
         "review": None,
     }
 
@@ -231,10 +231,10 @@ def _finding_count(findings: Any) -> int:
 def _attach_review_signals(items: list[dict]) -> None:
     """Enrich each item's document DTO with its AI verdict + review status (mockup 3 trust colours).
 
-    R0001 group 0135 / N0008: the live-feed mockup paints every completed row with a trust colour
+    N0008: the live-feed mockup paints every completed row with a trust colour
     (🟢 pass / 🟡 hold / 🔴 issues) and an AI badge so the user can see "says it is done but needs checking" without
     opening the document. The signals already exist — latest `document_reviews.verdict` + `doc_review_status`
-    (NR0009 §finding 5, same source as the triage cockpit) — so this is a read-only projection: no new column,
+    (§finding 5, same source as the triage cockpit) — so this is a read-only projection: no new column,
     no migration. Defensive by design: a minimal store without a document_reviews table (or a fresh install
     before the first review) simply yields null verdicts and the rows render neutral.
     """
@@ -335,7 +335,7 @@ def _normalize_activity(
         if row.get("from_state") is not None or row.get("to_state") is not None:
             transition = _transition(row)
     elif event_type == "continuous_work_ended":
-        # R0001 group 0135 / N0008: the ONE terminal signal of an unmanned continuous run,
+        # N0008: the ONE terminal signal of an unmanned continuous run,
         # surfaced as a distinct "continuous work finished" notification so the final completion reads
         # differently from the per-step doc_created inflow. `doc` is the joined terminal
         # document (event carries document_id → joined_doc); navigation points at it so the
@@ -347,7 +347,7 @@ def _normalize_activity(
             if metadata_doc_id:
                 doc = documents.get(str(metadata_doc_id))
     elif event_type == "continuous_work_failed":
-        # R0001 group 0154 / NR0004 Gap A: failure-path counterpart of continuous_work_ended. An
+        # Gap A: failure-path counterpart of continuous_work_ended. An
         # unmanned chain whose server-side test_run went RED assembles no TSR and stops silently; this
         # is the ONE terminal signal of that stop, surfaced as a distinct "continuous work failed" notification
         # pointing at the TS document that failed so the user lands on it. Fires once per failed run —
@@ -358,7 +358,7 @@ def _normalize_activity(
             if metadata_doc_id:
                 doc = documents.get(str(metadata_doc_id))
     elif event_type == "test_run_repair":
-        # flowgate.default.0157: the auto-recovery loop re-fired an INFRA-failed test run. Surfaced so
+        # the auto-recovery loop re-fired an INFRA-failed test run. Surfaced so
         # the user can see the retry; points at the TS document under repair. Bounded per doc.
         activity_type = "test_run_repair"
         if not doc:
@@ -366,7 +366,7 @@ def _normalize_activity(
             if metadata_doc_id:
                 doc = documents.get(str(metadata_doc_id))
     elif event_type == "test_run_repair_exhausted":
-        # flowgate.default.0157: the loop hit the attempt cap and stopped — the one case the user must
+        # the loop hit the attempt cap and stopped — the one case the user must
         # intervene. Points at the TS document; the attempt history rides in the event metadata.
         activity_type = "test_run_repair_exhausted"
         if not doc:
@@ -374,7 +374,7 @@ def _normalize_activity(
             if metadata_doc_id:
                 doc = documents.get(str(metadata_doc_id))
     elif event_type in ("qna_responder_failed", "qna_user_decision_required"):
-        # flowgate.default.0661 T0004: an unanswered Q the automatic responder could not
+        # an unanswered Q the automatic responder could not
         # close. Points at the document that hosts the Q so the user lands on its Q&A panel.
         activity_type = event_type
         if not doc:
@@ -468,8 +468,8 @@ def _normalized_activities(
 
     Shared by the dashboard recent-activity card (list_recent_activities, full _ACTIVITY_EVENT_TYPES)
     and the 🔔 notification feed (get_notification_feed). Group 0045 originally made the feed identical
-    to the dashboard ("the same data, made persistent and unread-aware" — NR0003 §2). Group 0118
-    (R0001 "the notification feature is useless") deliberately decoupled them: the feed now passes the quieter
+    to the dashboard ("the same data, made persistent and unread-aware" — the review). Group 0118
+    ("the notification feature is useless") deliberately decoupled them: the feed now passes the quieter
     _NOTIFICATION_EVENT_TYPES so a single registration is one notification instead of 3~5, while the
     dashboard card keeps the full stream. event_types selects which surface this call serves; the
     normalization itself is identical so the two never diverge in shape.
@@ -607,7 +607,7 @@ def get_notification_feed(
     limit: int,
     open_rows: list[dict] | None = None,
 ) -> dict:
-    """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
+    """Assemble the 🔔 notification center payload for a project (the earlier change, the review option A).
 
     Returns the persistent document-inflow feed (newest first) plus the unread count derived from
     last_seen_at, so the header bell can render an unread badge. The watermark itself is owned by the
@@ -759,7 +759,7 @@ def _build_active_workflow_item(row: dict, project_id: str) -> dict:
     Raises DashboardDataError when the row's source data is internally inconsistent
     (orphan/empty sequence, missing title, mismatched head document, bad timestamp).
     Callers decide whether an individual bad row is fatal; list_active_workflows skips
-    it so a single malformed workflow can't take down the whole dashboard (B0001/0122).
+    it so a single malformed workflow can't take down the whole dashboard.
     """
     requirement_id = row["requirement_doc_id"]
     group_id = row["group_id"]
@@ -795,7 +795,7 @@ def _build_active_workflow_item(row: dict, project_id: str) -> dict:
             or not row.get("head_doc_title")
         ):
             raise DashboardDataError(f"invalid workflow head document: {result_doc_id}")
-        # R0001 group 0125 / NR0003 recommendation 2: the stage badge previously only ever showed
+        # the stage badge previously only ever showed
         # pending / in_progress, so a finished head step was indistinguishable from a running one
         # ("there is no 'done' state at all"). Surface a 'done' state once the head document is approved
         # (or itself wf_done) so the active-workflow card can be scanned at a glance.
@@ -858,7 +858,7 @@ def _build_active_workflow_item(row: dict, project_id: str) -> dict:
 def list_active_workflows(project_id: str, limit: int) -> dict:
     """Active-workflow card data, tolerant of individual malformed rows.
 
-    B0001 (group 0122): the dashboard read path used to be all-or-nothing — a single
+    (the earlier change): the dashboard read path used to be all-or-nothing — a single
     workflow left in an abnormal state (empty/orphan/zombie sequence, e.g. after the
     user deletes every step) made the whole summary endpoint return HTTP 500, taking
     the unrelated "recent activity" card down with it. We now skip the malformed
@@ -911,7 +911,7 @@ def _scalar_count(sql: str, params: list) -> int:
 
     The state board aggregates several independent sources (documents, workflow_events,
     document_mention_copies). Some are optional in lighter deployments/tests, so a missing table
-    degrades that one metric to 0 instead of failing the whole dashboard (B0001/0122 ethos).
+    degrades that one metric to 0 instead of failing the whole dashboard (ethos).
     """
     try:
         row = get_store()._fetch_one(sql, params)
@@ -930,12 +930,12 @@ def _scalar_count(sql: str, params: list) -> int:
 def get_work_state_summary(project_id: str) -> dict:
     """Present-tense document work-STATE counts for the dashboard state board.
 
-    R0001 group 0125 / NR0003: the 🔔 notification feed is a past-tense event stream, but what
-    R0001 actually wants is "what state is it in right now" — working, done, copied, chain ended (NR0003 §finding 4).
+    the 🔔 notification feed is a past-tense event stream, but what
+    actually wants is "what state is it in right now" — working, done, copied, chain ended.
     This aggregation answers that as scannable counts and is exposed on the dashboard summary,
-    NOT on the notification feed (NR0003 recommendation 4 — keep _NOTIFICATION_EVENT_TYPES untouched).
+    NOT on the notification feed (keep _NOTIFICATION_EVENT_TYPES untouched).
 
-    "Copied" deliberately UNIFIES the two formerly-separate copy records (NR0003 recommendation 3): the
+    "Copied" deliberately UNIFIES the two formerly-separate copy records: the
     per-user document_mention_copies state table AND the prompt_copied workflow event, deduped to
     a distinct-document count so "which documents had their mention copied" is finally scannable in one place.
     """
@@ -1006,7 +1006,7 @@ def get_dashboard_summary(
         try:
             active_workflows = list_active_workflows(project_id, workflow_limit)
         except DashboardDataError as exc:
-            # Defense in depth (B0001/0122): list_active_workflows already skips
+            # Defense in depth: list_active_workflows already skips
             # individual malformed rows, so reaching here means the aggregation as a
             # whole failed. Degrade just the workflow card instead of failing the
             # entire dashboard — the recent-activity card must stay alive.

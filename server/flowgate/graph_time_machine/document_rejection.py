@@ -1,4 +1,4 @@
-"""0126 T#3: scoped document rejection using Time Machine's durable Git/DB executor.
+"""scoped document rejection using Time Machine's durable Git/DB executor.
 
 The plan is committed before Git. Only its final transaction changes document decisions,
 current node projections and effect validity. The ordinary Time Machine endpoint is never

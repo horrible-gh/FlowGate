@@ -1,13 +1,13 @@
-"""Persisted server literal regression guard (flowgate.default.0578 T0012 §2.5).
+"""Persisted server literal regression guard.
 
-``_materialize_pending_conversation_run`` (T1, 0578 T0006 §2.2) stores a
+``_materialize_pending_conversation_run`` stores a
 ``conversation[].message`` that is either (a) content passed through verbatim from a
 caller -- the AI's own ``last_message`` -- or (b) an empty string paired with a
 ``message_code``/``message_params``, never a sentence authored inside this function.
 Nothing enforces that AS A SOURCE STRUCTURE: ``test_review_turn_messages_0578.py``'s 64
 tests pin runtime behaviour (which code appears under which condition), not the source
 shape. This guard walks the AST of the function and fails when a ``"message"`` target
--- a dict-literal key OR a ``turn["message"] = ...`` subscript assignment, T0012 §2.5's
+-- a dict-literal key OR a ``turn["message"] = ...`` subscript assignment, the earlier implementation's
 reopened rejection finding -- is assigned anything other than (a) an empty-string
 placeholder or (b) an expression that resolves, through attribute/subscript/method-call
 navigation, all the way back to names this function received from OUTSIDE itself: its
@@ -52,7 +52,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_SERVER_DIR))
 
-# flowgate.default.0578 T0012 §2.5: the turn-building function T1 already converted.
+# the turn-building function T1 already converted.
 # If a sibling function starts writing `conversation[]`/session-stored turns directly
 # (rather than through this one), add its name here too.
 _GUARDED_FUNCTIONS = ("_materialize_pending_conversation_run",)
@@ -250,7 +250,7 @@ def test_synthetic_fresh_literal_in_message_key_is_caught():
 
 
 def test_synthetic_subscript_assignment_to_message_key_is_caught():
-    """RED proof (T0012 §2.5 reopened finding): ``turn["message"] = "..."`` is a
+    """RED proof (reopened finding): ``turn["message"] = "..."`` is a
     subscript assignment, not a dict-literal key -- the original guard only walked
     ``ast.Dict`` nodes and missed this shape entirely."""
     source = (
@@ -264,7 +264,7 @@ def test_synthetic_subscript_assignment_to_message_key_is_caught():
 
 
 def test_synthetic_builder_call_and_unresolved_constant_in_message_key_are_caught():
-    """RED proof (T0012 §2.5 reopened finding): a bare builder call or a reference to
+    """RED proof (reopened finding): a bare builder call or a reference to
     a name this function never bound has no non-empty string literal directly inside
     it, so the old "no literal anywhere in the expression" rule alone let both
     through. Neither is the caller's own text nor the code+params placeholder."""

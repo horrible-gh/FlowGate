@@ -58,7 +58,7 @@ const DOWNLOAD_PATH =
 const props = defineProps<{
   upload: DocumentIoButtonView
   download: DocumentIoButtonView
-  /** flowgate.v02.0074 T#2: the upload's tooltip as given (a work plan's, translated by the group); else the hint / reason. */
+  /** the upload's tooltip as given (a work plan's, translated by the group); else the hint / reason. */
   uploadTitle?: string | null
 }>()
 

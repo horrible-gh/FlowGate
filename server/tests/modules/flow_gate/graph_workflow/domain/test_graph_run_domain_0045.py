@@ -1,9 +1,9 @@
-"""flowgate.v02.0045 T0015 (S5) — Frontier Resolver and run policy slots, pure (no DB).
+"""(S5) — Frontier Resolver and run policy slots, pure (no DB).
 
-L0009 §2.6.1~§2.6.4 / §3.2 / §3.4: the node transition table, the document-argument checks
+~ / /: the node transition table, the document-argument checks
 (E-20 / E-36), propagation now (running) or later (stopped, drained by start / resume in
-``source_event_seq`` order), the policies a revision needs (P0008 S5-1) and the snapshot
-restore rule (E-33). No D0004 §8 rule is decided, so the decided policies here are test doubles
+``source_event_seq`` order), the policies a revision needs and the snapshot
+restore rule (E-33). No the design rule is decided, so the decided policies here are test doubles
 registered under their own value; nothing in the product is changed by them.
 """
 from __future__ import annotations
@@ -85,7 +85,7 @@ def state(status="running", pending=(), **nodes):
     return RunState(status, runs, list(pending))
 
 
-# ── transition table (L0009 §3.2) ────────────────────────────────────────────
+# ── transition table ────────────────────────────────────────────
 
 def test_node_transition_table():
     assert local_transition("pending", "opened") == "open"
@@ -101,7 +101,7 @@ def test_node_transition_table():
         assert local_transition(status, cause) is None
 
 
-# ── required policies (L0009 §2.6.3, P0008 S5-1) ─────────────────────────────
+# ── required policies ─────────────────────────────
 
 def test_required_policies_match_the_p0008_s5_1_example():
     g = graph([doc_node("gn_r", "R"), doc_node("gn_n", "N"), doc_node("gn_d", "D")], [("gn_r", "gn_n"), ("gn_n", "gn_d")])
@@ -116,9 +116,9 @@ def test_required_policies_match_the_p0008_s5_1_example():
 
 def test_required_policies_by_structure():
     only_root = graph([doc_node("gn_r", "R")], [])
-    # 0061 run scope: an isolated root is no run start, so a run targets nothing of it
+    # run scope: an isolated root is no run start, so a run targets nothing of it
     assert rp.required_policies(only_root, "gn_r") == rp.required_policies(only_root) == {"start_node", "completion"}
-    # flowgate.v02.0083 T#1 (0056 T#1 revised): the bound root is a done input whatever its review status (no status
+    # (revised): the bound root is a done input whatever its review status (no status
     # input); the rejection path is asked for the cards after it, which a bound run start always has
     assert rp.required_policies(LINEAR, "gn_r") == rp.required_policies(LINEAR) == {
         "start_node", "completion", "rejection_path"}
@@ -129,7 +129,7 @@ def test_required_policies_by_structure():
     assert {"edge_condition", "parallelism"} <= rp.required_policies(conditioned)
     special = graph([doc_node("a", "D"), doc_node("g", None, "gate"), doc_node("c", None, "custom")], [])
     assert "gate_node" in rp.required_policies(special)
-    # flowgate.v02.0053 T#8: a Custom card runs as a work instruction (report_pair), never on custom_node
+    # a Custom card runs as a work instruction (report_pair), never on custom_node
     assert "custom_node" not in rp.required_policies(special) and "report_pair" in rp.required_policies(special)
 
 
@@ -140,7 +140,7 @@ def test_every_system_default_policy_is_undecided_until_section_8_is_answered():
     assert pol.policy_states() == {k: "undecided" for k in pol.GRAPH_POLICY_KEYS}
 
 
-# ── policy implementations and snapshots (L0009 §2.6.2, E-33) ─────────────────
+# ── policy implementations and snapshots ─────────────────
 
 def test_undecided_implementation_refuses_and_unknown_snapshot_is_not_replaced():
     impl = rp.policies_of(pol.system_default_set()["entries"])
@@ -165,7 +165,7 @@ def test_registration_only_adds():
     assert rp.implementation("join", "domain_test_join", "2") is other
 
 
-# ── resolver (L0009 §2.6.4) ──────────────────────────────────────────────────
+# ── resolver ──────────────────────────────────────────────────
 
 def test_start_opens_start_nodes_then_drains_the_root_bound_record():
     calls = []

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#7 — the Q&A tab's calls in features/document/api/qa.ts (D#1 §6.3, §12.1): the
+ * the Q&A tab's calls in features/document/api/qa.ts: the
  * request each one sends to the existing v0.1 endpoint (path, body), the snake_case answer -> camelCase
  * (the Q&A tree as `GET /q/{doc_id}` returns it on the dev server: AI and human questions, options,
  * answers with picked options and provider snapshots, an empty container), and how a refusal is read

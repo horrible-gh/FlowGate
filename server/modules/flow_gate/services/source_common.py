@@ -1,9 +1,9 @@
-"""Source-capture utilities shared by the source fingerprint and legacy Snapshot (0672 T0004 stage 3).
+"""Source-capture utilities shared by the source fingerprint and legacy Snapshot (stage 3).
 
 These used to live in ``snapshot_materialization_service``. They belong to no single
 feature: capture exclusion policy, worker-facing locator redaction, and the path-only
 guard that keeps legacy Snapshot copies from being promoted into the live worktree
-through the canonical mutation tools. (0684 T#4 removed Source Bundle, the other
+through the canonical mutation tools. (the earlier implementation removed Source Bundle, the other
 original user, and its Bundle/AI Scratch promotion guard with it.)
 """
 from __future__ import annotations

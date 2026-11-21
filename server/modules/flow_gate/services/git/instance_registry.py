@@ -1,4 +1,4 @@
-"""Server instance registry (flowgate.default.0669 unit 1a; 0666 0009-L §2.8, §2.26 steps 1~2).
+"""Server instance registry (unit 1a; the earlier implementation, steps 1~2).
 
 Each server process registers one ``server_instance`` row at startup and keeps it alive
 with a CAS heartbeat. Locks and legacy mutex rows record that instance id, so a row

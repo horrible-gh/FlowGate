@@ -1,9 +1,9 @@
-"""flowgate.default.0284 — the runner keeps targeting the group branch worktree
+"""the runner keeps targeting the group branch worktree
 after the ledger's registration flag is cleared (merge/push cleanup).
 
-B0001 kept reporting fix-verification failures because a merge released the group
+kept reporting fix-verification failures because a merge released the group
 worktree (``worktree_registered=0``) and every re-run then silently dropped to the
-base(main) tree — a tree WITHOUT the fix under test (NR0003 §4). 0284 T0005 makes the
+base(main) tree — a tree WITHOUT the fix under test. the earlier implementation makes the
 on-disk branch worktree authoritative over the cleared flag: ``resolve_project_src_root``
 recovers it while its directory survives, and only a genuinely pruned directory falls
 back. ``effective_src_root_ex`` is deliberately left untouched so the raw ledger reason
@@ -38,7 +38,7 @@ def _install(monkeypatch, *, cfg, state, project_name=NAME):
 def _make_worktree(tmp_path):
     wt = tmp_path / "src" / NAME / BRANCH
     wt.mkdir(parents=True)
-    # 0287 NR0004: a real worktree carries its `.git` link, and every resolver now
+    # a real worktree carries its `.git` link, and every resolver now
     # requires it — a bare directory is the corpse an interrupted teardown leaves.
     (wt / ".git").write_text("gitdir: ../main/.git/worktrees/x\n", encoding="utf-8")
     return wt

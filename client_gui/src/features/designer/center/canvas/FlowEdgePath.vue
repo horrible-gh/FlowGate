@@ -1,21 +1,21 @@
 <template>
-  <!-- flowgate.v02.0026 — FlowGate Edge (0003-D §6.3): a smooth curve ending in an arrow head
+  <!-- FlowGate Edge: a smooth curve ending in an arrow head
        at the target anchor, in the FlowGate line colour. Rendered inside Vue Flow's edge
        <svg>; it draws the arrow itself instead of using the library's marker / theme. -->
-  <!-- flowgate.v02.0045 S3: an editable draft edge has a wider hit line (double click removes it,
+  <!-- S3: an editable draft edge has a wider hit line (double click removes it,
        FlowCanvas); one the last validation reported is drawn in the warning colour and names the
        problem on hover. -->
-  <!-- flowgate.v02.0045 T0019: an Edge the work already went through (`progressed`) is drawn in a
+  <!-- an Edge the work already went through (`progressed`) is drawn in a
        bright solid colour, one not yet taken stays a neutral line. Every Edge has a wide hit line so
        it can be selected (click); the selected Edge is highlighted. Selection and removal are apart:
        only a selected Edge that is `deletable` shows the remove button — a progressed one shows
        that it cannot be removed instead. -->
-  <!-- flowgate.v02.0045 TR0020 rev4: one kind of line only — a reference relation is not drawn
+  <!-- one kind of line only — a reference relation is not drawn
        (vueFlowMapping). The Edge leaves its source card and enters its target card on the sides
        that face each other (edgeGeometry.ts over the live node rectangles, `sourceNode` /
        `targetNode`), so a card moved below another one is reached from its top, not always from
        the left. Without the two nodes (a bare use) the anchor props Vue Flow computed are drawn. -->
-  <!-- flowgate.v02.0061 T#14: a third look next to progressed / pending — `running`, a line into a node the work is
+  <!-- a third look next to progressed / pending — `running`, a line into a node the work is
        going through now: a dashed line in the info colour that moves toward its target (still when the user asks
        for reduced motion). A line into a done / open / review node (`protectedTarget`) is never removed; selected, it
        shows the progressed line's lock mark. -->
@@ -96,9 +96,9 @@ const props = withDefaults(
     progressed?: boolean
     selected?: boolean
     deletable?: boolean
-    /** flowgate.v02.0061 T#14: a line into a done / open / review node (never removed). */
+    /** a line into a done / open / review node (never removed). */
     protectedTarget?: boolean
-    /** flowgate.v02.0061 T#14: a line into a node the work is going through now. */
+    /** a line into a node the work is going through now. */
     running?: boolean
   }>(),
   {
@@ -195,7 +195,7 @@ const arrow = computed(() => {
   stroke: none;
 }
 
-/* flowgate.v02.0045 T0019: not yet taken — the neutral line above; already taken — bright, thicker. */
+/* not yet taken — the neutral line above; already taken — bright, thicker. */
 .flow-edge-progressed .flow-edge-path {
   stroke: var(--fg2-status-success-fg);
   stroke-width: 2.2;
@@ -205,7 +205,7 @@ const arrow = computed(() => {
   fill: var(--fg2-status-success-fg);
 }
 
-/* flowgate.v02.0061 T#14: running — the info colour, dashed, moving toward the target. */
+/* running — the info colour, dashed, moving toward the target. */
 .flow-edge-running .flow-edge-path {
   stroke: var(--fg2-status-info-fg);
   stroke-width: 2.2;

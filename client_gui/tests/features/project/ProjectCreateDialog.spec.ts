@@ -573,7 +573,7 @@ describe('features/project/ProjectCreateDialog', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0088 F01/F10: the Dialog's own words, field errors, color names and its general failure follow the
+  // the Dialog's own words, field errors, color names and its general failure follow the
   // language; what the person typed is sent as typed.
   it.each([
     ['ja', '新しいプロジェクト', '名前を入力してください。', '色 #2563eb', 'プロジェクトを作成できませんでした。'],
@@ -626,7 +626,7 @@ describe('features/project/ProjectCreateDialog', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0152: "test" failed while "test2" worked because an archived project "test" held the
+  // "test" failed while "test2" worked because an archived project "test" held the
   // name. The Designer list shows active projects only, so the refusal must name the archived holder.
   it('names an archived project that already holds the name or id, in the current language', async () => {
     setTestLocale('ko')

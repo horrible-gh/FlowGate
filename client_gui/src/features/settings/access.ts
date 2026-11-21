@@ -2,7 +2,7 @@ import { readonly, ref } from 'vue'
 import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
 import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core/auth/currentUser'
 
-// flowgate.v02.0076 T#1 (D §1.2/§3.2): which /app/settings URL may be shown, decided before any
+// (D): which /app/settings URL may be shown, decided before any
 // settings view mounts. The router guard applies it to every move and SettingsLayout applies
 // it again when the /auth/me answer arrives, so both follow one rule:
 //

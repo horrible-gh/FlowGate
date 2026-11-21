@@ -1,9 +1,9 @@
-"""0391 T0005 §5-4/§6 -- chat turn corrupted-body guard + body-fingerprint match.
+"""chat turn corrupted-body guard + body-fingerprint match.
 
 The chat real-registration path (append_turn) had NO corruption check at all before
 this change -- only the dry-run branch did, and the chat mention never told the
-worker dry-run existed (NR0004). This suite exercises append_turn directly (per
-T0005 §9-8: test_conversation_dry_run_0360.py fakes append_turn wholesale for its
+worker dry-run existed. This suite exercises append_turn directly (per
+test_conversation_dry_run_0360.py fakes append_turn wholesale for its
 own route-level tests, so a regression test for the guard belongs here instead),
 plus dry_run_append parity and the pre-normalize fingerprint contract.
 """
@@ -70,7 +70,7 @@ def test_encoding_violation_fingerprint_mismatch_rejects():
 
 
 def test_encoding_violation_fingerprint_match_trusts_it_over_heuristic():
-    """T0005 §6-4: a matching fingerprint proves transit integrity, not that the
+    """a matching fingerprint proves transit integrity, not that the
     original text was clean -- if the sender hashed already-corrupted text, the
     server has no way to know. A matching fingerprint is trusted regardless."""
     digest = hashlib.sha256(CORRUPT.encode("utf-8")).hexdigest()
@@ -87,7 +87,7 @@ def test_encoding_violation_char_count_mismatch_rejects():
 
 
 def test_encoding_violation_fingerprint_checked_against_raw_not_normalized_body():
-    """T0005 §6-3: normalize_body() does NFC + newline + trailing-space changes the
+    """normalize_body does NFC + newline + trailing-space changes the
     sender cannot reliably reproduce, so the fingerprint contract MUST be pre-normalize
     (body_raw), not post-normalize. A CRLF+trailing-space body whose fingerprint was
     computed on the raw bytes must match here even though normalize_body would alter it."""
@@ -107,7 +107,7 @@ def test_encoding_violation_fingerprint_checked_against_raw_not_normalized_body(
 
 
 def test_encoding_violation_uses_line_based_check_not_whole_body_ratio():
-    """Regression for the same NR0004 §4 dilution bug the document paths hit: a long
+    """Regression for the same the review dilution bug the document paths hit: a long
     chat turn with one corrupted line among clean filler must still be caught."""
     from modules.flow_gate.services import workflow_decision_service as wf_decision
 

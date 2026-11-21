@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.chat.0017 CH0002 — the AI attachment upload requests of one run, as one block right below that run's AI
+  <!-- the AI attachment upload requests of one run, as one block right below that run's AI
        message (the server's anchor: after the run's last reply). The AI never waited for them; they stay here, pending,
        after the run ended until someone decides. Each row (preview / download / approve / reject) is the container's
        request row component; deciding is open in reading and editing mode alike. -->

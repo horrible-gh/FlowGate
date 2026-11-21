@@ -1,4 +1,4 @@
-"""flowgate.v02.0074 T#5 — the client's two deploy paths end to end on the server API (D0006 §3.7 · §3.6.2 · §6.1 · §6.2).
+"""the client's two deploy paths end to end on the server API.
 
 On the real SQLite DB, routes and fixtures of ``test_fg_instruction_stage_0056`` (card documents, card settings, the
 card approval port and the Graph run as ``startup`` registers them), with the v0.1 work plan router (the window's
@@ -188,7 +188,7 @@ def test_a_second_omission_deploys_with_add_and_writes_only_its_own_card(api):
     answer = _execute(api, wp_doc, "add", preview["baseline"])
     assert answer["created_node_keys"] == [] and answer["removed_node_keys"] == []
     assert OMIT in _file(t2_line).read_text(encoding="utf-8")
-    # T#1's line is the first omission's and stays as it was written (protected: kept, not written again).
+    # 's line is the first omission's and stays as it was written (protected: kept, not written again).
     assert _card_entry(answer, "T#1")["instruction"] in (None, "instruction_kept")
     assert OMIT in _file(_line_doc(api, keys[0])).read_text(encoding="utf-8")
 

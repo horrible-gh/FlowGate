@@ -1,4 +1,4 @@
-"""flowgate.v02test.0027 (0007-T, A-server): the AI role group's default review count copied once at card creation.
+"""(T, A-server): the AI role group's default review count copied once at card creation.
 
 Real migrated SQLite and the real draft route (the 0113 creation hook): a new card stores the type row's count, else
 the common row's, else 0 — explicitly, 0 included; the result review assignment takes that count;
@@ -104,7 +104,7 @@ def test_result_review_assignment_takes_the_copied_count(env, monkeypatch, count
 
 @pytest.mark.parametrize("count,ceiling,rounds", [(5, 5, 5), (4, 5, 4), (5, 3, 1)])
 def test_result_review_rounds_follow_the_policy_choices_not_a_frozen_set(env, monkeypatch, count, ceiling, rounds):
-    """TR0008 rev1 rejection: the slot path (AI author, AI reviewer, source slot) with a stored 5 under the policy max 5
+    """rejection: the slot path (AI author, AI reviewer, source slot) with a stored 5 under the policy max 5
     plans 5 rounds, not 1. A count left outside today's choices after the max was lowered keeps the old fallback, 1."""
     from flowgate.card_settings import stage_assignment as sa
     from modules.flow_gate.settings import ai_execution_policy_service as policy
@@ -156,7 +156,7 @@ def test_group_value_outside_card_choices_falls_back_to_zero(env, monkeypatch):
     (3, {"common": (0, "default"), "T": (0, "default"), "N": (0, "default"), "TS": (2, "type"), "WP": (-1, "type")}),
 ])
 def test_api_effective_count_is_what_a_new_card_copies_after_the_max_changes(env, monkeypatch, ceiling, expected):
-    """TR0008 rev2 rejection: common 5 (and a type's 4) saved under the max 5, then the max lowered to 3. The API kept
+    """rejection: common 5 (and a type's 4) saved under the max 5, then the max lowered to 3. The API kept
     answering effective 5 / source common for common and its inheriting types while the creation copy stored 0. Now
     both use one judgment (``effective_review_count`` against the card choices): the stored values stay as they are,
     and each row's effective value is exactly what a new card of that type stores — before and after lowering."""

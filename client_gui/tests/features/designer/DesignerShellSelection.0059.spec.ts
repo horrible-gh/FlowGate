@@ -95,7 +95,7 @@ beforeEach(() => {
       return { data: { data: { group_id: decodeURIComponent(group[1]), branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
-    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    // the Designer reads Flow Graphs from the server Canvas API.
     const canvas = answerFlowCanvas(url)
     if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
@@ -113,7 +113,7 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
-// flowgate.v02.0039 T#3: entering leaves the Designer without a work target; these suites
+// entering leaves the Designer without a work target; these suites
 // check the work state, so the user first chooses the Project row (one click).
 async function mountShell() {
   const pinia = createPinia()

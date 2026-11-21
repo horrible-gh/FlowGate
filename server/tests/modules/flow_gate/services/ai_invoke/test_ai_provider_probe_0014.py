@@ -1,4 +1,4 @@
-"""Run-less provider probe adapters (flowgate.v02.0014 HOLD 2.3 / 2.6).
+"""Run-less provider probe adapters (HOLD 2.3 / 2.6).
 
 AI Evaluation executes its baseline prompt through `provider_api.probe_api_completion` and
 `provider_cli.probe_cli_completion` instead of owning sockets and processes. These tests pin the

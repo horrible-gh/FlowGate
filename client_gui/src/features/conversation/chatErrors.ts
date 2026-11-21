@@ -1,4 +1,4 @@
-// flowgate.v02test.0024 B (decision 1): the chat's own request failures are part of its conversation history.
+// B (decision 1): the chat's own request failures are part of its conversation history.
 //
 // A refused send, AI call or command decision used to be only the notice line above the composer — gone on F5, on
 // reopening the chat and on the next notice. It is now a status line of the timeline, placed at its time, and it is

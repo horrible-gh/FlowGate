@@ -1,4 +1,4 @@
-"""flowgate.v02.0119 T#2 (T-1) — the v0.2 card completion: the completion record is a Graph node's only source of done.
+"""(T-1) — the v0.2 card completion: the completion record is a Graph node's only source of done.
 
 On the same real SQLite DB and fixtures as ``test_fg_card_settings`` / ``test_fg_run_buttons_0053`` (every migration, the
 card documents and card settings registered as ``startup`` does, plus ``flowgate.card_completion``). The cards are person
@@ -47,7 +47,7 @@ from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helper
     FA, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft,
 )
 
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+# (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
 pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions", "passive_person_results")
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
@@ -457,7 +457,7 @@ def test_the_rewind_and_the_startup_reach_the_completion_service():
     assert "start_card_completion_integration()" in startup
 
 
-# ── flowgate.v02.0119 T#2 rework (review rej_01M6D564RSF8JQE7): the registered completion contract ─────────────────
+# ── the earlier change the earlier implementation rework (review rej_01M6D564RSF8JQE7): the registered completion contract ─────────────────
 #
 # Each test below runs with ``flowgate.card_completion`` registered as the server's start registers it (``completions``),
 # except the unregistered one, which removes every handler (the engine suites' stand-in included) on purpose.

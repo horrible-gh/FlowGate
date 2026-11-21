@@ -1,4 +1,4 @@
-"""Prevent final commits from absorbing test artifacts (0382 B0001 / NR0003 proposals 1 and 3).
+"""Prevent final commits from absorbing test artifacts (proposals 1 and 3).
 
 Commit 0f502ce changed 266 files, including 261 under server/.test-tmp-*.
 Finalize used unfiltered git add -A to absorb a dirty worktree while the UI hid those

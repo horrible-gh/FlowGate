@@ -1,6 +1,6 @@
-"""Group AI-run lease exemption of [new chat] and command decisions (flowgate.v02.0032 T#1).
+"""Group AI-run lease exemption of [new chat] and command decisions.
 
-D0006 §3.10.3: ``GroupMutationPolicyMiddleware`` must not answer 423 to
+``GroupMutationPolicyMiddleware`` must not answer 423 to
 ``POST /api/v1/conversations`` or ``POST /api/v1/chat-commands/{id}/decision`` while an AI
 run holds the group lease (with or without the /flowgate prefix); every other group
 write keeps its 423, the CLI ``POST /chat-commands`` is not exempt, and the route
@@ -41,7 +41,7 @@ LEASE = {"group_id": GROUP, "run_id": RUN_ID, "token_id": f"tok_{RUN_ID}", "acti
     ("/flowgate/api/v1/conversations", "DELETE", False),
     ("/flowgate/api/v1/documents/next-empty", "POST", False),
     ("/flowgate/api/v1/conversations/extra", "POST", False),
-    # flowgate.v02.0047: the one AI title of a new chat.
+    # the one AI title of a new chat.
     ("/flowgate/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "POST", True),
     ("/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "POST", True),
     ("/flowgate/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "PATCH", False),

@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#2 (0005-L §2.5a) — the curve the Canvas draws for an Edge, as a pure function, and whether
+// the curve the Canvas draws for an Edge, as a pure function, and whether
 // it pierces a card. FlowEdgePath takes the two cards' facing sides (edgeGeometry edgeAnchors), stops the line
 // ARROW_LENGTH before the target side and draws Vue Flow's getBezierPath (curvature BEZIER_CURVATURE) between the
 // two points. Vue Flow may be imported inside center/canvas/ only (structure.0026), so the same formula is written

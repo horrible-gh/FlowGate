@@ -5,7 +5,7 @@ Formatting and parsing utilities for group, subgroup, and document-type codes.
 Default digit widths:
   - Group:     4 -> "0001"
   - Subgroup:  3 -> "001"
-  - Document:  4 -> "R0001"  (type_code prefix + 4-digit seq)
+  - Document: 4 -> "the requirement" (type_code prefix + 4-digit seq)
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def format_subgroup_code(seq: int, width: int = 3) -> str:
 
 
 def format_doc_code(type_code: str, seq: int, width: int = 4) -> str:
-    """Format a document-type code. Example: ('R', 1, 4) -> '0001-R'"""
+    """Format a document-type code. Example: ('R', 1, 4) -> 'the earlier implementation'"""
     return f"{str(seq).zfill(width)}-{type_code}"
 
 
@@ -46,7 +46,7 @@ def parse_subgroup_code(code: str) -> int:
 def parse_doc_code(code: str) -> tuple[str, int]:
     """Parse a document code into a (type_code, seq) tuple.
 
-    Example: '0001-R' -> ('R', 1), '0012-DS' -> ('DS', 12)
+    Example: 'the earlier implementation' -> ('R', 1), '0012-DS' -> ('DS', 12)
     """
     return _parse_doc_code(code)
 
@@ -81,7 +81,7 @@ def reformat_code(code: str, new_width: int, kind: str) -> str:
 
 
 def extract_numeric_suffix(code: str) -> str:
-    """Extract the numeric part from a code. '0001' -> '0001', '0001-R' -> '0001'"""
+    """Extract the numeric part from a code. '0001' -> '0001', 'the earlier implementation' -> '0001'"""
     numeric = doc_code_seq_text(code)
     if numeric is not None:
         return numeric

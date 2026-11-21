@@ -1,4 +1,4 @@
-"""Deterministic markdown render + artifact/compat routes (group 0351, T4).
+"""Deterministic markdown render + artifact/compat routes (the earlier change, T4).
 
 Same lightweight in-memory-SQLite harness as test_conversation_query_0351.py: a real
 074-schema DB for conversation_turns/conversation_docs, with document_service.get_document
@@ -280,7 +280,7 @@ def test_markdown_route_404_and_400(store, monkeypatch):
     assert resp.status_code == 404
 
 
-# ── GET .../content compatibility mode (P0003 scenario 15) ──
+# ── GET .../content compatibility mode (scenario 15) ──
 
 def _content_client() -> TestClient:
     from modules.flow_gate.auth.middleware import get_current_user

@@ -37,7 +37,7 @@ _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 log = logging.getLogger(__name__)
 
-# 0565 T0030 §6: why the stored proposal cannot be read. These describe the TR2 document
+# why the stored proposal cannot be read. These describe the TR2 document
 # itself and are never approval-attempt states (rollback/recovery_required stay separate).
 BODY_ERROR_CODES = frozenset({"tr2_body_missing", "tr2_body_corrupt",
                               "tr2_body_schema_invalid", "tr2_storage_mismatch"})
@@ -329,7 +329,7 @@ def _registered_at_canonical(doc: dict, expected: str) -> bool:
 
 def _body_error(code: str, doc: dict, loc: str, reason: str, *, cause=None) -> Tr2ValidationError:
     # The operator log keeps the diagnosis; the error sent to screens carries only a code,
-    # a location inside the proposal and a path-free reason (T0030 §5).
+    # a location inside the proposal and a path-free reason.
     log.warning("TR2 body unreadable doc=%s code=%s loc=%s cause=%r",
                 doc.get("doc_id"), code, loc, cause)
     return Tr2ValidationError(code, loc, {"reason": reason})
@@ -338,7 +338,7 @@ def _body_error(code: str, doc: dict, loc: str, reason: str, *, cause=None) -> T
 def load_current(doc: dict) -> dict:
     """The one reader of the current canonical proposal.
 
-    The contract (T0030 §4): ``documents.file_path`` names
+    The contract: ``documents.file_path`` names
     ``<code>_document.json`` under the document's storage directory, and that file holds
     the canonical JSON of the current revision. Anything else is reported as what it is
     (mismatch, missing, damaged, schema-invalid) instead of being guessed around.
@@ -405,7 +405,7 @@ def write_body_atomically(path, body: dict) -> None:
     _write_bytes_atomically(path, dumps(body).encode("utf-8"))
 
 
-# 0660 T0004 §1: every way the source root can be missing, by who can fix it. Git on: the
+# every way the source root can be missing, by who can fix it. Git on: the
 # group worktree is not usable YET (still provisioning, or provisioning lost a lock race) -
 # a retry or a synchronous ensure can fix it. Git off: src/<project_name>/<branch> is not
 # there and nothing in FlowGate creates it - only an operator can, so it is not retryable.
@@ -422,7 +422,7 @@ def resolve_source_root(project_id: str, group_id: str) -> Path:
         return Path(root)
     if reason != git_service.SRC_ROOT_INTEGRATION_OFF:
         # The internal SRC_ROOT_* name says which git-state check failed; operators read it
-        # in the log. The response carries only the public enum (0660 T0004 §1.3).
+        # in the log. The response carries only the public enum.
         log.info("TR2 source root unavailable for %s: %s", group_id, reason)
         raise Tr2ValidationError("tr2_git_unavailable", "source_root",
                                  {"reason": "worktree_provisioning"})
@@ -442,7 +442,7 @@ def resolve_source_root(project_id: str, group_id: str) -> Path:
 def ensure_source_root(project_id: str, group_id: str, module: str | None = None) -> Path:
     """The source root a new TR2 needs, provisioning the group worktree if it is not ready.
 
-    0660 T0004 §1.1 (RC1-a): the worktree a decide starts asynchronously may not exist yet,
+    (RC1-a): the worktree a decide starts asynchronously may not exist yet,
     or its provisioning may have lost the project git lock (``provision_error=git_busy``)
     and never been retried. Creation used to trust that async result and fail. It now runs
     the same idempotent ``ensure_worktree`` the remote-write and AI-invoke gates use, once,
@@ -612,7 +612,7 @@ def read_view(doc: dict, body: dict) -> dict:
     baseline = body["baseline_fingerprint"]
     if not _SOURCE_HEX.fullmatch(baseline):
         raise Tr2ValidationError("tr2_history_invariant_error", "baseline_fingerprint")
-    # The stored proposal loads without the source (T0030 §7): an unregistered, missing or
+    # The stored proposal loads without the source: an unregistered, missing or
     # broken group worktree leaves the source-derived facts unknown, and readiness below
     # carries the authoritative tr2_git_unavailable instead of failing the whole read.
     try:
@@ -705,9 +705,9 @@ def _lock(doc_id: str) -> threading.Lock:
 def revert_pending(doc: dict) -> bool:
     """True while a reopened TR2's own approval commit is still live in the worktree.
 
-    0660 T0004 §3 (RC3) invariant: "TR2 reopen complete" <=> "its approval commit is no
+    (RC3) invariant: "TR2 reopen complete" <=> "its approval commit is no
     longer live". A Time Machine reopen commits the document rewind first and cancels the
-    commit afterwards (D0005 K8: git never fails a rewind), so a cancel blocked by lock
+    commit afterwards (K8: git never fails a rewind), so a cancel blocked by lock
     contention leaves an editable TR2 on top of the source it already changed. A revision
     saved in that window takes its baseline from the approved source and can never apply
     again. This is the explicit intermediate state: not approved, yet a live, cancelable
@@ -723,7 +723,7 @@ def revert_pending(doc: dict) -> bool:
 def group_revert_pending(group_id: str) -> list[str]:
     """The group's TR2 documents in the ``revert_pending`` state (see :func:`revert_pending`).
 
-    0660 T0004 §3 (RC3): the pending state belongs to the whole group, not only to the
+    (RC3): the pending state belongs to the whole group, not only to the
     TR2. While it is non-empty the workflow may not rewind further, advance, approve or
     create the next step; the cancel retry (``/return-point/cancel-commits``) is the one
     group workflow operation left open, and its success empties this list.
@@ -877,7 +877,7 @@ def mutate(doc_id: str, operation: str, *, actor: str, expected_revision: int,
     return result
 
 
-# ── Proposal revision recovery (0565 T0030 §6) ─────────────────────────────────────
+# ── Proposal revision recovery ─────────────────────────────────────
 # "반영안 복구" is about the TR2 document itself: its current canonical file went missing,
 # got damaged or no longer validates. It never touches an approval attempt, a rollback or
 # recovery_required — those describe applying a proposal to the source and live in

@@ -1,4 +1,4 @@
-"""What the card editor needs from the server — flowgate.default.0649 T#3 (NR0003 §5.3, O7, §11).
+"""What the card editor needs from the server — the earlier change the earlier implementation.
 
 The work-plan editor moves whole cards, renumbers keys by order and keeps every card's
 ``card_id``; a card added in the editor is sent without an id. These tests pin the server
@@ -77,7 +77,7 @@ def test_a_new_card_moved_ahead_of_an_existing_same_type_card_gets_a_server_id()
     previous = wp.validate(_body([("T", "c_a")], values=False))
     sent = copy.deepcopy(previous)
     sent["quantities"]["T"]["count"] = 2
-    # editor: [+T] then drag the new card in front of c_a → new card is T#1, c_a is T#2.
+    # editor: [+T] then drag the new card in front of c_a → new card is the earlier implementation, c_a is the earlier implementation.
     sent["steps"] = _editor_renumber(_new_card("T") + previous["steps"])
     assert [(s["key"], s.get("card_id")) for s in sent["steps"]] == [
         ("T#1", None), ("TR#1", None), ("T#2", "c_a"), ("TR#2", "c_a"),
@@ -106,7 +106,7 @@ def test_a_reused_key_whose_previous_card_is_not_sent_is_still_a_lost_id():
 def test_another_type_card_does_not_vouch_for_a_lost_id():
     previous = wp.validate(_body([("D", "c_d"), ("T", "c_a")], values=False))
     sent = copy.deepcopy(previous)
-    sent["steps"][1].pop("card_id")  # T#1 lost its id; D's id is irrelevant to it
+    sent["steps"][1].pop("card_id")  # lost its id; D's id is irrelevant to it
     sent["steps"][2].pop("card_id")
     with pytest.raises(wp.WorkPlanValidationError) as exc:
         wp.assign_card_ids(sent, previous)
@@ -130,7 +130,7 @@ def test_read_view_marks_started_cards_by_identity(env, monkeypatch):
         ("T", "c_a", 0, DOC["T1"]), ("TR", "c_a", 0, None),
         ("D", "c_d", 0, None), ("T", "c_b", 0, None), ("TR", "c_b", 0, None),
     ]))
-    # rev1: the editor moved D behind B. Keys of c_b change (still T#2), started stays on c_a.
+    # : the editor moved D behind B. Keys of c_b change (still the earlier implementation), started stays on c_a.
     plan = env.plan(1, _body([("T", "c_a"), ("T", "c_b"), ("D", "c_d")]))
 
     assert wpa.started_card_ids(env.doc(), plan) == ["c_a"]
@@ -178,7 +178,7 @@ def test_mixed_order_saved_by_the_editor_pours_and_runs_in_card_order(env):
     by_card = {}
     for step in rev0["steps"]:
         by_card.setdefault(step["card_id"], []).append(step)
-    # The R0001 example shape: T → N → T2 → T, with a brand-new T2 card in the middle.
+    # The the requirement example shape: T → N → T2 → T, with a brand-new T2 card in the middle.
     saved = _editor_save(
         rev0,
         by_card["c_a"] + by_card["c_n"] + _new_card("T2") + by_card["c_b"],
@@ -311,7 +311,7 @@ def test_http_editor_to_pour_to_execution_follows_the_card_order(env, monkeypatc
     }
 
     # 2. the editor saves: B moved in front of D and a new T card added in front of D too
-    #    (renumbered onto T#3, no id; the server names it), through the PUT card contract.
+    #    (renumbered onto the earlier implementation, no id; the server names it), through the PUT card contract.
     by_card = {}
     for step in view.json()["body"]["steps"]:
         by_card.setdefault(step["card_id"], []).append(step)

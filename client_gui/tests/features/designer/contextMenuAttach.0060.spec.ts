@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0060 T#2 — the Designer context menu attached (0006-D rev2 §9.3): the connector of the Shell
+ * the Designer context menu attached: the connector of the Shell
  * (contextMenu/attach) over a real Center session with an editable draft (fake source), the real DesignerCenter
  * (Flow tabs + Vue Flow Canvas), the real Palette and the real menu view. Checks the Canvas / tab / Palette entry
  * points, the first-step commands through the existing session paths, the all-disabled menus, the multi-selection
  * rule, the re-check before running, the invalidation and the right-button guard on the Canvas root.
- * flowgate.v02.0060 T#1 (WP 0012, Q item 459): every mockup item is shown — the 27 not connected disabled with their
+ * every mockup item is shown — the 27 not connected disabled with their
  * reason (no request, no session call) — the multi-selection card opens its menu (no single card command, no run item,
  * selection kept), and alignment · layout / alignment run the Edit menu's alignment / layout (the same rule, one arrangeNodes, one undo).
  */
@@ -99,7 +99,7 @@ function makeSource(editable = true, hold = false, server = false) {
       return on
     })
   }
-  // A server source with the run controls and the Graph Time Machine (0061 T#14 / T#15): an idle run, gn_a done.
+  // A server source with the run controls and the Graph Time Machine: an idle run, gn_a done.
   if (server) {
     const idle: FlowRunInfo = { runId: 'r1', status: 'idle', openNodeKeys: [], nodeRuns: [{ nodeKey: 'gn_a', status: 'done' }] }
     source.loadRun = vi.fn(async () => idle)
@@ -774,7 +774,7 @@ describe('Designer context menu — Palette (0006-D §9.3 ⑤)', () => {
   })
 })
 
-// flowgate.v02.0060 T#1 (WP 0012 [B]): alignment · layout (blank Canvas) / alignment (multi-selected card) = Edit › alignment / layout.
+// alignment · layout (blank Canvas) / alignment (multi-selected card) = Edit › alignment / layout.
 describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit menu 정렬 / 배치 (T#1)', () => {
   const ORDER = DESIGNER_ARRANGE_GROUPS.flat()
   const words = (command: string) => i18n.global.t(`gui.designer.top.arrange.${command.slice(5)}`)
@@ -899,7 +899,7 @@ describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit m
   })
 })
 
-// flowgate.v02.0060 T#1 (WP 0012 [C]): the 27 disabled items never reach the session.
+// the 27 disabled items never reach the session.
 describe('Designer context menu — 연결 예정 / 미구현 items request nothing (T#1)', () => {
   it('붙여넣기 / 상세 보기 / 복사 on the Canvas: click, Enter, Space change nothing and call no session path', async () => {
     const { w, center, calls, drafts } = await mountHarness()

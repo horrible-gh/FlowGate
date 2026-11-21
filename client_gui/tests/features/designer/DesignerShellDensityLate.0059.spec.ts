@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 0017-T (was 0016-TR rev2) — on the real Shell (project store, Center session, server Graph
+ * (was the earlier implementation) — on the real Shell (project store, Center session, server Graph
  * source, real Vue Flow Canvas; only `@shared/api` is mocked, lateLayoutServer.ts): the density is the card drag
  * step and has no part in auto-layout.
  * - choosing any density — from the Toolbar radios or from the View menu — on a Flow whose auto-layout would read

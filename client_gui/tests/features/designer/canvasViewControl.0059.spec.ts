@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#1 — Toolbar / View menu fit and zoom reach the Canvas through the Center
+ * Toolbar / View menu fit and zoom reach the Canvas through the Center
  * session's view request: the Canvas runs them on its Vue Flow instance (zoom range, centre, pan
  * bound) and the result is the same Viewport the Toolbar value, the MiniMap and the saved layout
  * follow. jsdom replays no d3 gestures, so only the programmatic paths are exercised.
@@ -165,7 +165,7 @@ describe('Canvas view requests (flowgate.v02.0059 T#1)', () => {
   })
 })
 
-// flowgate.v02.0059 0017-T: the zoom value and the zoom select are one control.
+// the zoom value and the zoom select are one control.
 describe('Toolbar zoom control (flowgate.v02.0059 T#1, 0017-T)', () => {
   const shownZoom = (select: { element: Element }) => (select.element as HTMLSelectElement).selectedOptions[0]?.text
 

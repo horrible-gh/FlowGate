@@ -1,15 +1,15 @@
-"""Card document lines (flowgate.v02.0053 T#1, 0053 CH agreement on the documents of each section).
+"""Card document lines (CH agreement on the documents of each section).
 
 Every card placed on the Designer owns a fixed set of document lines ("slots"). Pure: which lines
 a node has and which document type fills each one. A line is written by a person (``human``: the
 draft is opened and written), filled by a run (``run``: created empty, the run's result takes
 its place), or — the instruction of a research / work / apply / design / custom card — written by the
-card's instruction AI or a person (``instruction_ai_or_human``, flowgate.v02.0056 T#2: the card run writes
+card's instruction AI or a person (``instruction_ai_or_human``, the earlier change the earlier implementation: the card run writes
 the instruction when its body is empty and keeps a written one). The other modules create, bind and remove
 the documents; nothing here touches storage.
 
 - requirement (R / B): requirement · AI delegation (only with AI delegation on; its setting lands
-  with T#2)
+  with the earlier implementation)
 - work plan (WP): work plan · deploy
 - design (D / P / L / DB) · research (N) · work (T / T2) · custom: instruction · report
 - test (TS): instruction · scenario · report — the scenario (cases) lives inside the TS document
@@ -17,7 +17,7 @@ the documents; nothing here touches storage.
   Its instruction stays a person's: the test cards take no instruction AI (TS is reorganized later).
 - gate and unknown types: no lines.
 
-flowgate.v02.0056 T#1: the card approval approves the documents of a card's approval lines
+the card approval approves the documents of a card's approval lines
 (``approval_slots``): the instruction then the report of a research / work / apply / design / custom /
 test card (N + NR, T + TR, T2 + TR2, DS + design, TS + TSR), the requirement of R / B and the plan of WP.
 The lines a run makes for the record (AI delegation, deploy) and the scenario sharing the TS are not.
@@ -120,7 +120,7 @@ def slot_signature(slot: CardSlot) -> tuple:
 
 
 def normalize_title(raw: str) -> str:
-    """0062 L0006 2.1 normalization, also used for exact default-name comparisons."""
+    """2.1 normalization, also used for exact default-name comparisons."""
     text = unicodedata.normalize("NFC", raw)
     text = "".join(" " if unicodedata.category(ch) in {"Cc", "Zs", "Zl", "Zp"} else ch
                    for ch in text if ch not in {"\u200b", "\ufeff"})
@@ -133,13 +133,13 @@ def name_key(raw: str) -> str:
 
 def title_locale(locale: Optional[str]) -> str:
     """The locale a new document's title is made in: ko / ja / en as given, anything else (none, blank, another
-    spelling) ko (flowgate.v02.0088 D0010 §2.1: the request's own normalization is not widened here)."""
+    spelling) ko (the request's own normalization is not widened here)."""
     return locale if locale in SLOT_TITLES else DEFAULT_LOCALE
 
 
 def slot_title(slot: str, locale: Optional[str] = None, doc_type: Optional[str] = None) -> str:
     """The line's default document name in ``locale``. A pair of names is the R name then the B name of a
-    requirement line (ja ``要件`` / ``バグレポート``, flowgate.v02.0088 D0010 §3.2): the document type picks one."""
+    requirement line (ja ``要件`` / ``バグレポート``, the earlier change the design): the document type picks one."""
     value = SLOT_TITLES[title_locale(locale)][slot]
     if isinstance(value, str):
         return value

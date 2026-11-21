@@ -1,4 +1,4 @@
-// flowgate.v02.0072 T#1 — the state and the calls of one work plan edit window: the read (`GET …/work-plan`), the
+// the state and the calls of one work plan edit window: the read (`GET …/work-plan`), the
 // edits (workPlanEditModel), the one save (`PUT …/work-plan` with base_revision_no — the whole body, every unsaved
 // change of the window at once) and what a save may answer: someone saved first (409, reload), field errors (422,
 // pinned to their rows), the capability confirmation (422, sent again with the findings acknowledged), not editable
@@ -17,15 +17,15 @@
 //   in another tab locks the window without a save first, and its end unlocks it.
 // - The window registers with the document edit registry (as the document windows do), so an upload of this
 //   document waits while it holds unsaved edits, and a finished upload is read again here.
-// - The Step window (T#2) edits one row through `stepSession(rowId)`: a copy of the row's pre-instruction values,
+// - The Step window edits one row through `stepSession(rowId)`: a copy of the row's pre-instruction values,
 //   and `apply` that puts its values on that row only (parent dirty; the server PUT stays the parent's).
-// - flowgate.v02.0073 T#2: a row's review is set by the main window's review popover (`setStepReview`, the server's
+// - the earlier change the earlier implementation: a row's review is set by the main window's review popover (`setStepReview`, the server's
 //   review_count_choices, the reviewer picker `reviewerOptions`) straight on the draft; the Step window no longer
 //   carries it, so a Step window's save or cancel never writes over a review set meanwhile. Its target names the row
 //   by its card and document (cardType / cardOrdinal) and its place among the shown rows — the Step key stays inside.
-// - Card moves take the screen's positions among the shown cards (flowgate.v02.0073 T#1: DS / T2 cards are not drawn);
+// - Card moves take the screen's positions among the shown cards (DS / T2 cards are not drawn);
 //   the model puts the shown cards back into their slots of the plan, so a hidden card keeps its place.
-// - flowgate.v02.0073 T#4: JSON on the client only (workPlanJson). `exportJson` is the draft as the save would send it;
+// - the earlier change the earlier implementation: JSON on the client only (workPlanJson). `exportJson` is the draft as the save would send it;
 //   `importJson` puts a checked JSON in the draft's place as an edit (dirty; nothing is sent — the save is the one PUT,
 //   whose server check is the final one). Not while locked or while a Step window holds edits; the Step windows open
 //   on the plan it replaces lose their row (the plan epoch moves, as on a read of another plan).
@@ -41,7 +41,7 @@
 //   the execution or from a preview with no change. A deploy that fails after the save (or whose answer does not show the
 //   row's card) leaves that row's button as 「전개 재시도」 — each row its own, until a deploy answer settles its card or the
 //   row is gone: the preview and the execution again (a new preview each time), never the save.
-// - flowgate.v02.0083 T#3 (D-1 · D-2 · D-3): the plan of a WP card in its Flow's run (`card`, the opener's reader —
+// - the earlier change the earlier implementation (D-1 · D-2 · D-3): the plan of a WP card in its Flow's run (`card`, the opener's reader —
 //   workPlanCardTarget: open with no result and the plan on its line, or in review with the plan as its result) is the
 //   person's to write: its content locks only on the Flow's ownership conflict or the card's own AI (its running
 //   executions, a document AI run on the plan), besides the server's editable, an upload and a refused save. The revision
@@ -182,7 +182,7 @@ const OMIT_SETTLED: Readonly<Record<'kept' | 'mismatch' | 'duplicate' | 'unregis
   unregistered: { key: 'omit_unregistered', outcome: 'unregistered' },
 }
 
-/** What a JSON import did (0073 T#4): taken (dirty), the same plan, refused for the lock or a Step window, or invalid. */
+/** What a JSON import did: taken (dirty), the same plan, refused for the lock or a Step window, or invalid. */
 export type WorkPlanJsonImportResult =
   | { readonly status: 'imported' | 'unchanged' | 'locked' | 'step_pending' }
   | { readonly status: 'invalid'; readonly issues: readonly WorkPlanJsonIssue[] }
@@ -213,7 +213,7 @@ export interface WorkPlanStepEditTarget {
 
 export type WorkPlanStepApplyStatus = 'applied' | 'gone' | 'locked' | 'not_eligible'
 
-/** What the parent window gives a Step window (T#2) for one row. Read at call time. */
+/** What the parent window gives a Step window for one row. Read at call time. */
 export interface WorkPlanStepEditSession {
   /** The row now, or null when it is gone (its card removed, the plan read again without it, the window closed). */
   target(): WorkPlanStepEditTarget | null
@@ -246,7 +246,7 @@ export interface WorkPlanEditorOptions {
   saved?(revisionNo: number): void
   /** The row's Step window is open (its 「지시 생략」 waits for it). */
   stepOpen?(rowId: string): boolean
-  /** flowgate.v02.0083 T#3: the plan's WP card as the Designer knows it now (the opener's reader); null / absent: none. */
+  /** the plan's WP card as the Designer knows it now (the opener's reader); null / absent: none. */
   card?(): WorkPlanRunCard | null
   /** flowgate.v02.0083 T#3: told after a [제출] (the opener reads its Flow again). */
   submitted?(): void
@@ -264,7 +264,7 @@ export interface WorkPlanEditor {
   /** A read again over the shown plan is on its way (every input waits for it). */
   readonly reloading: Readonly<Ref<boolean>>
   readonly lockReason: ComputedRef<WorkPlanLockReason | null>
-  /** flowgate.v02.0083 T#3: the plan is its run card's own (write / revise), or null. */
+  /** the plan is its run card's own (write / revise), or null. */
   readonly cardTarget: ComputedRef<WorkPlanCardTarget | null>
   /** flowgate.v02.0083 T#3: [제출] shown, usable now, and why not. */
   readonly submitState: ComputedRef<WorkPlanSubmitState>
@@ -598,7 +598,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     }
   }
 
-  // T0024: Save is the only user action. The existing result path starts review and propagation.
+  // Save is the only user action. The existing result path starts review and propagation.
   async function saveAndAdvance(acks: readonly string[]): Promise<'saved' | 'capability' | 'failed' | 'blocked'> {
     if (inputsLocked.value && capability.value === null) return 'blocked'
     if (!dirty.value && submittedRevision.value === `${submitState.value.action}:${view.value?.revisionNo}`) return 'blocked'

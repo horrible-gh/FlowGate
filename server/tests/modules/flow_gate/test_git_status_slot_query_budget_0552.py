@@ -1,4 +1,4 @@
-"""git/status slot query budget (flowgate.default.0552 T0013 / 0005-NR Set D).
+"""git/status slot query budget (Set D).
 
 `project_git_status` already reads every ledger row of the project in ONE
 `list_states_of_project_any` scan, and then asked the database for each of those
@@ -7,11 +7,11 @@ rows a second time: the per-slot `writable` probe went
     group_worktree_writable -> effective_src_root_ex -> db_git.get_state(group_id)
 
 so a project with S slots paid `SELECT * FROM group_git_state WHERE group_id = ?`
-S extra times (0005-NR measured 8 for 8 slots). The request-scope cache cannot
+S extra times (NR measured 8 for 8 slots). The request-scope cache cannot
 absorb it — the params differ per slot, and the transition loop just above writes,
 which discards the whole request cache anyway.
 
-T0013 hands the already-read row down instead. These tests pin the two halves of
+hands the already-read row down instead. These tests pin the two halves of
 that claim:
 
   A. cost — the number of `group_git_state` reads no longer grows with S, with a
@@ -231,7 +231,7 @@ def _make_project(
         if n <= live:
             wt = storage_root / "src" / _pname(project_id) / branch
             wt.mkdir(parents=True, exist_ok=True)
-            # 0287 NR0004: a worktree is a directory WITH its .git link.
+            # a worktree is a directory WITH its .git link.
             (wt / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
         group_ids.append(group_id)
     return group_ids
@@ -290,7 +290,7 @@ class TestSlotQueryBudget:
     ):
         """Guard against a green that means "the counter sees nothing".
 
-        Re-runs the pre-T0013 shape — the writable probe without the row — and
+        Re-runs the pre-the earlier implementation shape — the writable probe without the row — and
         asserts the counter records exactly one `WHERE group_id = ?` read per
         slot. If this fails, the assertions above prove nothing.
         """
@@ -322,7 +322,7 @@ class TestSlotQueryBudget:
     ):
         """The before/after table, measured rather than asserted from memory.
 
-        `_legacy` is the pre-T0013 body of `group_worktree_writable` verbatim (it
+        `_legacy` is the pre-the earlier implementation body of `group_worktree_writable` verbatim (it
         drops the row on the floor and lets the resolver re-read it), so both
         columns come out of the same `project_git_status` on the same fixture —
         the only difference is whether the already-read row is handed down.
@@ -458,7 +458,7 @@ class TestWritableMeaningIsUnchanged:
         assert from_db == from_row == (None, svc.SRC_ROOT_UNREGISTERED)
 
     def test_branch_empty_state_falls_back_via_both_paths(self, tmp_db, storage_root):
-        """T0013 §C.12: a registered-but-branchless row is the other ledger-only
+        """§C.12: a registered-but-branchless row is the other ledger-only
         fallback `effective_src_root_ex` distinguishes (SRC_ROOT_NO_BRANCH), and
         it must survive the row hand-off exactly like every other reason in
         `test_supplied_row_reproduces_every_fallback_reason` above."""

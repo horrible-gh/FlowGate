@@ -1,4 +1,4 @@
-"""0319 B0001 - base file explorer follows the enabled Git base branch."""
+"""base file explorer follows the enabled Git base branch."""
 
 import pytest
 

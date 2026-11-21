@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
 import { INSPECTOR_TABS } from '@/features/designer/inspector/inspectorTabs'
 
-// flowgate.v02.0036 — source-level guards for the bottom Inspector Frame (0036-R §2.2 / §2.4 /
+// source-level guards for the bottom Inspector Frame (the earlier implementation / /
 // §5.2) that a DOM test cannot see: a frame only, with no feature, API or state machine behind it.
-// flowgate.v02.0048 T#1 (D#1 §3.3): the guards cover the three Frame files; the rest of the
+// the guards cover the three Frame files; the rest of the
 // Inspector folder (registry, target, host, parts, features) is guarded by structure.0048.
 const SRC = resolve(__dirname, '../../../src')
 const INSPECTOR = join(SRC, 'features/designer/inspector')
@@ -80,10 +80,10 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     const inspector = messages.designer.inspector
     // flowgate.v02.0048 T#1: no `pane_placeholder` (no '연동 전' place); the header status labels
     // and the common section states of the parts instead.
-    // flowgate.v02.0051: the v7 header line (header), the `disabled` pane state and the strings of
+    // the v7 header line (header), the `disabled` pane state and the strings of
     // the common display parts (slot · review · origin · lock · run_settings).
-    // flowgate.v02.0051 stage 2: the card parts' common wordings (unconnected · slot_state · menu).
-    // flowgate.v02.0052 batch A: the header pill's plain words — the workflow states (wf_*), the node run
+    // stage 2: the card parts' common wordings (unconnected · slot_state · menu).
+    // batch A: the header pill's plain words — the workflow states (wf_*), the node run
     // status (run_status) and the pill tooltip (header.state_tip).
     expect(Object.keys(inspector).sort()).toEqual(
       ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'run_status', 'pane', 'header', 'slot', 'review', 'origin', 'lock', 'run_settings', 'unconnected', 'slot_state', 'menu'].sort(),
@@ -95,10 +95,10 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // "v0.1 단계에 속하지 않은 Node" one among them).
     expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'retry'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
-    // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the wording of a line without a
-    // document. flowgate.v02.0056 F1: the history button of a line (history / history_count).
+    // no "not yet" / write wording on a line; `none` is the wording of a line without a
+    // document. the earlier change F1: the history button of a line (history / history_count).
     // flowgate.v02.0056 F2-1: `author` — the instruction line's 지시 AI or a person (O2 0007-TR §4-3).
-    // flowgate.v02.0056 F2-2: a document without a body (blank), the row actions and the history split.
+    // a document without a body (blank), the row actions and the history split.
     expect(Object.keys(inspector.slot).sort()).toEqual(['actions', 'author', 'blank', 'edit', 'history', 'history_count', 'history_detail', 'none', 'open', 'progress'])
     expect(Object.keys(inspector.slot.actions).sort()).toEqual(['ai_invoke', 'ai_invoke_running', 'write'])
     expect(Object.keys(inspector.slot.author)).toEqual(['instruction_ai_or_human'])

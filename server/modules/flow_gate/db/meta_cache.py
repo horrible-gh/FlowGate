@@ -1,9 +1,9 @@
-"""Short-lived TTL cache for hot per-request metadata reads (0282 NR0003 finding 2).
+"""Short-lived TTL cache for hot per-request metadata reads.
 
 One screen load re-read the same ``projects`` row 11 times and the same
 ``project_git_config`` row 3 times: nearly every service entry point calls
 ``db_projects.get_by_id`` / ``db_git.get_config`` on its own. This module reuses
-the 0276 T0009 auth_cache pattern (tiny TTL map + explicit invalidation from the
+the the earlier implementation auth_cache pattern (tiny TTL map + explicit invalidation from the
 few write paths) for those two tables.
 
 Policy:

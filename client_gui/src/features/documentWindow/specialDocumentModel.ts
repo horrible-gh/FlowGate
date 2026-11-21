@@ -1,4 +1,4 @@
-// flowgate.v02.0053 T#4 — what the special document views decide without a screen or a server call: the
+// what the special document views decide without a screen or a server call: the
 // name a document type is shown by (never its code), the work plan's cards and Step labels (the v0.1
 // WorkPlanEditor's table, read only), the marks of a test verdict and execution mode (the v0.1
 // TestSpecPanel / TestReportPanel badges, as glyph + color with the word in the tooltip) and the Case rows

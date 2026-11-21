@@ -1,7 +1,7 @@
-"""Run API request checks (P0008 §7 S5-2 / S5-4 / S5-5 / S6-1, L0009 §1.4) — pure, no I/O.
+"""Run API request checks — pure, no I/O.
 
-Each returns ``(value, errors)``; ``errors`` uses the P0008 §1.3 ``{"field", "reason"}`` shape.
-A missing or empty body is allowed where every field is optional. flowgate.v02.0085 T#2: a gate decision's
+Each returns ``(value, errors)``; ``errors`` uses the the plan ``{"field", "reason"}`` shape.
+A missing or empty body is allowed where every field is optional. the earlier change the earlier implementation: a gate decision's
 request key and expected round / settings version (``parse_gate_intent``).
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ def parse_start(body: Any) -> tuple[Optional[int], list[dict]]:
 
 
 def parse_mode(body: Any) -> tuple[Optional[str], list[dict]]:
-    """flowgate.v02.0061 T#2: ``{"mode": "step" | "full" | null}`` of a run command (start / resume); absent
+    """``{"mode": "step" | "full" | null}`` of a run command (start / resume); absent
     means the run's own command (a new run: ``full``)."""
     raw, errors = _body(body)
     if raw is None:
@@ -81,7 +81,7 @@ def parse_reason(body: Any) -> tuple[Optional[str], list[dict]]:
 
 
 def parse_gate_decision(body: Any) -> tuple[tuple[Optional[str], Optional[str]], list[dict]]:
-    """``{"decision": "confirm" | "reject", "comment": "…"}`` (P0008 S6-1). ``comment`` is optional
+    """``{"decision": "confirm" | "reject", "comment": "…"}``. ``comment`` is optional
     and has the stop / resume ``reason`` limit (``RUN_REASON_MAX_LEN``)."""
     raw, errors = _body(body)
     if raw is None:
@@ -121,7 +121,7 @@ def _text_field(raw: dict, name: str, limit: int, errors: list[dict]) -> Optiona
 
 
 def parse_gate_intent(body: Any) -> tuple[dict, list[dict]]:
-    """flowgate.v02.0085 T#2 (D0007 §7.2): the optional fields a new client adds to a gate decision —
+    """the optional fields a new client adds to a gate decision —
     ``request_id`` (the idempotency key of the request), ``expected_attempt_id`` and ``expected_settings_version``
     (the gate round and the settings version the screen was drawn from). An old client sends none of them. A body
     that is no object is ``parse_gate_decision``'s error, not repeated here."""
@@ -140,7 +140,7 @@ def parse_gate_intent(body: Any) -> tuple[dict, list[dict]]:
 
 
 def parse_command_seq(raw: Optional[str]) -> tuple[Optional[int], list[dict]]:
-    """flowgate.v02.0113 T#5: the command result's ``command_seq`` — a positive integer (the event sequence of the
+    """the command result's ``command_seq`` — a positive integer (the event sequence of the
     command's start), or absent (the run's latest command)."""
     if raw is None:
         return None, []

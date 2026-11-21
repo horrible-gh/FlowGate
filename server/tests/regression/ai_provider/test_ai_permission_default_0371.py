@@ -1,4 +1,4 @@
-"""flowgate.default.0371 T0014 / NR0007 §5 — permission confirmation is on by default.
+"""permission confirmation is on by default.
 
 Both agent CLIs FlowGate spawns can be told to stop asking before they read, write or run
 anything: claude's ``--dangerously-skip-permissions`` and codex's ``--ask-for-approval
@@ -108,7 +108,7 @@ class TestUnattendedExamplesAreDerived:
     @pytest.mark.parametrize("host_os", HOST_KEYS)
     @pytest.mark.parametrize("kind", ["claude", "codex", "copilot"])
     def test_the_opt_in_example_is_the_canonical_unattended_preset(self, kind, host_os):
-        """0519 T0005: what this catalog publishes as "permission checks off" is the
+        """what this catalog publishes as "permission checks off" is the
         preset's OWN unattended form, not the generic toggle run over the safe example.
         For codex those two are different commands (see
         test_codex_cannot_round_trip_because_the_sandbox_also_widened below), and the one
@@ -203,7 +203,7 @@ class TestSetPermissionSkip:
     def test_the_flag_lands_before_the_stdin_dash_not_after_it(self):
         """`-p -` ends the claude command with the prompt argument; a flag appended after
         it is read by the wrong parsing stage. It also lands after the leading `--model`
-        pair (0519 TR0010 rev1), not before it — the model name stays the leftmost flag."""
+        pair, not before it — the model name stays the leftmost flag."""
         out = svc.set_permission_skip("claude", "claude --model m -p -", True)
         assert out == f"claude --model m {CLAUDE_SKIP} -p -"
 

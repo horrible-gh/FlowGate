@@ -1,4 +1,4 @@
-"""flowgate.v02.0146 T#2 — the document write gate for the Flow Gate test harnesses that seed documents directly.
+"""the document write gate for the Flow Gate test harnesses that seed documents directly.
 
 The server startup registers ``flowgate.card_document_edit.write_gate.dispatch`` as the document write gate
 (``card_document_ports.DOCUMENT_WRITE_GATE``). A harness that builds its app without the startup used to inherit

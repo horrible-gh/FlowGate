@@ -1,4 +1,4 @@
-"""Delivered-prompt matrix for v02test.0049 T0013 (no real provider calls)."""
+"""Delivered-prompt matrix for v02test.0049 the earlier implementation (no real provider calls)."""
 import json
 import re
 

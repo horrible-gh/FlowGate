@@ -1,12 +1,12 @@
-"""Regression guard for group 0102 R0001: long-lived SSE streams must not block
+"""Regression guard for the requirement: long-lived SSE streams must not block
 graceful server shutdown.
 
-Root cause (NR0003): an open EventSource keeps `event_generator` running on a
+Root cause: an open EventSource keeps `event_generator` running on a
 `while True` loop whose only exit conditions were a client disconnect or task
 cancellation. uvicorn's graceful shutdown waits on that in-flight response, so
 the server only exited once the browser was closed.
 
-Fix (T0004, candidate A — cooperative shutdown): `routers.main.lifespan` puts an
+Fix (candidate A — cooperative shutdown): `routers.main.lifespan` puts an
 `asyncio.Event` on `app.state.shutdown_event` and sets it on shutdown; the SSE
 generator races it against the subscriber queue and stops promptly when set.
 (Candidate B — `timeout_graceful_shutdown` on every uvicorn entry point — is the
@@ -49,7 +49,7 @@ def _patches(queue):
     return (
         patch("modules.flow_gate.api.v1.events.sse_routes.decode_token", return_value=_DECODED),
         patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False),
-        # Connect and every re-check read the users row since 0371 T0012; there is
+        # Connect and every re-check read the users row since the earlier implementation; there is
         # no DB behind this test app, so the lookup is mocked like the two above.
         patch("modules.flow_gate.api.v1.events.sse_routes._load_user",
               return_value={"user_id": _DECODED["sub"], "is_active": True}),

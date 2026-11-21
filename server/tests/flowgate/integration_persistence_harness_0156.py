@@ -1,4 +1,4 @@
-"""flowgate.v02.0156 T#2 (T0007 W6) — the S4 / S5 observation: several isolated Flows in one process, each left in a
+"""the S4 / S5 observation: several isolated Flows in one process, each left in a
 reproduced condition, the runtime triggers made inside one observation window, and the state sampled every 15 s until
 every Flow stayed unchanged for 10 minutes (real time) after its last change (NR §6.1: the window restarts at each
 progress; no single query decides). No server restart happens in the window; the server start recovery is never called.
@@ -10,7 +10,7 @@ Run on its own (it is not collected by the test pattern):
 It writes ``fg0156_harness/series.json`` (every sample) and ``fg0156_harness/summary.json`` (per scenario: the first
 failure state, each trigger, the last change, the final state and its judgement) under the basetemp.
 
-The scenarios (T0007 W6), on the same real stack as ``test_fg_integration_persistence_0156`` (its fixtures/helpers):
+The scenarios, on the same real stack as ``test_fg_integration_persistence_0156`` (its fixtures/helpers):
 
 - S4-1: D2-a under an idle run's hold (h1)          - S4-2: D2-a under a command's hold (h2)
 - S4-3: D2-b (its session open), then a person's abort  - S4-4: W4 ⓐ — a reservation canceled without a pin

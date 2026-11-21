@@ -139,7 +139,7 @@ def snapshot_env(tmp_path, monkeypatch):
 
     scratch = tmp_path / "token-scratch"
     scratch.mkdir()
-    # flowgate.v02.0090 T#3: a snapshot delete is recorded under S0/.flowgate-gc first.
+    # a snapshot delete is recorded under S0/.flowgate-gc first.
     storage = tmp_path / "storage"
     storage.mkdir(exist_ok=True)
     monkeypatch.setattr(materialize.storage_paths, "get_storage_root", lambda *_a, **_k: storage)
@@ -517,7 +517,7 @@ def test_copy_failure_removes_staging_and_never_publishes(snapshot_env, monkeypa
         return real_copy(*args)
 
     monkeypatch.setattr(materialize, "_copy_and_hash", fail_second)
-    # 0517 T0022: an unauthored exception leaves materialize() only as the same scrubbed
+    # an unauthored exception leaves materialize only as the same scrubbed
     # SnapshotRequestError that was stored, never as raw OSError text.
     with pytest.raises(snapshot_request_service.SnapshotRequestError) as caught:
         materialize.materialize("snap_test", "human")
@@ -954,7 +954,7 @@ def test_run_finish_closes_unmaterialized_and_late_http_approval_cannot_create(
 
 
 # ---------------------------------------------------------------------------
-# 0517 T0022: stale detection must be a content contract, not a stat heuristic.
+# stale detection must be a content contract, not a stat heuristic.
 # ---------------------------------------------------------------------------
 
 

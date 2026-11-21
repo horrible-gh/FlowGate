@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#5 — the documents tab's reads in features/document/api/document.ts (D#1 §6.3,
+ * the documents tab's reads in features/document/api/document.ts (the earlier implementation,
  * §12.1): the v0.1 `GET /api/v1/documents/{doc_id}` response (snake_case, row + rejection history +
  * AI review extras) -> DocumentDetail, and the superseded documents read one by one, a failed one
  * answered as missing without failing the others.

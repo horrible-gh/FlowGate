@@ -1,9 +1,9 @@
 /**
- * flowgate.v02.0048 T#9 — settingsModel as tables (D#1 §8.5; D#2 §2.4 rule 3, §4.1 test ①): ownership 4
+ * settingsModel as tables (rule 3, test ①): ownership 4
  * kinds, the read-only rows, row states (not started · protected pending report · started), AI running,
  * disposed, the guard refusals, a save in flight, the review count 0 (reviewer off), nothing changed; the
  * row a slot names, the choices of each field, the draft, and what a running hop took from the row.
- * flowgate.v02.0053 T#7: the running hop is no longer drawn (v7 has no such block) and its view is gone; the
+ * the running hop is no longer drawn (v7 has no such block) and its view is gone; the
  * v0.1 Node's rules stay, its strings at tooltip length. A Graph card's rules are cardSettingsModel.0053.
  */
 import { describe, expect, it } from 'vitest'
@@ -156,7 +156,7 @@ describe('settingsModel — the row (flowgate.v02.0048 T#9, D#2 §2.4)', () => {
     expect(settingsRowState(rows[1])).toBe('editable')
   })
 
-  // flowgate.v02.0052 T#2: the server derives status from the result document (get_sequence_items):
+  // the server derives status from the result document (get_sequence_items):
   // none -> pending, approved -> done, anything else (running, in review, rejected) -> in_progress.
   it.each<[string, string]>([
     ['pending', 'pending'],
@@ -263,9 +263,9 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
         expect(typeof value, `${locale} ${key}`).toBe('string')
       }
     }
-    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 row use instruction / omit is worded;
+    // stage 2 (B14 as reset it): the v7 row use instruction / omit is worded;
     // restart / time limit / review criteria are the Frame's run settings strings, not this feature's.
-    // flowgate.v02.0053 T#7: a v0.1 step's off reason is no_place. flowgate.v02.0056 F2-1: the progress-after-review
+    // a v0.1 step's off reason is no_place. the earlier change F2-1: the progress-after-review
     // row and its strings are removed (O1 0005-TR §4-3); the RUN card's 지시 AI row is worded.
     for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'instruction_ai.label', 'instruction_ai.hint', 'reason.no_place']) {
       for (const locale of ['ko', 'en', 'ja'] as const) {
@@ -275,7 +275,7 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
     }
     const text = JSON.stringify(messages.ko)
     for (const word of ['재시작', '제한 시간', '검수 기준']) expect(text).not.toContain(word)
-    // flowgate.v02.0053 T#7: no save button, saved line, row title or running hop wording is left.
+    // no save button, saved line, row title or running hop wording is left.
     for (const key of ['save', 'saved', 'hint', 'title', 'state', 'hop', 'no_slot', 'no_row', 'unconnected', 'policy']) {
       for (const locale of ['ko', 'en', 'ja'] as const) expect(messages[locale], `${locale} ${key}`).not.toHaveProperty(key)
     }

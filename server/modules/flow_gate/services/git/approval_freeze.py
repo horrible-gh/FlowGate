@@ -1,5 +1,5 @@
-"""Final approval freeze (flowgate.default.0669 unit 6a; 0666 0009-L §2.11, §2.22, §2.25,
-§3.3, §4.6; 0008-D §3.7).
+"""Final approval freeze (the earlier change unit 6a; the earlier implementation,,,
+; the design).
 
 A ``final_approval_publish`` job is born ``freezing``. Before any publish code may run,
 this module pins exactly what is being approved:
@@ -532,7 +532,7 @@ def _precheck_again(job: dict, g: _Group) -> Optional[str]:
     if action not in APPROVAL_ACTIONS:
         return "invalid_git_action"
     if action == "push" and _gs._dirty(g.wt_path):
-        # a bare push never fabricates a commit (NR 0331.0005 §3)
+        # a bare push never fabricates a commit
         return "dirty_worktree"
     return None
 

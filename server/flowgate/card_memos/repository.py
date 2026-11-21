@@ -1,4 +1,4 @@
-"""Card memo store (flowgate.v02.0056 T#3).
+"""Card memo store.
 
 Migration 149_graph_node_memos.sql. One row per memo, keyed by the card like its settings (``graph_node_settings``):
 the Flow and the node key, so a card keeps its memos whether it is only in the draft or in confirmed revisions (a
@@ -17,7 +17,7 @@ _COLUMNS = "memo_id, group_id, node_key, title, body, ai_ref, created_by, create
 
 
 def _now() -> str:
-    """ISO 8601 UTC with milliseconds, like the other Graph rows (P0008 §1.1)."""
+    """ISO 8601 UTC with milliseconds, like the other Graph rows."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 

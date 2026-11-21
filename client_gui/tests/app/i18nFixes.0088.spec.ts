@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0088 (D0004 §6.2) — the client_gui i18n fixes that no screen spec covers on its own:
+ * the client_gui i18n fixes that no screen spec covers on its own:
  * - the app catalog: ko / ja / en have the same keys and the same named interpolation params, the 0088 keys included;
  * - the UI message model (core/i18n/uiText) and the server-diagnostic boundary (core/i18n/serverDetail);
  * - F13: a default Palette card is labelled in the language of the placing moment, a custom one keeps its words;
@@ -108,7 +108,7 @@ describe('the UI message model and the server diagnostic boundary', () => {
     expect(serverDetailOf(transport)).toBe('')
   })
 
-  // TR0007 rework: told apart by where the text came from — a body message the Error repeats is kept.
+  // told apart by where the text came from — a body message the Error repeats is kept.
   it('keeps a body message the Error repeats (Error.message == response message, message != code)', () => {
     const message = 'The group is archived; restore it before creating a chat.'
     const repeated = Object.assign(new Error(message), { isAxiosError: true, response: { status: 409, data: { ok: false, error: { code: 'group_archived', message } } } })

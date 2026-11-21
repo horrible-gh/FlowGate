@@ -5,7 +5,7 @@
   </template>
 </template>
 <script setup lang="ts">
-// flowgate.v02.0150: the test card windows are not drawn here (the header goes with the selection) but by the Frame's
+// the test card windows are not drawn here (the header goes with the selection) but by the Frame's
 // windows host (TestCardWindowHost), so a selection change or a click elsewhere never closes them.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

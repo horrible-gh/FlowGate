@@ -1,4 +1,4 @@
-"""Storage of the chat card AI role API (flowgate.v02gui.0028, migration 190).
+"""Storage of the chat card AI role API (migration 190).
 
 - ``chat_placed_cards``: one row per work card a chat placed (``service.place``, after its draft save committed): the
   chat conversation document (the CH ``doc_ref`` of the chat token) that placed it, the token and AI run of that call,
@@ -8,7 +8,7 @@
   role's state before and after as JSON, whether it changed, the card's settings version after the change, the token,
   AI run, CH and acting user). Written inside the change's Flow guard transaction, so a refused or rolled-back change
   leaves no row. Rows are only inserted.
-- ``chat_card_setting_audit`` (flowgate.v02gui.0032, migration 191): the same for the run settings a chat may change
+- ``chat_card_setting_audit`` (migration 191): the same for the run settings a chat may change
   (``run_settings``: review count, restarts, time limit) — one row per requested setting (the shown value and whether it
   was stored, before and after). Optional: without migration 191 a settings change is refused, roles still work.
 
@@ -113,7 +113,7 @@ def _decoded(row) -> dict:
     return row
 
 
-# ── run settings audit (flowgate.v02gui.0032, migration 191) ─────────────────
+# ── run settings audit (migration 191) ─────────────────
 
 def setting_audit_available() -> bool:
     """False until migration 191 is applied."""

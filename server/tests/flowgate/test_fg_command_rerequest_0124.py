@@ -1,4 +1,4 @@
-"""flowgate.v02.0124 T#1 (0003-NR §5.1, §6 server side) — an explicit step / full command requests the result review of
+"""(NR, server side) — an explicit step / full command requests the result review of
 a card whose review loop spent its budget again, as the review assignment's next ``seq``.
 
 The harness of ``test_fg_card_intervention_assigned_0119`` (real SQLite DB, routes and migrations, the stage
@@ -123,7 +123,7 @@ def test_only_a_spent_review_budget_is_requested_again_by_a_command_and_nothing_
 
     for stop in ("retry_exhausted", "review_count_exhausted", "total_timeout"):
         assert reasons.command_rerequest_due("review_not_passed:" + stop) is True
-        assert reasons.retry_due(["review_not_passed:" + stop]) is False             # 0119: no automatic retry
+        assert reasons.retry_due(["review_not_passed:" + stop]) is False             # no automatic retry
         assert reasons.kind_of("review_not_passed:" + stop) == reasons.NEEDS_INTERVENTION
     for reason in ("review_not_passed:review_verdict_hold", "review_not_passed:review_stalled",
                    "review_not_passed:restart_orphaned", "review_not_passed:", "run_not_clean:timeout",
@@ -344,7 +344,7 @@ def test_an_excluded_card_is_never_requested_again_by_a_command(env, decided, mo
     loops, requests = len(_loops(starts)), len(ledger(env))
     command(env, "step")
     if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
-        # 0126: explicit reentry now covers these waits; attribution and older seqs remain fixed.
+        # explicit reentry now covers these waits; attribution and older seqs remain fixed.
         second = one(env, a, "result_review", 2)
         assert second is not None and len(assignments(env,a)) == rows + 1
         assert len(_loops(starts)) == loops + 1 and len(ledger(env)) == requests + 1
@@ -423,7 +423,7 @@ def test_a_command_requests_every_admitted_card_of_a_flow_again_and_nothing_of_a
         a: "review_not_passed:retry_exhausted", b: "review_not_passed:total_timeout",
         c: "review_not_passed:review_verdict_hold"}
     assert _run_row(env)["status"] == "idle"
-    _hold(env, c)  # 0126: verdict hold is retryable; the independent card Hold still blocks.
+    _hold(env, c)  # verdict hold is retryable; the independent card Hold still blocks.
     asked = []
     real = assigned_review.rerequest_review_locked
 
@@ -703,7 +703,7 @@ def test_a_lost_compare_and_set_requests_nothing(env, decided, monkeypatch, star
 
 def test_a_stop_during_the_re_requested_review_keeps_its_seq_and_the_next_command_goes_on(
         env, decided, monkeypatch, starts, fork_join):
-    """§6.11 with the Stop contract as it is (0061 T#7, not changed here): the Stop cancels seq 2's request, puts the
+    """with the Stop contract as it is (not changed here): the Stop cancels seq 2's request, puts the
     card back to pending and invalidates its attempt; the next command opens the card again as a new attempt. The
     stopped attempt's seq 1..2 stay as its history."""
     a, _a2, _a3, _result, first = _spent(env, monkeypatch, starts)

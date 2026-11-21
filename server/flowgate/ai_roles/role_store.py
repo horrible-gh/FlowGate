@@ -1,4 +1,4 @@
-"""Account role defaults, card role slots and card init state (flowgate.v02.0113 T#1, DB-1 §2.1-§2.3, §4).
+"""Account role defaults, card role slots and card init state.
 
 Migration 163: ``user_ai_role_defaults``, ``graph_node_role_slots``, ``graph_node_role_init``.
 
@@ -14,7 +14,7 @@ Migration 163: ``user_ai_role_defaults``, ``graph_node_role_slots``, ``graph_nod
   settings version once (W-6, ``card_settings.repository.bump_version``) in the same transaction.
 - No AI id column references ``ai_providers`` (DB-D4): a deleted AI keeps its original id and name snapshot.
 - Nothing here reads or writes ``graph_node_settings`` (DB-1 I-19).
-- flowgate.v02.0113 T#2 rework (0030-M §2, migration 166): ``first_setup`` is the source of a slot written by the
+- the earlier change the earlier implementation rework (M, migration 166): ``first_setup`` is the source of a slot written by the
   account's first AI setup applied to every AI-settings card of one Flow (``first_setup.apply``). One
   ``ai_role_setup_requests`` row per applied request (account, request id) keeps its answer: the same request sent again
   answers it and writes nothing. Its rows are only inserted.
@@ -35,7 +35,7 @@ SETUP_REQUEST_TABLE = "ai_role_setup_requests"     # migration 166
 
 ROLES = ("instruction", "execution", "review")
 ASSIGNED, NOT_USED = "assigned", "not_used"
-FIRST_SETUP = "first_setup"     # T#2 rework: the first AI setup's bulk apply (migration 166)
+FIRST_SETUP = "first_setup"     # the first AI setup's bulk apply (migration 166)
 SLOT_SOURCES = ("creation_copy", "wp_plan", "pending_fill", "card_explicit", FIRST_SETUP)
 PENDING_INIT, INITIALIZED = "pending_init", "initialized"
 NAME_SNAPSHOT_MAX = 100          # DB-D10: the AI name limit (ai_settings_service.NAME_MAX)
@@ -264,7 +264,7 @@ def mark_initialized(flow_id: str, node_key: str, now: Optional[str] = None) -> 
         "WHERE group_id = ? AND node_key = ? AND state = 'pending_init'", [now or _now(), flow_id, node_key]) > 0
 
 
-# ── first setup requests (T#2 rework, migration 166) ─────────────────────────
+# ── first setup requests (rework, migration 166) ─────────────────────────
 
 def setup_requests_available() -> bool:
     """False until migration 166 is applied: the first setup's bulk apply is off (its slot source is refused too)."""

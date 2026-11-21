@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — shared Inspector test support (D#1 §12.3). Owned by T#1 (T#3 adds the
+ * shared Inspector test support. Owned by the earlier implementation (the earlier implementation adds the
  * event hub mock); feature sets use it and keep their own helpers in their own folders.
  *
  * - Selection fixtures per ownership (v01 / graph / unassigned / conflict), shaped as the server

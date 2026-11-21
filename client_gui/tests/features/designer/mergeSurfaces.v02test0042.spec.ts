@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0042 — where a card result's merge shows outside its tab (mockup v7): the Canvas card (the hourglass names
+ * where a card result's merge shows outside its tab (mockup v7): the Canvas card (the hourglass names
  * the card it waits for; nothing is added below the card; 병합 충돌 opens the card's tab), the Center column turning
  * "open this card's merge" into a selection and a tab request, the notification runs tab and the Git panel (no dead end:
  * "카드에서 처리합니다 [카드로 이동]").

@@ -8,9 +8,9 @@ import { registerAppMessages } from '@/app/i18n'
 
 registerAppMessages(i18n)
 
-// T0011 §8/§12: the real App.vue + real /app router. Sidebar active state must follow the
+// the real App.vue + real /app router. Sidebar active state must follow the
 // router, placeholders must say "준비 중", and no navigation may rewrite the requested URL.
-// App.vue mounts the Project Dialog (T0010/T#3 §2), so a real Pinia instance is required
+// App.vue mounts the Project Dialog, so a real Pinia instance is required
 // the same way main.ts installs one — this is not the Project feature's own test surface,
 // just what App.vue now needs to mount at all.
 async function mountAt(url: string): Promise<{ wrapper: VueWrapper; router: Router }> {
@@ -101,7 +101,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
 
   it.each([
     ['/projects', 'projects', '프로젝트'],
-    // /designer is the Designer Shell since flowgate.v02.0025 (tests/app/designerEntry.0025.spec.ts).
+    // /designer is the Designer Shell since the earlier change (tests/app/designerEntry.0025.spec.ts).
     ['/git', 'git', 'Git'],
   ])('direct access to %s renders an explicit "준비 중" placeholder with that section active', async (url, key, title) => {
     const { wrapper, router } = await mountAt(url)
@@ -114,7 +114,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     expect(placeholder.get('h1').text()).toBe(title)
     expect(placeholder.get('.gui-coming-soon-badge').text()).toBe('준비 중')
     expect(placeholder.text()).toContain('아직 구현되지 않았습니다')
-    // flowgate.v02gui.0024: v0.1 is gone, so the placeholder no longer points at its screens.
+    // v0.1 is gone, so the placeholder no longer points at its screens.
     expect(placeholder.text()).not.toContain('v0.1')
     expect(placeholder.get('a.gui-coming-soon-back').attributes('href')).toBe('/app/')
     // A placeholder never embeds a v0.1 screen.
@@ -122,7 +122,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
   })
 
   it('direct access to /settings renders the Environment Settings hub with that section active', async () => {
-    // flowgate.v02.0020: /settings is no longer a placeholder (mockup 11 #hub).
+    // settings is no longer a placeholder (mockup 11 #hub).
     const { wrapper, router } = await mountAt('/settings')
     mounted = wrapper
 

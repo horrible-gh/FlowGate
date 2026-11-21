@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — the state and the calls of a document's AI call window (O3 0009-TR §4-3): the project's AIs
+// the state and the calls of a document's AI call window: the project's AIs
 // (settingsChoicesRead — the settings tab's read; the project's default first), the opinion, and [실행] — the only
 // place the AI is called (documentAiStart: edit · single · the pinned AI · the opinion, no review loop). The run
 // started is followed by documentAiWindows (trackDocumentAiRun) until it ends; the opener hears the end.

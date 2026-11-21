@@ -6,9 +6,9 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free button primitive (T0004 §5.1): visual variant/size/loading only, no feature
+// Domain-free button primitive: visual variant/size/loading only, no feature
 // meaning. A screen picks primary/secondary/ghost/danger — never a domain name like
-// "git-merge" or "approval" (T0004 §5.1/§11).
+// "git-merge" or "approval".
 import { computed } from 'vue'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'

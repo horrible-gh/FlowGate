@@ -1,4 +1,4 @@
-"""T#4: minimal spec preparation/finally failure contracts (no live DB or process)."""
+"""minimal spec preparation/finally failure contracts (no live DB or process)."""
 from __future__ import annotations
 
 import contextlib

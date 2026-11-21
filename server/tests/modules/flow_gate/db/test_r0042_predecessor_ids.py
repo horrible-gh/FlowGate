@@ -1,4 +1,4 @@
-"""R0001 #1 / T0004 — get_predecessor_result_doc_ids returns the top-N produced items.
+"""#1 / the earlier implementation — get_predecessor_result_doc_ids returns the top-N produced items.
 
 Pure-Python unit over get_sequence_items(): the helper that lets advance_workflow seed
 Section 3 'Reference documents' with the previous document + the one before it.

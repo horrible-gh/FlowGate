@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#5 — the documents tab's state (D#1 §7.2 / §7.3, §10.2). Reads the target
+// the documents tab's state. Reads the target
 // document with its review extras and the documents it superseded through `@/features/document`,
 // and reads them again when the server says the document changed: its review status, an AI
 // review result, or its documents (a new revision supersedes it). The tab changes nothing on the

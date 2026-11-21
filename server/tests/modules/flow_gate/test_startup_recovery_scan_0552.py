@@ -1,4 +1,4 @@
-"""Regression coverage for flowgate.default.0552 T0015 startup scan reuse."""
+"""Regression coverage for the earlier change the earlier implementation startup scan reuse."""
 from __future__ import annotations
 
 import os
@@ -37,7 +37,7 @@ def _startup_stubs(monkeypatch, sessions):
 
 
 def _claim_and_lock_stubs(monkeypatch):
-    """0153 T#4: each group session is recovered under its DB session claim, and the orphan
+    """each group session is recovered under its DB session claim, and the orphan
     close re-reads the row under the session lock. These scan tests have no store, so the
     claim is always granted and the lock is a no-op; the claim/guard contract itself is
     covered by test_git_orphan_claim_0153.py."""
@@ -59,7 +59,7 @@ def test_startup_reads_open_sessions_once_even_when_empty(monkeypatch):
     assert listed.call_count == 1
 
 
-# 0669 unit 9c: the project mutex table (git_project_lock) and its force-release are gone.
+# unit 9c: the project mutex table (git_project_lock) and its force-release are gone.
 # startup_recovery no longer sweeps lock rows by holder string; lock rows are the
 # resource_lock store and are reclaimed by owner instance (stale sweep), not here.
 def test_startup_recovery_has_no_legacy_project_lock_sweep(monkeypatch):
@@ -90,7 +90,7 @@ def test_startup_orphan_is_closed_once_and_not_reoffered_to_sweep(monkeypatch):
     monkeypatch.setattr(svc, "_base_root_of", Mock(return_value=None))
     close_orphan = Mock()
     monkeypatch.setattr(svc, "_close_orphan", close_orphan)
-    # 0153 T#4: startup re-reads the row under its lock and the orphan guard re-reads it
+    # startup re-reads the row under its lock and the orphan guard re-reads it
     # under its own (still open both times: it has no recovery evidence, so it is closed);
     # the refresh after it finds the row closed.
     monkeypatch.setattr(svc.db_git, "get_session", Mock(side_effect=[session, session, None]))
@@ -109,7 +109,7 @@ def test_startup_reconcile_uses_snapshot_but_sweep_gets_fresh_pending_row(monkey
     fresh = _session(review_state=svc.REVIEW_STATE_PENDING)
     listed = _startup_stubs(monkeypatch, [original])
     monkeypatch.setattr(svc, "_set_status", Mock())
-    # 0153 T#4: startup judges the row re-read under its lock (still the listed reconciling
+    # startup judges the row re-read under its lock (still the listed reconciling
     # row); the reconcile scan then changed it, so the refresh for the sweep reads it pending.
     monkeypatch.setattr(svc.db_git, "get_session", Mock(side_effect=[original, fresh]))
     reconciled = []
@@ -151,7 +151,7 @@ def test_explicit_empty_lists_never_trigger_a_hidden_rescan(monkeypatch):
     listed.assert_not_called()
 
 
-# NR0025 T0030 §3.6 (recommendation 4) -- the facade owns `_sweep_daemon_started`; reading it
+# (recommendation 4) -- the facade owns `_sweep_daemon_started`; reading it
 # through `svc.` sees the real state, and resetting it through `svc.` re-arms the
 # daemon (0550 §3.5). Never let a real thread run: `_start_sweep_daemon` does
 # `import threading` inside its own body, so patching the real `threading` module's
@@ -184,7 +184,7 @@ def test_sweep_daemon_flag_is_readable_and_resettable_through_the_facade(monkeyp
     svc._start_sweep_daemon()
     assert started_names == ["git-merge-sweep"]
 
-    # 3. Resetting the flag from OUTSIDE the facade (exactly the shape NR0025 §9
+    # 3. Resetting the flag from OUTSIDE the facade (exactly the shape the review
     #    describes: `git_service._sweep_daemon_started = False`) re-arms the daemon --
     #    a second, distinct thread gets started.
     svc._sweep_daemon_started = False

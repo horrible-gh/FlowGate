@@ -1,7 +1,7 @@
-"""flowgate.v02.0085 T#3 (D0007 §7.2 / §7.3; §8-12, 13, 14 (retry / cancel / resolve), 15, 17, 18): the recovery of
+"""(the design /;, 13, 14 (retry / cancel / resolve), 15, 17, 18): the recovery of
 the confirm gate's ``gate_publish`` job on a real Git repository.
 
-flowgate.v02.0098 T#2 (TR0009): moved unchanged from ``test_fg_gate_publish_recovery_0085`` (before that
+moved unchanged from ``test_fg_gate_publish_recovery_0085`` (before that
 ``test_fg_gate_publish_0085``), whose harness, fixtures and shared helpers it imports. ``--dist loadfile``
 gives one file to one worker, and the 16 cases of the one file took about as long as the 1800 s Self-check
 limit on a loaded host.
@@ -325,7 +325,7 @@ def test_abandon_closes_without_the_remote_and_blocks_the_gate_until_a_round_spl
     assert _job_row(env, job_id)["status"] == "cancelled"
 
 
-# 0134 T#1: final approval's stage/cause policy. The gate scenarios above keep
+# final approval's stage/cause policy. The gate scenarios above keep
 # their own recovery contract; this harness isolates approval policy and durable
 # evidence, while test_approval_finalize_real_http_0671 covers the real DB/HTTP/Git.
 @pytest.fixture

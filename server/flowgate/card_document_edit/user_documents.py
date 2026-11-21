@@ -1,4 +1,4 @@
-"""Designer (user JWT) read / revise of a standalone document by doc_id (flowgate.v02.0157).
+"""Designer (user JWT) read / revise of a standalone document by doc_id.
 
 A document that no card line holds (``target.NON_CARD``) has no card coordinates, so the card
 transport (``routes.BASE``) cannot reach it. These two functions give the Designer the same

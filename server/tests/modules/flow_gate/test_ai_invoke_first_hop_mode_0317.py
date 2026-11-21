@@ -1,4 +1,4 @@
-"""flowgate.default.0317 T0013 defect 2 — the continuous FIRST hop must forward the chosen
+"""defect 2 — the continuous FIRST hop must forward the chosen
 instruction mode to advance_workflow.
 
 _issue_first_hop routes the continuous first hop through advance_workflow (the only place

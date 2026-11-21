@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — apply on hold card (0033-D §3.4, Q 395). The project default action is
+// apply on hold card. The project default action is
 // never shown or sent as the group's plan. Stage 1 (no S1 fields): "반영 방식 미확인" and
 // `지금 반영` disabled. Stage 2: the S1 planned action / target, sent explicitly to finalize.
 // `설정` only raises the open-confirm-settings intent (C4).

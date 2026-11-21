@@ -1,4 +1,4 @@
-"""0406 T0009 — defaults.note fallback and note-source priority."""
+"""defaults.note fallback and note-source priority."""
 from __future__ import annotations
 
 import pytest
@@ -59,7 +59,7 @@ def test_step_note_has_priority_over_defaults_note():
 
 
 def test_pair_note_goes_to_the_result_row_and_defaults_still_fill_the_instruction():
-    """0408 M0019 second rejection, item 2: result notes stay on result rows; instruction rows receive the common note."""
+    """second rejection, item 2: result notes stay on result rows; instruction rows receive the common note."""
     rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
@@ -179,7 +179,7 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
         "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
         "pre_instruction_text", "pre_instruction_attachment",
         "source_freshness", "source_current_revision_no",
-        # 0649 T#1 (NR0003 O0/O1): the card the row serves, its stored id, and whether the
+        # the card the row serves, its stored id, and whether the
         # save must keep it in place.
         "source_wp_card_id", "item_id", "protected",
     }

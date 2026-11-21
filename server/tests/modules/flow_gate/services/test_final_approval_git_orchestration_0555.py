@@ -1,5 +1,5 @@
-"""Final-approval/Git orchestration contract for flowgate.default.0555 T0006, on the real job
-layer of flowgate.default.0669 (units 6a/6b).
+"""Final-approval/Git orchestration contract for the earlier change the earlier implementation, on the real job
+layer of the earlier change (units 6a/6b).
 
 The approval used to take the project mutex with ``wait_sec=0`` and answer ``git_busy`` 409 when
 it was busy. It is now a ``final_approval_publish`` job: ``precheck -> job -> freeze -> publish
@@ -123,7 +123,7 @@ def test_approval_commit_failure_keeps_the_job_queued_with_terminal_git(fx):
 
     status, body = fakes.approve(DOC["doc_id"], USER)
 
-    # 0669: Git is terminal and published; only the DB step is retried by the job
+    # Git is terminal and published; only the DB step is retried by the job
     assert status == 200, body
     assert body["approval"]["stage"] == "queued" and body["approval"]["deferred"] is True
     assert body["block_reason"]["code"] == "approval_commit_failed"
@@ -136,7 +136,7 @@ def test_approval_commit_failure_keeps_the_job_queued_with_terminal_git(fx):
 
 
 def test_terminal_retry_consumes_the_intent_its_own_conflict_parked(fx, monkeypatch):
-    """0555 T0008 §9 -- the D0005 §3.9 re-approval finishes the parked intent too.
+    """the the design re-approval finishes the parked intent too.
 
     Approving without consuming would leave a live intent on the closed session, and the next
     merge review to read it would approve the same document twice."""
@@ -161,7 +161,7 @@ def test_terminal_retry_consumes_the_intent_its_own_conflict_parked(fx, monkeypa
 
 
 def test_terminal_without_a_parked_intent_consumes_nothing(fx):
-    """The ordinary (never-conflicted) approval keeps its T#1 shape exactly."""
+    """The ordinary (never-conflicted) approval keeps its the earlier implementation shape exactly."""
     fx.script["outcome"] = _merged()
 
     status, _body = fakes.approve(DOC["doc_id"], USER)
@@ -185,7 +185,7 @@ def test_conflict_reports_the_parked_intent_id(fx):
 
 
 def test_busy_lock_queues_the_approval_instead_of_dropping_it(fx):
-    """0669 B: a busy R used to be a 409 git_busy that lost the approval. Now the job waits."""
+    """B: a busy R used to be a 409 git_busy that lost the approval. Now the job waits."""
     with hold_lock("R", PROJECT, holder_kind="publish"):
         status, body = fakes.approve(DOC["doc_id"], USER)
 

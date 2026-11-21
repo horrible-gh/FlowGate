@@ -1,7 +1,7 @@
-"""TR2 lifecycle consistency (flowgate.default.0660 T0004), connected.
+"""TR2 lifecycle consistency, connected.
 
 Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration, a
-real Git worktree in scratch, the real HTTP routes. The scenarios are the ones 0660 NR0003
+real Git worktree in scratch, the real HTTP routes. The scenarios are the ones the review
 reproduced on the test server:
 
 * RC1-a — git on, the group worktree is not provisioned yet (or its provisioning lost the
@@ -321,7 +321,7 @@ def test_t6_blocked_cancel_keeps_tr2_revert_pending_until_the_retry_succeeds(env
     with hold_group_lock(PROJECT, group["group_id"]):
         result = _reopen(doc_id)
 
-    # The rewind stands (D0005 K8) but the TR2 is not reopened for editing.
+    # The rewind stands but the TR2 is not reopened for editing.
     assert result["tr_commit_cancel"]["blocked_reason"] == "git_busy"
     assert result["tr_commit_cancel"]["retryable"] is True
     assert result["revert_pending"] == [doc_id]

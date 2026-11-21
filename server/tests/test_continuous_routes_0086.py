@@ -1,4 +1,4 @@
-"""Continuous (unmanned) work — group 0086 R0001 (T0003): HTTP route wiring.
+"""Continuous (unmanned) work — the requirement: HTTP route wiring.
 
 The service layer (advance_workflow / token_service.issue / mention continuous branch /
 inbox self-chain) is covered by test_continuous_work_0051.py. This module covers the thin
@@ -48,7 +48,7 @@ def test_advance_body_defaults_are_ordinary():
     assert body.continuation_auto_approve_item_seqs is None
 
 
-# 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+# the ai_direct chain's per-item_seq N/T auto-approve selection.
 def test_advance_body_accepts_auto_approve_item_seqs():
     body = wdr.AdvanceBodyRequest(
         doc_id="flowgate.default.0086.0001-R",
@@ -78,7 +78,7 @@ def _wire_advance_route(monkeypatch, captured):
     monkeypatch.setattr(wdr, "verify_bearer", lambda _r: {"issued_to": "pm-1"})
     monkeypatch.setattr(wdr._db_documents, "get_by_id", lambda _id: {"group_id": "g", "project_id": "flowgate"})
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(wdr._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)
@@ -118,7 +118,7 @@ def test_advance_route_ordinary_advance_unchanged(monkeypatch):
     assert captured["continuation_review_mode"] is False
 
 
-# ── 0352 T0004 §2/§3.4: /workflow/advance forwards + validates the per-item_seq
+# ── the earlier implementation: /workflow/advance forwards + validates the per-item_seq
 # N/T auto-approve selection ────────────────────────────────────────────────────
 
 def test_advance_route_forwards_auto_approve_item_seqs(monkeypatch):
@@ -247,7 +247,7 @@ def test_token_issue_route_ordinary_is_not_continuous(monkeypatch):
 
 
 def test_token_issue_route_forwards_auto_approve_item_seqs(monkeypatch):
-    # 0352 T0004 §2/§3.4: the fallback direct-issue path validates + forwards the selection
+    # the fallback direct-issue path validates + forwards the selection
     # exactly like /workflow/advance.
     issue_kw: dict = {}
     monkeypatch.setattr(tr, "validate_project_id", lambda _p: None)
@@ -307,7 +307,7 @@ def test_token_issue_route_rejects_non_positive_item_seq_with_422(monkeypatch):
 
 
 # ── Start BEFORE the workflow is decided ("워크플로 결정부터", TR0004 rework) ─────────
-# The reviewer rejected TR0004 because continuous work could not run until the workflow
+# The reviewer rejected the earlier implementation because continuous work could not run until the workflow
 # was decided. The continuous run now starts FROM the workflow decision: the decision-
 # request issues a workflow_decide token carrying the run-to-end sentinel, and once the
 # decision is saved the decide endpoint self-chains the first real step.
@@ -410,7 +410,7 @@ def test_kickoff_resolves_sentinel_to_last_item_and_advances(monkeypatch):
     assert env["next_mention"] == "NEXT_MENTION"
     assert env["continuation_remaining"] == 4
     assert "continuation_paused" not in env
-    # 0352 T0004 §3.3: normalized to [] (empty selection) and threaded through — always
+    # normalized to (empty selection) and threaded through — always
     # empty in practice for this pre-decision path (no item_seq exists before the decision).
     assert adv_kw["continuation_auto_approve_item_seqs"] == []
     assert env["continuation_auto_approve_item_seqs"] == []
@@ -457,7 +457,7 @@ def test_decide_route_kicks_off_continuation_for_continuation_token(monkeypatch)
                      "status": "open", "doc_review_status": "wf_in_progress"},
     )
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(wdr._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)

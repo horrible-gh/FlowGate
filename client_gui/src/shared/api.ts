@@ -23,7 +23,7 @@ interface RefreshResponse {
 
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
-  /** flowgate.v02gui.0017 B4: how many times this GET was already re-sent after a transient failure. */
+  /** B4: how many times this GET was already re-sent after a transient failure. */
   _getRetryCount?: number
 }
 
@@ -50,12 +50,12 @@ const storeRefreshToken = (token: string) => {
   storage.setItem('fg_refresh_token', token)
 }
 
-// group 0016 / NR0003 Finding C: shared with the cross-tab refresh coordination block below.
+// Finding C: shared with the cross-tab refresh coordination block below.
 export const REFRESH_LOCK_NAME = 'fg_token_refresh'
 export const SHARED_REFRESH_KEY = 'fg_refresh_result'
 
 const clearStoredAuth = () => {
-  // flowgate.v02test.0036 T#1: the session's unsent work (Flow attachment deletes) goes with the tokens.
+  // the session's unsent work (Flow attachment deletes) goes with the tokens.
   announceAuthSessionEnded()
   clearProactiveRefresh()
   delete window.__accessToken__
@@ -65,7 +65,7 @@ const clearStoredAuth = () => {
   localStorage.removeItem(SHARED_REFRESH_KEY)
 }
 
-// --- group 0016 / NR0003 Finding C: cross-tab refresh coordination -----------------
+// --- the earlier change / the review Finding C: cross-tab refresh coordination -----------------
 // Symptom: "occasionally" every session is force-logged-out. Root cause: with "remember me" the
 // refresh token lives in shared localStorage, so two tabs that both hit 401 after an idle
 // period read the SAME refresh token and each POST /auth/refresh. The server rotates the
@@ -101,7 +101,7 @@ const getLockManager = (): MinimalLockManager | null => {
   return nav?.locks && typeof nav.locks.request === 'function' ? nav.locks : null
 }
 
-// --- flowgate.v02gui.0017 B6: cross-tab refresh without Web Locks ---------------------
+// --- the earlier change B6: cross-tab refresh without Web Locks ---------------------
 // `navigator.locks` exists only in a secure context (HTTPS, localhost). Opened over plain HTTP
 // on a LAN address, the Web Lock above is missing and two remember-me tabs whose proactive
 // timers fire together (they adopted the same access token, so the same expiry) both POST the
@@ -251,7 +251,7 @@ tokenChannel?.addEventListener('message', (event: MessageEvent) => {
   }
 })
 
-// 0279 T0005 (NR0003 cause 3): this instance had no `timeout`, so axios defaulted to
+// this instance had no `timeout`, so axios defaulted to
 // `timeout: 0` — wait forever. When a request stalled, its promise never settled, the
 // `finally { loading.value = false }` never ran, and no rejection reached the existing
 // error+retry UI. The screen therefore froze on "loading" rather than showing an error,
@@ -270,7 +270,7 @@ const LONG_RUNNING_PATHS = [
   /\/files\/upload/,
   /\/files\/download/,
   /\/search\//,
-  // 0283 T0004 (NR0003 root cause): the base file-tree and group-tree GETs do a
+  // (root cause): the base file-tree and group-tree GETs do a
   // synchronous recursive directory walk of the storage root. On remote/UNC storage
   // that walk intermittently exceeds the 30s default and axios aborts it, surfacing
   // "트리를 불러오지 못했습니다." Give these reads the same 130s ceiling the other
@@ -278,11 +278,11 @@ const LONG_RUNNING_PATHS = [
   // matches /\/git\// above.)
   /\/files\/tree/,
   /\/groups\/tree/,
-  // flowgate.v02.0047: the AI title of a new chat waits for one model answer, which the
+  // the AI title of a new chat waits for one model answer, which the
   // server allows up to 90s (auto_title.TIMEOUT_SEC); a CLI model often needs more than
   // the 30s default, and the title was then dropped although the server still wrote it.
   /\/conversations\/[^/]+\/auto-title/,
-  // flowgate.v02.0152: an AI start answers only after admission — worktree check, the group's
+  // an AI start answers only after admission — worktree check, the group's
   // first source sync (git commands of up to 120s each), lease, token, scratch. The 30s default
   // gave up on healthy starts the server went on to run, and the chat said "AI를 호출하지 못했습니다"
   // for its first call. The chat resends the same press (client_request_id) when even
@@ -290,7 +290,7 @@ const LONG_RUNNING_PATHS = [
   /\/ai-invoke\/start(?:$|\?)/,
 ]
 
-// flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a
+// a final approval that carries a
 // `git_action` runs the whole Git finalize inside the request — fetch (≤120s),
 // ff-only + merge (≤30s each), push (≤120s) — before it answers, so the 30s default
 // abandoned healthy merges mid-flight. Only that request gets this ceiling; a plain
@@ -379,7 +379,7 @@ let refreshPromise: Promise<string> | null = null
 // Perform one token rotation: reuse a sibling tab's freshly published result when available,
 // otherwise POST /auth/refresh. Stores the new access+refresh tokens and notifies token-bound
 // long-lived connections (the SSE EventSource, which pins the token into its URL) that the
-// token rotated. (group 0016 Finding C + group 0021 NR0003 item 1)
+// token rotated.
 const runRefresh = async (): Promise<string> => {
   const intendedRefreshToken = getStoredRefreshToken()
   if (!intendedRefreshToken) {
@@ -387,7 +387,7 @@ const runRefresh = async (): Promise<string> => {
   }
   const refreshStartedAt = Date.now()
 
-  // group 0016 / NR0003 Finding C: hold a cross-tab lock so only one tab rotates the shared
+  // Finding C: hold a cross-tab lock so only one tab rotates the shared
   // refresh token; siblings adopt that tab's result instead of re-POSTing a token the server
   // has already retired (which would revoke every session).
   const newToken = await withRefreshLock(async () => {
@@ -402,7 +402,7 @@ const runRefresh = async (): Promise<string> => {
 
     // Bare `axios`, not `api` — deliberately, to skip the auth interceptor. That also
     // skips the instance default, so set the timeout explicitly: a rotation that hangs
-    // forever holds the cross-tab refresh lock and blocks every queued caller (0279 T0005).
+    // forever holds the cross-tab refresh lock and blocks every queued caller.
     const { data } = await axios.post<RefreshResponse>(`${getBaseUrl()}/auth/refresh`, {
       refresh_token: currentRefreshToken ?? intendedRefreshToken,
     }, { timeout: DEFAULT_TIMEOUT_MS })
@@ -442,14 +442,14 @@ const ensureFreshToken = (): Promise<string> => {
   return refreshPromise
 }
 
-// --- group 0028 / T0004: proactive token refresh ----------------------------------------
+// --- the earlier change / the earlier implementation: proactive token refresh ----------------------------------------
 // The access-token lifetime is intentionally short on this deployment (operator .env, e.g.
-// 1 minute — deliberately NOT widened to 30m per T0004). A purely reactive 401→refresh loop
+// 1 minute — deliberately NOT widened to 30m per the earlier implementation). A purely reactive 401→refresh loop
 // then means (a) every expiry surfaces at least one 401 in the browser console, and (b) the
 // SSE stream can sit pinned to a dead token until the next user action ("[Workflow Decision] not
 // refreshing"). We instead rotate the token slightly BEFORE it expires, so live requests
 // never carry an expired token. The reactive interceptor below stays as a safety net.
-// flowgate.v02gui.0031 T0005 ①: the token reaches the SSE stream through fg:access_token_refreshed, which the project
+// ①: the token reaches the SSE stream through fg:access_token_refreshed, which the project
 // event hub (features/project/projectEvents.ts) listens to — it replaces a stream that is not open (one the browser
 // retries on its old URL, or a closed one waiting to reopen) with one carrying the new token. An open stream is kept:
 // the server checks the token only when the stream connects.
@@ -458,7 +458,7 @@ const MIN_REFRESH_DELAY_MS = 2000
 let proactiveTimer: ReturnType<typeof setTimeout> | null = null
 let autoRefreshStarted = false
 
-// flowgate.v02gui.0031 T0005 ④: a proactive rotation that failed without a verdict (network error, timeout, 5xx — the
+// ④: a proactive rotation that failed without a verdict (network error, timeout, 5xx — the
 // server restarting) used to stop the timer, and only a focus / visibility return, or the next request's 401, tried
 // again. A screen watched without leaving it went on to an expired token. It is now tried again on its own, the wait
 // doubling from PROACTIVE_RETRY_BASE_MS up to PROACTIVE_RETRY_MAX_DELAY_MS, at most PROACTIVE_RETRY_MAX times; the
@@ -494,7 +494,7 @@ function clearProactiveRefresh() {
 export const proactiveRetryDelayMs = (failures: number): number =>
   Math.min(PROACTIVE_RETRY_BASE_MS * 2 ** Math.max(failures - 1, 0), PROACTIVE_RETRY_MAX_DELAY_MS)
 
-/** T0005 ④: a rotation started by the timer, a visibility return or `online`; a failure without a verdict retries. */
+/** ④: a rotation started by the timer, a visibility return or `online`; a failure without a verdict retries. */
 function refreshInBackground(): void {
   ensureFreshToken().catch((error) => retryProactiveRefresh(error))
 }
@@ -526,7 +526,7 @@ function scheduleProactiveRefresh() {
   const delay = Math.max(expMs - Date.now() - REFRESH_SKEW_MS, MIN_REFRESH_DELAY_MS)
   proactiveTimer = setTimeout(() => {
     proactiveTimer = null
-    // T0005 ④: a failure without a verdict is tried again (bounded backoff); a rejection stops the chain.
+    // ④: a failure without a verdict is tried again (bounded backoff); a rejection stops the chain.
     refreshInBackground()
   }, delay)
 }
@@ -547,7 +547,7 @@ const onVisibilityRefresh = (recordRecovery: boolean) => {
   // reconnect off an expired token.
   const nearExpiry = expMs !== null && expMs - Date.now() <= REFRESH_SKEW_MS
   if (recordRecovery) {
-    // T0004 §8: this module's own independent visibility-recovery listener — diagnostics
+    // this module's own independent visibility-recovery listener — diagnostics
     // only, coalesced under the same generation as the SSE/AI-run recovery entries via the
     // shared tick. Recorded only for a genuine hidden->visible recovery (see above), not
     // every focus, so a same-state focus cannot manufacture a duplicate token recovery entry
@@ -565,7 +565,7 @@ const onVisibilityRefresh = (recordRecovery: boolean) => {
 const onVisibilityChangeRefresh = () => onVisibilityRefresh(true)
 const onFocusRefresh = () => onVisibilityRefresh(false)
 
-// T0005 ④: back online — a rotation that failed while offline (or a token that expired meanwhile) is done now, as a
+// ④: back online — a rotation that failed while offline (or a token that expired meanwhile) is done now, as a
 // new bounded series; a healthy schedule is kept.
 const onOnlineRefresh = () => {
   if (!getStoredRefreshToken()) return
@@ -632,7 +632,7 @@ export const ensureValidAccessToken = async (): Promise<boolean> => {
   return true
 }
 
-// flowgate.default.0578 T0010 §2.3: delegates to the common resolver so a registered code
+// delegates to the common resolver so a registered code
 // renders its i18n message; otherwise the caller's fallback is returned verbatim. Raw
 // response.data.detail/error.message text is never returned here anymore.
 export const extractApiErrorMessage = (error: unknown, fallback: string): string =>
@@ -666,12 +666,12 @@ export const localizeApiError = (error: AxiosError): AxiosError => {
   return error
 }
 
-// 0005 T#1 (NR0003 rework, last rejection): on refresh failure the browser goes back to the
+// (rework, last rejection): on refresh failure the browser goes back to the
 // sign-in page. client_gui's bootstrap (main.ts) hits this exact path — a stale access token
 // plus a missing/invalid refresh token — when /auth/me 401s and the retried refresh also
 // fails, before installAuthGuard's /login?next=/app/... logic gets a chance to run, so the
 // requested /app deep link is carried here as `next` (same allow-list as the guard and the
-// sign-in page, resolveSafeReturnPath). flowgate.v02gui.0024: every other location goes to
+// sign-in page, resolveSafeReturnPath). the earlier change: every other location goes to
 // plain /login (v0.1's '/' is now the same sign-in page, but /login says what it is).
 // @internal — exported for the refresh-failure redirect regression tests.
 export const buildRefreshFailureRedirect = (): string => {
@@ -681,7 +681,7 @@ export const buildRefreshFailureRedirect = (): string => {
   return safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/login'
 }
 
-// flowgate.v02gui.0017 B1/B2: only a definitive answer from the server ends the session — the
+// B1/B2: only a definitive answer from the server ends the session — the
 // refresh/identity request was answered 401/403, or there is no refresh token at all. A network
 // error, a timeout or a 5xx (server restarting, proxy hiccup) says nothing about the session,
 // so the tokens are kept and the caller just sees the failed request.
@@ -694,7 +694,7 @@ export const isAuthRejection = (error: unknown): boolean => {
   return status === 401 || status === 403
 }
 
-// --- flowgate.v02gui.0017 B4: bounded retry of idempotent GETs ------------------------------
+// --- the earlier change B4: bounded retry of idempotent GETs ------------------------------
 // A dropped connection, a server restart or a gateway error used to surface at once as a failed
 // list ("채팅 목록을 불러오지 못했습니다", "새로고침에 실패했습니다") that stayed until the user
 // pressed [다시 시도]. GETs are re-sent a few times with a short exponential backoff. Only GET:
@@ -763,7 +763,7 @@ api.interceptors.response.use(
     // Mark BEFORE retrying so that a retry which STILL 401s rejects instead of looping into
     // another refresh — which, against an already-rotated token, would trip server reuse
     // detection and revoke every session. This is the latent cause of the intermittent
-    // "approve fails with Token has expired" in group 0028. (T0004 req 4)
+    // "approve fails with Token has expired" in the earlier change. (req 4)
     originalRequest._retry = true
 
     try {
@@ -771,7 +771,7 @@ api.interceptors.response.use(
       originalRequest.headers.Authorization = `Bearer ${newToken}`
       return api(originalRequest)
     } catch (refreshError) {
-      // flowgate.v02gui.0017 B1: the refresh could not reach a verdict (network error, timeout,
+      // B1: the refresh could not reach a verdict (network error, timeout,
       // 5xx — e.g. the server is restarting). The session may well be valid: keep every token,
       // stay on this screen and fail only this request. The next request, the proactive timer or
       // a visibility return refreshes again once the server answers.
@@ -790,12 +790,12 @@ api.interceptors.response.use(
   },
 )
 
-// `config` (optional, flowgate.v02.0045 S3): per-request extras such as the Canvas tab id header.
+// `config` (optional, the earlier change S3): per-request extras such as the Canvas tab id header.
 // Without it the call is exactly the previous one.
 export const postRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
   config ? api.post<T>(path, data, config) : api.post<T>(path, data)
 
-// 0282 NR0003 finding 3: the screen-load SQL log showed the client running the
+// the screen-load SQL log showed the client running the
 // same GET series twice (racing mounts / duplicated event listeners), roughly
 // doubling the server's per-load query work. Coalesce identical in-flight GETs
 // onto one network call: a caller issuing a GET whose (path, params) twin is
@@ -811,7 +811,7 @@ const getRequestKey = (path: string, params: Record<string, unknown>): string =>
   return keys.length ? `${path}?${JSON.stringify(params, keys)}` : path
 }
 
-// `config` (optional) carries per-request extras such as headers (flowgate.v02.0045: the Canvas
+// `config` (optional) carries per-request extras such as headers (the earlier change: the Canvas
 // tab id header). It is not part of the dedupe key: a caller sends the same extras for the same GET.
 export const getRequest = async <T>(
   path: string,

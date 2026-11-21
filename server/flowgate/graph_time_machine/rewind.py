@@ -1,4 +1,4 @@
-"""The DB step of a Graph Time Machine operation (0061 T#13), after its Git step, in one Flow guard taken under the
+"""The DB step of a Graph Time Machine operation, after its Git step, in one Flow guard taken under the
 Stop gate's exclusive hold (``fencing.exclusive``: no side effect of a target attempt's token runs across the commit,
 as for a Stop's invalidation).
 
@@ -10,14 +10,14 @@ Checked first, written after; a refusal rolls the guard back and the operation i
 - every attempt of the target nodes (the plan's and any later one) -> ``invalidated`` (``time_machine``), its tokens
   revoked through the existing reclaim path. An invalidated attempt's tokens are no evidence any more
   (``run_store.token_ids``): reconciliation and the result binder never take its result again, and its documents are
-  the card's history (the stale lines of ``card_completion.outputs``, flowgate.v02.0119 T-3), never a node's result;
+  the card's history (the stale lines of ``card_completion.outputs``, the earlier change T-3), never a node's result;
 - a target node opened before migration 151 has tokens of no attempt (``attempt_id`` NULL), which ``token_ids`` would
   keep as evidence (a consumed one is not touched by the reclaim path): they are mapped to one attempt row recorded
   for that old opening, invalidated (``time_machine``) at once — the same durable boundary as every other invalidated
   attempt, so ``token_ids``, ``invalidated_token_ids`` (stale documents), the authorship read and the token fence
   (``graph_source_hooks.binding`` -> an invalidated attempt) all leave them out. Nothing of the token, document or
   approval history is deleted;
-- the target nodes' completion records (``flowgate.card_completion``, flowgate.v02.0119 T#2) are kept and marked
+- the target nodes' completion records (``flowgate.card_completion``, the earlier change the earlier implementation) are kept and marked
   ``revoked``: no reconciliation completes a rewound node from them again;
 - the target documents' approval goes back (``approved`` -> ``pending_review``, the existing review status CAS);
   their content, revisions and approval / rejection history stay as the old attempt's output;

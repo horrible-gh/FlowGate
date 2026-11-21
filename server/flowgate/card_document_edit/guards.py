@@ -12,7 +12,7 @@ def authorize(actor, project_id, perm, *, flow_id):
 
 
 def _chat_lease_owner(req, group_id):
-    """0127 CH0028: a chat-delegated edit inside the group whose active AI lease is held by
+    """a chat-delegated edit inside the group whose active AI lease is held by
     that very chat run (same run, same current token, scope ``chat``) passes the lease check
     as its owner. Anything else stays a human principal and is refused by the lease as before."""
     origin = req.origin

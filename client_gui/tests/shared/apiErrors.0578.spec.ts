@@ -9,7 +9,7 @@ describe('apiErrors 0578 common resolver', () => {
     i18n.global.locale.value = 'ko'
   })
 
-  // T0010 §2.1: response.data.error.code (Git-style) wins over response.data.detail.code.
+  // response.data.error.code (Git-style) wins over response.data.detail.code.
   it('prefers the Git-style error envelope over detail.code', () => {
     const input = {
       response: {
@@ -84,7 +84,7 @@ describe('apiErrors 0578 common resolver', () => {
     )
   })
 
-  // T0010 tasks 2.3/7.2: min/max present but the wrong scalar type (string, boolean) must not
+  // tasks 2.3/7.2: min/max present but the wrong scalar type (string, boolean) must not
   // be treated as valid bounds -- cleanParams lets strings/booleans through unchanged, so the
   // resolver itself must reject non-finite-number bounds before interpolating.
   it('falls back to the screen fallback when both bounds are present but wrong-typed', () => {

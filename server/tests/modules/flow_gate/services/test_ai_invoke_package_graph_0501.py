@@ -1,6 +1,6 @@
-"""flowgate.default.0501 T6: the ai_invoke architecture is a real Python package.
+"""the ai_invoke architecture is a real Python package.
 
-T0014 rejected the T1-T5 result for not being NR0003 §12's structure: the engine was
+rejected the T1-T5 result for not being the review's structure: the engine was
 still a flat row of `ai_invoke_*.py` siblings next to every other service, with
 admission / oracle / finalize / diagnostics never separated at all. T6 built §12's
 package. This file locks the four properties that make it a package rather than a
@@ -39,7 +39,7 @@ _SERVER_DIR = Path(__file__).resolve().parents[4]
 _SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
 _PKG_DIR = _SERVICES_DIR / "ai_invoke"
 
-# NR0003 §12's recommended final structure, verbatim.
+# 's recommended final structure, verbatim.
 _EXPECTED_MODULES = {
     "__init__", "facade", "runtime", "admission", "worker", "provider_api",
     "provider_cli", "oracle", "finalize", "chain", "review", "diagnostics",
@@ -93,7 +93,7 @@ class TestLayoutIsNR0003Section12:
             assert not (_SERVICES_DIR / name).exists(), f"{name} still exists beside the package"
 
     def test_ai_invoke_service_is_a_shim_that_defines_nothing(self):
-        """NR0003 §20: the old import path survives as the compatibility surface, but it
+        """the old import path survives as the compatibility surface, but it
         must not become a second home for implementation."""
         path = _SERVICES_DIR / "ai_invoke_service.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -103,7 +103,7 @@ class TestLayoutIsNR0003Section12:
 
 
 class TestNoAssemblyMagic:
-    """T0012 §21, carried forward: nothing in the engine may conjure names at runtime."""
+    """carried forward: nothing in the engine may conjure names at runtime."""
 
     @pytest.mark.parametrize("module", sorted(_EXPECTED_MODULES))
     def test_module_has_no_loader_exec_or_module_getattr(self, module):
@@ -121,7 +121,7 @@ class TestNoAssemblyMagic:
 
 
 class TestDependencyDirection:
-    """NR0003 §28: an architectural test, so the package cannot drift back into a
+    """an architectural test, so the package cannot drift back into a
     god-module one convenient import at a time."""
 
     def test_runtime_imports_nothing_from_the_package(self):
@@ -134,7 +134,7 @@ class TestDependencyDirection:
         assert _package_imports("oracle") <= {"runtime"}
 
     def test_review_never_imports_chain(self):
-        """T0012 §8 / NR0003 §18: chain imports review, never the other way round."""
+        """chain imports review, never the other way round."""
         assert "chain" not in _package_imports("review")
         assert "review" in _package_imports("chain"), (
             "the allowed direction of the pair disappeared -- chain.py should be the one "
@@ -142,7 +142,7 @@ class TestDependencyDirection:
         )
 
     def test_provider_transports_never_import_chain_or_review(self):
-        """NR0003 §28's example rule, verbatim: transport must not import review. `worker`
+        """'s example rule, verbatim: transport must not import review. `worker`
         is added to the banned set alongside it (T6 rev1): provider_cli.py used to reach
         five watchdog helpers there, which is the same "transport knows the orchestration
         it transports for" shape §28 names for chain/review."""
@@ -172,7 +172,7 @@ class TestDependencyDirection:
         )
 
     def test_the_whole_package_import_graph_has_no_cycle(self):
-        """NR0003 §28, exhaustively: the edge-specific assertions above only ban the
+        """exhaustively: the edge-specific assertions above only ban the
         pairs someone thought to name. T6 rev0 passed every one of them while the
         checked-in graph still had direct cycles nobody had written a rule against
         (admission<->chain, admission<->worker, chain<->diagnostics, and a
@@ -252,7 +252,7 @@ def _run_fresh_import(dotted: str) -> subprocess.CompletedProcess:
 @pytest.mark.parametrize("entry", ("modules.flow_gate.services.ai_invoke_service",)
                          + tuple(f"modules.flow_gate.services.ai_invoke.{m}" for m in _ENTRY_POINTS))
 def test_fresh_process_import_from_any_entry_point(entry):
-    """T0012 §20, widened to the package: whichever module a fresh interpreter reaches
+    """widened to the package: whichever module a fresh interpreter reaches
     first, the rest of the graph must load behind it AND `ai_invoke_service` must end up
     carrying the full surface. Entering at `facade` is the case that catches a
     reintroduced cycle -- it is the module every other one would have to be finished for."""

@@ -1,4 +1,4 @@
-// 0071 D0008 §3.6 · §3.7 · §6.8 · §6.9 — the report and follow-up windows' rules. Pure functions over the card
+// · · · — the report and follow-up windows' rules. Pure functions over the card
 // session's view, result rows and presentation; the windows draw them and call session commands only.
 import { testSpecCasePayload, type TestSpecCaseDetail, type TestSpecEvidence, type TestSpecRecordRow, type TestSpecView } from '@/features/document'
 import type { TestCardPresentation } from '../testSpecModel'

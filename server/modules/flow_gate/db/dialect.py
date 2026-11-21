@@ -21,7 +21,7 @@ rewrites only activate when the live backend is MySQL or PostgreSQL.
 
 Canonical input forms
 ----------------------
-After the call-site cleanups (T0010), every upsert in the db submodules is
+After the call-site cleanups, every upsert in the db submodules is
 written in one of two SQLite/PostgreSQL-native canonical forms, which keeps the
 MySQL rewrite below bounded and testable:
 
@@ -40,7 +40,7 @@ MYSQL = 2
 POSTGRESQL = 3
 
 
-# --- SQLite-only now-expressions embedded in queries.json (group 0088) -------
+# --- SQLite-only now-expressions embedded in queries.json (the earlier change) -------
 # Hand-written runtime queries fill created_at/updated_at with SQLite functions:
 #   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')  -> UTC ISO8601 with millis + 'Z'
 #   datetime('now')                        -> UTC 'YYYY-MM-DD HH:MM:SS'
@@ -75,7 +75,7 @@ def _rewrite_now(sql: str, strftime_repl: str, datetime_repl: str) -> str:
     return sql
 
 
-# --- SQLite-only last-inserted-id retrieval (group 0088) ---------------------
+# --- SQLite-only last-inserted-id retrieval (the earlier change) ---------------------
 # Call sites recover an auto-increment PK right after INSERT with
 #   SELECT last_insert_rowid()
 # inside the same transaction connection. SQLite executes it natively (translate

@@ -13,7 +13,7 @@ import { registerAppMessages } from '@/app/i18n'
 
 registerAppMessages(i18n)
 
-// T0004 §8 / rejection 2026-09-25: swapping a native element for a UI Primitive must not
+// rejection 2026-09-25: swapping a native element for a UI Primitive must not
 // change the screen's already-shipped computed style. Each Primitive applies its own
 // scoped disabled-opacity / font-weight / fixed-size rule unconditionally (Button
 // `font-weight: 650`, Button/IconButton `:disabled { opacity: --fg2-control-disabled-*
@@ -22,7 +22,7 @@ registerAppMessages(i18n)
 // win that cascade with an explicit override, not just reuse the same class name — jsdom
 // resolves real CSS specificity/cascade for non-layout properties (opacity, font-weight),
 // so this loads the actual scoped `<style>` bodies (no build step, no data-v hash to
-// chase — see the "0416 TR0005" recipe) and reads getComputedStyle on the real mounted
+// chase — see the "the earlier implementation" recipe) and reads getComputedStyle on the real mounted
 // DOM instead of asserting against a source-text pattern.
 function scopedStyleBody(relPathFromSrc: string): string {
   const text = readFileSync(resolve(__dirname, '../../src', relPathFromSrc), 'utf8')
@@ -55,7 +55,7 @@ function mountWithRouter<T>(component: T) {
     history: createMemoryHistory(),
     routes: [{ path: '/', component: { template: '<div/>' } }, { path: '/:rest(.*)*', component: { template: '<div/>' } }],
   })
-  // Sidebar's Project entry now calls useProjectStore() (T0010/T#3 §1), so it needs an
+  // Sidebar's Project entry now calls useProjectStore, so it needs an
   // active Pinia instance the same way App.vue's real mount gets one from main.ts.
   return mount(component as never, { global: { plugins: [i18n, router, createPinia()] } })
 }

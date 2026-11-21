@@ -1,11 +1,11 @@
-"""CH (conversation) documents take no queries — B0001 / NR0004 (group 0261) regression.
+"""CH (conversation) documents take no queries — the regression / the review (the earlier change) regression.
 
-Bug (B0001): the AI, mid-conversation, announced it would register its uncertainty as a Q.
+Bug: the AI, mid-conversation, announced it would register its uncertainty as a Q.
 A chat has no Q surface — DocInfoPanel is switched off for CH (MainPanel.canShowDocInfoPanel,
-TR0044.0010 rev8) — yet nothing on the server refused the registration, so a Q posted from a
+) — yet nothing on the server refused the registration, so a Q posted from a
 chat would have been stored and rendered nowhere.
 
-Fix (NR0004 §6, approved): POST /q/{doc_id}/questions rejects a CH target with 400, and the
+Fix: POST /q/{doc_id}/questions rejects a CH target with 400, and the
 message tells the worker to ask in its reply turn instead.
 
 The gate is on the TARGET DOCUMENT rather than the credential because a "chat token" is not
@@ -114,7 +114,7 @@ def tmp_db():
             mock_db._conn.executescript(sql_file.read_text(encoding="utf-8"))
         except Exception:
             pass
-    # Environment repair, NOT part of the fix under test (TR0006 §4): the sqlite profile's
+    # Environment repair, NOT part of the fix under test: the sqlite profile's
     # migration 064 rebuilds `tokens` to widen the action_scope CHECK and its column list
     # omits continuation_instruction_mode, so 063_tokens_continuation_instruction_mode is
     # undone by the very next migration. token_service.issue() always INSERTs that column,
@@ -246,7 +246,7 @@ def _container_exists(doc_id: str) -> bool:
 # ── The gate: a CH document takes no queries, from either credential ──────────────────
 
 def test_worker_token_question_on_ch_is_rejected(seed_data, tmp_path):
-    """B0001: a chat worker's Q POST against its own CH document → 400, nothing stored."""
+    """a chat worker's Q POST against its own CH document → 400, nothing stored."""
     raw = _worker_token(CHDOC, tmp_path)
     with patch("modules.flow_gate.api.v1.q_tapi_routes.has_permission", return_value=True):
         resp = _client().post(

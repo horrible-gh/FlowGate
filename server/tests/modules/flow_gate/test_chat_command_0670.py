@@ -1,6 +1,6 @@
-"""flowgate.default.0670 T0004 -- chat (CH) command execution and run change summaries.
+"""chat (CH) command execution and run change summaries.
 
-Covers NR0003 §15:
+Covers the review:
   15.1 the command path never touches the one-time edit claim/commit/rollback;
   15.2 policy (default user_approval / always_approve / reject), approve/reject flow,
        results returned to the same run, exit code / stdout / stderr / timeout, cwd and

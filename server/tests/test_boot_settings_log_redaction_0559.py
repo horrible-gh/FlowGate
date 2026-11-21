@@ -1,11 +1,11 @@
-"""Boot-time settings log stops leaking secrets (flowgate.default.0559 NR0010 §5 / T0011).
+"""Boot-time settings log stops leaking secrets.
 
-NR0010 found that ``DatabaseSetting._init_db()`` unconditionally logged the whole
+The review found that ``DatabaseSetting._init_db()`` unconditionally logged the whole
 ``Settings`` object (``logger.debug("settings", settings)``), independent of
 ``DB_LOG``. LogAssist's ``debug(tag, msg)`` builds the record with an f-string
 (``f'[{tag}] {msg}'``), which stringifies the pydantic ``Settings`` instance and
 puts ``SECRET_KEY``, ``DB_PASSWORD`` and the ``FLOWGATE_*_ENCRYPT_KEY`` values into
-``logs/default.log`` in plain text on every boot. T0011 scopes the fix to exactly
+``logs/default.log`` in plain text on every boot. the earlier implementation scopes the fix to exactly
 this line: replace the raw object with an explicit allow-list of non-secret
 fields. This locks that in.
 """

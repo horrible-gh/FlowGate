@@ -1,10 +1,10 @@
-"""flowgate.v02gui.0019 (0004-CH) — a Flow never gets stuck on its draft.
+"""(CH) — a Flow never gets stuck on its draft.
 
 1. A card the run opened is put back into the draft (``flowgate.graph_run.draft_restore``): a draft saved while the
-   card was pending and without it (flowgate.v02gui.0011) no longer refuses every later save.
+   card was pending and without it no longer refuses every later save.
 2. A bug / requirement Flow has its start card from the registration of its root on
    (``graph_workflow.services.root_start``): a real draft card holding the root, made at registration, at startup for
-   an older Flow (flowgate.v02gui.0014) and by the chat card API whatever the draft holds. No edge is ever made.
+   an older Flow and by the chat card API whatever the draft holds. No edge is ever made.
 
 On the ``test_fg_card_settings`` harness (real SQLite DB, Graph routes, card document ports).
 """
@@ -104,7 +104,7 @@ def test_a_missing_source_card_of_a_restored_edge_comes_back_too(revision):
 # ── 1. draft_restore on the Graph ────────────────────────────────────────────
 
 def test_a_draft_without_the_card_the_run_opens_gets_it_back_and_saves_again(env, decided):
-    """flowgate.v02gui.0011: the draft (R only) was saved before the run opened T; T opens -> the draft gets T back
+    """the draft (R only) was saved before the run opened T; T opens -> the draft gets T back
     (draft version + 1, its key no longer retired) and a save that places a new card on it goes through."""
     from modules.flow_gate.graph_workflow.store import layout_store, run_store
 
@@ -153,7 +153,7 @@ def test_registration_makes_the_root_the_flow_s_start_card_once(env):
 
 
 def test_an_older_flow_keeps_its_cards_and_gets_its_start_card_without_any_edge(env):
-    """flowgate.v02gui.0014: a draft with a card and no start card."""
+    """a draft with a card and no start card."""
     first = put_draft(env, FA, 0, [node("tmp_n", "N")])
     n = first["key_map"]["tmp_n"]
     key = _ensure()
@@ -191,7 +191,7 @@ def test_the_root_registration_and_startup_call_it():
 
 
 def test_the_chat_card_api_places_the_start_card_whatever_the_draft_holds(env, decided):
-    """flowgate.v02gui.0019 bug 3: a draft with a card and no start card. The start card comes first; the chat then
+    """bug 3: a draft with a card and no start card. The start card comes first; the chat then
     names where its cards go (two cards without a successor: ambiguous, as for any Flow)."""
     from flowgate.chat_control import service
     from modules.flow_gate.graph_workflow.services.errors import GraphApiError

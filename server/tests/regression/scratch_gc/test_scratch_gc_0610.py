@@ -1,4 +1,4 @@
-"""Connected run scratch GC cases from 0610 NR rev1 and T#1."""
+"""Connected run scratch GC cases from 0610 NR and the earlier implementation."""
 from __future__ import annotations
 
 import json
@@ -200,7 +200,7 @@ def test_startup_bootstrap_sweeps_legacy_crash_and_retained_without_new_admissio
                  "recover_git_sessions", "encrypt_ai_provider_keys"):
         monkeypatch.setattr(startup, hook, lambda: None)
     startup.run_all()
-    # flowgate.v02.0090 T0015: run_all() only starts the sweeps; wait for their thread.
+    # run_all only starts the sweeps; wait for their thread.
     for thread in threading.enumerate():
         if thread.name == "startup-scratch-sweep":
             thread.join(10)

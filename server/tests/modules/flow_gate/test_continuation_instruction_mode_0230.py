@@ -1,6 +1,6 @@
-"""Continuous-chain N/T authoring mode — group 0230 R0001 / T0005.
+"""Continuous-chain N/T authoring mode — the requirement / the earlier implementation.
 
-R0001: a continuous run may choose, before it starts, how instruction steps (N/T) are
+a continuous run may choose, before it starts, how instruction steps (N/T) are
 handled — the current "승인문서 자동 발급" (server auto-creates + auto-approves the N/T from a
 fixed template) OR "AI 직접 작성" (the AI authors the N/T itself, like it already does for TS).
 The choice rides the continuation token as ``continuation_instruction_mode`` (``auto_approved``
@@ -10,7 +10,7 @@ self-chain so the whole run keeps the same policy.
 The service-level gating (advance_workflow skips _auto_complete_instruction_heads when the mode
 is ai_direct → the head reaches the worker as an N/T) and the route/body wiring are covered by
 test_continuous_instruction_skip_0092.py and test_continuous_routes_0086.py. This module pins the
-remaining pieces T0005 called out:
+remaining pieces the earlier implementation called out:
 
   • (§5.3 b) the worker mention for an ai_direct N/T head carries an "Instruction authoring"
     guide section (WI-7); the managed report path (auto_approved) never shows it.
@@ -52,7 +52,7 @@ def _nt_mention(head_type: str, locale: str = "ko") -> str:
 def test_mention_for_ai_direct_T_head_includes_authoring_guide():
     mention = _nt_mention("T")
     assert "## Instruction authoring (T)" in mention
-    # group 0372 set 3 (D-0003 §3-2): the mention now carries a pointer, not the full
+    # set 3 (D-0003): the mention now carries a pointer, not the full
     # T-specific grammar (that content moved behind the authoring_guide help item and
     # is covered separately by mention_service._nt_authoring_section, still exercised
     # by test_nt_authoring_guide_follows_locale below and by test_help_items_0372.py).
@@ -86,7 +86,7 @@ def test_nt_and_ts_authoring_are_mutually_exclusive_by_head():
     assert "help/items/authoring_guide/TS" in ts_mention
 
 
-# ── N/T + TS authoring guides now follow the worker's requested locale. group 0372 set 3
+# ── N/T + TS authoring guides now follow the worker's requested locale. the earlier change set 3
 # reduced the mention's own copy of this to a one-line pointer (D-0003 §3-2), so the
 # locale check here is against that pointer sentence; the full grammar's own locale
 # fidelity is unchanged and still covered directly against mention_service._ts_authoring_section /
@@ -205,7 +205,7 @@ def test_self_chain_carries_ai_direct_instruction_mode(monkeypatch):
 
 
 def test_self_chain_carries_auto_approve_item_seqs(monkeypatch):
-    # 0352 T0004 §3.4: db/tokens.py hands the consumed token record back with the
+    # db/tokens.py hands the consumed token record back with the
     # per-item_seq selection already decoded to a plain list — the self-chain must forward
     # it onto the next hop's advance and report it in the envelope, exactly like the mode.
     from modules.flow_gate.api import inbox_routes
@@ -279,7 +279,7 @@ def test_repair_token_inherits_instruction_mode(monkeypatch):
         attempt=1,
     )
     assert issue_kw["continuation_instruction_mode"] == "ai_direct"
-    # 0352 T0004 §3.4: the per-item_seq selection rides the repair token too, not just mode.
+    # the per-item_seq selection rides the repair token too, not just mode.
     assert issue_kw["continuation_auto_approve_item_seqs"] == [3]
 
 
@@ -292,7 +292,7 @@ def test_migration_063_adds_instruction_mode_column(test_db):
     assert cols["continuation_instruction_mode"]["notnull"] == 0
 
 
-# ── (0352 T0004 §3.1) migration 078 adds the per-item_seq selection + paused-chain mode ──
+# ── migration 078 adds the per-item_seq selection + paused-chain mode ──
 
 def test_migration_078_adds_auto_approve_item_seqs_and_paused_mode_columns(test_db):
     token_cols = {
@@ -305,7 +305,7 @@ def test_migration_078_adds_auto_approve_item_seqs_and_paused_mode_columns(test_
         row["name"]: row
         for row in test_db.execute("PRAGMA table_info(ai_invoke_paused_chains)").fetchall()
     }
-    # NR0003's root cause of the pause->resume mode-loss bug: this column did not exist at
+    # 's root cause of the pause->resume mode-loss bug: this column did not exist at
     # all before migration 078, so nothing could ever be read back on resume.
     assert "continuation_instruction_mode" in paused_cols
     assert paused_cols["continuation_instruction_mode"]["notnull"] == 0

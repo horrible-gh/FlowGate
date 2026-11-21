@@ -1,4 +1,4 @@
-"""flowgate.v02.0143 T#1 (W1, R11; NR flowgate.v02.0143.0003 §4.2) — the run read tells whether an automatic Q&A responder
+"""(W1, R11; NR the earlier change) — the run read tells whether an automatic Q&A responder
 answers a question of the run's card now (``qa_responding`` / ``qa_responding_node_keys``).
 
 The existing read model has the card's ``question`` (a question nobody answered yet) only: it tells a person's wait
@@ -30,7 +30,7 @@ ASKER, OTHER, RESPONDER = "air_asker", "air_other", "air_responder"
 
 @pytest.fixture(autouse=True)
 def document_write_port_0138(monkeypatch):
-    """This older harness seeds documents before any app lifespan registers the document write gate (flowgate.v02.0127):
+    """This older harness seeds documents before any app lifespan registers the document write gate:
     the current real gate is registered explicitly, as test_fg_provider_failure_retry_0121 does, and the review harness's
     fixture writes of earlier documents bypass it (not an agent's card edit)."""
     import test_fg_card_settings_review as review_harness

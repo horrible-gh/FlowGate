@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0002 C (v02test.0024.0006-B C-1~C-5): a confirm's archive ON archives the Flow once its run completes.
+"""C (v02test.0024.0006-B C-1~C-5): a confirm's archive ON archives the Flow once its run completes.
 
 On the real SQLite DB, routes, Runner and a real bare origin of ``test_fg_gate_publish_0085``: the confirm's publish job
 runs, the run completes and the Flow is archived through the manual archive's own path (``flow_archive.change``) -

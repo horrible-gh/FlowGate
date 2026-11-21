@@ -1,4 +1,4 @@
-"""flowgate.v02.0085 T#1 (D0007 §7.1, §7.2, §8-11) — the persistent data and the settings base of the confirm gate.
+"""the persistent data and the settings base of the confirm gate.
 
 On a real SQLite DB with every migration: the gate decision / effect / archive checkpoint / cleanup tables and their
 uniqueness and no-cascade rules; the operation job kind ``gate_publish``; migrations 158 / 159 run twice; the old
@@ -73,7 +73,7 @@ def _script(name, dialect="sqlite"):
 
 
 M158, M159 = "158_gate_decision_persistence.sql", "159_operation_job_gate_publish_kind.sql"
-M161 = "161_operation_job_gate_cleanup_kind.sql"           # T#3 rework: the end cleanup job kind
+M161 = "161_operation_job_gate_cleanup_kind.sql"           # the end cleanup job kind
 
 
 # ── migrations ───────────────────────────────────────────────────────────────
@@ -419,7 +419,7 @@ def test_the_gate_publish_job_kind_is_keyed_by_the_decision(gate_db):
     other = job_store.create_or_get_job("gate_publish", "flowgate", {**request, "node_key": "gn_x"}, group_id=FA,
                                         wake=False)
     assert other.outcome == job_store.REJECTED and other.code == "request_key_conflict"
-    # flowgate.v02.0085 T#3: the gate card's executor runs it now (installed with the gate rule).
+    # the gate card's executor runs it now (installed with the gate rule).
     from flowgate.gate_decisions import publish
     publish.install()
     with job_runner._reg_guard:
@@ -439,7 +439,7 @@ def _gate(env, flow=FB):
 def test_the_check_card_settings_are_archive_a_remote_and_false_switches(env):
     g = _gate(env)
     body = get_settings(env, FB, g)
-    # flowgate.v02.0098 T#1: the local merge branch (null: the work base) sits next to the remote
+    # the local merge branch (null: the work base) sits next to the remote
     assert list(body["fields"]) == ["archive", "merge_mode", "merge_target", "merge_target_branch", "push",
                                     "keep_branch", "hold"]
     assert shown(body) == {"archive": False, "merge_mode": None, "merge_target": None, "merge_target_branch": None,
@@ -459,7 +459,7 @@ def test_the_check_card_settings_are_archive_a_remote_and_false_switches(env):
         assert shown(setting(env, FB, g, name, True))[name] is True
         back = setting(env, FB, g, name, None)                                # null: stored nothing, false
         assert (back["fields"][name]["value"], back["fields"][name]["stored"]) == (False, False)
-    # flowgate.v02.0098 T#1 (D0004 §3.5): push true saved the remote with it; push null left the remote as history
+    # push true saved the remote with it; push null left the remote as history
     assert shown(get_settings(env, FB, g))["merge_target"] == "origin"
     assert shown(setting(env, FB, g, "merge_mode", "hold"))["merge_mode"] == "hold"
     # A stored null reads as false, and a branch name an old row still holds is not shown as the remote.
@@ -539,7 +539,7 @@ def test_a_running_flows_gate_settings_change_only_while_nothing_holds_the_gate(
     _start(env)
     run_id = _sql(env["db"], "SELECT run_id FROM graph_runs WHERE group_id = ?", (FA,))[0]["run_id"]
     assert _sql(env["db"], "SELECT status FROM graph_node_runs WHERE node_key = ?", (g,))[0]["status"] == "pending"
-    # flowgate.v02.0113 T#1: the other card waits for its person (open, no AI): it takes its settings too; the
+    # the other card waits for its person (open, no AI): it takes its settings too; the
     # definition keeps its structure lock.
     assert setting(env, FA, t, "restart", 1)["locked"] is False
     body = setting(env, FA, g, "push", True)
@@ -624,7 +624,7 @@ def test_an_open_gate_takes_settings_changes_and_a_waiting_card_does_too(env, de
     _sql(db, "UPDATE graph_runs SET status = ? WHERE run_id = ?", (run_status, run_id))
     for key in (g, t):
         _sql(db, "UPDATE graph_node_runs SET status = 'open' WHERE run_id = ? AND node_key = ?", (run_id, key))
-    # flowgate.v02.0113 T#1: an open node no AI works on is not running (the gate included); the gate's lock decides.
+    # an open node no AI works on is not running (the gate included); the gate's lock decides.
     assert legacy_adapter.node_running(FA, g) is False
     body = get_settings(env, FA, g)
     assert (body["locked"], body["lock_reason"], body["settings_version"]) == (False, None, 0)
@@ -633,7 +633,7 @@ def test_an_open_gate_takes_settings_changes_and_a_waiting_card_does_too(env, de
     assert changed["fields"]["archive"]["value"] is True and stored_rows(env, FA, g)[(g, "archive")] == "true"
     guarded = patch(env, FA, g, {"field": "push", "value": True, "expected_settings_version": 1})
     assert guarded["settings_version"] == 2 and guarded["locked"] is False
-    # flowgate.v02.0113 T#1: another open card of the same run that no AI works on waits — not running, not locked,
+    # another open card of the same run that no AI works on waits — not running, not locked,
     # whatever the run's status; once an AI works on it, it is locked (never with the gate's reason).
     assert legacy_adapter.node_running(FA, t) is False
     assert get_settings(env, FA, t)["locked"] is False

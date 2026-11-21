@@ -58,7 +58,7 @@ def _invalid_request(exc: ui_settings_service.UiSettingsError) -> JSONResponse:
 @router.get("/me/ui-settings")
 def get_my_ui_settings(user=Depends(get_current_user)):
     # Safe variant: a store that cannot be read must not take the finished-card feature
-    # down with it (L0003 §2-8, §5).
+    # down with it.
     return ui_settings_service.settings_response_safe(user["user_id"])
 
 

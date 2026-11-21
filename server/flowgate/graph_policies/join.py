@@ -1,6 +1,6 @@
-"""AND join execution policy — flowgate.v02.0061 (R §2.5 join, 0002-CH turns 3 / 11).
+"""AND join execution policy — the earlier change (R join, the discussion turns 3 / 11).
 
-The ``join`` slot (L0009 §2.6.1, D0004 §8 Q-4) gets its decided implementation here, for the structure the
+The ``join`` slot gets its decided implementation here, for the structure the
 validator reports as ``join`` (several incoming edges into one node):
 
 - ``join`` = ``and_all``: the node opens only when every live incoming edge is ``completed`` (its source

@@ -7,7 +7,7 @@ import source from '@/features/conversation/TimelineMessage.vue?raw'
 import menuSource from '@/features/conversation/TimelineMessageMenu.vue?raw'
 import type { ConversationTurn } from '@/features/conversation/types'
 
-// flowgate.v02gui.0031 B — the AI speaker's name is no longer cut by a fixed 110px cap: it shows in full while the
+// B — the AI speaker's name is no longer cut by a fixed 110px cap: it shows in full while the
 // line has room and gives way (ellipsis) only when it does not. The title keeps the full name. The bubble widens to
 // fit the name (up to its 92% max-width), so a short reply such as "ok" still shows the whole name.
 registerAppMessages(i18n)

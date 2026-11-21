@@ -1,9 +1,9 @@
-"""Semantic claims for one AI review round (flowgate.default.0583 T0004).
+"""Semantic claims for one AI review round.
 
 A review round is ``(review_run_id, doc_id, revision_no)``: the server-owned ai-invoke
 run that is reviewing, the document, and the revision it reviewed.  Two submissions that
 share all three belong to the SAME round however they differ otherwise --
-``attempt_no`` names a provider launch rather than a round (0486 NR0028 F1), and a
+``attempt_no`` names a provider launch rather than a round, and a
 requested/actual provider difference is a fallback inside one round, not a new one.  An
 explicit rerun is a different run id, so it keeps its own claim and its own row.
 
@@ -13,10 +13,10 @@ round has a durable verdict" are one fact: a rolled-back registration leaves nei
 behind, and two review tokens racing the same round cannot both commit.
 
 Why a separate table instead of a UNIQUE index on ``document_reviews``: existing
-deployments already carry duplicate review history written before this barrier (T0004
+deployments already carry duplicate review history written before this barrier (the earlier implementation
 §2), so an index added to that table could fail to build at boot.  Legacy / manual /
 copy-mention rows -- the ones with ``review_run_id`` NULL -- stay outside it entirely
-(T0004 §3.3).
+.
 
 That table being separate makes the deployment boundary its own problem, so the barrier
 reads BOTH records of a round: the claim, and the ``document_reviews`` row that names the

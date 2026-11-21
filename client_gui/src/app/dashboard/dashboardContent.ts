@@ -1,7 +1,7 @@
 import type { NavGlyphName } from '../components/navGlyphs'
 
 // What the Dashboard shows, in the order of the approved 01-dashboard.html. The Dashboard
-// only links to screens; it carries no project/Git/AI data or logic of its own (T0011 §9).
+// only links to screens; it carries no project/Git/AI data or logic of its own.
 
 export type DashboardCardKey = 'projects' | 'designer' | 'git' | 'ai' | 'settings' | 'quick'
 export type DashboardCardTone = 'blue' | 'cyan' | 'purple' | 'orange' | 'indigo'

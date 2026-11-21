@@ -1,4 +1,4 @@
-"""0638 T#1: TR Self-check before the TR document exists (0003-NR §4 option A).
+"""TR Self-check before the TR document exists (NR option A).
 
 A TR(new) worker has no TR row yet. Its runs are owned by the issuing token
 (``owner_token_id`` + ``draft_doc_ref``, ``tr_doc_id`` NULL) and are linked to the TR
@@ -342,7 +342,7 @@ def test_concurrent_start_and_registration_never_strand_a_draft_row(thread_store
 
 
 def test_start_maps_a_closed_owner_to_forbidden_and_leaves_nothing(monkeypatch, tmp_path):
-    """0053 1-B: the request is queued without any Group lock; an owner closed by the time the
+    """the request is queued without any Group lock; an owner closed by the time the
     queued row is inserted is 403 and its snapshot is removed again."""
     from modules.flow_gate.services import tr_self_check_queue as queue
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: True)
@@ -385,7 +385,7 @@ def test_start_maps_a_closed_owner_to_forbidden_and_leaves_nothing(monkeypatch, 
 @pytest.fixture
 def admitted(monkeypatch):
     from modules.flow_gate.services import graph_source_hooks, remote_tool_service
-    # 0110 T#3: start_draft asks whether the token is mapped to a Graph attempt; this DB-less
+    # start_draft asks whether the token is mapped to a Graph attempt; this DB-less
     # fixture's token is an ordinary (unmapped) one -- the group worktree path under test.
     monkeypatch.setattr(graph_source_hooks, "binding", lambda _token: None)
 
@@ -445,7 +445,7 @@ def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch, 
         service.start_draft(TOKEN, {"program": "pytest"})
     assert caught.value.code == "selfcheck_disabled"
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: True)
-    # 0053 1-B: a Group's unproved pre-queue run no longer refuses a start (a queued request runs
+    # a Group's unproved pre-queue run no longer refuses a start (a queued request runs
     # in its own snapshot, without G); the next gate, the managed worktree, still applies.
     monkeypatch.setattr(service.db_runs, "has_group_recovery_incomplete", lambda *_: True)
     monkeypatch.setattr(service.git_service, "effective_src_root_ex", lambda *_: (None, "base"))

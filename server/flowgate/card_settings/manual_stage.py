@@ -1,4 +1,4 @@
-"""A person's stages of an assigned attempt (flowgate.v02.0113 T#3, L-2 §2.7).
+"""A person's stages of an assigned attempt.
 
 A stage assigned to a person (``person``: not used, no AI, a former person's card) completes by what the person saved —
 never by a value typed and not saved — and moves on with no person's [승인]:
@@ -42,7 +42,7 @@ APPROVED = ar.APPROVED
 # ── judgement (L-2 §2.7.2 / §2.7.3) ───────────────────────────────────────────
 
 def duplicate(stage: str, attempt_id: str, run_id: str, key: str, doc: Optional[dict]):
-    """C5: (verdict, the review assignment) — ``JUDGED`` / ``EXISTING`` / ``TAKE_OVER_LATER`` / None. 0038-T T#3 A-4: a
+    """C5: (verdict, the review assignment) — ``JUDGED`` / ``EXISTING`` / ``TAKE_OVER_LATER`` / None. the earlier implementation the earlier implementation A-4: a
     result approved before the attempt took it (``legacy.taken_judged``) is not judged by this attempt — its review
     is opened once (``EXISTING`` after that), as for any submission."""
     if not doc:
@@ -130,7 +130,7 @@ def required_result(flow_id: str, attempt_id: str, node: dict, row: dict, doc: O
     if not sa.result_has_body(sa.kind_of(node), doc):
         return MISSING_REPORT
     if plan.get("instruction_type") and report_baseline.is_baseline(attempt_id, doc):
-        # 0038-T T#3 A-2: the report of before the instruction is no result (a baseline that cannot be read raises)
+        # A-2: the report of before the instruction is no result (a baseline that cannot be read raises)
         return MISSING_REPORT
     if plan.get("instruction_type"):
         ins = legacy.document_row(row.get("instruction_doc_id"))
@@ -146,7 +146,7 @@ def required_result(flow_id: str, attempt_id: str, node: dict, row: dict, doc: O
 def _handoff(flow_id: str, key: str, doc_id: str):
     from flowgate.card_settings import review_stage  # noqa: PLC0415
 
-    review_stage._person_job(flow_id, "", key, doc_id, None)            # marks the node as worked on (0061 T#2)
+    review_stage._person_job(flow_id, "", key, doc_id, None)            # marks the node as worked on
     return review_stage.PERSON_HANDOFF + doc_id
 
 
@@ -257,7 +257,7 @@ def proceed_written_instruction_held(flow_id: str, run_id: str, key: str, attemp
         if ia is not None and ia["stage_state"] in (sa.ACTIVE, sa.WAITING):
             sa.move(ia, sa.DONE)
         if ia is not None and not ia.get("reused_doc_id"):
-            # 0045-TR rework (0030-M §3.1 ⑥): the attempt's instruction is written now — the report baseline moves to
+            # (M ⑥): the attempt's instruction is written now — the report baseline moves to
             # this moment, so a report saved while the instruction waited never passes as one of after it (raises
             # ``BaselineUnavailable`` when it cannot be kept: the guard rolls back, the instruction is judged later)
             plan = sa.stage_plan(attempt_id) or {}
@@ -335,7 +335,7 @@ def person_result(flow_id: str, node: dict, doc_id: str):
         return lambda: ar.record_once(flow_id, run["run_id"], key, attempt_id, doc_id, ar.ASSIGNMENT_UNREADABLE,
                                       sa.mark(legacy.document_row(doc_id)))
     if a is not None and a["actor"] != sa.PERSON and a["stage_state"] == sa.DONE:
-        return None                                 # 0038-T T#3 A-4: the stage took its written report; it judges it
+        return None                                 # A-4: the stage took its written report; it judges it
     if a is None or a["actor"] != sa.PERSON or a["stage_state"] == sa.FAILED:
         if a is not None and (a["actor"] in (sa.WAIT_SETUP, sa.WAIT_UNAVAILABLE) or a["stage_state"] == sa.FAILED):
             # E-27: a person's result bound on a stage that is no person's — the card's [승인] takes it (B-1 once,
@@ -407,7 +407,7 @@ def follow_person_result(flow_id: str, run_id: str, key: str, doc_id: str, attem
 
 def reconcile_saved_report(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:
     """RC-8: a person's result stage whose report was saved in the card's line (no registration): registered with the
-    live node token once (the token is spent, so the next read finds nothing). 0038-T T#3 A: the report the stage takes
+    live node token once (the token is spent, so the next read finds nothing). the earlier implementation the earlier implementation A: the report the stage takes
     is ``written_result``'s — a saved body, submitted or approved alike, never the attempt's report baseline (one that
     cannot be read raises: nothing is taken); an approved one is recorded as taken judged and goes to this attempt's
     review as any other (``person_result`` after the binder binds it)."""

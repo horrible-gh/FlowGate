@@ -1,4 +1,4 @@
-"""Regression coverage for the OpenAI-compatible API base URL contract (0489 T0004)."""
+"""Regression coverage for the OpenAI-compatible API base URL contract."""
 from __future__ import annotations
 
 import sqlite3

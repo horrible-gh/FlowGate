@@ -19,7 +19,7 @@ def secret(prefix):
  return prefix+secrets.token_urlsafe(32)
 def digest(domain,raw):
  pepper=os.environ.get("FLOWGATE_AGENT_PEPPER")
- # 0078 T0004: a missing pepper is a server configuration gap, not a transient outage —
+ # a missing pepper is a server configuration gap, not a transient outage —
  # say which setting, never its value. Code/status stay as the published contract.
  if not pepper: raise AgentError(503,"temporarily_unavailable","Agent secret is not configured on the server (FLOWGATE_AGENT_PEPPER)",{"reason":"agent_pepper_not_configured"})
  return hmac.new(pepper.encode(),(domain+"\0"+raw).encode(),hashlib.sha256).hexdigest()
@@ -28,9 +28,9 @@ def pepper_id():
 
 def _bool(v): return bool(v)
 def _workdir(v):
- """flowgate.v02.0135 CH0006: the stored remote working directory; blank means not set."""
+ """the stored remote working directory; blank means not set."""
  return (v or "").strip() or None
-# flowgate.v02test.0019: per-Agent workspace cleanup policy, sent to the Agent in the heartbeat
+# per-Agent workspace cleanup policy, sent to the Agent in the heartbeat
 # success response (FlowGate-Agent docs/workspace-cleanup-contract.md: default ON / 24 h, 1..720 h).
 CLEANUP_DEFAULT_ENABLED=True; CLEANUP_DEFAULT_HOURS=24; CLEANUP_MIN_HOURS=1; CLEANUP_MAX_HOURS=720
 def _cleanup_fields(b):
@@ -77,7 +77,7 @@ def detail(r,at=None):
   except ValueError: pass
  return {"agent_id":r["agent_id"],"owner_user_id":r.get("owner_user_id"),"scope":"personal" if r.get("owner_user_id") else "system","name":r["name"],"enabled":_bool(r["enabled"]),"location":r["location"],
  "connection_mode":r["connection_mode"],"local_executable_path":r["local_executable_path"],
- # flowgate.v02.0135 CH0006: the working directory sent to this Agent's Jobs (None = not set).
+ # the working directory sent to this Agent's Jobs (None = not set).
  "remote_workdir":r.get("remote_workdir"),
  "workspace_cleanup_enabled":_cleanup(r)["enabled"],"workspace_cleanup_retention_hours":_cleanup(r)["retention_hours"],
  "configured_capabilities":cfg,"reported_capabilities":rep,
@@ -161,7 +161,7 @@ class AgentService:
   return {"agent_id":e["agent_id"],"agent_credential":raw,"protocol_version":1,"supported_protocol_versions":SUPPORTED,"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
  def authenticate(self,raw):
   if not raw or not raw.startswith("agc_"): raise AgentError(401,"unauthorized","Invalid Agent credential")
-  # flowgate.v02gui.0008: a deleted Agent never authenticates, even if a credential outlived delete()
+  # a deleted Agent never authenticates, even if a credential outlived delete
   # (an enroll committing between its credential and enrollment revocations). Same for enroll above.
   r=self.s._fetch_one("""SELECT c.credential_id,c.agent_id,a.enabled,a.location,a.owner_user_id FROM agent_credentials c JOIN agents a ON a.agent_id=c.agent_id WHERE c.credential_digest=? AND c.revoked_at IS NULL AND a.deleted_at IS NULL""",[digest("agent_credential",raw)])
   if not r: raise AgentError(401,"unauthorized","Invalid Agent credential")
@@ -185,7 +185,7 @@ class AgentService:
     self.s._execute("""UPDATE agents SET reported_ai_cli=?,reported_ai_api=?,reported_storage=?,last_seen_at=?,agent_version=?,protocol_version=?,os=?,architecture=?,protocol_compatibility='compatible',last_rejected_protocol_version=NULL,last_protocol_rejection_at=NULL,updated_at=? WHERE agent_id=?""",
      [c["ai_cli"],c["ai_api"],c["storage"],ts,b["agent_version"],b["protocol_version"],b["os"],b["architecture"],ts,auth["agent_id"]])
     self.s._execute("UPDATE agent_credentials SET last_heartbeat_at=? WHERE credential_id=?",[ts,auth["credential_id"]])
-    # flowgate.v02test.0019: the authenticated Agent's latest stored policy, success response only.
+    # the authenticated Agent's latest stored policy, success response only.
     policy_row=self.s._fetch_one("SELECT workspace_cleanup_enabled,workspace_cleanup_retention_hours,max_concurrent_jobs FROM agents WHERE agent_id=?",[auth["agent_id"]])
     policy=_cleanup(policy_row)
     capacity=int(policy_row["max_concurrent_jobs"])

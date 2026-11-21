@@ -1,4 +1,4 @@
-"""0061 T#13 regression specifications: the Graph Time Machine operation (Git step, DB step, journal, recovery).
+"""regression specifications: the Graph Time Machine operation (Git step, DB step, journal, recovery).
 
 TR Self-check only; formal PASS/gate belongs to TS/TSR. The Git step runs real ``git`` in a temporary repository (the
 group branch with A / B / J merges); the cancel session that would take the group's G from the DB is replaced by a

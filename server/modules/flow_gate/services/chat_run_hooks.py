@@ -1,4 +1,4 @@
-"""Generic chat-run hook ports (flowgate.v02.0032 T#1, D0006 §2.3).
+"""Generic chat-run hook ports.
 
 The AI invoke engine and the conversation turn service live in ``modules.flow_gate``;
 the Conversation contract that reacts to them (command requests, run changes, activity
@@ -12,7 +12,7 @@ Rules every port follows:
 * With no handler registered a port is a no-op, so the engine behaves exactly as it
   did before the ports existed.
 * A handler exception never fails the AI run or the turn append that called it: it is
-  logged and the caller continues (D0006 §2.3).
+  logged and the caller continues.
 * One handler per port. Registering again replaces it (startup may run more than once
   in one process, e.g. under a test client).
 """
@@ -25,7 +25,7 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 ON_CHAT_RUN_START = "on_chat_run_start"
-# flowgate.v02.0152: the heavy half of the start -- the start-tree snapshot -- runs on the
+# the heavy half of the start -- the start-tree snapshot -- runs on the
 # worker thread after the handoff gate opens and before any provider starts, so the
 # /ai-invoke/start request no longer waits for a full worktree hash (the browser gave up at
 # 30s and reported "could not call the AI" for a run the server then carried out).
@@ -34,7 +34,7 @@ PROVIDE_CHAT_TOOLS = "provide_chat_tools"
 ON_CHAT_RUN_FINALIZE = "on_chat_run_finalize"
 ON_CHAT_RUN_CANCEL = "on_chat_run_cancel"
 ON_CONVERSATION_REPLY_APPENDED = "on_conversation_reply_appended"
-# flowgate.v02.0127 L#3 §2.1 W1: the API worker hands every received tool call of a chat run
+# L#3 W1: the API worker hands every received tool call of a chat run
 # to this port exactly once, before any schema validation; the handler answers the server
 # call context (or None).
 ACCEPT_CHAT_CALL = "accept_chat_call"
@@ -54,7 +54,7 @@ HOOK_NAMES = (
 # (optional) is the same capability described for CLI providers; ``prompt_hint``
 # (optional) is one line added to the API chat context.
 CHAT_TOOL_KEYS = ("name", "description", "schema", "handler")
-# flowgate.v02.0127 L#3 §2.1 W2: optional keys. ``call_handler(run, call_context)`` receives the
+# L#3 W2: optional keys. ``call_handler(run, call_context)`` receives the
 # server call context of ACCEPT_CHAT_CALL instead of the model input (the handler reads the
 # input from its own frozen call record); ``own_validation`` (bool) asks the worker to skip
 # its generic schema validation because the handler maps input errors itself. A tool
@@ -122,7 +122,7 @@ def chat_run_start(run: dict) -> None:
 def chat_run_prepare(run: dict) -> None:
     """Worker: the run is registered and its gate is open, no provider has started yet.
 
-    flowgate.v02.0152: the start-tree snapshot lives here, off the request thread. Like
+    the start-tree snapshot lives here, off the request thread. Like
     finalize, the caller picks its in-module path only when nothing is registered."""
     if _is_chat(run):
         _call(ON_CHAT_RUN_PREPARE, run)

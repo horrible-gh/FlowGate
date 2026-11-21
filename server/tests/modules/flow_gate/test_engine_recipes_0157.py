@@ -1,4 +1,4 @@
-"""engine_recipes (flowgate.default.0157) — db + service logic test.
+"""engine_recipes — db + service logic test.
 
 Covers:
   - migration 057 seed: pytest + npm recipes present, active                    → DB §3
@@ -9,7 +9,7 @@ Covers:
   - auto-learning from a passed run: create (origin=auto) / update / tombstone respected / setup join → L §2-4
   - failure classification (infra vs code) across the L §2-5 matrix              → L §2-5
   - consecutive-infra attempt counter derived from test_runs history             → L §2-6
-  - recipes block built with the help URL (group 0372 set 3 moved it from the
+  - recipes block built with the help URL (the earlier change set 3 moved it from the
     TS mention into the `test_commands` help item — help_catalog carries it)     → L §2-7
 Environment: TESTING=1 with a temporary SQLite + the real queries.json (mirrors test_project_test_commands.py).
 """

@@ -1,4 +1,4 @@
-"""Merge-session claim rows (flowgate.v02.0153 T#4, T0011 §4.2~§4.3, migration 181).
+"""Merge-session claim rows (~, migration 181).
 
 One ``git_merge_session_claim`` row per merge session, created empty on first use. Every
 write follows the ``git_concurrency`` contract: the WHERE carries the previously observed

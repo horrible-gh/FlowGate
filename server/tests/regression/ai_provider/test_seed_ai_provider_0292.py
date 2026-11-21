@@ -1,4 +1,4 @@
-"""seed_ai_provider.py — the install-time AI provider seed (flowgate.default.0292 T0003).
+"""seed_ai_provider.py — the install-time AI provider seed.
 
 Covers the parts that decide WHAT gets written: option/env resolution, the catalog
 lookup (the script must never carry its own copy of the command strings), the duplicate
@@ -49,7 +49,7 @@ def _args(seed, *argv):
 # ── Catalog is the single source of the command strings ──────────────────────
 
 def test_command_default_comes_from_the_settings_catalog(seed, svc):
-    """The whole point of the split (CH0002): the seed and the settings screen read the
+    """The whole point of the split: the seed and the settings screen read the
     same dict, so fixing a command in one place fixes it in both."""
     from modules.flow_gate.services import test_command_service as tcs
 
@@ -145,7 +145,7 @@ def test_api_duplicates_match_on_the_model(seed):
 
 
 def test_default_name_avoids_a_collision(seed, svc):
-    """Names are unique per scope (L0004 duplicate_name), so a second provider of the
+    """Names are unique per scope (duplicate_name), so a second provider of the
     same kind must not be handed a name the save would reject."""
     first = seed.default_name(svc, "cli", "claude", set())
     second = seed.default_name(svc, "cli", "claude", {first.lower()})
@@ -207,7 +207,7 @@ def test_entry_point_prefers_the_venv_interpreter(name, venv):
 
 @pytest.mark.parametrize("name", ["setup-ai.sh", "setup-ai.ps1"])
 def test_entry_point_carries_no_copy_of_the_provider_catalog(name):
-    """The whole point of the split (CH0002): kinds and command strings exist once, in
+    """The whole point of the split: kinds and command strings exist once, in
     ai_settings_service. A wrapper that names them would be a second catalog to fix."""
     body = _entry_point(name)
     for leaked in ("--dangerously-skip-permissions", "--output-format=json", "KINDS_CLI"):

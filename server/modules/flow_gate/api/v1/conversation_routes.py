@@ -25,14 +25,14 @@ class WorkerConversationTurnAppend(BaseModel):
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
     dry_run: bool = False
-    # 0391 T0005 §7-4: optional body fingerprint (proposal 4) + bypass door (proposal 3 §5-6),
+    # optional body fingerprint (proposal 4) + bypass door (proposal 3),
     # same field names as the inbox submit paths.
     body_sha256: Optional[str] = None
     body_chars: Optional[int] = None
     force_encoding_reason: Optional[str] = None
-    # flowgate.v02test.0023: the commit message of an edit-mode chat that changed source.
+    # the commit message of an edit-mode chat that changed source.
     # FlowGate commits the flow's worktree with it when the chat run ends.
-    # flowgate.v02test.0033: required (422 commit_message_required) when the token is an
+    # required (422 commit_message_required) when the token is an
     # edit-mode chat token and the worktree holds changes that run end would commit.
     commit_message: Optional[str] = None
 
@@ -141,15 +141,15 @@ def _append_authenticated(
         return _fail(422, "idempotency_key must equal the token id.")
 
     actor = {"kind": "worker", "token": token}
-    # T0009 task 4: the encoding/fingerprint violation messages route through the
+    # task 4: the encoding/fingerprint violation messages route through the
     # worker's own continuation_locale (same field mention_service already reads),
     # unchanged default "ko" when absent — mirrors the pattern remote_tool_service uses.
     from modules.flow_gate import template_provision
     locale = template_provision.normalize_locale(token.get("continuation_locale"))
     if body.dry_run:
-        # T0004: validate-only path, checked before the single-use/replay branch so a
+        # validate-only path, checked before the single-use/replay branch so a
         # dry-run never depends on (or inspects) whether the token was already consumed.
-        # flowgate.v02test.0033: a dry run gives the same commit_message verdict.
+        # a dry run gives the same commit_message verdict.
         refusal = _commit_message_refusal(token, body)
         if refusal is not None:
             return refusal

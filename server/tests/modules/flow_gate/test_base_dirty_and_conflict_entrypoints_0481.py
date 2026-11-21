@@ -1,4 +1,4 @@
-"""flowgate.default.0481 T0010 — the two AI entrances the operator said were dead.
+"""the two AI entrances the operator said were dead.
 
 T0010 reported, in order: [AI에게 맡기기] only ever answered "기준 브랜치 AI 정리를 시작하지
 못했습니다.", the conflict dialog offered no action at all, the conflict AI call did not seem
@@ -56,7 +56,7 @@ def _start(monkeypatch, base_dirty: dict):
 
 
 def test_base_dirty_delegation_is_refused_by_name_while_a_merge_is_open(monkeypatch):
-    # T0010 #1: during a stopped merge the base checkout's dirty set IS the merge, so
+    # #1: during a stopped merge the base checkout's dirty set IS the merge, so
     # committing or discarding it would destroy the merge. Before this, the request fell
     # through to start_run and died on the phantom group's worktree gate with a generic
     # `worktree_unavailable` — the operator only ever saw "…시작하지 못했습니다.".
@@ -85,7 +85,7 @@ def test_base_dirty_delegation_is_not_refused_when_no_merge_is_open(monkeypatch)
 
 
 def test_empty_still_wins_over_an_open_merge(monkeypatch):
-    # L0008 §4's ordering is unchanged: nothing to delegate outranks every other reason.
+    # 's ordering is unchanged: nothing to delegate outranks every other reason.
     response, payload = _start(monkeypatch, {
         "dirty": False, "files": [],
         "merge_in_progress": {"merge_id": 42, "group_id": "flowgate.default.0481"},
@@ -94,7 +94,7 @@ def test_empty_still_wins_over_an_open_merge(monkeypatch):
     assert payload["code"] == "base_dirty_empty"
 
 
-# ── T0010 #5: what the conflict worker is actually told to do ────────────────
+# ── the earlier implementation #5: what the conflict worker is actually told to do ────────────────
 
 def _merge_task() -> str:
     from modules.flow_gate.api import token_routes
@@ -103,7 +103,7 @@ def _merge_task() -> str:
 
 
 def test_general_merge_task_states_the_human_approval_gate():
-    # T0008 moved a general merge's endpoint from "commit" to `resolved_pending_review`, but
+    # moved a general merge's endpoint from "commit" to `resolved_pending_review`, but
     # the merge branch of the task section still described the old world — only the tr_*
     # branch told its worker a person reads the diff afterwards. A worker that believes its
     # submission ships behaves differently from one that knows it will be read.
@@ -113,7 +113,7 @@ def test_general_merge_task_states_the_human_approval_gate():
 
 
 def test_general_merge_task_defines_a_correct_resolution_not_just_a_marker_free_file():
-    # "Strip the markers" is a description of a syntactically finished file. T0010 #5 was
+    # "Strip the markers" is a description of a syntactically finished file. the earlier implementation #5 was
     # about the answer being wrong, so the task has to say what right means: both sides'
     # intent, the zdiff3 base as the ancestor, and read around the chunk before deciding.
     task = _merge_task()
@@ -130,7 +130,7 @@ def test_tr_conflict_task_is_untouched():
     assert "UNDOING" in tr_task
 
 
-# ── T0010 #1: the live card has to be filed where the browser looks for it ───
+# ── the earlier implementation #1: the live card has to be filed where the browser looks for it ───
 
 def test_run_event_payloads_carry_the_project_scoped_identity():
     """A resolve_base_dirty run's rows are keyed by the synthetic `<project>.none.0000`
@@ -167,7 +167,7 @@ def test_started_event_payload_carries_the_project_scoped_identity():
     assert '"action_scope": run.get("action_scope")' in started
 
 
-# ── T0010 rev1 (2026-09-08 rejection) ──
+# ── the earlier implementation (2026-09-08 rejection) ──
 # The user expected an inline reply after sending chat, rather than leaving the
 # dialog for the general AI execution dialog. To keep the approval screen waiting
 # in place, the server must expose this conversation turn's active run and must
@@ -272,7 +272,7 @@ def test_a_run_whose_record_is_gone_answers_instead_of_waiting_forever(monkeypat
 
     assert result["pending_conversation"] is None
     assert result["conversation"][-1]["status"] == "run_lost"
-    # 0578 T0006 §2.2: the sentence the operator reads is no longer stored — the turn
+    # the sentence the operator reads is no longer stored — the turn
     # carries the MEANING and each surface says it in its own language. Asserting on the
     # code is asserting on the contract; the Korean sentence was only ever one rendering.
     assert result["conversation"][-1]["message_code"] == "review_run_lost"

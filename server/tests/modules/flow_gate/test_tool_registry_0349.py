@@ -1,4 +1,4 @@
-"""TR-1 registry policy and localized catalog tests for group 0349."""
+"""TR-1 registry policy and localized catalog tests for the earlier change."""
 import pytest
 
 from modules.flow_gate import template_provision
@@ -31,7 +31,7 @@ def test_kind_read_write_for_new_or_edit_tr_tsr(monkeypatch, action_scope, step_
 
 @pytest.mark.parametrize("action_scope", ["new", "edit"])
 def test_kind_read_only_for_t_after_write_recall(monkeypatch, action_scope):
-    """0427 T0004: T lost write/patch/remove -- it now advertises the same
+    """T lost write/patch/remove -- it now advertises the same
     read-only catalog as an investigation-only step (N/NR/D/DS/...)."""
     monkeypatch.setattr(
         remote_tool_service,
@@ -48,7 +48,7 @@ def test_kind_read_only_for_t_after_write_recall(monkeypatch, action_scope):
 
 @pytest.mark.parametrize("action_scope", ["review", "workflow_decide", "chat"])
 def test_kind_read_for_review_workflow_decide_and_chat_without_step_lookup(monkeypatch, action_scope):
-    """0431 T0004: chat joins review/workflow_decide at the same immediate
+    """chat joins review/workflow_decide at the same immediate
     read-only return -- none of the three look up a step type or reach the
     TR/TSR/TS write-kind branch."""
     def unexpected(_rec):
@@ -98,7 +98,7 @@ def test_local_mode_overrides_kind_to_none(monkeypatch):
     assert result["kind"] == "none"
     assert result["source_mode"] == "local"
     assert result["reason"] == "source_mode_local"
-    # 0523 T0004 s.17: a kind=none answer now also says that the document attachment API
+    # s.17: a kind=none answer now also says that the document attachment API
     # is closed to this token. Silence there is what let a worker read "no attachment tool
     # in the list" as "attachments cannot be reached at all".
     assert result["notes"] == [
@@ -133,7 +133,7 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
     assert template_provision.normalize_locale("en") == "en"
 
     result = tool_registry.resolve_registry({"action_scope": "edit"}, "flowgate", "ko")
-    # 0482 T0011 put a scope-bound tool (resolve_base_dirty) into DISPLAY_ORDER, so the
+    # put a scope-bound tool (resolve_base_dirty) into DISPLAY_ORDER, so the
     # catalog an `edit` token sees is DISPLAY_ORDER MINUS the scope-bound names — same
     # order, one entry short. Both spellings are asserted: the literal list keeps this a
     # real pin, the derived list keeps "order comes from DISPLAY_ORDER" the reason.
@@ -151,7 +151,7 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
         tool_registry.NOTES["ko"]["no_disk_edit"],
         tool_registry.NOTES["ko"]["scratch_rule"],
         tool_registry.NOTES["ko"]["report_changes"],
-        # 0523 T0004 s.17 — sits before see_detail so the "attachments are not these
+        # s.17 — sits before see_detail so the "attachments are not these
         # tools" sentence is read while the tool list is still in view.
         tool_registry.NOTES["ko"]["attachments"],
         tool_registry.NOTES["ko"]["see_detail"],

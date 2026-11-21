@@ -68,7 +68,7 @@ def source_root(token, *, project_id=None, group_id=None):
 
 
 def attempt_scope(token, *, project_id=None, group_id=None):
-    """0110 T#2 (NR0003 §2 T-A): what a mapped token's work is measured against — the attempt's validated tree and
+    """what a mapped token's work is measured against — the attempt's validated tree and
     its ``input_commit``. ``source_root`` has already held the marker's ``input_commit`` equal to the attempt row's,
     so for a Join this is the marker's final input (its merged results or the integration head), not a predecessor's.
     ``None`` for an unmapped v0.1 token, which keeps the group worktree. Raises ``GraphSourceError``; an attempt that
@@ -107,7 +107,7 @@ def write_session():
 
 
 def require_writable(token, operation, *, report=False):
-    """0061 T#7: an attempt token may still write or register a result (``report``: an execution's own report, a
+    """an attempt token may still write or register a result (``report``: an execution's own report, a
     review verdict). Raises ``GraphAttemptInactive``; an unmapped v0.1 token, or no handler, passes. Inside a
     ``write_session`` the judgement's hold is kept for the session."""
     from modules.flow_gate.db.groups import is_archived

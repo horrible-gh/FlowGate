@@ -1,4 +1,4 @@
-"""0159 T#1: restart recovery against migrated SQLite, real card reads and commands."""
+"""restart recovery against migrated SQLite, real card reads and commands."""
 import json
 import threading
 from unittest.mock import Mock
@@ -334,7 +334,7 @@ def test_restart_scan_does_not_bind_loop_reads_to_a_temporary_connection_store()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-# ── flowgate.v02gui.0006 CH: a request owned by a starting admission or a git_busy retry is never closed unowned ──
+# ── the earlier change CH: a request owned by a starting admission or a git_busy retry is never closed unowned ──
 
 @pytest.mark.parametrize("entry", ["supervisor_tick", "held_recovery"])
 def test_recovery_during_admission_keeps_the_starting_claim(request_scene, monkeypatch, entry):

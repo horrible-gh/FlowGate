@@ -286,7 +286,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
         "continue_note": "질의를 등록해도 지금 하는 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 이번 단계의 산출물을 제출하세요. 이 실행이 등록한 질의가 열려 있으면 체인은 다음 단계(검수 포함)로 넘어가기 전에 보류되고, 질의자 provider와 다른 활성 검수 AI → 독립 기본 AI 순으로 답변자를 선택하고 답변 후 자동으로 재개됩니다. 독립 응답자가 없거나 질의자 provider를 확인할 수 없으면 자동 답변하지 않고 사람 답변을 기다립니다. 답변을 기다리거나 조회하며 대기하지 마세요.",
         "option_labels": ("<옵션1 — 선택 · 없으면 생략>", "<옵션2>"),
         "requires_note": "보기를 고르는 것만으로는 조치가 끝나지 않습니다. 이 카드의 작업을 지금 attempt에서 이어갈 수 없어 사람이나 시스템이 새 attempt를 열어야 하는 보기(예: 새 기준으로 다시 시작)는 문자열 대신 {\"label\": \"<보기>\", \"requires\": \"new_attempt\"}로 등록하세요. 그 보기가 선택되면 새 attempt가 실제로 열릴 때까지 카드는 다시 호출되지 않고 개입 필요로 멈춥니다.",
-        # flowgate.v02gui.0028: the check-before-asking steps (mention_service._QUESTION_PRECHECK_TEXT says the same)
+        # the check-before-asking steps (mention_service._QUESTION_PRECHECK_TEXT says the same)
         "before_asking": (
             "Q를 등록하기 전에 순서대로 확인하십시오. 1) 사용자 질의 방침(notices 항목, 이 항목의 policy)을 먼저 적용하십시오. "
             "방침상 AI가 정할 일(되돌릴 수 있는 작업, 구현·테스트 결정, 테스트 서버 재현·배포 등)이면 Q를 남기지 말고 정해서 진행하십시오. "
@@ -609,8 +609,8 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
 
     if name == "tr_self_check":
         # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit
-        # step, or (0638 T#1) on a TR(new) step -- doc_type is then the workflow head's type.
-        # 0110 T#3: a Graph attempt token sees it too -- its run executes in its attempt tree
+        # step, or on a TR(new) step -- doc_type is then the workflow head's type.
+        # a Graph attempt token sees it too -- its run executes in its attempt tree
         # (content "graph_attempt"); before that it was always refused with 409.
         if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") in AUTHORING_SCOPES and doc_type == "TR":
             return VISIBLE
@@ -820,7 +820,7 @@ def _content_group_documents(ctx: dict) -> dict:
     }
 
 
-#: ``content_state`` values of the token document read (P0006 §1.2 / §2.9 ③); ``read_error`` is never a response
+#: ``content_state`` values of the token document read (③); ``read_error`` is never a response
 #: reason there (a read error stays 500), so it is not listed.
 _DOCUMENT_CONTENT_STATES: tuple[tuple[str, str], ...] = (
     ("readable", "본문을 읽었다. front matter뿐이면 빈 문서이며 읽기 실패가 아니다"),
@@ -886,7 +886,7 @@ def _content_document_access(ctx: dict) -> dict:
         },
         "answers": _answers_lookup(ctx),
         "path": {"method": "GET", "url": f"{base}/document/{{doc_id}}/path"},
-        # Bounded reads (group 0370). The full-body GET is the expensive one; these
+        # Bounded reads (the earlier change). The full-body GET is the expensive one; these
         # exist so a worker can read only the part it needs.
         "partial": {
             "note": (
@@ -911,7 +911,7 @@ def _content_document_access(ctx: dict) -> dict:
             },
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),
-        # 0064 T-B1e (P0006 §2.9 ③): what each ``content_state`` of a document read means, and the unread-body
+        # T-B1e (③): what each ``content_state`` of a document read means, and the unread-body
         # rules -- the Flow node AI reads them here through the help index (the same constant as the Q&A mention).
         "content_state": dict(_DOCUMENT_CONTENT_STATES),
         "rules": list(_body_unreadable_rules()),
@@ -952,7 +952,7 @@ def _attachment_permission_table() -> dict:
 
 
 def _content_document_attachments(ctx: dict) -> dict:
-    """T0004 s.4/s.6 -- reuses the same tool_registry kind ctx already carries
+    """s.4/s.6 -- reuses the same tool_registry kind ctx already carries
     (resolve_context calls tool_registry.resolve_registry once per request), so this
     item can never advertise a permission the worker route itself would refuse.
     """
@@ -969,13 +969,13 @@ def _content_document_attachments(ctx: dict) -> dict:
             "method": "POST",
             "url": f"{base}/document/{{doc_id}}/attachments/{{name}}/copy",
             "headers": {"Authorization": "Bearer <YOUR_TOKEN>", "Content-Type": "application/json"},
-            # T0004 s.11/s.34: destination is always the caller's own group worktree --
+            # s.11/s.34: destination is always the caller's own group worktree --
             # there is no group_id field to steer it elsewhere, unlike the Console contract.
             "body": {
                 "target_path": "<path inside the source tree, e.g. assets/schema.json>",
             },
         },
-        # flowgate.chat.0017 CH0002: hand a produced file to a person for approval as an
+        # hand a produced file to a person for approval as an
         # attachment of this worker's own card. Answers at once; never wait for the decision.
         "upload_request": {
             "method": "POST",
@@ -990,7 +990,7 @@ def _content_document_attachments(ctx: dict) -> dict:
             "by_kind": table,
         },
         # What a work token CANNOT do with an attachment, said out loud rather than left
-        # to be inferred from the three keys above (T0004 s.19 applied to the capability
+        # to be inferred from the three keys above (the earlier implementation s.19 applied to the capability
         # list itself): uploading and deleting are Console-screen actions.
         "absent": view["absent"],
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_attachments"),
@@ -1026,14 +1026,14 @@ def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
     copy = QUESTION_HELP_COPY[normalize_locale(locale)]
     titles = copy["titles"]
     bodies = copy["bodies"]
-    # flowgate.v02gui.0029: with a token context (GET /help/question, the `question` help item) the user's
+    # with a token context (GET /help/question, the `question` help item) the user's
     # question policy rides along.
     policy = _question_policy_block(ctx) if ctx else ""
     return {
         **({"question_policy": policy} if policy else {}),
         "note": copy["note"],
-        "options_requires": copy["requires_note"],          # flowgate.v02gui.0015 T3
-        "before_asking": copy["before_asking"],             # flowgate.v02gui.0028
+        "options_requires": copy["requires_note"],          # 
+        "before_asking": copy["before_asking"],             # 
         "registration_precheck": {
             "search": "Literal word OR; relevance score descending; next_cursor is bound to project/query/version. Legacy next_before_id is a ranked anchor, not a numeric cutoff.",
             "list_then_detail": "Search results and precheck candidates are list rows (answer_id, doc_id, seq, title, author_label, score, matched_terms, answer_preview) without bodies. Open one row with GET /flowgate/api/v1/q/{doc_id}/search/{answer_id}.",
@@ -1059,7 +1059,7 @@ def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
                 "asker_kind": "ai",
                 "questions": [
                     {"title": titles[0], "body": bodies[0]},
-                    # group 0372 set 3: the mention no longer embeds a placeholder Q
+                    # set 3: the mention no longer embeds a placeholder Q
                     # POST, so this example is the one place that demonstrates the
                     # optional `options` array the no-choices guard prescribes
                     # (offer alternatives as ONE Q carrying options, never a prompt).
@@ -1076,9 +1076,9 @@ def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
 
 def _content_question(ctx: dict) -> dict:
     content = {**build_question_content(ctx["locale"], ctx), "answers": _answers_lookup(ctx)}
-    # flowgate.v02gui.0028: the user's question policy next to the registration guide, not only in `notices`
+    # the user's question policy next to the registration guide, not only in `notices`
     # (same owner rule: the run starter for a card, the token's user for a chat). build_question_content looked it
-    # up once (flowgate.v02gui.0029); the help item carries it as `policy`.
+    # up once; the help item carries it as `policy`.
     policy = content.pop("question_policy", None)
     if policy:
         content["policy"] = policy
@@ -1116,7 +1116,7 @@ def _module_and_group(ctx: dict) -> tuple[str, str]:
     return "none", ctx.get("group_id") or ""
 
 
-# flowgate.v02gui.0009: the per-token encoding probe for a document body (new / edit).
+# the per-token encoding probe for a document body (new / edit).
 # ASCII on purpose: the rule must survive the very consoles it warns about.
 _ENCODING_PROBE_RULE = (
     "Make `line` the LAST line of the body file (content or doc_path), exactly as given. "
@@ -1167,7 +1167,7 @@ def _content_submit(ctx: dict) -> dict:
                 "body_chars": "<optional: character count of comment>",
                 "force_encoding_reason": "<optional: only if a genuinely-flagged comment must go through anyway>",
             },
-            # 0393 T0005 §2-7: a long Korean overall comment survives a file far better
+            # a long Korean overall comment survives a file far better
             # than a command line, so the verdict may travel the same way a document does.
             "source_choice": (
                 "verdict/findings/comment may travel inline (as above) or in a file. For the "
@@ -1194,7 +1194,7 @@ def _content_submit(ctx: dict) -> dict:
                 "doc_id": doc_id,
                 "doc_class": "R",
                 "sequence": [{"id": 1, "type": "<TYPE_CODE>", "label": "<STEP_LABEL>"}],
-                # 0391 T0005 §5-5: a corrupted step label is rejected here now (it used
+                # a corrupted step label is rejected here now (it used
                 # to be silently replaced by the type name), so this path needs the same
                 # escape hatch as the others.
                 "force_encoding_reason": "<optional: only if a genuinely-flagged label must go through anyway>",
@@ -1211,7 +1211,7 @@ def _content_submit(ctx: dict) -> dict:
             "body": {
                 "doc_id": doc_id,
                 "items": [{
-                    # 0649 T#1 (NR0003 O1): an existing row sent back keeps its item_id; a
+                    # an existing row sent back keeps its item_id; a
                     # new row has none. Protected rows are recognised by this id only.
                     "item_id": "<EXISTING_ROW_ITEM_ID_OR_OMIT_FOR_NEW_ROW>",
                     "type": "<TYPE_CODE>",
@@ -1219,7 +1219,7 @@ def _content_submit(ctx: dict) -> dict:
                     "note": "<UNCHANGED_NOTE_OR_EMPTY>",
                     "source_doc_id": None,
                     "source_revision_no": None,
-                    # 0444 T0007 (NR0003 §4-6): omitting both provider keys keeps whatever is
+                    # omitting both provider keys keeps whatever is
                     # stored on the row; an explicit null is what clears it.
                     "provider_id": "<UNCHANGED_PROVIDER_ID_OR_NULL>",
                     "provider_display_name": None,
@@ -1310,8 +1310,8 @@ def _content_test_commands(ctx: dict) -> dict:
     project = ctx.get("project") or ""
     try:
         block = test_command_service.build_verified_commands_block(project) if project else ""
-        # group 0372 set 3 (D-0003 §3-2, "environment-preparation guidance: dropped"): the engine-recipe
-        # guidance the TS mention used to inline (flowgate.default.0157) now rides in
+        # set 3 (D-0003, "environment-preparation guidance: dropped"): the engine-recipe
+        # guidance the TS mention used to inline now rides in
         # this item, so the first help call still teaches the registry (L §2-7).
         engine_recipes = engine_recipe_service.build_engine_recipes_block(ctx["base_url"])
     except Exception as exc:
@@ -1346,11 +1346,11 @@ def _content_changed_files_format(ctx: dict) -> dict:
     }
 
 
-# ── tr_self_check (0654 T0004) ───────────────────────────────────────────────
+# ── tr_self_check ───────────────────────────────────────────────
 # The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
 # tr_self_check_service._validate_request and tr_self_check_policy; this item only
 # describes it, and a regression test pins the field set so the two cannot drift.
-#: 0114 T#4: parallel_share (D 0006 5, the wished parallel share) joins the four fields; the pinned test follows.
+#: parallel_share (5, the wished parallel share) joins the four fields; the pinned test follows.
 SELF_CHECK_REQUEST_FIELDS: tuple[str, ...] = ("program", "args", "cwd", "timeout_seconds", "parallel_share")
 SELF_CHECK_TIMEOUT_DEFAULT = 300
 SELF_CHECK_TIMEOUT_MAX = 1800
@@ -1368,7 +1368,7 @@ SELF_CHECK_STATUSES = ("queued", "pending", "running", "completed", "failed", "c
 SELF_CHECK_RESULT_FIELDS = (
     "exit_code", "timed_out", "stdout_tail", "stderr_tail",
     "source_changed_during_run", "worktree_state_changed", "error_code",
-    # 0114 T#3: evidence read from a normally completed run's result block (advisory).
+    # evidence read from a normally completed run's result block (advisory).
     "result_summary", "environment_evidence",
 )
 
@@ -1383,7 +1383,7 @@ SELF_CHECK_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("list", "GET", "/documents/{tr_doc_id}/self-check/runs", 200),
 )
 
-#: 0638 T#1: the same contract for a TR(new) worker, before its TR exists. Owned by
+#: the same contract for a TR(new) worker, before its TR exists. Owned by
 #: self_check_routes.draft_router (prefix /api/v1/self-check/draft); the token alone names
 #: the owner, so no path segment names a document. A regression test pins it to the routes.
 SELF_CHECK_DRAFT_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
@@ -1393,7 +1393,7 @@ SELF_CHECK_DRAFT_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("list", "GET", "/self-check/draft/runs", 200),
 )
 
-#: 0080 T#2: read-only view of the run that holds a Group's single run slot, for every
+#: read-only view of the run that holds a Group's single run slot, for every
 #: worker token of that Group. Owned by self_check_routes.group_router (prefix
 #: /api/v1/self-check/group); a regression test pins it to the routes.
 SELF_CHECK_GROUP_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
@@ -1575,7 +1575,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
     },
 }
 
-#: 0110 T#3 (NR0003 §3 T-B): what changes for a token mapped to a Graph attempt.
+#: what changes for a token mapped to a Graph attempt.
 _SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
     "ko": {
         "note": "이 토큰은 Graph attempt 에 매핑되어 있다. Self-check 는 그룹 워크트리가 아니라 이 attempt 의 전용 워크트리(원격 소스 도구가 읽고 쓰는 트리)에서 실행되고, cwd 는 그 트리 기준 상대 경로다. run 응답과 조회 결과의 attempt_id·input_commit 이 실행 기준(attempt 와 그 트리의 시작 커밋)이며 source_head_before/after 는 attempt 트리의 HEAD 다. 실행 중에는 이 attempt 트리에 대한 소스 쓰기가 잠긴다. 실행이 끝났어도 그 프로세스 트리가 비었음이 증명되지 않으면(recovery_incomplete) 이 잠금은 보호된 채 남고, 증명된 뒤에 풀린다. 실행 슬롯은 attempt 가 아니라 Group 에 하나다.",
@@ -1601,7 +1601,7 @@ _SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
 }
 
 
-#: 0114 T#3 (D 3.2-3.4, 5): what a completed run's result block summary means and how a baseline
+#: (D 3.2-3.4, 5): what a completed run's result block summary means and how a baseline
 #: run is judged. The keys are the same in every locale; the values are guidance, never a verdict.
 _SELF_CHECK_BASELINE_COPY: dict[str, dict] = {
     "ko": {
@@ -1661,7 +1661,7 @@ _SELF_CHECK_BASELINE_COPY: dict[str, dict] = {
 }
 
 
-#: 0114 T#4 (D 0006 2.3, 3.5, 3.6): the host-wide processor cap, the parallel share and the
+#: the host-wide processor cap, the parallel share and the
 #: verification order. The keys are the same in every locale.
 _SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
     "ko": {
@@ -1689,7 +1689,7 @@ _SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
 
 
 def _self_check_attempt(ctx: dict) -> Optional[str]:
-    """The Graph attempt the caller's worker token is mapped to (0110 T#3), else None."""
+    """The Graph attempt the caller's worker token is mapped to, else None."""
     token_rec = ctx.get("token_rec")
     if ctx.get("principal_kind") != "worker" or not token_rec:
         return None
@@ -1714,7 +1714,7 @@ def _content_tr_self_check(ctx: dict) -> dict:
              "parallel_share": "integer"}
     defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": limits["run_timeout_sec"],
                 "parallel_share": SELF_CHECK_SHARE_DEFAULT}
-    # 0638 T#1: a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
+    # a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
     draft = ctx.get("action_scope") == "new"
     operations = SELF_CHECK_DRAFT_HTTP_OPERATIONS if draft else SELF_CHECK_HTTP_OPERATIONS
     content = {
@@ -1855,7 +1855,7 @@ def build_item(name: str, ctx: dict) -> dict:
         payload["kind"] = registry["kind"]
         payload["source_mode"] = registry["source_mode"]
         payload["reason"] = registry["reason"]
-        # The same second catalog /help/tools returns (0523 T0004 s.17). The source-tool
+        # The same second catalog /help/tools returns (s.17). The source-tool
         # item must not be the one surface left answering "source tree only".
         payload["document_attachments"] = tool_registry.attachment_view(
             registry["kind"], ctx["locale"], ctx["base_url"]
@@ -1942,7 +1942,7 @@ def _child_design_template(child: str, ctx: dict) -> dict:
         "form": "content",
         "content": {
             "type_code": child,
-            # P0009 §6: every template used to be Markdown, so its format never had to be
+            # every template used to be Markdown, so its format never had to be
             # stated. WP is JSON, so the format is now said out loud on BOTH branches —
             # a worker must not have to infer it from the body it happens to receive.
             "body_format": "markdown",

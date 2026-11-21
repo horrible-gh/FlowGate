@@ -6,7 +6,7 @@ import { getRequest, postRequest } from '@shared/api'
 import LoginApp from '@/login/LoginApp.vue'
 import { authRedirect } from '@/login/stores/auth'
 
-// flowgate.v02gui.0024 (R0001 §2, §4.2): the v0.2 sign-in page (login.html) in the mockup's
+// the v0.2 sign-in page (login.html) in the mockup's
 // style, with every v0.1 sign-in step in the same card and status/errors at the card bottom.
 vi.mock('@shared/api', () => ({
   postRequest: vi.fn(),

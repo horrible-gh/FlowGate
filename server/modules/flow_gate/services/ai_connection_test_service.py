@@ -1,5 +1,5 @@
 """AI connection test: one isolated baseline prompt against an AI connection
-(flowgate.v02.0017 T0002 §3.1).
+.
 
 This is the former 0014 "AI Evaluation" baseline probe, moved out of AI Evaluation. It only
 answers "does this connection respond?" -- it is a connection diagnostic, never a capability
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 BASELINE = ("Reply with one short sentence confirming that you can answer this harmless test. "
             "Do not call tools, modify files, run commands, or disclose secrets.")
 TIMEOUT_SEC = 60
-# Owner id of work that belongs to no project (AI Evaluation, CH0006 (4)). It stands in for the
+# Owner id of work that belongs to no project (AI Evaluation, the discussion ). It stands in for the
 # project id on the run-less execution path: the subject's chain is the global one and the
 # manifest-bound Scratch lives under <storage>/scratch/_ai_evaluation/.
 EVALUATION_SCOPE = "_ai_evaluation"
@@ -116,7 +116,7 @@ def resolve_subject(project_id: str, provider_id: str, *, error=ConnectionTestEr
         raise error("provider_disabled" if not stored.get("enabled") else "provider_unavailable", 409)
     provider = dict(provider)
     if provider["exec_type"] == "cli" and provider.get("exec_location") == "remote":
-        # flowgate.v02.0129 T#2 (D0005 §3-8): connection test, AI Evaluation and commit
+        # connection test, AI Evaluation and commit
         # suggestion would run the CLI on this server; a remote CLI connection never does.
         raise error("remote_cli_unsupported", 409)
     if provider["exec_type"] == "cli" and provider.get("cli_command"):

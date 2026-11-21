@@ -1,4 +1,4 @@
-// flowgate.v02test.0036 T#1 (R1) — the Flow attachment work manager. Pending work belongs to the signed-in session,
+// (R1) — the Flow attachment work manager. Pending work belongs to the signed-in session,
 // the Project and the Flow, not to a window: a 🗑 staged in a Flow's attachment window keeps its five-second countdown
 // and is sent when it runs out, whether the window is closed, unmounted, its Host remounted, the route left or another
 // Flow opened. The windows, the Host and the Shell only draw this state and forward the user's presses.

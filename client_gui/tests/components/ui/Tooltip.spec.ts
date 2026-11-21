@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import Tooltip from '@/components/ui/Tooltip.vue'
 
-// T0004 §5.8/§9: open/close, keyboard/focus. The bubble is teleported to <body>, so it is
+// open/close, keyboard/focus. The bubble is teleported to <body>, so it is
 // looked up on document rather than inside the mounted wrapper.
 describe('components/ui/Tooltip (T0004)', () => {
   afterEach(() => {

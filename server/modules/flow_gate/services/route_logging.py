@@ -1,8 +1,8 @@
-"""Structured request/outcome logging for the workflow hand-off endpoints (0449 T0004 item 6).
+"""Structured request/outcome logging for the workflow hand-off endpoints.
 
 Why this exists
 ---------------
-0449 NR0003 could not tell three cases apart for the reported incident — the client never
+could not tell three cases apart for the reported incident — the client never
 called ``/workflow/advance``; it called and was refused; it never got past ``/token/issue`` —
 because neither endpoint left a trace. ``token_routes`` had no logger at all, and
 ``advance_workflow``'s own ``sequence_exhausted`` / ``head_in_progress`` raises are ordinary
@@ -21,7 +21,7 @@ Two things had to be true for a log line to be useful here:
    arrive through. What is recorded is the endpoint, the outcome, the HTTP status, the server's
    own refusal code, the document/group identifiers and a correlation id.
 
-   A closed parameter list only holds if nothing writes *beside* it. 0449 TR0005 rev1 paired
+   A closed parameter list only holds if nothing writes *beside* it. the earlier implementation paired
    each ``failed`` line with a ``logger.exception(...)`` call for triage, and that second
    record expands ``exc_info`` into ``str(exc)`` plus every traceback frame — so a helper that
    interpolated the very token it was minting into its own error message had it written to
@@ -77,7 +77,7 @@ class _FileLogForwarder(logging.Handler):
 
 
 def forward_to_file_log(logger: logging.Logger, level: int = logging.WARNING) -> logging.Logger:
-    """Make ``logger``'s records of ``level`` and above reach ``logs/default.log`` (flowgate.v02test.0020: the merge
+    """Make ``logger``'s records of ``level`` and above reach ``logs/default.log`` (the earlier change: the merge
     target lookup's diagnostic line had been written to a handler-less root since 0119). Idempotent."""
     if not any(isinstance(handler, _FileLogForwarder) for handler in logger.handlers):
         logger.addHandler(_FileLogForwarder(level=level))

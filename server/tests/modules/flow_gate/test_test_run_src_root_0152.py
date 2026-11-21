@@ -1,4 +1,4 @@
-"""flowgate.default.0152 — embedded test-run runner src_root resolution.
+"""embedded test-run runner src_root resolution.
 
 The runner used to pass doc.project_id straight into src_root(project_name,
 branch), resolving a nonexistent directory whenever project_id differs from
@@ -105,7 +105,7 @@ def test_execute_run_goes_through_resolver(monkeypatch):
     test_run_service.execute_run({"run_id": "trun_0152", "doc_id": "doc-1"})
 
     assert calls["args"] == ("flowgate", "main")
-    # B0001 (0190): the runner must forward group_id so a git-integrated group
+    # : the runner must forward group_id so a git-integrated group
     # resolves to its own worktree (work branch) instead of base(main).
     assert calls["group_id"] == "flowgate.default.0152"
     assert finished["status"] == "failed"

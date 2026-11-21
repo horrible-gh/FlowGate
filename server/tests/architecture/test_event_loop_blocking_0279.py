@@ -1,9 +1,9 @@
-"""0279 T0005 — regression guard: no blocking work inside `async def` route handlers.
+"""regression guard: no blocking work inside `async def` route handlers.
 
 Why this test exists
 --------------------
-This bug has now shipped twice. 0275 T0005 fixed it in tree/list/document/git
-routes; 0279 NR0003 found the identical pattern still live in remote_routes,
+This bug has now shipped twice. the earlier implementation fixed it in tree/list/document/git
+routes; the review found the identical pattern still live in remote_routes,
 file_transfer_routes and legacy_misc_routes, where it was measured freezing the
 whole server for 40 seconds.
 
@@ -45,7 +45,7 @@ _API_DIR = _SERVER_DIR / "modules" / "flow_gate" / "api"
 
 # Module-level names whose attribute calls mean "synchronous DB / filesystem work".
 #
-# 0394 T0016 item 4 (NR0003 section 5.3): the old hand-written list named only
+# the old hand-written list named only
 # service modules present in 0279. Later services (conversation_query_service,
 # conversation_turn_service, ai_invoke_service, token_service, document_service)
 # were unguarded when called directly from async handlers. A measured check
@@ -103,9 +103,9 @@ _OPT_OUT = "noqa: event-loop-blocking"
 # test_known_unfixed_entries_are_still_accurate below, which fails once an entry
 # stops blocking — so a stale exemption cannot quietly re-open the hole.
 #
-# EMPTY, and it should stay that way. 0279 T0005 fixed remote_routes /
-# file_transfer_routes / legacy_misc_routes; 0279 T0007 fixed inbox_routes (the
-# last one, ranked #2 by NR0003). Add an entry only with a dated reason and a
+# EMPTY, and it should stay that way. the earlier implementation fixed remote_routes /
+# file_transfer_routes / legacy_misc_routes; the earlier implementation fixed inbox_routes (the
+# last one, ranked #2 by the review). Add an entry only with a dated reason and a
 # follow-up T.
 _KNOWN_UNFIXED: set[str] = set()
 
@@ -122,7 +122,7 @@ def _is_route_handler(node: ast.AST) -> bool:
     return False
 
 
-# 0394 T0016 item 4 (NR0003 section 5.3): the no-synchronous-work-on-the-loop
+# the no-synchronous-work-on-the-loop
 # rule also applies to BaseHTTPMiddleware.dispatch, not only @router handlers.
 # Every request passes through middleware, so blocking there stalls the whole
 # server rather than one route. Include middleware dispatch in the guard.
@@ -279,14 +279,14 @@ def find_blocking_calls(source: str, filename: str = "<src>") -> list[str]:
 
 
 _MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
-# flowgate.v02.0032 T#1 (D0006 §2.4 rule 4): new route/middleware code lives in server/flowgate.
+# (rule 4): new route/middleware code lives in server/flowgate.
 _FLOWGATE_ROOT = _SERVER_DIR / "flowgate"
 
 
 def _router_sources() -> list[Path]:
     """Every file that can define something Starlette runs on the event loop.
 
-    0394 T0016 item 4: include middleware definitions as well as api/ routers.
+    include middleware definitions as well as api/ routers.
     GroupMutationPolicyMiddleware lives in services/, outside the previous api/
     scope, so its dispatch handling all mutations was never checked.
     """

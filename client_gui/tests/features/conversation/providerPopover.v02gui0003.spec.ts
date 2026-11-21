@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// flowgate.v02gui.0003 — the AI picker popover opens at the composer's left content edge in a
+// the AI picker popover opens at the composer's left content edge in a
 // ~300px panel; a 360px-wide popover (long provider name) ran ~69px past the screen edge. jsdom has
 // no layout, so these source guards keep the popover capped to the composer's width (100cqw).
 const CONV = resolve(__dirname, '../../../src/features/conversation')

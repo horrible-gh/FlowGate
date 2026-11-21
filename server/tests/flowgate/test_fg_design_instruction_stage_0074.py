@@ -8,7 +8,7 @@ DB, on the fixtures of ``test_fg_instruction_stage_0056``:
   reference, writing the card's own design type;
 - (b) instruction omitted: no instruction job; the result stage starts with the card's own type and no DS reference;
   the DS line and its document stay (same doc id, same bytes, not approved) — omission never deletes or remakes it;
-- (c) the run's issuer may not approve: flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1,
+- (c) the run's issuer may not approve: the earlier change the earlier implementation — expectation revised (NR the earlier change,
   Q #511 o3): the DS is approved under the server's automatic approval authority and the result stage starts with it
   (before: the DS stayed unapproved for the card approval).
 """

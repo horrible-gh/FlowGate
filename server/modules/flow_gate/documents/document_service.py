@@ -99,7 +99,7 @@ def is_final_approved(document: dict[str, Any]) -> bool:
 
     from modules.flow_gate.documents.live_root import is_live_root, is_succeeded_root
 
-    # 0064 T#4 (L0005 2.10 P6): a root answers for itself, except one succeeded by a later document — that
+    # a root answers for itself, except one succeeded by a later document — that
     # one is history and follows the live root at its chain's end, as the console read (P5) does.
     if document.get("type_code") in _WORKFLOW_ROOT_TYPES and not is_succeeded_root(document):
         return False
@@ -110,7 +110,7 @@ def is_final_approved(document: dict[str, Any]) -> bool:
         limit=200,
     )
 
-    # 0064 T#4 (L0005 2.10 P6): a root succeeded by a later document is not the group's live root.
+    # a root succeeded by a later document is not the group's live root.
     return any(
         is_live_root(item)
         and item.get("doc_review_status") == "wf_done"
@@ -200,7 +200,7 @@ def _update_document_fields(doc_id, updates, actor_user_id):
     return doc
 
 
-# flowgate.v02.0047: a CH created owing its one AI title (flowgate/conversation/auto_title.py)
+# a CH created owing its one AI title (flowgate/conversation/auto_title.py)
 # stops owing it once its title is written here -- by hand, or as the AI title itself, which
 # marks the debt paid before writing -- so the AI never replaces a title the user set.
 _CHAT_AUTO_TITLE_KEY = "chat_auto_title"
@@ -260,7 +260,7 @@ def delete_document(doc_id: str, actor_user_id: str) -> None:
             "message": "TR2 document is missing project/group ownership metadata.",
         })
 
-    # 0666 D 3.10: no Git command runs here, but ownership/history must not move under
+    # D 3.10: no Git command runs here, but ownership/history must not move under
     # the decision, so the Group's G (not the whole project) serializes it.
     outcome, ctx = lock_manager.acquire_group(project_id, group_id, holder_kind="source_mutation")
     if not outcome.ok:
@@ -450,10 +450,10 @@ def _auto_close_q(q_doc_id: str, actor_user_id: str) -> None:
 
 # ── Root-type conversion (R ↔ B) ──────────────────────────────────────────────
 #
-# Background (NR0066.0003): a workflow root's type code is part of its identity —
-# it is embedded in the doc_id ("…0001-R"), the stored filename ("0001-R_*.md")
+# Background: a workflow root's type code is part of its identity —
+# it is embedded in the doc_id ("…the earlier implementation"), the stored filename ("0001-R_*.md")
 # and every inbound reference. There is no whitelist field that flips it, by
-# design. This implements the NR0003 §5 recommendation: an R↔B converter that is
+# design. This implements the the review recommendation: an R↔B converter that is
 # allowed ONLY on a pristine root (before the workflow decision is taken) and
 # rewrites the identity atomically so referential integrity is preserved.
 
@@ -486,7 +486,7 @@ _DOC_REFERENCE_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 # Columns that reference the documents *integer* primary key (documents.id) rather
-# than the textual doc_id. The portable converter (NR0108.0003 §7 candidate b)
+# than the textual doc_id. The portable converter (.0003 candidate b)
 # inserts a fresh identity row — which gets a new SERIAL id — and drops the old one,
 # so these must be repointed old_id → new_id too. (workflow_events.document_id is the
 # only such FK in the schema; doc_id-based references live in _DOC_REFERENCE_COLUMNS.)
@@ -502,7 +502,7 @@ def _by_table(columns: tuple[tuple[str, str], ...]) -> tuple[tuple[str, tuple[st
     return tuple((table, tuple(cols)) for table, cols in tables.items())
 
 
-# flowgate.v02gui.0012 (0004-CH turn 60): the columns above, one entry per table. A number swap rewrote them with one
+# (CH): the columns above, one entry per table. A number swap rewrote them with one
 # UPDATE per column (22): ``documents`` was scanned six times, ``events`` three times, and every column without an
 # index (``events.related_*``, ``tokens.doc_ref``, ``documents.previous_*`` ...) cost a whole-table scan of its own.
 # One UPDATE per table (14) now sets each column only where it held the old id, the same rows and values as before.
@@ -538,7 +538,7 @@ def _repoint_references(store, tables, old_value, new_value) -> None:
 def compute_converted_doc_id(doc_id: str, new_type: str) -> str:
     """Return the doc_id with its trailing document-code type suffix swapped.
 
-    "flowgate.default.0066.0001-R" + "B" -> "flowgate.default.0066.0001-B".
+    "the earlier change" + "B" -> "the earlier change".
     The seq and every other segment are preserved (group seq is type-agnostic,
     so only the suffix changes).
     """
@@ -564,9 +564,9 @@ def convert_root_document_type(
     new_type: str,
     actor_user_id: str,
 ) -> dict:
-    """Convert a workflow root document between R and B (NR0066.0003 §5) and return its row.
+    """Convert a workflow root document between R and B and return its row.
 
-    0064 T#3: the judgement, the file stage and the identity rewrite run in
+    the judgement, the file stage and the identity rewrite run in
     ``root_conversion.execute_root_conversion`` (one Flow guard transaction, the new body file staged
     next to the original and the original removed only after the commit). This keeps the direct
     service entry point: the same refusals (HTTPException 404 / 409 / 422, ``ConversionRefused`` for the
@@ -588,7 +588,7 @@ def convert_by_number_swap(
     before_delete=None,
     note_suffix: str = "",
 ) -> dict:
-    """The DB part of a number-swap conversion (0064 L0005 2.7), inside the caller's transaction.
+    """The DB part of a number-swap conversion, inside the caller's transaction.
 
     The body file is already staged by the coordinator (``root_conversion``); nothing here touches a
     file. ``before_delete`` runs after every reference points at the new row and before the old row is
@@ -599,11 +599,11 @@ def convert_by_number_swap(
     old_int_id = doc.get("id")
     store = get_store()
 
-    # Portable identity rewrite (NR0108.0003 §7 candidate b). An in-place
+    # Portable identity rewrite (.0003 candidate b). An in-place
     # UPDATE of documents.doc_id is impossible under IMMEDIATE foreign keys
     # (PostgreSQL/MySQL): the rename momentarily diverges from the rows that
     # reference it — and every document keeps at least its `created` event —
-    # so the FK check aborts the transaction (B0108). The earlier SQLite-only
+    # so the FK check aborts the transaction. The earlier SQLite-only
     # `PRAGMA defer_foreign_keys` masked this on SQLite but had no equivalent
     # on other backends. Instead create the new identity row FIRST, repoint
     # every reference to it, then drop the old row: a parent-first ordering
@@ -647,7 +647,7 @@ def convert_by_number_swap(
     return refreshed
 
 
-# Columns of a succession's new row that are not copied from the original (L0005 2.9.2): the identity, the
+# Columns of a succession's new row that are not copied from the original: the identity, the
 # file, the per-document history (revisions, rejections live on the original) and the timestamps.
 _SUCCESSION_NOT_COPIED = frozenset({
     "id", "doc_id", "type_code", "seq", "file_path", "filename", "superseded_by", "revision_no",
@@ -672,7 +672,7 @@ def convert_by_succession(
     *,
     after_original=None,
 ) -> dict:
-    """The DB part of a succession conversion (0064 L0005 2.9.2, DB0007 §2.3 / §2.4), in the caller's transaction.
+    """The DB part of a succession conversion, in the caller's transaction.
 
     A new row of ``new_type`` takes the original's columns — title, owner, status and review status included —
     with the staged body copy, ``revision_no`` 0 and ``meta`` deep-copied plus ``converted_from``
@@ -680,7 +680,7 @@ def convert_by_succession(
     ``superseded_by``, ``meta.converted_to`` and ``updated_at`` only; no reference is rewritten, so child
     documents, reviews, events, revisions, tokens, Q&A and runs keep pointing at it. ``after_original`` runs
     once both rows are written (the attachment rows are copied there). Events: ``doc_type_succeeded`` on the
-    original, ``doc_type_converted`` on the new row (P0006 §3.4) and ``doc_review_inherited`` (``events``,
+    original, ``doc_type_converted`` on the new row and ``doc_review_inherited`` (``events``,
     ``related_doc_id`` = the original).
     """
     from modules.flow_gate.db import events as db_doc_events

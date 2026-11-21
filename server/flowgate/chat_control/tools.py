@@ -1,13 +1,13 @@
 """API chat tools and the CLI mention section of the control tower (stage 1).
 
-flowgate.v02gui.0028: ``get_card_roles`` / ``set_card_roles`` read and change the AI roles of a work card this chat
+``get_card_roles`` / ``set_card_roles`` read and change the AI roles of a work card this chat
 placed (``card_roles``), the API twins of ``GET`` / ``PATCH .../nodes/{node_key}/roles``.
 
-flowgate.v02gui.0032 (decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
+(decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
 .../ai-options``) before placing, ``roles`` per card in ``place_flow_cards``; a group preset (``from_group`` of
 ``set_card_roles``) only when the user names the group.
 
-flowgate.v02gui.0032 (0002-CH seq 15-17): the run settings the AI tab shows next to the roles (review count, restarts,
+(CH seq 15-17): the run settings the AI tab shows next to the roles (review count, restarts,
 time limit; ``run_settings``) — ``settings`` per card in ``place_flow_cards`` and in ``set_card_roles``, their values and
 choices in ``get_card_roles``. The chat decides each card's review count itself."""
 from __future__ import annotations
@@ -230,7 +230,7 @@ def place_call(run, tool_input):
     def handle():
         flow_id, body = _split(tool_input)
         scope, group = authz.from_run(run, flow_id or (run or {}).get("group_id"))
-        # flowgate.v02gui.0028: the run's conversation document (bound to its current token by from_run) owns the cards.
+        # the run's conversation document (bound to its current token by from_run) owns the cards.
         return service.place(group, scope.user_id, body, (run or {}).get("locale"),
                              owner=authz.owner(scope, (run or {}).get("doc_ref")))
     return _result(handle)

@@ -1,4 +1,4 @@
-"""Storage of the Conversation contract: command requests and run changes (D0006 §2.2, §4.3).
+"""Storage of the Conversation contract: command requests and run changes.
 
 Two tables, both created by migration 137 and anchored by 138:
 

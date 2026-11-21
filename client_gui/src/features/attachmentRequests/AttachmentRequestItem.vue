@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.chat.0017 CH0002 — one AI attachment upload request, the same row in the chat timeline and in the flow
+  <!-- one AI attachment upload request, the same row in the chat timeline and in the flow
        attachment window. A person checks the real content first (preview / download), then approves (keep both by
        default, overwrite only when chosen) or rejects. Available in reading and editing screens alike; the server
        decides who may (perm_document_update). A changed target is never followed silently: the person confirms it.

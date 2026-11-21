@@ -1,4 +1,4 @@
-"""register_context_failures CRUD (flowgate.default.0492 DB0011 §2.1 / T0018 item 3).
+"""register_context_failures CRUD.
 
 One row per (correlation_id, boundary): the axis-classified form of a context-binding 403
 that used to survive only as free text inside ``ai_invoke_runs.register_errors``.

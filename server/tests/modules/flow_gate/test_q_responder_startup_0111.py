@@ -1,4 +1,4 @@
-"""0111 T-A3: bounded startup reassignment through the real Q-answer admission/worker/finalize.
+"""T-A3: bounded startup reassignment through the real Q-answer admission/worker/finalize.
 
 Only provider execution and persistence are faked. Tests wait for finalization before
 returning; a single claim/run/lease covers all unique independent startup candidates.

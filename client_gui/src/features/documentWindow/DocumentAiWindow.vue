@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0056 F2-2 — the single AI call on one document (O3 0009-TR §4-3) on ModelessShell, opened from
+// the single AI call on one document on ModelessShell, opened from
 // [AI 호출] of a document line. The AI is picked from the project's AIs (settingsChoicesRead — the settings
 // tab's read; the project's default first), the opinion is written, and only [실행] calls the AI:
 // POST /ai-invoke/start { action_scope: 'edit', mode: 'single', provider_id, provider_pinned: true, messages:
@@ -96,7 +96,7 @@ const k = (key: string) => `gui.document_window.ai.${key}`
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 
 const request = computed(() => props.win.request)
-// flowgate.v02.0088 F15: only the kind follows the language (lineKindName); the document title is shown as stored.
+// only the kind follows the language (lineKindName); the document title is shown as stored.
 const docTitle = computed(() => [lineKindName(request.value, t, te), request.value.title || props.win.docId].filter(Boolean).join(' · '))
 
 const { providers, choicesState, providerId, opinion, run, phase, runnable, otherRun, failure, readChoices, start } = useDocumentAi(() => props.win)

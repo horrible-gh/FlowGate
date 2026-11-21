@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0135 T#3 — a new chat whose create answer was lost. On stg POST /conversations answered
+// a new chat whose create answer was lost. On stg POST /conversations answered
 // only after ~2 minutes: the GUI gave up at 30 s ("새 채팅을 만들지 못했습니다") while the server still made the
 // chat, and the next try made a second one (NR 3.2: two CH, no turn). The panel now sends one create intent
 // (`client_request_id`) for every try of a draft; the server (flowgate/conversation/chats.py) answers the chat an

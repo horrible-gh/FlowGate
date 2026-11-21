@@ -1,4 +1,4 @@
-"""0092: remote move contract, filesystem refusal/rollback and managed Git routing."""
+"""remote move contract, filesystem refusal/rollback and managed Git routing."""
 from __future__ import annotations
 
 import errno

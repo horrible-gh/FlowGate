@@ -121,7 +121,7 @@ let observer: ResizeObserver | null = null
 
 function kindLabel(p: ConversationParticipant): string {
   if (p.kind === 'user' || p.kind === 'ai') return t(`gui.conversation.participants.${p.kind}`)
-  // flowgate.v02test.0023: FlowGate's own turns (the chat commit result).
+  // FlowGate's own turns (the chat commit result).
   return p.kind === 'system' ? t('gui.conversation.message.system') : p.kind
 }
 

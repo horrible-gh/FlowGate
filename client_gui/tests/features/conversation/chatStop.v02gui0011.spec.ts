@@ -12,7 +12,7 @@ import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
 registerAppMessages(i18n)
 
-// flowgate.v02gui.0011 B — stop right after the send. Measured on stage: from the press of send the stop button stayed
+// B — stop right after the send. Measured on stage: from the press of send the stop button stayed
 // off while the chat was created (7.8s), the message stored and /ai-invoke/start answered (17-50s): no run id existed
 // yet and the server cancelled by run id only. Now the stop works in each of those phases:
 // - message being stored (or its chat created): the message is kept, the AI call is not started;
@@ -189,7 +189,7 @@ describe('v02gui.0011 B: stop right after the send', () => {
   })
 })
 
-// flowgate.v02gui.0011 T — "The stop icon looks the same before and after clicking ... so it is hard to tell": a pressed stop
+// T — "The stop icon looks the same before and after clicking ... so it is hard to tell": a pressed stop
 // (stop under way) is a muted spinning ring instead of the red ■ (… when the user asks for reduced motion).
 const COMPOSER_STYLE = readFileSync(resolve(__dirname, '../../../src/features/conversation/ConversationComposer.vue'), 'utf8')
   .split('<style')[1] ?? ''

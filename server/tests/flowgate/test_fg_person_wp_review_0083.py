@@ -1,5 +1,5 @@
-"""flowgate.v02.0083 T#4 (WP-4) — a work plan (WP) card a person writes: the card's AI review of every submission, or with
-review 'none' its automatic approval. A new path, kept apart from T#1~3 (its own commit and this file).
+"""(WP-4) — a work plan (WP) card a person writes: the card's AI review of every submission, or with
+review 'none' its automatic approval. A new path, kept apart from the earlier implementation~3 (its own commit and this file).
 
 The person's result is bound by the result binder, which hands it to the card before its settlement
 (``card_settings_ports.person_result`` -> ``review_stage.person_result``: the node is marked as worked on) and runs the
@@ -16,7 +16,7 @@ card's step after its commit (``follow_person_result``):
 - review 'none': ``legacy.approve`` with the run issuer's own authority (``_get_user_permissions``, the transition rules,
   the TR hook) — never the author's; without it nothing is tried and a person approves the card.
 
-Covered (T#4 §5):
+Covered:
 1. a person's WP on an idle run -> running -> passed -> approved -> the next card opens (its AI job);
 2. review count 1 (and until it passes): rejected (document rejected, no AI rework, node in review) -> resubmitted by
    ``mark_revised``, by a new revision, or by the real HTTP ``POST /inbox`` ``action=edit`` of the same document (its
@@ -30,13 +30,13 @@ Covered (T#4 §5):
    Time Machine operation, an attempt invalidation or a Stop committed between the bind's job and its step refuses that
    step (approval / review start) and records it — the step is judged under the Stop gate's shared hold;
 5. attempt invalidation: the old attempt's review is refused (its verdict, its late pass, its stale start: recorded,
-   nothing approved); after a T#2 card recovery the old loop's result is refused too;
+   nothing approved); after a the earlier implementation card recovery the old loop's result is refused too;
 6. review 'none': approved and on with the issuer's ``document.approve``, awaiting a person without it (whatever the
    author holds); a Stop's exclusive hold asked while that approval is in flight waits until it is over;
 7. the engine: a loop with its rework AI keeps its stages for count 1 / 2 / -1 (``review_count_exhausted``), hold and
    stalled stay as they are and a rejected document's AI loop starts with its rework; the loop with no rework AI
    stops on ``issues`` (the real worker: one hop, the rejection, no rework hop) and is refused at admission in rework;
-8. a lost contact (L0009 E-27): a submission the run read's or a Resume's reconciliation binds takes the card's step —
+8. a lost contact: a submission the run read's or a Resume's reconciliation binds takes the card's step —
    its review, or with 'none' its automatic approval — once, however often it is recovered.
 
 On the card settings suites' real SQLite DB, routes and fixtures (``test_fg_card_settings``,
@@ -66,7 +66,7 @@ from test_fg_card_approval_0056 import (  # noqa: F401 — card_outputs_port: re
     LEE, _approval_route_gone, _current, _node_run, _resume, _run_id, _stop, card_outputs_port,
 )
 from test_fg_wp_ai_run_0083 import OPUS, _cards, _opus, _run_status, _tokens, _wp_result
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -246,7 +246,7 @@ def _seq(env):
 
 
 def _grant(user, *perms):
-    """``user`` holds ``perms`` in the project (the inbox's own RBAC check, run for real as in the T#1 suite)."""
+    """``user`` holds ``perms`` in the project (the inbox's own RBAC check, run for real as in the the earlier implementation suite)."""
     from modules.flow_gate.db.connection import get_store, now_iso
     from modules.flow_gate.rbac import permission_service
 
@@ -263,7 +263,7 @@ def _grant(user, *perms):
 
 
 def _wp_body(note):
-    """A valid WP body (the T#1 suite's, its default note changed: what the author revised)."""
+    """A valid WP body (the the earlier implementation suite's, its default note changed: what the author revised)."""
     from modules.flow_gate.services import work_plan_service as wp
 
     counted = ["T"]
@@ -586,7 +586,7 @@ def _invalidate(env, monkeypatch, how):
             _sql(env["db"], "UPDATE graph_runs SET idle_reason = 'stopped'")
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the refusal is recorded under the pre-feature step's hold (result_approval / review_start); an assigned attempt judges the same step under its manual judgement's hold (manual_result, L-2 §2.7.5) — test_fg_ai_roles_l2_manual.py::test_c1_*
+# (T) pre-feature contract: the refusal is recorded under the pre-feature step's hold (result_approval / review_start); an assigned attempt judges the same step under its manual judgement's hold (manual_result, L-2) — test_fg_ai_roles_l2_manual.py::test_c1_*
 @pytest.mark.parametrize("how", ["time_machine_started", "attempt_invalidated", "run_stopped"])
 @pytest.mark.parametrize("count", [0, 1], ids=["review_none_approval", "review_start"])
 def test_4_what_commits_between_the_job_and_its_step_refuses_the_step_and_records_it(pre_feature_attempts, 
@@ -674,7 +674,7 @@ def test_6_review_none_is_approved_with_the_issuer_s_permission_and_the_next_car
     assert "work_resumed" in _run_causes(env, seq)                       # the idle run went on (0083 WP-3)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person's WP was approved under the issuer's own authority (issuer_lacks_approve); an assigned attempt's is the system's (AUTOMATION, T §6.4, G-10) — test_fg_ai_roles_l2_manual.py::test_g10_*
+# (T) pre-feature contract: a person's WP was approved under the issuer's own authority (issuer_lacks_approve); an assigned attempt's is the system's (AUTOMATION, T, G-10) — test_fg_ai_roles_l2_manual.py::test_g10_*
 def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve(pre_feature_attempts, env, decided, reviews, monkeypatch):
     """The issuer (u_kim, the run's starter) lacks ``document.approve``; the author (u_lee) holds it and is never used."""
     from modules.flow_gate.workflow.pipeline_service import transition_document_review as real_transition
@@ -696,8 +696,8 @@ def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve
     assert shown["intervention"] == {"kind": "needs_intervention", "reason": "issuer_lacks_approve"}
     assert _node(env, t2)[0] == "pending" and env["jobs"] == []
     assert _run_status(env) == ("idle", "needs_intervention")
-    # flowgate.v02.0119 T#3 (T-2): no person approves the card any more (a person's card approval moved it on before)
-    _approval_route_gone(env, wp)                                        # 0119 T-3: the route is gone
+    # (T-2): no person approves the card any more (a person's card approval moved it on before)
+    _approval_route_gone(env, wp)                                        # T-3: the route is gone
     assert _node(env, wp) == ("review", doc) and _node(env, t2)[0] == "pending"
 
 
@@ -751,7 +751,7 @@ def test_6_a_stop_waits_for_the_review_none_approval_in_flight_on_an_idle_run(en
     assert (_node(env, wp), _review_status(doc)) == (("done", doc), "approved") and _node(env, t2)[0] == "open"
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: the issuer's own authority of a person's WP (assigned: AUTOMATION, G-10)
+# (T) pre-feature contract: the issuer's own authority of a person's WP (assigned: AUTOMATION, G-10)
 def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_approve(pre_feature_attempts, env, decided, reviews, monkeypatch):
     from modules.flow_gate.workflow.routers import workflow
 
@@ -768,7 +768,7 @@ def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_app
     assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention" and _node(env, t2)[0] == "pending"
 
 
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1, 0004-CH seq 9 T-3): no person approves a card any more — a
+# (rej_01M6DQW6YF0SCQ5D P1, the discussion seq 9 T-3): no person approves a card any more — a
 # pre-feature attempt (no stage assignment record) of a run card a person writes takes its card's review setting as the
 # plan does: review 'none' completes it as ``human_submitted`` at once, a review set reviews each submission once and its
 # pass completes it. Was: test_6_a_person_s_run_card_still_waits_for_a_person_s_approval (a person's [승인], now gone).
@@ -1059,7 +1059,7 @@ def test_7_the_real_worker_runs_one_review_hop_rejects_and_never_reworks_a_loop_
 @pytest.mark.parametrize("count", [1, 0], ids=["review", "review_none"])
 def test_8_a_submission_bound_by_the_reconciliation_after_a_lost_contact_takes_its_card_s_step_once(
         env, decided, reviews, recovery, count):
-    """L0009 E-27: the person's WP was registered and its token consumed, but the Graph contact was lost. The run read's
+    """E-27: the person's WP was registered and its token consumed, but the Graph contact was lost. The run read's
     reconciliation (``reconcile_if_needed``) or a Resume's (``reconcile_links``) binds it and hands it to the card as the
     contact would have, into the same post-commit jobs: one review, or with 'none' the automatic approval. Recovering
     again starts nothing more."""
@@ -1090,7 +1090,7 @@ def test_8_a_submission_bound_by_the_reconciliation_after_a_lost_contact_takes_i
 
 # ── wiring ───────────────────────────────────────────────────────────────────
 
-# 0113 T#3 (T §6.4) pre-feature contract: the scene without the PERSON_RESULT port is the code before 0083 WP-4 (a pre-feature attempt by construction)
+# (T) pre-feature contract: the scene without the PERSON_RESULT port is the code before 0083 WP-4 (a pre-feature attempt by construction)
 def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hands_nothing(pre_feature_attempts, env, decided, reviews):
     from flowgate.card_settings import review_stage
     from modules.flow_gate.graph_workflow.services import card_settings_ports as ports
@@ -1101,7 +1101,7 @@ def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hand
         wp, _t2 = _person_wp(env)
         doc = _submit(env, wp, 81)
         assert reviews == [] and _node(env, wp) == ("review", doc)       # the binder hands nothing to the card
-        # flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the run read's reconciliation still takes the person's
+        # (rej_01M6DQW6YF0SCQ5D P1): the run read's reconciliation still takes the person's
         # step the binder never handed (``review_stage._reconcile_person_result``) — no person approves it
         _node_run(env, wp)
         assert len(reviews) == 1 and reviews[0]["doc_ref"] == doc

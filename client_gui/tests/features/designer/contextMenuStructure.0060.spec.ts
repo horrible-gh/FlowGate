@@ -13,7 +13,7 @@ const partRoot = join(root, 'features/designer/contextMenu')
 const attachRoot = join(partRoot, 'attach')
 const rel = (path: string) => relative(root, path).replace(/\\/g, '/')
 const MENU_KEY = "Symbol.for('flowgate.designer.contextMenu')"
-// flowgate.v02.0060 T#2 (0006-D §4.2): the five areas reach the menu only through inject of this key.
+// the five areas reach the menu only through inject of this key.
 const AREA_FILES = [
   'features/designer/center/FlowTabStrip.vue',
   'features/designer/center/canvas/FlowCanvas.vue',
@@ -34,7 +34,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
       expect(source, file).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|defineStore|localStorage|sessionStorage)\b|\bimport\s*\(/)
     }
   })
-  // flowgate.v02.0060 T#2: attached (2 step-A). Only the Designer Shell imports the menu (its view and the connector);
+  // attached (2 step-A). Only the Designer Shell imports the menu (its view and the connector);
   // the five areas inject it and import nothing of it, so mounted elsewhere they keep their old behaviour.
   it('is installed by the Designer Shell only; the five areas reach it through inject and import nothing of it', () => {
     const injecting: string[] = []
@@ -62,7 +62,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
     expect(injecting.sort()).toEqual(AREA_FILES)
     expect(DESIGNER_CONTEXT_MENU).toBe(Symbol.for('flowgate.designer.contextMenu'))
   })
-  // flowgate.v02.0060 T#2: the attach folder also holds the 2-B windows (DesignerMenuActions.vue), their pure model
+  // the attach folder also holds the 2-B windows (DesignerMenuActions.vue), their pure model
   // (menuActions.ts) and strings (actionMessages.ts). Still no store, API or transport: the server paths are the ones the
   // Shell lends (`server`), so no route string, Base / Git revert path or delete beyond the two file-tree ones is here.
   it('keeps the connectors on the Center session, Graph rules and the Palette catalog — no store, API or transport', () => {
@@ -78,7 +78,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
       expect(source, file).not.toMatch(/dispose\(|base-revert|revertAll|untracked|git\/branches/)
     }
   })
-  // flowgate.v02.0060 T#2: the 11 run through the existing contracts only (features/project api.ts), with group_id.
+  // the 11 run through the existing contracts only (features/project api.ts), with group_id.
   it('runs the 11 2-B commands through the existing server contracts only — no new route, no permanent / document / branch delete', () => {
     const api = readFileSync(join(root, 'features/project/api.ts'), 'utf8')
     const added = api.slice(api.indexOf('// ── Group / Flow / source file commands'))
@@ -100,7 +100,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
     expect(shell).toMatch(/server: menuServer/)
     expect(shell.match(/<component :is="contextMenu\.dialogs"/g)).toHaveLength(1)
   })
-  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1 phase 11 + alignment · layout / alignment; T#2 adds the 11 2-B commands (24).
+  // 13 connected = 1 phase 11 + alignment · layout / alignment; the earlier implementation adds the 11 2-B commands.
   it('connects 24 commands: the 11 first-step ones, the two 정렬 (T#1) and the 11 2-B server ones (T#2)', () => {
     expect([...FIRST_STEP_COMMANDS].sort()).toEqual([...firstConnected].sort())
     expect([...ARRANGE_COMMANDS].sort()).toEqual([...arrangeConnected].sort())
@@ -142,7 +142,7 @@ describe('independent Designer context menu boundaries (0060)', () => {
     expect(used.length).toBeGreaterThan(0)
     for (const token of used) expect(defined, token).toContain(token)
   })
-  // flowgate.v02.0060 T#1 (auxiliary to the browser comparison, WP 0012 [D]): the source CSS carries the mockup's sizes.
+  // (auxiliary to the browser comparison, the earlier implementation [D]): the source CSS carries the mockup's sizes.
   it('carries the mockup .fg-ctx sizes in the source CSS (min 186 / max 236, 5px padding, 33px items, 16px icon column)', () => {
     const view = readFileSync(join(partRoot, 'DesignerContextMenu.vue'), 'utf8')
     const css = view.split('<style scoped>')[1]

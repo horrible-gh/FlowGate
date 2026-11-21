@@ -1,8 +1,8 @@
-// flowgate.v02.0030 — Palette model (R0001 §2): the categories, the default items of
+// Palette model: the categories, the default items of
 // MirageGlass 03-designer-shell, the add-dialog choices, user-defined item creation and the
 // select / drag intents the Palette hands to the Designer. Pure TypeScript, no screen.
 //
-// Reuse, not a parallel structure (R0001 §3): an item's `nodeKind` is the open Node kind key
+// Reuse, not a parallel structure: an item's `nodeKind` is the open Node kind key
 // of the Graph model (center/graph/flowGraph.ts `FlowGraphNode.kind`); the default items use
 // the known keys of center/canvas/flowNodeKinds.ts. `docType` is the FlowGate document type
 // code (D / P / L / DB / N / WP / T / TS) a default item stands for, so the four 설계 items
@@ -161,7 +161,7 @@ function nextCustomNumber(existing: readonly PaletteItem[]): number {
   return max + 1
 }
 
-// ── intents handed to the Designer (R0001 §2.3) ───────────────────────────────────────────
+// ── intents handed to the Designer ───────────────────────────────────────────
 
 /**
  * What the Designer receives when an item is selected or starts a drag: the item's definition
@@ -233,7 +233,7 @@ export function readPaletteDragData(transfer: Pick<DataTransfer, 'getData'> | nu
 }
 
 /**
- * flowgate.v02.0088 F13: the definition a new node is made from, at the moment it is placed. A
+ * the definition a new node is made from, at the moment it is placed. A
  * selection, a drag or a context-menu entry may have been made in another language, so a default
  * item's label is built again from its item id in the language of the placing moment; a
  * user-defined item keeps its own words. Existing Graph labels are never touched by this.
@@ -248,7 +248,7 @@ export function placedPaletteDefinition(
 }
 
 /**
- * flowgate.v02.0045 S3 (P0008 §5.1): the Graph node a dropped item stands for. A default item with
+ * S3: the Graph node a dropped item stands for. A default item with
  * a document type is a document node; the `confirm` card is a gate node; a user-defined item is a
  * custom node. The node kind for drawing is the item's own kind key.
  */

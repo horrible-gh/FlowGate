@@ -1,8 +1,8 @@
 <template>
-  <!-- flowgate.v02.0052 batch A — v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the
+  <!-- batch A — v7 ↗ (insp.js openQA / openWin): one modeless window per opened question — the
        full question, every answer and the full answer form; several may be open at once.
-       flowgate.v02.0070 T#5: the only place a question is answered, after its context above the form.
-       flowgate.v02.0150 — the windows of ONE document, drawn apart from the Q&A tab: `target` is the target the windows
+       the only place a question is answered, after its context above the form.
+       the windows of ONE document, drawn apart from the Q&A tab: `target` is the target the windows
        were opened for (not the selection), so the questions read, the answers sent and the AI asked are always that
        document's, and a selection change, a tab change or a click elsewhere never closes them. A window closes only by
        its own × (`close`); Esc does not close it. -->
@@ -43,7 +43,7 @@
         <span v-if="windowItem(win.itemId)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc"><LineIcon name="file" class="inspector-qna-doc-icon" />{{ t(k('detail.doc'), { docId: windowItem(win.itemId)!.docId }) }}</span>
         <p v-if="windowItem(win.itemId)!.title" class="inspector-qna-window-q">{{ windowItem(win.itemId)!.title }}</p>
         <p class="inspector-qna-text inspector-qna-qbody" data-test="qna-window-body">{{ windowItem(win.itemId)!.body }}</p>
-        <!-- flowgate.v02.0070 T#5: the stored options stay readable where they cannot be picked. -->
+        <!-- the stored options stay readable where they cannot be picked. -->
         <span
           v-if="windowItem(win.itemId)!.options.length && !(windowItem(win.itemId)!.answerable && availability.answer.visible)"
           class="inspector-qna-sub"
@@ -132,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0150 — the ↗ windows of one document (moved here from QnaTab): the Frame's window host draws them for
+// the ↗ windows of one document (moved here from QnaTab): the Frame's window host draws them for
 // every document with an open window (QnaWindowHost), and a history Q&A (a document window's aside) draws its own.
 // The questions, the answer form and the AI line read and write through their own useQna of `target`.
 import { computed, reactive, watch } from 'vue'
@@ -156,7 +156,7 @@ const props = defineProps<{
   target: InspectorTarget
   /** The open windows of that document, in opening order. */
   windows: readonly QnaWindow[]
-  /** flowgate.v02.0070 T#4: read only history — the questions and answers are read, nothing is answered. */
+  /** read only history — the questions and answers are read, nothing is answered. */
   history?: boolean
 }>()
 
@@ -182,13 +182,13 @@ const {
   providersStatus,
 } = useQna(() => props.target, { history: () => props.history === true })
 
-/** History: only reading is offered (answering and the AI line close in the model, 0070 T#5 body context `history`). */
+/** History: only reading is offered (answering and the AI line close in the model, the earlier implementation body context `history`). */
 const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
 const availability = computed<QnaAvailability>(() =>
   props.history ? { ...liveAvailability.value, ask: HISTORY_CLOSED } : liveAvailability.value,
 )
 
-/** flowgate.v02.0070 T#5: the window's one line while the body cannot be checked, or null. */
+/** the window's one line while the body cannot be checked, or null. */
 const bodyLine = computed(() => qnaBodyLine(availability.value))
 
 // --- The AI line (0056 F1) ------------------------------------------------------------------------
@@ -289,7 +289,7 @@ function windowSub(item: QnaItemView): string {
 }
 
 /**
- * The Flow is read only (the first reason answering is closed on), or the questions are history (T#4; 0070 T#5: a
+ * The Flow is read only (the first reason answering is closed on), or the questions are history (the earlier implementation; the earlier implementation: a
  * superseded document too): the window says so.
  */
 const readOnlyReason = computed(() => {

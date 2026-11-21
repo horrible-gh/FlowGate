@@ -59,7 +59,7 @@ const rows = computed(() => {
   const flows = new Map(props.project?.groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow.name] as const)) ?? [])
   return runs.value.filter((run) => flows.has(run.groupId)).map((run) => ({ ...run, flowName: flows.get(run.groupId)! }))
 })
-// flowgate.v02test.0042: card result merges waiting in this project's Flows (the runs tab lists them; a merge that only
+// card result merges waiting in this project's Flows (the runs tab lists them; a merge that only
 // waits keeps the Flow "running" with no AI run, so the list was empty before).
 const mergeItems = ref<CardMergeItem[]>([])
 const mergeRows = computed(() => {

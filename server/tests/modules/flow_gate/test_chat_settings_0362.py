@@ -1,9 +1,9 @@
-"""Group 0362 T0012 — per-user chat settings and the recent-turn context window.
+"""Group the earlier implementation — per-user chat settings and the recent-turn context window.
 
 Three things are pinned here, in the order the work was specified:
 
-1. the window arithmetic and the mention text it produces (L0010 §2-3/§2-4, P0009 scenario 11~15),
-2. the settings the window is read from, in both directions (L0010 §2-1/§2-2),
+1. the window arithmetic and the mention text it produces (scenario 11~15),
+2. the settings the window is read from, in both directions,
 3. the table those settings live in, including the constraints DB0011 deliberately did
    NOT put in the schema.
 
@@ -90,7 +90,7 @@ class _MemoryStore:
 
 
 class _MemorySourceAccessStore:
-    """0515 T0009: a one-row source-access store standing in for
+    """a one-row source-access store standing in for
     db.user_chat_source_access -- the second, independent storage
     resolve_chat_settings/save_chat_settings now always consults."""
 
@@ -110,7 +110,7 @@ class _MemorySourceAccessStore:
 
 
 class _MemoryCommandPolicyStore:
-    """0670 T0004 / flowgate.v02.0032 T#1: the third, independent storage (db.user_chat_command_policy)."""
+    """the third, independent storage (db.user_chat_command_policy)."""
 
     def __init__(self, row=None):
         self.row = row
@@ -126,7 +126,7 @@ class _MemoryCommandPolicyStore:
 
 class _FakeTransactionStore:
     """Just enough of FlowGateStore for save_chat_settings' ``with get_store().transaction():``
-    (T0009 §3.3) -- a real connection is not needed to prove the split-write logic itself."""
+    -- a real connection is not needed to prove the split-write logic itself."""
 
     @contextmanager
     def transaction(self):
@@ -308,7 +308,7 @@ class TestFoldedMention:
 
 class TestResolveSettings:
     def test_maximum_is_999_and_independent_of_the_read_page_cap(self):
-        # NR0003 Rev.4 §4: a selection range, not a page size.  The worker pages
+        # Rev.4: a selection range, not a page size. The worker pages
         # through next_after_seq, so a value above one page still delivers N turns.
         assert css.CONTEXT_TURNS_MAX == 999
         assert css.CONTEXT_TURNS_MAX > conversation_query_service.TURN_LIMIT_MAX
@@ -329,10 +329,10 @@ class TestResolveSettings:
         assert settings == {
             "send_action": "none", "context_mode": "recent",
             "context_turns": 20, "updated_at": None,
-            # 0515 T0009 §3.2: merged in from the separate source-access storage,
+            # merged in from the separate source-access storage,
             # defaulting to read_only regardless of this (never-saved) legacy row.
             "source_access_mode": "read_only",
-            # 0670 T0004 / flowgate.v02.0032 T#1: likewise from its own storage, default user_approval.
+            # likewise from its own storage, default user_approval.
             "command_policy": "user_approval",
         }
 
@@ -355,7 +355,7 @@ class TestResolveSettings:
         assert settings["updated_at"] == "2026-07-30T18:22:41+09:00"
 
     def test_only_the_broken_field_is_reverted(self, memory_store):
-        # P0009 scenario 17: one unusable value must not take a good one down with it.
+        # scenario 17: one unusable value must not take a good one down with it.
         memory_store.row = {
             "user_id": "u1", "send_action": "invoke_ai", "context_mode": "last_week",
             "context_turns": 20, "created_at": "x", "updated_at": "t",
@@ -398,19 +398,18 @@ class TestResolveSettings:
         body = css.settings_response("u1")
         assert body["domain"] == {
             "send_action": ["copy_mention", "invoke_ai", "none"],
-            # flowgate.v02test.0025: [checkpoint] and its no-checkpoint fallback.
+            # [checkpoint] and its no-checkpoint fallback.
             "context_mode": ["recent", "all", "checkpoint"],
             "context_turns_presets": [5, 10, 15, 20, 30],
             "context_turns_min": 1,
             "context_turns_max": css.CONTEXT_TURNS_MAX,
             "context_checkpoint_fallback_turns": 5,
-            # 0515 T0009 §3.2/D0006 §2.2; "execute" (commands only) -- flowgate.v02test.0026.
+            # "execute" (commands only) -- the earlier change.
             "source_access_mode": ["read_only", "execute", "edit", "edit_once"],
-            # 0670 T0004 / flowgate.v02.0032 T#1.
             "command_policy": ["always_approve", "user_approval", "reject"],
         }
         assert "updated_at" not in body["defaults"]
-        # 0515 T0009 §3.2: the defaults envelope carries the source-access default too.
+        # the defaults envelope carries the source-access default too.
         assert body["defaults"]["source_access_mode"] == "read_only"
 
 
@@ -489,7 +488,7 @@ def _client() -> TestClient:
 class TestChatSettingsEndpoint:
     def test_handlers_stay_synchronous(self):
         # The store below is synchronous; an async handler would block the loop for
-        # every other request (L0010 §5).
+        # every other request.
         assert not inspect.iscoroutinefunction(chat_settings_routes.get_my_chat_settings)
         assert not inspect.iscoroutinefunction(chat_settings_routes.patch_my_chat_settings)
 
@@ -534,7 +533,7 @@ class TestChatSettingsEndpoint:
         assert paths == {"/me/chat-settings"}
 
 
-# ── 5b. a saved 1..999 reaches the invocation (NR0003 Rev.4 §4, T0011) ───────
+# ── 5b. a saved 1..999 reaches the invocation (Rev.4, the earlier implementation) ───────
 
 class _WindowRoute:
     """Stands in for ``conversation_routes._list_authenticated`` with the real paging rules.

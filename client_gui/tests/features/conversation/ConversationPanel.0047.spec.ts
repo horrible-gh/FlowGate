@@ -5,7 +5,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { ConversationPanel } from '@/features/conversation'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0047 — the Conversation panel on the v9 layout (R0001 §2.3) and the chat that
+// the Conversation panel on the v9 layout and the chat that
 // starts from the composer (§2.1, §2.2).
 registerAppMessages(i18n)
 
@@ -122,7 +122,7 @@ describe('v9 layout (R0001 §2.3)', () => {
   it('shows the source modes as named icons with the pressed one marked', async () => {
     await mountPanel(withChat())
     const buttons = find('conv-source-mode').findAll('button')
-    // flowgate.v02test.0026 §7: exactly four, in this order — read → execute → edit once → edit.
+    // exactly four, in this order — read → execute → edit once → edit.
     expect(buttons.map((b) => b.attributes('data-mode'))).toEqual(['read_only', 'execute', 'edit_once', 'edit'])
     expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '실행', '1회 편집', '편집'])
     expect(buttons.map((b) => b.attributes('title'))).toEqual([

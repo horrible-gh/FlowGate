@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 — Redo of the Graph structure edits (add / remove node, connect /
+ * Redo of the Graph structure edits (add / remove node, connect /
  * disconnect): the editor's redo stack (round trip, emptied by a new edit, `tmp_` key remap,
  * revived keys, conflict / reset), the Center session's `redoEdit` and the Toolbar / Edit menu
  * button state. Undo of moves / settings / Inspector edits stays out of scope.

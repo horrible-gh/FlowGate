@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#1 — the document edit state registry (0068 D §2.1, L §2.11). Module state of this tab,
+// the document edit state registry. Module state of this tab,
 // like documentWindows: nothing is sent anywhere.
 // - Every open document window registers what it shows or edits and whether its editor reads, holds unsaved
 //   text or saves (an entry), and answers the upload's requests through it: a guard started (on_guard), a
@@ -55,7 +55,7 @@ const guards = reactive(new Map<string, DocumentIoToken>())
 const inflight = reactive(new Map<string, DocumentIoToken>())
 const downloading = reactive(new Map<string, DocumentIoToken>())
 /**
- * flowgate.v02.0127 T#5 (§2.14): documents with an upload request whose result is uncertain. One request per document
+ * : documents with an upload request whose result is uncertain. One request per document
  * is kept (single_inflight); a window's save and a new upload check it like an unsaved edit.
  */
 const unresolved = reactive(new Map<string, string>())

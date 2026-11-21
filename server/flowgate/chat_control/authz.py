@@ -9,7 +9,7 @@ token's own group as the Flow, its project, the conversation document of that gr
 - no edit-once claim of this token is still pending;
 - the issuing user may write the Flow (``perm_document_update``, the Canvas draft save and Run button permission).
 
-flowgate.v02gui.0028: the card AI role API keeps the token and run of the request (``Caller``): a read
+the card AI role API keeps the token and run of the request (``Caller``): a read
 (``read_caller``) is the Graph read boundary of a chat token alone, a change (``write_caller``) the boundary above; the
 change re-judges the same inside its Flow guard (``card_roles``). ``owner`` is what a placement records about the chat
 that placed a card (its CH conversation document, token, AI run, user).
@@ -52,7 +52,7 @@ def from_run(run, flow_id):
     return authorize(token, flow_id, current)
 
 
-# ── flowgate.v02gui.0028: callers that keep their token and run ──────────────
+# ── the earlier change: callers that keep their token and run ──────────────
 
 @dataclass(frozen=True)
 class Caller:

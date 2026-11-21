@@ -1,4 +1,4 @@
-"""Worker orchestration (0501 NR0003 §12/§15 `worker.py`).
+"""Worker orchestration (`worker.py`).
 
 Provider-neutral execution of one admitted run: the fallback loop over the provider
 chain, the attempt loop, the no-output retry and its token re-preparation, the stall /
@@ -7,7 +7,7 @@ into (register / read document / decide workflow / resolve conflict / conversati
 / question).
 
 The transports themselves are NOT here -- HTTP/API in `provider_api.py`, subprocess/CLI
-in `provider_cli.py` (NR0003 §15) -- and neither is the end of the run: judging, stop
+in `provider_cli.py` -- and neither is the end of the run: judging, stop
 classification, persistence, notification and the finished payload are `finalize.py`
 (§17). This module decides what to attempt next; those decide what it meant.
 """
@@ -76,7 +76,7 @@ from .runtime import (
     RETRY_MIN_REMAINING_SEC,
     REVIEW_HOP_KIND,
     REWORK_HOP_KIND,
-    # 0515 T0009 §10: handoff-gate state names, aliased so a generic bare `OPEN`/`ABORT`
+    # handoff-gate state names, aliased so a generic bare `OPEN`/`ABORT`
     # never shadows anything else in this module's namespace.
     ABORT as _GATE_ABORT,
     OPEN as _GATE_OPEN,
@@ -107,16 +107,16 @@ from .runtime import (
 )
 
 
-# ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
+# ── Worker: provider fallback loop ──────────────────────────────
 
 def _await_handoff_gate(run: dict) -> bool:
-    """Block until this run's handoff gate is OPEN (0515 T0009 §10).
+    """Block until this run's handoff gate is OPEN.
 
     Returns False for every terminal outcome that is NOT "OPEN" -- ABORT (whether this
     call or admission's own commit-failure path is the one that actually won the CAS),
     or a timeout this call itself turns into an ABORT it wins. In every False case the
     caller (``_worker``) must return immediately without running any real work: nothing
-    below this gate may touch ``run``'s token/prompt (T0009 §10 "workers must not use the token/prompt
+    below this gate may touch ``run``'s token/prompt (the earlier implementation "workers must not use the token/prompt
     before OPEN").
 
     A run with no gate at all (defensive: only reachable if some future caller starts a
@@ -129,7 +129,7 @@ def _await_handoff_gate(run: dict) -> bool:
 
     state = gate.wait_pending()
     if state == _GATE_PENDING:
-        # T0009 §10.1 (a)/(b): admission never called seal()/open_direct() in time --
+        # (a)/(b): admission never called seal/open_direct in time --
         # possibly because it died before reaching that line. Claim ABORT ourselves; if
         # we win, we are the one that runs cleanup (§10.1 "only the CAS winner cleans up").
         if gate.abort():
@@ -147,14 +147,14 @@ def _await_handoff_gate(run: dict) -> bool:
     if state == _GATE_OPEN:
         return True
     if state == _GATE_SEALED:
-        # T0009 §10.1 (c), the seal watchdog: 120s elapsed with no open_after_seal().
+        # (c), the seal watchdog: 120s elapsed with no open_after_seal.
         if gate.abort():
             admission._abort_handoff(run, "sealed_timeout")
         return False
     return False  # ABORT: admission's own commit-failure path already cleaned up.
 
 def _prepare_chat_start_tree(run: dict) -> None:
-    """flowgate.v02.0152: the chat run's start-tree snapshot, on this worker thread.
+    """the chat run's start-tree snapshot, on this worker thread.
 
     It used to run inside admission, so /ai-invoke/start answered only after the whole
     worktree had been hashed (twice). On a cold file cache that outlasted the browser's
@@ -260,16 +260,16 @@ _JUDGMENT_FIELDS = ("docs_reached", "reached_doc_ids", "outcome", "oracle_mismat
 
 
 def _worker(run: dict, chain: list[dict], prompt: str) -> None:
-    """One hop — one or more attempts (0359 L0007 §2.1).
+    """One hop — one or more attempts.
 
     Before 0359 this ran `provider loop → classify exit reason → judge+close` with judgment welded onto
     finalize, so there was no seam where "the hop ran and produced NOTHING" could be turned
-    back into another attempt. NR0003 §3 is the consequence: the loop had one forward edge
+    back into another attempt. the review is the consequence: the loop had one forward edge
     ("a document was registered") and no other edge at all, so a single wasted lap ended the
     whole chain — silently, with 11 untried providers still on the bench. Judgment and finalize
     are separated here, and the no-output retry lives in the seam between them.
 
-    0515 T0009 §10/§11: the handoff gate is awaited BEFORE the try block below -- in
+    the handoff gate is awaited BEFORE the try block below -- in
     particular before the `ai_invoke_started` broadcast, which must never fire ahead of
     OPEN (§11 "broadcasting ai_invoke_started before the gate is OPEN is a failure"). A gate that
     never opens ends this function here, with no broadcast, no provider call, and no use
@@ -285,12 +285,12 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         run["provider"] = oracle_module._provider_brief(current_chain[0])
         run["provider_id"] = current_chain[0].get("id")
         run["attempt_no"] = 1
-        # Exactly once per run, however many attempts follow (P0006 appendix D: no new event
+        # Exactly once per run, however many attempts follow (the plan appendix D: no new event
         # types — a retry is reported as a provider switch, which the UI already draws).
         _svc()._broadcast(run, "ai_invoke_started", {
             "run_id": run["run_id"],
             "group_id": run["group_id"],
-            # 0481 T0010 #1: a project-scoped run (resolve_base_dirty) carries a synthetic
+            # #1: a project-scoped run (resolve_base_dirty) carries a synthetic
             # `<project>.none.0000` group so its rows have a key, but the browser files its
             # card under `project:<id>`. Ship both identities or the live card, the button's
             # busy state and the post-finish status refresh all key on a group nobody watches.
@@ -306,13 +306,13 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "provider_id": current_chain[0].get("id"),
             "provider_name": current_chain[0].get("name"),
             "attempt_no": 1,
-            # 0406 T0022 item 3: the miniplayer builds its card from this payload. Without
+            # the miniplayer builds its card from this payload. Without
             # these the live card has no real worker type until after the run finishes.
             "hop_item_seq": run.get("hop_item_seq"),
             "worker_document_type": run.get("worker_document_type"),
             "auto_handled_item_seqs": list(run.get("auto_handled_item_seqs") or []),
         })
-        # flowgate.v02.0152: a chat run's start tree, taken here instead of inside the
+        # a chat run's start tree, taken here instead of inside the
         # /ai-invoke/start request -- before the first provider starts, so it is still the
         # content the AI found.
         _prepare_chat_start_tree(run)
@@ -351,10 +351,10 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 loop = review._checkpoint_document_review_loop(run)
                 run["document_review_loop_checkpointed"] = True
                 if run.get("remote_final_failure"):
-                    # flowgate.v02.0129 T#2: no next/same review-loop stage after a remote
-                    # final failure inside this run (D0005 §3-3).
+                    # no next/same review-loop stage after a remote
+                    # final failure inside this run.
                     break
-                # 0583 T0004 section 5: the gate reserves the review stage AGAIN only
+                # the gate reserves the review stage AGAIN only
                 # when the hop it just judged left no verdict this run owns. Before a
                 # second reviewer is launched -- second token, second provider, second
                 # durable verdict for one round -- ask once more on a connection opened
@@ -371,7 +371,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                         loop = late
                 if not loop or loop.get("current_stage") == "stopped":
                     break
-                # flowgate.v02test.0051 T0005 (A1): questions this run asked are still open -- the next
+                # (A1): questions this run asked are still open -- the next
                 # hop does not start. The wait is stored with the stage the checkpoint reserved and the
                 # run ends here (finalize, execution end, lease release); the card's responder answers
                 # and the loop goes on from that stage exactly once (question_loop_wait). Judged after
@@ -382,7 +382,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 from flowgate.card_settings import question_loop_wait
                 if question_loop_wait.park(run, loop) is not None:
                     break
-                # 0417 T0013: the reissue inside _prepare_retry_token calls this SAME
+                # the reissue inside _prepare_retry_token calls this SAME
                 # issue_builder the run started with — without this, a rework hop's reissued
                 # token kept the prior review-scope, and POST /inbox action=edit 403'd
                 # ("Context binding mismatch") on every rework attempt, so the loop could
@@ -395,7 +395,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                     loop_issue_builder.loop_stage = loop["current_stage"]
                 prepared = _svc()._prepare_retry_token(run)
                 selected_id = review.resolve_loop_provider(loop, loop["current_stage"])
-                # flowgate.v02.0129 CH0012: the run's requester may have picked their own AI.
+                # the run's requester may have picked their own AI.
                 selected = ai_settings_service.selectable_provider(
                     run["project_id"], selected_id, run.get("issued_to"))
                 if prepared is None or selected is None:
@@ -406,19 +406,19 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                     break
                 _svc()._reset_attempt_state(run)
                 run["hop_kind"] = loop["current_stage"]
-                # flowgate.v02.0137 T0004 §2-4: the admission-time judge measured the FIRST
+                # the admission-time judge measured the FIRST
                 # hop's scope from the FIRST hop's baseline, so a failed rework after a review
                 # verdict still read `complete`. Re-make it for this stage and this token now,
                 # after the token is issued and before the worker starts. run["action_scope"]
                 # stays the admission scope on purpose (oracle.refresh_hop_oracle).
                 oracle_module.refresh_hop_oracle(
                     run, loop["current_stage"], prepared.get("token_id") or run.get("token_id"))
-                # TR0005 rev1: submissions from here on belong to THIS hop; finalize settles
+                # submissions from here on belong to THIS hop; finalize settles
                 # the scratch on this hop's ordered outcomes only (submission_ledger).
                 submission_ledger.start_hop(run)
                 run["provider"] = oracle_module._provider_brief(selected)
                 run["provider_id"] = selected_id
-                # 0582 TR0006 rev1: requested_provider_id is set once at admission (the
+                # requested_provider_id is set once at admission (the
                 # FIRST stage's own provider) and never touched again by this transition --
                 # left alone, a provenance snapshot taken on stage 2+ would compare stage
                 # 2's actual provider against stage 1's requested one and report a fallback
@@ -428,7 +428,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 run["requested_provider_id"] = selected_id
                 run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
                 run["document_review_loop_checkpointed"] = False
-                # T0011 §4 / 0486 NR0010 Finding 3: a stage switch is a new HOP, so its
+                # a stage switch is a new HOP, so its
                 # execution budget is recomputed here from the loop's own contract
                 # (rework_timeout_sec, clamped to the loop's total_timeout_sec deadline)
                 # instead of staying pinned to whatever the FIRST hop of this run
@@ -439,7 +439,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 # from its first attempt onward.
                 stage_started_at = admission.now_iso()
                 stage_now = datetime.fromisoformat(stage_started_at)
-                # flowgate.v02test.0051 T0007 (A2): the time this loop spent parked for its questions (in
+                # (A2): the time this loop spent parked for its questions (in
                 # the Graph predecessors this run was resumed from) is not loop time.
                 run["timeout_sec"] = review.loop_stage_timeout_sec(
                     loop, loop["current_stage"], stage_now,
@@ -482,7 +482,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 "from_provider_name": previous.get("name"),
                 "to_provider_id": current_chain[0].get("id"),
                 "to_provider_name": current_chain[0].get("name"),
-                # 0359 P0006 [core] 3: the fourth switch reason. The existing three all mean
+                # [core] 3: the fourth switch reason. The existing three all mean
                 # "it never started"; this one means "it started, finished politely and left
                 # nothing" — the shape this incident actually had, and the more common one.
                 "reason": "no_output",
@@ -501,7 +501,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         if run.get("post_process_recovered"):
             return
         run["post_process_phase"] = "handoff"
-        # 0317 TR0011 (Q153 opt-1): the run is now finished, so start_run's active-run guard
+        # (Q153 opt-1): the run is now finished, so start_run's active-run guard
         # is clear — re-spawn the next hop's worker if the self-chain flagged a boundary.
         _svc()._maybe_auto_resume_hop(run)
     except Exception:
@@ -642,7 +642,7 @@ _REMOTE_CLI_CHAT_TRANSPORT: dict[str, str] = {
 
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
-    # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
+    # T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (the plan
     # §4.2.6); any other token's prompt is returned as it is.
     from modules.flow_gate.services import message_image_delivery
     prompt = message_image_delivery.provider_prompt(prompt, provider, run)
@@ -671,7 +671,7 @@ from flowgate.ai_roles import invocations as role_invocations
 
 
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
-    """One attempt: walk the provider chain until one actually STARTS (L0006 §2.2).
+    """One attempt: walk the provider chain until one actually STARTS.
 
     Unchanged in substance — startup/transport failures (spawn_failed / fast_fail / api_error)
     fall through to the next provider, and the first provider that runs at all ends the walk.
@@ -682,7 +682,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     policy = run.get("responder_startup_policy")
     run.pop("remote_final_failure", None)
     for index, provider in enumerate(chain):
-        # 0111 T-A3: one run keeps its item claim and group lease across startup
+        # T-A3: one run keeps its item claim and group lease across startup
         # candidates. An answer, hand-off, lost claim, pause/cancel or deadline ends
         # the walk; it never schedules a second Graph stage or responder run.
         if policy and (run.get("timed_out") or run.get("pause_requested") or not policy["may_fallback"]()):
@@ -705,7 +705,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                 "to_provider_name": provider.get("name"),
                 "reason": last_reason,
                 "attempt_no": run["attempt_no"],
-                # 0359: name the KIND of switch, now that there is more than one kind.
+                # name the KIND of switch, now that there is more than one kind.
                 "retry_kind": "spawn_failure",
                 "hop_item_seq": run.get("hop_item_seq"),
             })
@@ -758,7 +758,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                 classification, detail = "zero_output", "Responder exited without registering an answer."
         if (classification != "started_ok" and provider_remote.is_remote_cli(provider)
                 and not run.get("remote_final_failure")):
-            # flowgate.v02.0129 T#2 (D0005 §3-3): whatever ended a remote CLI attempt, the
+            # whatever ended a remote CLI attempt, the
             # same request is never handed to the next connection, another Agent or here.
             run["remote_final_failure"] = {"code": "remote_" + str(classification),
                                            "reason": str(classification),
@@ -780,7 +780,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         if remote_failure:
             # Kept on the per-connection history (persisted with the run record): the
             # target Agent, the Agent that actually claimed (if any) and the Job identity.
-            # flowgate.v02.0135 CH0006: plus the cause, the Agent's own words and the Job's
+            # plus the cause, the Agent's own words and the Job's
             # working directory, so the GUI shows what actually failed.
             run["fallback_history"][-1]["remote_final"] = {
                 key: remote_failure.get(key) for key in (
@@ -804,9 +804,9 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
 
 
 def _classify_end_reason(run: dict, started_ok: bool) -> None:
-    """end_reason classification (L0006 §4.1 / L0007 §2.1.2) — order unchanged, default "exited".
+    """end_reason classification — order unchanged, default "exited".
 
-    "user_paused" (0252 P0008 S4): the inbox self-chain hit the user's pause flag at a step
+    "user_paused": the inbox self-chain hit the user's pause flag at a step
     boundary and withheld the next token; the worker then exits normally, so the flag — not the
     exit itself — is what distinguishes a boundary stop.
 
@@ -825,7 +825,7 @@ def _classify_end_reason(run: dict, started_ok: bool) -> None:
         run["end_reason"] = "exited"
 
 
-# ── No-output retry (0359 L0007 §2.3 ~ §2.6) ─────────────────────────────────
+# ── No-output retry ─────────────────────────────────
 
 def _attempt_elapsed_sec(run: dict) -> int:
     started = run.get("attempt_started_mono") or run.get("started_mono") or time.monotonic()
@@ -833,9 +833,9 @@ def _attempt_elapsed_sec(run: dict) -> int:
 
 
 def _has_pending_question(doc_ref: Optional[str], asker_run_id: Optional[str] = None) -> bool:
-    """NR0003 follow-up proposal 1: does doc_ref carry a query THIS run is still waiting on?
+    """follow-up proposal 1: does doc_ref carry a query THIS run is still waiting on?
 
-    0661 T0004 safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): an open
+    safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): an open
     container alone is not evidence. An older Q, a human's Q or another run's Q can keep
     the same anchor 'pending' indefinitely, and a new hop that then ends empty would park
     as question_pending with no item the responder dispatch may take (it only takes items
@@ -873,7 +873,7 @@ def _has_pending_question(doc_ref: Optional[str], asker_run_id: Optional[str] = 
 
 
 def _retry_eligible(run: dict) -> bool:
-    """May this hop open ANOTHER attempt? (L0007 §2.4 — this exact order.)
+    """May this hop open ANOTHER attempt? (this exact order.)
 
     Condition 3 is the axis the whole fix turns on. The existing provider-switch test is
     "exit code != 0 within 15 seconds", which the incident's worker passed cleanly: it ran for
@@ -881,11 +881,11 @@ def _retry_eligible(run: dict) -> bool:
     it is a completed attempt with nothing to show, and it needs an edge of its own.
     """
     if run.get("remote_final_failure"):
-        # flowgate.v02.0129 T#2 (D0005 §3-3): a remote final failure is never retried
+        # a remote final failure is never retried
         # inside the same run, on any connection.
         return False
     scope_retry = oracle_module._scope_oracle_retry_run(run)
-    # flowgate.v02.0053 T#2: a Graph node's single 'new' run whose card picked restarts
+    # a Graph node's single 'new' run whose card picked restarts
     # (admission `node_restart_open`) retries like a continuous hop; other single runs do not.
     if run.get("mode") != "continuous" and not scope_retry and not run.get("node_restart_open"):
         return False
@@ -900,14 +900,14 @@ def _retry_eligible(run: dict) -> bool:
     if run.get("pause_requested"):
         return False
     if run.get("completion_oracle") is not None and not scope_retry:
-        # 0446 T0008 §3-1: the ENGINE's own scope default judge is re-askable —
+        # the ENGINE's own scope default judge is re-askable —
         # `_recheck_no_output` below does exactly that before a second worker starts. A
         # caller's override is not, so it keeps the original block.
         return False
     if run.get("action_scope") in ("workflow_decide", "resolve_conflict"):
         return False
     if int(run.get("docs_target") or 0) < 1 and not scope_retry:
-        # 0446 T0008 §3-2: start_run pins a scope-oracle run's docs_target to 0 because its
+        # start_run pins a scope-oracle run's docs_target to 0 because its
         # token cannot register a document at all. For that run the count is not a low
         # number — it is not a measurement.
         return False
@@ -926,7 +926,7 @@ def _retry_eligible(run: dict) -> bool:
         # A rework with output still keeps this guard: its edit token can revise the
         # document mid-run, and another attempt could write a second revision.
         return False        # this hop DID hand off; the next hop is already queued
-    # 0661 T0004 F4 (review rej_01M4HRWSVP3M0BSH finding 2): the question probe sits ABOVE
+    # (review rej_01M4HRWSVP3M0BSH finding 2): the question probe sits ABOVE
     # the partial-output and scoped-success guards below. A hop that landed part of its
     # documents and then registered a Q is still waiting on an answer; before this it left
     # through "partial output is still output" with no stop code, so the chain was neither
@@ -935,7 +935,7 @@ def _retry_eligible(run: dict) -> bool:
     # keys on asker_ai_run_id) — an older or foreign open Q never relabels a hop.
     if run.get("outcome") != "complete" and _svc()._has_pending_question(
             run.get("doc_ref"), run.get("run_id")):
-        # NR0003 follow-up proposal 1: this hop stopped to wait for a human answer, not because
+        # follow-up proposal 1: this hop stopped to wait for a human answer, not because
         # it failed — spending another attempt (and another provider) on a question the
         # human has not even seen yet would waste both without ever getting a different
         # outcome. _resolve_stop_code below reads this back into "question_pending" instead
@@ -945,7 +945,7 @@ def _retry_eligible(run: dict) -> bool:
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
     if scope_retry and run.get("outcome") != "none":
-        # 0446 T0008 §3-2: the guard directly above cannot see a scope-oracle SUCCESS —
+        # the guard directly above cannot see a scope-oracle SUCCESS —
         # `_judge_hop` pins docs_reached to 0 for every scoped run, satisfied or not. Without
         # this line a rework that correctly raised the document's revision would qualify for a
         # retry and write a SECOND revision over its own work. The scoped equivalent of
@@ -961,19 +961,19 @@ def _retry_eligible(run: dict) -> bool:
     if attempts_max != -1 and int(run.get("attempts_used") or 0) >= attempts_max:
         return False
     if _retry_remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
-        # 0446 T0014 §4-4: the reading, not the gate, changed — `_retry_remaining_sec` is
+        # the reading, not the gate, changed — `_retry_remaining_sec` is
         # min(no-progress clock, absolute ceiling). A hop that ran 90 productive minutes on
         # a 60-minute threshold has a NEGATIVE `_remaining_sec` and would have been refused
         # a retry for a budget it never actually exhausted. With no watchdog anchor recorded
         # the two readings are identical, so every case below still decides as it did.
-        # 0446 T0010 §3-4 — the hole T0008 §3-6 / TR0009 §7-4 explicitly left to R5. This gate
+        # the hole the earlier implementation / the earlier implementation explicitly left to R5. This gate
         # blocked the retry and said nothing. `_stop_reason_text` already listed "a budget too
         # far spent" among the reasons no further attempt opened, but no code ever SET that
         # reason, so the only durable field (stop_reason) read "produced no document in N
         # attempts" and the real cause never left the process. No new stop_code: the reason
         # rides the existing "No further attempt was opened: <reason>." tail on
         # no_output_exhausted. Ordered BELOW the question_pending probe on purpose — a Q stop
-        # is not a failure (T0008 §3-2) and must keep its own name.
+        # is not a failure and must keep its own name.
         run["retry_block_reason"] = "budget_exhausted"
         return False
     # register_errors / tool_call_misses / turn_limit_exhausted deliberately do NOT block:
@@ -982,14 +982,14 @@ def _retry_eligible(run: dict) -> bool:
 
 
 def _recheck_no_output(run: dict) -> bool:
-    """Last gate before a retry: is the hop STILL empty? (L0007 §5 — the last guard against duplicate documents.)
+    """Last gate before a retry: is the hop STILL empty? (the last guard against duplicate documents.)
 
     The judge already waited out the settle window, but a registration can land between that
     judgment and the moment a second worker would start. Two documents from one hop is worse
     than one wasted hop, so ask again and cancel the retry if anything appeared.
     """
     if oracle_module._scope_oracle_retry_run(run):
-        # 0446 T0008 §3-4: a rework run never creates a document, so the document query below
+        # a rework run never creates a document, so the document query below
         # would answer "still empty" for it under every circumstance — turning the one guard
         # standing between a late write and a duplicate one into a constant True. Ask the
         # scope's own judge again instead, exactly as `_judge_hop` did.
@@ -1003,7 +1003,7 @@ def _recheck_no_output(run: dict) -> bool:
                            run["run_id"], exc_info=True)
             # Deliberately the opposite of the document path's fallback below: when the judge
             # cannot answer, a wasted hop is cheaper than a second revision written over the
-            # worker's own (L0007 §5).
+            # worker's own.
             return False
         if not satisfied:
             return True
@@ -1033,7 +1033,7 @@ def _recheck_no_output(run: dict) -> bool:
 def _retry_provider_chain(run: dict) -> list[dict]:
     """Return the same selected provider for this hop's no-output retry.
 
-    0435 T0004 replaces both older schedules — individual -> individual -> common and
+    replaces both older schedules — individual -> individual -> common and
     configured-order fallback — with one contract for every origin tier: a retry NEVER
     replays the priority tiers or falls back to another provider, only the finalized chain
     head. 0443 T0002 (R0001) makes how MANY retries fire a per-run pick ("재시작 횟수")
@@ -1048,7 +1048,7 @@ def _retry_provider_chain(run: dict) -> list[dict]:
     if attempts_max != -1 and attempts_used >= attempts_max:
         return []
     if oracle_module._review_hop_recovery_run(run):
-        # T0007 §2.3/§3.1.5: retry the provider that ACTUALLY STARTED this attempt
+        # retry the provider that ACTUALLY STARTED this attempt
         # (`run["provider_id"]`, set by `_execute_provider_chain` even when it had to walk
         # past an earlier startup failure in the SAME attempt), never the original
         # priority-tier head. A reviewer-override hop's chain is already a single provider
@@ -1062,7 +1062,7 @@ def _retry_provider_chain(run: dict) -> list[dict]:
     if not selected_provider_id:
         return []
     try:
-        # flowgate.v02.0129 CH0012: same provider, including the requester's own AI.
+        # same provider, including the requester's own AI.
         selected = ai_settings_service.selectable_provider(
             run["project_id"], selected_provider_id, run.get("issued_to"))
     except Exception:
@@ -1075,7 +1075,7 @@ def _token_reusable(row: dict) -> bool:
     """Can the dead attempt's work token simply be handed to the next provider?
 
     Not merely "is it alive": a token with two minutes left would expire mid-attempt, and
-    handing a worker a token that dies under it is worse than minting a fresh one (L0007 §2.5).
+    handing a worker a token that dies under it is worse than minting a fresh one.
     """
     if row.get("consumed_at") or row.get("revoked_at"):
         return False
@@ -1092,9 +1092,9 @@ def _token_reusable(row: dict) -> bool:
 
 
 def _prepare_retry_token(run: dict) -> Optional[dict]:
-    """A usable work token + prompt for the next attempt (L0007 §2.5).
+    """A usable work token + prompt for the next attempt.
 
-    Reuse first. A dead hop's token is normally neither consumed nor revoked — NR0003 §6 found
+    Reuse first. A dead hop's token is normally neither consumed nor revoked — the review found
     24 of them sitting in the tokens table, one being this incident's own tok_20260730_000032 —
     so the next provider can just be handed the same one. Reissue only when it is spent, revoked
     or about to expire: advance_workflow re-opens the SAME head (this hop registered nothing, so
@@ -1120,7 +1120,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     try:
         issue = admission._call_issue_builder(issue_builder, run["run_id"])
     except work_plan_attachment_service.PreInstructionAttachmentError:
-        # 0554 T0014 §5 (review rej_01M334Z5Y72GK6BW finding 2): a rework issue_builder
+        # (review rej_01M334Z5Y72GK6BW finding 2): a rework issue_builder
         # (issue_rework_request) that raises this directly has already revoked the token
         # it minted before re-raising (invoke_mention_service.issue_rework_request). The
         # broad `except Exception` below used to catch this too, folding it into the
@@ -1155,7 +1155,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
                 audit=retry_audit,
             )
         except work_plan_attachment_service.PreInstructionAttachmentError:
-            # 0554 T0014 §5 (review finding 2): unlike issue_rework_request above, this
+            # (review finding 2): unlike issue_rework_request above, this
             # builder (a plain 'new'-scope issuer) already minted and returned a live
             # token before this call ever runs, and run["token_id"]/run["raw_token"] are
             # not updated to it until AFTER this block succeeds (below). Without this
@@ -1175,24 +1175,24 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
                         new_token_id, run["run_id"], exc_info=True,
                     )
             raise
-        # 0406 T0022 item 5: a retry rebuilds the prompt from scratch, so the audit must
+        # a retry rebuilds the prompt from scratch, so the audit must
         # point at THAT prompt — otherwise attempt 1's hash gets attached to attempt 2's
         # run while still claiming "the note went in".
         run.update(retry_audit)
     before = token_id
-    # 0496 T0008 (self-review of T0006 §3.1): both halves of the run's token identity land
+    # (self-review of the earlier implementation): both halves of the run's token identity land
     # HERE, adjacent, before anything that can fail runs. They used to straddle the group
     # lease block below -- token_id first, raw_token only after it -- so a lease-DB write,
     # or the document_review_loop token lookup inside it, that raised left the run holding a
     # NEW token_id next to the OLD raw_token. Neither caller (worker.py:137/169) wraps this
     # function in try/except, so that half-updated pair is what the finalize path persists
     # and what the next hop would have sent: a 401 "Token is invalid" of exactly the kind
-    # 0496 B0001 reported. `_note_issued_raw_token` moves up with them for the same reason --
+    # The review reported. `_note_issued_raw_token` moves up with them for the same reason --
     # the new raw token exists in the tokens table the instant issue_builder returns, so
     # `_redact_secrets` must already know it before any code that can fail and log.
     run["token_id"] = issue.get("token_id")
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
-    # T0004 (0581 NR0003 §12, rev1 rejection): a reissued token's scratch must travel
+    # a reissued token's scratch must travel
     # WITH it -- required key, no `or run.get(...)` fallback. The production
     # issue_builder contract (chain.py/review.py/qa_routes.py, and start_run's own
     # inline token_service.issue() call) always returns "scratch_dir"; falling back to
@@ -1206,7 +1206,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if run.get("document_review_loop") and not _adopt_continuation_token(
         run, run.get("raw_token"), pinned_doc=str(run.get("doc_ref") or ""),
     ):
-        # flowgate.v02.0136 T0004 T#2 (NR0003 rev2 §6.2-2): a review loop's reissued token --
+        # a review loop's reissued token --
         # a stage switch (review <-> edit, worker.py transition block) or a same-stage retry --
         # moves register_context and current_token_id with it, so the /inbox edit boundary and
         # the API provider dispatch compare against THIS token, not the run's start scope or the
@@ -1227,7 +1227,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
                            run["run_id"], exc_info=True)
         return None
     if run.get("group_id"):
-        # 0417 T0013: a document_review_loop hop's reissued token can carry a DIFFERENT
+        # a document_review_loop hop's reissued token can carry a DIFFERENT
         # action_scope than the run started with (review <-> edit as the loop alternates
         # stages) — refresh the lease's recorded scope to match, or mutation_policy's
         # owner-match check 403s the very next real call this token makes. Every other
@@ -1240,10 +1240,10 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         db_group_ai_leases.update_token(
             run["group_id"], run["run_id"], run["token_id"], action_scope=reissued_action_scope,
         )
-    # TR0005 rev1: the run scratch's owner record lists every token this run held, so a
+    # the run scratch's owner record lists every token this run held, so a
     # later run can prove the retained directory belongs to the row that names it (0138).
     carryover.bind_run_token(run, issue.get("token_id"))
-    # flowgate.v02.0137 T0004 §3-3 (R2): the new token cannot submit files from the old
+    # (R2): the new token cannot submit files from the old
     # token's scratch or the run's cwd. Copy those drafts into the new token's scratch and
     # say so in the prompt; never moves, deletes or submits anything (carryover.py). After
     # the token is fully adopted (lease re-pointed), so a refused reissue copies nothing.
@@ -1257,7 +1257,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if issue.get("worker_document_type"):
         run["worker_document_type"] = issue.get("worker_document_type")
     if issue.get("auto_handled_item_seqs") is not None:
-        # 0611 TR0012: a retry re-enters the SAME hop's issuer after its first attempt already
+        # a retry re-enters the SAME hop's issuer after its first attempt already
         # expanded the instruction head, so the retry's own advance finds nothing left and
         # reports []. Overwriting erased the only record that the server expanded that T/N in
         # this run; keep what earlier attempts handled and append anything new.
@@ -1271,16 +1271,16 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
 
 
 def _no_output_detail(run: dict) -> Optional[str]:
-    """The sentence that finally reaches a human (L0007 §2.6).
+    """The sentence that finally reaches a human.
 
     In the incident this text existed, was precise, and even named its own fix — and lived only
     in a scratch file the server deletes after seven days.
 
-    0505 T0009: API providers branch to diagnosis by category (exit_code / register_errors /
+    API providers branch to diagnosis by category (exit_code / register_errors /
     tool_call_misses / turn_limit_exhausted) instead of generic "worker exited"; CLI providers
     keep the generic form for backward compat.
 
-    0505 T0010: API provider exit None now shows status by category (completed/failed) rather
+    API provider exit None now shows status by category (completed/failed) rather
     than generic "worker exited None".
     """
     provider = run.get("provider") or {}
@@ -1329,7 +1329,7 @@ def _no_output_detail(run: dict) -> Optional[str]:
 
 
 def _archive_attempt(run: dict, reason: str, token_id: Optional[str]) -> None:
-    """Fold the attempt that just ended into the history (L0007 §2.6)."""
+    """Fold the attempt that just ended into the history."""
     run["fallback_history"].append({
         "provider_id": run.get("provider_id"),
         "provider_name": (run.get("provider") or {}).get("name"),
@@ -1347,7 +1347,7 @@ def _archive_attempt(run: dict, reason: str, token_id: Optional[str]) -> None:
 
 
 def _reset_attempt_state(run: dict) -> None:
-    """Clear the per-ATTEMPT observations, keep the per-HOP identity (L0007 §2.6).
+    """Clear the per-ATTEMPT observations, keep the per-HOP identity.
 
     run_id / started_mono / timeout_sec / deadline_at / baseline_seq all survive: one hop gets
     one budget and one baseline no matter how many attempts it spends inside them.
@@ -1358,7 +1358,7 @@ def _reset_attempt_state(run: dict) -> None:
     run["last_message_received"] = False
     run["stdout_tail"] = None
     run["stderr_tail"] = None
-    # flowgate.v02.0136 T0004 T#3 (§4-1/§7): register_errors stays the per-ATTEMPT list the
+    # : register_errors stays the per-ATTEMPT list the
     # judges read (_no_output_detail, the API diagnosis, finalize's ending), so it is still
     # emptied here. The axis-classified binding rejections it holds (1st-stage inbox and
     # 2nd-stage register_dispatch records) are a per-RUN diagnosis, though, and finalize
@@ -1369,20 +1369,20 @@ def _reset_attempt_state(run: dict) -> None:
     run["register_errors"] = []
     run["tool_call_misses"] = 0
     run["turn_limit_exhausted"] = False
-    # 0505 T0006 (DB0005 3.3): "this attempt's last mediated self-HTTP call", not a
+    # ( 3.3): "this attempt's last mediated self-HTTP call", not a
     # cross-attempt history -- reset alongside the three siblings above.
     run["last_tool_name"] = None
     run["last_tool_status"] = None
     run["last_tool_error"] = None
-    # 0505 T0008: re-derive next attempt's transport base rather than trust a value
+    # re-derive next attempt's transport base rather than trust a value
     # cached from a prior attempt -- the recompute is cheap and this keeps the cache
     # from ever outliving the per-attempt state it was read alongside.
     run["_transport_api_base_resolved"] = None
-    # 0496 T0006 §3.2: the fallback-kind cache is computed alongside the transport
+    # the fallback-kind cache is computed alongside the transport
     # base above and must not outlive it either.
     run["_transport_fallback_kind_resolved"] = None
     run["attempt_started_mono"] = time.monotonic()
-    # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
+    # the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
     # ceiling is not, because started_mono survives this reset by the contract above.
     run["watchdog_kill"] = None
@@ -1399,7 +1399,7 @@ def _reset_attempt_state(run: dict) -> None:
 
 def _now_mono() -> float:
     """The monotonic clock behind ONE name, so the watchdog's 30-minute and 4-hour
-    edges can be exercised without waiting for them (0446 T0014 §5). Nothing else
+    edges can be exercised without waiting for them. Nothing else
     about it differs from calling time.monotonic() directly."""
     return time.monotonic()
 
@@ -1408,7 +1408,7 @@ def _remaining_sec(run: dict) -> float:
     """The hop's nominal budget measured from hop START — unchanged, and still exactly
     what the `timeout_sec` / `deadline_at` of every response and stored row means.
 
-    0446 T0014 §2-5: that deadline is now the EARLIEST this run may be stopped rather
+    that deadline is now the EARLIEST this run may be stopped rather
     than the latest, and it lands only if the run shows nothing new for the whole
     budget. The two helpers below are the ones the watchdog and the retry gate ask.
     """
@@ -1418,7 +1418,7 @@ def _remaining_sec(run: dict) -> float:
 
 
 def _stall_remaining_sec(run: dict) -> float:
-    """Seconds left on the NO-PROGRESS clock (0446 T0014 §2-3).
+    """Seconds left on the NO-PROGRESS clock.
 
     The same budget with a different anchor: it runs from the last point this run was
     known to be moving (`stall_anchor_mono` — set when an attempt launches, moved
@@ -1437,7 +1437,7 @@ def _stall_remaining_sec(run: dict) -> float:
 def _retry_remaining_sec(run: dict) -> float:
     """The budget the retry gate asks about: how long could another attempt run?
 
-    0446 T0014 §4-4: `_remaining_sec` alone would answer "none" for every hop that
+    `_remaining_sec` alone would answer "none" for every hop that
     legitimately outlived its no-progress threshold BY WORKING, and `_retry_eligible`
     would then report `budget_exhausted` for a run with hours of ceiling left. Both
     limits are real, so the smaller one is the answer.
@@ -1488,7 +1488,7 @@ def _chat_tool_definitions() -> list[dict]:
             "schema": api_server_tools.READ_HELP_SCHEMA,
         },
         {
-            # 0670 T0004: command execution is a capability of the chat run itself, not
+            # command execution is a capability of the chat run itself, not
             # a mode -- read/edit stays exactly what the token was issued with, and the
             # user's command policy decides (always / ask / refuse) per request.
             "name": chat_command_service.TOOL_NAME,
@@ -1523,10 +1523,10 @@ def _api_trace_tool(entry: dict, name: object, status: object, *, registration: 
 
 
 def _conflict_tool_result_well_formed(status: object, resp: object) -> bool:
-    """0608 T0007: whether a conflict-run read tool's ``(status, resp)`` is a real envelope.
+    """whether a conflict-run read tool's ``(status, resp)`` is a real envelope.
 
     Success: ``ok is True`` with a 2xx status. Failure: ``ok is False`` with a non-2xx status
-    and either the P0005 ``error: {code, message}`` object (remote tools, error_payload) or
+    and either the the plan ``error: {code, message}`` object (remote tools, error_payload) or
     read_help's ``error_message`` string. Anything else -- ``{}``, a missing or non-boolean
     ``ok``, an ``ok`` that contradicts the status, a failure with no readable error -- is a
     malformed result, never a successful read.
@@ -1554,7 +1554,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     try:
         key = ai_settings_service.get_provider_secret(secret_scope, provider.get("id"))
     except ApiKeyCryptoError:
-        # 0371: a key IS stored, the master key just cannot read it. Reporting it as
+        # a key IS stored, the master key just cannot read it. Reporting it as
         # "not set" would send the operator hunting for a key nobody removed.
         return "spawn_failed", "api_key_unreadable"
     if not key:
@@ -1570,7 +1570,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     max_turns = max(_svc().API_MAX_TURNS_PER_DOC, max(1, run["docs_target"]) * _svc().API_MAX_TURNS_PER_DOC)
 
     current_token = run["raw_token"]
-    # 0492 T0018 item 1: the run's four register axes and the token they are bound to
+    # the run's four register axes and the token they are bound to
     # are seeded together here and only ever move together (_adopt_continuation_token).
     _run_register_context(run)
     registered = 0
@@ -1578,12 +1578,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     conflict_pending = run.get("action_scope") == "resolve_conflict"
     is_chat = run.get("action_scope") == "chat"
     is_sequence_edit = run.get("action_scope") == "workflow_sequence_edit"
-    # flowgate.v02.0032 T#1 (D0006 §2.3/§3.3): tools a chat run may call besides its reply
+    # tools a chat run may call besides its reply
     # tool come through the chat run hook port. With none registered the chat run keeps the
     # single direct send_chat_reply tool exactly as before.
     chat_tools = chat_run_hooks.chat_tools(run) if is_chat else []
     chat_tool_handlers = {tool["name"]: tool["handler"] for tool in chat_tools}
-    # flowgate.v02.0127 L#3 §2.1 W2/W3: optional descriptor keys. A tool with ``call_handler``
+    # L#3 W2/W3: optional descriptor keys. A tool with ``call_handler``
     # receives only the server call context of its accepted call (never the model input);
     # ``own_validation`` skips the generic schema validation below because the handler maps
     # input errors itself. Tools without them (run_command) keep handler(run, input).
@@ -1614,7 +1614,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
     def loop_remaining() -> float:
         # A chat tool (run_command) may wait for the user and run a command for longer
-        # than the hop's nominal budget; it records that as run progress (D0006 §3.6), so a
+        # than the hop's nominal budget; it records that as run progress, so a
         # chat run with chat tools reads the progress-aware budget, capped by the hard
         # ceiling. Every other run keeps the ORIGINAL `_remaining_sec` reading.
         if chat_tool_handlers:
@@ -1630,7 +1630,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # the reads that led to it instead of carrying them to the end of the run.
     conflict_read_msgs: list[tuple[int, dict]] = []
     if conflict_pending:
-        # 0608 T0007: the resolver gets the read tools its mention advertises (registry-
+        # the resolver gets the read tools its mention advertises (registry-
         # judged, write/patch/remove never) next to resolve_git_conflict, and a budget that
         # follows the conflict's size (runtime.API_CONFLICT_*).
         conflict_specs = api_server_tools.conflict_tool_definitions() + [{
@@ -1649,7 +1649,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         {"role": "user", "content": first_prompt},
     ]
     if is_chat:
-        # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
+        # ( 3.3): the FIRST self-HTTP this hop may open. Its status/
         # error land in the same three columns as the other five mediated calls, and a
         # failure here ends the hop before the turn loop -- but the same `run` object
         # carries the three fields into persist_run_record/finished_payload regardless.
@@ -1703,7 +1703,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["_api_turn"] = turn
         if run["cancel_event"].is_set():
             break
-        # 0446 T0014 §4-5: the model-call loop keeps the ORIGINAL reading. It has no
+        # the model-call loop keeps the ORIGINAL reading. It has no
         # subprocess to watch and no watchdog attached, so `_stall_remaining_sec` would
         # return this very number anyway; naming `_remaining_sec` here keeps the API
         # call ceiling and its cancel/timeout behaviour bit-for-bit unchanged.
@@ -1739,7 +1739,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             except api_server_tools.ToolError as exc:
                 return "api_error", exc.reason
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
-        # 0505 T0006 (DB0005 2/3.3): counted whether the call below succeeds, raises, or
+        # ( 2/3.3): counted whether the call below succeeds, raises, or
         # times out -- "how many model calls did this hop make" is the question, not
         # "how many succeeded". model_last_http_status uses the same 0/exc.code sentinel
         # convention as last_tool_status; the adapters below do not surface the real
@@ -1877,7 +1877,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if tool_specs is not None:
             exposed = {item["name"]: item for item in tool_specs}
             validation_errors = []
-            # flowgate.v02.0127 L#3 §2.1 W1/W3: every received call of a chat run is handed to the
+            # L#3 W1/W3: every received call of a chat run is handed to the
             # call acceptance port exactly once, right here -- before any normalization or schema
             # validation, with the provider's original input. The answer (server call context or
             # None) is only ever passed to a ``call_handler`` below.
@@ -1901,9 +1901,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     elif call["name"] == "read_help":
                         tool_input = api_server_tools.normalize_read_help_input(tool_input)
                     elif call["name"] == "register_document" and _run_register_context(run).get("action") == "edit":
-                        pass  # T#2 ordered edit port receives original input, before schema/allowlist filtering.
+                        pass  # ordered edit port receives original input, before schema/allowlist filtering.
                     elif call["name"] in chat_tool_own_validation:
-                        pass  # 0127 L#3 W3: the tool maps its own input errors (P#2 §9.26).
+                        pass  # L#3 W3: the tool maps its own input errors (P#2).
                     else:
                         api_server_tools.validate(spec["schema"], tool_input)
                     call["input"] = tool_input
@@ -1913,7 +1913,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     validation_errors.append(exc)
 
             completion_call = None
-            # 0608 T0007: a tool the model asked for in this turn that did not succeed. The
+            # a tool the model asked for in this turn that did not succeed. The
             # model has not seen that failure yet, so a resolve sent alongside it is a guess.
             failed_tools: list[str] = []
             for call, validation_error, call_context in zip(tool_calls, validation_errors, call_contexts):
@@ -1933,7 +1933,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     if completion_call is None:
                         completion_call = call
                         trace["completion_selected"] = True
-                        # 0505 T0006 (DB0005 2): validated and about to be dispatched to the
+                        # : validated and about to be dispatched to the
                         # register handler below (_inbox_register) -- counted here, at the
                         # ONE call that survives the duplicate-register rejection just below.
                         run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
@@ -1945,7 +1945,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         ))
                     continue
                 if conflict_pending and conflict_source_calls >= conflict_source_budget:
-                    # 0608 T0007: bounded like the turns -- refused, never run.
+                    # bounded like the turns -- refused, never run.
                     _status, resp = api_server_tools.error_payload(call["name"], api_server_tools.ToolError(
                         429, "tool_call_budget_exhausted",
                         f"this run's {conflict_source_budget} read-tool calls are used up; submit what "
@@ -1957,7 +1957,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     continue
                 if conflict_pending:
                     conflict_source_calls += 1
-                # 0505 T0006 (DB0005 2): sent to a real handler regardless of what it
+                # : sent to a real handler regardless of what it
                 # returns -- "executed" counts dispatch, not success.
                 run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
@@ -1967,7 +1967,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     elif call["name"] in api_server_tools.SELF_CHECK_NAMES:
                         _status, resp = api_server_tools.self_check_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == api_server_tools.ATTACHMENT_REQUEST_NAME and not is_chat:
-                        # flowgate.chat.0017 CH0002: stored at once, decided later by a person.
+                        # stored at once, decided later by a person.
                         _status, resp = api_server_tools.attachment_request_call(run, call["input"])
                     elif call["name"] == "request_source_snapshot":
                         _status, resp = api_server_tools.request_source_snapshot(
@@ -1988,11 +1988,11 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     elif call["name"] == "read_help":
                         _status, resp = api_server_tools.read_help(run, current_token, call["input"])
                     elif call["name"] in chat_tool_handlers:
-                        # flowgate.v02.0032 T#1: blocks this same loop while a command waits
+                        # blocks this same loop while a command waits
                         # for the user's decision and runs; the result returns to this
                         # conversation and the model continues from it.
                         if call["name"] in chat_tool_call_handlers:
-                            # flowgate.v02.0127 L#3 §2.1 W3: the call context only; the handler
+                            # L#3 W3: the call context only; the handler
                             # reads the input from the frozen record of that accepted call.
                             _status, resp = chat_tool_call_handlers[call["name"]](run, call_context)
                         else:
@@ -2002,7 +2002,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                             run, current_token, call["input"]
                         )
                     elif is_chat and call["name"] == chat_command_service.TOOL_NAME:
-                        # 0670 T0004 (no chat tool port handler registered): blocks this same
+                        # (no chat tool port handler registered): blocks this same
                         # loop while the request waits for the user's decision and runs; the
                         # result returns to this conversation.
                         _status, resp = chat_command_service.run_tool(
@@ -2015,19 +2015,19 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 except Exception as exc:
                     if not conflict_pending:
                         raise
-                    # 0608 T0007: a failed read is a tool result the model must see, not
+                    # a failed read is a tool result the model must see, not
                     # the end of the run and never something to resolve around.
                     logger.warning("ai-invoke %s: conflict tool %s failed: %s", run["run_id"], call["name"], exc)
                     _status, resp = api_server_tools.error_payload(
                         call["name"], api_server_tools.ToolError(503, "tool_failed", str(exc)[:300] or "tool failed"),
                     )
                 if conflict_pending and not _conflict_tool_result_well_formed(_status, resp):
-                    # 0608 T0007: `{}`, a missing/non-boolean `ok`, an `ok` the status
+                    # `{}`, a missing/non-boolean `ok`, an `ok` the status
                     # contradicts, or a failure without an error is not a read -- a failure.
                     _status, resp = api_server_tools.error_payload(
                         call["name"], api_server_tools.ToolError(502, "malformed_tool_result"),
                     )
-                # 0505 T0006 (DB0005 3.3): read_document/create_question both dispatch
+                # ( 3.3): read_document/create_question both dispatch
                 # through _api_bound_request -- one self-HTTP call point, one name. The
                 # other two branches above (SOURCE_OPS, read_help) are direct
                 # in-process handlers, never self-HTTP, and stay out of last_tool_name
@@ -2048,7 +2048,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 trace["dispatched"] += 1
                 result_text = json.dumps(resp, ensure_ascii=False)
                 if conflict_pending and len(result_text) > API_TOOL_RESULT_MAX_CHARS:
-                    # 0608 T0007: a cut-off read looks like a whole one; refuse it instead.
+                    # a cut-off read looks like a whole one; refuse it instead.
                     _status, resp = api_server_tools.error_payload(call["name"], api_server_tools.ToolError(
                         413, "result_too_large",
                         f"the result is {len(result_text)} characters and tool results are limited to "
@@ -2066,7 +2066,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 trace["disposition"] = "direct_tools_only"
                 continue
             if conflict_pending and failed_tools:
-                # 0608 T0007: the server, not the model's caution, keeps a guess out of the
+                # the server, not the model's caution, keeps a guess out of the
                 # merge -- the resolve is never dispatched, so no file, index stage or session
                 # state moves. The model gets the failures and must re-read successfully
                 # (then submit in a later turn) or stop.
@@ -2132,7 +2132,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 next_mention = resp.get("next_mention")
                 resolved_target = resp.get("continuation_target_seq")
                 if run.get("target_to_end") and isinstance(resolved_target, int) and resolved_target > 0:
-                    # 0226 NR0003 §5-1: resolved_target is an item_seq — count the decided
+                    # resolved_target is an item_seq — count the decided
                     # sequence's worker items instead of subtracting the group doc seq.
                     resolved = admission._continuation_docs_target(
                         run["doc_ref"],
@@ -2170,7 +2170,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if 200 <= status < 300:
                 result = resp.get("result") if isinstance(resp, dict) else None
                 if isinstance(result, dict) and result.get("status") == "conflict":
-                    # 0608 T0007: accepted, but conflicts remain (complete=false, or files
+                    # accepted, but conflicts remain (complete=false, or files
                     # left). The server already wrote and staged what it accepted; the run
                     # goes on to the rest instead of ending here.
                     run["conflict_partial_submits"] = run.get("conflict_partial_submits", 0) + 1
@@ -2255,7 +2255,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _api_trace_tool(trace, "register_document", status, registration=True)
         run["last_tool_name"] = "inbox_register"
         run["last_tool_status"] = status
-        # TR0005 rev1: in-process refusals (binding / preflight) never reach the inbox hook;
+        # in-process refusals (binding / preflight) never reach the inbox hook;
         # a duplicate of an inbox-recorded event changes no order.
         _resp = resp if isinstance(resp, dict) else {}
         submission_ledger.record(
@@ -2300,7 +2300,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
 
-    # 0470 T0009: a chat model can still finish with plain assistant text instead of
+    # a chat model can still finish with plain assistant text instead of
     # calling the forced tool (or exhaust its turns after a rejected tool call).  That
     # text used to survive only as the diagnostic last_message, leaving the conversation
     # completely empty.  If no chat turn was registered, make one final append attempt
@@ -2343,7 +2343,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     ):
         run["turn_limit_exhausted"] = True
 
-    # 0505 T0006 (DB0005 2): the loop's own exit turn -- set once, here, regardless of
+    # : the loop's own exit turn -- set once, here, regardless of
     # which branch above broke out of it.
     run["api_turns_used"] = turn
     run["exit_code"] = None
@@ -2357,7 +2357,7 @@ def _completion_tool_name(tool_specs: list[dict]) -> str:
 
 
 def _conflict_turn_budget(run: dict) -> int:
-    """0608 T0007: turns for a resolve_conflict API run, from the conflict it faces.
+    """turns for a resolve_conflict API run, from the conflict it faces.
 
     ``API_MAX_TURNS_PER_DOC`` (the old flat budget) + ``API_CONFLICT_TURNS_PER_CHUNK`` per
     open chunk + one submit per open file, capped at ``API_CONFLICT_MAX_TURNS``. An
@@ -2379,7 +2379,7 @@ _CONFLICT_READ_ELIDED = json.dumps({
 
 
 def _elide_conflict_reads(kind: str, reads: list[tuple[int, dict]], turn: int) -> None:
-    """Replace the text of read results from turns before ``turn`` (0608 T0007).
+    """Replace the text of read results from turns before ``turn``.
 
     A resolve_conflict run accumulates every read it makes; once a submit is accepted
     the reads behind it have done their job. The results stay in place (each tool call
@@ -2453,7 +2453,7 @@ def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
 
 
 def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # ( 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set (e.g. by the chat
     # prefetch) stays untouched.
     if run.get("transport_api_base") is None:
@@ -2463,7 +2463,7 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
-    # 0630 T0005: a branch merge's resolve endpoint is project-scoped.
+    # a branch merge's resolve endpoint is project-scoped.
     from modules.flow_gate.services import git_service
     route = git_service.merge_route_prefix(run["merge_id"], run["group_id"])
     req = urllib.request.Request(
@@ -2488,7 +2488,7 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
 
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # ( 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
@@ -2553,7 +2553,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
     mode = settings["context_mode"]
     turns = int(settings["context_turns"])
     try:
-        # flowgate.v02test.0025: the same window helper as the mention ([checkpoint] = from / after the chat's
+        # the same window helper as the mention ([checkpoint] = from / after the chat's
         # checkpoint, unbounded; without one the last 5 turns). [recent]/[all] are what they were before.
         window = chat_doc_settings_service.context_window(
             run.get("issued_to"), run["doc_ref"], settings, head_seq_of=conversation_turns.current_head_seq,
@@ -2613,7 +2613,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             "after_seq": after_seq,
             "folded": folded,
         }
-        # flowgate.v02test.0041: the delivered range is all the model needs; whether the user's
+        # the delivered range is all the model needs; whether the user's
         # checkpoint or the latest-N limit chose it is not sent (same rule as the mention).
         if folded > 0:
             merged["older_history"] = {
@@ -2646,13 +2646,13 @@ def _conversation_history_read(
 
 def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Append an API-provider reply through the token-bound conversation endpoint."""
-    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # ( 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
         run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     api_base = provider_api._resolve_transport_api_base(run).rstrip("/")
-    # flowgate.v02gui.0009: this hop is Python -> ensure_ascii JSON, never a console, so the
+    # this hop is Python -> ensure_ascii JSON, never a console, so the
     # server-side probe check always matches and the reply is exempt from the corruption
     # heuristics. An empty reply stays empty (the server still rejects it as empty).
     from modules.flow_gate.services import encoding_probe
@@ -2666,8 +2666,8 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         "based_on_seq": int(run.get("_chat_based_on_seq") or 0),
         "display_name": (run.get("provider") or {}).get("name") or "AI",
     }
-    # flowgate.v02test.0023: the chat commit point's message, when the model named one.
-    # flowgate.v02test.0033: the turn route itself refuses an edit-mode reply without one
+    # the chat commit point's message, when the model named one.
+    # the turn route itself refuses an edit-mode reply without one
     # while the worktree holds changes; the refusal comes back as this tool's result, so
     # the model resends with commit_message (the plain-text fallback below is refused too).
     if isinstance(tool_input.get("commit_message"), str) and tool_input["commit_message"].strip():
@@ -2701,7 +2701,7 @@ def _sequence_edit_register(run: dict, raw_token: str, tool_input: dict) -> tupl
 
 def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:
     """Call a document service through its normal token gate with only server-owned routing."""
-    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # ( 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
@@ -2725,7 +2725,7 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
 
 
 def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    """0505 T0018: in-process call, not self-HTTP -- same GET-skips-the-lease-middleware
+    """in-process call, not self-HTTP -- same GET-skips-the-lease-middleware
     reasoning as _conversation_context above. `_api_bound_request`/`_api_create_question`
     keep dialing self-HTTP unchanged; this is the only call inside the shared dispatch
     branch (1707-1719) that no longer does.
@@ -2738,7 +2738,7 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
 
     transport_api_base is still resolved here even though it is no longer dialed, so
     DB0005 2's "first opener wins" diagnostic keeps reporting the same per-hop value
-    regardless of which of the seven sites happens to run first (T0018 item 3 judgment:
+    regardless of which of the seven sites happens to run first (the earlier implementation judgment:
     last_tool_name/transport_api_base semantics are left unchanged for this site).
     """
     if run.get("transport_api_base") is None:
@@ -2774,12 +2774,12 @@ def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[i
     return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
 
 
-# ── Register mutation context (0492 T0018 item 1 / L0010 §2.1-§2.2) ──────────
+# ── Register mutation context ──────────
 #
-# The four routing axes of a register call are server property. Before T0018 the proxy
-# built them from `run` alone and, before TR0017, from a hard-coded "new" — which is the
-# whole of B0001: an edit-scoped token was posted as action="new", so /inbox picked
-# _handle_new and its scope check rejected it three turns running (NR0013, conclusion).
+# The four routing axes of a register call are server property. Before the earlier implementation the proxy
+# built them from `run` alone and, before the earlier implementation, from a hard-coded "new" — which is the
+# whole of the regression: an edit-scoped token was posted as action="new", so /inbox picked
+# _handle_new and its scope check rejected it three turns running (conclusion).
 #
 # Now every call re-reads the run AND re-verifies the live token, compares the two on
 # action/project/group/doc in that fixed order, and only then assembles an envelope. The
@@ -2792,13 +2792,13 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 # Per-scope allowlist of model-authored fields. Anything else the model sends is dropped
 # here even if a future schema change lets it through validation — this list, not the
 # model's input, decides what an /inbox body may contain besides the server's own axes.
-# 0064 T-B4d (P0006 §4.2.5 ②): new / edit carry the card title candidate ``node_title`` as it came (no value is
+# T-B4d (②): new / edit carry the card title candidate ``node_title`` as it came (no value is
 # reshaped here; the title service judges it). review / test_run never carry it.
 _REGISTER_MODEL_FIELDS = {
     "new": ("doc_type", "title", "content", "node_title"),
     "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
              "rejection_review_id", "node_title"),
-    # 0474 T0007 §1.1: force_encoding_reason dropped -- review never lets a
+    # force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
     "review": ("verdict", "findings", "comment", "body_sha256", "body_chars"),
     "test_run": (),
@@ -2837,12 +2837,12 @@ def _adopt_continuation_token(run: dict, raw_token: str, *,
                               pinned_doc: Optional[str] = None) -> bool:
     """Move the run's current token and its four axes together, or not at all.
 
-    L0010 §2.1: after a hop change only the refreshed pair is honoured, so a delayed call
+    after a hop change only the refreshed pair is honoured, so a delayed call
     holding the previous token fails the ownership check below before it can do anything.
     A continuation that would leave the run's project or group is refused outright — those
     two axes are immutable for the life of a run.
 
-    ``pinned_doc`` (flowgate.v02.0136 T0004 §2-4/§5-4) additionally fixes the document axis.
+    ``pinned_doc`` additionally fixes the document axis.
     An ordinary continuation leaves it None and keeps moving to the token's own doc, as it
     always has; a document review loop reviews and reworks ONE document, so its hop tokens
     pass the loop's target here and a token naming any other document of the same
@@ -2884,7 +2884,7 @@ def _adopt_continuation_token(run: dict, raw_token: str, *,
 
 
 def _bind_register_context(run: dict, raw_token: str) -> tuple[dict, dict]:
-    """L0010 §2.2 R5. Returns (context, token_rec) or raises _RegisterBindingRejected.
+    """R5. Returns (context, token_rec) or raises _RegisterBindingRejected.
 
     Nothing from the model or the request participates: `expected` is the run's server-owned
     hop context, `actual` is the verified token. The group axis of a token minted before the
@@ -2953,7 +2953,7 @@ def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> 
 
     `doc` is the predecessor for new and the target for the other three. test_run takes
     `doc_id` and never `prev_doc_id` — the key its handler does not read at all, which is
-    why fixing only the action string would have turned B0001's 403 into a 400 (NR0013 §4).
+    why fixing only the action string would have turned the regression's 403 into a 400.
     """
     action, doc = context["action"], context["doc"]
     payload = tool_input if isinstance(tool_input, dict) else {}
@@ -2975,7 +2975,7 @@ def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> 
 
 
 def _attach_document_probe(body: dict, token_rec) -> None:
-    """flowgate.v02gui.0009: end an API run's document body with its token's encoding probe.
+    """end an API run's document body with its token's encoding probe.
 
     This hop is Python -> JSON, never a console, so the probe always matches and the
     body is exempt from the corruption heuristics ('?' stays punctuation). The server
@@ -3095,13 +3095,13 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     return status, result
 
 
-# ── Judge / finish (L0006 §2.6–2.8) ──────────────────────────────────────────
+# ── Judge / finish ──────────────────────────────────────────
 
 def _oracle_new_docs(run: dict) -> list[dict]:
     """Run-attributed documents: non-draft docs past the run's baseline seq.
 
     The single filter shared by the live progress counter (get_status) and the final
-    judge (_settle_and_judge) — 0226 NR0003 §5-2. The live counter previously showed
+    judge (_settle_and_judge) — the review The live counter previously showed
     the raw group max-seq delta (drafts and documents this run never made included),
     so it could read 4/3 mid-run while the judge later clamped to 3/3.
     """

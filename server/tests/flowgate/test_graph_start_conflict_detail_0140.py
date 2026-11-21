@@ -1,4 +1,4 @@
-"""flowgate.v02.0140 T0004 T#1-3 / T#2-3 — a scratch path conflict refused by the AI invoke admission keeps its safe
+"""a scratch path conflict refused by the AI invoke admission keeps its safe
 detail (code, message, phase, retryable, run id) in the Graph's failure state and its read.
 
 The harness of ``test_fg_ai_roles_l2_assignment`` (real SQLite DB with every migration, the real Graph routes, the

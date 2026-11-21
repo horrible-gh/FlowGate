@@ -1,4 +1,4 @@
-"""0064 T-B1e — the AI start body precheck and the unread-body rules (L0005 2.14 / 2.15, P0006 §2.9 / §2.10).
+"""T-B1e — the AI start body precheck and the unread-body rules.
 
 On the real SQLite DB, routes and fixtures of ``test_fg_card_settings`` (card documents, card settings, a Graph
 run whose AI start is recorded as a job): a Flow node AI start and a Q&A answer check every document they hand over,
@@ -7,7 +7,7 @@ put the "[읽을 수 없는 문서]" section between the card memos and the ment
 byte what it was before the check existed. The same rule wording reaches the Q&A / chat lookup lines, the help item
 ``document_access`` and the section from one constant (``mention_service.BODY_UNREADABLE_RULES``).
 
-Verification ids: L0005 V-B1e-1 ~ 8, P0006 V-P-9.
+Verification ids: the earlier implementation V-B1e-1 ~ 8, the plan V-P-9.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from modules.flow_gate.services.mention_service import (
     BODY_UNREADABLE_RULES as RULES,
     BODY_UNREADABLE_ANSWER_REFERENCE as REFERENCE_SENTENCE,
 )
-# P0006 §1.3 — the server mention wording of each reason.
+# the server mention wording of each reason.
 REASONS = {
     "file_path_missing": "본문 파일 경로가 기록되지 않음",
     "file_not_found": "본문 파일이 없음",
@@ -163,7 +163,7 @@ def _missing_file_doc(flow, seq):
 
 
 def _section(*entries):
-    """The section of P0006 §2.9 ①: ``entries`` = (doc_id, reason) in the check order."""
+    """The section of the plan ①: ``entries`` = (doc_id, reason) in the check order."""
     lines = [f"- {doc_id} ({_row(doc_id)['title']}): {REASONS[reason]}" for doc_id, reason in entries]
     return "\n".join(["[읽을 수 없는 문서]", *lines, *RULES])
 

@@ -1,4 +1,4 @@
-"""flowgate.v02.0143 T#1 (W6, R12~R14; NR flowgate.v02.0143.0003 §3, §4.1~4.2) — the command result of a card whose AI asked
+"""(W6, R12~R14; NR the earlier change, ~4.2) — the command result of a card whose AI asked
 a question answered by an automatic Q&A responder.
 
 The counterexample checked (T §2 W6-1): a responder's role invocation record (``origin_kind=card_qa``,
@@ -42,7 +42,7 @@ ITEM = 901                                                  # test_fg_question_p
 
 @pytest.fixture(autouse=True)
 def document_write_port_0138(monkeypatch):
-    """This older harness seeds documents before any app lifespan registers the document write gate (flowgate.v02.0127):
+    """This older harness seeds documents before any app lifespan registers the document write gate:
     the current real gate is registered explicitly, as test_fg_provider_failure_retry_0121 does, and the review harness's
     fixture writes of earlier documents bypass it (not an agent's card edit)."""
     import test_fg_card_settings_review as review_harness

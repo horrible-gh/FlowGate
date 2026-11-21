@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0009 (chat 0002-CH) -- question marks in documents, language-neutral.
+"""(chat the discussion) -- question marks in documents, language-neutral.
 
 Requirement A: a document whose text contains ordinary question marks ("??", "?? ??? ?")
 failed to register. The question-mark heuristic (``_text_is_corrupted``) ran on every

@@ -1,4 +1,4 @@
-"""0066 E7: real immutable Git objects, captured Provider inputs and HTTP failures."""
+"""E7: real immutable Git objects, captured Provider inputs and HTTP failures."""
 from __future__ import annotations
 
 import json

@@ -1,6 +1,6 @@
-"""0111 T#8 (NR 0003 §5.4 D-1c): a new attempt's dedicated ref and detached worktree, beside the branch layout.
+"""a new attempt's dedicated ref and detached worktree, beside the branch layout.
 
-Real temporary Git repositories on the 0061 T#5 harness (SQLite ledger, real linked worktrees, mocked locks / Flow
+Real temporary Git repositories on the the earlier implementation harness (SQLite ledger, real linked worktrees, mocked locks / Flow
 guard). A new attempt has no ``refs/heads`` entry from its preparation to its removal (``for-each-ref refs/heads`` and
 ``git branch --all`` unchanged; the catalog never lists it); its commit, result merge and removal succeed as the branch
 layout's do (its Self-check: test_graph_attempt_workspaces_0061, both layouts). An attempt prepared before keeps its
@@ -189,7 +189,7 @@ def test_commit_result_merge_and_removal_match_between_layouts(repo, monkeypatch
 
 
 def test_branch_layout_attempt_keeps_working_beside_a_new_one(repo, monkeypatch):
-    """Stage 3: an attempt prepared before T#8 is re-prepared, committed and removed on its branch; never moved to a
+    """Stage 3: an attempt prepared before the earlier implementation is re-prepared, committed and removed on its branch; never moved to a
     ref, renamed or given one. The new attempt beside it takes the ref."""
     monkeypatch.setattr(workspace, "NEW_LAYOUT", BRANCH)
     old = _item(repo, "old")
@@ -222,7 +222,7 @@ def test_branch_layout_attempt_keeps_working_beside_a_new_one(repo, monkeypatch)
 @pytest.mark.parametrize("dirty", [True, False], ids=["a_dirty_kept", "g_clean_removed"])
 @pytest.mark.parametrize("path", PATHS)
 def test_invalidation_entries_judge_a_ref_layout_attempt_by_d1a0(repo, monkeypatch, path, dirty):
-    """D-1a-0 at each invalidation entry (T#7) for the new namespace: kept with its ref, or removed with it."""
+    """D-1a-0 at each invalidation entry for the new namespace: kept with its ref, or removed with it."""
     item = _item(repo)
     heads = _heads(repo)
     if dirty:
@@ -271,7 +271,7 @@ def test_a_foreign_ref_in_the_namespace_is_never_taken_or_removed(repo):
 
 @pytest.mark.parametrize("conflict", [False, True], ids=["merged", "integration_head"])
 def test_join_moves_the_ref_with_the_tree(repo, conflict):
-    """T#10's Join in the new namespace: the ref ends at the final input -- the merged results, or the group branch
+    """'s Join in the new namespace: the ref ends at the final input -- the merged results, or the group branch
     HEAD after a conflict (not a descendant of the first input) -- and the tree is valid there."""
     item = _item(repo)
     sides = []

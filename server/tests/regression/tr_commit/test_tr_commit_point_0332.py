@@ -1,4 +1,4 @@
-"""Does TR approval commit to the group worktree? (0332 T#1, first part of R0001.)
+"""Does TR approval commit to the group worktree? (first part of the requirement.)
 
 Exercise each of three real layers. Substituting any layer would prove only that
 the feature was called.
@@ -7,9 +7,9 @@ the feature was called.
    migrated SQLite, including CHECK constraints rejecting invalid combinations (DB0008 §2-1).
 2. **Commit (Git)**: run ``create_tr_commit`` on a real worktree outside the repository,
    checking actual commits, exclusion of tool artifacts (shared 0382 rules), and which
-   closed P0006 §5-2 code each failure condition produces.
+   closed the plan code each failure condition produces.
 3. **Hook (approval)**: do nothing for non-TRs; for TRs, leave a ledger row and a response
-   matching P0006 §1.
+   matching the plan
 
 The governing contract: **approval stands regardless of what Git does**.
 """
@@ -162,7 +162,7 @@ def test_the_schema_refuses_a_live_row_without_a_commit(real_store):
 
 
 def test_the_schema_refuses_a_skip_reason_outside_the_closed_set(real_store):
-    """The six closed-set codes in P0006 §5-2; the DB rejects a seventh."""
+    """The six closed-set codes in the plan; the DB rejects a seventh."""
     with pytest.raises(sqlite3.IntegrityError):
         real_store._execute(
             "INSERT INTO tr_commit_ledger"
@@ -173,7 +173,7 @@ def test_the_schema_refuses_a_skip_reason_outside_the_closed_set(real_store):
 
 
 def test_re_approval_adds_a_row_and_the_newest_one_wins(real_store):
-    """Reapproval after rewind creates a new row without deleting the earlier row (D0005 K9)."""
+    """Reapproval after rewind creates a new row without deleting the earlier row."""
     first = db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_DOC, commit_sha="1" * 40, commit_subject="first",
     )
@@ -188,7 +188,7 @@ def test_re_approval_adds_a_row_and_the_newest_one_wins(real_store):
 
 
 def test_live_rows_are_the_cancel_targets_newest_first(real_store):
-    """L0007 §2.4: sort by ledger row ID (insertion order), not seq."""
+    """sort by ledger row ID (insertion order), not seq."""
     db_ledger.record_commit(
         group_id=_GROUP, doc_id=_TR_DOC_2, commit_sha="b" * 40, commit_subject="seq 11",
     )
@@ -222,10 +222,10 @@ def test_the_strip_marks_only_steps_that_actually_committed(real_store):
     assert marks[_TR_DOC] == {
         "state": "live", "commit": "d" * 7,
         "subject": "0009-TR: 제목", "cancel_commit": None,
-        # 0332 T0018 K11: a commit from initial approval, not a reapplied commit.
+        # K11: a commit from initial approval, not a reapplied commit.
         "restored": False,
     }
-    # A step that did not change source stays quiet: no marker at all (D0005 §6.1).
+    # A step that did not change source stays quiet: no marker at all.
     assert _TR_DOC_2 not in marks
     assert _D_DOC not in marks
 
@@ -286,7 +286,7 @@ def test_summaries_answer_for_several_groups_in_one_call(real_store):
 # ── 3. Approval hook ──────────────────────────────────────────────────────
 
 def test_a_non_tr_approval_is_not_touched_at_all(real_store, monkeypatch):
-    """P0006 §1-8: non-TR approval responses remain byte-for-byte identical to before this feature."""
+    """non-TR approval responses remain byte-for-byte identical to before this feature."""
     def _never(*args, **kwargs):
         raise AssertionError("non-TR 승인이 git 을 건드렸다")
 
@@ -307,7 +307,7 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
 
     assert payload["committed"] is True
     assert payload["commit"] == "a1b2c3d"
-    # flowgate.default.0462 T0005 §4-2 replaces L0007 §2.6: without a draft (this seeded document's
+    # replaces the earlier implementation: without a draft (this seeded document's
     # commit_message is NULL), use the ASCII fallback; still perform no translation.
     assert payload["subject"] == "chore: approve 0009-TR"
     rows = db_ledger.list_by_group(_GROUP)
@@ -316,7 +316,7 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
 
 
 def test_a_tr_approval_that_could_not_commit_still_leaves_the_reason(real_store, monkeypatch):
-    """Approval stands. Record the failure reason in both the ledger and response (P0006 §1-6)."""
+    """Approval stands. Record the failure reason in both the ledger and response."""
     monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
         "committed": False, "commit": None, "commit_sha": None, "subject": None,
         "skipped_reason": "git_busy", "excluded_artifacts": [], "committed_paths": [],
@@ -341,7 +341,7 @@ def test_the_hook_never_lets_a_git_failure_reach_the_approval(real_store, monkey
 
 
 def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkeypatch, tmp_path):
-    """D0005 K2: use the reported list only for comparison, never to narrow commit scope."""
+    """K2: use the reported list only for comparison, never to narrow commit scope."""
     body = tmp_path / "0009-TR_document.md"
     body.write_text(
         "# 작업레포트\n\n## 변경 파일\n\n- server/reported.py\n- client/forgotten.ts\n",
@@ -371,7 +371,7 @@ def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkey
     assert payload["committed"] is True
 
 
-# ── 3a. Approval hook's quiet decision (flowgate.default.0548 T0004) ─────────
+# ── 3a. Approval hook's quiet decision ─────────
 
 def _tr_body_doc(tmp_path, real_store, monkeypatch, body_text):
     """The seed TR's file_path pointed at a real temp file carrying body_text."""
@@ -416,7 +416,7 @@ def test_artifacts_only_skip_is_always_quiet(real_store, monkeypatch):
 def test_git_inactive_skip_is_quiet_when_the_tr_declared_no_changes(
     real_store, monkeypatch, tmp_path,
 ):
-    """T0004 2/3 R1 - a no-work group's git_inactive ends quiet, not a warning."""
+    """2/3 R1 - a no-work group's git_inactive ends quiet, not a warning."""
     _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
     monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
         "committed": False, "commit": None, "commit_sha": None, "subject": None,
@@ -432,7 +432,7 @@ def test_git_inactive_skip_is_quiet_when_the_tr_declared_no_changes(
 def test_no_worktree_skip_is_quiet_when_the_tr_declared_no_changes(
     real_store, monkeypatch, tmp_path,
 ):
-    """T0004 2/3 R2 - same rule, the other git-could-not-be-asked reason."""
+    """2/3 R2 - same rule, the other git-could-not-be-asked reason."""
     _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## Changed Files\n\n- none\n")
     monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
         "committed": False, "commit": None, "commit_sha": None, "subject": None,
@@ -448,7 +448,7 @@ def test_no_worktree_skip_is_quiet_when_the_tr_declared_no_changes(
 def test_no_worktree_skip_still_warns_when_worktree_registered_is_off_but_the_stale_dir_disagrees(
     real_store, monkeypatch, tmp_path,
 ):
-    """Automated review rejection of TR0005 rev 1 (flowgate.default.0548) - `no_worktree`
+    """Automated review rejection of the earlier implementation - `no_worktree`
     fires both when `worktree_registered` is off and when the directory is simply gone;
     `unregister_worktree` clears only the flag, never `branch`, so a slot whose flag was
     dropped but whose branch worktree directory is still on disk with real, undeclared
@@ -497,7 +497,7 @@ def test_no_worktree_skip_stays_quiet_when_worktree_registered_is_off_and_no_dir
 def test_git_inactive_skip_is_quiet_when_no_worktree_ever_existed_even_if_the_tr_declared_real_changes(
     real_store, monkeypatch, tmp_path,
 ):
-    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - a TR's
+    """Automated review rejection of the earlier implementation - a TR's
     prose declaration of a real change is not, on its own, a confirmed source change:
     a worktree is the only place an edit can physically exist, so a group whose git
     state was never registered at all (nothing for ``_worktree_shows_pending_changes``
@@ -520,7 +520,7 @@ def test_git_inactive_skip_is_quiet_when_no_worktree_ever_existed_even_if_the_tr
 def test_git_inactive_skip_still_warns_when_the_worktree_disagrees_with_the_declaration(
     real_store, monkeypatch, tmp_path,
 ):
-    """Automated review rejection of TR0005 rev 0 (flowgate.default.0548) - the TR's own
+    """Automated review rejection of the earlier implementation - the TR's own
     "없음" declaration is not the only word: when git_inactive means the project's git
     INTEGRATION is off rather than the worktree being gone, the worktree itself is asked
     directly, and a real (undeclared) edit there must keep the warning."""
@@ -588,7 +588,7 @@ def test_git_inactive_skip_is_quiet_when_no_registered_state_exists_regardless_o
 def test_git_inactive_skip_is_quiet_when_the_section_is_missing_and_no_worktree_exists(
     real_store, monkeypatch,
 ):
-    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - a normal
+    """Automated review rejection of the earlier implementation - a normal
     no-work group (no git state row registered at all, no ``## 변경 파일`` section to
     even parse) must not be turned into a warning just because the TR's own prose has
     nothing to say. "Git cannot say whether there is a change" is not the same claim
@@ -611,7 +611,7 @@ def test_git_inactive_skip_is_quiet_when_the_section_is_missing_and_no_worktree_
 def test_git_busy_skip_is_never_quiet_even_when_the_tr_declared_no_changes(
     real_store, monkeypatch, tmp_path,
 ):
-    """T0004 4/7 R7 - a real commit failure keeps its warning regardless of the doc."""
+    """4/7 R7 - a real commit failure keeps its warning regardless of the doc."""
     _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
     monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
         "committed": False, "commit": None, "commit_sha": None, "subject": None,
@@ -628,7 +628,7 @@ def test_missing_group_id_is_quiet_when_the_tr_declared_no_changes(
     real_store, monkeypatch, tmp_path,
 ):
     """The early no-group branch follows the same rule as create_tr_commit's
-    own git_inactive (T0004 2)."""
+    own git_inactive."""
     body = _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
     monkeypatch.setattr(
         trc.storage_paths, "resolve_storage_path", lambda *a, **k: body,
@@ -659,7 +659,7 @@ def test_a_committed_approval_is_never_marked_quiet(real_store, monkeypatch):
     assert payload["quiet"] is False
 
 
-# ── 3b. Approval commit subject rules (flowgate.default.0462 T0005) ─────────
+# ── 3b. Approval commit subject rules ─────────
 
 def _draft_doc(commit_message=None, seq=9, title="커밋 포인트 생성 작업레포트"):
     """``commit_subject()`` reads only a dict, so its decision logic can be tested without a DB."""
@@ -706,7 +706,7 @@ def test_an_oversized_draft_falls_back_instead_of_being_clipped():
 def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
     real_store, monkeypatch,
 ):
-    """T0005 §4-3: the RPC approval dict omits commit_message entirely.
+    """the RPC approval dict omits commit_message entirely.
     Verify that re-querying actually happens."""
     real_store._execute(
         "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
@@ -836,13 +836,13 @@ def test_a_tr_that_changed_nothing_gets_no_commit_and_says_so(git_active, repo):
 
     assert result["committed"] is False
     assert result["skipped_reason"] == "no_changes"
-    # No empty anchor commit (D0005 K3); it would defeat finalize's automatic-discard decision.
+    # No empty anchor commit; it would defeat finalize's automatic-discard decision.
     assert _git(["rev-parse", "HEAD"], repo).strip() == before
 
 
 @needs_git
 def test_a_worktree_dirty_only_with_debris_is_not_no_changes(git_active, repo):
-    """P0006 §1-5: different UI text requires different codes."""
+    """different UI text requires different codes."""
     debris = repo / "server" / ".test-tmp-0332"
     debris.mkdir(parents=True)
     (debris / "junk.txt").write_text("junk\n", encoding="utf-8")
@@ -858,7 +858,7 @@ def test_a_worktree_dirty_only_with_debris_is_not_no_changes(git_active, repo):
 def test_a_held_lock_gives_up_immediately_instead_of_stalling_the_approval(
     git_active, repo, monkeypatch,
 ):
-    """L0007 §1 tr_commit_lock_wait_sec = 0: one finalization must not block all approvals."""
+    """tr_commit_lock_wait_sec = 0: one finalization must not block all approvals."""
     stub_group_lock(monkeypatch, grant=False)
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 2\n", encoding="utf-8")
@@ -885,7 +885,7 @@ def test_a_group_without_a_worktree_reports_no_worktree(git_active, monkeypatch)
 
 @needs_git
 def test_probe_worktree_pending_changes_sees_an_untracked_edit_without_staging(repo):
-    """flowgate.default.0548 T0004 §4/R6 - the read-only probe behind
+    """R6 - the read-only probe behind
     ``_worktree_shows_pending_changes`` must find a real edit without ``git add``ing it
     (unlike ``_stage_worker_edits``, which this must not reuse or trigger)."""
     (repo / "server").mkdir()
@@ -931,7 +931,7 @@ def test_git_disabled_project_is_reported_not_raised(git_active, monkeypatch):
 def test_real_git_inactive_approval_uses_the_worktree_as_quiet_ssot(
     real_store, repo, monkeypatch, with_pending_change, expected_quiet,
 ):
-    """The production git-inactive gate and a real worktree cover both sides of T0004 R6.
+    """The production git-inactive gate and a real worktree cover both sides of the earlier implementation R6.
 
     No document-body declaration is installed: a clean tree must still be quiet, while
     an undeclared source edit must retain the actionable warning.
@@ -959,7 +959,7 @@ def test_real_git_inactive_approval_uses_the_worktree_as_quiet_ssot(
 def test_real_no_worktree_ever_registered_stays_quiet_even_with_no_declaration(
     real_store,
 ):
-    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - the exact
+    """Automated review rejection of the earlier implementation - the exact
     scenario the rejection describes: a group whose git worktree state was never
     registered at all (``db_git.get_state`` genuinely returns no row - nothing here is
     mocked), and a TR body with no ``## 변경 파일`` section to parse either. Fired
@@ -990,7 +990,7 @@ def test_real_no_worktree_ever_registered_stays_quiet_even_with_no_declaration(
 def test_the_approval_hook_produces_a_conventional_english_commit_in_real_git(
     real_store, git_active, repo,
 ):
-    """flowgate.default.0462 T0005 acceptance criterion 3: measure the commit subject through
+    """acceptance criterion 3: measure the commit subject through
     the real approval hook when a draft exists."""
     real_store._execute(
         "UPDATE documents SET commit_message = ? WHERE doc_id = ?",

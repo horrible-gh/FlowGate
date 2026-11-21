@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#9 — the settings tab's state (D#1 §7.2 / §7.3, D#2 §2.4). The v0.1 sequence belongs
+// the settings tab's state. The v0.1 sequence belongs
 // to the Flow, so the resource read through useInspectorResource is keyed by the Flow id: it reads the
 // Flow's sequence root and rows (`settingsRead`), the group's live AI run and whether the group was
 // disposed (the facts the server refuses on). The Node's row is the one its slot names.
@@ -12,7 +12,7 @@
 // node_key while its slot takes the new id. A refusal of the group guard (disposed, AI run) keeps the
 // fields disabled until the Node changes or the state is read again; a stale screen (the rows moved)
 // reads the Canvas again as well.
-// flowgate.v02.0053 T#7 — the v0.1 Flow's Node only (a Graph card's settings are useCardSettings'). A change
+// the v0.1 Flow's Node only (a Graph card's settings are useCardSettings'). A change
 // is saved at once (`change`: no save button, no "saved" line — v7), and while the rows written again wait
 // for the Canvas to give the Node its row's new id, the row last shown stays drawn (off) instead of a line.
 import { computed, inject, ref, watch, type ComputedRef, type Ref } from 'vue'
@@ -199,7 +199,7 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
     }
   })
   const row = computed(() => readRow.value ?? (noSlot.value ? null : lastRow.value))
-  // flowgate.v02.0052 T#2 rework: only a row not started yet takes a draft. A started row (in progress or
+  // only a row not started yet takes a draft. A started row (in progress or
   // done) is history and shows what the server holds; a draft left from before it started (an event read
   // the row again on the same Node) is dropped, so it never shows nor comes back.
   const rowState = computed(() => (row.value ? settingsRowState(row.value) : null))

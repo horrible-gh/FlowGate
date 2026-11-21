@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0060 T#1 (WP 0012 [B]) — alignment · layout (blank Canvas) and alignment (multi-selected card) of the Designer context
+ * alignment · layout (blank Canvas) and alignment (multi-selected card) of the Designer context
  * menu in the real Designer Shell: the same commands, words, enabled state and path as 편집 › alignment / layout (the Shell's
  * DESIGNER_ARRANGE_GROUPS, isMenuCommandEnabled and onTopCommand → center.arrangeNodes): the cards move as the Edit
  * menu moves them, one 실행 취소 brings them back, the selection and select mode stay, a selection change after
@@ -175,7 +175,7 @@ async function editArrange(w: VueWrapper<any>) {
   await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
   await w.get('[data-test="designer-menu-sub"][data-sub="arrange"]').trigger('click')
   const pop = w.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
-  // 0068 T0011 adds an automatic layout group to Edit only; compare the unchanged manual groups.
+  // adds an automatic layout group to Edit only; compare the unchanged manual groups.
   const items = pop.findAll('[data-command]')
   const automatic = items.filter((el) => el.attributes('data-command')!.startsWith('edit.auto-layout-'))
   expect(automatic.map((el) => el.attributes('data-command'))).toEqual(['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])

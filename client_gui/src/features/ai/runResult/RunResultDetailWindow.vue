@@ -11,7 +11,7 @@
     :min-height="320"
     @close="emit('close')"
   >
-    <!-- flowgate.v02gui.0001: the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
+    <!-- the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
     <template #header>
       <span :title="windowTitle" data-test="run-result-detail-title">{{ windowTitle }}</span>
     </template>
@@ -83,7 +83,7 @@ import { installRunResultMessages } from './messages'
 import { bodyNote, copyText, eventLine, modelLabel, roleLabel, roleUseLabel, summaryLine, timeLabel, type HasKey, type Translate } from './runResultView'
 import { useFitModelessHeight, type FittableShell } from './fitModelessHeight'
 
-// flowgate.v02gui.0001: `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
+// `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
 const props = defineProps<{ result: FlowCommandResult | null; open: boolean; flowName?: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -98,8 +98,8 @@ const has: HasKey = (key) => te(key)
 const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialWidth = Math.max(360, Math.min(780, viewportWidth - 30))
-// flowgate.v02test.0015: no 690 cap — the messages and their logs use the screen's height (less 40).
-// flowgate.v02gui.0001: that is now the cap only — few messages fit the window to their height (centred again); many
+// no 690 cap — the messages and their logs use the screen's height (less 40).
+// that is now the cap only — few messages fit the window to their height (centred again); many
 // still reach the screen less 40 and scroll.
 const VIEWPORT_MARGIN = 40
 const initialHeight = Math.max(320, viewportHeight - VIEWPORT_MARGIN)
@@ -152,7 +152,7 @@ async function onContentClick(event: MouseEvent) {
 </script>
 
 <style scoped>
-/* flowgate.v02gui.0001: its own height (no min-height: 100%, which the fit would read back as content) and no padding of
+/* its own height (no min-height: 100%, which the fit would read back as content) and no padding of
    its own — the shell's body already pads it. */
 .run-detail { display: flex; flex-direction: column; box-sizing: border-box; color: var(--fg2-text); font-size: 13px; }
 .run-detail-summary { margin-bottom: 12px; line-height: 1.6; }

@@ -1,8 +1,8 @@
-"""Group 0460 T0004 task 2.5 — the generated 'Instruction to include next
+"""Group the earlier implementation task 2.5 — the generated 'Instruction to include next
 document header' block must be fenced so downstream Markdown viewers (and
 anything else that renders this mention as Markdown) preserve its 7 lines
-instead of collapsing them into one run-together paragraph (the group 0458
-display bug R0001 reported; NR0003 traced the direct cause to the renderer,
+instead of collapsing them into one run-together paragraph (the the earlier change
+display bug the requirement reported; the review traced the direct cause to the renderer,
 not the stored text — this fences the *source* of that text too, so the
 same soft-line-break collapse cannot recur wherever else this block ends up
 being rendered as Markdown).

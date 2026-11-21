@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#12 — checkModel as tables (D#1 §8.5): rows are input combinations, columns the
+ * checkModel as tables: rows are input combinations, columns the
  * operations' visible / enabled / reason. Card kind × ownership, the AC review statuses, the read-only
  * rows every Model with change operations carries, AI running, disposed, the group's final approval
  * job, an approval in flight and the reason order (D#1 §8.3 rule 6-1); then the display keys of the

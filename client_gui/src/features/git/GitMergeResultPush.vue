@@ -38,12 +38,12 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 T#7 — the follow-up Push part (0066 D#2 §3-4(5)), shown only while a recorded
+// the follow-up Push part (the earlier implementation), shown only while a recorded
 // merge is not on its remote. One candidate: its target and one Push; two or more: a small choice
 // (target · short merge commit · time), the newest first. A Push sends that record's merge id and
 // commit only — never a branch name, never the worktree, never /git/push. No candidate but an
 // unmeasured or blocked row: a disabled Push and its reason. Already published or moved rows: nothing.
-// flowgate.v02.0067 T#3 — only a merge that really waits for its remote shows it (R §5-6,
+// only a merge that really waits for its remote shows it (R,
 // followUpPushMode): a row behind the group's Git job keeps the disabled Push and its reason; an
 // unmeasured remote shows nothing (the Fetch icon above measures it again).
 import { computed } from 'vue'

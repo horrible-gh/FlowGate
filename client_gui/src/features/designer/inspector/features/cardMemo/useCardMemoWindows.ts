@@ -1,5 +1,5 @@
 // flowgate.v02.0056 (0017-CH) — the open card memo windows (shared by every part of the feature, not per component). The header [메모] opens a new memo and the documents tab
-// list opens a written one; both reach the same windows, drawn by CardMemoWindows — flowgate.v02.0150: the Frame's
+// list opens a written one; both reach the same windows, drawn by CardMemoWindows — the earlier change: the Frame's
 // windows host, whatever is selected (no card, another card, another tab). A window keeps the card it was opened for.
 // Like a document line, a memo line opens its memo to read (열기) or straight in its form (✎); a new memo is a form.
 import { reactive } from 'vue'

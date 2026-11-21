@@ -1,13 +1,13 @@
-"""flowgate.default.0630 T0005 — ordinary Branch Merge conflict as a persistent attempt.
+"""ordinary Branch Merge conflict as a persistent attempt.
 
 Real git end-to-end on a temporary SQLite with the real migrations (the same harness as
 test_git_merge_target_0594.py). Every test builds its OWN project (own origin, own base
-checkout), so nothing leaks between cases. The numbers are T0005 §15's required tests.
+checkout), so nothing leaks between cases. The numbers are the earlier implementation's required tests.
 
    1/2  clean merge push=false / push=true — attempt row created and completed
    3/4/5 conflict → persistent attempt, managed workspace kept, no `merge --abort`
    6    multi-file partial resolve
-   7/8  T#3: no AI auto-start on conflict; explicit /ai-resolve route starts resolver
+   7/8 the earlier implementation: no AI auto-start on conflict; explicit /ai-resolve route starts resolver
    9    AI resolution → resolved_pending_review (never auto-approved)
   10    target ref / remote untouched before approval
   11/12 approve push=false (local only) / push=true (remote)
@@ -415,7 +415,7 @@ def test_06_multi_file_partial_resolve_keeps_the_rest_open(proj):
     assert view["resolver_type"] == "human"
 
 
-# ── 7/8 T#3: no auto-start on conflict; explicit /ai-resolve starts resolver ──────────
+# ── 7/8 the earlier implementation: no auto-start on conflict; explicit /ai-resolve starts resolver ──────────
 
 def _client(monkeypatch):
     from fastapi import FastAPI
@@ -437,7 +437,7 @@ def _prepare_route_conflict(p: Proj):
 
 
 def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
-    """T#3: conflict route must NOT auto-start the AI resolver. The attempt is left
+    """conflict route must NOT auto-start the AI resolver. The attempt is left
     open in 'conflict' state with ai.status=not_started and auto_start=False."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
@@ -457,7 +457,7 @@ def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
     assert resp.status_code == 202, resp.text
     body = resp.json()
     assert body["status"] == "conflict" and body["merge_id"]
-    # T#3 key assertions: resolver was NOT started automatically
+    # key assertions: resolver was NOT started automatically
     assert calls == [], "auto-start must not fire on conflict (T#3)"
     ai = body["ai"]
     assert ai["status"] == "not_started", f"expected not_started, got {ai['status']}"
@@ -474,7 +474,7 @@ def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
 
 
 def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(proj, monkeypatch):
-    """T#3: /ai-resolve is the ONLY way to start the resolver.
+    """ai-resolve is the ONLY way to start the resolver.
     First call creates a run; duplicate call returns already_running (single live run)."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
@@ -495,8 +495,8 @@ def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(p
     assert resp.status_code == 202, resp.text
     body = resp.json()
     merge_id = body["merge_id"]
-    assert body["ai"]["status"] == "not_started"    # T#3: no run yet
-    assert calls == []                              # T#3: starter not called
+    assert body["ai"]["status"] == "not_started"    # no run yet
+    assert calls == []                              # starter not called
 
     # Step 2: user opens dialog and clicks [AI 호출] → /ai-resolve
     from modules.flow_gate.services.git import branch_merge as bm_mod
@@ -538,7 +538,7 @@ def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(p
 
 
 def test_08b_concurrent_explicit_ai_resolve_requests_start_single_live_run(proj, monkeypatch):
-    """T#3: Concurrent explicit /ai-resolve requests are guarded by an atomic per-attempt lock.
+    """Concurrent explicit /ai-resolve requests are guarded by an atomic per-attempt lock.
     Even when multiple requests arrive while start_run is in-flight, exactly ONE live run is created."""
     import threading
     import time
@@ -866,7 +866,7 @@ def test_16c_crash_after_a_landed_base_merge_is_applied_on_recovery(proj, monkey
     assert _ctx(session["merge_id"])["attempt_state"] == "in_progress"
     assert p.sha("refs/heads/main") == main_before               # the crash left main behind
 
-    # 0669 unit 8a: the attempt belongs to its branch_merge_publish job (holder ``job:{id}``),
+    # unit 8a: the attempt belongs to its branch_merge_publish job (holder ``job:{id}``),
     # which is still running while its lease is valid -- boot recovery leaves it alone.
     from modules.flow_gate.db import operation_job as db_jobs
     from modules.flow_gate.db.connection import get_store
@@ -1086,9 +1086,9 @@ def test_24b_reject_returns_to_resolver_with_a_new_run(proj):
     assert "git_branch_merge_review_rejected" in [e["type"] for e in ctx["attempt_events"]]
 
 
-# ── flowgate.default.0683 T0004 — review handoff / target blocker / plan-time recovery ──
+# ── the earlier change the earlier implementation — review handoff / target blocker / plan-time recovery ──
 #
-# The 0683 case (flowgate.v02.0033.0007-AC): branch merge #206 (main → v0.2) sat in
+# The 0683 case: branch merge #206 (main → v0.2) sat in
 # resolved_pending_review and every v0.2 approval was refused with a bare
 # "another finalize attempt owns this target branch's workspace".
 
@@ -1323,7 +1323,7 @@ def test_0683_busy_lock_on_the_claim_skips_plan_time_recovery(proj, monkeypatch)
     assert _session(session["merge_id"])["status"] == "open"
 
 
-# 0530 T0004: exercise the human HTTP approval boundary on real isolated git repos.
+# exercise the human HTTP approval boundary on real isolated git repos.
 @pytest.mark.parametrize("push", [False, True])
 @pytest.mark.parametrize("resolver", ["manual", "ai"])
 def test_0530_recovered_review_human_api_finishes_original_plan(proj, monkeypatch, push, resolver):

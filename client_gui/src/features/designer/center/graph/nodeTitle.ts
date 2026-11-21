@@ -1,4 +1,4 @@
-// flowgate.v02.0064 T#4 — a card's own title on the Canvas (0062 D0005 §3.2 / §3.5 / §6, 0062 L0006 2.1 / 2.8, 0064
+// a card's own title on the Canvas (the design / /, the earlier implementation 2.1 / 2.8, 0064
 // P0006 §4.2.7 / §6.5). Pure: no Vue, no transport.
 //
 // - Length: the server's rule (L0006 2.1) — NFC; control and separator characters become a space; zero width space and
@@ -7,7 +7,7 @@
 // - Version order (L0006 2.8 accept_title_state): a title state bundle replaces the one the screen shows only when its
 //   version is above it — a save answer and every Graph read alike, whatever order they arrive in. Nothing is shown
 //   before the server answered (no optimistic title), so nothing is ever rolled back.
-// - Who may edit (D0005 §3.2 locking table): a card with a title state (a v0.2 Graph node; never a v0.1 free document / slot
+// - Who may edit (locking table): a card with a title state (a v0.2 Graph node; never a v0.1 free document / slot
 //   card or an older server's), on a Graph or unassigned Flow, not in a past revision view, and not while it runs. The
 //   running lock is the server's own (`node_running` of the node run: the card settings' lock a title save is refused by —
 //   open, or in review while the card's AI review works), never the approval state: a review card waiting only for its

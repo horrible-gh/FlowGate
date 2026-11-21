@@ -75,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 T#7 — the Base apply part (0066 D#2 §3-4, §6-4): the merge target (E8
+// the Base apply part: the merge target (E8
 // `targets[]` only, never a typed or fixed branch), the small Fetch icon (E12 only), `머지 후 Push`,
 // the `머지` / `머지 + Push` button with its one reason, and the follow-up Push part. No commit and
 // no approval button: committing is the commit line's, approving is the approval flow's. Without a

@@ -1,17 +1,17 @@
 /**
- * flowgate.v02.0025 — Designer Shell (0003-D §7.1).
+ * Designer Shell.
  *
  * The Shell is mounted with the real 0023 Project Explorer, the real 0024 File Explorer and
  * the real project store; only the HTTP layer (`@shared/api`) is mocked. Assertions go
  * through the DOM the user sees and the props the Explorers receive.
  *
- * flowgate.v02.0026 (0003-D §7.1): the Workspace now holds the Designer Center (Flow Tabs +
+ * the Workspace now holds the Designer Center (Flow Tabs +
  * Canvas) instead of its placeholder, and an activated Flow opens a tab rendered with the
  * real Vue Flow — this file gives the Canvas a size and a ResizeObserver stand-in.
  *
- * flowgate.v02.0039 T#3: entering the Designer leaves it without a work target (initial
+ * entering the Designer leaves it without a work target (initial
  * unselected state, covered by DesignerInitialState.0039.spec.ts).
- * flowgate.v02.0042: only an open Flow is the work target — a plain click in the Explorer is a
+ * only an open Flow is the work target — a plain click in the Explorer is a
  * selection and leaves the Designer unselected. Suites that check the work state open a Flow
  * first (`activateCanvas`); `mountShell` itself opens nothing.
  */
@@ -171,7 +171,7 @@ describe('DesignerShell — container hierarchy', () => {
 
     expect([...shell.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-top', 'designer-body'])
     const body = child(shell, 'designer-body')!
-    // flowgate.v02.0046: a resize handle on each Dock ↔ Center line.
+    // a resize handle on each Dock ↔ Center line.
     expect([...body.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-left-dock',
       'designer-left-resize',
@@ -194,7 +194,7 @@ describe('DesignerShell — container hierarchy', () => {
     const w = await mountShell()
     await activateCanvas(w)
 
-    // flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar, no placeholder.
+    // the Top holds the real Header / Menu Bar / Toolbar, no placeholder.
     const top = get(w, 'designer-top')
     expect(top.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
     expect([...top.element.children].map((c) => c.getAttribute('data-test'))).toEqual([
@@ -202,19 +202,19 @@ describe('DesignerShell — container hierarchy', () => {
       'designer-menubar',
       'designer-toolbar',
     ])
-    // flowgate.v02.0026: the Workspace holds the Designer Center, no placeholder.
+    // the Workspace holds the Designer Center, no placeholder.
     const workspace = get(w, 'designer-workspace')
     expect(workspace.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
     expect([...workspace.element.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-center'])
     expect(workspace.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-workspace-flow"]').exists()).toBe(false)
-    // flowgate.v02.0036: the Bottom Dock holds the real Inspector (nothing selected yet) next
-    // to the Minimap — flowgate.v02.0049: the real Minimap of the open Flow, no placeholder.
+    // the Bottom Dock holds the real Inspector (nothing selected yet) next
+    // to the Minimap — the earlier change: the real Minimap of the open Flow, no placeholder.
     expect(get(w, 'designer-bottom-dock').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
     // It draws what the Canvas draws: nothing while the opened Flow has no Canvas Nodes on screen.
     const canvasNodes = w.findAll('[data-test="designer-canvas-node"]').length
     expect(get(w, 'designer-bottom-minimap').findAll('[data-test="designer-minimap-node"]')).toHaveLength(canvasNodes)
-    // flowgate.v02.0042: no Node selected leaves an empty Inspector area, no guidance text.
+    // no Node selected leaves an empty Inspector area, no guidance text.
     expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('')
     // flowgate.v02.0037: the Right Dock is the Tool Panel — [팔레트] [대화] [Git] over the real
     // Palette part, no placeholder.
@@ -305,7 +305,7 @@ describe('DesignerShell — active Flow', () => {
     explorerRow(w, 'Canvas').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
     await settle()
     expect(tabNames(w)).toEqual([])
-    // flowgate.v02.0042: a selection is not a work target — the Designer stays unselected.
+    // a selection is not a work target — the Designer stays unselected.
     expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBeNull()
@@ -321,7 +321,7 @@ describe('DesignerShell — active Flow', () => {
     await settle()
 
     expect(tabNames(w)).toEqual([])
-    // flowgate.v02.0039 T#3: the new Project starts without a work target — empty Center frame.
+    // the new Project starts without a work target — empty Center frame.
     expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(w.findComponent(DesignerFileExplorer).props('flow')).toBeNull()
     expect(w.findComponent(DesignerFileExplorer).props('projectId')).toBe('q')
@@ -334,7 +334,7 @@ describe('DesignerShell — active Flow', () => {
     expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
     expect(w.text()).not.toContain('선택된 프로젝트가 없습니다')
     expect(w.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
-    // flowgate.v02.0039 T#3: nothing can be chosen, so the mode switch stays unavailable; the
+    // nothing can be chosen, so the mode switch stays unavailable; the
     // Window menu still moves between the Explorers.
     await get(w, 'designer-menubar').get('[data-menu="window"]').trigger('click')
     await get(w, 'designer-menubar').get('[data-tab="file"]').trigger('click')
@@ -392,7 +392,7 @@ describe('DesignerShell — left collapse', () => {
   })
 })
 
-// flowgate.v02.0025 T0006 — Designer initial screen UI refinements.
+// Designer initial screen UI refinements.
 describe('DesignerShell — UI refinements (T0006)', () => {
   it('has a single Left Dock header row: no "탐색기" title, only [프로젝트] [파일] + collapse', async () => {
     const w = await mountShell()
@@ -457,7 +457,7 @@ describe('DesignerShell — UI refinements (T0006)', () => {
     expect(files.find('[data-path="src"]').exists()).toBe(true)
   })
 
-  // flowgate.v02.0038: the top band follows its confirmed design wording (Project / Group /
+  // the top band follows its confirmed design wording (Project / Group /
   // Flow / Node, 0001-R rev2) and carries the FlowGate brand, so this rule covers the Body.
   it('names the Flow object 플로우 everywhere in the Korean Designer Body', async () => {
     const w = await mountShell()
@@ -477,14 +477,14 @@ describe('Korean Flow wording (T0006 §3)', () => {
 
   it('ko Designer / navigation strings use 플로우, never Flow / 플로 / 흐름', async () => {
     const ko = (await import('@/app/i18n/ko.ts')).default as Record<string, any>
-    // flowgate.v02.0038: the top band block keeps the confirmed design wording (see above);
-    // flowgate.v02.0043: so do the File menu dialogs, which carry the menu items' own names.
+    // the top band block keeps the confirmed design wording (see above);
+    // so do the File menu dialogs, which carry the menu items' own names.
     const body = Object.fromEntries(Object.entries(ko.designer).filter(([key]) => key !== 'top' && key !== 'file_menu'))
     const texts = [...strings(body), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
     for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
     expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')
     expect(ko.designer.center.tabs_label).toBe('열린 플로우')
-    // flowgate.v02.0042: the no-open-Flow guidance strings are gone.
+    // the no-open-Flow guidance strings are gone.
     expect(ko.designer.center).not.toHaveProperty('no_open_flow')
     expect(ko.designer.center).not.toHaveProperty('no_open_flow_desc')
     expect(ko.designer.shell).not.toHaveProperty('active_flow')

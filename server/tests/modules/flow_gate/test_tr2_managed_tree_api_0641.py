@@ -1,4 +1,4 @@
-"""flowgate.default.0641 T2#4 — group tree managed-set API contract."""
+"""#4 — group tree managed-set API contract."""
 from modules.flow_gate.api.v1 import git_routes
 from modules.flow_gate.services import tr2_file_policy
 

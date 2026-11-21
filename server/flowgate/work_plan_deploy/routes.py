@@ -1,4 +1,4 @@
-"""HTTP adapter of the work plan deploy (flowgate.v02.0074 T#4, D0006 §5). Under the WP API group, mounted under the
+"""HTTP adapter of the work plan deploy. Under the WP API group, mounted under the
 ``/flowgate`` context like the other v0.2 card routes; user JWT only.
 
     GET  /api/v1/documents/{doc_id}/work-plan/deploy            status       (read permission)

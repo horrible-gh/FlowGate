@@ -28,7 +28,7 @@ async def post_revision(flow_id: str, node_key: str, slot: str, request: Request
         coords={"flow_id": flow_id, "node_key": node_key, "slot": slot}, locale=legacy.locale_of(request)))
 
 
-# 0127 CH0028: doc_id routes. The server resolves card bindings; creation is a separate route.
+# doc_id routes. The server resolves card bindings; creation is a separate route.
 @router.get("/documents/{doc_id}")
 def get_document_by_id(doc_id: str, request: Request):
     return legacy.run(request, lambda: chat_documents.chat_read_document(
@@ -50,7 +50,7 @@ async def post_document(request: Request):
         chat_authz.CLI, token_raw=_bearer(request), request_body=raw, locale=legacy.locale_of(request)))
 
 
-# flowgate.v02gui.0010: card questions (Q) of the chat's Flow — list, and answer on the user's behalf.
+# card questions (Q) of the chat's Flow — list, and answer on the user's behalf.
 @router.get("/questions")
 def get_questions(request: Request):
     return legacy.run(request, lambda: chat_questions.chat_list_questions(

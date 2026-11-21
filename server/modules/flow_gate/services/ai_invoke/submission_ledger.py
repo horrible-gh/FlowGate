@@ -1,7 +1,7 @@
-"""Ordered submission outcomes of a live run (flowgate.v02.0137 T0004 §2-1~3, TR0005 rev1).
+"""Ordered submission outcomes of a live run.
 
 `register_errors` says that SOME submission failed; it never said in which order the
-failures and the successes happened. TR0005 rev0 let a run scratch be deleted when any
+failures and the successes happened. the earlier implementation let a run scratch be deleted when any
 document had been reached, so "submit OK -> write a revised draft -> last submit 403/422"
 read as settled and the newest, unsubmitted draft went with the scratch.
 

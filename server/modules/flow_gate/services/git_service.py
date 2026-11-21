@@ -1,19 +1,19 @@
-"""Git integration service (flowgate.default.0115 — D0004/P0005/L0006/DB0007).
+"""Git integration service.
 
 Bridges FlowGate projects and remote Git repositories:
 
-  - per-project config + reversibly-encrypted credentials (L0006 §2.3)
-  - connection test (ls-remote, L0006 §2.5)
+  - per-project config + reversibly-encrypted credentials
+  - connection test (ls-remote, the earlier implementation)
   - base-slot provisioning: clone into an empty slot, or LOSSLESS adopt of an
     occupied slot + last-attempt ledger + manual trigger
-    (flowgate.default.0161 — D0003/P0004/L0005)
-  - per-group branch/worktree provisioning (L0006 §2.1·§2.4; hooks H1/H2)
-  - effective source-root resolution for workers (L0006 §2.2 — fallback first:
+    
+  - per-group branch/worktree provisioning (·; hooks H1/H2)
+  - effective source-root resolution for workers (the earlier implementation — fallback first:
     a non-integrated project NEVER changes behavior)
-  - finalize state machine merge/push/wait (L0006 §2.6·§3), conflict sessions
-    (L0006 §2.7) and the project-level git mutex (L0006 §2.8, DB-backed)
+  - finalize state machine merge/push/wait, conflict sessions
+    and the project-level git mutex (DB-backed)
 
-Secret invariant (L0006 §2.3): the plaintext secret never appears in responses,
+Secret invariant: the plaintext secret never appears in responses,
 logs, git argv, or repository URLs. Git authentication is injected via a
 one-shot ASKPASS helper whose values travel in child-process env vars; stderr
 is scrubbed before storage/return.
@@ -41,7 +41,7 @@ from Crypto.Cipher import AES as _AES
 from modules.flow_gate import template_provision
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import git_integration as db_git
-from modules.flow_gate.db.git_integration import (  # pure session readers (0630 T0005)
+from modules.flow_gate.db.git_integration import (  # pure session readers
     MERGE_REVIEW_SESSION_KINDS as _MERGE_REVIEW_KINDS,
     is_branch_merge_session as _is_branch_merge_session,
     session_owner_type as _session_owner_type,
@@ -64,21 +64,21 @@ from modules.flow_gate.storage.paths import get_storage_root, src_root
 
 _log = logging.getLogger(__name__)
 
-# ── Parameters (L0006 §1) ─────────────────────────────────────────────────────
+# ── Parameters ─────────────────────────────────────────────────────
 
 GIT_TEST_TIMEOUT_SEC = 15
 GIT_NET_TIMEOUT_SEC = 120
-# 0287 NR0004 §3: `worktree remove` recursively deletes a FULL source checkout
+# `worktree remove` recursively deletes a FULL source checkout
 # (measured: 864 files / 112 MB) and the storage root is routinely an SMB share,
 # where every unlink is a round trip. Under the 30 s local budget the subprocess
 # was killed MID-DELETE, leaving a half-erased tree whose `.git` file was already
 # gone — the state that then failed every retry forever. Deletion gets its own,
 # far larger budget; it is a local filesystem walk, not a network call.
-# Group branch file explorer — checkout-free ref/tree/blob reads (0186 L0006 §1).
+# Group branch file explorer — checkout-free ref/tree/blob reads.
 GIT_READ_TIMEOUT_SEC = 15          # local ls-tree / cat-file timeout (no network)
 BLOB_MAX_RETURN_BYTES = 1048576    # 1 MiB blob content cap; over → truncated=true
 BLOB_BINARY_SNIFF_BYTES = 8000     # NUL-scan window for binary detection (git heuristic)
-# ── Git tangle prevention (flowgate.default.0205 — D0002/P0003/L0004/DB0005) ──
+# ── Git tangle prevention ──
 # A conflict wait no longer holds the project lock; abandoned sessions are
 # reclaimed by a sweep so one stalled merge can never silently disable every
 # later group's git management (0203 root cause).
@@ -119,22 +119,22 @@ from .git.commit import (
 )
 
 
-# ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
+# ── Base-checkout explicit commit / revert ────
 # Default subject for an explicit base-checkout commit: "fix: a.py, b.py", or the
 # abbreviated "fix: a.py and N more" when the joined list overflows COMMIT_SUBJECT_MAX.
 # Subject for the seed commit that BORNs the base branch when a brand-new EMPTY
-# remote is connected (0313 B0001): `git clone --branch <base>` cannot create it,
+# remote is connected: `git clone --branch <base>` cannot create it,
 # so provisioning initializes the slot with this one README.md commit instead.
 # Present while an adopt is unfinished — the slot never reports "checkout"
-# until the marker is removed (L0005 §2.1·§2.3, 0161).
+# until the marker is removed.
 # Per-project last-attempt ledger in the generic system_settings KV (no DDL).
 SESSION_ACTION_DEFAULT = "merge"
-# flowgate.default.0162 L §1 — group git status subsets.
+# L — group git status subsets.
 PENDING_STATUSES = ("awaiting_choice", "waiting", "conflict")  # "finalize pending"
 # "merging" is a transient state: recorded, but its transition is not broadcast
 # (it would flicker the badge n→n-1→n before the terminal event lands, L §2.3).
 TRANSIENT_STATUSES = ("merging",)
-# flowgate.default.0182 NR0003 §5 — terminal statuses whose slot leftovers
+# terminal statuses whose slot leftovers
 # (worktree dir, local work branch, ledger registration) are cleanup targets.
 CLEANUP_STATUSES = ("merged", "pushed")
 
@@ -160,7 +160,7 @@ from .git.credentials import (
 )
 
 
-# ── Branch naming (L0006 §2.1) ────────────────────────────────────────────────
+# ── Branch naming ────────────────────────────────────────────────
 
 
 
@@ -179,7 +179,7 @@ def merge_session_owner_args(
     merge_id, group_id: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """``(group_id, project_id)`` to address ``merge_id``'s conflict/review functions with
-    (0630 T0005). A branch merge is addressed by its project and never by a group — the
+. A branch merge is addressed by its project and never by a group — the
     AI run that resolves it carries only the synthetic project-scoped run key. Any lookup
     failure keeps the caller's group addressing (the pre-0630 behaviour)."""
     try:
@@ -206,7 +206,7 @@ def _owner_kw(project_id: Optional[str]) -> dict:
 
 
 def _session_project(session: Optional[dict]) -> Optional[str]:
-    """The project that owns a merge session (0630 T0005).
+    """The project that owns a merge session.
 
     A branch_merge row carries its project in its own column (it has no group); every
     group-owned row keeps resolving through ``_project_of_group`` exactly as before."""
@@ -219,7 +219,7 @@ def _one_line_subject(text: Optional[str]) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
-# normalize_subject (L0004 §2.1): collapse newlines/tabs/runs of whitespace to a
+# normalize_subject: collapse newlines/tabs/runs of whitespace to a
 # single space and trim — the one canonical subject cleaner for every path.
 normalize_subject = _one_line_subject
 
@@ -238,7 +238,7 @@ from .git.command import (
 )
 
 
-# ── SSE emission (P0005 §4·§5 events) ────────────────────────────────────────
+# ── SSE emission (· events) ────────────────────────────────────────
 
 def _emit(event_type: str, project: str, group_id: Optional[str], payload: dict) -> None:
     """Best-effort FlowEvent broadcast; never breaks the calling operation."""
@@ -260,7 +260,7 @@ def _emit(event_type: str, project: str, group_id: Optional[str], payload: dict)
         _log.warning("git SSE emit failed (%s)", event_type, exc_info=True)
 
 
-# ── Pending-set broadcast (flowgate.default.0162 L §2.3) ─────────────────────
+# ── Pending-set broadcast ─────────────────────
 
 def _count_pending(project_id: str) -> int:
     """Project-wide "finalize pending" count, recomputed from the ledger.
@@ -295,7 +295,7 @@ def _set_status(
     update. The transient "merging" state is recorded but not broadcast.
 
     ``emit=False`` lets a caller that still has a decision pending on top of this
-    same status change (0555 T0008 §12: the deferred final approval) record the
+    same status change (the deferred final approval) record the
     status now and broadcast it itself once that decision is known — never
     broadcasting a "merged" a subscriber could refresh on before the approval
     transaction it is coupled to has even run.
@@ -305,7 +305,7 @@ def _set_status(
         _emit_pending_changed(_project_of_group(group_id), group_id, status)
 
 
-# ── Project lock (L0006 §2.8) ────────────────────────────────────────────────
+# ── Project lock ────────────────────────────────────────────────
 
 
 from .git.lock import (
@@ -321,7 +321,7 @@ def get_branch_merge_group_claim(group_id: str):
 
 
 
-# ── Base-protection gate (flowgate.default.0205 P scenario 3 / L §2.2) ────────
+# ── Base-protection gate (P scenario 3 / L) ────────
 
 
 
@@ -366,13 +366,13 @@ from .git.config import (
 )
 
 
-# ── Connection test (P0005 §3 / L0006 §2.5) ──────────────────────────────────
+# ── Connection test ──────────────────────────────────
 
 
 
 
 
-# ── Worktree provisioning (L0006 §2.4 — hooks H1/H2) ─────────────────────────
+# ── Worktree provisioning (hooks H1/H2) ─────────────────────────
 
 def _project_name(project_id: str) -> Optional[str]:
     row = db_projects.get_by_id(project_id)
@@ -380,7 +380,7 @@ def _project_name(project_id: str) -> Optional[str]:
     return name or None
 
 
-# ── Worktree liveness: is that directory a REAL worktree? (0287 NR0004) ──────
+# ── Worktree liveness: is that directory a REAL worktree? ──────
 # Every gate in this module used to equate "the directory exists" with "a healthy
 # registered worktree exists". A `worktree remove` interrupted mid-delete breaks
 # that equivalence: the directory survives while its `.git` link and most of its
@@ -413,7 +413,7 @@ def _registered_worktrees(base_root: Path) -> Optional[set[Path]]:
     Paths are compared resolved, never as strings: `git worktree list` reports the
     real path (e.g. a UNC share `//host/share/…`) while `src_root()` builds the
     junction/mapped form (`C:\\…\\storage\\…`), so the two spellings of one
-    directory never match textually (0287 NR0004 §7-1).
+    directory never match textually.
 
     Returns None — meaning "cannot tell" — when git fails or times out, so callers
     can stay conservative instead of mistaking silence for "not registered"."""
@@ -447,7 +447,7 @@ def _registered_worktrees(base_root: Path) -> Optional[set[Path]]:
 
 
 def _classify_worktree_dir(base_root: Path, wt_path: Path) -> str:
-    """'live' | 'orphan' | 'unknown' for an EXISTING directory (0287 NR0004 §7-1).
+    """'live' | 'orphan' | 'unknown' for an EXISTING directory.
 
     'live'    — git lists it as a non-prunable worktree AND its `.git` link is intact
     'orphan'  — the directory is there but git does not (or no longer can) own it:
@@ -470,7 +470,7 @@ def _classify_worktree_dir(base_root: Path, wt_path: Path) -> str:
 
 
 
-# ── Base-slot provisioning: lossless adopt + attempt ledger (0161 L0005) ─────
+# ── Base-slot provisioning: lossless adopt + attempt ledger ─────
 
 from .git.base_slot import (
     _judge_base_slot,
@@ -576,7 +576,7 @@ from .git.worktree import (
 
 
 
-# ── Initial group source sync (flowgate.default.0511 T0004 / NR0003 v5) ──────
+# ── Initial group source sync (v5) ──────
 # ensure_worktree above provisions a group's worktree once, at creation, and its
 # idempotence check only asks "does the directory exist and match the ledger" -
 # never "is it current". A group that starts with N/NR investigation reads
@@ -594,9 +594,9 @@ from .git.worktree import (
 
 
 
-# ── Effective source-root resolution (L0006 §2.2·§4.1) ───────────────────────
+# ── Effective source-root resolution ───────────────────────
 
-# 0280 NR0003 §4-B: every reason the worktree is NOT used. The fallback itself is
+# B: every reason the worktree is NOT used. The fallback itself is
 # intended design; what was missing is any record of WHICH condition fired, so a
 # "tests ran in main" report could never be confirmed or refuted after the fact.
 # These constants are persisted (test_runs.source_root_kind) and rendered in TSR.
@@ -608,7 +608,7 @@ SRC_ROOT_UNREGISTERED = "worktree_unregistered"
 SRC_ROOT_NO_BRANCH = "state_branch_empty"
 SRC_ROOT_NO_PROJECT_NAME = "project_name_missing"
 SRC_ROOT_DIR_MISSING = "worktree_dir_missing"
-# 0287 NR0004 §5: the directory is there but it is a corpse — an interrupted
+# the directory is there but it is a corpse — an interrupted
 # `worktree remove` took its `.git` link and most of its content with it. Distinct
 # from *_dir_missing because the failure looks nothing alike in a TSR: the suite
 # runs, finds a tree with its test files but not its modules, and reports import
@@ -625,7 +625,7 @@ def effective_src_root_ex(
     """``effective_src_root`` plus the reason, and a log line on every fallback.
 
     Returns ``(worktree_path, "worktree")`` or ``(None, <SRC_ROOT_* reason>)``.
-    0280 NR0003 §6-3: each fallback below used to be a bare ``return None`` with
+    each fallback below used to be a bare ``return None`` with
     no log, no DB column and no UI trace, so a group that silently dropped to the
     base tree left zero evidence. Two of them are routine (integration off / no
     group context) and log at debug; the rest mean a worktree was *expected* and
@@ -633,7 +633,7 @@ def effective_src_root_ex(
     re-run hits (CLEANUP_STATUSES clears the flag) — so they log at warning.
     Never raises.
 
-    0552 T0013 (0005-NR Set D): ``state`` lets a caller that ALREADY holds this
+    (NR Set D): ``state`` lets a caller that ALREADY holds this
     group's ``group_git_state`` row hand it in instead of paying another
     ``SELECT * FROM group_git_state WHERE group_id = ?``. It is a pure read here —
     only ``worktree_registered`` / ``branch`` decide anything, and ``status`` is
@@ -700,7 +700,7 @@ def effective_src_root_ex(
             )
             return None, SRC_ROOT_DIR_MISSING
         if not _worktree_link_ok(wt_path):
-            # 0287 NR0004 §5: a directory is not a source tree. Without its `.git`
+            # a directory is not a source tree. Without its `.git`
             # link the path is what an interrupted teardown left behind, and
             # returning it here is what silently pointed a suite at a half-erased
             # checkout while the TSR still labelled the root "worktree".
@@ -727,14 +727,14 @@ def group_worktree_writable(
 ) -> bool:
     """True when *group_id* has a live worktree that may be written to.
 
-    0327 T0004 (B0001 / NR0003 recommendation 1): the explorer used to treat "a group is
+    the explorer used to treat "a group is
     selected" as "read-only", so create/upload stayed blocked even for the group
     the user is actively working in — while the server could already tell the two
     apart. This is that answer, in the one shape the client needs, so the UI stops
     guessing. Groups with no worktree (finalized, disposed, never provisioned)
     remain fully read-only, exactly as before (recommendation 5).
 
-    0552 T0013: ``state`` is passed straight through to ``effective_src_root_ex``
+    ``state`` is passed straight through to ``effective_src_root_ex``
     — see its docstring for what an already-read ledger row does and does not
     change. Positional so a stub of the shape ``lambda *args: True`` keeps working.
     """
@@ -744,16 +744,16 @@ def group_worktree_writable(
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
     """Group worktree path when it must be used, else None (= caller falls back).
 
-    Fallback-first (L0006 §2.2): missing config, disabled integration, missing
+    Fallback-first: missing config, disabled integration, missing
     ledger entry, or a vanished directory all yield None so the caller resolves
     the ordinary project-branch folder. Never raises. Thin wrapper over
     ``effective_src_root_ex`` — callers that need to record WHY the worktree was
-    skipped use that one directly (0280 T0005).
+    skipped use that one directly.
     """
     return effective_src_root_ex(project_id, group_id)[0]
 
 
-# ── Finalize state (P0005 §5-1 / L0006 §3) ───────────────────────────────────
+# ── Finalize state ───────────────────────────────────
 
 from .git.finalize import (
     ACTION_VALUES,
@@ -806,7 +806,7 @@ from .git.finalize import (
 
 
 
-# ── No-work divergence gating (flowgate.default.0199 B0001) ──────────────────
+# ── No-work divergence gating ──────────────────
 #
 # The none→awaiting_choice transition (three sites: realize_wf_done_transition,
 # get_finalize_state lazy, project_git_status aggregation) used to fire on
@@ -827,7 +827,7 @@ from .git.finalize import (
 
 
 
-# ── Group branch file explorer: checkout-free ref/tree/blob (0186 L0006 §2) ──
+# ── Group branch file explorer: checkout-free ref/tree/blob ──
 #
 # Pure read layer. The group worktree shares base_root/.git with the base
 # checkout (git worktree add), so a group branch's ref/tree/blob objects can be
@@ -839,7 +839,7 @@ _REF_PIN_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def resolve_group_ref(project_id: str, group_id: str) -> tuple[Path, str, str]:
-    """(base_root, branch, commit) for a group branch. Pure read (L0006 §2.1)."""
+    """(base_root, branch, commit) for a group branch. Pure read."""
     cfg = db_git.get_config(project_id)
     if cfg is None or not cfg.get("enabled"):
         raise GitServiceError(
@@ -889,7 +889,7 @@ def _build_tree_nodes(files: list[str], dirs: Sequence[str] = ()) -> list[dict]:
     """FileNode list (same contract as process_service.get_file_tree) from a flat
     list of visible blob paths.
 
-    0327 T0004 (B0001): *dirs* carries directory paths that hold no file at all.
+    *dirs* carries directory paths that hold no file at all.
     Git has no way to express an empty directory, so a folder just created in a
     group worktree is invisible to every file-based listing — the new folder the
     user asked for would silently not appear. Those paths are registered with
@@ -945,7 +945,7 @@ def _build_tree_nodes(files: list[str], dirs: Sequence[str] = ()) -> list[dict]:
 def _is_hidden_source_path(path: str) -> bool:
     """Group-explorer exposure rule (shared by tree/changes/blob).
 
-    0382 NR0003 proposal 3: this used to be a *second*, hand-rolled rule that disagreed
+    proposal 3: this used to be a *second*, hand-rolled rule that disagreed
     with the submission check — it hid ``server/.test-tmp-0313/...`` while
     ``tr_scope_service`` demanded those same 261 paths be reported. The shared rule
     in ``path_exclusion_rules`` is now the base, so a path the explorer hides as
@@ -957,7 +957,7 @@ def _is_hidden_source_path(path: str) -> bool:
     explorer must not serve a secret-shaped file through the blob/write endpoints.
     That direction is safe — it never hides debris the check would then demand.
     The repository's own policy files (``.gitattributes`` …) are not secret-shaped and
-    are committed by ``git add -u``, so they stay visible (0608 TR0006).
+    are committed by ``git add -u``, so they stay visible.
     """
     if path_exclusion_rules.is_excluded_path(path):
         return True
@@ -969,7 +969,7 @@ def _is_hidden_source_path(path: str) -> bool:
 def _group_worktree_path(project_id: str, group_id: str, branch: str) -> Optional[Path]:
     """Absolute path of a group's live worktree, or None when it is unavailable.
 
-    NR0003: the checkout-free explorer reads committed git objects only, so a new
+    the checkout-free explorer reads committed git objects only, so a new
     file the worker has not committed is invisible until finalize. The tree/changes/
     blob readers use this worktree to surface those untracked files. A finalized or
     not-yet-provisioned group has no worktree — a normal, non-fatal state (returns
@@ -985,7 +985,7 @@ def _group_worktree_path(project_id: str, group_id: str, branch: str) -> Optiona
 def _group_untracked_visible(wt_path: Path) -> list[str]:
     """Exposed untracked (never-committed) paths in a group worktree, sorted.
 
-    ``git diff`` / ``ls-tree`` never report untracked files (NR0003 §3.1·§3.2), so
+    ``git diff`` / ``ls-tree`` never report untracked files, so
     these are collected with ``ls-files --others --exclude-standard`` and filtered by
     the same exposure rule as the committed tree. git emits '/'-separated paths."""
     proc = _run_git(
@@ -1006,7 +1006,7 @@ def _group_untracked_visible(wt_path: Path) -> list[str]:
 def _group_empty_dirs_visible(wt_path: Path) -> list[str]:
     """Exposed untracked directories that contain no file anywhere beneath them.
 
-    0327 T0004 (B0001): creating a folder in a group worktree used to leave no
+    creating a folder in a group worktree used to leave no
     trace in the explorer — git tracks files, so an empty directory is reported by
     no file listing and the new folder simply never appeared. ``ls-files --others
     --directory`` names the shallowest untracked directory; the ones that do hold
@@ -1073,7 +1073,7 @@ def _group_untracked_safe(project_id: str, group_id: str, branch: str) -> list[s
         return []
 
 
-# 0325 T0006: per-file +/- line counts for the changes list. `git diff --numstat`
+# per-file +/- line counts for the changes list. `git diff --numstat`
 # already reports them for tracked paths; an untracked file has no diff entry at
 # all, so its "added" count is read off disk. Both channels degrade to None (=
 # "unknown", e.g. binary) rather than 0, so the client never shows a made-up 0.
@@ -1128,7 +1128,7 @@ def _diff_line_stats(wt_path: Path, merge_base: str) -> dict[str, tuple[Optional
 
 
 def read_group_tree(project_id: str, group_id: str) -> dict:
-    """checkout-free recursive tree of a group branch's HEAD commit (L0006 §2.2)."""
+    """checkout-free recursive tree of a group branch's HEAD commit."""
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     proc = _run_git(
         ["ls-tree", "-r", "-z", commit], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
@@ -1152,12 +1152,12 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
             continue
         visible_files.append(path)
     untracked = _group_untracked_safe(project_id, group_id, branch)
-    # 0327 T0004 (B0001): folders created in the group worktree that hold no file
+    # folders created in the group worktree that hold no file
     # yet — they exist on disk but in no file listing, so they need their own channel.
     empty_dirs = _group_empty_dirs_safe(project_id, group_id, branch)
     # _build_tree_nodes dedups by name per directory, so committed + untracked paths
     # can be concatenated directly. worktree_untracked is ALSO returned as a separate
-    # channel (NR0003 recommendation 1): the client caches the tree by commit, but untracked
+    # channel: the client caches the tree by commit, but untracked
     # files change without advancing the commit, so this list must not be cached there.
     nodes = _build_tree_nodes(visible_files + untracked, empty_dirs)
     return {"ok": True, "data": {
@@ -1170,7 +1170,7 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
 def _validate_compare_base(base_root: Path, base_ref: str) -> str:
     """An explicitly requested comparison base: an existing local branch, nothing else.
 
-    flowgate.v02.0024 TR0004 rev2: the Designer File Explorer compares a Flow against the
+    the Designer File Explorer compares a Flow against the
     PROJECT Base even when the group is pinned to another work base, so ``/changes`` and
     ``/diff`` take the base as a parameter. Revision expressions, remote-only refs and
     option-looking values are refused rather than handed to ``git merge-base``.
@@ -1208,17 +1208,17 @@ def _group_diff_context(
 ) -> tuple[str, str, str, Path, str]:
     """(base_branch, branch, commit, worktree_path, scope_floor) for group diffs.
 
-    Shared by the changes list and the per-file diff reader (0325 TR0007 rev1) so both
+    Shared by the changes list and the per-file diff reader so both
     compare against the SAME floor — otherwise the summary and the diff a reviewer
     opens from it could disagree about what this group changed.
 
-    flowgate.default.0665 T0004 (W2): the floor is the group's RECORDED work-base
+    (W2): the floor is the group's RECORDED work-base
     commit (:func:`resolve_scope_floor`), not ``merge-base(<project base>, HEAD)`` --
     a group forked from another branch otherwise lists that branch's whole history
     as its own change.  An unverified/diverged floor is a 409, never a guess.
 
     ``base_ref`` overrides that with an explicitly requested local branch, compared at
-    its merge-base (flowgate.v02.0024 TR0004 rev2); omitted, the recorded floor is used.
+    its merge-base; omitted, the recorded floor is used.
     """
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     cfg = db_git.get_config(project_id) or {}
@@ -1233,7 +1233,7 @@ def _group_diff_context(
     if base_ref is not None:
         base_branch, merge_base = _compare_base_merge_base(base_root, base_ref, commit)
         return base_branch, branch, commit, wt_path, merge_base
-    # 0009-TR#1 rev2: this project pins some groups (e.g. v02) to a rolling
+    # #1: this project pins some groups (e.g. v02) to a rolling
     # integration branch via groups.work_base_ref, which is where the group's own
     # worktree actually forked from -- so that, not the project-wide base_branch, is
     # the branch reported as compared against.
@@ -1263,14 +1263,14 @@ def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] =
             500, "git_error", _one_line_subject(diff_proc.stderr) or "git diff failed"
         )
 
-    # 0325 T0006: the final-approval sidebar summarizes "how big is this change",
+    # the final-approval sidebar summarizes "how big is this change",
     # which --name-status cannot answer. A second read-only pass over the same
     # merge-base supplies the per-file +/- counts.
     line_stats = _diff_line_stats(wt_path, merge_base)
 
     fields = (diff_proc.stdout or "").split("\0")
     changes: list[dict] = []
-    # 0382 NR0003 proposal 3: hide the debris but **never pretend it does not exist**. The whole
+    # proposal 3: hide the debris but **never pretend it does not exist**. The whole
     # incident was 261 files being approved and merged without appearing on any screen, so what
     # is filtered out is counted on a separate channel and the screen always shows a "N tool-left files" line.
     tool_artifacts: list[str] = []
@@ -1287,9 +1287,9 @@ def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] =
             "path": path, "status": status[:1],
             "insertions": insertions, "deletions": deletions,
         })
-    # NR0003 recommendation 2: git diff never lists untracked files, so a brand-new file would be
+    # git diff never lists untracked files, so a brand-new file would be
     # absent from the changes list entirely — the exact "edits show up but new files do not"
-    # asymmetry B0001 reports. Surface each with "?" (git porcelain's untracked marker).
+    # asymmetry the regression reports. Surface each with "?" (git porcelain's untracked marker).
     existing = {change["path"] for change in changes}
     # Untracked debris never reaches _group_untracked_safe (it filters by the same
     # exposure rule), so the artifact channel reads the raw list once more.
@@ -1306,22 +1306,22 @@ def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] =
             })
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "commit": commit,
-        # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
+        # the changes viewer titles itself "<branch> ↔ <base>", and
         # the base branch is a project setting the client had no other way to read.
         "base_branch": base_branch, "changes": changes,
-        # 0665 T0004: what the list was actually measured against — the group's work
+        # what the list was actually measured against — the group's work
         # base name and the exact recorded floor commit.
         "work_base_ref": work_base_ref, "scope_base_sha": merge_base,
         "work_base_sha": work_base.get("work_base_sha"),
         "work_base_sync_sha": work_base.get("work_base_sync_sha"),
         "work_base_state": work_base.get("work_base_state"),
-        # 0382 proposal 3: the list may be collapsed but the count is always visible — nothing is pretended away.
+        # proposal 3: the list may be collapsed but the count is always visible — nothing is pretended away.
         "tool_artifacts": sorted(set(tool_artifacts)),
     }}
 
 
 def collect_scope_changes(project_id: str, group_id: str) -> dict:
-    """Every path this group actually changed, seen from its OWN worktree (0299 D0004 §3.3).
+    """Every path this group actually changed, seen from its OWN worktree.
 
     Deliberately NOT ``read_group_changes``. That one resolves the tree through
     ``src_root(project_name, branch)`` and only checks that the directory exists,
@@ -1335,7 +1335,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
 
       * merge-base..worktree diff — committed + staged + unstaged tracked changes
       * ``ls-files --others`` — untracked new files
-      * renames resolved to the NEW path only (D0004 §3.2: "for a rename, record only
+      * renames resolved to the NEW path only (the design: "for a rename, record only
         the path after the rename"), hence ``-M`` instead of ``--no-renames``
 
     Returns ``{"available": bool, "reason": str, "worktree": str|None,
@@ -1344,7 +1344,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
     ``status`` is one of ``A``/``M``/``D``/``R`` (falling back to ``M`` — best-effort,
     still content-changed — for a git status letter this check does not otherwise
     recognise) and ``old_path`` is set only for a rename. A path is never omitted from
-    ``entries`` just because its status could not be classified precisely (0493 T0005 —
+    ``entries`` just because its status could not be classified precisely (the earlier implementation —
     reviewers need per-file status, not just a bare path list). Never raises: an
     unavailable worktree or a failing git call is a *result* (``available=False`` +
     reason), because the caller must turn that into TRV-006 rather than a 500 on
@@ -1365,11 +1365,11 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         state = db_git.get_state(group_id) or {}
         result["branch"] = (state.get("branch") or "").strip() or None
         cfg = db_git.get_config(project_id) or {}
-        # 0009-TR#1 rev2: this group's own effective work base (groups.work_base_ref when
+        # #1: this group's own effective work base (groups.work_base_ref when
         # pinned, else the project default), never the project-wide base_branch -- the
         # recorded floor below (0665) is resolved against exactly that work base.
 
-        # flowgate.default.0665 T0004 (W1): the floor is the group's RECORDED
+        # (W1): the floor is the group's RECORDED
         # work-base commit (fork SHA, or the last update's absorbed source SHA).
         # The project base_branch says nothing about where THIS group started, and
         # a work-base branch NAME's current tip says nothing about what an update
@@ -1437,7 +1437,7 @@ def _scope_entries(wt_path: Path, merge_base: str) -> Optional[dict]:
 
 
 def collect_scope_changes_at(root, base_sha: Optional[str]) -> dict:
-    """``collect_scope_changes`` measured on an EXPLICIT tree from an EXPLICIT floor (0110 T#2, NR0003 §2 T-A).
+    """``collect_scope_changes`` measured on an EXPLICIT tree from an EXPLICIT floor.
 
     A Graph attempt token writes into its own attempt worktree, which only reaches the group
     branch after approval, so measuring the group worktree reported every honest declaration as
@@ -1527,7 +1527,7 @@ def _read_group_untracked_blob(
     """Read an untracked worktree file for the group explorer, or None when the path
     is not an exposed untracked file (the caller then 404s as before).
 
-    NR0003 recommendation 3: git objects hold committed content only, so a not-yet-committed file
+    git objects hold committed content only, so a not-yet-committed file
     can be read solely off the worktree disk. The read is gated three ways — the
     exposure filter, git's own untracked list, and a resolved-path containment check
     against the worktree root — so it can never serve a tracked, hidden, or out-of-tree
@@ -1577,7 +1577,7 @@ def _read_group_untracked_blob(
 def read_group_blob(
     project_id: str, group_id: str, path: str, ref: Optional[str] = None
 ) -> dict:
-    """checkout-free single-file read from a group branch (L0006 §2.3)."""
+    """checkout-free single-file read from a group branch."""
     _validate_blob_path(path)
     base_root, branch, head_commit = resolve_group_ref(project_id, group_id)
     commit = head_commit
@@ -1590,7 +1590,7 @@ def read_group_blob(
         commit = ref
     entry = _ls_tree_entry(base_root, commit, path)
     if entry is None or entry[0] != "blob":
-        # NR0003 recommendation 3: the path may be a new file that lives only in the group
+        # the path may be a new file that lives only in the group
         # worktree (no commit object yet). Fall back to reading it off disk before
         # giving up — this is what makes a just-created file openable from the tree.
         fallback = _read_group_untracked_blob(project_id, group_id, branch, path)
@@ -1616,10 +1616,10 @@ def read_group_blob(
     }}
 
 
-# ── Single-file change view (0326 R0001 / NR0005 §4) ─────────────────────────
+# ── Single-file change view ─────────────────────────
 #
-# The backend half of R0001's complaint that you could only see "a file changed" and never
-# "where and how". Option (b) of NR0005 §4 was chosen: the server builds no patch text, only
+# The backend half of the requirement's complaint that you could only see "a file changed" and never
+# "where and how". Option (b) of the review was chosen: the server builds no patch text, only
 # serves one path's old/new contents, and the line diff is computed by the engine the client
 # already has (useConflictChunks.buildChunkSideDiff). That overlaps cleanly with the existing
 # blob reader (read_group_blob) rather than running `git diff` and parsing a patch, and
@@ -1739,7 +1739,7 @@ def read_group_file_diff(
 ) -> dict:
     """old (scope-floor blob) / new (group worktree, else branch commit) content.
 
-    The old side is the group's recorded scope floor (0665 T0004) — the same
+    The old side is the group's recorded scope floor — the same
     reference ``read_group_changes`` diffs against, so the tree's changed markers and
     this view can never disagree. The new side prefers the live worktree file (which
     is what ``read_group_changes`` measures, so uncommitted work shows up) and falls
@@ -1763,12 +1763,12 @@ def read_group_file_diff(
 
     cfg = db_git.get_config(project_id) or {}
     if base_ref is not None:
-        # flowgate.v02.0024 TR0004 rev2: the same explicit comparison branch
+        # the same explicit comparison branch
         # _group_diff_context accepts, so this file diffs against that list's merge-base.
         base_branch, merge_base = _compare_base_merge_base(base_root, base_ref, commit)
         floor = {"work_base_ref": resolve_group_work_base_ref(project_id, group_id, config=cfg)}
     else:
-        # 0009-TR#1 rev2 / 0665 T0004: in lockstep with _group_diff_context -- the group's
+        # #1 / the earlier implementation: in lockstep with _group_diff_context -- the group's
         # own work base, measured from its recorded floor.
         base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
         floor = resolve_scope_floor(project_id, group_id, base_root, config=cfg, head=commit)
@@ -1787,13 +1787,13 @@ def read_group_file_diff(
     }}
 
 
-# ── Finalize execution (P0005 §5 / L0006 §2.6·§4.2) ──────────────────────────
+# ── Finalize execution ──────────────────────────
 
 
 
-# ── TR commit cancel (flowgate.default.0332 D0005 §3.2 / L0007 §2.2~§2.6) ─────
+# ── TR commit cancel ─────
 
-# L0007 §1 cancel_lock_wait_sec = 5, deliberately NOT the approval side's 0. An
+# cancel_lock_wait_sec = 5, deliberately NOT the approval side's 0. An
 # approval happens many times an hour and its commit is a by-product, so waiting is
 # pure latency; a rewind is a person pressing [되돌리기] once and the cancel IS the
 # point of that press. Giving up because a finalize held the lock for two seconds
@@ -1801,7 +1801,7 @@ def read_group_file_diff(
 CANCEL_LOCK_WAIT_SEC = LOCK_WAIT_SEC
 
 
-# ── TR revert/reapply conflict session (TR0019, migration 088) ───────────────
+# ── TR revert/reapply conflict session (migration 088) ───────────────
 #
 # Before this block a conflicted revert was a dead end with a `retryable=false` label on
 # it: the loop wiped the index and told the person to go fix their worktree by hand. The
@@ -1887,21 +1887,21 @@ def _last_line(text: Optional[str]) -> str:
 
 
 
-# ── Conflict session: list / resolve / abort (P0005 §6 / L0006 §2.7) ─────────
+# ── Conflict session: list / resolve / abort ─────────
 
 _CONFLICT_OPEN_RE = re.compile(r"^<{7}( |$)")
 _CONFLICT_CLOSE_RE = re.compile(r"^>{7}( |$)")
 
 
 def has_conflict_markers(content: str) -> bool:
-    # A bare "=======" line doubles as a Markdown H1 underline — not checked (L0006 §2.7).
+    # A bare "=======" line doubles as a Markdown H1 underline — not checked.
     for line in (content or "").splitlines():
         if _CONFLICT_OPEN_RE.match(line) or _CONFLICT_CLOSE_RE.match(line):
             return True
     return False
 
 
-# ── One-side-dropped detection (0478 T0012) ───────────────────────────────
+# ── One-side-dropped detection ───────────────────────────────
 # Same marker grammar and state machine as client/src/main/composables/useConflictChunks.ts
 # (MARKER_OPEN_RE/MARKER_CLOSE_RE/MARKER_SEP_RE/MARKER_BASE_RE, parseConflictFile), reimplemented
 # server-side so `resolve_conflicts` can catch a resolver that dropped an entire side even though
@@ -1926,7 +1926,7 @@ def has_conflict_markers(content: str) -> bool:
 
 
 
-# ── General-merge review gate (flowgate.default.0481 D0006/L0007, T0008) ─────
+# ── General-merge review gate ─────
 # TR revert/reapply conflicts have stopped at a human commit press since 0332 (see
 # TR_CONFLICT_REVIEW_* above); this extends the same stop-and-look principle to an
 # ordinary finalize merge, whose resolution used to commit and push itself the
@@ -1964,11 +1964,11 @@ PUSH_RECONCILE_DELAYS_SEC = (0, 1, 3)
 PUSH_RECONCILE_RETRY_INTERVAL_SEC = 60
 # Reconciliation kinds a durable worker (§2.8.1) is allowed to keep retrying.
 RECONCILE_AUTO_RETRY_KINDS = ("push_remote_unknown", "post_push_cleanup")
-# 0153 T#2 §3.4: the approved resolution commit could not be pinned/verified under
+# the approved resolution commit could not be pinned/verified under
 # refs/flowgate/preserve/. Deliberately NOT auto-retried: nothing is pushed, synced or
-# reset until a person (T#5) re-runs the idempotent preserve.ensure_preserved.
+# reset until a person re-runs the idempotent preserve.ensure_preserved.
 RECONCILE_KIND_PRESERVE_FAILED = "preserve_failed"
-# 0153 T#3 §3.1: the non-destructive reconcile state machine (git/reconcile_plan.py).
+# the non-destructive reconcile state machine (git/reconcile_plan.py).
 RECONCILE_MAX_CYCLES = reconcile_plan.RECONCILE_MAX_CYCLES            # 5 cycles per round
 RECONCILE_MAX_INTEGRATIONS = reconcile_plan.RECONCILE_MAX_INTEGRATIONS  # 2 per round
 RECONCILE_BACKOFF_MAX_SEC = reconcile_plan.RECONCILE_BACKOFF_MAX_SEC    # 900
@@ -1978,7 +1978,7 @@ RECONCILE_KIND_RETRY_EXHAUSTED = "reconcile_retry_exhausted"
 RECONCILE_KIND_RESET_FAILED = "reconcile_reset_failed"
 RECONCILE_KIND_LOCAL_STATE_MISMATCH = "reconcile_local_state_mismatch"
 # Every kind here waits for a person: review_state=reconciling, reconcile_next_at=None,
-# and none of them is in RECONCILE_AUTO_RETRY_KINDS (asserted by the 0153 T#3 tests).
+# and none of them is in RECONCILE_AUTO_RETRY_KINDS (asserted by the the earlier implementation tests).
 RECONCILE_USER_INTERVENTION_KINDS = (
     RECONCILE_KIND_PRESERVE_FAILED, RECONCILE_KIND_PUSH_REMOTE_THIRD,
     RECONCILE_KIND_AUTH_REQUIRED, RECONCILE_KIND_RETRY_EXHAUSTED,
@@ -1995,7 +1995,7 @@ def _reconcile_backoff_seconds(cycle: int) -> int:
 
 def _parse_ls_tree_z(stdout: str) -> list[dict]:
     """``git ls-tree -r -z <tree>`` → ``[{path, mode, kind, oid}]`` sorted by the
-    raw path bytes (not a locale collation), matching L0007 §2.3's manifest order."""
+    raw path bytes (not a locale collation), matching the earlier implementation's manifest order."""
     entries: list[dict] = []
     for record in (stdout or "").split("\0"):
         if not record:
@@ -2014,7 +2014,7 @@ def _parse_ls_tree_z(stdout: str) -> list[dict]:
 
 def _canonical_encode_manifest(manifest: list[dict]) -> bytes:
     """Length-prefixed encoding of the manifest so no field boundary is ambiguous
-    (L0007 §2.3 — the same principle as the conflict-chunk ``canonical_encode``)."""
+    (the same principle as the conflict-chunk ``canonical_encode``)."""
     chunks: list[bytes] = []
     for entry in manifest:
         path_bytes = entry["path"].encode("utf-8", errors="surrogateescape")
@@ -2045,7 +2045,7 @@ def _compute_review_fingerprint(
 
 
 def _freeze_commit_candidate(base_root: Path, base_branch: str) -> dict:
-    """Fork of D0006 §3.4 / L0007 §2.3's ``freeze_commit_candidate``.
+    """Fork of the design / the earlier implementation's ``freeze_commit_candidate``.
 
     MUST be called with the project git lock already held by the caller — this
     function never acquires or releases it. Returns the one frozen commit
@@ -2091,10 +2091,10 @@ def _freeze_commit_candidate(base_root: Path, base_branch: str) -> dict:
 
 
 def _live_candidate_matches_snapshot(base_root: Path, context: dict) -> bool:
-    """The TOCTOU identity check (D0006 §3.4): is the tree the base checkout would
+    """The TOCTOU identity check: is the tree the base checkout would
     commit RIGHT NOW, from the SAME heads, byte-identical to the frozen one? A tree
     object id already encodes every path's content/mode/existence recursively, so
-    comparing two tree ids is exactly the manifest comparison L0007 describes."""
+    comparing two tree ids is exactly the manifest comparison the earlier implementation describes."""
     if not _merge_in_progress(base_root):
         return False
     if _unmerged_paths(base_root):
@@ -2120,7 +2120,7 @@ _VOID_HTML_ELEMENTS = {
 
 
 _FLOWGATE_REPO_ROOT = Path(__file__).resolve().parents[4]
-# flowgate.v02gui.0024: client_gui is FlowGate's only client (v0.1's client/ is gone); the
+# client_gui is FlowGate's only client (v0.1's client/ is gone); the
 # checker script and the compiler packages it imports live there.
 _FLOWGATE_CLIENT_DIR = _FLOWGATE_REPO_ROOT / "client_gui"
 _SYNTAX_CHECK_SCRIPT = _FLOWGATE_CLIENT_DIR / "scripts" / "git-review-syntax-check.mjs"
@@ -2128,7 +2128,7 @@ _NODE_SYNTAX_CHECK_TIMEOUT_SEC = 20
 
 
 def _run_node_syntax_check(ext: str, text: str) -> Optional[dict]:
-    """Real-parser syntax check for JS/TS/CSS/SCSS/Vue (D0006 §3.5 / L0007 §2.7):
+    """Real-parser syntax check for JS/TS/CSS/SCSS/Vue:
     shells out to ``client_gui/scripts/git-review-syntax-check.mjs``, which parses
     ``text`` with the SAME compiler packages the client build already depends on
     (typescript's no-emit `transpileModule`, `@vue/compiler-sfc`, `postcss`,
@@ -2162,8 +2162,8 @@ def _run_node_syntax_check(ext: str, text: str) -> Optional[dict]:
 
 
 def _check_html_syntax(text: str) -> Optional[str]:
-    """Dependency-free balanced-tag check for `*.html`/`*.htm`/`*.vue` (D0006
-    §3.5 / L0007 §2.7) — a tag stack over a lightweight regex tokenizer, not a
+    """Dependency-free balanced-tag check for `*.html`/`*.htm`/`*.vue` (the design
+    / the earlier implementation) — a tag stack over a lightweight regex tokenizer, not a
     real HTML5 parser. `<script>`/`<style>` bodies are skipped verbatim so angle
     brackets inside JS/CSS content never desync the stack."""
     tag_re = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9:_-]*)([^>]*)>")
@@ -2215,7 +2215,7 @@ def _marker_orphans(lines: list[str]) -> tuple[int, int]:
 def _review_markers_are_inherited(
     base_root: Path, context: dict, change: dict, text: str,
 ) -> bool:
-    """0096 T0004: exempt only unchanged marker lines from the frozen parents.
+    """exempt only unchanged marker lines from the frozen parents.
 
     Assign each candidate line to its first aligned parent (base first). Compare
     orphan counts per parent, so inherited asymmetric fixtures remain legal but
@@ -2288,9 +2288,9 @@ def _validate_review_changed_paths(
     base_root: Path, context: dict, *, unregistered_extension: str = "reject",
 ) -> list[dict]:
     """Pre-commit content sanity over every changed/created path in the frozen
-    candidate (D0006 §3.5 / L0007 §2.7). Every text path must decode as UTF-8 and
+    candidate. Every text path must decode as UTF-8 and
     carry no leftover conflict marker. Extension selects the validator per
-    L0007 §2.7's table:
+    's table:
 
     `*.py` parses bytes AND compiles in memory; `*.json` and `*.yaml`/`*.yml` get a real
     strict parser (the stdlib's / PyYAML, already a dependency); `*.html`/`*.htm`
@@ -2303,13 +2303,13 @@ def _validate_review_changed_paths(
     and the two callers genuinely need different answers.
 
     ``"reject"`` (the default, and what `_apply_write_plan_locked` passes) is
-    L0007 §2.7 as written: the scope of that rule is the WRITE PLAN's own target
+    as written: the scope of that rule is the WRITE PLAN's own target
     files (`syntax_validation_scope` = "all changed or newly created **plan** target files"),
     so a plan that asks to write a file type we cannot syntax-check is rejected
     whole. There is no fallback that lets an unvalidated AI-written file reach
     approval.
 
-    ``"skip"`` is what `approve_merge_review` passes, and 0481 T0010 rev3 is why.
+    ``"skip"`` is what `approve_merge_review` passes, and the earlier implementation is why.
     Approval validates the WHOLE merge candidate, not a plan — every file the two
     branches happen to touch. Reusing "reject" there made the rule mean something
     it never said: any merge carrying a `.md`, `.txt`, `.lock`, `.png` or (the
@@ -2399,7 +2399,7 @@ def _validate_review_changed_paths(
             if result:
                 errors.append({"path": path, "validator": "vue", "line": result["line"], "message": result["message"]})
         elif unregistered_extension == "reject":
-            # L0007 §2.7: an extension outside the registered table is not
+            # an extension outside the registered table is not
             # generically accepted — reject the whole plan instead.
             label = f"'.{ext}'" if ext else "files without an extension"
             errors.append({
@@ -2409,8 +2409,8 @@ def _validate_review_changed_paths(
     return errors
 
 
-# ── Anchored write-plan engine (flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9,
-# Q&A on 0009-TR) ─────────────────────────────────────────────────────────────
+# ── Anchored write-plan engine (the earlier change the earlier implementation / the earlier implementation,
+# Q&A on the earlier implementation) ─────────────────────────────────────────────────────────────
 # The merge review's explicit [수정 적용] turn is the only conversation turn that
 # may change the source tree. Its AI run has no write tool at all (SCOPE_BOUND_TOOLS
 # demotes action_scope=resolve_conflict to "read") — the anchored plan it submits to
@@ -2423,7 +2423,7 @@ MAX_APPLY_OPERATIONS = 200
 
 
 def _is_test_write_plan_path(path: str) -> bool:
-    """L0007 §2.7's "test file" definition for held_test_operations gating."""
+    """'s "test file" definition for held_test_operations gating."""
     if path.startswith("server/tests/") or path.startswith("client/tests/"):
         return True
     return any(seg in ("test", "tests") for seg in path.split("/"))
@@ -2455,7 +2455,7 @@ def _decode_write_plan_bytes(value, field: str) -> bytes:
 
 def _validate_write_plan_structure(plan: dict, *, allow_test_edits: bool) -> None:
     """Structural/shape validation only — everything that does not require reading
-    the live tree (L0007 §2.5, Q&A on 0009-TR's schema). ``_apply_write_plan_locked``
+    the live tree (Q&A on the earlier implementation's schema). ``_apply_write_plan_locked``
     separately re-validates each operation's claims (expected blob, anchor
     occurrence count, path absence) against the tree it is actually about to
     touch; a plan can pass this and still fail there."""
@@ -2476,9 +2476,9 @@ def _validate_write_plan_structure(plan: dict, *, allow_test_edits: bool) -> Non
     held = plan.get("held_test_operations") or []
     if not isinstance(held, list):
         raise GitServiceError(422, "invalid_write_plan", "held_test_operations must be an array")
-    # 0009-TR rev3 (AI review finding 2): a plan whose AI proposed ONLY test-path
+    # (AI review finding 2): a plan whose AI proposed ONLY test-path
     # edits is legitimate — every proposed operation lands in held_test_operations
-    # and operations[] is empty. L0007 §2.7's held-edit flow requires that to be
+    # and operations is empty. the earlier implementation's held-edit flow requires that to be
     # SHOWN, not rejected outright; the plan is only meaningless if BOTH arrays
     # are empty.
     if not operations and not held:
@@ -2554,7 +2554,7 @@ def submit_review_write_plan(
     (`_materialize_pending_conversation_run` -> `_apply_write_plan_locked`), never
     synchronously from this worker-token call.
 
-    0009-TR rev3 (AI review finding 1): ``ai_run_id`` is the SUBMITTING token's
+    (AI review finding 1): ``ai_run_id`` is the SUBMITTING token's
     own bound run — the caller (git_routes) reads it from the verified worker
     token, never from the request body. A resolve_conflict token that is still
     valid for this group/merge but belongs to a different (stale, or simply
@@ -2627,7 +2627,7 @@ def _build_write_plan_tree(
     object entirely inside an isolated scratch git index — ``GIT_INDEX_FILE``
     points at a temp file only this function touches, so neither the real
     ``.git/index`` nor the working tree are read or written no matter what this
-    returns (L0007 §2.6 ``isolated_apply_area``). Returns ``(new_tree, errors)``;
+    returns (``isolated_apply_area``). Returns ``(new_tree, errors)``;
     ``new_tree`` is ``None`` whenever ``errors`` is non-empty."""
     before_map = _tree_manifest_map(base_root, before_tree)
     errors: list[dict] = []
@@ -2707,11 +2707,11 @@ def _restore_write_plan_worktree(base_root: Path, before_tree: str) -> bool:
 def _apply_write_plan_locked(
     group_id: str, merge_id: int, plan: dict, base_root: Path, base_branch: str,
 ) -> dict:
-    """L0007 §2.6 ``apply_write_plan`` — the anchored write-plan engine's atomic
-    apply/rollback core (flowgate.default.0481 T0008 item 1). Never reached
+    """``apply_write_plan`` — the anchored write-plan engine's atomic
+    apply/rollback core. Never reached
     directly by a route: `_materialize_pending_conversation_run` applies a plan
     once a review-message write turn's AI run finishes with a ``write_plan``
-    attached (Q&A on 0009-TR's ``GET /ai-invoke/{run_id}`` contract). The new
+    attached (Q&A on the earlier implementation's ``GET /ai-invoke/{run_id}`` contract). The new
     candidate tree is built ENTIRELY off-tree (`_build_write_plan_tree`'s
     isolated scratch index) and validated (real syntax/py_compile checks,
     reusing `_validate_review_changed_paths`) before the live checkout is ever
@@ -2719,10 +2719,10 @@ def _apply_write_plan_locked(
     completely untouched, so recovery is only ever needed for the one step that
     DOES touch them (the final ``read-tree --reset -u``).
 
-    0009-TR rev5: the project git lock is the CALLER's to hold, not this
-    function's. L0007 §2.6 opens with `acquire project_git_lock`, but the only
-    caller must decide staleness (L0007 §2.9) and apply in the SAME critical
-    section, and the lock is non-reentrant single-owner (D0006 §3.3) — so a
+    the project git lock is the CALLER's to hold, not this
+    function's. the earlier implementation opens with `acquire project_git_lock`, but the only
+    caller must decide staleness and apply in the SAME critical
+    section, and the lock is non-reentrant single-owner — so a
     self-locking wrapper could not be called from inside that decision at all,
     and having one for nobody would be dead code that invites exactly the
     check-then-act split this revision removes. Every piece of session state
@@ -2743,10 +2743,10 @@ def _apply_write_plan_locked(
     held_test_operations = plan.get("held_test_operations") or []
     operations = plan.get("operations") or []
     if not operations:
-        # 0009-TR rev3 (AI review finding 2): a plan whose only content is
+        # (AI review finding 2): a plan whose only content is
         # held test edits touches nothing — there is no tree to build or
         # apply. Persist the held operations onto the session so the review
-        # screen can show them (L0007 §2.7's "show the reasons and expected verification
+        # screen can show them (the earlier implementation's "show the reasons and expected verification
         # on screen") instead of silently discarding them, and leave
         # review_state/review_fingerprint exactly where they were: nothing
         # changed, so nothing needs re-review.
@@ -2763,7 +2763,7 @@ def _apply_write_plan_locked(
     if build_errors:
         return {"status": "apply_failed", "errors": build_errors}
 
-    # L0007 §2.7 step 6: nothing outside the plan's own paths may have moved —
+    # step 6: nothing outside the plan's own paths may have moved —
     # checked here directly against the two isolated manifests (no git diff
     # needed for this check, and no live tree involved yet).
     before_map = _tree_manifest_map(base_root, before_tree)
@@ -2823,7 +2823,7 @@ def _apply_write_plan_locked(
     context["merge_commit"] = None
     context["apply_phase"] = None
     context["last_error"] = None
-    # 0009-TR rev3 (AI review finding 2): a MIXED plan (some operations applied,
+    # (AI review finding 2): a MIXED plan (some operations applied,
     # some test-path proposals held) must not silently drop the held half —
     # persist it alongside the freshly-applied candidate so it stays visible.
     context["held_test_operations"] = held_test_operations
@@ -2841,7 +2841,7 @@ def _review_session_of_owner(
 ) -> dict:
     """The session ``merge_id`` if it belongs to the caller's owner, else 404.
 
-    0630 T0005: a group route passes its ``group_id`` (and no ``project_id``); a
+    a group route passes its ``group_id`` (and no ``project_id``); a
     project-scoped branch-merge route passes ``project_id`` and ``group_id=None``.
     Neither can reach the other owner's session."""
     session = db_git.get_session(merge_id)
@@ -2861,11 +2861,11 @@ def _merge_review_session(
     """``(session, context, project_id, base_root, base_branch)`` for a general
     merge review session, or raises 404/409 when this merge_id is not one.
 
-    0594 T0012: ``base_root``/``base_branch`` are the attempt's PINNED target root
+    ``base_root``/``base_branch`` are the attempt's PINNED target root
     and branch (``merge_target.resolve_session_target``) — the shared base checkout
     only for a base/legacy target, the managed workspace otherwise. Every review
     step (diff, conversation, write plan, reject/re-review, approve) reads them here.
-    0630 T0005: an ordinary branch merge (owner ``branch_merge``) is reviewed by the
+    an ordinary branch merge (owner ``branch_merge``) is reviewed by the
     same code, addressed by ``project_id``."""
     session = _review_session_of_owner(group_id, merge_id, project_id)
     if db_git.session_kind(session) not in _MERGE_REVIEW_KINDS:
@@ -2879,17 +2879,17 @@ def _merge_review_session(
 
 
 def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) -> None:
-    """D0006 §3.2 / L0007 §2.2 ``record_auto_authority`` — the ONLY place
+    """``record_auto_authority`` — the ONLY place
     ``auto_authority`` is ever written. Called from a human-authenticated request
     at the exact moment a resolution run starts ([AI 호출]) or a human submits a
     direct [해결 제출], with THAT request's checkbox value; a worker token's own
     resolve submission never reaches this function.
 
     A TR revert/reapply conflict silently ignores this call — "does not apply to
-    TR sessions" (D0006 §3.2) is modeled as a no-op here, not an error, because the
+    TR sessions" is modeled as a no-op here, not an error, because the
     generic [AI 호출] start path calls this unconditionally for every
     resolve_conflict invocation and must not regress the pre-existing,
-    already-working TR conflict AI-call flow (T0008 completion criteria: no
+    already-working TR conflict AI-call flow (the earlier implementation completion criteria: no
     regression in the TR/group-update flows)."""
     session = db_git.get_session(merge_id)
     if session is None or session.get("group_id") != group_id:
@@ -2905,7 +2905,7 @@ def _touch_review_activity(merge_id: int) -> None:
     """Record a real review operation as activity for the sweep TTL — best-effort, a
     timestamp write must never fail the operation itself.
 
-    flowgate.v02test.0052 T0003 task 4(c): called from operations only (a review
+    task 4(c): called from operations only (a review
     conversation turn); the review GET (``get_merge_review`` / ``tr_conflict_review``)
     no longer calls it — reading is not activity."""
     try:
@@ -2927,13 +2927,13 @@ def _is_tr_conflict_merge(group_id: Optional[str], merge_id: int, project_id: Op
 
 
 def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
-    """Approval-screen payload (L0007 §2.11 GET .../review) assembled ENTIRELY from
-    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4).
+    """Approval-screen payload (GET .../review) assembled ENTIRELY from
+    the frozen candidate — never a fresh worktree read.
 
-    0668 T0004: a TR conflict session is reviewed on the same screen; its payload comes
+    a TR conflict session is reviewed on the same screen; its payload comes
     from ``tr_conflict_review`` in the same shape.
 
-    flowgate.v02test.0052 T0003 task 4(c): opening (reading) a review is NOT activity —
+    task 4(c): opening (reading) a review is NOT activity —
     a GET never calls ``touch_session``, so a screen left open (or polled) cannot keep
     pushing the sweep TTL forward. Only real operations count: a resolution submit and a
     review conversation turn (``send_review_message``)."""
@@ -2976,12 +2976,12 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
             "snapshot_tree": context.get("snapshot_tree"),
             "changes": context.get("changes") or [],
             "conflict_origins": context.get("conflict_origins") or [],
-            # 0604 D0005 §4/§6 — resolver `supersede` declarations, shown in full.
+            # resolver `supersede` declarations, shown in full.
             "conflict_supersedes": context.get("conflict_supersedes") or [],
             "companion_files": context.get("conflict_companions") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
-            # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
+            # non-null while a chat turn's run is still working, so
             # the approval screen can show the wait in place instead of sending the
             # operator out to the generic AI-run dialog to find out what is happening.
             "pending_conversation": _pending_conversation_view(context),
@@ -2994,7 +2994,7 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
             "can_approve": pending,
             "can_reject": pending,
             "can_send": pending,
-            # 0630 T0005: who owns this review, and for a branch merge the two branches,
+            # who owns this review, and for a branch merge the two branches,
             # the push choice frozen at start and who resolved it (ai | human | mixed).
             "owner_type": _session_owner_type(session),
             **_branch_merge_review_fields(session, context),
@@ -3018,7 +3018,7 @@ def _branch_merge_review_fields(session: dict, context: dict) -> dict:
 
 def review_conversation_brief(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     """What a review-conversation run has to be told about the review it is answering
-    (0481 T0010 rev6, rejection 3).
+.
 
     A chat turn on the approval screen used to be launched with the ORDINARY conflict
     mention: "two branches changed the same lines, resolve every conflict, call the bound
@@ -3078,7 +3078,7 @@ def _refreeze_for_re_review(
     group_id: str, merge_id: int, base_root: Path, base_branch: str,
     context: dict, reason: str,
 ) -> dict:
-    """D0006 §3.4/§3.6 — the target changed under review (or a conditional push was
+    """the target changed under review (or a conditional push was
     rejected). Discard the stale approval bookkeeping, re-freeze the WHOLE tree
     from scratch, and land back at re_review with a new fingerprint. Never
     commits, never reuses the old approval_attempt_id."""
@@ -3091,10 +3091,10 @@ def _refreeze_for_re_review(
         # origin/base_branch's ancestor anymore (someone else's push moved it) —
         # so re-fetch and redo the SAME merge against the base's current tip
         # before falling through to the ordinary freeze below.
-        # 0630 T0005: the project comes from the session's owner (a branch merge has no group).
+        # the project comes from the session's owner (a branch merge has no group).
         project_id = _session_project(db_git.get_session(merge_id)) or _project_of_group(group_id)
         cfg = db_git.get_config(project_id) or {}
-        # flowgate.default.0361 NR0003 §8.1: this recovery fetch must target the
+        # this recovery fetch must target the
         # currently configured remote, not whatever `origin` happened to point at
         # when the base checkout was adopted/cloned.
         ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
@@ -3163,7 +3163,7 @@ def _refreeze_for_re_review(
     from .git import recovery
     recovery.archive_attempt(context, "superseded")
     context["approval_attempt_id"] = None
-    # 0153 T#2 §3.2: the resolution commit leaves the session here — close its
+    # the resolution commit leaves the session here — close its
     # preservation round (the ref itself stays); a re-approval pins `-r<N+1>`.
     preserve.close_round(context, preserve.CLOSE_RE_REVIEW, now=now_iso())
     context["merge_commit"] = None
@@ -3181,7 +3181,7 @@ def _refreeze_for_re_review(
 def _complete_merge_review(
     group_id: str, merge_id: int, project_id: str, context: dict, *, pushed: bool,
 ) -> dict:
-    # 0555 T0008 §5/§12 (D0005 §3.6 B7/B8): a final approval that a conflict parked
+    # a final approval that a conflict parked
     # on this session is finished HERE — after the merge is really terminal, still
     # inside the project Git lock approve_merge_review holds, and BEFORE the
     # completion event goes out. Emitting first would let the refresh that event
@@ -3200,7 +3200,7 @@ def _complete_merge_review(
     merge_commit = context.get("merge_commit") or ""
     merge_commit_short = merge_commit[:7] or None
     if merge_target.is_manual_record(context.get(merge_target.TARGET_RECORD_KEY)):
-        # 0066 D#1 §3-6(9): a reviewed manual merge ends like a clean one — ledger
+        # : a reviewed manual merge ends like a clean one — ledger
         # ``none``, the Group slot kept, no approval to finish (it never carries one).
         _finish_reviewed_attempt(group_id, merge_id, project_id, merge_commit_short, pushed)
         db_git.consume_resolution_checkpoint(merge_id)
@@ -3209,7 +3209,7 @@ def _complete_merge_review(
             "merge_commit": merge_commit_short, "pushed": pushed,
             "group_status": "none", "worktree_kept": True,
         }}
-    # 0594 T0012 §6.3: ledger → the completed attempt, attempt row closed, only its
+    # ledger → the completed attempt, attempt row closed, only its
     # own workspace released. emit=False: the status row is written now (Git really
     # is terminal), but the git_pending_changed broadcast waits until the approval
     # decision below is known — otherwise a subscriber's refresh could land between
@@ -3241,7 +3241,7 @@ def _complete_merge_review(
         "status": "merged", "merge_commit": merge_commit_short, "pushed": pushed,
     }
     if approval is not None:
-        # D0005 §3.12: the Git completion is announced either way (it really
+        # the Git completion is announced either way (it really
         # happened), but "Git finished" and "the approval finished" are two facts
         # and the payload says which of them is true.
         event["approval"] = approval
@@ -3251,7 +3251,7 @@ def _complete_merge_review(
     # matches on (git_routes.py's token-consume check, the resolver dialog, the
     # worker's HTTP tool reader). `review_state` is where the NEW completed/
     # reconciling/re_review vocabulary lives; `status` keeps meaning what it
-    # always meant to keep this a non-breaking extension (T0008 completion
+    # always meant to keep this a non-breaking extension (the earlier implementation completion
     # criteria: existing TR/group-update flows unaffected).
     result = recovery.replay_result(db_git.get_session(merge_id), status="merged")
     return {"ok": True, "result": result}
@@ -3261,13 +3261,13 @@ def _finish_reviewed_attempt(
     group_id: str, merge_id: int, project_id: str, merge_commit_short: Optional[str],
     pushed: bool, *, emit: bool = True, cleanup_slot: bool = True,
 ) -> None:
-    """Close a reviewed finalize attempt as completed (0594 T0012 §6.3): the row
+    """Close a reviewed finalize attempt as completed: the row
     stays, the group ledger points at it, and only its own workspace is released.
 
-    ``emit``/``cleanup_slot`` let the deferred final approval (0555 T0008 §12)
+    ``emit``/``cleanup_slot`` let the deferred final approval
     broadcast and tear the slot down itself once its decision is known.
 
-    0066 D#1 §3-6(7): a manual merge attempt (``origin=manual_merge``) keeps the Group
+    : a manual merge attempt (``origin=manual_merge``) keeps the Group
     slot and leaves the ledger at ``none`` instead."""
     target = merge_target.resolve_merge_id_target(merge_id)
     session = db_git.get_session(merge_id)
@@ -3306,16 +3306,16 @@ def _run_session_git(
     retains the audit. No argv/credentials or extra Git probes are kept.
     Exceptions retain a null result instead of inventing a subprocess exit code.
 
-    flowgate.v02test.0052 T0003: a FAILED local command (non-zero exit) also keeps git's
+    a FAILED local command (non-zero exit) also keeps git's
     own reason — one stderr line chosen by ``_git_reason_line``, credential-scrubbed and
     capped — as ``stderr_tail``.
     merge 457's abort failed five times and nothing anywhere said why; a successful
     command still keeps no output. A network command (push/fetch/pull/ls-remote/clone,
     or any call carrying a configured ``secret``) keeps none either: its stderr can hold
     a credential only the caller's configured secret can mask, and its scrubbed reason
-    already lives in ``last_error.detail`` (0153 T#1).
+    already lives in ``last_error.detail``.
 
-    0153 T#4 (review rej_01M6ZWFPF1E6JE2M): when this thread processes the session under
+    (review rej_01M6ZWFPF1E6JE2M): when this thread processes the session under
     its claim, the claim is fenced before the command and again after it, before the audit
     write — a lease that ran out during a slow fetch/push (and was taken over) stops here
     with ``session_claim.ClaimLost``; nothing of this processor is written afterwards.
@@ -3357,7 +3357,7 @@ def _git_subcommand(args: list[str]) -> Optional[str]:
 
 
 def _audit_keeps_stderr(operation: str, args: list[str], kwargs: dict) -> bool:
-    """flowgate.v02test.0052 T0003: whether a failed session command's audit entry may keep
+    """whether a failed session command's audit entry may keep
     git's reason — local commands only (see :func:`_run_session_git`)."""
     if kwargs.get("secret"):
         return False
@@ -3365,7 +3365,7 @@ def _audit_keeps_stderr(operation: str, args: list[str], kwargs: dict) -> bool:
             and _git_subcommand(args) not in _NETWORK_GIT_COMMANDS)
 
 
-# ── flowgate.v02test.0052 T0003: the one way the server aborts a merge ─────────────
+# ── the earlier change the earlier implementation: the one way the server aborts a merge ─────────────
 #
 # merge 457 (0036 → feature/v0.2.0): `git merge --abort` exited 128 five times with
 # "Entry '<path>' not uptodate. Cannot merge." although nothing was modified — a staged
@@ -3472,7 +3472,7 @@ def _record_abort_failure(merge_id: int, trigger: str, result) -> Optional[dict]
 
 
 def _session_claim_require(merge_id: int, step: str) -> None:
-    """0153 T#4: fence the session claim this thread holds for ``merge_id`` (no claim held:
+    """fence the session claim this thread holds for ``merge_id`` (no claim held:
     nothing to fence). Raises ``session_claim.ClaimLost`` when it is no longer valid."""
     from .git import session_claim as _session_claim
     _session_claim.require(int(merge_id), step)
@@ -3513,7 +3513,7 @@ _PRESERVE_VALIDATION_REASONS = (
 
 
 def _enter_preserve_failed(merge_id: int, context: dict, result: dict, stage: str) -> dict:
-    """0153 T#2 §3.4 — park the session without touching Git any further.
+    """park the session without touching Git any further.
 
     ``merge_commit``, ``approval_attempt_id``, ``apply_phase``, the approval intent and
     the local branch/HEAD stay exactly as they are; ``reconciling`` keeps the
@@ -3536,7 +3536,7 @@ def _preserve_gate(
     merge_id: int, context: dict, root: Path, *, stage: Optional[str] = None,
     project_id: Optional[str] = None, group_id: Optional[str] = None,
 ) -> Optional[dict]:
-    """0153 T#2 §3.1/§3.3/§4.1 — pin the approved resolution commit before any remote
+    """pin the approved resolution commit before any remote
     contact. None: preserved (``created``/``same``) and recorded in the session
     context, persisted BEFORE the caller goes on to push/query. Otherwise the
     ``preserve_failed`` response the caller returns as is.
@@ -3571,7 +3571,7 @@ def _preserve_gate(
 
 
 def _preserve_reset_gate(merge_id: int, context: dict, root: Path) -> Optional[dict]:
-    """0153 T#2 §4.2 — read-only re-verification right before an existing
+    """read-only re-verification right before an existing
     ``reset --hard ORIG_HEAD``. None: the reset may run; otherwise preserve_failed
     (``stage=reset_gate``) and the reset/refreeze must not run."""
     result = preserve.verify_preserved(root, context)
@@ -3602,13 +3602,13 @@ def _conditionally_push_or_reconcile(
     group_id: str, merge_id: int, session: dict, project_id: str,
     base_root: Path, cfg: dict, base_branch: str, context: dict,
 ) -> dict:
-    """D0006 §3.6 conditional push — CAS on ``expected_remote_head`` via
+    """conditional push — CAS on ``expected_remote_head`` via
     ``--force-with-lease`` (safe for a fast-forward update, not a history rewrite),
     with an explicit unknown-result branch instead of folding it into failure."""
     session_action = session.get("finalize_action") or SESSION_ACTION_DEFAULT
     if session_action == "merge_only":
         return _complete_merge_review(group_id, merge_id, project_id, context, pushed=False)
-    # 0153 T#2 §3.1: pin the approved resolution commit under refs/flowgate/preserve/
+    # pin the approved resolution commit under refs/flowgate/preserve/
     # BEFORE the origin sync, the secret load and the push. A failure parks the session
     # at reconciling/preserve_failed with nothing pushed, synced or reset.
     preserve_failed = _preserve_gate(
@@ -3618,7 +3618,7 @@ def _conditionally_push_or_reconcile(
         return preserve_failed
     expected = context.get("expected_remote_head") or ""
     lease = f"{base_branch}:{expected}" if expected else base_branch
-    # flowgate.default.0361 NR0003 §7/§16: the review may have sat waiting for
+    # the review may have sat waiting for
     # approval long enough for the operator to repoint repo_url at a different
     # remote — this push must land on the CURRENTLY configured origin, not
     # whatever `origin` happened to point at when the base checkout was
@@ -3662,7 +3662,7 @@ def approve_merge_review(
     group_id: Optional[str], merge_id: int, *, attempt_id: str, review_fingerprint: str,
     authority: str, project_id: Optional[str] = None,
 ) -> dict:
-    """D0006 §3.5·§3.6 / L0007 §2.8 ``approve_snapshot``.
+    """· / the earlier implementation ``approve_snapshot``.
 
     ``authority`` is ``"human"`` (the person pressing [승인]) or ``"automatic"``
     (the internal call `submit_resolution` makes for its own auto_authority
@@ -3670,7 +3670,7 @@ def approve_merge_review(
     to the client — an automatic approval never reaches this function through the
     public HTTP route).
 
-    0630 T0005: an ordinary branch merge (``project_id``, no group) is approved here
+    an ordinary branch merge (``project_id``, no group) is approved here
     too. It is never ``automatic``; before anything moves it re-checks that the target
     and source refs are where the merge started (stale target/source → 409, nothing
     changed), and it publishes through ``branch_merge.publish_reviewed`` with the push
@@ -3682,7 +3682,7 @@ def approve_merge_review(
     if is_branch_merge and authority != "human":
         raise GitServiceError(403, "human_authority_required", "a branch merge is approved by a person")
     project_id = _session_project(session)
-    # 0669 unit 8b: the session target's G/W/B plus R (it commits and pushes) instead of
+    # unit 8b: the session target's G/W/B plus R (it commits and pushes) instead of
     # the project mutex.
     from .git import branch_merge_publish as _bmp
     from .git import session_claim as _session_claim
@@ -3693,7 +3693,7 @@ def approve_merge_review(
         if authority == "automatic" and not context.get("auto_authority"):
             raise GitServiceError(403, "human_authority_required", "auto_authority was not recorded for this session")
         if authority == "automatic" and context.get("conflict_supersedes"):
-            # 0604 D0005 §3.4 — a supersede declaration always needs a person's approval.
+            # a supersede declaration always needs a person's approval.
             raise GitServiceError(
                 403, "human_authority_required",
                 "a supersede declaration was recorded; a person must approve this merge",
@@ -3724,7 +3724,7 @@ def approve_merge_review(
                 409, "stale_review", "the reviewed target has changed since this fingerprint was shown",
             )
         cfg = db_git.get_config(project_id) or {}
-        # 0594 T0012 §13: approve/commit/push run in the attempt's pinned target
+        # approve/commit/push run in the attempt's pinned target
         # root on its pinned branch — never a fresh read of project.base_branch.
         target = merge_target.resolve_session_target(session)
         base_root = target.root
@@ -3745,7 +3745,7 @@ def approve_merge_review(
             return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "identity_mismatch")
 
         try:
-            # 0481 T0010 rev3: the candidate is a MERGE, not a write plan — see
+            # the candidate is a MERGE, not a write plan — see
             # `_validate_review_changed_paths`' docstring for why an extension we
             # have no validator for must not veto a merge here.
             errors = _validate_review_changed_paths(
@@ -3755,7 +3755,7 @@ def approve_merge_review(
                 recovery.archive_attempt(context, "pre_commit_validation_failed")
                 context["approval_attempt_id"] = None
                 context["review_state"] = pre_apply_review_state
-                # L0007 §2.7/§2.11: an unregistered-extension rejection is a
+                # an unregistered-extension rejection is a
                 # distinct error code from an ordinary parser/compile failure.
                 code = (
                     "unsupported_syntax_validation"
@@ -3859,7 +3859,7 @@ def reject_merge_review(
     provider_pinned: bool, start_run: "Callable[[Optional[str]], Optional[str]]",
     project_id: Optional[str] = None,
 ) -> dict:
-    """D0006 §3.7 / L0007 §2.9 ``reject_and_return_to_resolver``.
+    """``reject_and_return_to_resolver``.
 
     Restores the conflict by re-running the ORIGINAL merge (same base_head,
     same merge_head, captured in ``resolver_baseline`` at session creation) —
@@ -3882,12 +3882,12 @@ def reject_merge_review(
     if not base_head or not merge_head:
         raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
 
-    # 0669 unit 8b: the session target's G/W/B (the conflict is restored in its
+    # unit 8b: the session target's G/W/B (the conflict is restored in its
     # workspace) instead of the project mutex.
     from .git import branch_merge_publish as _bmp
     lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
-        # 0009-TR rev5 (AI review finding): the checks above ran WITHOUT the lock,
+        # (AI review finding): the checks above ran WITHOUT the lock,
         # so an approval (or another rejection) may have moved this session in the
         # meantime. Re-read and re-check here: restoring the conflict from a
         # context read before that transition would both undo it in the checkout
@@ -3926,20 +3926,20 @@ def reject_merge_review(
         # matches the sha this session was frozen against, and that mismatch (not
         # a silently-different merge) is what must fail restoration.
         if is_branch_merge:
-            # 0630 T0005: an ordinary branch merge was started from its SOURCE branch name.
+            # an ordinary branch merge was started from its SOURCE branch name.
             branch = (context.get("branch_merge") or {}).get("source_branch") or merge_head
         else:
             state = db_git.get_state(group_id) or {}
             branch = (state.get("branch")
                       or worktree_branch_name(project_id, _module_of(group_id), group_id))
-        # 0153 T#3 §3.5: a reconcile hand-off re-based the conflict on the remote tip and
+        # a reconcile hand-off re-based the conflict on the remote tip and
         # re-merged the RESOLUTION commit (``merge_ref``), not the group branch. Restoring
         # that conflict means merging the same SHA again and checking MERGE_HEAD against it.
         merge_ref = baseline.get("merge_ref")
         if merge_ref:
             branch = merge_ref
             merge_head = merge_ref
-        # 0153 T#3 review: a CLEAN hand-off (re_review after a failed re-verification) has
+        # review: a CLEAN hand-off (re_review after a failed re-verification) has
         # no conflict to restore — restoring it is the same clean merge of the resolution
         # onto F, i.e. the candidate the session was handed back with.
         clean_restore = bool(merge_ref) and baseline.get("clean") is True
@@ -3948,7 +3948,7 @@ def reject_merge_review(
         # work when the checkout has no user.name/user.email, and FlowGate never
         # relies on ambient git config. Without it a rejection could only ever end
         # at restoration_verification_failed on a server that has none — the merge
-        # never ran, so no marker could come back (0555 T0008 §7).
+        # never ran, so no marker could come back.
         redo = _run_session_git(
             merge_id, context, "merge", "reject_merge_review",
             [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
@@ -3998,7 +3998,7 @@ def reject_merge_review(
         })
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
-        # 0608 T0005: the redo merge brought back the same line-ending-only conflicts
+        # the redo merge brought back the same line-ending-only conflicts
         # the session opened with; take them out again exactly as finalize did.
         apply_eol_separation(merge_id, base_root)
     finally:
@@ -4034,7 +4034,7 @@ def _conversation_run_detail(run_id: str) -> tuple[Optional[dict], bool]:
 
 
 def _pending_conversation_view(context: dict) -> Optional[dict]:
-    """0481 T0010 rev1 — the in-flight chat turn, as the approval screen sees it.
+    """the in-flight chat turn, as the approval screen sees it.
 
     The review screen's chat used to be fire-and-forget: ``send_review_message``
     starts a run and nothing in the payload said one was in flight, so the only
@@ -4073,19 +4073,19 @@ def _materialize_pending_conversation_run(
     group_id: str, merge_id: int, project_id: str, base_root: Path, base_branch: str,
 ) -> None:
     """Lazily folds a finished conversation run's answer into ``conversation`` the
-    next time the review screen is read (L0007 §2.9 — this process starts runs
+    next time the review screen is read (the earlier implementation — this process starts runs
     asynchronously; nothing else calls back into this module when one finishes).
 
     A propose-only run (or a write turn whose run finished without ever
-    submitting a plan) just appends its ``last_message`` — L0007 §2.9's "on run
+    submitting a plan) just appends its ``last_message`` — the earlier implementation's "on run
     success without plan" branch. A write turn whose run DID submit a plan
     (``get_run_detail(run_id).write_plan`` — the bound contract from the Q&A on
-    0009-TR) is applied here via ``_apply_write_plan_locked``, and its outcome
+    ) is applied here via ``_apply_write_plan_locked``, and its outcome
     (new fingerprint / held_only / apply_failed / rollback_verification_failed)
     becomes the AI turn instead of the run's raw last_message. Whenever the
     plan is actually recorded against the session (``re_review`` or
     ``held_only`` — i.e. the plan passed the fingerprint/identity checks), any
-    ``held_test_operations`` it carried (L0007 §2.7) are persisted onto the
+    ``held_test_operations`` it carried are persisted onto the
     session (``get_merge_review``'s ``held_test_operations``) so they stay
     visible for the human's second explicit [테스트 편집 포함 재지시] action;
     a rejected plan (``apply_failed``/``rollback_verification_failed``)
@@ -4096,9 +4096,9 @@ def _materialize_pending_conversation_run(
     implicitly its pending ``review_state``) is no longer the one on screen —
     approved, rejected, or superseded by an earlier write turn's new candidate
     while this run was in flight — the result is discarded as ``stale_run``
-    instead (L0007 §2.9), regardless of whether it carried a write plan.
+    instead, regardless of whether it carried a write plan.
 
-    0009-TR rev5 (AI review finding): that decision and everything it authorizes
+    (AI review finding): that decision and everything it authorizes
     happen inside ONE hold of the project git lock — the same lock every review
     state transition (``approve_merge_review``, ``reject_merge_review``,
     ``_apply_write_plan_locked``) takes before it moves the session — so nothing
@@ -4121,7 +4121,7 @@ def _materialize_pending_conversation_run(
     if detail is not None and (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
         return  # still running
 
-    # 0669 unit 8b: the session target's G/W/B, one attempt and no wait (see above),
+    # unit 8b: the session target's G/W/B, one attempt and no wait (see above),
     # instead of the project mutex.
     from .git import branch_merge_publish as _bmp
     try:
@@ -4134,7 +4134,7 @@ def _materialize_pending_conversation_run(
         if context.get("pending_conversation_run_id") != run_id:
             return  # a concurrent poll already claimed and materialized this run
 
-        # 0009-TR rev5: the RUN row is re-read inside the hold too, not just the
+        # the RUN row is re-read inside the hold too, not just the
         # session. `detail` above was fetched BEFORE the lock, and
         # `submit_review_write_plan` (the worker-token window, which takes no git
         # lock) can still attach a newer plan to this run right up until the claim
@@ -4157,7 +4157,7 @@ def _materialize_pending_conversation_run(
         # human can approve, reject, or (via an EARLIER write turn) already
         # refreeze a new candidate while this run was in flight; in every one of
         # those cases the run's answer/plan describes a target that no longer
-        # exists and must be discarded as `stale_run` (L0007 §2.9) — never
+        # exists and must be discarded as `stale_run` — never
         # applied, never appended as if it still answered the current candidate.
         # Checking `review_state` in addition to fingerprint/generation matters
         # because approval does NOT change either of those.
@@ -4176,7 +4176,7 @@ def _materialize_pending_conversation_run(
         # The claim is persisted BEFORE the plan is applied: should this process
         # die mid-apply, the next poll must not apply the same plan a second
         # time on top of the candidate this one already changed.
-        # 0578 T0006 §3 work item 3-6: capture the start locale BEFORE the pop below, and
+        # work item 3-6: capture the start locale BEFORE the pop below, and
         # before `_apply_write_plan_locked` makes this function re-read `context` from the
         # session -- after either of those it is unreachable, and the turn appended at the
         # bottom would have no `source_locale` to record.
@@ -4199,7 +4199,7 @@ def _materialize_pending_conversation_run(
                     group_id, merge_id, plan, base_root, base_branch,
                 )
             except GitServiceError as exc:
-                # 0578 T0006 §2.3: code and diagnostic sentence stay separate fields so the
+                # code and diagnostic sentence stay separate fields so the
                 # screen's diagnostic area can show the cause without the body quoting it.
                 apply_result = {
                     "status": "apply_failed",
@@ -4212,19 +4212,19 @@ def _materialize_pending_conversation_run(
 
         conversation = context.get("conversation") or []
         if stale_run:
-            # 0481 T0010 rev6 (rejection 3): the answer is KEPT. Until rev5 this branch
+            # (rejection 3): the answer is KEPT. Until this branch
             # replaced whatever the run had said with one sentence -- "the approval target
             # changed, so the result was discarded (stale_run). Instruct again." -- and the
             # operator, who had asked "what was the problem this time?", got that instead of
             # the answer, twice, with no way to tell WHICH of the three identity checks
-            # fired. The plan-discard rule (L0007 §2.9) is unchanged and `plan` above still
+            # fired. The plan-discard rule is unchanged and `plan` above still
             # enforces it: nothing a stale run submitted is ever applied. But an ANSWER is
             # text about a candidate one revision behind, not a danger, so it is appended
             # under a line that says exactly what moved underneath it.
             #
-            # 0578 T0006 §2.2: the three checks and the plan-discard rule are UNCHANGED --
+            # the three checks and the plan-discard rule are UNCHANGED --
             # only their outcome is stored differently. The sentence used to be assembled
-            # here, in Korean, and frozen into `message` forever (NR0003 F1); now the
+            # here, in Korean, and frozen into `message` forever; now the
             # WHICH-check-fired verdict travels as reason codes and the surface picks the
             # words. `message` carries the AI's own answer and nothing else.
             changed = []
@@ -4251,7 +4251,7 @@ def _materialize_pending_conversation_run(
                 "created_at": now_iso(),
             })
         elif lost:
-            # 0481 T0010 rev1: the run id is gone for good, so no later poll can ever
+            # the run id is gone for good, so no later poll can ever
             # fold an answer in. Before this branch the pending bookkeeping stayed set
             # forever and every further message was refused with `re_instruction_busy`
             # — the operator waited in the approval screen for a reply that could not
@@ -4268,13 +4268,13 @@ def _materialize_pending_conversation_run(
             })
         elif apply_result is not None:
             status = apply_result.get("status")
-            # 0009-TR rev3 (AI review finding 2): held test operations must be
+            # (AI review finding 2): held test operations must be
             # OBSERVABLE, not just structurally accepted — surface them in the same
             # AI turn that reports the apply outcome, in addition to the structured
             # `held_test_operations` context field `get_merge_review` now exposes.
             held = apply_result.get("held_test_operations") or []
             errors = apply_result.get("errors") or []
-            # 0578 T0006 §2.2: held operations stay OBSERVABLE (0009-TR rev3's point) but as
+            # held operations stay OBSERVABLE (TR 's point) but as
             # a COUNT, not a sentence -- the paths and purposes are already on the session's
             # own `held_test_operations`, which the screen lists in full. §2.3: the causes of
             # a failed apply go to `apply_errors` verbatim; `json.dumps(errors)` is never
@@ -4306,7 +4306,7 @@ def _materialize_pending_conversation_run(
                 turn["apply_errors"] = errors
             conversation.append(turn)
         elif detail.get("end_reason") == "cancelled":
-            # T0004 §2.2 (flowgate.default.0570): a run the human stopped with the
+            # a run the human stopped with the
             # STOP button must not fold into the conversation looking like an
             # ordinary run failure -- name it as a cancellation instead.
             conversation.append({
@@ -4319,7 +4319,7 @@ def _materialize_pending_conversation_run(
                 "created_at": now_iso(),
             })
         else:
-            # 0578 T0006 §2.2: a real answer is content and stays verbatim in `message`.
+            # a real answer is content and stays verbatim in `message`.
             # "no answer"/"run failed" were never the model's words -- they were this
             # function's, in English, for a ko screen -- so they become codes instead.
             answer = detail.get("last_message") or ""
@@ -4349,11 +4349,11 @@ def send_review_message(
     locale: Optional[str] = None,
     project_id: Optional[str] = None,
 ) -> dict:
-    """D0006 §3.7 / L0007 §2.9 ``send_review_message``. A propose-only turn
+    """``send_review_message``. A propose-only turn
     (``apply_requested=False``) asks a question against the frozen candidate and
     never touches the source tree. An explicit-write turn (``apply_requested=True``,
-    flowgate.default.0481 T0008 item 1) starts the SAME kind of run but marks the
-    session as waiting for an anchored write plan (Q&A on 0009-TR's bound
+    ) starts the SAME kind of run but marks the
+    session as waiting for an anchored write plan (Q&A on the earlier implementation's bound
     contract); the run's AI has no write tool at all and can only submit that plan
     to ``POST .../write-plan-token`` (``submit_review_write_plan``). Nothing is
     applied synchronously here — ``_materialize_pending_conversation_run`` calls
@@ -4362,9 +4362,9 @@ def send_review_message(
     freezes ``pending_conversation_start_fingerprint``/``_start_generation`` from
     the CURRENT (already-validated-pending) ``review_fingerprint``/
     ``instruction_generation``, so materialization can later tell a `stale_run`
-    apart from one still answering the review on screen (L0007 §2.9). Both that
+    apart from one still answering the review on screen. Both that
     freeze and the human turn are written from a session re-read INSIDE the
-    project git lock (0009-TR rev5), so this turn can never write back over an
+    project git lock (TR), so this turn can never write back over an
     approval/rejection that landed while the run was starting."""
     session, context, project_id, _base_root, _base_branch = _merge_review_session(
         group_id, merge_id, **_owner_kw(project_id),
@@ -4391,7 +4391,7 @@ def send_review_message(
     # started is simply left unrecorded, and that run's own write-plan
     # submission is refused by `submit_review_write_plan`'s pending-run check.
     run_id = start_run()
-    # 0669 unit 8b: the session target's G/W/B instead of the project mutex.
+    # unit 8b: the session target's G/W/B instead of the project mutex.
     from .git import branch_merge_publish as _bmp
     lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
@@ -4411,19 +4411,19 @@ def send_review_message(
         if apply_requested:
             context["pending_conversation_write_requested"] = True
             context["pending_conversation_allow_test_edits"] = bool(allow_test_edits)
-        # L0007 §2.9 stale_run guard: freeze the review identity THIS run is bound to
+        # stale_run guard: freeze the review identity THIS run is bound to
         # at launch, so `_materialize_pending_conversation_run` can tell — once the
         # run finishes, possibly much later — whether the review it answered is
         # still the one on screen.
         context["pending_conversation_start_fingerprint"] = context.get("review_fingerprint")
         context["pending_conversation_start_generation"] = int(context.get("instruction_generation") or 0)
-        # 0578 T0006 §3 work item 3-5 / D0005 §3.3: the locale this turn STARTED in, pinned
+        # work item 3-5 / the design: the locale this turn STARTED in, pinned
         # beside the other pending bookkeeping and written under the same hold. A status
         # poll, a cancel, or the screen switching language later must not move it.
         context["pending_conversation_locale"] = template_provision.normalize_locale(locale)
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
-        # flowgate.v02test.0052 T0003 task 4(c): a conversation turn is a real
+        # task 4(c): a conversation turn is a real
         # operation on the review, so it — not opening the screen — is activity.
         _touch_review_activity(merge_id)
     finally:
@@ -4436,10 +4436,10 @@ def send_review_message(
 
 
 def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional[dict]:
-    """D0006 §3.6 / L0007 §2.8.1 ``reconcile_push_session`` — settles a session stuck in
+    """``reconcile_push_session`` — settles a session stuck in
     ``reconciling`` after a push whose result this process never learned.
 
-    0153 T#3: after the lock, the kind re-check and the T#2 preservation gate, one
+    after the lock, the kind re-check and the the earlier implementation preservation gate, one
     reconcile *cycle* runs the non-destructive state machine of
     ``git/reconcile_plan.py``. It never discards the resolution commit: an unchanged
     remote gets the SAME preserved commit pushed again (``--force-with-lease`` on the
@@ -4466,7 +4466,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
     if trigger != "server_startup" and not _iso_is_due(context.get("reconcile_next_at")):
         return None
     project_id = _session_project(session)
-    # 0153 T#4 §4.3: the session claim is taken after the unlocked pre-check and before
+    # the session claim is taken after the unlocked pre-check and before
     # the lock (re-entered when a sweep/startup pass of this thread already holds it). A
     # busy claim is answered like a busy lock: None, nothing written. The outermost
     # release records the outcome; a dead process is freed by lease expiry / owner DEAD.
@@ -4477,7 +4477,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
 
     def _locked() -> Optional[dict]:
         nonlocal session
-        # 0669 unit 8b: the session target's G/W/B plus R (it asks the remote and may push or
+        # unit 8b: the session target's G/W/B plus R (it asks the remote and may push or
         # move the target) instead of the project mutex.
         from .git import branch_merge_publish as _bmp
         try:
@@ -4494,7 +4494,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
                 return None
             if context.get("review_state") != REVIEW_STATE_RECONCILING:
                 return {"ok": True, "result": {"status": context.get("review_state")}}
-            # 0153 T#2 §3.4: the auto-retry check above ran without the lock. Another caller
+            # the auto-retry check above ran without the lock. Another caller
             # may have parked the session (e.g. reconciling/preserve_failed) while this one
             # waited, so the kind is re-checked on the fresh row BEFORE any context write,
             # preservation call, remote query or reset — a kind outside the auto-retry set
@@ -4505,11 +4505,11 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
                     "status": REVIEW_STATE_RECONCILING, "review_state": REVIEW_STATE_RECONCILING,
                     "reconciliation_kind": kind,
                 }}
-            # 0153 T#3 §3.1: one more cycle of this round (counted even on server_startup,
+            # one more cycle of this round (counted even on server_startup,
             # which skips the due check) with an exponential back-off; the cumulative
-            # reconcile_attempt_count keeps counting for T#4. A round whose budget is already
+            # reconcile_attempt_count keeps counting for the earlier implementation. A round whose budget is already
             # spent is not counted again — it is parked below without any remote contact.
-            # 0153 T#4 (review rej_01M6ZWFPF1E6JE2M): the claim was taken before the lock and
+            # (review rej_01M6ZWFPF1E6JE2M): the claim was taken before the lock and
             # may have been lost while this call waited for it (lease expired, another
             # instance took over). It is fenced HERE, before the first change under the lock
             # (cycle counters, preservation gate, remote contact). Every later session write
@@ -4532,14 +4532,14 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
             context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
             db_git.set_session_context(merge_id, context)
             cfg = db_git.get_config(project_id) or {}
-            # 0594 T0012 §13: the remote ref asked about is the attempt's pinned target.
+            # the remote ref asked about is the attempt's pinned target.
             target = merge_target.resolve_session_target(session)
             base_root = target.root
             base_branch = target.target_branch
             if base_root is None:
                 return {"ok": True, "result": {"status": "retry_scheduled"}}
-            # 0153 T#2 §4.1: preservation gate (re-entry recovery included) BEFORE the remote
-            # is asked. A session from before T#2 gets its ref here if the commit passes the
+            # preservation gate (re-entry recovery included) BEFORE the remote
+            # is asked. A session from before the earlier implementation gets its ref here if the commit passes the
             # object/parent checks; any failure parks it with no remote query and no reset.
             preserve_failed = _preserve_gate(
                 merge_id, context, base_root, stage=preserve.STAGE_RECONCILE_GATE,
@@ -4575,10 +4575,10 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         _session_claim.release(claim)
 
 
-# ── 0153 T#3: reconcile state machine executor ───────────────────────────────
+# ── the earlier implementation: reconcile state machine executor ───────────────────────────────
 # Every helper below runs under the session lock reconcile_push_session holds and only
 # performs what reconcile_plan.decide() decided. Ref/HEAD/remote moves go through
-# _run_session_git (T#1 audit); reads go through _run_git.
+# _run_session_git (audit); reads go through _run_git.
 
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -4588,7 +4588,7 @@ def _is_sha40(value) -> bool:
 
 
 def _reconcile_claim_ok(merge_id: int, step: str) -> bool:
-    """0153 T#4 §4.3: renew + fence the session claim right before a reconcile write."""
+    """renew + fence the session claim right before a reconcile write."""
     from .git import session_claim as _session_claim
     return _session_claim.check(merge_id, step)
 
@@ -4610,7 +4610,7 @@ class _ReconcileRun:
 
 
 def _reconcile_detail(stderr: Optional[str], secret: Optional[str] = None) -> str:
-    """T#1 rule: scrubbed, last useful line, at most 300 characters."""
+    """rule: scrubbed, last useful line, at most 300 characters."""
     text = _scrub(stderr or "", secret)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return (lines[-1] if lines else "git command failed")[:300]
@@ -4623,7 +4623,7 @@ def _reconcile_secret(run: _ReconcileRun) -> str:
 
 
 def _prior_push_error(context: dict) -> Optional[dict]:
-    """T#2 rule: a ``push_remote_unknown`` that was there before (directly, or already
+    """rule: a ``push_remote_unknown`` that was there before (directly, or already
     carried by an earlier failure) moves under ``prior_push_error`` verbatim."""
     prior = context.get("last_error")
     if isinstance(prior, dict):
@@ -4872,14 +4872,14 @@ def _reconcile_complete(run: _ReconcileRun, tip: Optional[str], *, published: Op
     context.pop("reconciliation_kind", None)
     context.pop("reconcile_next_at", None)
     if run.is_branch:
-        # 0630 T0005: the push landed; a base target still has its local ref to apply.
+        # the push landed; a base target still has its local ref to apply.
         from .git import branch_merge as _branch_merge
         _branch_merge._apply_local_target(
             run.project_id, context.get("branch_merge") or {}, run.root,
             published, required=False, merge_id=run.merge_id, context=context,
         )
         return _branch_merge.complete_reviewed(run.merge_id, context, pushed=True)
-    # _complete_merge_review → _finish_reviewed_attempt (0594 T0012 §6.3): the ledger
+    # _complete_merge_review → _finish_reviewed_attempt: the ledger
     # points at the attempt and only its own workspace is released.
     return _complete_merge_review(run.group_id, run.merge_id, run.project_id, context, pushed=True)
 
@@ -4917,7 +4917,7 @@ def _reconcile_repush(run: _ReconcileRun, inputs) -> dict:
     if verdict == reconcile_plan.PUSH_LEASE_REJECTED:
         # The remote moved: the next cycle's decision handles it. No reset, no refreeze.
         return _reconcile_transient(run, inputs, reconcile_plan.OUT_PUSH_LEASE_REJECTED)
-    # Result unknown (timeout and the rest): the T#1 evidence shape plus the stage.
+    # Result unknown (timeout and the rest): the the earlier implementation evidence shape plus the stage.
     context["last_error"] = {
         "code": "push_remote_unknown", "returncode": push.returncode, "cause": cause,
         "detail": _reconcile_detail(push.stderr, secret),
@@ -5224,7 +5224,7 @@ def _handoff_to_human(run: _ReconcileRun, remote_tip: str, *, problems: Optional
                   "changed_paths": [c["path"] for c in snapshot["changes"]],
                   "error": "remote_integration_unverified"}
     # The resolution leaves the session: close its round (refs kept), a re-approval pins
-    # the next round. The approval intent stays for the re-approval (T#5); a person, not
+    # the next round. The approval intent stays for the re-approval; a person, not
     # an automatic approval, decides the handed-back merge.
     from .git import recovery
     recovery.archive_attempt(context, "superseded")
@@ -5266,11 +5266,11 @@ def reconcile_due_merge_review_sessions(
             )
 
 
-# ── Post-finalize slot cleanup (flowgate.default.0182 NR0003 §5) ─────────────
+# ── Post-finalize slot cleanup ─────────────
 # Before 0182 nothing ever removed a finalized group's leftovers: the worktree
 # directory (a full source copy per group), the local work branch ref, and the
 # ledger row accumulated forever (delete_config intentionally leaves worktrees
-# alone, P0005 §2-3 — that guard is about CONFIG deletion and stays). Cleanup
+# alone, the plan — that guard is about CONFIG deletion and stays). Cleanup
 # now runs best-effort right after a finalize reaches merged/pushed, plus a
 # manual backlog sweep for everything that piled up before this landed.
 
@@ -5288,9 +5288,9 @@ def reconcile_due_merge_review_sessions(
 
 
 
-# ── Auto-recovery sweep (flowgate.default.0205 P scenario 6 / L §2.5) ─────────
+# ── Auto-recovery sweep (P scenario 6 / L) ─────────
 
-# 0550 NR0025 §9/recommendation 4 — sweep-daemon startup flag. Before decomposition this was a git_service global,
+# sweep-daemon startup flag. Before decomposition this was a git_service global,
 # and callers could re-arm the daemon with `git_service._sweep_daemon_started = False`.
 # Re-exporting by import only snapshots the value at import time and cannot restore that contract. Keep it here;
 # git/cleanup.py reads and writes it through `_gs.`.
@@ -5328,11 +5328,11 @@ from .git.cleanup import (
 
 
 
-# ── Boot recovery (flowgate.default.0205 P scenario 7 / L §2.6) ───────────────
+# ── Boot recovery (P scenario 7 / L) ───────────────
 
 
 
-# ── Project git status aggregation (flowgate.default.0162 P §2 / L §2.2) ──────
+# ── Project git status aggregation ──────
 
 
 from .git.status import (
@@ -5345,7 +5345,7 @@ from .git.status import (
 
 
 
-# ── Manual recovery operations (flowgate.default.0162 P §3 / L §2.4) ──────────
+# ── Manual recovery operations ──────────
 
 
 
@@ -5353,7 +5353,7 @@ from .git.status import (
 
 
 
-# ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
+# ── Base-checkout explicit commit / revert ────
 # A src-content save writes straight into the base checkout (an admin edit),
 # leaving it dirty and tripping the E3 merge guard for EVERY group of the
 # project. These operations are the sanctioned way OUT of that state: an
@@ -5375,7 +5375,7 @@ from .git.status import (
 
 
 
-# ── Approval-ride-along git action (flowgate.default.0162 P §1 / L §2.1) ──────
+# ── Approval-ride-along git action ──────
 
 
 

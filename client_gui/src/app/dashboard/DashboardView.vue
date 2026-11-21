@@ -23,10 +23,10 @@
 </template>
 
 <script setup lang="ts">
-// Dashboard page (T0011 §7): composes the hero, the screen shortcut cards, the tip and the
+// Dashboard page: composes the hero, the screen shortcut cards, the tip and the
 // right-hand summary panels. Layout only — each part is its own component.
 //
-// The one exception (T0010/T#3 §1, D0004 §4.1): the Project card has nowhere routed to link
+// The one exception: the Project card has nowhere routed to link
 // to any more, so this view (not the presentational DashboardActionCard leaf) owns the
 // Project Feature's public open interface and calls it when that card emits `open-project`.
 import { useI18n } from 'vue-i18n'

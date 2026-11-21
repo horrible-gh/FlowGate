@@ -11,14 +11,14 @@
     :min-height="240"
     @close="emit('close')"
   >
-    <!-- flowgate.v02gui.0001: the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
+    <!-- the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
     <template #header>
       <span :title="windowTitle" data-test="run-result-title">{{ windowTitle }}</span>
     </template>
     <section v-if="result" ref="contentRef" class="run-result" data-test="run-result" :data-state="result.state" :data-scope="result.scope">
       <div class="run-result-state" :class="held ? 'is-held' : `is-${result.state}`" data-test="run-result-state">
         <span class="run-result-symbol" aria-hidden="true">
-          <!-- flowgate.v02gui.0020 mock ②: an orange warning triangle, not a glyph in a circle. -->
+          <!-- mock ②: an orange warning triangle, not a glyph in a circle. -->
           <svg v-if="held" class="run-result-warning" width="24" height="22" viewBox="0 0 24 22" data-test="run-result-warning">
             <path d="M12 2 23 20H1Z" fill="#3a2a12" stroke="#ffae57" stroke-width="1.8" stroke-linejoin="round" />
             <path d="M12 8.5v5.2" stroke="#ffae57" stroke-width="2" stroke-linecap="round" />
@@ -63,7 +63,7 @@
       <p v-if="held" class="run-result-issue is-held" data-test="run-result-hold">
         <span class="run-result-label">{{ t('gui.runResult.label.hold_reason') }}</span> {{ t('gui.runResult.hold_reason') }}
       </p>
-      <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting for a decision (the flow attachment window). -->
+      <!-- AI attachment requests waiting for a decision (the flow attachment window). -->
       <p v-if="attachmentLine" class="run-result-attachments" data-test="run-result-attachments">{{ attachmentLine }}</p>
       <footer class="run-result-footer">
         <Button size="sm" variant="secondary" data-test="run-result-detail" @click="emit('detail')">{{ t('gui.runResult.detail') }}</Button>
@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0113 T#5 (0030-M §5-1·2, D revision §3.14-2 / §6.5) — the 1st run result window: shown only when a command
+// the 1st run result window: shown only when a command
 // ended completed or failed (runResultWatch). Its state icon and name, the scope, the cards it processed (by step or
 // branch, a few lines), the done / failed counts, the next state, the failure's one line, [상세] and [닫기]. No long output
 // or log here and no fixed sentence — the 2nd window holds the messages. ModelessShell: dragged, the clicked window
@@ -101,7 +101,7 @@ import {
 } from './runResultView'
 import { useFitModelessHeight, type FittableShell } from './fitModelessHeight'
 
-// flowgate.v02gui.0001: `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
+// `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
 const props = defineProps<{ result: FlowCommandResult | null; open: boolean; flowName?: string | null }>()
 const emit = defineEmits<{ close: []; detail: [] }>()
 
@@ -114,8 +114,8 @@ const has: HasKey = (key) => te(key)
 const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialX = Math.max(8, Math.round(viewportWidth / 2 - 230))
-// flowgate.v02test.0015: no fixed 320 — the failed cards and their causes show without scrolling (the screen less 80).
-// flowgate.v02gui.0001: that is now the cap only — once laid out the window takes its content's height (a short result
+// no fixed 320 — the failed cards and their causes show without scrolling (the screen less 80).
+// that is now the cap only — once laid out the window takes its content's height (a short result
 // leaves no empty space below) and is centred again; a longer one stops at the screen less 80 and scrolls.
 const VIEWPORT_MARGIN = 80
 const initialHeight = Math.max(240, viewportHeight - VIEWPORT_MARGIN)
@@ -146,7 +146,7 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 </script>
 
 <style scoped>
-/* flowgate.v02gui.0001: no padding of its own — the shell's body already pads it (no doubled space around it). */
+/* no padding of its own — the shell's body already pads it (no doubled space around it). */
 .run-result { display: flex; flex-direction: column; gap: 12px; color: var(--fg2-text); font-size: 13px; }
 .run-result-state { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;

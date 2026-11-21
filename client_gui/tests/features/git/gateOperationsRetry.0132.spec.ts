@@ -1,4 +1,4 @@
-/** flowgate.v02.0132 T#4 (NR §5.3 client): an accepted retry (202) that fails again, the sync state and the new codes. */
+/** (NR client): an accepted retry  that fails again, the sync state and the new codes. */
 import { defineComponent, h, provide } from 'vue'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

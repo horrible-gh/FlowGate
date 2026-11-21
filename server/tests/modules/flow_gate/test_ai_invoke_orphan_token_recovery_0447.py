@@ -1,15 +1,15 @@
-"""Orphan-token revoke on the startup lease sweep (0447 T0007).
+"""Orphan-token revoke on the startup lease sweep.
 
-flowgate.default.0447.0006-TR's own §4 named this gap: ``startup_recover_leases()``
+'s own named this gap: ``startup_recover_leases()``
 already reclaims a dead ``group_ai_leases`` row and gives its run an
-``orphaned_by_restart`` end record (0401 NR0003 / T0004), but it never touches the
+``orphaned_by_restart`` end record, but it never touches the
 ``token_id`` the lease was issued with. An unused single-use token then survives to
 its own 24h TTL and can be replayed back into the same group. This file pins:
 
   * ``ai_invoke_service._reclaim_orphan_lease_token`` -- best-effort, idempotent
     revoke of an active victim token, wired independently of the end-record write
     inside ``startup_recover_leases()``'s victim loop.
-  * The persist-then-crash scenario named in T0007 item 3-2: a victim whose run
+  * The persist-then-crash scenario named in the earlier implementation: a victim whose run
     already has a normal end record (the process died after persisting
     ``ai_invoke_runs`` but before releasing the lease) must still get its token
     revoked, without disturbing the existing end record.
@@ -19,11 +19,11 @@ its own 24h TTL and can be replayed back into the same group. This file pins:
     token twice raises no error and writes exactly one ``token_revoked`` event;
     revoking a token_id that never existed still 404s.
   * ``token_service.revoke()``'s idempotency also holds when two callers race
-    across the query-then-revoke window at the same instant (0447 T0007 review
+    across the query-then-revoke window at the same instant (the earlier implementation review
     rev1) -- the winner is decided by the atomic claim marker in
     ``db_tokens.revoke()``, not by any in-process lock.
   * ``db_tokens.revoke()``'s guarded UPDATE also loses to a concurrent
-    ``consume()`` that lands in the same query-then-revoke window (0447 T0007
+    ``consume()`` that lands in the same query-then-revoke window (the earlier implementation
     review rev2) -- a token consumed after ``token_service.revoke()``'s own
     query read it as still active must stay consumed, not flip to revoked,
     and must draw no ``token_revoked`` event.
@@ -59,7 +59,7 @@ from modules.flow_gate.db import workflow_events as db_events  # noqa: E402
 
 GROUP = "flowgate.default.0447"
 PROJECT = "flowgate"
-RUN_ID = "aiv2_20260828_000099"  # 0139: v0.2 namespace; aiv_ leases are v0.1's
+RUN_ID = "aiv2_20260828_000099"  # v0.2 namespace; aiv_ leases are v0.1's
 TOKEN_ID = "tok_20260828_000001"
 PAST = "2000-01-01T00:00:00+00:00"
 
@@ -98,7 +98,7 @@ class FakeTokenStore:
 
     ``revoke()`` mirrors the real store's guarded-UPDATE contract: the
     revoked_at/revoke_claim pair only ever changes once per token_id, and only
-    while consumed_at is still NULL (0447 T0007 review rev2), and that
+    while consumed_at is still NULL (review), and that
     check-and-set is protected by ``_engine_lock`` -- standing in for the real
     DB engine's own atomicity of a single UPDATE statement (ACID, not a
     Python-level design choice), which is what lets two *different processes*
@@ -196,7 +196,7 @@ def test_startup_recover_revokes_the_active_orphan_token_exactly_once(fake_runs,
 
 
 def test_persist_then_crash_before_release_still_revokes_the_token(fake_runs, fake_tokens, event_log):
-    """T0007 item 3-2: the run already persisted a normal end record before the
+    """the run already persisted a normal end record before the
     process died with the lease still held -- the crash happened between that
     persist and the lease release. Recovery must not overwrite the real end
     reason, and must still revoke the active token exactly once."""
@@ -300,7 +300,7 @@ def test_revoke_missing_token_still_404s(fake_tokens, event_log):
 def test_concurrent_revoke_race_across_the_query_window_writes_exactly_one_event(
     fake_tokens, event_log, monkeypatch
 ):
-    """0447 T0007 review rev1: the rejected revision's idempotency held only within
+    """review: the rejected revision's idempotency held only within
     a single process (a bare threading.Lock). This reproduces the exact race the
     review named -- two callers (standing in for two separate OS processes, which
     share no Python object, let alone a lock) both query the same active token_id
@@ -355,7 +355,7 @@ def test_concurrent_revoke_race_across_the_query_window_writes_exactly_one_event
 def test_consume_landing_in_the_query_window_leaves_the_token_consumed_not_revoked(
     fake_tokens, event_log, monkeypatch
 ):
-    """0447 T0007 review rev2: the rev1 fix guarded the UPDATE only on
+    """review: the fix guarded the UPDATE only on
     ``revoked_at IS NULL``, which stops a second *revoke* from landing but says
     nothing about a *consume* that lands between token_service.revoke()'s query
     (``db_tokens.get_by_id``) and its own guarded UPDATE. This deterministically

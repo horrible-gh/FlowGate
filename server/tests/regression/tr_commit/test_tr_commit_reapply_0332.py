@@ -1,7 +1,7 @@
-"""Does forward restoration reapply canceled source? (0332 T0018, R0001's remaining third part.)
+"""Does forward restoration reapply canceled source? ('s remaining third part.)
 
-0012-TR implemented commits on approval; 0014-TR implemented reverts on rewind. This
-suite checks reapplication when moving forward (D0005 K11). R0001 required all three
+implemented commits on approval; the earlier implementation implemented reverts on rewind. This
+suite checks reapplication when moving forward. the requirement required all three
 as one set. With only two, Time Machine moves code backward but not forward, worse
 than consistent unavailability: people assume returning forward restores the original
 state, but the worktree disagrees.
@@ -13,10 +13,10 @@ and restoration of the worktree on conflicts.
 
 Contracts:
 * **Forward restoration brings documents and source together, reporting why anything
-  cannot be restored** (D0005 K8/K11).
+  cannot be restored**.
 * **Never reapply work a person already redid**, the sole destructive failure mode of reapplication.
 
-Also cover T0018 §3-4's gap: reapproving a step after blocked rewind left its
+Also cover the earlier implementation's gap: reapproving a step after blocked rewind left its
 **old live row** unreachable through every retry path. Filtering is now by row
 rather than document; §7 covers that contract.
 """
@@ -184,7 +184,7 @@ def _ledger_commit(doc_id, sha, subject="s"):
 
 
 def _two_committed_steps(repo):
-    """State after 0009-TR created a.py and 0011-TR created b.py."""
+    """State after the earlier implementation created a.py and the earlier implementation created b.py."""
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
     _ledger_commit(_TR_A, sha_a, "0009-TR: a")
@@ -197,7 +197,7 @@ def _two_committed_steps(repo):
 # ── 1. Ledger reapply columns (086) ────────────────────────────────────────
 
 def test_a_reapply_adds_a_new_live_row_and_leaves_the_canceled_one_alone(real_store):
-    """D0005 K5: reapplication creates a new row, rather than restoring the canceled row.
+    """K5: reapplication creates a new row, rather than restoring the canceled row.
     Erasing cancellation would erase the fact of rewind from history."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
@@ -234,7 +234,7 @@ def test_the_reappliable_query_orders_the_peel_the_inverse_of_the_cancel(real_st
 
 def test_a_row_with_a_newer_live_row_is_flagged_not_dropped(real_store):
     """A manually redone step. Silently excluding it leaves the UI unable to explain why it
-    did not return; filter it out but return the reason (L0007 §5)."""
+    did not return; filter it out but return the reason."""
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")
     db_ledger.mark_canceled(row["id"], cancel_commit="c" * 40)
     _ledger_commit(_TR_A, "n" * 40, "0009-TR: 다시 한 작업")
@@ -255,7 +255,7 @@ def test_newest_live_id_by_doc_names_only_the_freshest_row(real_store):
     assert newest[_TR_A] != stale["id"]
 
 
-# ── 2. Round trip (T0018 §4 scenarios A/B) ──────────────────────────────────
+# ── 2. Round trip (scenarios A/B) ──────────────────────────────────
 
 @needs_git
 def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
@@ -303,7 +303,7 @@ def test_a_forward_restore_reapplies_the_canceled_commits_newest_cancel_first(
 def test_the_strip_marker_comes_back_to_committed_after_a_restore(
     real_store, git_active, repo,
 ):
-    """Restore markers through D0005 §6.1's existing newest-row-wins rule.
+    """Restore markers through the design's existing newest-row-wins rule.
     This asserts that no separate reapplication marker path was introduced."""
     _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
@@ -325,7 +325,7 @@ def test_a_step_redone_by_hand_is_never_double_applied(real_store, git_active, r
     during forward restoration would apply the same work twice, the destructive failure mode."""
     sha_a, _sha_b = _two_committed_steps(repo)
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
-    # Manually rework and reapprove 0009-TR, producing a new commit and live row.
+    # Manually rework and reapprove the earlier implementation, producing a new commit and live row.
     (repo / "a.py").write_text("a = 2   # 다시 한 작업\n", encoding="utf-8")
     redone = _commit(repo, "0009-TR: a (redone)")
     _ledger_commit(_TR_A, redone, "0009-TR: a (redone)")
@@ -340,7 +340,7 @@ def test_a_step_redone_by_hand_is_never_double_applied(real_store, git_active, r
     # Redone work remains unchanged; old content was not overlaid.
     assert (repo / "a.py").read_text(encoding="utf-8") == "a = 2   # 다시 한 작업\n"
     assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
-    # Only 0011-TR adds a new commit.
+    # Only the earlier implementation adds a new commit.
     assert _git(["rev-list", "--count", f"{head_before}..HEAD"], repo).strip() == "1"
     # The rework row is untouched, and the old canceled row remains canceled.
     assert db_ledger.get_by_id(
@@ -415,9 +415,9 @@ def test_a_blocked_reapply_leaves_the_rows_canceled_and_says_why(
 def test_a_reapply_conflict_is_parked_as_a_session_and_leaves_the_rest_untried(
     real_store, git_active, repo,
 ):
-    """Reapplication conflicts are not a dead end either (TR0019).
+    """Reapplication conflicts are not a dead end either.
 
-    T0018 §2-2 deferred this to a later group. Now the **same function** as cancellation
+    deferred this to a later group. Now the **same function** as cancellation
     stores a session in the same table, with only the direction changed to ``tr_reapply``.
     Preserve stopping, leaving remaining items ``not_attempted``, and offering no button
     that merely repeats the same request.
@@ -463,7 +463,7 @@ def test_a_conflict_leaves_the_older_cancels_untouched(real_store, git_active, r
     sha_b = _commit(repo, "0011-TR: b")
     _ledger_commit(_TR_B, sha_b, "0011-TR: b")
     trc.cancel_tr_commits(_GROUP, [_TR_A, _TR_B])
-    # The cancellation of 0009-TR is removed first; a person has obstructed that location.
+    # The cancellation of the earlier implementation is removed first; a person has obstructed that location.
     (repo / "f.txt").write_text("C\n", encoding="utf-8")
     _commit(repo, "manual fix")
 
@@ -477,7 +477,7 @@ def test_a_conflict_leaves_the_older_cancels_untouched(real_store, git_active, r
 
 def test_a_group_with_nothing_canceled_ends_quietly_not_on_an_error(real_store):
     """Forward restoration of a group never rewound must not show a Git error screen:
-    finish quietly before the gates (same reason as L0007 §4.1 note 1)."""
+    finish quietly before the gates (same reason as the earlier implementation note 1)."""
     result = trc.restore_for_return(_GROUP, [_TR_A, _TR_B])
 
     assert result == {
@@ -529,7 +529,7 @@ def test_every_reapply_skip_reason_stays_inside_the_closed_set(real_store):
 def test_the_lock_is_released_even_when_the_reapply_conflicts(
     real_store, git_active, repo, monkeypatch,
 ):
-    """L0007 §2.1 ③: the lock is not reentrant. If reapplication returns holding it,
+    """③: the lock is not reentrant. If reapplication returns holding it,
     the next Git operation waits five seconds and then silently fails."""
     held: list[str] = []
     stub_group_lock(monkeypatch, held=held)
@@ -545,10 +545,10 @@ def test_the_lock_is_released_even_when_the_reapply_conflicts(
     assert held == []
 
 
-# ── 5. Commit messages (T0018 §3-3) ────────────────────────────────────────
+# ── 5. Commit messages ────────────────────────────────────────
 
 def test_the_reapply_subject_names_the_original_tr_not_the_cancel():
-    """``Revert "Revert "0009-TR: ...""`` is Git's automatic wording and tells readers nothing useful."""
+    """``Revert "Revert "the earlier implementation: ...""`` is Git's automatic wording and tells readers nothing useful."""
     assert svc.reapply_subject("0009-TR: 제목") == 'Reapply "0009-TR: 제목"'
 
 
@@ -574,7 +574,7 @@ def test_the_reapply_body_names_both_ends_of_the_round_trip():
 # ── 6. Routes and retry (latter part of scenario D) ─────────────────────────
 
 def test_the_restore_route_adds_one_key_and_renames_nothing(real_store, monkeypatch):
-    """Follow P0006: preserve existing response keys and meanings, adding only one key.
+    """Follow the plan: preserve existing response keys and meanings, adding only one key.
     The assertions in 0142/0381 must continue to hold."""
     from modules.flow_gate.documents.routers import documents as doc_routes
 
@@ -593,8 +593,8 @@ def test_the_restore_route_adds_one_key_and_renames_nothing(real_store, monkeypa
 def test_a_reapply_that_blows_up_drops_the_key_instead_of_half_filling_it(
     real_store, monkeypatch,
 ):
-    """L0007 §5: a partial object would make the UI claim source was restored. Omit the key
-    entirely. Document restoration still returns HTTP 200 (D0005 K8)."""
+    """a partial object would make the UI claim source was restored. Omit the key
+    entirely. Document restoration still returns HTTP 200."""
     from modules.flow_gate.documents.routers import documents as doc_routes
 
     def _boom(group_id, doc_ids):
@@ -736,7 +736,7 @@ def test_a_reapply_retry_that_blows_up_reports_nothing_attempted_not_a_500(
     assert payload == {"ok": True, "tr_commit_restore": trc.empty_restore_result()}
 
 
-# ── 7. Old live rows surviving reapproval (scenario F / T0018 §3-4) ─────────
+# ── 7. Old live rows surviving reapproval (scenario F / the earlier implementation) ─────────
 
 def test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval(
     real_store, monkeypatch,
@@ -772,7 +772,7 @@ def test_cancel_retry_still_targets_the_old_live_row_after_a_reapproval(
             "VALUES(?, ?, ?, 'approved', 'fp')",
             [rp_id, doc_id, seq],
         )
-    # 0009-TR has been reapproved, while 0011-TR remains rewound.
+    # has been reapproved, while the earlier implementation remains rewound.
     real_store._execute(
         "UPDATE documents SET doc_review_status = 'pending_review' WHERE doc_id = ?",
         [_TR_B],
@@ -813,7 +813,7 @@ def test_excluding_every_row_ends_quietly_instead_of_opening_a_session(real_stor
     assert result["canceled"] == [] and result["skipped"] == []
 
 
-# ── 8. Evidence for the panel's buttons (T0018 §3-5) ─────────────────────────
+# ── 8. Evidence for the panel's buttons ─────────────────────────
 
 def test_the_panel_summary_says_whether_anything_can_be_restored(real_store):
     row = _ledger_commit(_TR_A, "a" * 40, "0009-TR: a")

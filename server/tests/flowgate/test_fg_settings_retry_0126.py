@@ -1,4 +1,4 @@
-"""0126 T#5 A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
+"""A3/A4: real settings routes, SQLite assignments/ledger, AI admission recorder.
 No external model, deployed server, or existing user data is used.
 """
 import json
@@ -140,7 +140,7 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
     before_calls=len(starts)
     command(env,mode)
     writers=[r for r in assignments(env,key) if r['stage']=='result']
-    # 0121 keeps its contract while the write role still resolves to the recorded assignment: a provider failure or a
+    # keeps its contract while the write role still resolves to the recorded assignment: a provider failure or a
     # clean end with no result is written again on the SAME attempt by the same AI; every other end, and any end whose
     # role changed, resolves a new assignment in a new attempt (the earlier one stays as history)
     same_attempt=(not changed) and failure in ('provider_failed','no_result')
@@ -161,8 +161,8 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
 
 
 def _submitted_ai_instruction(env,monkeypatch,provider):
-    """0158: the instruction AI's write as a submitted document (``pending_review``), as an edit submission leaves it.
-    ``_ai_writes_instruction`` alone writes the body only; its review start then submits it itself (flowgate.v02test.0015,
+    """the instruction AI's write as a submitted document (``pending_review``), as an edit submission leaves it.
+    ``_ai_writes_instruction`` alone writes the body only; its review start then submits it itself (the earlier change,
     the case below), which is not this recovery case."""
     import test_fg_ai_roles_l2_review as l2_review
     from modules.flow_gate.db import documents as db_documents
@@ -221,7 +221,7 @@ def test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limi
 
 @pytest.mark.parametrize('mode',['step','full'])
 def test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage(env,decided,monkeypatch,starts,mode):
-    """flowgate.v02test.0015 (replaces the 0158 refusal case): an AI instruction written but never submitted (the v0.1
+    """(replaces the 0158 refusal case): an AI instruction written but never submitted (the v0.1
     submit step never ran on it) goes to its review because the card's instruction stage ended -- the review start puts
     it in review itself (``pending_review``, the system as the actor, ``card_review_submitted``) and requests the loop
     in the same savepoint. Formerly the loop's admission refused it (``document_not_submitted``) on every try, and the
@@ -313,7 +313,7 @@ def test_pre_t5_assignment_without_version_keeps_q544_revision_guard(
     from test_fg_command_review_0125 import _loop_row, _loop_end, _review_row, _revised
 
     key, _, result, revision = _spent(env, monkeypatch, starts, mode, follow=False)
-    # This existing card saved settings before T#5: its version is already positive.
+    # This existing card saved settings before the earlier implementation: its version is already positive.
     _, settings = new_settings(env, key)
     if evidence == 'asked':
         command(env, mode)

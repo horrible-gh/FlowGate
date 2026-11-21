@@ -44,7 +44,7 @@ RUNNER_POLL_SEC = 5
 CASE_EXIT_PASS = 0
 SETUP_STEP_TIMEOUT_SEC = 600
 TEARDOWN_STEP_TIMEOUT_SEC = 600
-# flowgate.default.0358 T0004: once a cancel is accepted, teardown still runs
+# once a cancel is accepted, teardown still runs
 # best-effort (it may undo setup side effects) but must not hold the run in
 # 'cancelling' for the full normal budget — that would defeat the "cancel immediately" promise.
 CANCEL_TEARDOWN_STEP_TIMEOUT_SEC = 30
@@ -77,7 +77,7 @@ class _ActiveRun:
         self.lock = threading.Lock()
         self.proc: Optional[subprocess.Popen] = None
         self.service_procs: set = set()
-        # 0684 T#2: a spec run's Case process, owned by the shared execution layer
+        # a spec run's Case process, owned by the shared execution layer
         # (tr_self_check_executor.ProcessControl: Job Object / supervised group).
         self.control = None
 
@@ -86,7 +86,7 @@ _active_runs: dict[str, _ActiveRun] = {}
 _active_runs_meta_lock = threading.Lock()
 
 # Per-run_id lock serializing "decide the terminal status, then write it" between a
-# cancel request and the worker's own natural-completion commit (0358 T0004 risk 2).
+# cancel request and the worker's own natural-completion commit (risk 2).
 # FlowGateStore._execute reports no affected-row count, so a bare
 # UPDATE ... WHERE status=? cannot tell a CAS winner from a loser on its own — this
 # lock is what makes the DB CAS calls in this module actually exclusive, the same
@@ -193,7 +193,7 @@ class TestCaseParseError(ValueError):
         self.detail = detail
 
 
-# T0009: English aliases for the TS grammar. The parser accepts both names below and
+# English aliases for the TS grammar. The parser accepts both names below and
 # normalises field names through the aliases, so downstream logic keeps using the Korean canonical keys.
 TEST_CASES_SECTION_NAMES = ("테스트 케이스", "Test Cases")
 SETUP_SECTION_NAMES = ("테스트 준비", "Setup")
@@ -207,7 +207,7 @@ _FIELD_ALIASES = {
 }
 _DISPLAY_FIELD = {"기대": "expect", "기동": "start", "대기": "wait"}
 
-# flowgate.default.0503 T0007 §1: the `assert` field key is never translated (like `cmd`),
+# the `assert` field key is never translated (like `cmd`),
 # so it is not part of _FIELD_ALIASES/_DISPLAY_FIELD above.
 _ASSERT_MODES = (
     "exit_code",
@@ -537,7 +537,7 @@ def _automated_case_keys(cases: list[dict]) -> set[str]:
 
 
 def result_entry_case_ids(cases: list[dict]) -> list[str]:
-    """0684 T#3 (D#1 §3-8, CH S6): the Cases whose results are entered -- ai/manual/external only.
+    """(CH S6): the Cases whose results are entered -- ai/manual/external only.
 
     Every automated Case gets its official result from a server run only. One the server
     cannot run yet (unbound, command_missing, command_invalid) is not entered either: it
@@ -552,7 +552,7 @@ def refuse_server_run_results(cases: list[dict], normalized: list[dict]) -> tupl
     """Split a submission into the results it may record and the ones it may not.
 
     A result for an automated Case -- runnable by the server or not -- is refused item by
-    item, with its reason; the rest of the submission still records (D#1 §3-8 "reject only that item").
+    item, with its reason; the rest of the submission still records ("reject only that item").
     """
     server_run = _automated_case_keys(cases)
     kept: list[dict] = []
@@ -586,7 +586,7 @@ def validate_and_create_run(
             doc_id=doc_id,
             detail="document type is not TS",
         )
-    # 0549 T0008 (D0006 §4-5): the executable runner only ever sees a legacy TS. The contract
+    # the executable runner only ever sees a legacy TS. The contract
     # marker is read BEFORE the legacy parser, so a specification TS can never be half-parsed
     # as an executable one — it is refused here with the route that does accept it.
     _reject_non_legacy_contract(doc_id, _read_doc_content_or_empty(doc))
@@ -625,7 +625,7 @@ def _require_ts_admissible(doc: dict, doc_id: str) -> None:
     """Approval gate for legacy executable TS documents only."""
     review_status = doc.get("doc_review_status")
     if review_status != "approved":
-        # Re-run affordance (0163 / B0001, extended by 0169): an approved TS that has
+        # Re-run affordance: an approved TS that has
         # actually run moves to doc_review_status="pending_review" while its result awaits
         # review. If that result is rejected and the author revises the TS, the status becomes
         # "revised" and must remain re-runnable so the fixed command can produce fresh results.
@@ -649,7 +649,7 @@ def _admit_legacy_run(
 ) -> dict:
     # Fail fast at admission: without a source mirror the async worker can only
     # die with src_root_missing, which surfaces late and pathless (0152 outage).
-    # B0001 (0190): pass group_id so a git-integrated group resolves to its own
+    # : pass group_id so a git-integrated group resolves to its own
     # worktree (the work branch), not base(main). Must match _execute_run_inner's
     # resolution below — if the guard and the worker disagree on the folder, the
     # admission check passes against one tree while tests run in another.
@@ -718,7 +718,7 @@ def _run_response(run: dict) -> dict:
 
 
 def request_cancel(run_id: str) -> dict:
-    """Accept a user cancel for run_id (flowgate.default.0358 T0004 / NR0003 contract).
+    """Accept a user cancel for run_id.
 
     Returns {"run_id", "status"} where status is one of:
       - 'cancelled'  — either a not-yet-picked-up run terminated immediately, or the
@@ -783,10 +783,10 @@ def issue_test_run_request(
     continuation_instruction_mode: Optional[str] = None,
     locale: Optional[str] = None,
     continuous: bool = False,
-    # 0393 NR0003 §6 — the AI run this token belongs to, so the group lease that run holds
+    # the AI run this token belongs to, so the group lease that run holds
     # recognises the worker as its own owner.
     ai_run_id: Optional[str] = None,
-    # 0352 T0004 §3.4: TS is never a member of the auto-approve item_seq set (it is excluded
+    # TS is never a member of the auto-approve item_seq set (it is excluded
     # from INSTRUCTION_AUTO_TYPES entirely), so this has no bearing on THIS TSR hand-off's own
     # behavior — it is threaded through purely so the chain's selection keeps riding every
     # continuation token, including this one, without a silent drop at the TSR hop.
@@ -794,9 +794,9 @@ def issue_test_run_request(
 ) -> dict:
     """Issue a test_run-scoped token + execution mention for an approved TS.
 
-    Two callers (P0005 §3's two entrances): the manned delegation route
+    Two callers ('s two entrances): the manned delegation route
     (POST /documents/test-run-request — ordinary token, continuation fields NULL) and
-    the unmanned chain (advance_workflow's TSR-head wiring, group 0150 — the token
+    the unmanned chain (advance_workflow's TSR-head wiring, the earlier change — the token
     inherits the chain's continuation fields, and those persisted fields are how
     _maybe_chain_auto_approve_tsr later recognizes a chain run).
     """
@@ -859,7 +859,7 @@ def _build_test_run_mention(
     hand_off_note = ""
     if continuous:
         # Reuse the exact unmanned-chain directive every other chain mention carries so
-        # the worker reads an identical framing on the test-run hop (group 0150).
+        # the worker reads an identical framing on the test-run hop (the earlier change).
         from modules.flow_gate.services.mention_service import _CONTINUOUS_TEXT
 
         chain_text = _CONTINUOUS_TEXT.get(locale or "ko", _CONTINUOUS_TEXT["ko"])
@@ -905,10 +905,10 @@ def _build_spec_result_mention(
     continuous: bool = False,
     locale: Optional[str] = None,
 ) -> str:
-    """Hand-off for a specification TS: ai/manual/external result entry only (0684 T#3).
+    """Hand-off for a specification TS: ai/manual/external result entry only.
 
-    0549 T0008 had the worker run the automated Cases in its own environment and submit
-    them. Since 0632/0684 the server runs them (D#1 §3-8): their official result comes from
+    had the worker run the automated Cases in its own environment and submit
+    them. Since 0632/0684 the server runs them: their official result comes from
     a server run only and the inbox refuses them. This token therefore carries only the
     Cases whose results are entered -- ai, manual and external ones. An ``ai`` Case (AI 확인)
     is the worker's own check: it verifies the Case and records the verdict with its evidence,
@@ -1020,7 +1020,7 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "failure_origin_provider": failure_origin_provider,
         "code_rework_cycle": count_code_rework_cycles(run.get("doc_id"))
         if run.get("failure_origin") else None,
-        # 0280 T0005: expose the recorded execution root so a "ran in main" report
+        # expose the recorded execution root so a "ran in main" report
         # can be checked against the run itself, not just the assembled TSR.
         "source_root": run.get("source_root"),
         "source_root_kind": run.get("source_root_kind"),
@@ -1028,7 +1028,7 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "created_at": run.get("created_at"),
-        # 0549 T0008: NULL/absent for every legacy executable run; 2 for a specification-TS
+        # NULL/absent for every legacy executable run; 2 for a specification-TS
         # result record, whose verdict is `overall` (server-computed) — never `status` alone.
         "contract_version": run.get("contract_version"),
         "overall": run.get("overall"),
@@ -1049,7 +1049,7 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         out["run_kind"] = meta.get("run_kind")
         out["execution_root"] = meta.get("execution_root")
         if meta.get("run_kind") == "spec_execution":
-            # 0684 T#1: queued/preparing/executing/finalizing/finished, how it was admitted
+            # queued/preparing/executing/finalizing/finished, how it was admitted
             # (approval or request) and why it did not run when it was refused.
             out["phase"] = meta.get("phase")
             out["admission"] = meta.get("admission")
@@ -1077,14 +1077,14 @@ def _shape_case_item(case: dict) -> dict:
         "duration_ms": case.get("duration_ms"),
         "output_tail": case.get("output_tail"),
         "finished_at": case.get("finished_at"),
-        # flowgate.default.0503 T0007 §6: exposed as-is (already human-readable strings
+        # exposed as-is (already human-readable strings
         # produced by _evaluate_case_assertion); NULL for legacy (assert-less) cases.
         "assert_mode": case.get("assert_mode"),
         "actual": case.get("actual"),
         "comparison_result": case.get("comparison_result"),
     }
     if case.get("case_status") is not None:
-        # 0549 T0008: a specification-TS case — the four-state verdict plus its evidence.
+        # a specification-TS case — the four-state verdict plus its evidence.
         row = test_spec_service.stored_case_to_row(case)
         shaped["case_status"] = row["status"]
         for key in (
@@ -1111,13 +1111,13 @@ def load_test_run_embed(doc_id: str) -> tuple[Optional[dict], list[dict]]:
 def load_group_test_run(group_id: Optional[str]) -> dict:
     """Group-wide "a test is running right now" signal for the document detail payload.
 
-    0441 TR0005 rev2. The per-document ``test_run`` embed above only ever describes the
+    The per-document ``test_run`` embed above only ever describes the
     document being fetched, so a sibling document's action bar had no way to know a run
     was in flight and stayed fully clickable. This block is computed from the group the
     fetched document belongs to, exactly like the workflow head fields next to it, so
     every tab of the group receives the same answer.
 
-    0441 TR0005 rev10: a query failure returns ``active=None``, not ``active=False``. The
+    a query failure returns ``active=None``, not ``active=False``. The
     client (DocHeader.vue's ``groupTestRunActive``) only treats a strict boolean as an
     answer and otherwise reports "unconfirmed", which MainPanel then fail-closes to locked.
     Answering ``False`` here was indistinguishable from "confirmed: no run in this group" —
@@ -1138,7 +1138,7 @@ def load_group_test_run(group_id: Optional[str]) -> dict:
     }
 
 
-# ── Specification TS: result intake, TSR test report, gate (0549 T0008) ─────────────────
+# ── Specification TS: result intake, TSR test report, gate ─────────────────
 
 
 def load_spec_ts(doc_id: str) -> tuple[dict, dict]:
@@ -1208,9 +1208,9 @@ def record_spec_results(
     submission for the same TS revision — manual results can follow the automated ones.
 
     Any ``overall`` a caller sends is ignored: the verdict is computed here from the
-    required cases (D0006 §10) and the ignored claim is kept in result_meta for audit.
+    required cases and the ignored claim is kept in result_meta for audit.
 
-    0684 T#2 (D#1 §3-5): every result is recorded under the Basis of the source it was
+    every result is recorded under the Basis of the source it was
     made on. A server run passes the Basis it executed (``execution_basis``) and the live
     state it measured after executing (``execution_live``); a manual/external submission
     measures the live source once, here, before the admission lock. A TS whose Group has
@@ -1275,7 +1275,7 @@ def record_spec_results(
                           errors=exc.errors) from exc
     refused: list[dict] = []
     if execution_basis is None:
-        # 0684 T#3 (D#1 §3-8): the official result of a Case the server runs comes from a
+        # the official result of a Case the server runs comes from a
         # server run only -- never from a person's or a worker's own environment.
         normalized, refused = refuse_server_run_results(parsed["cases"], normalized)
         if refused and not normalized:
@@ -1342,7 +1342,7 @@ def record_spec_results(
             "previous_run_id": (previous_run or {}).get("run_id"),
             "basis_id": (basis or {}).get("basis_id"),
             "test_basis": basis,
-            # 0684 T#3: the server run this record came from (absent for an entry), and the
+            # the server run this record came from (absent for an entry), and the
             # results this submission was not allowed to record.
             "execution_run_id": execution_run_id,
             "refused_results": refused,
@@ -1376,12 +1376,12 @@ def record_spec_results(
 def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     """Assemble/refresh the TSR for a recorded submission and apply the gate.
 
-    TSR existence and the test gate are separate facts (D0006 §9): the report is written
+    TSR existence and the test gate are separate facts: the report is written
     for every submission, PASS or not; only an overall PASS lets the TSR be approved and
     the workflow move on. FAIL goes to failure-origin review on an unmanned chain; BLOCKED
     and NOT_RUN are holds for a human.
 
-    0684 T#2 (D#1 §3-3 finalizing): the result stays recorded under the Basis it was made
+    (finalizing): the result stays recorded under the Basis it was made
     on. Its live verdict (measured when it was recorded, else measured here, outside the
     admission lock) decides the rest: valid applies the gate; stale (the source moved after
     execution) or unverifiable still rewrites the report -- marked not valid for the current
@@ -1425,7 +1425,7 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
         "continuation": None,
     }
     if not valid:
-        # D#1 §3-3 / §3-9: not a verdict on the current source -- stop for a human, who
+        # : not a verdict on the current source -- stop for a human, who
         # runs again. No failure-origin review (nothing failed on the current source).
         outcome.update({"stale": True, "basis_state": judged["state"],
                         "basis_reasons": judged["reasons"]})
@@ -1445,7 +1445,7 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     else:
         outcome["continuation"] = continue_chain_after_test_gate(doc, finished)
         if (outcome["continuation"] or {}).get("action") != "resumed_for_result_entry":
-            # 0684 T#3: a chain resumed for manual/external entry did not stop.
+            # a chain resumed for manual/external entry did not stop.
             _maybe_notify_chain_failure(doc, finished)
     return outcome
 
@@ -1490,7 +1490,7 @@ def spec_result_response(run_id: str, outcome: dict) -> dict:
 
 
 def _handle_spec_failure(doc: dict, run: dict) -> dict:
-    """A required case FAILed: reuse the existing failure-origin review (0503 T0009).
+    """A required case FAILed: reuse the existing failure-origin review.
 
     On an unmanned chain the dedicated classifier decides product_defect (product rework),
     test_defect (test automation / mapping / evidence rework) or hold (human) — the same
@@ -1519,14 +1519,14 @@ def _handle_spec_failure(doc: dict, run: dict) -> dict:
 
 
 def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
-    """Is this TSR allowed through the test gate? (0549 T0008, D0006 §9-10)
+    """Is this TSR allowed through the test gate?
 
     The gate is read from the server record — the newest result record of the TSR's TS —
     never from the TSR text. It applies only when that record is a specification result
     (contract 2); a legacy executable TSR is only ever assembled from an all-green run, so
     its approval semantics are unchanged.
 
-    0684 T#2 (D#1 §3-5): the valid result is the newest result of the current TS revision
+    the valid result is the newest result of the current TS revision
     whose Basis equals the Basis the live source has now. Decision callers (TSR approval,
     chain auto-approval, chain attach) measure the live source once; display callers pass
     ``memo=True`` and only reuse the last measurement -- with no fitting memo the state is
@@ -1547,7 +1547,7 @@ def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
     ts_doc = db_docs.get_by_id(ts_id)
     revision = (ts_doc or {}).get("revision_no") or 0
     if (tsr_doc or {}).get("doc_review_status") == "approved":
-        # 0682 D#1 3.11: the recorded result stands for an already-approved report.
+        # 3.11: the recorded result stands for an already-approved report.
         recorded = db_test_runs.latest_spec_run(ts_id, revision) or db_test_runs.latest_spec_run(ts_id)
         recorded = recorded or latest_any
         return {"applies": True,
@@ -1586,7 +1586,7 @@ def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
                 "stale_run_id": (newest or {}).get("run_id"),
                 "basis_state": judged["state"], "basis_reasons": judged["reasons"]}
     attempt_meta = test_spec_service.load_result_meta(latest_any.get("result_meta"))
-    # D#1 §3-5: no execution failure (a prepare refusal included) newer than the result.
+    # no execution failure (a prepare refusal included) newer than the result.
     # Whatever source it ran on (or none: a run refused before it could measure has no
     # basis_id): a failure on another source in between still blocks an A-B-A return.
     if (attempt_meta.get("run_kind") == "spec_execution"
@@ -1646,7 +1646,7 @@ def continue_chain_after_test_gate(
     locale: Optional[str] = None,
     log_end: bool = True,
 ) -> dict:
-    """Decide what an unmanned chain does once its test gate has an outcome (0549 T0008).
+    """Decide what an unmanned chain does once its test gate has an outcome.
 
     Replaces the old "chain ends here by design" end. Nothing new is built: the hop that
     handed the TS to the gate parked the ordinary durable system row
@@ -1693,7 +1693,7 @@ def continue_chain_after_test_gate(
         if latest is not None and not latest_passed:
             if own_row is not None and own_row.get("stop_code") == pending_code:
                 if _awaits_result_entry(doc, latest):
-                    # 0684 T#3 (D#1 §3-9): the server run is done and only entered Cases
+                    # the server run is done and only entered Cases
                     # (manual/external) keep the gate shut. Resuming lands on the TSR head
                     # again, whose hop is a manual/external-only result-entry token.
                     return _resume_parked_chain(doc, run, own_row, api_base_url=api_base_url,
@@ -1785,7 +1785,7 @@ def _resume_parked_chain(doc: dict, run: Optional[dict], own_row: dict, *,
 
 
 def _awaits_result_entry(doc: dict, latest: dict) -> bool:
-    """A server run's record whose only open required Cases are entered ones (D#1 §3-9).
+    """A server run's record whose only open required Cases are entered ones.
 
     The record must come from the server run (an entry that left Cases NOT_RUN is a human's
     answer, not a reason to ask again), it must be valid for the current source, and every
@@ -1825,7 +1825,7 @@ def hand_chain_to_server_run(
     continuation_auto_approve_item_seqs: Optional[list] = None,
     ai_run_id: Optional[str] = None,
 ) -> Optional[dict]:
-    """0684 T#3 (D#1 §3-9): a chain whose next head is a TSR waits on the server run.
+    """a chain whose next head is a TSR waits on the server run.
 
     The TS approval queued the run, so there is nothing for a worker to do while it runs:
     no hop starts and no hand-off token goes to anyone. The chain is bound to the run here
@@ -1857,7 +1857,7 @@ def hand_chain_to_server_run(
     # The run records and finalizes its result under its run lock, reading the chain context
     # there. Binding under the same lock means a result either ended before the chain was
     # bound (attach_chain then sees an ended run) or meets the consumed token -- a FAIL the
-    # chain rode always reaches failure-origin review (D#1 §3-9), never a human by default.
+    # chain rode always reaches failure-origin review, never a human by default.
     running = db_test_runs.get_running_by_doc(ts_doc_id)
     running_id = (running or {}).get("run_id")
     with _get_run_lock(running_id) if running_id else contextlib.nullcontext():
@@ -1893,7 +1893,7 @@ def hand_chain_to_server_run(
 def continue_attached_chain(doc: dict, tsr_doc_id: Optional[str], *,
                             api_base_url: Optional[str] = None,
                             locale: Optional[str] = None) -> dict:
-    """0684 T#1: a chain handed to a server run that had already passed the gate.
+    """a chain handed to a server run that had already passed the gate.
 
     The run finished before any chain token existed, so its PASS could not approve the
     report for the chain. Now that the token is consumed, do what the PASS would have
@@ -1914,7 +1914,7 @@ def resume_test_gate_chain_for_hop(doc_id: Optional[str], *, api_base_url: Optio
 
 
 def describe_test_document(doc: dict) -> dict:
-    """Structured view model for the TS/TSR document body (0549 T0008 UI).
+    """Structured view model for the TS/TSR document body (UI).
 
     TS: the contract, the parsed specification (with validation errors) and the newest
     result record. TSR: the result record the report was assembled from. A legacy document
@@ -1949,20 +1949,20 @@ def describe_test_document(doc: dict) -> dict:
             history = db_test_runs.list_by_doc(doc["doc_id"])
             out["run_history"] = [shape_run(item) for item in history
                                   if item.get("contract_version") == test_spec_service.CONTRACT_SPEC][:30]
-            # 0684 T#3 (D#1 §6-1): the newest server run's own outcome for the action bar's
+            # the newest server run's own outcome for the action bar's
             # state -- a prepare refusal or a cancel leaves no result record behind.
             out["last_execution"] = next(
                 (shaped for shaped in out["run_history"] if shaped.get("run_kind") == "spec_execution"),
                 None,
             )
-            # 0684 T#3 (D#1 §3-8): the Cases [enter results] offers; the rest are run.
+            # the Cases [enter results] offers; the rest are run.
             out["result_entry_case_ids"] = result_entry_case_ids(parsed["cases"])
             running = db_test_runs.get_running_by_doc(doc["doc_id"])
-            # 0684 T#1: with its Cases, so a Case the live run already reported shows its result.
+            # with its Cases, so a Case the live run already reported shows its result.
             out["active_run"] = (shape_run(running, include_cases=True) if running and
                                  running.get("contract_version") == test_spec_service.CONTRACT_SPEC
                                  else None)
-            # D#1 §3-4: PENDING is a display state -- the Cases the live run has not reported.
+            # PENDING is a display state -- the Cases the live run has not reported.
             out["pending_case_ids"] = []
             if out["active_run"] is not None:
                 reported = {test_spec_service.case_id_key(case_id) for case_id in
@@ -1972,12 +1972,12 @@ def describe_test_document(doc: dict) -> dict:
                     if test_spec_service.case_id_key(case_id) not in reported
                 ]
             from modules.flow_gate.services import test_basis_service
-            # 0684 T#1: what each Case can run is the locator's answer, Basis or not.
+            # what each Case can run is the locator's answer, Basis or not.
             out["case_capabilities"] = {
                 case["case_id"]: test_basis_service.locator(case)["capability"]
                 for case in parsed["cases"]
             }
-            # 0684 T#2 (D#1 §3-6): a display path. The Basis shown is the one the newest
+            # a display path. The Basis shown is the one the newest
             # result of this revision was made on; it is judged against the memo of the last
             # measurement only -- this request never hashes the source. No fitting memo is
             # "unchecked" (basis_valid null), not stale.
@@ -2043,7 +2043,7 @@ def describe_test_document(doc: dict) -> dict:
                             "stale_previous_result", "run_history", "active_run", "progress",
                             "pending_case_ids", "last_execution"):
                     out[key] = ts_view.get(key)
-                # 0684 T#3: the TSR body offers [run again] only while its TS may run.
+                # the TSR body offers [run again] only while its TS may run.
                 out["ts_review_status"] = ts_view.get("doc_review_status")
                 from modules.flow_gate.services import test_basis_service
                 out["source_identity"] = (test_basis_service.source_identity(ts_view["test_basis"])
@@ -2054,7 +2054,7 @@ def describe_test_document(doc: dict) -> dict:
 
 
 def execute_run(run: dict) -> None:
-    # Safety net (0163 / B0001 family): the inner executor finalizes the run row on every
+    # Safety net: the inner executor finalizes the run row on every
     # *expected* path (setup_failed / passed / failed), but an unexpected exception anywhere
     # in it — or in port allocation / scratch setup before its try-block — would otherwise leave
     # the row at status="running". The live worker cannot reap that (only startup's
@@ -2129,7 +2129,7 @@ def _execute_run_inner(run: dict) -> None:
         if _bail_if_cancelled(run_id, doc, active):
             return
 
-        # B0001 (0190): resolve the group's worktree (work branch), not base(main).
+        # : resolve the group's worktree (work branch), not base(main).
         # group_id is the switch in resolve_project_src_root that selects the git
         # worktree via git_service.effective_src_root; without it a git-integrated
         # group runs its test commands in base(main), so TS cases that reference
@@ -2184,7 +2184,7 @@ def _execute_run_inner(run: dict) -> None:
             if not setup_failed:
                 for idx, case in enumerate(cases, start=1):
                     if active.cancel_event.is_set():
-                        # NR0003 contract: remaining cases are not executed — leave them NULL,
+                        # contract: remaining cases are not executed — leave them NULL,
                         # not timeout (that would be a false statistic reading "ran but overran").
                         break
                     if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
@@ -2249,12 +2249,12 @@ def _execute_run_inner(run: dict) -> None:
                                 locale=finished_for_tsr.get("locale") or "ko",
                             )
                         except Exception as exc:
-                            # 0257 NR0003 §2: a passed run with no report is not a success — record it as a
+                            # a passed run with no report is not a success — record it as a
                             # distinct terminal error rather than leaving a green run whose TSR never existed.
                             logger.warning("TSR assembly failed for %s: %s", run_id, exc, exc_info=True)
                             status = "failed"
                             report_error = "report_assembly_failed"
-                        # flowgate.default.0152: reflect this passed run's setup/case commands into the project's
+                        # reflect this passed run's setup/case commands into the project's
                         # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
                         # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
                         # Still reflected on report_assembly_failed by intent: every case passed, so the commands
@@ -2262,7 +2262,7 @@ def _execute_run_inner(run: dict) -> None:
                         try:
                             passed_items = db_test_runs.list_cases(run_id)
                             test_command_service.reflect_from_passed_run(doc, passed_items)
-                            # flowgate.default.0157: also reflect this run's setup/run command into the GLOBAL engine
+                            # also reflect this run's setup/run command into the GLOBAL engine
                             # recipe (auto-learn, L §2-4). Self-isolating like the 0152 reflect — never affects verdict.
                             engine_recipe_service.reflect_from_passed_run(
                                 doc, db_test_runs.get_run(run_id) or run, passed_items
@@ -2283,7 +2283,7 @@ def _execute_run_inner(run: dict) -> None:
             finished_run = db_test_runs.get_run(run_id) or run
 
         if cancelled:
-            # 0358 T0004 risks 1/4/5: cancelled runs must never reach TSR assembly,
+            # risks 1/4/5: cancelled runs must never reach TSR assembly,
             # auto-recovery, or the chain-failure alarm — reuse the existing
             # test_run_finished/group_view_refresh broadcast only.
             _emit_finished(doc, finished_run, None)
@@ -2298,7 +2298,7 @@ def _execute_run_inner(run: dict) -> None:
             return
 
         if report_error is not None:
-            # 0257 NR0003 §2: terminal, so it must NOT enter the 0157 recovery loop below — every
+            # terminal, so it must NOT enter the 0157 recovery loop below — every
             # case passed, so there is no INFRA fault to repair and re-firing green tests cannot
             # produce the missing report. Surface it once and stop.
             _maybe_notify_chain_failure(doc, finished_run)
@@ -2306,7 +2306,7 @@ def _execute_run_inner(run: dict) -> None:
             _handle_terminal_case_failure(
                 doc, finished_run, db_test_runs.list_cases(run_id)
             )
-        # 0549 T0008: the run row is terminal now, so the chain can be told the gate outcome
+        # the run row is terminal now, so the chain can be told the gate outcome
         # (resume the next head on PASS past a TSR target; stay stopped otherwise).
         continue_chain_after_test_gate(doc, finished_run)
     finally:
@@ -2393,9 +2393,9 @@ def _handle_terminal_case_failure(doc: dict, run: dict, items: list[dict]) -> di
 def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
     """Route a setup-stage abort — the run never reached a single test case.
 
-    flowgate.default.0157 treats this as the canonical INFRA case, and for an unmanned chain
+    treats this as the canonical INFRA case, and for an unmanned chain
     that is still right: the recovery loop re-fires it up to the cap and owns the signal, so
-    nothing is rewound while it is working (T0004 completion criterion 3).
+    nothing is rewound while it is working (completion criterion 3).
 
     What that left uncovered is every manual run, and it is the only failure the reporter ever
     reproduced: 15 consecutive runs of test.test.0042.0006-TS on the preview server ended with
@@ -2404,14 +2404,14 @@ def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict
     stayed parked on the empty test-report slot and the action bar stayed empty. But the setup
     commands are authored in the TS document itself (its setup section), so a setup step that
     exits non-zero is a defect in the test scenario — exactly the document the user has to edit
-    and re-approve. It gets the same rewind as a RED. T0004 §2.3 had put this branch out of
+    and re-approve. It gets the same rewind as a RED. the earlier implementation had put this branch out of
     scope; that exclusion is what made the feature invisible in practice.
     """
     recovery = engine_recipe_service.handle_run_failure(doc, run, items)
     if recovery in ("repair", "escalated"):
         return None                                # unmanned repair loop owns this failure
     auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_setup_failure")
-    # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
+    # Gap A: surface the silent stop (best-effort).
     _maybe_notify_chain_failure(doc, run, auto_reopen=auto_reopen)
     return auto_reopen
 
@@ -2474,7 +2474,7 @@ def _auto_reopen_failed_scenario(
 def _record_source_root(doc: dict, run: dict, root: Path) -> None:
     """Persist the tree this run executes in, before a single command runs.
 
-    0280 NR0003 §6-2: the runner resolved a root and then forgot it, so "the tests
+    the runner resolved a root and then forgot it, so "the tests
     ran in main" could never be confirmed or refuted — a correct worktree run and a
     silent fallback to base were indistinguishable after the fact. Written early so
     a run that dies mid-way still carries its location. Best-effort in both
@@ -2570,7 +2570,7 @@ def _execute_teardown(
     if not steps:
         return
     stage_started = time.monotonic()
-    # 0358 T0004 §2: teardown still runs best-effort after a cancel (it may undo
+    # teardown still runs best-effort after a cancel (it may undo
     # setup side effects), but a cancelled run gets a short overall budget instead of
     # the normal 600s-per-step timeout — otherwise "cancel immediately" could stay stuck in
     # 'cancelling' for up to 10 minutes.
@@ -2629,14 +2629,14 @@ def _execute_case(
     )
     if active is not None and active.cancel_event.is_set():
         # Cancelled while the command was in flight (checked right after communicate()
-        # returns, per T0004 §2) — the process was already killed; do not record a
+        # returns, per the earlier implementation) — the process was already killed; do not record a
         # pass/fail/timeout result for a command that never ran to completion.
         return
     duration_ms = int((time.monotonic() - started) * 1000)
     output_tail = output[-OUTPUT_TAIL_CHARS:]
-    # flowgate.default.0503 T0007 §3: an assert field replaces the legacy exit-code
+    # an assert field replaces the legacy exit-code
     # verdict with the native comparator's — including the exit_code==0 + fail combination
-    # (NR0003 §23). exit_code is None only on timeout; a case that never finished has
+    #. exit_code is None only on timeout; a case that never finished has
     # nothing to grade, so it keeps the legacy "timeout" result with actual/comparison_result
     # left NULL.
     assert_mode = case.get("assert_mode")
@@ -2801,7 +2801,7 @@ def _run_shell_command(
 ) -> tuple[str, Optional[int], str, str]:
     """Run cmd; returns (result, exit_code, combined_output, raw_stdout).
 
-    raw_stdout (flowgate.default.0503 T0007 §3) excludes stderr so assert grading of
+    raw_stdout excludes stderr so assert grading of
     stdout_*/json_* modes never sees a false match/mismatch from interleaved stderr text
     that the legacy combined `output`/`output_tail` intentionally still includes.
     """
@@ -2867,7 +2867,7 @@ def _scratch_dir(doc: dict, run_id: str) -> Path:
 def _execution_env(port: int, scratch: Path) -> dict[str, str]:
     """Env every setup/case/teardown command sees.
 
-    FLOWGATE_TEST_OS / FLOWGATE_TEST_SHELL (0277 B0001 -> NR0003 §4 F3) let a TS branch at
+    FLOWGATE_TEST_OS / FLOWGATE_TEST_SHELL let a TS branch at
     run time instead of guessing the host: the same cmd string is handed to cmd.exe on
     Windows and /bin/sh on POSIX, and until these existed a TS had no way to tell which.
     PYTEST_ADDOPTS disables pytest's cacheprovider for FlowGate-managed runs. The provider
@@ -3050,19 +3050,19 @@ _TSR_TITLE_TEMPLATES = {
 def assemble_tsr(
     doc: dict, run: dict, cases: list[dict], locale: str = "ko", *, run_chain: bool = True
 ) -> str:
-    """Assemble this run's TSR into the TS's single active report slot (0257 NR0003 §1).
+    """Assemble this run's TSR into the TS's single active report slot.
 
     Two distinct re-entry paths land here, and they need different answers:
 
     * the *same* run re-finishing (worker retry) — return the report it already produced,
       keyed on run_id. Narrow by construction: finish_run records tsr_doc_id only after
       this returns, so this guard is False on a first assembly and True only afterwards.
-    * a *new* run for the same TS (the B0001 rerun) — revise the report already holding
+    * a *new* run for the same TS (the the regression rerun) — revise the report already holding
       the workflow slot instead of reserving a second number. Reserving one per attempt is
       what produced two TSR documents, the second of which the slot never adopted.
 
     Per-attempt history stays in test_runs/test_run_cases; the workflow keeps one document.
-    ``locale`` (T0009 task 4): no request context reaches this background assembly step
+    ``locale`` (task 4): no request context reaches this background assembly step
     today, so callers all pass the "ko" default — the parameter exists so the report body
     is localizable once one does, and so it can be unit-tested directly.
     """
@@ -3088,7 +3088,7 @@ _TSR_BASIS_VALIDITY = {
 
 
 def _tsr_basis_section(meta: dict, locale: str) -> str:
-    """What the result was made on (D#1 §3-4): the execution Basis summary, no Bundle id."""
+    """What the result was made on: the execution Basis summary, no Bundle id."""
     from modules.flow_gate.services import test_basis_service
     basis = meta.get("test_basis") or {}
     summary = test_basis_service.source_summary(basis)
@@ -3169,7 +3169,7 @@ def open_execution_tsr(doc: dict, cases: list[dict], run: dict, *, locale: str =
 
 
 def _open_execution_tsr_in_guard(doc: dict, cases: list[dict], run: dict, *, locale: str = "ko") -> str:
-    """Open (or reuse) the TS's report for a just-admitted spec run (0684 D#1 §3-4).
+    """Open (or reuse) the TS's report for a just-admitted spec run.
 
     The report says "test queued/running" with every selected Case PENDING -- a display
     state, no verdict -- and the run is linked to it so the report view follows the run.
@@ -3196,7 +3196,7 @@ def _open_execution_tsr_in_guard(doc: dict, cases: list[dict], run: dict, *, loc
 def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None:
     """Keep the Case results a live spec run just reported and refresh its report.
 
-    0684 D#1 §3-4: a finished Case shows its result in the report and in /test-document
+    a finished Case shows its result in the report and in /test-document
     while the remaining Cases still run. The result is kept on the run's own Case row --
     the run's result record (finalize_spec_results) still decides the overall verdict --
     and the report the run opened is rewritten with it unless it is no longer this run's.
@@ -3271,12 +3271,12 @@ def _settle_execution_tsr(doc: dict, run: dict) -> None:
 
 
 def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
-    """The TSR document already holding this TS's report slot, if any (0257 NR0003 §1).
+    """The TSR document already holding this TS's report slot, if any.
 
     A TSR is assembled for exactly one TS and records it as target_id, so the TS doc_id is
-    the slot key. Superseded reports are ignored. When a group already carries the B0001
+    the slot key. Superseded reports are ignored. When a group already carries the the regression
     duplicate, the slot-bound report wins over the orphan so a rerun converges back onto
-    the document the workflow actually tracks (cleaning up the existing orphan is NR0003 §4
+    the document the workflow actually tracks (cleaning up the existing orphan is the review
     admin work, deliberately not automated here).
     """
     existing = [
@@ -3429,7 +3429,7 @@ def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str, locale: st
     )
 
 
-# 0280 NR0003 §4-A: the execution-environment block used to print doc['branch'] (always "main",
+# A: the execution-environment block used to print doc['branch'] (always "main",
 # it is the *document's* branch, not the worktree's) next to the hardcoded string
 # the project source root (src_root). A run that executed correctly in the group worktree
 # was therefore reported as having run in main — the direct source of the repeated
@@ -3496,7 +3496,7 @@ def _src_root_label(run: dict, locale: str = "ko") -> str:
     stored = run.get("source_root")
     kind = run.get("source_root_kind")
     if not stored:
-        # Runs predating 0280 T0005, and runs whose bookkeeping failed. Say so
+        # Runs predating the earlier implementation, and runs whose bookkeeping failed. Say so
         # rather than repeating the old guess.
         return templates["no_record"]
     if kind == "worktree":
@@ -3566,11 +3566,11 @@ def _register_tsr_workflow_result(
 
 
 def _tsr_slot_item(doc: dict, db_wfseq) -> Optional[dict]:
-    """The sequence slot that holds this TS's report (0257 NR0003 §3).
+    """The sequence slot that holds this TS's report.
 
     Resolved from the TS's own sequence, not the pending head: the head only names a TSR
     while the first report is outstanding, so a rerun's report used to find no slot and was
-    left unbound — the orphan document of B0001. The workflow builder attaches TSR directly
+    left unbound — the orphan document of the regression. The workflow builder attaches TSR directly
     after its TS (AUTO_REPORT_MAP), so the slot is the first TSR item past the TS's own.
     Falls back to the pending head when the TS is not a registered slot result.
     """
@@ -3593,14 +3593,14 @@ def _tsr_slot_item(doc: dict, db_wfseq) -> Optional[dict]:
 
 
 def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
-    """Unmanned-chain gate passage for an auto-assembled TSR (group 0150).
+    """Unmanned-chain gate passage for an auto-assembled TSR (the earlier change).
 
-    L0006 (0138) deliberately left the TSR gate to "a human or an unmanned-chain approval procedure"; this is
+     deliberately left the TSR gate to "a human or an unmanned-chain approval procedure"; this is
     the latter. Chain detection is the consumed test_run token for this TS: only the
     token minted by advance_workflow's TSR-head wiring carries continuation_target_seq
     (the manned test-run-request token leaves it NULL, so manned delegation keeps its
     human approval gate). Approval uses the token issuer's REAL resolved permissions —
-    the same resolver as the inbox self-chain (approve is never bypassed, P0005 §4);
+    the same resolver as the inbox self-chain (approve is never bypassed, the plan);
     lacking document.approve degrades to a submitted TSR, never an error.
     """
     try:
@@ -3612,7 +3612,7 @@ def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
         if token_rec is None or token_rec.get("continuation_target_seq") is None:
             return  # manned delegation (or UI) run — human keeps the TSR gate
         actor_user_id = token_rec.get("issued_to") or "system"
-        # 0549 T0008: a TSR can exist without the gate being passed. The chain never
+        # a TSR can exist without the gate being passed. The chain never
         # approves a report whose server-computed overall is not PASS; the approval guard in
         # transition_document_review would refuse it anyway, this just keeps it quiet.
         gate = tsr_gate_state(db_docs.get_by_id(tsr_doc_id))
@@ -3646,7 +3646,7 @@ def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
             actor_user_id=actor_user_id,
             user_permissions=approver_perms,
         )
-        # 0549 T0008: the chain no longer "ends here by design". What happens next — end at
+        # the chain no longer "ends here by design". What happens next — end at
         # a TSR target, or resume the next workflow head with a fresh worker — is decided by
         # continue_chain_after_test_gate once the run row is terminal (the caller invokes it
         # after finish_run / after the specification result is recorded).
@@ -3823,7 +3823,7 @@ def _emit_case_finished(doc: dict, run: dict, case: dict, idx: int, total: int) 
 
 
 def _emit_phase(doc: dict, run: dict, phase: str) -> None:
-    """0684 T#1 (D#1 §3-3): queued → preparing → executing → finalizing, as it happens."""
+    """queued → preparing → executing → finalizing, as it happens."""
     _broadcast("test_run_phase", doc, {"doc_id": doc["doc_id"], "run_id": run["run_id"],
                                        "phase": phase})
 
@@ -3895,7 +3895,7 @@ def token_can_run_tests(user_id: str, project_id: str) -> bool:
 
     Same semantics as the UI routes' user_can_run_tests — is_admin bypass first. The
     inbox handler previously called has_permission alone, which re-created the 0086
-    unpopulated-RBAC trap for admin-issued chain tokens (group 0150).
+    unpopulated-RBAC trap for admin-issued chain tokens (the earlier change).
     """
     from modules.flow_gate.db import users as db_users
 
@@ -3975,7 +3975,7 @@ def startup() -> None:
             doc = db_docs.get_by_id(row["doc_id"])
             if run is not None and doc is not None:
                 _settle_execution_tsr(doc, run)
-                # 0684 T#2 (D#1 §3-3): the disposable run copy a restart left behind.
+                # the disposable run copy a restart left behind.
                 _remove_scratch(_scratch_dir(doc, run["run_id"]))
         _resume_failure_origin_after_restart()
     except Exception:

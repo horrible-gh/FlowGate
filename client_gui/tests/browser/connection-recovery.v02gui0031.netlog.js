@@ -1,4 +1,4 @@
-/* flowgate.v02gui.0031 T0005 §3 / NR0003 §6 — the browser's per-request log for the connection-recovery scenarios.
+/* the browser's per-request log for the connection-recovery scenarios.
  * A classic script, loaded before the fixture module, so it sees every request the product makes (the shared axios
  * client and the refresh call both use XMLHttpRequest; fetch is wrapped too) and every EventSource connection attempt.
  * One entry per request (or per stream attempt): wall-clock start / end (Date.now(), the clock the scenario script and

@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#1 — what the document upload / download decides without a screen or a server call
+// what the document upload / download decides without a screen or a server call
 // (0068 L §1.3, §2.12, §2.14, §2.15, §4.3, §4.4): the parameters, the file checks, the error → notice keys,
 // the file name of a download, and whether each button is usable (with its tooltip key).
 import type { DocumentError, DocumentInfo } from '@/features/document'
@@ -12,7 +12,7 @@ export const FILE_PICK_CANCEL_GRACE_MS = 1000
 /** How long the upload waits for the open windows to answer its reflect request before it releases. */
 export const REFLECT_TIMEOUT_MS = 10000
 /**
- * Upload file size limit. The server's content save has none (0068 T#1 DEFERRED, see the TR): the body
+ * Upload file size limit. The server's content save has none (DEFERRED, see the TR): the body
  * model is a plain `str`, the save writes the bytes as they are and no middleware bounds a request body.
  * null keeps L §2.12's TBD branch: no size check before the save.
  */

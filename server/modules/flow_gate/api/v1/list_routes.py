@@ -392,7 +392,7 @@ def list_documents(
     })
 
 
-# ── 3-6. GET /search/documents (R0001 Phase 1: global title/doc_id search) ─────
+# ── 3-6. GET /search/documents (Phase 1: global title/doc_id search) ─────
 
 @router.get("/search/documents")
 def search_documents(
@@ -425,7 +425,7 @@ def search_documents(
     # (the one that runs when "search inside contents" is off) shows the document's simplified
     # body — not just its id/title. The body lives on the filesystem; we read only
     # this page of rows through the same mtime cache the content search uses, so it
-    # stays cheap. This is the group 0123 rev10 fix: prior revisions only added the
+    # stays cheap. This is the the earlier change fix: prior revisions only added the
     # body preview on the content endpoint, but the reviewer searches in this default
     # mode, so the brief body never appeared.
     from modules.flow_gate.services import content_search_service
@@ -451,7 +451,7 @@ def search_documents(
     })
 
 
-# ── 3-7. GET /search/documents/content (R0001 Phase 2: body full-text search) ─
+# ── 3-7. GET /search/documents/content (Phase 2: body full-text search) ─
 
 @router.get("/search/documents/content")
 def search_documents_content(

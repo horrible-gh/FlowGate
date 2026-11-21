@@ -171,7 +171,7 @@ def create_group(
             project_id, work_base_ref
         )
     else:
-        # 0665 T0004: pin the creation-time project base (Git projects only).
+        # pin the creation-time project base (Git projects only).
         work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
     now = now_iso()
@@ -590,7 +590,7 @@ class WorkflowRevertPendingError(TransitionError):
 def _require_no_revert_pending_for_approval(doc: dict, locale: str = "ko") -> None:
     """Refuse every approval in a group while a reopened TR2's commit is still live.
 
-    0660 T0004 §3 (RC3, approach B): a blocked cancel leaves the group in an explicit
+    (RC3, approach B): a blocked cancel leaves the group in an explicit
     pending state in which only the cancel retry may run. The pending TR2 itself is
     refused by its own rule (``tr2_revert_pending``); this closes the rest of the group,
     so no other step can be approved on top of a source that still carries the commit.
@@ -617,7 +617,7 @@ def _require_no_revert_pending_for_approval(doc: dict, locale: str = "ko") -> No
 def _require_workflow_head_for_approval(doc: dict, locale: str = "ko") -> None:
     """Refuse to approve a slot result that sits after the authoritative workflow head.
 
-    0660 T0004 §5 (S3): a Time Machine reopen re-pends every step from the target onward.
+    (S3): a Time Machine reopen re-pends every step from the target onward.
     The effective head is then the EARLIEST of them, yet nothing stopped a later N/NR/T
     from being approved first — out of order, ahead of the step the rewind returned to.
     Only documents that occupy a workflow slot are checked; non-slot documents (root,
@@ -773,7 +773,7 @@ _TEST_GATE_MESSAGES = {
         "en": "The test specification (TS) has validation errors and cannot be approved: {errors}",
         "ja": "試験仕様書(TS)に構造検証エラーがあるため承認できません: {errors}",
     },
-    # 0684 T#1 (D#1 §3-1 step 4): which Case, which file -- checked for existence only.
+    # (step 4): which Case, which file -- checked for existence only.
     "ts_asset": {
         "ko": "자동 실행 Case {case_id}의 시험 파일 {path}을(를) 작업 공간에서 확인할 수 없어 승인할 수 없습니다 ({code}).",
         "en": "Automated Case {case_id}: its test file {path} cannot be confirmed in the workspace, so the TS cannot be approved ({code}).",
@@ -796,7 +796,7 @@ def _spec_asset_refusal(raw: str, lang: str) -> str:
 
 
 def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
-    """0549 T0008: approval is where the test gate becomes a workflow gate.
+    """approval is where the test gate becomes a workflow gate.
 
     * TSR — "the report exists" is not "the gate passed". A report whose newest result
       record is a specification result with a server-computed overall other than PASS is
@@ -852,7 +852,7 @@ def transition_document_review(
     M026 §8-1: based on the DOC_REVIEW_TRANSITIONS rules.
     action: approve | reject | mark_revised
 
-    T0005 2.1.5: `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
+    2.1.5: `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
     came from. Optional, defaults to None, so every existing caller -- the human [반려]
     button above all -- keeps writing exactly the item shape it wrote before. When given
     and identifiable, the new rejection_history item carries the key, which is what lets
@@ -863,7 +863,7 @@ def transition_document_review(
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
 
-    # 0660 T0004 §5 (S3): approval follows the authoritative workflow head, whoever asks
+    # (S3): approval follows the authoritative workflow head, whoever asks
     # (the button is only a hint). Checked before the TR2 branch so a reopened, later TR2
     # cannot be approved out of order either.
     if action == "approve":
@@ -911,7 +911,7 @@ def transition_document_review(
             if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_SPEC:
                 lang = locale if locale in ("ko", "en", "ja") else "ko"
                 parsed = test_spec_service.parse_spec(content)
-                # 0684 T#1 (D#1 §3-1): approval fixes the specification and queues the test
+                # approval fixes the specification and queues the test
                 # run; it never captures, copies or hashes the source, so it answers in the
                 # same short time whatever the worktree's size. The automated Cases' test
                 # files only have to exist and be safe here -- the run measures what it
@@ -949,7 +949,7 @@ def transition_document_review(
     if action == "reject" and comment:
         update_fields["rejection_reason"] = comment  # Compatibility: keep the latest reason
         existing_history: list = parse_rejection_history(doc.get("rejection_history"))
-        # P0005/T0006: assign a time-sortable rejection_id at creation so the AI
+        # assign a time-sortable rejection_id at creation so the AI
         # response can later be attached to this exact item (index/time alone is
         # unsafe). The four response fields start null — they are filled in when
         # the AI re-submits the rejected document through the inbox edit path
@@ -965,7 +965,7 @@ def transition_document_review(
             "response_revision_no": None,
         }
         if is_review_row_id(review_id):
-            # T0005 2.1.5: only a valid row id earns the key. A human rejection never
+            # 2.1.5: only a valid row id earns the key. A human rejection never
             # passes review_id, so it never grows a key it did not have; readers that do
             # not know it (the client, older rejection_history items) simply ignore it.
             item["review_id"] = review_id
@@ -1005,7 +1005,7 @@ def transition_document_review(
                 if not updated:
                     raise TransitionError("Review status transition failed")
                 if selected:
-                    # Same transaction as the approval (D#1 §3-1 steps 5-6): the queued run and
+                    # Same transaction as the approval (steps 5-6): the queued run and
                     # the report it opens exist exactly when the approval does.
                     admitted = spec_execution_service.admit_on_approval(
                         updated, parsed, selected, runner_id=actor_user_id, locale=locale)
@@ -1045,7 +1045,7 @@ def transition_document_review(
         action_code=f"review_{action}",
     )
 
-    # 0449 T0004 item 5.2 (NR0003 E4): this is the forward way home. A rewind leaves a return
+    # this is the forward way home. A rewind leaves a return
     # point behind whose snapshot documents are all pending_review; approving the last of them
     # here means the rewound range has been rebuilt without restore, so the ledger no longer
     # describes a state anyone can return to. Clearing it at THIS write boundary is what lets
@@ -1147,7 +1147,7 @@ def commit_final_approval(
 ) -> dict:
     """Atomically approve one AC and finish its canonical R/B root.
 
-    ``consume_hook`` is the T#2 seam: when supplied it runs inside the same
+    ``consume_hook`` is the the earlier implementation seam: when supplied it runs inside the same
     transaction after both CAS updates and may raise (or return ``False``) to
     roll the whole unit back.
     """
@@ -1207,7 +1207,7 @@ def commit_final_approval(
     return {"document": updated_doc, "root": updated_root}
 
 
-# P0005/T0006: AI response length ceiling (fixed by T0006).
+# AI response length ceiling (fixed by the earlier implementation).
 AI_RESPONSE_MAX_LEN = 4000
 
 
@@ -1231,7 +1231,7 @@ UNIDENTIFIABLE_REVIEW_ID = _UnidentifiableReviewId()
 
 
 def is_review_row_id(value: Any) -> bool:
-    """True only when `value` could BE a `document_reviews.id` (T0005 2.2.2).
+    """True only when `value` could BE a `document_reviews.id`.
 
     The column is an autoincrement primary key -- a positive integer, never a bool
     (`isinstance(True, int)` is True in Python, so bool is excluded first) and never an
@@ -1262,7 +1262,7 @@ def is_review_row_id(value: Any) -> bool:
 def rejection_review_key(value: Any) -> str:
     """One comparable form for a `document_reviews.id` stored in rejection_history.
 
-    T0005 2.2.3. The column is an integer, but it round-trips through the
+    2.2.3. The column is an integer, but it round-trips through the
     rejection_history JSON and through an inbox request body, so it can come back as
     "244". Normalizing to a stripped string makes 244 and "244" one key. Values that
     cannot identify a review row -- None, a bool, an empty/whitespace-only string, a
@@ -1295,18 +1295,18 @@ def parse_rejection_history(raw: Any) -> list:
 
 
 def rejection_provenance_view(item: dict) -> dict:
-    """Shape one rejection_history item's AI-provider evidence for API/UI (0582 T0005).
+    """Shape one rejection_history item's AI-provider evidence for API/UI.
 
     Resolves two independent, both-optional facts -- neither is stored redundantly on
     the item itself, and both are None-safe for a legacy row that predates this T:
 
     * ``rejection_provider`` -- when this rejection carries a ``review_id`` (an
-      AUTOMATIC AI-review rejection, T0005 2.1.5), the ACTUAL reviewing AI, resolved
+      AUTOMATIC AI-review rejection, the earlier implementation 2.1.5), the ACTUAL reviewing AI, resolved
       from ``document_reviews`` at read time. The server logic that executed the
-      auto-reject transition is never reported as "the AI" here (0582 T0005 SS2.1) --
+      auto-reject transition is never reported as "the AI" here --
       only the AI review run that produced the `issues` verdict is.
     * ``response_provider`` -- the AI that generated ``ai_response`` (the rework
-      reply), if it was recorded with a run/provider snapshot (0582 T0005 SSC).
+      reply), if it was recorded with a run/provider snapshot (SSC).
 
     Returns a NEW dict; the source item is left untouched.
     """
@@ -1341,7 +1341,7 @@ def enrich_rejection_history_provenance(history: list) -> list:
 
     Every document read path that surfaces ``rejection_history`` (api/v1/document_routes,
     documents/routers/documents) calls this ONE function so the derived provider fields
-    cannot drift between the console UI and the T-API worker view (0582 T0005 SS4).
+    cannot drift between the console UI and the T-API worker view.
     """
     return [rejection_provenance_view(item) for item in history if isinstance(item, dict)]
 
@@ -1387,12 +1387,12 @@ def record_rejection_response(
 ) -> dict | None:
     """Annotate the rejection this response answers with how the AI addressed it.
 
-    Reviewer intent (TR0007 rework): the AI's response to a rejection arrives
+    Reviewer intent: the AI's response to a rejection arrives
     *with the inbox re-submission* of the rejected document — the body stays the
     body, and this records, against a rejection_history item, what the AI
     did about the reviewer's comment. There is no separate manual-input UI/API.
 
-    Which item (0458 T0007 §2.2-3~6):
+    Which item:
 
     * ``review_id`` given and identifying → the item carrying that same `review_id`,
       compared through :func:`rejection_review_key` so 244 and "244" are one row. If
@@ -1443,7 +1443,7 @@ def record_rejection_response(
     target["responded_at"] = now_iso()
     target["response_recorded_by"] = recorded_by
     target["response_revision_no"] = revision_no
-    # 0582 T0005 SSC: the rework run's OWN effective provider, never the review's or a
+    # SSC: the rework run's OWN effective provider, never the review's or a
     # stale prior response's -- callers resolve it fresh per call via
     # ai_invoke.provenance.resolve_run_provenance and pass the snapshot in.
     target["response_ai_run_id"] = response_ai_run_id
@@ -1462,11 +1462,11 @@ def record_rejection_response(
 def _log_workflow_slot_conflict(
     conflict: WorkflowSlotConflictError, *, actor_user_id: str
 ) -> None:
-    """Record a refused slot write in workflow_events (0457 NR0003 §7-4).
+    """Record a refused slot write in workflow_events.
 
     Takes either refusal — the slot is held by another document
     (:class:`WorkflowSlotConflictError`) or the document already holds another slot
-    (:class:`WorkflowDocumentAlreadyLinkedError`, 0457 T0007). Both land under the same
+    (class:`WorkflowDocumentAlreadyLinkedError`, the earlier implementation). Both land under the same
     ``workflow_slot_conflict`` event type; ``metadata.code`` tells them apart, so an
     operator reconstructing an incident sees one stream of refused writes rather than two.
 
@@ -1505,13 +1505,13 @@ def register_workflow_result(
 
     DB004 §6.3: set workflow_sequence_items.result_doc_id when registering a result doc.
 
-    0457 B0001 / NR0003 §7-3 — the occupancy invariant. A slot is claimable only when it
+    the occupancy invariant. A slot is claimable only when it
     is empty or already holds ``registered_doc_id``; a slot holding a *different*
     document raises :exc:`WorkflowSlotConflictError` and keeps what it has. Re-registering
     the same document stays allowed, because that is what every rejected-resubmit
     revision does to its own slot.
 
-    0457 T0007 / NR0003 §7-1 — the other half of the same invariant, now enforced by
+    the other half of the same invariant, now enforced by
     uq_wfseq_items_result_doc (migration 090): one document, one slot. Linking a document
     that already occupies a different slot raises
     :exc:`WorkflowDocumentAlreadyLinkedError` even when the target slot is empty. Both
@@ -1525,7 +1525,7 @@ def register_workflow_result(
     * The claim runs **before** the ledger INSERT. The old order wrote
       ``workflow_item_results`` first, so a registration that had no business happening
       still left a row that reads like a successful one — that ledger is precisely what
-      NR0003 §3 had to untangle to date the eviction. Now a refused attempt leaves no
+      had to untangle to date the eviction. Now a refused attempt leaves no
       ledger row, and the refusal itself is what gets recorded (as a
       ``workflow_slot_conflict`` event).
 
@@ -1536,7 +1536,7 @@ def register_workflow_result(
     """
     from modules.flow_gate.db import workflow_sequences as _db_wfseq
 
-    # 0457 T0007: the document may already be some other slot's result. Migration 090
+    # the document may already be some other slot's result. Migration 090
     # makes that a unique-index violation, which would surface as the driver's
     # IntegrityError — engine-specific, and a 500 on paths that already know how to
     # answer 409. Ask the reverse lookup first and refuse in the vocabulary the callers

@@ -132,7 +132,7 @@ describe('D §8 first modeless and run lifecycle', () => {
     await wrapper.findAll('button').at(-1)!.trigger('click'); expect(wrapper.emitted('save')).toEqual([[notUsed]])
     await wrapper.get('[data-modeless-action="close"]').trigger('click'); expect(wrapper.emitted('close')).toHaveLength(1)
   })
-  // flowgate.v02.0117 T#3: the setup window is a ModelessShell (the frame of the run result window), not its own fixed panel.
+  // the setup window is a ModelessShell (the frame of the run result window), not its own fixed panel.
   const mountSetup = (data: ReturnType<typeof account> | null = account()) => mount(AiRoleSetupModeless, { props: { data, saving: false, error: null }, global: { plugins: [i18n], stubs: { Teleport: true } } })
   it('is framed by ModelessShell: open follows data, title, shell close, no own header or fixed panel', async () => {
     wrapper = mountSetup()

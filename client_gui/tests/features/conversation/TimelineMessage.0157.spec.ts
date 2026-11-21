@@ -8,7 +8,7 @@ import TimelineMessage from '@/features/conversation/TimelineMessage.vue'
 import type { TimelineItem } from '@/features/conversation/timeline'
 import type { ConversationTurn } from '@/features/conversation/types'
 
-// flowgate.v02.0157 — Markdown tables, a copy per code block and the whole-message copy in the Designer chat.
+// Markdown tables, a copy per code block and the whole-message copy in the Designer chat.
 registerAppMessages(i18n)
 
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn(async (_text: string, _host?: HTMLElement | null) => true) }))

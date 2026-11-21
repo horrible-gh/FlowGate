@@ -1,4 +1,4 @@
-"""0061 T#8: freeze and commit one attempt result; integration is T#9's caller.
+"""freeze and commit one attempt result; integration is the earlier implementation's caller.
 
 The Stop gate covers Git and the following DB transaction, but no Flow guard or
 DB transaction spans Git. A durable pending reservation closes the concurrent
@@ -72,7 +72,7 @@ def commit_result(attempt_id: str, doc_id: str) -> dict:
                 "integration_reason = 'result_commit' WHERE attempt_id = ? AND status = 'active'",
                 [attempt_id])
         fencing.guarded(flow_id, reserve)
-        # 0111 T#8: a ref-layout attempt commits on its detached tree and moves its dedicated ref.
+        # a ref-layout attempt commits on its detached tree and moves its dedicated ref.
         ref = workspace.attempt_head(row, project_id)
         outcome = git_commit.create_attempt_commit(
             project_id, root, branch, row["input_commit"], attempt_id, doc_id,

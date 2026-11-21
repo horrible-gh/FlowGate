@@ -1,4 +1,4 @@
-"""Screen-load SQL reduction (flowgate.default.0282 NR0003) — unit suite.
+"""Screen-load SQL reduction — unit suite.
 
 Covers:
   - finding 1: _groups_root_wf_done / _group_ac_doc_ids batch helpers return

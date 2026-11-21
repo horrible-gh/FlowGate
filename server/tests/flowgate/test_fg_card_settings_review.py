@@ -1,10 +1,10 @@
-"""flowgate.v02.0053 T#2 — the card settings a node's run applies after the start: instruction use / omit and
-the card's AI review (review AI, review count, review basis). flowgate.v02.0056 T#1: after review is gone and
+"""the card settings a node's run applies after the start: instruction use / omit and
+the card's AI review (review AI, review count, review basis). the earlier change the earlier implementation: after review is gone and
 what follows is always the former follow; a result that is not approved waits for the card's approval.
 
 On the same real SQLite DB and routes as ``test_fg_card_settings`` (its fixtures and helpers), from the
 result registration on: the AI of one card writes the card's report as the node's result — with its instruction
-used after the instruction stage (flowgate.v02.0056 T#2: ``_in_review`` walks that stage the way the engine runs
+used after the instruction stage (the earlier change the earlier implementation: ``_in_review`` walks that stage the way the engine runs
 it, ``test_fg_instruction_stage_0056`` tests the stage itself), with it omitted at once — and only that type
 binds and fills its card line; when the node's AI run has ended (the AI invoke engine's run-end port, ``ai_run_end_hooks``) the card's review count starts the
 v0.1 document review loop with the card's review AI, count and basis; a passed review (or no review)
@@ -29,7 +29,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     setting,
 )
 
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -105,7 +105,7 @@ def _write_written(doc_id, body="## 작업\n\n지시 AI가 쓴 지시서 본문\
 
 
 def _executions_ended():
-    """flowgate.v02.0083 T#1 (T0 baseline, harness): the end of the Flow's Graph executions in the 0061 T#4 ledger
+    """(T0 baseline, harness): the end of the Flow's Graph executions in the the earlier implementation ledger
     (``graph_attempt_runs``), as ``terminal.cleanup`` -> ``graph_run.execution.finish`` ends them before an AI run's
     lease is released and its run-end hooks run. The recorder standing in for the AI invoke start never launches, so its
     execution is still ``requested``: it ends as the finish of a launcher that holds no lease token ends it (cancelled);
@@ -136,7 +136,7 @@ def _run_ended(run_id, **fields):
 
 
 def _through_instruction(env, monkeypatch):
-    """The instruction stage of an AI card with its instruction used (flowgate.v02.0056 T#2), as the engine runs
+    """The instruction stage of an AI card with its instruction used, as the engine runs
     it: its instruction AI writes the card's instruction into the line's empty document (an edit start) and its
     run ends on its own; the instruction is approved and the result stage's start is queued. -> the instruction."""
     [job] = env["jobs"]
@@ -152,7 +152,7 @@ def _through_instruction(env, monkeypatch):
 def _in_review(env, monkeypatch, settings=(), written="TR"):
     """An AI card with ``settings`` runs (through its instruction stage when its instruction is used); its AI
     registers a result as the inbox does (the Graph contact, then its token's consume): (node key, result, AI
-    token). flowgate.v02.0056 T#3: the run's end reviews or approves only a result its own tokens registered."""
+    token). the earlier change the earlier implementation: the run's end reviews or approves only a result its own tokens registered."""
     from modules.flow_gate.graph_workflow.api import v01_contact
     from modules.flow_gate.services import token_service
 
@@ -194,7 +194,7 @@ def _work_run_ended(**ending):
     (None, "TR", "T", "report"), ("use", "TR", "T", "report"), ("omit", "TR", "T", "report")])
 def test_instruction_use_or_omit_decides_what_the_ai_writes_and_what_the_node_binds(
         env, decided, monkeypatch, instruction, written, other, line):
-    """flowgate.v02.0056 T#2: with its instruction used the card's report is the result too, written after the
+    """with its instruction used the card's report is the result too, written after the
     instruction stage (walked here; ``test_fg_instruction_stage_0056`` tests the stage)."""
     from modules.flow_gate.graph_workflow.api import v01_contact
 
@@ -228,7 +228,7 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
     # T2 does not fold: its TR2 names the T2 it applies, and an omitted instruction leaves no T2
     assert [f.result_doc_type("document", t, omit) for t in ("N", "T", "T2", "D", "DB", "TS")] == [
         "NR", "TR", None, None, None, None]
-    # flowgate.v02.0056 T#2: instruction use (the default) -> the instruction stage, then the report is the result
+    # instruction use (the default) -> the instruction stage, then the report is the result
     for used in ({"instruction": "use"}, {}):
         assert [f.result_doc_type("document", t, used) for t in ("N", "T", "T2", "D", "DB", "TS")] == [
             "NR", "TR", "TR2", "D", "DB", None]
@@ -236,7 +236,7 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
             "N", "T", "T2", "DS", "DS", None, None, None]
     assert f.result_doc_type("custom", None, {}) == "TR" and f.instruction_stage("custom", None, {}) == "T"
     assert [f.instruction_stage("document", t, omit) for t in ("N", "T", "D")] == [None, None, None]
-    # flowgate.v02.0053 T#8: a Custom card runs as a work instruction, so it folds like a work card
+    # a Custom card runs as a work instruction, so it folds like a work card
     assert f.result_doc_type("custom", None, omit) == "TR"
     assert f.run_plan(f.RUN, omit, "custom", None) == {"settings": omit, "result_doc_type": "TR", "step_timeout_sec": 14400, "restart_max": 3}
     assert f.run_plan(f.RUN, omit, "document", "T") == {"settings": omit, "result_doc_type": "TR", "step_timeout_sec": 14400, "restart_max": 3}
@@ -247,7 +247,7 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
         "step_timeout_sec": 14400, "restart_max": 3}
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person card's result type was its own; an assigned attempt's is its stage plan's (L-2 §2.5.1/§2.14, K-2) — test_fg_ai_roles_l2_manual.py::test_k2_*
+# (T) pre-feature contract: a person card's result type was its own; an assigned attempt's is its stage plan's (L-2 /, K-2) — test_fg_ai_roles_l2_manual.py::test_k2_*
 def test_a_human_node_binds_its_own_type_whatever_its_card_says(pre_feature_attempts, env, decided):
     from modules.flow_gate.graph_workflow.api import v01_contact
 
@@ -336,7 +336,7 @@ def test_a_token_the_graph_never_mapped_is_judged_as_before(env, decided, monkey
     assert "write" not in _source_scopes(stray["raw_token"])               # the root R: read, as before
 
 
-# ── without a review: approved at once (flowgate.v02.0056 T#1) ──────────────
+# ── without a review: approved at once ──────────────
 
 @pytest.mark.parametrize("stored_human", [False, True])
 def test_without_a_review_the_result_is_approved_when_the_ai_run_ends(env, decided, monkeypatch, stored_human):
@@ -368,7 +368,7 @@ def test_a_run_that_is_not_the_node_ai_changes_nothing(env, decided, monkeypatch
 
 # ── the card's AI review ─────────────────────────────────────────────────────
 
-# 0113 T#3 (T §6.4) pre-feature contract: review_ai None asks the project default reviewer (assigned: wait_setup, G-9)
+# (T) pre-feature contract: review_ai None asks the project default reviewer (assigned: wait_setup, G-9)
 @pytest.mark.parametrize("review_ai, reviewer", [("aip_review", "aip_review"), (None, "aip_default")])
 def test_a_card_review_starts_the_review_loop_with_its_review_ai_count_and_basis(request, 
         env, decided, monkeypatch, review_ai, reviewer):
@@ -503,7 +503,7 @@ def test_a_card_review_rejection_is_no_node_event_and_the_card_is_locked_while_i
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
                     "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
     result_binder.reconcile_if_needed(FA, "flowgate")                    # the review ended rejected:
-    assert _node(env, key) == ("review", result)                          # no node event (flowgate.v02.0056 T#1)
+    assert _node(env, key) == ("review", result)                          # no node event
     assert get_settings(env, FA, key)["locked"] is False
 
 
@@ -567,5 +567,5 @@ def test_integration_registers_every_port_and_the_run_end_hook():
     assert worker_step_type_hooks.token_step_type({"token_id": "x", "group_id": FA}) is None
 
 
-# Fixture-only legacy fields for the pre-T#3 execution contract.
+# Fixture-only legacy fields for the pre-the earlier implementation execution contract.
 from test_fg_card_settings import legacy_setting

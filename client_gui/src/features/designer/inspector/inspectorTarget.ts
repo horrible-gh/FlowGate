@@ -1,9 +1,9 @@
-// flowgate.v02.0048 T#1 — what the bottom Inspector works on (D#1 §4.3). One pure translation of
+// what the bottom Inspector works on. One pure translation of
 // the Center session's selection context (FlowGraphSelection) into an InspectorTarget: the
 // document bound to the selected Node, its card kind, its states and whether the Flow is read
 // only. Every Inspector part reads this one shape, so the rules here (card kind, read only) are
 // decided once and never again per feature.
-// flowgate.v02.0070 T#1 (B1): the card's own title state and whether it may be edited now (the session's titleEdit) —
+// (B1): the card's own title state and whether it may be edited now (the session's titleEdit) —
 // the Inspector header edits the title; the title text rules it checks before sending are the Canvas's (nodeTitle.ts).
 import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
 import type {
@@ -82,14 +82,14 @@ export interface InspectorTarget {
   readonly slot: FlowGraphNodeSlot | null
   readonly nodeRun: FlowGraphNodeRun | null
   /**
-   * flowgate.v02.0053 T#5: the card's document lines as the server keeps them (T#1 — made when the card
+   * the card's document lines as the server keeps them (the earlier implementation — made when the card
    * is placed), in its order; empty on a Node without them (a document / sequence Node).
    */
   readonly cardDocuments: readonly InspectorCardDocument[]
   /** Graph definition node type (`document` | `gate` | `custom`), or null. */
   readonly nodeType: string | null
   /**
-   * flowgate.v02.0053 T#7: the Graph card's own document type (its definition), whatever document its run bound
+   * the Graph card's own document type (its definition), whatever document its run bound
    * (a 조사 card stays N with its NR result); null on a Node without a definition.
    */
   readonly cardDocType: string | null
@@ -101,18 +101,18 @@ export interface InspectorTarget {
   readonly settingsReadOnly?: InspectorReadOnly
   readonly settingsContext?: { readonly run_id: string | null; readonly graph_revision_no: number | null; readonly draft_version: number | null }
   /**
-   * flowgate.v02.0061 T#14: `run` while the Flow's Graph run is running, paused or stopping — its structure and card
-   * settings cannot change (the Center session's run lock); TR0031 rev1: `unknown` while the run's status is not
+   * `run` while the Flow's Graph run is running, paused or stopping — its structure and card
+   * settings cannot change (the Center session's run lock); the earlier implementation: `unknown` while the run's status is not
    * confirmed (being read, or the read failed). Absent / null = not locked.
    */
   readonly editLock?: 'run' | 'unknown' | 'archived' | null
   /** flowgate.v02.0105 T#2 (B-6): the server confirmed the user may approve the Flow's cards. Absent = no [승인]. */
   readonly canApprove?: boolean
-  /** flowgate.v02.0070 T#1: the card's own title state as shown (its version), or null / absent (none). */
+  /** the card's own title state as shown (its version), or null / absent (none). */
   readonly titleState?: FlowGraphTitleState | null
-  /** flowgate.v02.0070 T#1: the card's title may be edited now (the Canvas's rule, graph/nodeTitle.ts). Absent = no. */
+  /** the card's title may be edited now (the Canvas's rule, graph/nodeTitle.ts). Absent = no. */
   readonly canEditTitle?: boolean
-  /** flowgate.v02.0070 T#1: why it may not — the card runs (an open edit then closes with the lock note). */
+  /** why it may not — the card runs (an open edit then closes with the lock note). */
   readonly titleLock?: 'running' | null
   /**
    * v02gui.0029: on a 확인 card (gate), the cards before it (every ancestor along execution edges, in the Graph's order)
@@ -139,16 +139,16 @@ export function inspectorReadOnly(ownership: string | null | undefined, viewMode
 }
 
 /**
- * flowgate.v02.0053 T#7 — what the settings tab holds for a Node, by the kinds the server keeps card settings
+ * what the settings tab holds for a Node, by the kinds the server keeps card settings
  * by (T#2 `fields.card_kind`): run (조사 · 작업 · 설계 · Custom), test, requirement, check.
- * flowgate.v02.0072 T#3 — and plan: a Graph work plan (WP) card keeps the plan settings (the AI pre-instruction writing
+ * and plan: a Graph work plan (WP) card keeps the plan settings (the AI pre-instruction writing
  * switch and the run block, values only).
  */
 export const INSPECTOR_SETTINGS_KINDS = ['run', 'test', 'requirement', 'check', 'plan'] as const
 
 export type InspectorSettingsKind = (typeof INSPECTOR_SETTINGS_KINDS)[number]
 
-/** Document card types with run settings (T#2 `fields._RUN_DOC_TYPES`). */
+/** Document card types with run settings (`fields._RUN_DOC_TYPES`). */
 const SETTINGS_RUN_TYPES: readonly string[] = ['N', 'T', 'T2', 'D', 'P', 'L', 'DB']
 
 /**
@@ -269,7 +269,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     ownership,
     viewMode,
     readOnly: selection.flowReadOnly ? 'archived' : inspectorReadOnly(ownership, viewMode),
-    // flowgate.v02.0130: a card's settings follow the server's capability in every view (revision, an older revision,
+    // a card's settings follow the server's capability in every view (revision, an older revision,
     // draft, with or without a Canvas run) — the view never turns the AI tab off; only an ownership conflict does here.
     settingsReadOnly: selection.flowReadOnly ? 'archived' : ownership === 'conflict' ? 'conflict' : viewMode === 'revision' ? null : undefined,
     settingsContext: node.definition ? {

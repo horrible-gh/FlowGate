@@ -8,9 +8,9 @@ import { REVISIT_CATCHUP_MIN_MS, type ConversationSession } from '@/features/con
 import type { WorkChangeActivity } from '@/features/conversation/types'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// flowgate.v02.0151 T-A2 (NR Rev.4 §2.6-3 ②, §2.8 V8): coming back to the panel — the tab visible again, the window
+// T-A2 (NR Rev.4 ②, V8): coming back to the panel — the tab visible again, the window
 // focused again — catches the open chat up, activities included; at most once per REVISIT_CATCHUP_MIN_MS, never while
-// hidden. The panel's existing reload path (same chat) brings activities too. flowgate.v02test.0013: a polled run's
+// hidden. The panel's existing reload path (same chat) brings activities too. the earlier change: a polled run's
 // poll is woken instead of being skipped.
 registerAppMessages(i18n)
 
@@ -92,7 +92,7 @@ describe('0151 T-A2 panel revisit catch-up (V8)', () => {
     expect(changeCards()).toHaveLength(1)
   })
 
-  // flowgate.v02test.0013: a return while a run is polled is no longer skipped — the poll may be behind (a throttled
+  // a return while a run is polled is no longer skipped — the poll may be behind (a throttled
   // background tab, missed events). It wakes the poll instead of reading beside it: one tick now, no history read.
   it('while an AI run is polled a return wakes its poll instead of a catch-up beside it', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

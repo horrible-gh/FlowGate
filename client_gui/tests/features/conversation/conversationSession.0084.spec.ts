@@ -4,7 +4,7 @@ import { ConversationRequestError } from '@/features/conversation/api'
 import { RUN_ADOPT_GRACE_MS, RUN_POLL_MS, START_RESEND_MAX, createConversationSession } from '@/features/conversation/conversationSession'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02.0084 T#2 — a slow server must not make a run that exists look failed: a run
+// a slow server must not make a run that exists look failed: a run
 // adopted before the server registered it, and a /start that got no answer.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
@@ -62,7 +62,7 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     expect(statuses).toEqual([])
   })
 
-  // flowgate.v02.0152: the first call of a chat ran past the 30s wait while the server went on to run the AI; the
+  // the first call of a chat ran past the 30s wait while the server went on to run the AI; the
   // screen said "AI를 호출하지 못했습니다" and a second press could run the same message again. Now the press is sent
   // again with the same client_request_id, and the server answers with the run it already admitted.
   it.each([['running', 'finished'], ['finished']] as const)(
@@ -135,7 +135,7 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     await none.session.invokeAi()
     expect(none.source.startChatRun).toHaveBeenCalledTimes(1 + START_RESEND_MAX)
     expect(none.session.state.runId).toBeNull()
-    // flowgate.v02test.0024 B: a line of the chat's history; no answer, so this browser keeps it (not the server).
+    // B: a line of the chat's history; no answer, so this browser keeps it (not the server).
     expect(none.session.state.notice).toBeNull()
     expect(none.session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([
       { code: 'invoke_failed', text: 'timeout of 30000ms exceeded', chatError: true }])
@@ -154,7 +154,7 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
     expect(source.fetchActiveChatRun).toHaveBeenCalledTimes(opened)
     expect(session.state.runId).toBeNull()
-    // flowgate.v02test.0024 B: a line of the chat's history, kept by the server (it answered).
+    // B: a line of the chat's history, kept by the server (it answered).
     expect(session.state.notice).toBeNull()
     expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([{ code: 'invoke_failed', text: 'bad request' }])
     expect(source.recordChatError).toHaveBeenCalledTimes(1)

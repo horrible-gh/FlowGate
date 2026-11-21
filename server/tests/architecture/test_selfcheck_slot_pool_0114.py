@@ -1,4 +1,4 @@
-"""flowgate.v02.0114 T#4: the per-run worker slot pool of ``server/tests`` pytest (D 0006 3.5 (3),
+"""the per-run worker slot pool of ``server/tests`` pytest (the earlier implementation 3.5 ,
 9.2-7 (e), the pool half of (f)).
 
 Real pytest sessions run in a throwaway repository holding a copy of the real

@@ -1,4 +1,4 @@
-"""0603: rerere/checkpoint behavior on real Git conflicts and hold failure ordering."""
+"""rerere/checkpoint behavior on real Git conflicts and hold failure ordering."""
 from __future__ import annotations
 
 import base64
@@ -370,7 +370,7 @@ def test_hold_persists_before_actual_abort_and_abort_does_not_checkpoint(monkeyp
         def active_resolution_checkpoint(self, *_args):
             return None
 
-        # flowgate.v02test.0052 T0003 task 3(b): the hold's abort is audited on the
+        # task 3(b): the hold's abort is audited on the
         # session (``_run_session_git``), which reads and writes the session context.
         def get_session(self, merge_id):
             return {**session, "merge_id": merge_id, "status": "open"}
@@ -686,7 +686,7 @@ def test_abort_failure_restores_previous_checkpoint(monkeypatch, tmp_path):
             state["cp-old"] = "active"
             events.append("rollback")
 
-        # flowgate.v02test.0052 T0003 task 3(b): the hold's abort is audited on the
+        # task 3(b): the hold's abort is audited on the
         # session (``_run_session_git``) and marked "정리 실패" (``_record_abort_failure``).
         def get_session(self, merge_id):
             return {**session, "merge_id": merge_id, "status": "open"}
@@ -710,7 +710,7 @@ def test_abort_failure_restores_previous_checkpoint(monkeypatch, tmp_path):
     assert events == ["persist", "rollback"]
     assert state == {"cp-old": "active", "cp-new": "invalidated"}
     assert git(repo, "rev-parse", "MERGE_HEAD").stdout.strip()
-    # flowgate.v02test.0052 T0003 task 3(b): git's reason is in the API error, the
+    # task 3(b): git's reason is in the API error, the
     # session audit and the "정리 실패" marker.
     assert caught.value.details["reason"] == "injected abort failure"
     assert context["ref_operations"][-1]["reason"] == "hold_abort"

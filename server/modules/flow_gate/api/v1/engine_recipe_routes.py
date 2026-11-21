@@ -1,4 +1,4 @@
-"""Engine test-recipe API (flowgate.default.0157; R0001→D0002→P0003→L0004→DB0005→T0006).
+"""Engine test-recipe API.
 
   GET    /api/v1/test-commands/help            engine recipe list / single (worker or session)
   POST   /api/v1/engine-recipes                register a recipe (worker/system CRUD)

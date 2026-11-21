@@ -1,8 +1,8 @@
-"""Node executor registry and the document node executor (D0004 §2.2, L0009 §2.6.6 ``dispatch_node``).
+"""Node executor registry and the document node executor (``dispatch_node``).
 
 The registry maps a node type to its executor: ``document``, ``custom`` and ``gate``. A gate node hands
-no work out — no token, no mention, ``dispatch = null`` (P0008 §7.1, L0009 §2.6.6); a person decides
-it through the gate decision API (``gate_service``, P0008 S6-1). flowgate.v02.0053 T#8: a ``custom`` node
+no work out — no token, no mention, ``dispatch = null``; a person decides
+it through the gate decision API (``gate_service``, the plan S6-1). the earlier change the earlier implementation: a ``custom`` node
 (a Custom card) is a plain document card — handed out by the document executor as the document type its
 run writes (``graph_model.run_doc_type``: the work instruction T), whatever Palette category made it.
 The document executor hands the work out through the existing token service — called,
@@ -12,23 +12,23 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
 
 - The issue runs under a savepoint: a failing statement must not poison the guard transaction
   (PostgreSQL), so a failed issue is rolled back to the savepoint and reported as
-  ``dispatch.token_issued = false`` with ``error_code`` — the run goes on (L0009 E-22).
+  ``dispatch.token_issued = false`` with ``error_code`` — the run goes on.
 - ``issued_to`` of the token is a user (``workflow_events.actor_user_id`` is a users FK): the human
   assignee, else the run's actor; an AI node's token carries the provider in ``provider_id`` and the
-  dispatch block names the provider (P0008 §7.1).
+  dispatch block names the provider.
 - v0.1 keeps no mention record (a mention is text built on demand from the token), so
   ``mention_id`` stays null.
 - The AI start is ``ai_node_starter.start_ai_invoke`` (the existing AI invoke service, single mode,
-  once per node — D0004 §3.4 / §3.5). ``set_ai_starter`` swaps it (tests; ``None`` = not wired).
-- flowgate.v02.0053 T#2: an AI node reads its card's run settings here, inside the run step's guard
+  once per node — the design). ``set_ai_starter`` swaps it (tests; ``None`` = not wired).
+- the earlier change the earlier implementation: an AI node reads its card's run settings here, inside the run step's guard
   (``card_settings_ports.run_settings``): the card's run AI replaces the assignee provider (token and
   start), its time limit / restarts ride the job to the start, and with the instruction omitted the
   AI writes the card's report instead of the node's own type (``result_doc_type``; the result binder
   asks the same port which type it binds). With no setting (or no handler) every value is the one
   used before.
   When the start raises, or nothing is wired, the open node records ``ai_invoke_failed`` in a new
-  guard (L0009 E-23); the token stays valid for a person.
-- flowgate.v02.0056 T#2 (0002-CH turn 5 / 6 §3 / 10 O2): an AI card with its instruction used runs in two
+  guard; the token stays valid for a person.
+- the earlier change the earlier implementation (CH / 6 / 10 O2): an AI card with its instruction used runs in two
   stages, each one single AI start through the same starter, inside one card. The 0061 ``report_pair``
   policy names this existing instruction_result contract; it adds no executor. The node run records its
   stage (``graph_node_runs.stage``).
@@ -53,17 +53,17 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   of a card it already opened. A node with no instruction stage (instruction omitted, a test card, no card
   handler) runs only the result stage.
 
-- flowgate.v02.0111 T#2 (T-A1, NR flowgate.v02.0111.0003 §2 A-1): an AI run that asked questions and ended before its
+- the earlier change the earlier implementation (T-A1, NR the earlier change A-1): an AI run that asked questions and ended before its
   document was (fully) submitted is a question wait, never a failure. Its instruction stage is written again on the same
   attempt once the questions are answered (``retry_instruction_stage``: the instruction AI, never the "written: approve
   without AI" shortcut of ``_instruction_job``); a result writer that ended so (``write_failure`` ``question_pending``)
   is retried like one with no result (``retry_result_stage``) and, while its questions are open, is no dispatch error and
   no explicit command's retry (``needs_ai_dispatch``).
-- flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): the answers' retry of a result writer is taken under
+- the earlier change the earlier implementation (T-A2, NR the earlier change A-2): the answers' retry of a result writer is taken under
   ``legacy.person_hold`` with ``retry_result_stage`` ``idle_ok``, as the result stage's start after the answers is
   (``start_result_stage`` ``idle_ok``): a run judged idle between the wake and the retry no longer refuses it
   (``attempt_inactive`` ``result_retry`` / ``run_idle``). Without ``idle_ok`` it still refuses an idle run.
-- flowgate.v02.0113 T#3 (L-2 §2.4 / §2.5 / §2.10): a role card's attempt opened while the stage assignment store exists
+- the earlier change the earlier implementation (L-2 /): a role card's attempt opened while the stage assignment store exists
   is opened, moved to its result stage and retried by its stage assignments (``card_settings_ports.stage_dispatch`` /
   ``stage_result_start`` / ``stage_needs_dispatch`` / ``stage_retry``): one assigned AI per call, never the card's run AI
   or the assignee provider. With no handler, or for a pre-feature attempt, every function here is the one before.
@@ -87,7 +87,7 @@ from modules.flow_gate.services import graph_execution_hooks
 _log = logging.getLogger(__name__)
 
 INSTRUCTION_STAGE, RESULT_STAGE = "instruction", "result"
-# 0111 T-A1: the result writer's ends ``retry_result_stage`` writes again after its questions are answered.
+# T-A1: the result writer's ends ``retry_result_stage`` writes again after its questions are answered.
 RETRYABLE_WRITE_FAILURES = ("no_result", "question_pending")
 QUESTION_PENDING = "question_pending"
 
@@ -131,14 +131,14 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
 
 
 REDISPATCH, REOPEN = "dispatch", "reopen"
-# 0038-T T#3 B-6: a waiting stage whose role changed is opened again as a new attempt too (its reason told apart)
+# B-6: a waiting stage whose role changed is opened again as a new attempt too (its reason told apart)
 REOPEN_VERDICTS = ("reopen_new_attempt", "reinterpret_wait")
 
 
 def redispatch_kind(ctx, row: dict) -> Optional[str]:
-    """flowgate.v02.0113 T#3: what an explicit command does with an open node — ``REDISPATCH`` (the dispatch again,
+    """what an explicit command does with an open node — ``REDISPATCH`` (the dispatch again,
     the same attempt), ``REOPEN`` (an assigned attempt's wait / failure, or a waiting stage whose role changed: a new
-    attempt, L-2 §2.10, 0038-T B-6) or None."""
+    attempt, L-2, the earlier implementation B-6) or None."""
     verdict = card_settings_ports.stage_needs_dispatch(ctx, row)
     if verdict in REOPEN_VERDICTS:
         return REOPEN
@@ -154,18 +154,18 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
     default Designer card opened without dispatch (0063 B7). Result reconciliation runs first;
     the legacy no-dispatch repair still excludes staged nodes and explicit assignees."""
     node = ctx.node_rows.get(row["node_key"]) or {}
-    verdict = card_settings_ports.stage_needs_dispatch(ctx, row)          # 0113 T#3: an assigned attempt's
+    verdict = card_settings_ports.stage_needs_dispatch(ctx, row)          # an assigned attempt's
     if verdict is not None:
         return verdict in ("dispatch", "retry_same_attempt", *REOPEN_VERDICTS)
     # An explicit command may retry a result writer that ended without its result.
     # Hold, live executions and registered results still prevent a new dispatch.
-    # 0111 T-A1: not one whose questions are still open (``question_pending``) — its answers retry it once.
+    # T-A1: not one whose questions are still open (``question_pending``) — its answers retry it once.
     if card_settings_ports.uses_ai(ctx.flow_id, node) \
             and row["node_key"] not in (graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()) \
             and graph_execution_hooks.call("write_failure", row) not in (None, "", QUESTION_PENDING):
         return True
     if _start_failed_open_card(ctx, row, node):
-        return True                                                       # 0156 T4 D6: its AI start failed earlier
+        return True                                                       # D6: its AI start failed earlier
     return (row["status"] == "open" and row.get("stage") is None and row.get("result_doc_id") is None
             and node.get("assignee_kind") is None
             and card_settings_ports.uses_ai(ctx.flow_id, node)
@@ -173,7 +173,7 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
 
 
 def _start_failed_open_card(ctx, row: dict, node: dict) -> bool:
-    """flowgate.v02.0156 T#4 (D6): a pre-feature (no stage assignment) AI card whose AI start failed (``record_ai_failure``
+    """(D6): a pre-feature (no stage assignment) AI card whose AI start failed (``record_ai_failure``
     wrote ``ai_invoke_failed`` on its open row) is dispatched again by an explicit command, on the same attempt. Only
     with no result, no hold, no question wait, and no requested / running execution of the attempt (no duplicate run)."""
     if row["status"] != "open" or row.get("dispatch_error_code") != "ai_invoke_failed" or row.get("result_doc_id") is not None:
@@ -192,7 +192,7 @@ def _start_failed_open_card(ctx, row: dict, node: dict) -> bool:
 
 
 def dispatch_document(ctx, row: dict) -> dict:
-    assigned = card_settings_ports.stage_dispatch(ctx, row)                # 0113 T#3 (L-2 §2.4.1)
+    assigned = card_settings_ports.stage_dispatch(ctx, row)                # (L-2)
     if assigned is not None:
         return assigned
     ai = card_settings_ports.uses_ai(ctx.flow_id, row)
@@ -210,9 +210,9 @@ def dispatch_document(ctx, row: dict) -> dict:
             token = token_service.issue(
                 project=ctx.project_id or "", group_id=ctx.flow_id, action_scope="edit" if binding else "new",
                 doc_ref=binding["doc_id"] if binding else (root or {}).get("doc_id"), issued_to=issued_to, provider_id=provider,
-                continuation_target_seq=None,                       # no unmanned chain (D0004 §3.5, Q-9)
+                continuation_target_seq=None,                       # no unmanned chain
             )
-    except Exception as exc:  # noqa: BLE001 — L0009 E-22: the run goes on, the node stays open
+    except Exception as exc:  # noqa: BLE001 — the earlier implementation E-22: the run goes on, the node stays open
         _log.warning("graph node dispatch failed run=%s node=%s: %s", ctx.run_id, row.get("node_key"), exc)
         return {"token_issued": False, "mention_id": None, "issued_to": shown, "error_code": "token_issue_failed"}
     run_store.map_token(token["token_id"], ctx.run_id, row["node_key"], map_kind=run_store.MAP_DISPATCH)
@@ -241,7 +241,7 @@ def _ai_job(ctx, row: dict, plan: dict, provider: Optional[str], issued_to: str,
 
 
 def dispatch_custom(ctx, row: dict) -> dict:
-    """Custom card executor (flowgate.v02.0053 T#8): the document executor, the node standing for its run type."""
+    """Custom card executor: the document executor, the node standing for its run type."""
     return dispatch_document(ctx, {**row, "doc_type": run_doc_type(row.get("node_type"), row.get("doc_type"))})
 
 
@@ -256,7 +256,7 @@ _EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {
 
 
 def start_ai(job: dict) -> None:
-    """Post-commit job (outside the guard): start the AI, or record the failure (L0009 E-23). An instruction
+    """Post-commit job (outside the guard): start the AI, or record the failure. An instruction
     stage job first asks the card's instruction (``_instruction_job``): a written one is approved and the
     result stage started instead."""
     try:
@@ -274,19 +274,19 @@ def start_ai(job: dict) -> None:
             failure = {"start_failure": _start_failure(exc)}
             info = _start_failure_info(exc)
             if info:
-                failure["start_failure_info"] = info            # flowgate.v02.0140 T#1-3: kept by the failure record
+                failure["start_failure_info"] = info            # kept by the failure record
             record_ai_failure({**job, **failure})
 
 
 def _start_failure(exc: BaseException) -> str:
-    """flowgate.v02.0113 T#3 (L-2 §2.10): an admission refusal keeps its own code (``start_refused:<code>``); any other
+    """(L-2): an admission refusal keeps its own code (``start_refused:<code>``); any other
     failure of the start is ``start_failed``."""
     detail = getattr(exc, "detail", None)
     code = detail.get("code") if isinstance(detail, dict) else getattr(exc, "code", None)
     return "start_refused:" + str(code) if isinstance(code, str) and code else "start_failed"
 
 
-# flowgate.v02.0140 T#1-3 / T#1-4: what a Graph failure keeps of an admission refusal besides its code — the safe
+# what a Graph failure keeps of an admission refusal besides its code — the safe
 # fields the admission answered (``scratch_path_conflict``: its message, ``phase`` ``scratch_create`` and ``retryable``).
 # A message that looks like it carries a server path, a credential or a stack is left out (the code still tells it).
 START_FAILURE_MESSAGE_MAX = 300
@@ -334,7 +334,7 @@ def _instruction_job(job: dict) -> Optional[dict]:
         if card_settings_ports.review_instruction(job["flow_id"], job["node"], found["doc_id"],
                                                   job["issued_to"], job["run_id"], attempt_id):
             return None
-        # 0061 T#7: a job of an attempt that is no longer the node's active one approves nothing (recorded); the
+        # a job of an attempt that is no longer the node's active one approves nothing (recorded); the
         # approval and the result stage's commit run under the Stop gate's shared hold, judged for the job's attempt.
         jobs: list = []
         with attempt_hold(job["run_id"], job["node_key"], attempt_id, "instruction_approval") as owned:
@@ -367,14 +367,14 @@ def _record_instruction(job: dict, doc_id: str) -> None:
         if row is not None and row.get("stage") == INSTRUCTION_STAGE:
             if graph_execution_hooks.call("node_refused", job["run_id"], job["node_key"], "instruction_record",
                                           job.get("graph_attempt_id")):
-                return                                      # 0061 T#7: a stopping run / not the job's attempt
+                return                                      # a stopping run / not the job's attempt
             run_store.set_stage(job["run_id"], job["node_key"], INSTRUCTION_STAGE, doc_id)
 
     with_flow_guard(job["flow_id"], body)
 
 
 def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> bool:
-    """0061 T#7, outside a guard: the attempt a job or an AI run was made for (``attempt_id``; None: not known, the
+    """outside a guard: the attempt a job or an AI run was made for (``attempt_id``; None: not known, the
     node's active attempt judges) is still the node's active attempt and may write. A refusal is recorded."""
     return not graph_execution_hooks.call("node_refused", run_id, node_key, operation, attempt_id)
 
@@ -394,7 +394,7 @@ def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operatio
 
 
 def _open_row(run_id: str, node_key: str) -> Optional[dict]:
-    """The node run, while its run goes on and the node is open (re-read inside the guard, L0009 §2.1.1)."""
+    """The node run, while its run goes on and the node is open (re-read inside the guard, the earlier implementation)."""
     run = run_store.run_by_id(run_id)
     if run is None or run_store.completed(run):
         return None
@@ -405,15 +405,15 @@ def _open_row(run_id: str, node_key: str) -> Optional[dict]:
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
                        issued_to: str, project_id: Optional[str] = None, *, attempt_id: Optional[str] = None,
                        defer: Optional[list] = None, idle_ok: bool = False) -> None:
-    """flowgate.v02.0056 T#2: the node's instruction stage is over (its instruction written or found written,
+    """the node's instruction stage is over (its instruction written or found written,
     and approved — or left to the card approval); its run AI writes the node's result now, the instruction
     attached as a reference. Only a node still open in its instruction stage moves on (a repeated call is a
     no-op), whether the run goes on or is stopped at the next step (a card already opened finishes both
     stages). The start is a post-commit job like the dispatch's: a refused start records ``ai_invoke_failed``.
-    0061 T#7: ``attempt_id`` is the attempt whose instruction stage ended (the job's, the instruction AI run's); a
+    ``attempt_id`` is the attempt whose instruction stage ended (the job's, the instruction AI run's); a
     node opened again since (another active attempt) is left alone and the refusal recorded. ``defer``: the caller
     runs the post-commit AI start itself (after the Stop gate's hold it took, ``attempt_hold``).
-    flowgate.v02.0105 T#2 (B-3): ``idle_ok`` — an idle run (waiting for a person) takes the result stage too, for a
+    (B-3): ``idle_ok`` — an idle run (waiting for a person) takes the result stage too, for a
     caller holding ``legacy.person_hold`` (the run read's reconciliation of a lost instruction stage end): its Stop /
     Time Machine conditions were judged under that hold, and the execution's request takes the run back to running
     (``request_write``'s settlement), so its AI start can acquire."""
@@ -429,7 +429,7 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
         if row is None or row.get("stage") != INSTRUCTION_STAGE:
             return
         if graph_execution_hooks.call("node_refused", run_id, node_key, "result_stage", attempt_id, **refusal):
-            return                                          # 0061 T#7: a late instruction end starts nothing
+            return                                          # a late instruction end starts nothing
         ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, jobs)
         node = ctx.node_rows.get(node_key)
         if node is None:
@@ -437,7 +437,7 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
         if node.get("node_type") == "custom":                 # handed out as ``dispatch_custom`` does
             node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
         if card_settings_ports.stage_result_start(ctx, node, row, instruction_doc_id, attempt_id):
-            return                                          # 0113 T#3: the assigned attempt's result stage (L-2 §2.5)
+            return                                          # the assigned attempt's result stage (L-2)
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
         tokens = run_store.token_ids(run_id, node_key)
@@ -461,12 +461,12 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
 def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, project_id: Optional[str] = None, *,
                        attempt_id: Optional[str] = None, idle_ok: bool = False,
                        defer: Optional[list] = None) -> bool:
-    """flowgate.v02.0063: the node's result writer ended with no result after asking questions, and they are answered
+    """the node's result writer ended with no result after asking questions, and they are answered
     now: its run AI writes the result again on the same attempt (a new execution, the instruction attached as at the
     result stage's start). Only a node still open in its result stage whose writer ended with no result
     (``write_failure``; 0111 T-A1: ``no_result`` or ``question_pending``) and that is not held moves on; ``attempt_id``
     must still be the node's active attempt. True when the AI start was requested (it runs after the guard).
-    flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): ``idle_ok`` — an idle run takes it too, for a caller
+    (T-A2, NR the earlier change A-2): ``idle_ok`` — an idle run takes it too, for a caller
     holding ``legacy.person_hold`` (the answers' continuation): a run judged idle between the wake and this retry is no
     refusal, and the execution's request takes it back to running. ``defer``: the caller runs the AI start after its
     hold."""
@@ -494,7 +494,7 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
             node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
-        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, RESULT_STAGE)   # 0113 T#3 (L-2 §2.9)
+        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, RESULT_STAGE)   # (L-2)
         if assigned == {}:
             return                                          # the result stage is no AI's: nothing is written again
         if assigned:
@@ -522,7 +522,7 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
 def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, asker_ai_run_id: Optional[str],
                             target_doc_id: Optional[str] = None, project_id: Optional[str] = None, *,
                             attempt_id: Optional[str] = None, defer: Optional[list] = None) -> bool:
-    """flowgate.v02.0111 T#2 (T-A1): the instruction stage's AI run ``asker_ai_run_id`` asked questions and they are
+    """(T-A1): the instruction stage's AI run ``asker_ai_run_id`` asked questions and they are
     answered now, but its instruction is not written (or it ended asking, ``question_pending``): the instruction AI
     writes it again on the same attempt — a new execution, never a new attempt. Inside the Flow guard, only once: the node
     is still open in its instruction stage with no result; its active attempt has no requested / running execution and
@@ -559,7 +559,7 @@ def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to:
             return                                          # the card has no instruction stage any more
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
-        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, INSTRUCTION_STAGE)   # 0113 T#3
+        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, INSTRUCTION_STAGE)   # 
         if assigned == {}:
             return
         tokens = run_store.token_ids(run_id, node_key)
@@ -590,8 +590,8 @@ def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to:
 
 def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_id: Optional[str] = None, *,
                              attempt_id: Optional[str] = None) -> None:
-    """flowgate.v02.0056 T#2: the instruction stage's AI run failed (stopped, or ended without a written
-    instruction): the node records it as an AI start failure does (``ai_invoke_failed``, L0009 E-23) and
+    """the instruction stage's AI run failed (stopped, or ended without a written
+    instruction): the node records it as an AI start failure does (``ai_invoke_failed``, the earlier implementation E-23) and
     the result stage does not start. The node's token stays valid for a person; what the failed stage registered
     stays behind the node run's registration boundary (``record_ai_failure``)."""
     tokens = run_store.token_ids(run_id, node_key)
@@ -609,7 +609,7 @@ def record_ai_failure(job: dict) -> None:
     jobs: list = []
 
     def body() -> None:
-        run = run_store.run_by_id(job["run_id"])              # re-read inside the guard (L0009 §2.1.1)
+        run = run_store.run_by_id(job["run_id"])              # re-read inside the guard
         if run is None or run_store.completed(run):
             return
         row = next((r for r in run_store.node_runs(run["run_id"]) if r["node_key"] == job["node_key"]), None)
@@ -619,24 +619,24 @@ def record_ai_failure(job: dict) -> None:
             return
         if graph_execution_hooks.call("node_refused", run["run_id"], job["node_key"], "ai_failure_record",
                                       job.get("graph_attempt_id")):
-            return                                          # 0061 T#7: a stopping run's / an old attempt's failure
-        # 0113 T#3: an assigned stage's AI failed to start — its assignment fails with the cause (L-2 §2.10) and the node
+            return                                          # a stopping run's / an old attempt's failure
+        # an assigned stage's AI failed to start — its assignment fails with the cause (L-2) and the node
         # records ``ai_unavailable:<cause>``; a pre-feature job keeps ``ai_invoke_failed``
         code = card_settings_ports.stage_failed(job)
         if code:
             run = run_store.run_by_id(run["run_id"]) or run     # its stage_failed event moved the run's event seq
         dispatch = {**(run_apply.dispatch_block(row) or {}), "error_code": code or "ai_invoke_failed"}
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
-        if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's
+        if row.get("stage") == INSTRUCTION_STAGE:              # a person's result binds, not the stage's
             run_store.mark_result_floor(run["run_id"], job["node_key"])
-        # flowgate.v02.0140 T#1-3: the refusal's safe detail rides the node's ``dispatch_failed`` event (stored in the
+        # the refusal's safe detail rides the node's ``dispatch_failed`` event (stored in the
         # run event log, read back by the node wire: ``run_apply.start_failure_of``) and its SSE payload
         info = job.get("start_failure_info")
         event_dispatch = {**dispatch, run_apply.START_FAILURE_KEY: dict(info)} if isinstance(info, dict) else dispatch
         ctx = run_apply.load_context(run, job.get("project_id"), None, jobs)
         run_apply.emit_node_state(ctx, job["node_key"], "open", "open", "dispatch_failed",
                                   row.get("result_doc_id"), event_dispatch)
-        run_apply.settle_run(ctx)                             # 0061 T#2: nothing else works -> idle (error)
+        run_apply.settle_run(ctx)                             # nothing else works -> idle (error)
 
     try:
         with_flow_guard(job["flow_id"], body)

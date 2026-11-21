@@ -1,4 +1,4 @@
-"""0156 T6 preserved F1/F2 E2E, one explicit cell per invocation.
+"""preserved F1/F2 E2E, one explicit cell per invocation.
 
 python server/tests/flowgate/e2e_0156/full_harness.py SCRATCH f1 lan all LABEL
 Uses the production full app, JWT/RBAC, a deterministic CLI through the real

@@ -1,6 +1,6 @@
-"""0080 T#2: the Self-check G reclaim gate, cancel without a control, and who holds the slot.
+"""the Self-check G reclaim gate, cancel without a control, and who holds the slot.
 
-The card's core checks (NR0007 §5 items 9, 3-a, 1):
+The card's core checks (items 9, 3-a, 1):
 
 1. a Self-check-owned G whose owner lookup fails, or whose heartbeat expired while the
    owner lives, is deleted neither by the sweeper (``job_sweeper.step_stale_locks``) nor by
@@ -21,7 +21,7 @@ and never while its owner is unproved.
 
 Fixtures: ``flow`` of tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 and ``world`` of
 test_tr_self_check_recover_proof_0080 (run rows, owner server rows and G written directly,
-real short python children). Injected, as in T#1: the identity lookup failure
+real short python children). Injected, as in the earlier implementation: the identity lookup failure
 (``executor.probe_start_identity``). Not covered here: the full path x injection matrix of
 NR §6 item 6, the cancel poll of a worker in another server, a failing TerminateJobObject.
 """

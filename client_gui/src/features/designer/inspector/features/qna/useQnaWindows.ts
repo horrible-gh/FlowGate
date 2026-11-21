@@ -1,4 +1,4 @@
-// flowgate.v02.0150 — the open Q&A ↗ windows of this tab, apart from the Q&A tab that opened them. A window keeps the
+// the open Q&A ↗ windows of this tab, apart from the Q&A tab that opened them. A window keeps the
 // target it was opened for (its project, Flow and document), so a selection change, a tab change, a click on the
 // Canvas or a focus leaving the window never closes it or moves it to another document: only its own × does. The
 // Frame's window host (QnaWindowHost) draws them, one group per document; the selected target, when it is a group's

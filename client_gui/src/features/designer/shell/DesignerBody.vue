@@ -2,7 +2,7 @@
   <!-- Horizontal axis of the Designer: Left ↔ Center ↔ Right (0003-D §3.7.2). Left / Right
        get fixed widths from the layout state; the Center takes everything left over, down to
        its minimum. Narrower than that, only the Body scrolls sideways — columns never
-       overlap. flowgate.v02.0046: a resize handle sits on each Left / Right ↔ Center line
+       overlap. the earlier change: a resize handle sits on each Left / Right ↔ Center line
        while that Dock is expanded; dragging it asks the Shell for a new Dock width. -->
   <div
     ref="bodyRef"

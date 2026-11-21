@@ -1,4 +1,4 @@
-"""v02gui.0015 (0001-B, NR0003 §6): a start card's base (``run_base``) is pinned per base window, not per run.
+"""v02gui.0015: a start card's base (``run_base``) is pinned per base window, not per run.
 
 The window follows the run's last command start (a person's ``user_start`` / ``user_command`` / ``user_resume`` to
 ``running``, not from ``paused``); its first ``run_base`` card starts from the group HEAD of that moment and the later

@@ -1,10 +1,10 @@
-"""Characterization guard for group 0257 review-reopen test reruns.
+"""Characterization guard for the earlier change review-reopen test reruns.
 
 These two pass against unmodified main, and are meant to: they pin admission behaviour main
 already has, so they verify none of this group's changes. They exist because revision 1–2 of
-TR0005 added a "pending_review + previous passed → 409" gate here that broke the normal reopen
+added a "pending_review + previous passed → 409" gate here that broke the normal reopen
 rerun; the gate is gone and these fail if anyone re-adds it. The tests that actually pin the
-B0001 fix are in test_tsr_slot_0257.py, and those are red without it.
+fix are in test_tsr_slot_0257.py, and those are red without it.
 """
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ def test_pending_review_rerun_still_rejects_concurrent_start(monkeypatch, tmp_pa
 
 
 def test_cancelling_run_still_rejects_concurrent_start(monkeypatch, tmp_path):
-    """flowgate.default.0358 T0004 acceptance criteria: a 'cancelling' row (cleanup not landed
+    """acceptance criteria: a 'cancelling' row (cleanup not landed
     yet) is still active — a second start must 409, exactly like 'running'. This is
     what db/test_runs.get_running_by_doc's IN ('running', 'cancelling') covers; this
     test pins the admission-gate consumer of it, not just the DB helper."""
@@ -223,7 +223,7 @@ def test_cancelling_run_still_rejects_concurrent_start(monkeypatch, tmp_path):
 
 
 def test_cancelled_run_allows_immediate_rerun(monkeypatch, tmp_path):
-    """flowgate.default.0358 T0004 acceptance criteria: once cancellation reaches its terminal
+    """acceptance criteria: once cancellation reaches its terminal
     'cancelled' state, get_running_by_doc no longer sees it as active (052/0358 074
     CHECK only counts running/cancelling) and a fresh run is admitted immediately,
     same as the existing prior-passed-run reopen case above."""

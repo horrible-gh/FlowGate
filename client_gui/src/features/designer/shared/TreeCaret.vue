@@ -10,7 +10,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — expand/collapse caret primitive (0024-D §8.2). Rows with
+// expand/collapse caret primitive. Rows with
 // children use it; a leaf row renders a spacer instead of a dead caret.
 defineProps<{ expanded: boolean; hasChildren: boolean }>()
 defineEmits<{ toggle: [] }>()

@@ -1,6 +1,6 @@
-"""Group 0238 T0004: real help_url (and what became of the worker-token 401 hint).
+"""Group the earlier implementation: real help_url (and what became of the worker-token 401 hint).
 
-NR0003 traced a false bug report to two things the server told the worker:
+The review traced a false bug report to two things the server told the worker:
 
   1. The internal UI API (plural /documents/…) answers a worker token with a bare
      "Invalid authentication credentials", which the worker read as "my token has
@@ -12,8 +12,8 @@ Item 2 is still guarded below. Item 1 is not, because the product no longer does
 `middleware.verify_token` has no worker-token branch, and GET /help now states the bare
 401 as the expected answer ("worker token은 401 'Invalid authentication credentials'를
 받는다", help_routes.py) — the correction moved from the error message into the docs the
-worker reads first. The case asserting the corrective 401 was deleted under 0394 T0004
-(NR0003 §4.2 S7) rather than repaired: it described a feature that was withdrawn, so
+worker reads first. The case asserting the corrective 401 was deleted under the earlier implementation
+rather than repaired: it described a feature that was withdrawn, so
 making it pass would mean putting the feature back, which is not this group's call. The
 three cases around it still hold and are unchanged — the generic 401 for a bogus
 credential, the 401 (not 500) when the token store is down, and the expired-JWT message.

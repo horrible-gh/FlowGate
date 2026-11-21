@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0019 (0004-CH): a bug / requirement Flow has its start card from the moment its root is registered.
+"""(CH): a bug / requirement Flow has its start card from the moment its root is registered.
 
 The Flow's one live root (R or B, ``root_binding.resolve_root``) is the start card a person connects cards from and
 runs: a real draft card of the root's type whose requirement line holds that root (``card_documents.lines``
@@ -7,8 +7,8 @@ card into the draft when the definition has no card of the root's type yet. It i
 
 - when the root is registered (``process_service.create_workflow_root``: the console / GUI and a chat's document
   create);
-- at startup for every Flow made before this rule (``ensure_all``; e.g. flowgate.v02gui.0014, flowgate.tr-update.0001,
-  flowgate.v02.0080): the cards already placed stay as they are;
+- at startup for every Flow made before this rule (``ensure_all``; e.g. the earlier change, flowgate.tr-update.0001,
+  ): the cards already placed stay as they are;
 - by the chat card API (``chat_control.service.place``), whatever the draft already holds.
 
 No edge is made: a person connects the start card (a card nothing connects is left out of a run, as before). Nothing

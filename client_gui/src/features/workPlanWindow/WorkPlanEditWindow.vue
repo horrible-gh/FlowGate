@@ -107,28 +107,28 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0072 T#1 — the v0.2 work plan edit window: one ModelessShell per work plan document (moves, resizes,
+// the v0.2 work plan edit window: one ModelessShell per work plan document (moves, resizes,
 // minimizes and closes like every v0.2 modeless window; no backdrop), the editing body (WorkPlanEditBody) and the bar
 // [닫기] [저장]. New v0.2 parts: the v0.1 WorkPlanEditor is neither mounted nor copied — it was the reference for
 // what the plan editor does (quantities, Steps by card and their order, per-Step AI / review / note, defaults and
-// [apply to all], save and lock). Not connected to the WP card here: the opener is T#3 (openWorkPlanEditWindow).
+// [apply to all], save and lock). Not connected to the WP card here: the opener is the earlier implementation (openWorkPlanEditWindow).
 // - [저장] sends the whole body once (useWorkPlanEditor.save); closing or reading again with unsaved edits asks first,
 //   and a quantity decrease that removes Steps with values asks first.
 // - The window hears its document's project events and polls like the document windows (useDocumentWindowEvents);
 //   a clean window takes a newer plan, a dirty one says that a newer revision exists. The polling and the Flow /
 //   record events read the Flow's live AI run again too (the lock follows a run started elsewhere).
-// - ✎ of a row hands the row to the Step window (T#2) with a session on this window's editor; the Step window is a
+// - ✎ of a row hands the row to the Step window with a session on this window's editor; the Step window is a
 //   separate ModelessShell, never a drawer here.
 // - flowgate.v02.0073 T#4: the title bar's JSON buttons (client only, no server API): [JSON 가져오기] opens the JSON
 //   window in import mode (off while locked or while a Step window holds edits), [JSON 내보내기] saves the draft as a
 //   .json file (the body the save would send), [JSON 원문 보기] opens the JSON window read only. One JSON window per
 //   plan window; it closes with it. Not the Inspector's document upload / download (DocumentIoGroup, 0068).
-// - flowgate.v02.0074 T#1 (R §2.2): the title bar shows no totals and no r{n}; the totals are the task order line's
+// - the earlier change the earlier implementation (R): the title bar shows no totals and no r{n}; the totals are the task order line's
 //   (wp-edit-step-totals) only. The revision still drives the save (base_revision_no, 409) and the newer-version banner.
 // - flowgate.v02.0074 T#2: the document [업로드] of the plan (any DocumentIoGroup) is this window's [JSON 가져오기]: a request
 //   with initialMode 'import' opens the import window once the plan is read; the window tells its dirty state for the
 //   plan's .json download.
-// - flowgate.v02.0083 T#3: the plan of a WP card in its Flow's run (the request's `card`) is edited by its writer while the
+// - the earlier change the earlier implementation: the plan of a WP card in its Flow's run (the request's `card`) is edited by its writer while the
 //   Flow runs, and the bar's [제출] (after [저장], off while edits are unsaved) registers it as the card's result — or, after a
 //   rejection, puts it back in review (useWorkPlanEditor.submit).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -228,7 +228,7 @@ watch(
   { immediate: true },
 )
 
-// flowgate.v02.0074 T#2: the plan's download (documentIo) says unsaved edits here are not in its file.
+// the plan's download (documentIo) says unsaved edits here are not in its file.
 watch(dirty, (value) => setWorkPlanEditWindowDirty(props.win.docId, value), { immediate: true })
 
 /** [JSON 내보내기]: the draft as the save would send it, unsaved edits included. */

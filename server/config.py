@@ -19,7 +19,6 @@ logger.logger_init(logger_config)
 SERVICE_SQLOADER = "sql/queries"
 MIGRATION_PATHS = "sql/migrations"
 
-# 🔹 Define DB_TYPE clearly using Enum
 class DBType(str, Enum):
     MYSQL = "mysql"
     SQLITE = "sqlite"
@@ -27,13 +26,12 @@ class DBType(str, Enum):
     POSTGRES = "postgres"
     LOCAL = "local"
 
-# 🔹 Settings class (using Pydantic)
 class Settings(BaseSettings):
     ALLOWED_ORIGIN: str
     SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     CONTEXT: str
-    DB_TYPE: DBType  # Enum applied
+    DB_TYPE: DBType
     DB_HOST: str = ""
     DB_PORT: int = 0
     DB_USER: str = ""
@@ -44,41 +42,17 @@ class Settings(BaseSettings):
     DB_LOG: bool = False
     DB_PATH: str = ""
 
-    # 0288 NR0003 finding 4 / recommendation  2 — connection-pool sizing for the MySQL and
-    # PostgreSQL backends. Endpoints are declared with sync `def`, so FastAPI
-    # runs them on the AnyIO thread pool (40 threads by default) while sqloader
-    # defaulted to max_parallel_queries=5 / pool_min=1 / pool_max=5. Nothing was
-    # forwarded from here, so those defaults could not be tuned at all in
-    # operation: 40 workers queued behind 5 slots, and pool_min=1 made psycopg2
-    # close every returned connection above the first — a TCP reconnect per
-    # query under load (psycopg2/pool.py:105-122).
-    #
-    # sqloader semantics (sqloader/postgresql.py __init__):
-    #   * max_parallel_queries — the semaphore permit count; callers past it WAIT.
-    #     This, not the pool, is what applies backpressure.
-    #   * pool_max must be >= max_parallel_queries (sqloader raises otherwise);
-    #     the surplus is reserve so the pool never raises "exhausted" while the
-    #     semaphore still has permits. None ⇒ equal to max_parallel_queries.
-    #   * pool_min connections are opened eagerly and kept, killing the churn.
-    #   * acquire_timeout bounds the wait for a permit. Left unset it waits
-    #     forever, so a single leaked slot would hang requests indefinitely
-    #     instead of failing them; 30s fails loudly.
-    #   * max_lifetime / max_idle recycle connections at checkout. Unset by
-    #     default (= sqloader default, no recycling); set them when a proxy or
-    #     the server drops idle connections underneath the pool.
-    #
-    # Keep DB_POOL_MAX >= DB_MAX_PARALLEL_QUERIES when overriding either.
-    # Ignored by the SQLite backend (no pool).
+    # Bound concurrent queries with a semaphore; the pool must cover every permit.
+    # Keep DB_POOL_MAX >= DB_MAX_PARALLEL_QUERIES and retain enough idle connections
+    # to avoid reconnecting on every burst. SQLite ignores these pool settings.
+    # acquire_timeout bounds permit waits; lifetime/idle limits recycle connections
+    # before a proxy or database closes them underneath the pool.
     DB_MAX_PARALLEL_QUERIES: int = 20
-    # flowgate.v02.0137 T0004 §4-3: pool_min below max_parallel_queries still churns.
-    # psycopg2 closes every returned connection once minconn idle ones are pooled, so
-    # with 5 kept and 20 permits each burst above 5 opened and closed TCP connections
-    # (isolated measurement on sqloader 0.2.17: 50 bursts of 10 -> 250, of 20 -> 750
-    # reconnects; pool_min 20 -> 0). Holding pool_min == max_parallel_queries removes
-    # the churn below the concurrency cap, which the semaphore never lets traffic pass.
+    # psycopg2 closes returned connections above minconn. Match the permit count
+    # so bursts within the concurrency limit reuse connections instead of reconnecting.
     DB_POOL_MIN: int = 20
     DB_POOL_MAX: int = 24
-    # T0004 §4-3: the whole-server connection budget this process must fit into.
+    # the whole-server connection budget this process must fit into.
     # Boot checks DB_POOL_MAX * DB_SERVER_PROCESSES against PostgreSQL's
     # max_connections - superuser_reserved_connections - DB_RESERVED_CONNECTIONS
     # (other clients: migrations, psql, test runners) and logs ERROR when over.
@@ -88,10 +62,9 @@ class Settings(BaseSettings):
     DB_POOL_MAX_LIFETIME: Optional[float] = 1800.0
     DB_POOL_MAX_IDLE: Optional[float] = 300.0
 
-    # NOTE: preset activation is now managed by server/res/preset_hands.json
-    # and not by environment settings. PRESET_HANDS removed per T072.
+    # Preset activation is managed by server/res/preset_hands.json.
 
-    # REL-010: Maintenance mode — toggle via MAINTENANCE_MODE=true/false in .env
+    # Toggle maintenance with MAINTENANCE_MODE=true/false in .env
     # Message is delivered based on server/res/maintenance/maintenance_{lang}.txt file
     MAINTENANCE_MODE: bool = False
 
@@ -100,58 +73,43 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD: str = "20/hour"
     RATE_LIMIT_DOWNLOAD: str = "50/hour"
 
-    # Phase 1 Token (D020) — R015 new env variables
+    # Token peppers support rotation through the active key ID.
     FLOWGATE_TOKEN_PEPPER_ACTIVE_ID: str | None = None
     FLOWGATE_TOKEN_PEPPER_V1: str | None = None
     FLOWGATE_INBOX_CONTENT_MAX: int = 10485760  # 10 MB default
 
-    # Git integration (0115 L0006 §2.3) — base64-encoded 32-byte AES key for the
+    # Git integration — base64-encoded 32-byte AES key for the
     # project git credential store. Provisioned by the docker entrypoint (or the
     # storage-root key-file fallback); _PREV enables rotation-time decryption.
     FLOWGATE_GIT_ENCRYPT_KEY: str | None = None
     FLOWGATE_GIT_ENCRYPT_KEY_PREV: str | None = None
 
-    # TOTP secret encryption (0273 NR0003 P1-3) — base64-encoded 32-byte AES key
-    # read by modules/flow_gate/auth/totp_service.py. Declared here so the setup
-    # scripts can persist it in .env: pydantic forbids extra keys, so an
-    # undeclared FLOWGATE_TOTP_ENCRYPT_KEY line would fail the boot outright.
-    # Unset does NOT break startup — it breaks the first 2FA enrolment, which is
-    # why this went unnoticed. _PREV enables rotation-time decryption.
+    # Base64-encoded 32-byte TOTP AES key; _PREV permits rotation-time decryption.
+    # Declare .env keys because Pydantic rejects unknown fields. A missing key
+    # permits startup but prevents the first 2FA enrolment.
     FLOWGATE_TOTP_ENCRYPT_KEY: str | None = None
     FLOWGATE_TOTP_ENCRYPT_KEY_PREV: str | None = None
 
-    # AI provider API-key encryption (0371 NR0007 §3) — base64-encoded 32-byte
-    # AES key for ai_providers.api_key, read by
-    # modules/flow_gate/utils/api_key_crypto.py. Its own key, not the git/TOTP
-    # one, so the three secret stores rotate independently. Blank is safe: a key
-    # file is generated once under the storage root, exactly like the git key.
-    # _PREV enables rotation-time decryption. Declared here for the same
-    # extra_forbidden reason as the TOTP/git keys above — an operator .env
-    # provisioned for a merged sibling group (0371) crashed boot on this branch
-    # without the field declared.
+    # Provider credentials use a separate AES key so Git, TOTP and API keys rotate
+    # independently. When blank, generate a key file under the storage root.
+    # _PREV permits rotation-time decryption; declarations allow these keys in .env.
     FLOWGATE_AI_ENCRYPT_KEY: str | None = None
     FLOWGATE_AI_ENCRYPT_KEY_PREV: str | None = None
     FLOWGATE_AI_EVALUATION_HMAC_KEY: str | None = None
     FLOWGATE_AGENT_PEPPER: str | None = None
     FLOWGATE_AGENT_PEPPER_ID: str = "primary"
 
-    # Listen address (0273 NR0003 P1-2). stg.py — the entry point the systemd
-    # unit runs — had port 8089 hardcoded, so a Linux install could not move off
-    # a busy port without editing the source. Declared here for the same
-    # extra_forbidden reason as the TOTP keys above; stg.py reads them from the
-    # environment after load_dotenv().
+    # stg.py reads these from the environment after load_dotenv. Declare them
+    # here so Pydantic accepts the same .env used by the systemd entry point.
     FLOWGATE_PORT: int = 8089
     FLOWGATE_BIND_HOST: str = "0.0.0.0"
 
-    # 0275 T0007 (NR0003 cause 5): stg.py launch knobs. Reload is dev-only (the
-    # file-watcher used to run unconditionally in production); keep workers at 1
-    # while SSE matters — the publisher is in-process and does not span workers.
-    # Declared for the same extra_forbidden reason as FLOWGATE_PORT above;
-    # stg.py reads them from the environment after load_dotenv().
+    # Reload is for development. Keep one worker while SSE uses an in-process
+    # publisher; events do not cross worker boundaries.
     FLOWGATE_RELOAD: bool = False
     FLOWGATE_WORKERS: int = 1
 
-    # 0275 T0007 (NR0003 cause 5): run schema migrations + backfill scan at every
+    # run schema migrations + backfill scan at every
     # boot. Set false on remote-DB deployments where boot latency matters and
     # migrations are applied at deploy time instead.
     AUTO_MIGRATION: bool = True
@@ -164,7 +122,7 @@ class Settings(BaseSettings):
     # values fail fast rather than risking bearer-token delivery to another origin.
     FLOWGATE_AGENT_API_BASE: str | None = None
 
-    # flowgate.v02test.0017 CH0002: the OPERATOR-facing origin (scheme://host[:port]) for AI starts that have no
+    # the OPERATOR-facing origin (scheme://host[:port]) for AI starts that have no
     # HTTP request -- Graph node starts, card reviews / Q answers, recovery jobs. A remote Agent connects to it, so it
     # must be reachable from the Agent PC (never loopback). When unset, such a start uses the run user's latest
     # non-loopback request origin (as chat does), else loopback. Not the agent base above.
@@ -177,7 +135,7 @@ class Settings(BaseSettings):
         # `.env.sample` ships `FLOWGATE_INBOX_CONTENT_MAX=` and setup copies it
         # verbatim without filling it in). pydantic only falls back to the
         # default when a key is ABSENT, so a present-but-blank value would try to
-        # coerce "" -> int and crash the boot (B0101). Treat blank as "unset".
+        # coerce "" -> int and crash the boot. Treat blank as "unset".
         if isinstance(v, str) and v.strip() == "":
             return 10485760
         return v
@@ -229,14 +187,9 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-# 🔹 Mirror the credential keys from .env into os.environ (0273 NR0003 P1-3).
-# totp_service.py and git_service.py read os.environ directly, but pydantic
-# parses .env into `settings` WITHOUT populating os.environ. That only worked
-# because stg.py calls load_dotenv() first — the systemd path. Launchers that
-# import the app directly (run.bat / setup.ps1 -Start / `uvicorn routers.main:app`)
-# skip stg.py entirely, so a key that is present in .env stayed invisible to both
-# services. Fill in only what the real environment has not already set, so an
-# explicit OS env var (docker-entrypoint, systemd Environment=) still wins.
+# Pydantic reads .env without populating os.environ, which the crypto services use.
+# Mirror missing keys for launchers that bypass stg.py/load_dotenv; explicit OS
+# environment values retain precedence.
 for _env_key in (
     "FLOWGATE_TOTP_ENCRYPT_KEY",
     "FLOWGATE_TOTP_ENCRYPT_KEY_PREV",
@@ -297,7 +250,7 @@ class DatabaseSetting:
         self.tfa = None
         self.config = {}
 
-        # 0559 NR0010 §5 / T0011: this used to dump the whole Settings
+        # this used to dump the whole Settings
         # object (str(settings)), which put SECRET_KEY, DB_PASSWORD and the
         # FLOWGATE_*_ENCRYPT_KEY values into logs/default.log in plain text on
         # every boot, independent of DB_LOG. Allow-list only the fields this
@@ -334,7 +287,7 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
-                    # 0288 NR0003 recommendation  2. MySqlWrapper opens a connection per
+                    # MySqlWrapper opens a connection per
                     # transaction rather than pooling, so only the two
                     # concurrency knobs sqloader accepts here apply.
                     **_pool_settings(pooled=False),
@@ -355,7 +308,7 @@ class DatabaseSetting:
                 "placeholder": "?",
                 f"{settings.DB_TYPE.value}": {
                     "db_name": settings.DB_PATH,
-                    # 0273 NR0003 §5-2: this was hardcoded True, so DB_LOG had no
+                    # this was hardcoded True, so DB_LOG had no
                     # effect on the DEFAULT engine — full SQL logging could not be
                     # turned off without editing the source. The mysql/postgres
                     # branches already honour settings.DB_LOG; match them.
@@ -385,9 +338,9 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
-                    # 0288 NR0003 finding 4 / recommendation  2: without these the pool stayed
+                    # without these the pool stayed
                     # at sqloader's 5/1/5 defaults regardless of .env — the
-                    # 40-thread-vs-5-slot mismatch behind B0001's exhaustion.
+                    # 40-thread-vs-5-slot mismatch behind the regression's exhaustion.
                     **_pool_settings(pooled=True),
                 },
                 "service": {
@@ -399,7 +352,7 @@ class DatabaseSetting:
                 },
             }
         else:
-            # 0273 NR0003 §5-5: falling through left self.config == {} and handed
+            # falling through left self.config == {} and handed
             # database_init({}) an empty dict, whose failure names neither the
             # setting nor the value that caused it. The DBType enum already
             # rejects unknown values at Settings() time, so this fires only when
@@ -417,7 +370,7 @@ class DatabaseSetting:
         """Initialize DB instance."""
         logger.debug("config", self.config)
 
-        # 0394 T0004: sqloader's migrator keys the `migrations` table on the FILE
+        # sqloader's migrator keys the `migrations` table on the FILE
         # NAME, so the duplicate-number cleanup (031a / 042a / ... / 076b) looks
         # like fourteen brand-new migrations to any DB that already applied them under
         # the old names — and re-running an ALTER TABLE ADD COLUMN aborts the boot.
@@ -447,7 +400,7 @@ class DatabaseSetting:
             logger.error(traceback.format_exc())
 
         try:
-            # 0358 R0001 fourth rejection: sqloader applies pending migrations inside
+            # sqloader applies pending migrations inside
             # database_init(), which leaves no seam to fix the migrations table
             # before files run. Take the connection config without the migration
             # block, then drive the migrator here — repair renamed filenames
@@ -464,7 +417,7 @@ class DatabaseSetting:
             logger.error(traceback.format_exc())
             raise
 
-        # B0091: dialect-agnostic data backfills that replace SQLite-only JSON DML
+        # dialect-agnostic data backfills that replace SQLite-only JSON DML
         # migrations (see db/backfills/). Idempotent — safe to run on every boot —
         # and must never block startup, so failures are logged, not raised.
         try:
@@ -479,7 +432,7 @@ class DatabaseSetting:
             logger.error(f"⚠️ rejection_id backfill skipped: {e}")
             logger.error(traceback.format_exc())
 
-        # 0492 T0018 item 4: legacy ai_invoke_runs.register_errors elements become
+        # legacy ai_invoke_runs.register_errors elements become
         # register_context_failures rows. Python, not DML in migration 094, for the same
         # reason as above — unrolling a JSON array needs jsonb_array_elements / JSON_TABLE /
         # json_each, three spellings that do not survive each other's engine. The source
@@ -515,7 +468,7 @@ class DatabaseSetting:
         ahead of it: sqloader recognises an applied migration only by its exact
         filename, so a file that was applied under an older name looks pending
         and gets executed a second time. See migration_rename_repair for what
-        that did to the dev deployment (0358 R0001 fourth rejection).
+        that did to the dev deployment.
         """
         migration_path = (migration_config or {}).get("migration_path")
         if not migration_path:
@@ -556,7 +509,7 @@ import os
 def _enable_sqlite_wal() -> None:
     """Put the runtime SQLite DB into WAL journal mode, once, at boot.
 
-    0279 T0005 (NR0003 §4): `PRAGMA journal_mode = WAL` existed only in
+    `PRAGMA journal_mode = WAL` existed only in
     db/migrations/migrate.py — a standalone legacy script that builds
     flow_gate_new.db and is not on the boot path. The runtime DB was therefore
     still in rollback-journal mode, where a write transaction takes an EXCLUSIVE
@@ -595,7 +548,7 @@ if os.getenv("TESTING", "0") != "1":
     db = DatabaseSetting()
     # Maintain backward import compatibility
     tfa = db.tfa
-    # After the migrator has created/updated the DB file (0279 T0005).
+    # After the migrator has created/updated the DB file.
     _enable_sqlite_wal()
 else:
     class _DummyDB:

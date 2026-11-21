@@ -1,6 +1,6 @@
-"""FlowGate-computed source changes of one chat AI run (flowgate.default.0670 T0004).
+"""FlowGate-computed source changes of one chat AI run.
 
-NR0003 §10-§11: ``source_dirty_files`` (``now_paths - baseline``) cannot answer "what
+``source_dirty_files`` (``now_paths - baseline``) cannot answer "what
 did THIS run change" -- a file that was already dirty and got edited again vanishes
 from it, and it carries no line counts. So a chat run snapshots its worktree content
 into a Git tree object at admission and again at finalization, and the summary is
@@ -14,7 +14,7 @@ into a Git tree object at admission and again at finalization, and the summary i
   listed path;
 * the model never reports these numbers -- whatever its reply says, the card shows
   only what this module measured;
-* zero changed files store nothing and draw nothing (NR0003 §11.4).
+* zero changed files store nothing and draw nothing.
 """
 from __future__ import annotations
 
@@ -164,7 +164,7 @@ def public(row: dict) -> dict:
         "deletions": row.get("deletions"), "files": row.get("files") or [],
         "start_tree": row["start_tree"], "end_tree": row["end_tree"],
         "created_at": row.get("created_at"),
-        # 0675 T0004: where the summary sits in the conversation, decided by the server.
+        # where the summary sits in the conversation, decided by the server.
         "anchor_seq": row.get("anchor_seq"), "anchor_position": row.get("anchor_position"),
         "anchor_state": row.get("anchor_state"),
     }

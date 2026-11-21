@@ -1,4 +1,4 @@
-"""Root binding judgement (D0004 §3.7, L0009 §2.4.1 / §2.4.2, P0008 S3-5 / S4-5).
+"""Root binding judgement.
 
 On the first confirmation of an unassigned Flow, the Flow's existing root document (its one live
 R or B) is bound to the one start node of the same document type. Nobody picks the pair; if it
@@ -24,7 +24,7 @@ class BindingCheck:
     issues: list = field(default_factory=list)
 
     def preview(self) -> dict:
-        """P0008 S3-5 ``root_binding_preview``."""
+        """S3-5 ``root_binding_preview``."""
         return {
             "status": self.status,
             "node_key": self.node_key if self.status != "blocked" else None,
@@ -38,7 +38,7 @@ def doc_key(doc_id: str) -> str:
 
 
 def resolve_root(alive_docs: list[dict]) -> tuple[str, list[dict]]:
-    """L0009 §2.4.1 over the Flow's live documents: ("none" | "one" | "ambiguous", candidates)."""
+    """over the Flow's live documents: ("none" | "one" | "ambiguous", candidates)."""
     candidates = sorted(
         (d for d in alive_docs if str(d.get("type_code") or "").upper() in ROOT_DOC_TYPES),
         key=lambda d: d["doc_id"],
@@ -53,10 +53,10 @@ def _blocked(code: str, node_keys, **extra) -> BindingCheck:
 
 
 def bindable_starts(graph: Graph, doc_type: Optional[str]) -> list[str]:
-    """The start nodes a root document of ``doc_type`` may be bound to, stored order (flowgate.v02gui.0019).
+    """The start nodes a root document of ``doc_type`` may be bound to, stored order.
 
     The run start nodes of that type (``run_scope``: no incoming live edge, at least one outgoing) come first, so a
-    connected root card always wins over an isolated one (flowgate.v02.0061). Only when there is none, the start
+    connected root card always wins over an isolated one. Only when there is none, the start
     nodes of that type with no edge at all qualify: the root card a person has not connected yet still holds its
     document, and a run of such a revision opens nothing instead of being refused (an isolated card is not run).
     """
@@ -74,7 +74,7 @@ def check_root_binding(
     current: Optional[dict],
     follow_supersede: Callable[[str], str] = lambda doc_id: doc_id,
 ) -> BindingCheck:
-    """L0009 §2.4.2 (confirmation and validation share it).
+    """(confirmation and validation share it).
 
     ``current``: the Flow's binding record (``node_key``, ``doc_id``, ``doc_type``) or None.
     """

@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02gui.0030 — the Flow attachment windows (one per Flow) and the full-screen file drop of the final
+// the Flow attachment windows (one per Flow) and the full-screen file drop of the final
 // mockup: a file dropped anywhere on the Designer goes to the Flow that is open now. While any window is open,
 // opening another Flow opens that Flow's window too; a Flow that already has one brings it to the front.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -27,7 +27,7 @@ import { connectReadOnly, enqueueUpload } from './operations'
 import { flowAttachmentUi } from './state'
 import { wordsFor } from './words'
 
-// isArchived (flowgate.v02test.0036 T#1): the Designer's definite archive state of a Flow (null = not known yet). While
+// isArchived: the Designer's definite archive state of a Flow (null = not known yet). While
 // this Host is mounted the Flow work manager also follows it (a fast path: the Designer already reads this state), so a
 // Flow archived while its window is closed drops its unsent deletes at once. The manager does not depend on it: it
 // watches the archive state of every Project with pending work itself, for its own lifetime (after this Host unmounts

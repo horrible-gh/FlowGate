@@ -1,4 +1,4 @@
-"""Existing-Flow work-base change boundary (flowgate.v02.0104 D0004 §3.2–§3.4, §5.3–§5.5, §7.1).
+"""Existing-Flow work-base change boundary.
 
 Everything runs on the real migrated SQLite store (group_lock_stub.group_store): the
 ``groups`` row lock, ``operation_job`` and ``group_git_state`` are the production tables,

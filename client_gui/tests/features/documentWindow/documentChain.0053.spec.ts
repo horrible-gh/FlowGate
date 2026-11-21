@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#3 (rework 2) — the document an open window shows: the end of the opened document's
+ * (rework 2) — the document an open window shows: the end of the opened document's
  * supersede chain as the server's card line shows it (live_end), read one document per hop; and one window
  * per shown document (followDocumentWindow).
  * flowgate.v02.0070 T#4 (B4) — an exact window (`exact`, the 「전환 전 문서」 link): a window of its own for that very id —

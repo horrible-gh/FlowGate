@@ -1,9 +1,9 @@
-"""0126 T#1: Graph document decisions, independent of execution/final approval.
+"""Graph document decisions, independent of execution/final approval.
 
 GET returns a context to echo unchanged. POST uses a card-wide version and a durable
 request key. The Flow guard serializes decisions, document saves, and Graph commands;
-all cascaded badges, history, requests and audit rows commit together. T#2 consumes
-revision-bound human evidence; T#3 owns recovery before rejection of completed work.
+all cascaded badges, history, requests and audit rows commit together. the earlier implementation consumes
+revision-bound human evidence; the earlier implementation owns recovery before rejection of completed work.
 """
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
         report = docs.get("report")
         if report and report.get("doc_review_status") in APPROVED:
             targets.append(("report", report, doc["doc_id"]))
-    # flowgate.v02gui.0023: a person may approve or reject a document an ended attempt
+    # a person may approve or reject a document an ended attempt
     # left behind (``stale_documents``, e.g. after a Stop). It stays card history for
     # the completion until a person approves it (``card_completion.human._document``);
     # old worker tokens stay fenced. Only the body/test gates and rejection safety apply.

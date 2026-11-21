@@ -1,4 +1,4 @@
-"""Card completion ports (flowgate.v02.0119 T#2, T-1; D0006 §2.1 / §2.3 / §4.1).
+"""Card completion ports.
 
 A Graph node's ``review -> done`` follows its completion record (``flowgate.card_completion``), never the document's v0.1
 review status: the record is the only source of "this node is done". ``modules.flow_gate`` never imports ``flowgate``, so
@@ -15,7 +15,7 @@ this module offers named ports the Graph calls and the composition root (``start
     settle          ``result_binder.reconcile_links`` (inside the guard of a run read's reconciliation or a command): the
                     Flow's written records that no longer answer their node turn ``superseded`` (done with them:
                     ``applied``); the rows changed
-    pending_outputs ``result_binder.card_complete`` (flowgate.v02.0119 T#4, T-3; inside the Flow guard or a run read): the
+    pending_outputs ``result_binder.card_complete`` (T-3; inside the Flow guard or a run read): the
                     required outputs of the card of ``node`` other than its result ``result_doc_id`` not complete yet —
                     the instruction the card uses, not approved; while any is left the node stays in review. It replaces
                     the removed ``card_approval_ports.pending_documents``: a line document beside the required outputs
@@ -38,7 +38,7 @@ COMPLETION_OF = "completion_of"
 APPLIED = "applied"
 UNSETTLED = "unsettled"
 SETTLE = "settle"
-PENDING_OUTPUTS = "pending_outputs"                              # flowgate.v02.0119 T#4 (T-3)
+PENDING_OUTPUTS = "pending_outputs"                              # (T-3)
 HUMAN_DISPATCH, HUMAN_DUE, HUMAN_RECONCILE = "human_dispatch", "human_due", "human_reconcile"
 PORT_NAMES = (COMPLETION_OF, APPLIED, UNSETTLED, SETTLE, PENDING_OUTPUTS, HUMAN_DISPATCH, HUMAN_DUE, HUMAN_RECONCILE)
 

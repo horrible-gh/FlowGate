@@ -60,7 +60,7 @@
         <h1 id="fg-login-title" class="fg-login-title">{{ t('auth.login.redirecting') }}</h1>
       </div>
 
-      <!-- R0001 §2: status and error messages sit at the bottom of the card, as in the mockup. -->
+      <!-- status and error messages sit at the bottom of the card, as in the mockup. -->
       <div
         v-if="status"
         class="fg-login-status"

@@ -1,4 +1,4 @@
-"""Mention tool section after the 0349 shrink — TR-2 (D0004 D-3/D-4/D-5/D-6, P0005 [reference]).
+"""Mention tool section after the 0349 shrink — TR-2 (D-3/D-4/D-5/D-6, the plan [reference]).
 
 TR-1 built the registry and /help/tools without touching a single mention. This is the
 other half: every mention now asks the registry which tools to name, names only those, and
@@ -77,7 +77,7 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
     assert len(body) == 5
     assert body[0] == "첫 행동으로 GET http://h/flowgate/api/v1/help/tools 를 호출해 각 도구의 사용법을 확인하세요."
     assert body[1].startswith("디스크의 프로젝트 소스를 직접 편집하지 마세요")
-    # 0482 T0011 x 0492 D0004 D-2: default head_type="TR" is a MUTATING_STEP_TYPES
+    # x the design D-2: default head_type="TR" is a MUTATING_STEP_TYPES
     # read_write kind, but `resolve_base_dirty` is bound to its own action_scope — a TR
     # worker's token would 403 on it, so the mention must not name it here.
     assert body[2] == "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"
@@ -106,11 +106,11 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 # ── D-3 / D-1: advertised set per step and scope ─────────────────────────────
 
 @pytest.mark.parametrize("head_type,expected", [
-    # T (0427 T0004): write/patch/remove recalled -- investigation-only now.
+    # T: write/patch/remove recalled -- investigation-only now.
     ("T", "read, grep, glob, stat, diff, log, show, merge_preview"),
     ("TR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
     # TSR: the test-report step really does edit test code, and TR-1 already gave its
-    # token write scope. TS (group 0390 R0001): the test-scenario step now writes too, so
+    # token write scope. TS: the test-scenario step now writes too, so
     # the bug a scenario surfaces gets fixed instead of just the test being rewritten.
     ("TSR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
     ("NR", "read, grep, glob, stat, diff, log, show, merge_preview"),
@@ -224,12 +224,12 @@ def test_section_precedes_the_scope_guard_it_used_to_follow():
     ("workflow_decide", None, ["read", "grep"]),
     ("workflow_sequence_edit", None, []),
     ("test_run", None, []),
-    # 0392 B0001/NR0003 added "chat" to this parametrize list so the CH mention could
-    # not default to "new" and advertise tools the token could not use. 0431 T0004
+    # added "chat" to this parametrize list so the CH mention could
+    # not default to "new" and advertise tools the token could not use. the earlier implementation
     # flips the settled chat=none policy to chat=read: the chat worker token now gets
     # real read/grep/glob/stat access, matching kind_for_step's read-only early return.
     ("chat", "CH", ["read", "grep"]),
-    # 0478 T0004: resolve_conflict was falling through to the "none" branch of
+    # resolve_conflict was falling through to the "none" branch of
     # kind_for_step (action_scope not in {new, edit}), leaving the conflict-resolution
     # worker with zero remote tools. It now shares the read-only early return with
     # review/workflow_decide/chat.

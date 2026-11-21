@@ -1,4 +1,4 @@
-"""0120 T#1: real migrated SQLite, transaction/concurrency/API regressions."""
+"""real migrated SQLite, transaction/concurrency/API regressions."""
 import os
 import sqlite3
 import sys

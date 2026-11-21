@@ -1,4 +1,4 @@
-/** 0098 D0004 §6: local branch choices, inheritance and receipt-only summaries. */
+/** local branch choices, inheritance and receipt-only summaries. */
 import { describe, expect, it } from 'vitest'
 import { checkSettingsErrorKey, checkSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
 import { checkControlFailure, checkOperationErrorKey, checkSettingsSummary } from '@/features/document'
@@ -25,7 +25,7 @@ describe('check settings branch contract — 0098', () => {
     expect(checkSettingsView({ ...base, node: node({ fields: { merge_mode: field(mode), merge_target_branch: field('release', true) } }) })).toMatchObject({ target: 'release', targetEnabled: false })
   })
   it.each([['empty', 'target.empty'], ['failed', 'target.lookup_failed'], ['timeout', 'target.lookup_timeout'], ['git_unavailable', 'target.git_unavailable']])('distinguishes %s from other lookup states', (status, lookupError) => {
-    // flowgate.v02test.0020: after a timeout / failure the inherited name stays choosable, unverified; empty / Git refused lock
+    // after a timeout / failure the inherited name stays choosable, unverified; empty / Git refused lock
     const usable = status === 'failed' || status === 'timeout'
     expect(checkSettingsView({ ...base, node: node({ merge_target_options: [], merge_target_state: { status, current: null, default: null } }) })).toMatchObject({
       targetEnabled: usable, lookupError, optionsSource: usable ? 'unverified' : 'none', targetOptions: usable ? ['feature/v0.2.0'] : [] })
@@ -35,7 +35,7 @@ describe('check settings branch contract — 0098', () => {
     const unchecked = { checked: false, error: null, unmerge_supported: null, warnings: [] }
     const saved = node({ fields: { merge_mode: field('merge'), merge_target_branch: field(stored ? name : null, stored) },
       merge_target_options: [], merge_target_state: { status, current: entry(name, unchecked), default: entry('feature/v0.2.0', unchecked) } })
-    // flowgate.v02test.0020: on a timeout / failure with nothing kept the stored and inherited names are offered, unverified
+    // on a timeout / failure with nothing kept the stored and inherited names are offered, unverified
     const usable = status !== 'git_unavailable'
     expect(checkSettingsView({ ...base, node: saved })).toMatchObject({ target: name, targetStored: stored, targetError: null,
       lookupError: status === 'git_unavailable' ? 'target.git_unavailable' : status === 'timeout' ? 'target.lookup_timeout' : 'target.lookup_failed', targetEnabled: usable,
@@ -59,7 +59,7 @@ describe('check settings branch contract — 0098', () => {
       .toMatchObject({ target: null, defaultTarget: null, targetError: null })
     for (const locale of ['ko', 'en', 'ja'] as const) {
       expect(messages[locale].target).not.toHaveProperty('unavailable')
-      // T0012 rework: the default button and the unsupported-undo notice are deleted, not reworded.
+      // the default button and the unsupported-undo notice are deleted, not reworded.
       for (const key of ['use_default', 'use_default_named', 'unmerge_unsupported']) expect(messages[locale].target).not.toHaveProperty(key)
     }
   })

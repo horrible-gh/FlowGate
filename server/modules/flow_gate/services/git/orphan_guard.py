@@ -1,4 +1,4 @@
-"""Orphan judgement with a recovery-evidence guard (flowgate.v02.0153 T#4, T0011 §3).
+"""Orphan judgement with a recovery-evidence guard.
 
 Pure functions only: nothing here runs Git or touches the DB. The executor
 (``cleanup._judge_orphan`` and the TTL path ``cleanup._auto_abort_session``) gathers the
@@ -7,9 +7,9 @@ the verdict says.
 
 A session that carries evidence of a human-approved resolution (a merge/publish commit,
 preservation refs, reconcile history or a reconcile hand-off) is never closed as an orphan
-merely because its base checkout has no MERGE_HEAD: it is resumed into the T#3 reconcile
+merely because its base checkout has no MERGE_HEAD: it is resumed into the the earlier implementation reconcile
 state machine when every resume condition holds, and otherwise parked in an explicit
-recovery hold (``recovery_hold``) for a person (T#5). Only a session with no evidence keeps
+recovery hold (``recovery_hold``) for a person. Only a session with no evidence keeps
 the old orphan close (``_close_orphan`` → ``orphan_recovered``).
 
 "No evidence" must be an observed fact, not a failed read (review rej_01M6ZWFPF1E6JE2M): when
@@ -231,7 +231,7 @@ def apply_resume(context: dict, *, evidence: list, at: str, instance_id: Optiona
 
     The cumulative ``reconcile_attempt_count`` and ``reconcile_cycle_count`` are left alone
     (the reconcile counts its own cycles). An existing ``last_error`` is carried under
-    ``prior_push_error`` of a new ``orphan_resumed`` marker (T#2 rule), so a later T#3 error
+    ``prior_push_error`` of a new ``orphan_resumed`` marker (rule), so a later the earlier implementation error
     still finds it through ``_prior_push_error``."""
     from_state = context.get("review_state")
     context["review_state"] = STATE_RECONCILING

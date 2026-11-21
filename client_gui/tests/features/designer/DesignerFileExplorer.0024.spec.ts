@@ -5,7 +5,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import type { FlowRef, Project } from '@/features/project'
 
-// flowgate.v02.0024 T0005 — Designer File Explorer end to end below the transport: only
+// Designer File Explorer end to end below the transport: only
 // `@shared/api` is replaced, so features/project's api + store, the adapter and every
 // component run for real. The fake server answers `/changes` according to the `base` query,
 // the way the server-side `base` parameter does.
@@ -153,7 +153,7 @@ async function expand(w: VueWrapper, path: string) {
 describe('Designer File Explorer — tree, scope and interaction', () => {
   it('shows the active Flow tree with its scope, folders first, and expands/collapses by click and keys', async () => {
     const w = await mountExplorer()
-    // 0025 T0006 §6: the active Flow name is not repeated above the tree.
+    // the active Flow name is not repeated above the tree.
     expect(w.find('[data-test="dfx-scope-name"]').exists()).toBe(false)
     expect(w.text()).not.toContain('로그인 오류 수정')
     expect(w.get('[data-test="dfx-scope-group"]').text()).toBe('인증')
@@ -223,7 +223,7 @@ describe('Designer File Explorer — 변경됨 against the configured project Ba
     const changeCalls = calls('/changes')
     expect(changeCalls).toHaveLength(1)
     expect(changeCalls[0][1]).toEqual({ base })
-    // 0025 T0006 §6: a confirmed Base is not spelled out on screen, only as the tooltip.
+    // a confirmed Base is not spelled out on screen, only as the tooltip.
     expect(w.find('[data-test="dfx-base-label"]').exists()).toBe(false)
     expect(w.get('[data-test="dfx-filter-changed"]').attributes('title')).toBe(`Base ${base} 대비`)
     expect(w.get('[data-test="dfx-changed-count"]').text()).toBe('3')

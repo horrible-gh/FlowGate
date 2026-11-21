@@ -22,7 +22,7 @@ from modules.flow_gate.services import git_service, token_service
 from modules.flow_gate.services.snapshot_request_service import SnapshotRequestError
 from modules.flow_gate.storage import filesystem as storage_fs
 from modules.flow_gate.storage import paths as storage_paths
-# 0672 T0004 stage 3: the capture exclusion policy and worker-facing locator redaction moved to
+# stage 3: the capture exclusion policy and worker-facing locator redaction moved to
 # source_common (shared with the source fingerprint); re-exported here for the legacy Snapshot code and tests.
 from modules.flow_gate.services.source_common import (  # noqa: F401
     EXCLUDED_DIR_NAMES, EXCLUDED_DIR_PREFIXES, EXCLUDED_FILE_NAMES,
@@ -790,7 +790,7 @@ def _remaining_count(path: Path) -> int:
 def _cleanup_busy(snapshot_id: str) -> dict:
     """Another cleanup of this snapshot holds it: answer at once with a retryable result.
 
-    flowgate.v02.0090 T0015: the first TTL sweep runs after startup() returns, so its
+    the first TTL sweep runs after startup returns, so its
     backlog delete can overlap a request for the same snapshot. The holder finishes or
     records the delete (and its retry state); this caller never waits on it or deletes twice.
     """
@@ -876,7 +876,7 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit",
         return updated
 
 
-# ── Delete journal (flowgate.v02.0090 T#3, NR0003 §5.2) ─────────────────────
+# ── Delete journal ─────────────────────
 #
 # A published snapshot is deleted only after its owner evidence (DB row,
 # token namespace, snapshot.json when still readable) is recorded outside
@@ -913,7 +913,7 @@ def _recorded_manifest(final: Path, row: dict) -> dict | None:
 
 
 def _journal_extra_roots() -> list[Path]:
-    # The record must stay outside the source tree too (NR0003 §5.2).
+    # The record must stay outside the source tree too.
     return [storage_paths.get_storage_root() / "src"]
 
 
@@ -1455,7 +1455,7 @@ def startup() -> None:
     snapshot_request_service.retire_unmaterialized(SYSTEM_ACTOR_USER_ID)
 
     def _loop() -> None:
-        # flowgate.v02.0090 T0015: the first (startup=True) recovery and TTL sweep run as
+        # the first (startup=True) recovery and TTL sweep run as
         # this thread's first pass, not before startup() returns, so a backlog never holds
         # the lifespan. A failed first pass is logged and the periodic sweep still follows.
         try:

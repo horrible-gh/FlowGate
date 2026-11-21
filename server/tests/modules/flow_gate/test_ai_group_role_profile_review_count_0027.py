@@ -1,4 +1,4 @@
-"""flowgate.v02test.0027 (0007-T, A-server): the AI role group's default review count.
+"""(T, A-server): the AI role group's default review count.
 
 Real migrated SQLite (migration 191) and the real routes, reusing the 0120 fixture: stored per profile row (NULL = the
 type row inherits common, common NULL = the card default 0), its own write route, the server policy's choices without
@@ -105,7 +105,7 @@ def test_stored_value_outside_choices_is_kept_on_read_and_resave(world, monkeypa
     assert put_count(world, gid, 'common', {'review_count': 5}).status_code == 200
     monkeypatch.setattr(policy, 'get_repeat_count_max', lambda: 3)          # the ceiling was lowered later
     # The stored 5 is shown as it is, but a new card would copy 0 (outside today's card choices): the effective value
-    # and its source follow the creation copy's judgment (TR0008 rev2 rejection).
+    # and its source follow the creation copy's judgment.
     assert counts(world, gid)['common'] == {'review_count': 5, 'effective_review_count': 0, 'source': 'default'}
     assert put_count(world, gid, 'common', {'review_count': 5}).status_code == 200     # same value: kept
     assert put_count(world, gid, 'common', {'review_count': 4}).status_code == 422     # a new out-of-range value

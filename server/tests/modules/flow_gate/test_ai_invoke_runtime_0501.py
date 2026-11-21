@@ -1,12 +1,12 @@
-"""flowgate.default.0501 T0008 (T3): ai_invoke runtime module boundary.
+""": ai_invoke runtime module boundary.
 
-Retargeted by T6 at `ai_invoke/runtime.py`, which is where NR0003 §13 puts this
+Retargeted by T6 at `ai_invoke/runtime.py`, which is where the review puts this
 module: T3 first extracted the registry accessors as a flat `ai_invoke_runtime.py`
 sibling, and T6 moved them into the package together with the registry objects and
 the engine parameters they belong to. The boundary the tests below check is the same
 one; only the module path changed.
 
-Covers the completion conditions T0008 T3 §15 asks for on the NEW runtime-registry
+Covers the completion conditions the earlier implementation T3 asks for on the NEW runtime-registry
 access module:
 
   * the mutable registry (`_runs`/`_runs_lock`/`_group_resume_locks`) has exactly ONE
@@ -18,7 +18,7 @@ access module:
   * the module never imports worker/provider/chain execution detail (T3 §13-F)
   * the compatibility facade (`svc.get_run_record` etc.) still produces the same
     results as calling the new module directly
-  * T0008 §13-B/C/D/E: `start_run`'s own admission/collision code, `cancel_run`'s
+  * B/C/D/E: `start_run`'s own admission/collision code, `cancel_run`'s
     primitive, and the `start_run` facade itself -- none of which were extracted --
     still behave exactly as before once `is_run_live`/`get_run_record`/
     `_active_run_for_group` are served by the new module instead of being inlined
@@ -47,7 +47,7 @@ _RUNTIME_PATH = (
     _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke" / "runtime.py"
 )
 
-# flowgate.default.0501 T6: inside the package these are relative imports, so the
+# inside the package these are relative imports, so the
 # guard matches the MODULE NAME rather than a dotted suffix -- `from . import worker`
 # carries no module path at all and a suffix check would silently stop guarding.
 _FORBIDDEN_PACKAGE_MODULES = {
@@ -73,7 +73,7 @@ class TestModuleOwnsNoExecutionDetail:
         assert callable(ai_invoke_runtime.get_run_record)
 
     def test_source_never_imports_worker_provider_or_chain_modules(self):
-        """AST guard for T0008 T3 §13-F: no execution-layer dependency leak."""
+        """AST guard for the earlier implementation T3: no execution-layer dependency leak."""
         tree = ast.parse(_RUNTIME_PATH.read_text(encoding="utf-8"), filename=str(_RUNTIME_PATH))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
@@ -185,7 +185,7 @@ class TestFacadeMatchesRuntimeModule:
         assert svc._run_list_item_live(run) == runtime.run_list_item_live(run)
 
 
-# ── T0008 §13-B/C/D/E: admission / collision / cancel / start_run facade ───────
+# ── the earlier implementationB/C/D/E: admission / collision / cancel / start_run facade ───────
 #
 # None of the code these four sections exercise was extracted -- start_run's admission
 # check, its RunIdCollision retry, and cancel_run all live exactly where they lived
@@ -268,7 +268,7 @@ def _wait_finished(run_id, timeout=30.0):
 
 
 class TestAdmissionUnchanged:
-    """T0008 §13-B: same-group concurrent admission keeps the existing 409 contract.
+    """B: same-group concurrent admission keeps the existing 409 contract.
     start_run's check (`db_group_ai_leases.get_active`) is DB-level and never touched
     the in-memory registry T3 extracted -- this locks that fact down instead of leaving
     it as an assumption."""
@@ -291,7 +291,7 @@ class TestAdmissionUnchanged:
 
 
 class TestRunIdCollisionUnchanged:
-    """T0008 §13-C: run-id collision retry shape (ai_invoke_service.py §1741-1762) is
+    """C: run-id collision retry shape (ai_invoke_service.py) is
     start_run's own code, untouched by T3. One collision retries once with a freshly
     minted id; a second collision surfaces as a clean 409, never a raw DB error."""
 
@@ -328,7 +328,7 @@ class TestRunIdCollisionUnchanged:
 
 
 class TestAcquireRaceBlockerIdentityUnchanged:
-    """flowgate.default.0502 T0004 rev2: the acquire_race 409 (start_run's admission
+    """the acquire_race 409 (start_run's admission
     check passes because no lease is active yet, but `acquire()` itself then loses to a
     concurrently-active lease) must record the BLOCKING run's identity using the
     snapshot `acquire()` captured at its own conflict decision, never a fresh
@@ -381,7 +381,7 @@ class TestAcquireRaceBlockerIdentityUnchanged:
         assert events[0]["blocking"]["blocking_token_id"] == "tok_blocker"
         assert events[0]["blocking"]["blocking_worker_id"] == "usr_other"
         assert events[0]["detail"]["admission_stage"] == "acquire_race"
-        # T0004 SS5/SS23(1)-(2): the run_id start_run minted for the LOSING candidate
+        # SS5/SS23-: the run_id start_run minted for the LOSING candidate
         # (before acquire() lost the race) must survive into the event too -- both the
         # correlation column and the requested snapshot -- distinct from the blocker's
         # own run_id ("aiv_blocker") asserted above.
@@ -391,7 +391,7 @@ class TestAcquireRaceBlockerIdentityUnchanged:
 
 
 class TestCancelPrimitiveUnchanged:
-    """T0008 §13-D: cancel_run (ai_invoke/chain.py since T6, unmodified in behavior by
+    """D: cancel_run (ai_invoke/chain.py since T6, unmodified in behavior by
     T3, T5 or T6) reaches the
     active run through `get_run_record`, now served by ai_invoke_runtime. This locks
     that cancel_run's mutation lands on the SAME object the new module hands back --
@@ -424,7 +424,7 @@ class TestCancelPrimitiveUnchanged:
 
 
 class TestStartRunFacadeUnchanged:
-    """T0008 §13-E: `ai_invoke_service.start_run(...)` is the external surface T3 must
+    """E: `ai_invoke_service.start_run(...)` is the external surface T3 must
     preserve untouched. This proves the facade's OWN result is reachable through the
     new runtime module end-to-end -- registered while running, gone once finished --
     which is a stronger claim than TestFacadeMatchesRuntimeModule above (that class only

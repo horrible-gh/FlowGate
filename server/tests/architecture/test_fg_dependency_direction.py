@@ -1,4 +1,4 @@
-"""Dependency direction between ``flowgate`` and ``modules.flow_gate`` (flowgate.v02.0032 T#1, D0006 §2.4, §4.1).
+"""Dependency direction between ``flowgate`` and ``modules.flow_gate``.
 
 * ``modules.flow_gate`` never imports the v0.2 application package (it reaches it only
   through the ``chat_run_hooks`` ports registered by the composition root);

@@ -1,4 +1,4 @@
-"""0145 T#1 self-checks: isolated migrated DB/files and real inbox/common revision path.
+"""self-checks: isolated migrated DB/files and real inbox/common revision path.
 
 Only display-card definitions, authorization and notification endpoints are mocked.
 No production flow or historical example document is loaded or changed.

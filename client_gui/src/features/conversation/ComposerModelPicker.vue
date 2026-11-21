@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0047 — the composer's compact AI picker (R0001 §2.3-7): the selected
+  <!-- the composer's compact AI picker: the selected
        provider's name on a small button, the project's providers in a popover above it.
        The list is the providers call as is; nothing here is a fixed model list. -->
   <div ref="rootEl" class="cmp-model">
@@ -134,7 +134,7 @@ function pick(providerId: string): void {
   left: 0;
   bottom: calc(100% + 4px);
   z-index: 30;
-  /* flowgate.v02gui.0003: wide enough for a full provider name; a longer one wraps instead of being cut.
+  /* wide enough for a full provider name; a longer one wraps instead of being cut.
      The picker is the first item of the composer row, so the popover starts at the composer's
      content edge; 100cqw (the composer is an inline-size container) keeps its right edge inside
      the panel instead of past the screen edge (360px in a ~300px panel ran ~69px off-screen). */

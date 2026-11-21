@@ -1,4 +1,4 @@
-"""Worker token step type port (flowgate.v02.0053 T#2, D0006 §2.3).
+"""Worker token step type port.
 
 The remote source tools decide what a worker token may do to the source from the document type its
 holder writes (``remote_tool_service._worker_token_step_type_result`` -> ``tool_registry.kind_for_step``):

@@ -8,7 +8,7 @@ AUTO_COMPLETE_TYPES = frozenset({"M", "CH"})
 # These types still require a human approval action; they are not auto-complete.
 FILELESS_APPROVABLE_TYPES = frozenset({"AC"})
 
-# ── Server-assembled document types (0441 T0004 item 3 / NR0003 recommendation A) ──
+# ── Server-assembled document types ──
 # Types the SERVER builds out of a machine result instead of anybody writing them. A TSR
 # is assembled by test_run_service.assemble_tsr() from a finished test run, so no human
 # and no worker may author one: /documents/next-empty, an inbox action:new submission and
@@ -30,31 +30,31 @@ def is_server_assembled_type(type_code: str | None) -> bool:
 
 # Records that are intentionally outside workflow_sequence_items result slots.
 NON_SLOT_WORKFLOW_TYPES = AUTO_COMPLETE_TYPES | frozenset({"Q", "A", "AC"})
-# The work plan (WP) is deliberately **NOT** in this set. D0007 §7 required stating where a
+# The work plan (WP) is deliberately **NOT** in this set. the design required stating where a
 # work plan belongs, and the same document settled it as "an ordinary slot following the
-# requirements definition" — in P0009 §7.2's preview example WP occupies item_seq 2. So WP is
+# requirements definition" — in the plan's preview example WP occupies item_seq 2. So WP is
 # a slot-occupying type, and a WP not attached to a slot shows as an orphan that must be asked where to attach.
 # Do not confuse this with HEAD_TYPE_GUARD_EXEMPT_TYPES below: that one relaxes "you may only
 # create it while the workflow head is WP", whereas this one means "it occupies no slot at all".
 
-# ── Work plan (WP) — flowgate.default.0395 R0001 / D0007 ─────────────────────
+# ── Work plan (WP) — the earlier change the requirement / the design ─────────────────────
 # The advisory plan document: type counts + per-step provider assignment, stored
-# as a JSON canonical body. It is NOT auto-complete (D0007 §3.1 decision 4) — it is
+# as a JSON canonical body. It is NOT auto-complete (decision 4) — it is
 # created pending_review and goes through the ordinary review pipeline.
 WORK_PLAN_TYPE = "WP"
 
 # Types exempt from the inbox workflow-head type guard. A workflow head pins the
 # next expected document type, which is right for step documents. A work plan is
-# advisory and may be written at any point in a group's life — D0007 §3.1 decision 5
+# advisory and may be written at any point in a group's life — the design decision 5
 # explicitly allows several plans per group — so pinning it to the head would make
-# the documented AI creation path (P0009 §5.1) fail whenever the group is mid-flow.
+# the documented AI creation path fail whenever the group is mid-flow.
 HEAD_TYPE_GUARD_EXEMPT_TYPES = AUTO_COMPLETE_TYPES | frozenset({WORK_PLAN_TYPE})
 
-# ── Countable type registry (P0009 §4.1, L0010 §2.1) ─────────────────────────
+# ── Countable type registry ─────────────────────────
 # "Countable" means the type occupies a quantity box in a work plan. The unit and
 # the instruction→result pairing are facts about the workflow, not per-project
 # settings, so they live in code — but the *order* the types are listed in is read
-# from the document_types table (L0010 §2.1 decision 2), never from this file.
+# from the document_types table (decision 2), never from this file.
 WORK_PLAN_SHEET_TYPES = ("DS", "D", "P", "L", "DB")
 WORK_PLAN_SET_TYPES = ("N", "T", "T2", "TS")
 
@@ -84,11 +84,11 @@ WORK_PLAN_STEP_TYPES = frozenset(
 )
 
 # Steps the server assembles itself — no provider, no note (DS0006 §2-7). Same set as
-# SERVER_ASSEMBLED_DOC_TYPES above, read from it rather than restated (0441 T0004 item 3):
+# SERVER_ASSEMBLED_DOC_TYPES above, read from it rather than restated:
 # "the server builds this row" and "nobody may author this document" are one fact.
 WORK_PLAN_LOCKED_TYPES = SERVER_ASSEMBLED_DOC_TYPES
 
-# ── One-line note length cap — canonical (0406 T0022 item 6 / M0019) ─────────
+# ── One-line note length cap — canonical ─────────
 # The same value was pinned separately in work_plan_service, work_plan_sequence_service and
 # the screen — all three at 200. The work-plan editor blocked typing at that 200 with no
 # warning, and the sequence save path silently cut everything past 200 — the reported "the work plan gets chopped off going in".

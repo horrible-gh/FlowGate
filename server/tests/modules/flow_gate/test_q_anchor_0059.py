@@ -1,11 +1,11 @@
-"""Question anchor redirect — B0001 / NR0003 (group 0059) regression.
+"""Question anchor redirect — the regression / the review (the earlier change) regression.
 
-Bug (B0001): the AI worker registered an ambiguity as a question, but nothing showed up in the console.
-Cause (NR0003 §8, approved): the worker token is bound to the workflow spine (the R/B root that owns the
+Bug: the AI worker registered an ambiguity as a question, but nothing showed up in the console.
+Cause: the worker token is bound to the workflow spine (the R/B root that owns the
 sequence), so when the worker is blocked while producing the report (TR) and registers a question via
 POST /q/{doc_id}/questions, that question accumulates on the far-upstream spine (e.g. 0044.0001-R). The user
-directs the report from the instruction document (0009-T) and expects the question to appear on 0010-TR
-(or 0009-T), not to dig through an already-passed spine.
+directs the report from the instruction document and expects the question to appear on the earlier implementation
+, not to dig through an already-passed spine.
 
 Fix (subject of this test): a worker-token question redirects its anchor to the 'current work context' document —
   (a) if a head-step produced document exists, that document (the in-progress TR), otherwise
@@ -241,7 +241,7 @@ def test_anchor_b_predecessor_when_report_not_produced(seed_data):
 def test_anchor_a_report_doc_when_in_progress(seed_data):
     """(a) If a produced TR document exists (awaiting review), redirect to that document."""
     from modules.flow_gate.services import q_service
-    # 'B0002' spine with the TR step already linked to an in-progress TR doc.
+    # 'the regression' spine with the TR step already linked to an in-progress TR doc.
     #
     # The T slot gets its own instruction document rather than reusing TDOC, which the
     # test above already put in another sequence's slot. A document belongs to exactly one
@@ -272,7 +272,7 @@ def test_anchor_no_sequence_returns_doc(seed_data):
 # ── End-to-end: a worker-token question lands on the work-context document, not the spine ─────────────
 
 def test_worker_question_lands_on_workcontext_not_spine(seed_data, tmp_path):
-    """B0001 regression: POST /q/{spine}/questions with a spine-bound worker token →
+    """regression: POST /q/{spine}/questions with a spine-bound worker token →
     the question is stored on the preceding instruction document (T), not the spine."""
     spine3 = "anchorprj-__ALL__-0059-B0003"
     tdoc3 = "anchorprj-__ALL__-0059-T0014"

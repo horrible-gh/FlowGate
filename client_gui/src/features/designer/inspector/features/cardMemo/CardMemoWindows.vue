@@ -1,10 +1,10 @@
 <template>
-  <!-- flowgate.v02.0056 (0017-CH) — the card memo windows (useCardMemoWindows): one form per memo — title · body · [AIa
+  <!-- (CH) — the card memo windows (useCardMemoWindows): one form per memo — title · body · [AIa
        참조] — with [삭제] · [저장] · [닫기]. The header names the memo (a new one: 새 메모) with the AI 참조 chip when
        the AI refers to it; no hint text. A read-only view of the window's card keeps the form but changes nothing.
        A written memo opened to read (the line's 열기) shows its body with [삭제] · [편집] · [닫기]; [편집] or the
        line's ✎ turns it into the form.
-       flowgate.v02.0150: the Frame's windows host — drawn whatever is selected; a window keeps the card it was opened for
+       the Frame's windows host — drawn whatever is selected; a window keeps the card it was opened for
        and closes only by its × · [닫기] (or its memo deleted); Esc does not close it. -->
   <ModelessShell
     v-for="win in cardMemoWindows"
@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0056 (0017-CH) — the memo windows' form and writes (the writes announce themselves, so the documents
+// (CH) — the memo windows' form and writes (the writes announce themselves, so the documents
 // tab list follows them). `target` is the selected card (null: none): a window of that card is locked while its view is
 // read only.
 import { computed } from 'vue'

@@ -84,7 +84,7 @@ def invalidate_all() -> None:
 
     Needed when a change affects users that cannot be enumerated cheaply —
     editing a *role's* permissions re-grants or revokes it for everyone holding
-    that role (0276 T0009). With a 30-minute TTL and no such hook, those edits
+    that role. With a 30-minute TTL and no such hook, those edits
     previously took up to half an hour to take effect.
     """
     with _cache_lock:

@@ -24,19 +24,19 @@ class FlowEvent:
 _subscribers: dict[str, list[asyncio.Queue]] = {}
 _lock = asyncio.Lock()
 
-# Per-queue "interest project" (0291 D0005 §3-2). Kept as a side table keyed by the
+# Per-queue "interest project". Kept as a side table keyed by the
 # queue object rather than folded into _subscribers, so the {user_id: [queue]} shape
 # every existing caller and test relies on is unchanged. A queue missing from this map
 # (or mapped to None) is a subscriber that did not declare an interest project — an
 # older client — and keeps receiving everything (§3-1 rule 4).
 _subscriber_projects: dict[asyncio.Queue, Optional[str]] = {}
 
-# Broadcast routing counters (0291 D0005 §3-1). The two fallback rules are meant to be
+# Broadcast routing counters. The two fallback rules are meant to be
 # temporary: rule 3 (event carries no project) and rule 4 (subscriber declared no
 # project) both degrade to "deliver to everyone", which is exactly the fanout this
 # change exists to remove. Without a number attached to them there is no way to tell
 # whether the fallbacks are a thin safety net or where all the traffic still goes, so
-# count them and expose the counts for the measurement task (NR0003 4-8).
+# count them and expose the counts for the measurement task.
 _routing_stats: dict[str, int] = {
     "broadcasts": 0,             # broadcast_event calls
     "delivered": 0,              # queue deliveries made
@@ -63,7 +63,7 @@ def _offer(q: asyncio.Queue, event: FlowEvent) -> bool:
     the only thing that could drain that queue was an SSE client that had already
     stopped reading. One abandoned browser tab could wedge event delivery for
     everyone, and because ``_lock`` also guards subscribe/unsubscribe, new tabs hung
-    on connect instead of recovering. That is the "it hangs on loading" shape R0001 asked
+    on connect instead of recovering. That is the "it hangs on loading" shape the requirement asked
     about, arriving from the event path rather than from the DB or the filesystem.
 
     A queue that is full means the subscriber is not draining, so something must be
@@ -111,7 +111,7 @@ async def subscribe(user_id: str, project: Optional[str] = None) -> asyncio.Queu
     """Called when SSE route connects — create and register a new queue.
 
     *project* is the project the connecting screen is currently looking at (0291
-    D0005 §3-2). It is recorded once, at connect time; a user switching projects
+    ). It is recorded once, at connect time; a user switching projects
     reconnects, which the client already does for token rotation and dropped
     streams. Omitting it (older clients) keeps the pre-0291 receive-everything
     behaviour.
@@ -139,7 +139,7 @@ async def unsubscribe(user_id: str, q: asyncio.Queue) -> None:
 
 
 def _should_deliver(event_project: Optional[str], sub_project: Optional[str]) -> bool:
-    """Delivery decision for one (broadcast event, subscriber) pair — D0005 §3-1.
+    """Delivery decision for one (broadcast event, subscriber) pair — the design
 
     Both "unknown" cases deliver. An event with no project (rule 3) and a subscriber
     that never declared one (rule 4) are situations where we have no basis to decide,
@@ -160,9 +160,9 @@ async def broadcast_event(event: FlowEvent) -> int:
 
     Before 0291 this pushed to every connected queue unconditionally, so one document
     write re-queried the entire screen of every logged-in user regardless of which
-    project they were looking at — the write-amplification NR0003 finding 1 measured.
+    project they were looking at — the write-amplification the review measured.
     Now the event's ``project`` is matched against each subscriber's declared interest
-    project and unrelated screens are skipped (D0005 §3-1 rule 2).
+    project and unrelated screens are skipped (rule 2).
 
     User-targeted delivery is *not* affected: that goes through publish_event, which
     keeps routing purely by audience (rule 1). Applying a project filter there would
@@ -222,7 +222,7 @@ def publish_event_threadsafe(event: FlowEvent) -> int:
     is not the running loop, and asyncio.get_event_loop() raises in a non-main thread. The
     previous q_service implementation (get_event_loop + run_until_complete) therefore raised
     and was swallowed, so the qna_q_registered event was never emitted — the F5-only
-    symptom in 0059 B0001. Schedule the coroutine onto the captured main loop instead so
+    symptom in the regression. Schedule the coroutine onto the captured main loop instead so
     delivery actually reaches the subscriber. Returns the delivered-queue count, -1 if
     scheduled from an async context, 0 if there is no subscriber / no usable loop.
     """

@@ -1,6 +1,6 @@
 /**
- * flowgate.v02.0053 T#5 — the card settings read the documents tab uses (features/document/api/settings.ts):
- * GET /api/v1/flows/{flow_id}/nodes/{node_key}/settings (T#2) -> camelCase, and whether the card omits its
+ * the card settings read the documents tab uses (features/document/api/settings.ts):
+ * GET /api/v1/flows/{flow_id}/nodes/{node_key}/settings -> camelCase, and whether the card omits its
  * instruction (its instruction line is then not shown, v7).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +13,7 @@ vi.mock('@shared/api', () => ({
 
 import { settingsInstructionOmitted, settingsNodeRead, toSettingsNode } from '@/features/document'
 
-/** A task card's settings as the T#2 route answers them. */
+/** A task card's settings as the the earlier implementation route answers them. */
 const RAW = {
   ok: true,
   server_ts: '2026-10-11T16:00:00+09:00',

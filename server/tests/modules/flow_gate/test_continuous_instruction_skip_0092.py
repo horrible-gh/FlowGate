@@ -3,7 +3,7 @@
 The unmanned continuous chain used to issue an AI-worker mention for EVERY next step,
 making no distinction between instruction-series steps (N/T/TS — "무엇을 하라", fillable
 from a fixed server template) and report-series steps (NR/TR/TSR — the actual AI
-deliverable). That spent ~3 redundant worker cycles per R→…→TSR lap (B0001's "token
+deliverable). That spent ~3 redundant worker cycles per R→…→TSR lap (the regression's "token
 two-fold" symptom).
 
 The fix: ``workflow_decision_service._auto_complete_instruction_heads`` auto-creates +
@@ -57,7 +57,7 @@ def test_auto_complete_fills_instruction_then_stops_at_report(monkeypatch):
                    "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    # 0406 T0022 task 3: return which slots the server handled, not merely their count.
+    # task 3: return which slots the server handled, not merely their count.
     # Without that list, instruction stages disappearing cannot be explained afterward.
     assert n == [1]
     assert created == ["N"]  # only the instruction head was auto-completed
@@ -128,7 +128,7 @@ def test_auto_complete_skips_in_progress_head(monkeypatch):
 
 def test_auto_complete_pauses_when_approve_denied(monkeypatch):
     # A genuine non-approver: create_next_approved_core raises 403 → the helper re-raises as a
-    # ValueError so advance_workflow's caller pauses the chain honestly (P0005 §4).
+    # ValueError so advance_workflow's caller pauses the chain honestly.
     _patch_perms(monkeypatch, is_admin=0)
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("T", 3))
 
@@ -229,7 +229,7 @@ def test_advance_continuous_ai_direct_mints_instruction(monkeypatch):
     assert result["continuation_instruction_mode"] == "ai_direct"
 
 
-# ── (0352 T0004 §2) per-item_seq N/T auto-approve selection within ai_direct ──────────
+# ── per-item_seq N/T auto-approve selection within ai_direct ──────────
 
 def test_advance_continuous_ai_direct_auto_approves_selected_item_seq(monkeypatch):
     # §4 acceptance criteria 1: ai_direct + T at item_seq 1 and 3, selecting {3} auto-completes ONLY
@@ -305,7 +305,7 @@ def test_advance_continuous_ai_direct_leaves_unselected_item_seq_to_worker(monke
     assert result["token"] == "RAW" if "token" in result else True
 
 
-# ── (0352 T0004 §2) normalize / validate / is_auto_handled_step (pure functions) ──────
+# ── normalize / validate / is_auto_handled_step (pure functions) ──────
 
 def test_normalize_auto_approve_item_seqs_dedupes_sorts_and_empties():
     assert svc.normalize_continuation_auto_approve_item_seqs(None) == []
@@ -338,7 +338,7 @@ def test_is_auto_handled_step_formula():
         head_type="T", item_seq=1, instruction_mode="ai_direct",
         auto_approve_item_seqs=[3],
     ) is False
-    # TS is never eligible, in either mode, selected or not (group 0121 R0001).
+    # TS is never eligible, in either mode, selected or not.
     assert svc.is_auto_handled_step(
         head_type="TS", item_seq=3, instruction_mode="ai_direct",
         auto_approve_item_seqs=[3],
@@ -389,7 +389,7 @@ def test_validate_auto_approve_item_seqs_rejects_ts_type(monkeypatch):
         svc.db_wfseq, "get_sequence_items",
         lambda _sid: [{"item_seq": 5, "type": "TS", "status": "pending"}],
     )
-    # §2: TS is never a selectable target — group 0121 R0001 excludes it from
+    # : TS is never a selectable target — the requirement excludes it from
     # INSTRUCTION_AUTO_TYPES entirely, so it fails the same "ineligible type" check.
     with pytest.raises(ValueError, match="ineligible_auto_approve_item_seq"):
         svc.validate_continuation_auto_approve_item_seqs([5], "r-doc", target_seq=6)
@@ -436,7 +436,7 @@ def test_validate_auto_approve_item_seqs_empty_selection_is_always_a_noop():
 
 
 def test_advance_continuous_issues_worker_token_for_TS(monkeypatch):
-    # group 0121 R0001: with TS removed from INSTRUCTION_AUTO_TYPES, a TS head is NOT
+    # with TS removed from INSTRUCTION_AUTO_TYPES, a TS head is NOT
     # auto-completed — advance_workflow mints a worker token+mention for TS itself so the AI
     # authors the test-scenario directive. No create_next_approved_core call occurs.
     _patch_perms(monkeypatch)

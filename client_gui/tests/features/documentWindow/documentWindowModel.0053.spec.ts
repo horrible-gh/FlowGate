@@ -1,4 +1,4 @@
-/** flowgate.v02.0053 T#3 — the document window's pure decisions (state dot, body view, frontmatter, reasons). */
+/** the document window's pure decisions (state dot, body view, frontmatter, reasons). */
 import { describe, expect, it } from 'vitest'
 import {
   documentBodyView,

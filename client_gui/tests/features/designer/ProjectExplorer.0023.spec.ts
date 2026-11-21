@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0023 T0006 — Designer Project Explorer component (client_gui).
+ * Designer Project Explorer component (client_gui).
  *
  * Mounted with the real ProjectTree/Row components and the real project store; only the
  * HTTP layer (`@shared/api`) is mocked. Every assertion goes through rendered rows, real
@@ -99,7 +99,7 @@ async function doubleClickRow(w: VueWrapper<any>, label: string) {
   await flushPromises()
 }
 
-/** flowgate.v02test.0002 R0001 #5: one click on a Group opens (or closes) it. */
+/** #5: one click on a Group opens (or closes) it. */
 async function expandGroup(w: VueWrapper<any>, label: string) {
   await clickRow(w, label)
 }
@@ -234,7 +234,7 @@ describe('ProjectExplorer — selection vs activation', () => {
     await mouse(w, 'core', 'click', 1)
     expect(w.emitted('select-group')).toEqual([[{ projectId: 'p', groupId: 'module:p:core' }]])
     expect(row(w, 'core').attributes('aria-selected')).toBe('true')
-    // flowgate.v02test.0002 R0001 #5: a single click selects and opens the Group.
+    // #5: a single click selects and opens the Group.
     expect(row(w, 'core').attributes('aria-expanded')).toBe('true')
 
     // A double click on a Group selects it (first click only) and toggles it exactly once.
@@ -504,7 +504,7 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
           spec === 'vue-i18n' ||
           spec === '@/features/project' ||
           spec.startsWith('../../../components/ui/') ||
-          // 0025 T0006 §4: the one Designer Explorer glyph set (shared with the File Explorer).
+          // the one Designer Explorer glyph set (shared with the File Explorer).
           spec === '../shared/ExplorerIcon.vue' ||
           spec.startsWith('./')
         expect(allowed, `${file}: ${spec}`).toBe(true)

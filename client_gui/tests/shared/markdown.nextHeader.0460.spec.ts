@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown'
 
-// R0001 (group 0460) — the leading next-document header must not appear in the
+// (the earlier change) — the leading next-document header must not appear in the
 // rendered document at all: "Even in this document, the headers appear verbatim in the body".
 //
 // rev1-rev4 wrapped the seven fields in a fenced `text` block, which still put

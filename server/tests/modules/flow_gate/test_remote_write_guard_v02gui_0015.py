@@ -1,6 +1,6 @@
-"""Remote write/patch content guards (v02gui 0015 T5, 0006-NR §6-2 a/c/e/f).
+"""Remote write/patch content guards (v02gui 0015 T5, the earlier implementation a/c/e/f).
 
-Completion cases of 0006-NR §6-2 (rev 4), numbered as there:
+Completion cases of the earlier implementation, numbered as there:
   ① masked-only overwrite -> 422          ② patch whose new_string carries a masked line -> 422
   ③ masked old_string patch -> 404         ④ counter-example 1 (existing *** literal edit) -> allowed
   ⑤ counter-example 2 (mask + tail edit) -> 422   ⑥ pure *** literal line added -> allowed
@@ -336,7 +336,7 @@ def test_help_and_api_schema_list_the_guard_fields(op):
     assert "base_changed" in api_server_tools.DESCRIPTIONS[f"{op}_source_file"]
 
 
-# ── guard unit: the prefix rule table of 0006-NR §6-2 (c) ─────────────────────────
+# ── guard unit: the prefix rule table of the earlier implementation (c) ─────────────────────────
 
 @pytest.mark.parametrize("removed, added, suspect", [
     ('const example = "Long documentation literal: ***old value";',

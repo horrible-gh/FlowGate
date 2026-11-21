@@ -1,6 +1,6 @@
-"""0638 T#2: TR Self-check before and after the TR exists, end to end.
+"""TR Self-check before and after the TR exists, end to end.
 
-T#1 pinned each piece of the pre-registration path on its own (repository, service, REST
+pinned each piece of the pre-registration path on its own (repository, service, REST
 with a mocked service, consumption with a mocked link). This file runs them as one flow on
 a fully migrated SQLite, through the real pieces:
 
@@ -109,7 +109,7 @@ def flow(migrated_sqlite_db, monkeypatch, tmp_path):
     app.include_router(routes.router)
     app.include_router(routes.draft_router)
     client = TestClient(app)
-    # 0053 1-B: requests are queued; this server's queue workers start them from their snapshot.
+    # requests are queued; this server's queue workers start them from their snapshot.
     monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
     # Two runs fit at once whatever processors this test process may use (a Self-check run of
     # this suite is itself limited to one).

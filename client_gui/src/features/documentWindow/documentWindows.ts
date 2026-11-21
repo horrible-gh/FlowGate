@@ -1,14 +1,14 @@
-// flowgate.v02.0053 T#3 — the open document windows of this tab. One window per document: opening a
+// the open document windows of this tab. One window per document: opening a
 // document that already has a window brings that window back (restored, in front) instead of a second
 // one, and an edit request turns it to its editor. New windows cascade so several stay visible.
 // Module state, not a store: the windows are screen state of this tab only and are never sent anywhere.
-// A window follows its document's supersede chain (T#3 rework 2): a run result that replaced the card's
+// A window follows its document's supersede chain: a run result that replaced the card's
 // empty report becomes what the window shows (`shown`). A window is found by either id, and two windows
 // never show the same document (followDocumentWindow).
-// flowgate.v02.0056 F1 — the review history windows (0056 CH §2) are a second list kept the same way: one
+// the review history windows (CH) are a second list kept the same way: one
 // review·rejection history window per document, opened from the history button of a document line, cascaded apart
 // from the document windows so both stay visible.
-// flowgate.v02.0070 T#4 (B4) — an exact window (`exact`): the document of that very id, as history — it never follows
+// (B4) — an exact window (`exact`): the document of that very id, as history — it never follows
 // the supersede chain and is read only (no "편집" / "본문 다시 입력" / "복구"). The 「전환 전 문서」 link opens the document an
 // R↔B succession came from this way, so the old id is shown instead of the new document it was succeeded by. An exact
 // window is a window of its own (`id` = `exact:<docId>`): a usual open of the same document opens the usual window, and
@@ -21,20 +21,20 @@ import { closeAllSlotWriteWindows } from './slotWriteWindows'
 
 export type DocumentWindowMode = 'view' | 'edit'
 
-/** flowgate.v02.0070 T#4 — a part an exact window draws under its body, with the props it is given. */
+/** a part an exact window draws under its body, with the props it is given. */
 export interface DocumentWindowAside {
   readonly component: Component
   readonly props?: Readonly<Record<string, unknown>>
 }
 
-/** flowgate.v02.0070 T#4 — how a document window opens. */
+/** how a document window opens. */
 export interface DocumentWindowOpenOptions {
   /** That very document, as history: no supersede chain, read only (no edit / re-enter / recover). */
   readonly exact?: boolean
   /** An exact window's part under the body (ignored on a usual window). */
   readonly aside?: DocumentWindowAside | null
   /**
-   * flowgate.v02.0127 T#5 (0009-L §2.11): the card coordinates the opener took from its target and the line's real
+   * the card coordinates the opener took from its target and the line's real
    * slot. Without them the window can view but not edit (no v1 save fallback).
    */
   readonly card?: CardDocumentContext | null
@@ -47,7 +47,7 @@ export interface DocumentWindowState {
   readonly docId: string
   /** The document it shows and edits: `docId`, or the end of its supersede chain (never followed when `exact`). */
   shown: string
-  /** flowgate.v02.0070 T#4: shows exactly `docId`, read only. */
+  /** shows exactly `docId`, read only. */
   readonly exact: boolean
   /** The exact window's part under the body, or null. */
   readonly aside: DocumentWindowAside | null
@@ -64,7 +64,7 @@ export interface DocumentWindowState {
   raise: number
 }
 
-/** A document's review history window (flowgate.v02.0056 F1). */
+/** A document's review history window. */
 export interface DocumentHistoryWindowState {
   readonly docId: string
   minimized: boolean
@@ -112,7 +112,7 @@ function bringBack(win: DocumentWindowState, mode: DocumentWindowMode): void {
  * Opens a document's window: `view` shows the document, `edit` goes straight to its editor. A window
  * already open for the document is restored and brought to the front; `edit` turns it to the editor,
  * `view` leaves an editor that is open as it is (its unsaved text stays).
- * flowgate.v02.0070 T#4: `exact` opens (or brings back) the document's exact window instead — always the view.
+ * `exact` opens (or brings back) the document's exact window instead — always the view.
  */
 export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'view', options: DocumentWindowOpenOptions = {}): void {
   if (!docId) return
@@ -177,7 +177,7 @@ export function closeDocumentWindow(id: string): void {
   if (index !== -1) windows.splice(index, 1)
 }
 
-// --- Review history windows (flowgate.v02.0056 F1) -------------------------------------------------
+// --- Review history windows -------------------------------------------------
 
 /** The open history windows, oldest first (reactive). */
 export function documentHistoryWindowList(): readonly DocumentHistoryWindowState[] {

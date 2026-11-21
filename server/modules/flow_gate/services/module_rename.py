@@ -1,4 +1,4 @@
-"""Rename a Group's module key everywhere (flowgate.v02gui.0012 0001-B item B).
+"""Rename a Group's module key everywhere.
 
 ``rename_module(project_id, old, new)`` is what ``PATCH /projects/{pid}/modules/{name}`` runs when
 the identifier changes. Every group of the module ``old`` becomes a group of ``new``:
@@ -18,11 +18,11 @@ the new trees and moves Git back, so nothing is half renamed.
 
 Refused (409, nothing changed) when ``new`` is already a key of the project
 (``module_identifier_taken``, the details name that group and whether it is archived — an archived
-group keeps its key, and is renamed like any other to free it, v02test.0040 T0007), while anything is running in one of
+group keeps its key, and is renamed like any other to free it, v02test.0040 the earlier implementation), while anything is running in one of
 the module's groups (``module_rename_busy``, the details list what and where), or when a branch /
 worktree / directory of the new name is already there.
 
-flowgate.v02test.0040 T0005 (the v01 rename of 11/17 15:15 held 691 Flow locks and the path namespace
+(the v01 rename of 11/17 15:15 held 691 Flow locks and the path namespace
 for about 3 minutes, blocked the whole server, rolled back and left no trace):
 
 - a module with more documents than ``max_documents()`` (env ``FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS``,
@@ -57,7 +57,7 @@ from modules.flow_gate.db.module_rename import (
 from modules.flow_gate.services.route_logging import forward_to_file_log
 
 # A plain getLogger(__name__) propagates to a handler-less root: no line of a rename (not even its success) reached
-# logs/default.log. forward_to_file_log hands INFO and above to LogAssist's file handlers (v02test.0040 T0005).
+# logs/default.log. forward_to_file_log hands INFO and above to LogAssist's file handlers (v02test.0040 the earlier implementation).
 _log = forward_to_file_log(logging.getLogger(__name__), logging.INFO)
 _log.setLevel(logging.INFO)
 
@@ -98,7 +98,7 @@ def busy_reasons(project_id: str, group_ids: list[str]) -> list[dict]:
             reasons.append({"group_id": gid, "reason": "merge_session_open"})
         if test_runs.get_active_by_group(gid):
             reasons.append({"group_id": gid, "reason": "test_run_active"})
-        # 0053 1-B: queued and running queue runs too (they carry no active_key).
+        # queued and running queue runs too (they carry no active_key).
         if tr_self_check_runs.group_open_runs(project_id, gid):
             reasons.append({"group_id": gid, "reason": "self_check_active"})
         if store._fetch_one(
@@ -404,7 +404,7 @@ def _revert_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
             _log.error("module rename: git revert failed for %s", plan.group_id, exc_info=True)
 
 
-# ── limits (v02test.0040 T0005) ────────────────────────────────────────────────────────────────
+# ── limits (v02test.0040 the earlier implementation) ────────────────────────────────────────────────────────────────
 
 MAX_DOCUMENTS_ENV = "FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS"
 # v01: 6,049 documents took about 3 minutes under the global path lock; 2,000 stays under about a minute even
@@ -499,7 +499,7 @@ def rename_module(project_id: str, old: str, new: str, actor: Optional[str] = No
 
     Every outcome reaches ``logs/default.log``: a refusal (``ModuleRenameRefused``) as a warning with its code
     and details, any other failure as an exception record (re-raised, the rollback unchanged), a success as an
-    info line with its duration and document count (v02test.0040 T0005)."""
+    info line with its duration and document count (v02test.0040 the earlier implementation)."""
     started = time.perf_counter()
     try:
         return _rename_module(project_id, old, new, actor, started)
@@ -537,7 +537,7 @@ def _rename_module(project_id: str, old: str, new: str, actor: Optional[str], st
     docs = store._fetch_all(
         "SELECT * FROM documents WHERE project_id = ? AND (module = ? OR group_id IN ("
         + (",".join("?" for _ in group_ids) or "NULL") + "))", [project_id, old, *group_ids])
-    # Before any lock (v02test.0040 T0005): too large is refused first — waiting for running work to end would
+    # Before any lock (v02test.0040 the earlier implementation): too large is refused first — waiting for running work to end would
     # not help it — and without touching a Flow lock or the path namespace.
     _refuse_too_large(docs, group_ids)
     _refuse_busy(busy_reasons(project_id, group_ids))
@@ -590,7 +590,7 @@ def _rename_module(project_id: str, old: str, new: str, actor: Optional[str], st
 
 
 def _refuse_taken(store, project_id: str, new: str) -> None:
-    """409 ``module_identifier_taken`` naming the holder (v02test.0040 T0007: and whether it is archived).
+    """409 ``module_identifier_taken`` naming the holder (v02test.0040 the earlier implementation: and whether it is archived).
 
     An archived group keeps holding its identifier (its documents' ids carry it); the message says the
     holder is archived — the default tree hides it — and how to free the identifier: change that group's

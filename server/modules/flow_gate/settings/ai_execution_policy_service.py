@@ -1,4 +1,4 @@
-"""AI execution policy — repeat-count ceiling SSOT (R0001 / NR0003 §7·§11·§12).
+"""AI execution policy — repeat-count ceiling SSOT.
 
 This is the ONLY place that reads or defines the finite ceiling a repeat-count
 selection (연속체인 재시작 / 단계별 검수 / 실패 재시작 / 문서 검수 루프) may reach. Every
@@ -13,16 +13,16 @@ the first. `system_settings_service.py` is deliberately NOT imported here: it pu
 in `subprocess`/git for its build-info helpers, and §4-2 has it import THIS module
 (for save-time range validation) — importing back would be a cycle.
 
-NR0003 §14 / §19 R9 asked write and read to be asymmetric — a stored/paused chain's
+R9 asked write and read to be asymmetric — a stored/paused chain's
 `continuation_review_count_overrides` (etc.) was accepted under whatever max was in
 effect the day it was written, and re-checking it against TODAY's (possibly lower)
 max on read would silently demote it to the "not reviewed" default, which FlowGate's
-time-machine contract normally forbids. flowgate.default.0490.0006-TR could not ship
+time-machine contract normally forbids. the earlier change could not ship
 that: the two read-side helpers this module feeds
 (`ai_invoke_service.resolve_review_count`, `ai_invoke_service._resolve_restart_max_attempts`)
-already had pre-T0005 unit coverage (`test_ai_invoke_review_gate_0414.py`,
+already had pre-the earlier implementation unit coverage (`test_ai_invoke_review_gate_0414.py`,
 `test_ai_invoke_restart_count_0443.py`) asserting the OLD, symmetric, bound-checked
-behavior, T0005 §5 forbids editing those two files, and no single bound satisfies
+behavior, the earlier implementation forbids editing those two files, and no single bound satisfies
 both "an out-of-range read at the default ceiling degrades" (what they assert) and
 "an out-of-range read at a since-lowered ceiling survives" (what §19 R9 asks) for
 the same function. This module's decision — confirmed across three review rounds —
@@ -95,7 +95,7 @@ def repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True) -> t
 
     `allow_unlimited=True` prepends -1 ("될 때까지"), `allow_zero=True` prepends 0
     ("검수/재시작 없음") — each feature keeps its own existing -1/0 semantics
-    (NR0003 §19 R5); only the finite tail `1..get_repeat_count_max()` is dynamic.
+    ; only the finite tail `1..get_repeat_count_max()` is dynamic.
     Always returns a sorted tuple: -1, then 0, then 1..N.
     """
     values: list[int] = []

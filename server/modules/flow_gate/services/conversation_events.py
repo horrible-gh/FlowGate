@@ -1,9 +1,9 @@
-"""Live delivery of a single appended conversation turn (L0004 §2-11, T2).
+"""Live delivery of a single appended conversation turn.
 
 Kept out of ``conversation_turn_service`` so the append path has no import-time
 dependency on the SSE layer, and so a broadcast failure has one obvious place to be
 swallowed: the turn is already committed and must never be rolled back for this
-(L0004 §2-1, judgement 3).
+(judgement 3).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 
 
 def build_payload(doc: dict, result: dict) -> dict:
-    """P0003 scenario 6 payload — the turn itself, not a "something changed" ping."""
+    """scenario 6 payload — the turn itself, not a "something changed" ping."""
     return {
         "doc_id": result["doc_id"],
         "head_seq": result["head_seq"],
@@ -30,7 +30,7 @@ def broadcast_turn_appended(doc: Optional[dict], result: dict[str, Any]) -> int:
 
     Called from a synchronous route running in a worker thread, so it must go through
     the threadsafe broadcaster: a bare ``asyncio.get_event_loop()`` raises there (the
-    0059 trap).
+    trap).
     """
     if doc is None or not result.get("turn"):
         return 0

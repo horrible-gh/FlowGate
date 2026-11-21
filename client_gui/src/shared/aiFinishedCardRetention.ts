@@ -1,4 +1,4 @@
-// The finished-card retention setting, in one place (group 0452, L0003 §1).
+// The finished-card retention setting, in one place (the earlier change, the earlier implementation).
 //
 // Two documents read this value — the header monitor in main.html and the account screen
 // in settings.html — and they must not each carry their own copy of the nine choices, of

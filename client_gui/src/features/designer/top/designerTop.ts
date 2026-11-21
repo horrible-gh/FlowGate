@@ -1,4 +1,4 @@
-// flowgate.v02.0038 — Designer top band model (0001-R rev2 / 0007-T): the commands the Header,
+// Designer top band model: the commands the Header,
 // Menu Bar and Toolbar emit, the Menu Bar structure, the search scopes, the layout density
 // levels, the Window menu targets and the UI-only run state. Pure data and functions: no
 // screen, store, API or persistence.
@@ -8,19 +8,19 @@
 // command is the event boundary a later Feature group wires (0001-R §8). No keyboard shortcut is
 // assigned or shown here — shortcuts are decided in a later step (0001-R §6.7, 0007-T §7).
 //
-// flowgate.v02.0059 T#2 (0011-CH contract D): alignment / layout is a submenu of the Edit menu and the Toolbar's
+// (CH contract D): alignment / layout is a submenu of the Edit menu and the Toolbar's
 // alignment / layout ▾ drop-down, both listing the same commands — six alignment and two equal distribution of the selected cards
 // (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, auto-layout.
 //
-// flowgate.v02.0059 0017-T: the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
+// the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
 // its numbers live); freeform forces none. It never lays cards out and never starts or stops auto-layout.
 //
-// flowgate.v02.0061 T#14 (R §run control, 0002-CH turn 8 §2.3): the run commands follow the open Flow's run phase —
+// (R §run control, the discussion): the run commands follow the open Flow's run phase —
 // idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: Retry stop (0156 D8: the server's repeated Stop goes on with the stop).
 // No standing button is added (the Toolbar shows the two of the phase in place). The Run menu's 다음 단계 실행 · 전체
 // 실행 · 실행 중지 · Flow verification follow the same rule and 재실행 is never available (Q7: no reset / forced rerun in a
 // Graph Flow). While one run command is answered (`runBusy`) every run command waits.
-// TR0031 rev1: so does every run command while the open Flow's run status is not confirmed (`runUnknown`) — a run being
+// so does every run command while the open Flow's run status is not confirmed (`runUnknown`) — a run being
 // read, or whose read failed, is not idle.
 
 /** Commands of the top band. Window panel / tab and density choices have their own events. */
@@ -41,7 +41,7 @@ export type DesignerTopCommand =
   | 'edit.copy'
   | 'edit.paste'
   | 'edit.delete'
-  /** flowgate.v02.0059 T#2: alignment / equal distribution of the selected cards (DESIGNER_ARRANGE_GROUPS). */
+  /** alignment / equal distribution of the selected cards (DESIGNER_ARRANGE_GROUPS). */
   | DesignerArrangeCommand
   /** flowgate.v02.0068 T#2: horizontal / 세로 자동정렬 (DESIGNER_AUTO_LAYOUT_COMMANDS). */
   | DesignerAutoLayoutCommand
@@ -68,7 +68,7 @@ export type DesignerTopCommand =
   | 'header.settings'
   | 'header.user'
 
-/** flowgate.v02.0059 T#2: the alignment / distribution commands (the Center's arrange kinds after `edit.`). */
+/** the alignment / distribution commands (the Center's arrange kinds after `edit.`). */
 export type DesignerArrangeCommand =
   | 'edit.align-left'
   | 'edit.align-center'
@@ -87,7 +87,7 @@ export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[
 ]
 
 /**
- * flowgate.v02.0068 T#2 (0004-D §6.3): auto-layout by direction — the former single auto-layout is these two, after the
+ * auto-layout by direction — the former single auto-layout is these two, after the
  * alignment / distribution groups in the Toolbar's alignment / layout ▾ and in the Edit menu. The direction is the command's only: no last
  * direction is kept or shown.
  */
@@ -129,7 +129,7 @@ export interface DesignerRecentRequest {
 }
 
 /**
- * Canvas layout density, widest first (0001-R §3.4): wide / normal / narrow / freeform. flowgate.v02.0059 0018-TR rev2
+ * Canvas layout density, widest first: wide / normal / narrow / freeform. the earlier change the earlier implementation
  * (rejection: the terms are wide, normal, narrow): the three stepped densities were renamed — the steps stay 40 / 20 / 10.
  */
 export type DesignerDensity = 'wide' | 'normal' | 'narrow' | 'free'
@@ -137,7 +137,7 @@ export type DesignerDensity = 'wide' | 'normal' | 'narrow' | 'free'
 export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['wide', 'normal', 'narrow', 'free']
 
 /**
- * flowgate.v02.0059 0017-T: the step, in Canvas (Graph) units, a card drag moves in at each density — widest
+ * the step, in Canvas (Graph) units, a card drag moves in at each density — widest
  * first, coarse to fine. 0018-TR rework: the step is a lattice — the dragged card lands on the nearest Graph
  * point whose x and y are whole steps, the other dragged cards keep their offset to it (canvasView.ts
  * stepGroupMove), so a dragged selection keeps its relative layout — and the Canvas dot grid draws exactly that
@@ -206,7 +206,7 @@ export type DesignerMenuEntry =
   | { kind: 'command'; command: DesignerTopCommand; label: string }
   | { kind: 'recent'; recent: DesignerRecentKind; label: string }
   | { kind: 'density'; label: string }
-  /** flowgate.v02.0059 T#2: the alignment / layout submenu (DESIGNER_ARRANGE_GROUPS). */
+  /** the alignment / layout submenu (DESIGNER_ARRANGE_GROUPS). */
   | { kind: 'arrange'; label: string }
   | { kind: 'panel'; panel: DesignerWindowPanel }
   | { kind: 'tab'; tab: DesignerWindowTab }
@@ -301,7 +301,7 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
 // --- run state ---------------------------------------------------------------------------------
 
 /**
- * flowgate.v02.0061 T#14: the open Flow's run phase the run commands follow — the server's run status
+ * the open Flow's run phase the run commands follow — the server's run status
  * (`running` | `paused` | `stopping`; anything else, or no run, is `idle`).
  */
 export type DesignerRunPhase = 'idle' | 'running' | 'paused' | 'stopping'
@@ -313,7 +313,7 @@ export function runPhaseOf(status: string | null | undefined): DesignerRunPhase 
   return DESIGNER_RUN_PHASES.find((phase) => phase === status) ?? 'idle'
 }
 
-/** flowgate.v02.0143 T#1: what the run commands' hold reads of the open Flow's run (FlowRunInfo fits). */
+/** what the run commands' hold reads of the open Flow's run (FlowRunInfo fits). */
 export interface DesignerRunHoldFacts {
   readonly status: string
   /** The server's `qa_responding`: an automatic Q&A responder answers a question of this run's card now (absent: not told). */
@@ -321,7 +321,7 @@ export interface DesignerRunHoldFacts {
 }
 
 /**
- * flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §4.2) — the server's Graph is idle (`needs_intervention`, …) while an
+ * (NR the earlier change) — the server's Graph is idle (`needs_intervention`, …) while an
  * automatic Q&A responder answers its card's question, and the card goes on by itself once answered: 다음 단계 / 전체 실행
  * wait while that is so (`DesignerMenuTargets.runHold`). Only on the server's word (`qaResponding === true` on an idle
  * run): an idle reason, a card's question mark or an older server (absent) never holds, so a person's wait stays open;
@@ -332,12 +332,12 @@ export function runCommandHold(run: DesignerRunHoldFacts | null | undefined): bo
   return run?.status === 'idle' && run.qaResponding === true
 }
 
-/** flowgate.v02.0143 T#1: the run commands an automatic Q&A responder's hold keeps waiting (Flow verification starts nothing). */
+/** the run commands an automatic Q&A responder's hold keeps waiting (Flow verification starts nothing). */
 const HELD_RUN_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>(['run.next', 'run.all'])
 
 /**
  * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
- * a newly created Project's too — starts at the density normal (flowgate.v02.0059 0018-TR rev2).
+ * a newly created Project's too — starts at the density normal.
  */
 export interface DesignerTopState {
   runPhase: DesignerRunPhase
@@ -417,7 +417,7 @@ export function runBandView(run: DesignerRunFacts | null | undefined): DesignerR
 }
 
 /**
- * flowgate.v02.0083 T#4 — the band's colour, by the server's run status and idle reason only: a running run (its AI
+ * the band's colour, by the server's run status and idle reason only: a running run (its AI
  * executions are counted beside it) is `info`; an idle run waiting for a person (Human writing·승인 대기, 개입 필요, Hold) or a paused
  * run is `warning`; one stopped by an error, a rejection or a merge conflict is `danger`; a completed run is
  * `success`; anything else (다음 단계 완료, 실행할 카드 없음, 중지됨, an unknown reason) is `neutral`.
@@ -427,7 +427,7 @@ export type DesignerRunBandTone = 'info' | 'warning' | 'danger' | 'success' | 'n
 const IDLE_REASON_TONES: Readonly<Record<string, DesignerRunBandTone>> = {
   completed: 'success',
   waiting_approval: 'warning',
-  needs_intervention: 'warning',     // flowgate.v02.0124 T#2 (waiting_confirm stays neutral, like a gate's confirm wait)
+  needs_intervention: 'warning',     // (waiting_confirm stays neutral, like a gate's confirm wait)
   hold: 'warning',
   error: 'danger',
   blocked_rejected: 'danger',
@@ -441,7 +441,7 @@ export function runBandTone(band: Pick<DesignerRunBand, 'phase' | 'idleReason'>)
   return 'neutral'
 }
 
-// --- menu targets (flowgate.v02.0039 T#3 / v02.0042 / v02.0043) ---------------------------------
+// --- menu targets (v02.0042 / v02.0043) ---------------------------------
 
 /**
  * What the Designer holds for the menus to act on. `flow` is the work target of 0042 — an open
@@ -457,20 +457,20 @@ export interface DesignerMenuTargets {
   flow: boolean
   readOnly?: boolean
   /**
-   * flowgate.v02.0059 T#2: whether the open Flow's structure edits can be undone / redone. Left out
+   * whether the open Flow's structure edits can be undone / redone. Left out
    * (undefined) the command follows the open Flow alone; the Shell states both explicitly.
    */
   canUndo?: boolean
   canRedo?: boolean
-  /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (alignment 2+, equal distribution 3+). */
+  /** how many cards of the open Flow are selected (alignment 2+, equal distribution 3+). */
   selectedCount?: number
-  /** flowgate.v02.0061 T#14: a run command of the open Flow is being answered (every run command waits). */
+  /** a run command of the open Flow is being answered (every run command waits). */
   runBusy?: boolean
   /** A Stop request is awaiting its response; show progress immediately. */
   runStopping?: boolean
   /** A failed Stop request for this run can be sent again, never inferred from stopping alone. */
   runStopRetry?: boolean
-  /** flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (every run command waits). */
+  /** the open Flow's run status is not confirmed yet (every run command waits). */
   runUnknown?: boolean
   /** flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run (`runCommandHold`): 다음 단계 / 전체 실행 wait. */
   runHold?: boolean
@@ -509,7 +509,7 @@ const PROJECT_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCom
 /**
  * Whether a menu command can be chosen. ALWAYS_COMMANDS always can; PROJECT_COMMANDS need the
  * Project context, Group Close a chosen Group, Flow Close an open Flow; everything else needs the
- * open Flow and then the run phase decides (flowgate.v02.0061 T#14: the run commands of each phase).
+ * open Flow and then the run phase decides (the run commands of each phase).
  */
 export function isMenuCommandEnabled(
   cmd: DesignerTopCommand,
@@ -528,7 +528,7 @@ export function isMenuCommandEnabled(
   if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
   if (cmd.startsWith('run.')) {
     if (cmd === 'run.stop' && runPhase === 'stopping' && targets.runStopRetry !== true) return false
-    if (targets.runHold === true && HELD_RUN_COMMANDS.has(cmd)) return false             // flowgate.v02.0143 T#1
+    if (targets.runHold === true && HELD_RUN_COMMANDS.has(cmd)) return false             
     return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)
   }
   return true

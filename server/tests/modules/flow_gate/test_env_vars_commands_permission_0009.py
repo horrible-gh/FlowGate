@@ -1,4 +1,4 @@
-"""flowgate.v02.0009 T#2: env-vars/commands mutation permission regression tests.
+"""env-vars/commands mutation permission regression tests.
 
 Before this fix, every route in env_vars_commands.py (list/get, create/update/delete,
 resolve, and execute) depended only on `_require_settings_read`
@@ -31,7 +31,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 @pytest.fixture(scope="module")
 def test_db_path(migrated_sqlite_db):
-    """Shared migration-replay factory (flowgate.default.0394 T0010 / NR0003 §13-6)."""
+    """Shared migration-replay factory."""
     return migrated_sqlite_db(
         "test_env_vars_commands_permission_0009.db",
         seed_sql="""
@@ -162,7 +162,7 @@ class TestEnvVarPermissions:
         assert body["value"] == "1"
 
     def test_editor_cannot_create_system_kind(self, mock_db):
-        """T#2 §2: system-kind mutation still needs is_admin, on top of the new edit gate."""
+        """system-kind mutation still needs is_admin, on top of the new edit gate."""
         client = _make_client(EDITOR)
         resp = client.post("/api/v1/env-vars", json={"kind": "system", "name": "BAR", "value": "1"})
         assert resp.status_code == 403
@@ -323,7 +323,7 @@ class TestCommandPermissions:
         assert any(r["command_id"] == created["command_id"] for r in rows)
 
     def test_admin_can_create_update_delete_system_kind(self, mock_db):
-        """T#2 §4 rework: prove admin succeeds across the full CRUD surface for a
+        """prove admin succeeds across the full CRUD surface for a
         kind='system' command, not just a single create — mirrors the env-var
         coverage in test_admin_can_update_system_kind/test_admin_can_delete_system_kind."""
         client = _make_client(ADMIN)

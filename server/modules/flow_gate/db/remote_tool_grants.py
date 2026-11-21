@@ -1,6 +1,6 @@
 """remote_tool_grant / remote_tool_grant_scope CRUD (DB0007 §4·§5).
 
-Persistent form of the permission selection (R0001 "the permissions chosen when the user delegates a task").
+Persistent form of the permission selection ("the permissions chosen when the user delegates a task").
 A grant is one delegated token; its scope set is the selected permissions.
 Follows the get_store()-based access pattern used by db/tokens.py.
 """

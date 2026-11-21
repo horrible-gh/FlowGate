@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0010: a chat AI lists and answers the card questions (Q) of its own Flow.
+"""a chat AI lists and answers the card questions (Q) of its own Flow.
 
 Real SQLite (questions / question_items / answers, documents, tokens), the real Flow document guard and the real
 ``q_service.register_answer``, through both transports: the API chat tool (call ledger) and the CLI chat HTTP route.

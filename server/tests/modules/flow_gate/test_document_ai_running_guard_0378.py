@@ -66,7 +66,7 @@ def test_human_mutation_is_structured_423(monkeypatch):
         "message": "Modification not allowed while an AI run owns this group.",
         "group_id": GROUP,
         "run_id": "aiv_owner",
-        # 0401 NR0003 §3 / T0004 task 4: the lease's OWN run is not in this process's
+        # task 4: the lease's OWN run is not in this process's
         # registry (never seeded here), so is_run_live reports False -- an orphaned lease.
         "run_live": False,
     }}
@@ -133,7 +133,7 @@ def test_middleware_allows_owner_worker(monkeypatch):
 
 
 def test_work_plan_and_workflow_routes_are_locked_without_side_effects(monkeypatch):
-    """0424 T0004: exercise all five public HTTP paths against one active lease."""
+    """exercise all five public HTTP paths against one active lease."""
     from modules.flow_gate import process_service
     from modules.flow_gate.api.v1 import workflow_decision_routes as workflow_routes
     from modules.flow_gate.auth.middleware import get_current_user

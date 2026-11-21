@@ -1,16 +1,16 @@
-"""Graph definition service (D0004 §2.2 graph definition service, P0008 §5 S3, L0009 §2.1.5 / §2.5).
+"""Graph definition service (graph definition service, the plan S3, the earlier implementation).
 
 Draft save and validation run inside the Flow guard: the ownership judgement, the
 ``draft_version`` comparison and the write are one unit. A draft save replaces the Flow's draft
-as a whole (P0008 S3-1); concurrent saves are refused by version (Q-13 provisional rule, S3-2).
+as a whole; concurrent saves are refused by version (Q-13 provisional rule, S3-2).
 Structure is not checked on save, only on validation / confirmation. The same unit brings the
-cards' documents in line with the draft (flowgate.v02.0053 T#1, ``card_document_ports.draft_saved``;
+cards' documents in line with the draft (the earlier change the earlier implementation, ``card_document_ports.draft_saved``;
 the feature lives in ``flowgate.card_documents``).
 
-flowgate.v02.0061 T#11: a Graph read tells whether each node's card is held (``hold`` on every node of the draft and the
+a Graph read tells whether each node's card is held (``hold`` on every node of the draft and the
 revisions, ``graph_execution_hooks`` ``held_nodes``; false for all when no handler is registered).
 
-0064 T-B4b (P0006 §4.2.1): a Graph read carries each node's ``title_state`` (the card's current state, also on a
+T-B4b: a Graph read carries each node's ``title_state`` (the card's current state, also on a
 past revision; null on a v0.1 Flow). A draft save neither reads nor writes title states nor answers them. A Graph read
 and a revision read take their definition and title states in one read unit (``flow_guard.with_read_snapshot``,
 DB0007 Q1): never a draft of one moment with the title states of another.
@@ -101,7 +101,7 @@ def revision_wire(rev: Optional[dict]) -> Optional[dict]:
 
 
 def _with_hold(flow_id: str, *wires: Optional[dict]) -> None:
-    """0061 T#11: ``hold`` on each node of the wires (the card's Hold, kept by node key whatever the revision)."""
+    """``hold`` on each node of the wires (the card's Hold, kept by node key whatever the revision)."""
     from modules.flow_gate.services import graph_execution_hooks
     held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
     for wire in wires:
@@ -110,7 +110,7 @@ def _with_hold(flow_id: str, *wires: Optional[dict]) -> None:
 
 
 def _with_title_states(flow_id: str, carried: bool, *wires: Optional[dict]) -> None:
-    """0064 T-B4b: ``title_state`` on each node of the wires (the Flow's states in one statement, in the caller's read
+    """T-B4b: ``title_state`` on each node of the wires (the Flow's states in one statement, in the caller's read
     unit with the wires' definition), else null."""
     states = title_store.states(flow_id) if carried else {}
     for wire in wires:
@@ -119,7 +119,7 @@ def _with_title_states(flow_id: str, carried: bool, *wires: Optional[dict]) -> N
 
 
 def graph_payload(flow_id: str) -> dict:
-    """P0008 §5.2 ``GET /flows/{flow_id}/graph``."""
+    """``GET /flows/{flow_id}/graph``."""
     return with_read_snapshot(lambda: _graph_read(flow_id))
 
 
@@ -140,7 +140,7 @@ def _graph_read(flow_id: str) -> dict:
 
 
 def revision_payload(flow_id: str, revision_no: int) -> dict:
-    """P0008 §5.2 ``GET /flows/{flow_id}/graph/revisions/{n}``."""
+    """``GET /flows/{flow_id}/graph/revisions/{n}``."""
     return with_read_snapshot(lambda: _revision_read(flow_id, revision_no))
 
 
@@ -171,8 +171,8 @@ def version_conflict(flow_id: str, expected: int, current: Optional[dict]) -> Gr
 
 
 def check_draft(flow_id: str, own: Ownership, draft: dict) -> tuple[list[dict], BindingCheck]:
-    """Structure issues + root binding (L0009 §2.4.2 / §2.5): binding issues come last. The structure is
-    validated through ``graph_validation_ports`` (the flowgate.v02.0061 pre-run rules when registered)."""
+    """Structure issues + root binding: binding issues come last. The structure is
+    validated through ``graph_validation_ports`` (the the earlier change pre-run rules when registered)."""
     graph = as_graph(draft)
     issues = graph_validation_ports.validate(graph, policies.current())
     snap = read_snapshot(flow_id)
@@ -216,9 +216,9 @@ def _resolve(req: dr.DraftRequest, taken: set[str]) -> tuple[list[dict], list[di
 
 def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optional[str],
                locale: Optional[str] = None, after_save=None) -> dict:
-    """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``; ``locale`` is the request's (flowgate.v02.0088).
+    """S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``; ``locale`` is the request's.
 
-    flowgate.v02gui.0032: ``after_save(saved)`` (optional) runs in the same Flow guard after the new cards were
+    ``after_save(saved)`` (optional) runs in the same Flow guard after the new cards were
     created and their settings initialized, so what it writes (a chat placement's chosen card AI roles) commits with
     the draft or not at all."""
     flow_id = group["group_id"]
@@ -241,7 +241,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
 
 def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],
                 registered: set[str], locale: Optional[str] = None) -> dict:
-    """The draft save inside the caller's Flow guard of ``group`` (flowgate.v02.0074 T#4, D0006 §2 internal draft-save function).
+    """The draft save inside the caller's Flow guard of ``group`` (internal draft-save function).
 
     ``save_draft`` runs it in a guard of its own; the work plan deploy runs it in the guard that also writes its
     cards' settings and instructions, so the draft, the card lines and those writes commit together or not at all.
@@ -312,7 +312,7 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
 
 
 def validate_draft(group: dict, user_id: str, draft_version: int) -> dict:
-    """P0008 S3-5 / S3-6 ``POST /flows/{flow_id}/graph/draft/validate`` — never writes."""
+    """S3-5 / S3-6 ``POST /flows/{flow_id}/graph/draft/validate`` — never writes."""
     flow_id = group["group_id"]
 
     def body() -> dict:

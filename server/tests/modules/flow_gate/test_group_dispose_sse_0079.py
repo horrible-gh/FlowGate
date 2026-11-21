@@ -1,6 +1,6 @@
-"""Regression: group dispose must propagate immediately (TR0079.0003 rework).
+"""Regression: group dispose must propagate immediately.
 
-Rejection (group 0079): "the SSE isn't applied right away so the action bar doesn't change.
+Rejection (the earlier change): "the SSE isn't applied right away so the action bar doesn't change.
 The action bar still lets you act on documents in a disposed group." — disposing a group did not push any SSE
 event, so already-open document tabs stayed stale and their action bar kept offering
 approve/reject/workflow actions on a now-discarded group.
@@ -245,7 +245,7 @@ def test_decision_route_guard_rejects_disposed_group(real_store):
 def test_inbox_edit_guard_rejects_disposed_group(real_store):
     """The inbox ingestion path rejects create/edit/review in a disposed group.
 
-    Rework rejection (group 0079): "documents in a disposed group still get edited just fine." rev2 guarded the
+    Rework rejection (the earlier change): "documents in a disposed group still get edited just fine." guarded the
     workflow/review/decision routes but NOT the inbox path, which is how a document is
     actually edited (action: edit) — so a disposed group's documents could still be
     modified by a direct inbox submission. _disposed_group_fail closes that gap.
@@ -416,7 +416,7 @@ def test_rejection_reason_guard_rejects_disposed_group(real_store, monkeypatch):
     root_id = "flowgate.default.0079.0001-R"
     _seed_group_with_root(gid, root_id)
 
-    # 0419 T0006: PATCH now CORRECTS an existing rejection, so the doc must already
+    # PATCH now CORRECTS an existing rejection, so the doc must already
     # be rejected (with a history entry) before it has anything to correct.
     db_docs.update(root_id, {
         "doc_review_status": "rejected",

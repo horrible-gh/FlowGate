@@ -1,6 +1,6 @@
-"""The AI start of a Graph document node (L0009 §2.6.6 ``start_ai_invoke``, D0004 §3.4 / §3.5).
+"""The AI start of a Graph document node (``start_ai_invoke``, the design).
 
-A post-commit job: the guard that opened the node has committed and released (L0009 §2.1.4). The
+A post-commit job: the guard that opened the node has committed and released. The
 node is started once, single mode, through the existing AI invoke service — called, never
 changed — exactly as a v0.1 next step is (``action_scope="new"``, ``doc_ref`` = the Flow's root
 document, the mention of ``mention_service.build_mention_from_token_rec`` for the node's
@@ -8,20 +8,20 @@ document type).
 
 - The AI invoke service mints the run's own token through ``issue_builder`` so the token carries
   the AI run id (its group lease admits only that token). The node executor's token stays valid
-  for a person (L0009 E-23); the AI token is recorded with ``map_token`` in a new guard before the
-  worker can submit (L0009 §2.6.6 "map_token the returned token_id after commit
+  for a person; the AI token is recorded with ``map_token`` in a new guard before the
+  worker can submit (the earlier implementation "map_token the returned token_id after commit
   in a new guard scope"). The result binder accepts either token, first result only.
 - Any refusal (no root document to work from, no provider, a group AI run already in progress,
   the node no longer open) raises; ``node_dispatch.start_ai`` then records ``ai_invoke_failed``.
-- flowgate.v02.0053 T#2: the card's run settings ride the job (``node_dispatch``): its time limit is
-  the run's budget (``continuation_step_timeout_sec``, honoured by a single run since 0446 T0010) and
+- the earlier change the earlier implementation: the card's run settings ride the job (``node_dispatch``): its time limit is
+  the run's budget (``continuation_step_timeout_sec``, honoured by a single run since the earlier implementation) and
   its restarts are the no-output retries on the same AI (``node_restart_max_attempts``). ``None`` keeps
   the engine's own single-run default (the per-document budget, no restart). The mention asks for the
   job's ``result_doc_type``: the node's own type, or the card's report when its instruction is omitted
   (the result binder binds that same type, asking the card as the dispatch did).
 - The card's review (review AI / count / basis) and what follows it (the approval) are not part of this
   start: they begin when this run has ended and released the group lease (``ai_run_end_hooks``).
-- flowgate.v02.0056 T#2: the same start serves both stages of an AI card with its instruction used
+- the earlier change the earlier implementation: the same start serves both stages of an AI card with its instruction used
   (``node_dispatch``). The instruction stage asks for the card's instruction type; when the card's
   instruction line already has its (empty) document the AI writes into it — ``action_scope`` edit on that
   document, the shape of the v0.1 edit AI invoke, so no new document is made — with the Flow's root
@@ -29,19 +29,19 @@ document type).
   attached as a reference document (``ref_doc_ids``: the mention's reference section, as v0.1 hands a next
   step its instruction). The run's token is mapped with the stage it was started for (``map_token``'s ``stage``):
   what the instruction AI registers with it is never the node's result, however late its registration lands.
-- flowgate.v02.0056 T#3: the card's memos turned on for AI reading open the mention of both stages (and of every
+- the earlier change the earlier implementation: the card's memos turned on for AI reading open the mention of both stages (and of every
   reissue of the run's token) as one "User memos" section (``card_memo_hooks``); none, or no handler: unchanged.
-- flowgate.v02.0064 T-B1e: before the memos, every document the run hands over (its start, target and reference
+- the earlier change T-B1e: before the memos, every document the run hands over (its start, target and reference
   documents and the card's line documents) is checked for a readable body (``ai_start_precheck``): an unreadable one
   puts the "unreadable documents" section between the memos and the mention; all readable: unchanged.
-- flowgate.v02.0056 T#3: a person may register the node's result with its dispatch token (the card line write) once
+- the earlier change the earlier implementation: a person may register the node's result with its dispatch token (the card line write) once
   the AI start holds the group lease but before its token is mapped. The mapping guard then finds that result
   registered (its consume is committed before the Graph is told) and refuses the start, as for a node no longer
   open: the token is revoked and the AI never runs on a node a person already answered. The judgement is the run
   reconciliation's own (``result_binder.next_missing_event``), so it sees what the contact or a reconciliation
   binds next, whoever registered it. The line write refuses in turn once an AI token is mapped while its run
   holds the lease (``node_ai_working``): under the Flow guard, whichever comes first wins.
-- flowgate.v02.0064 T-B4d (0062 D0005 set 3, L0006 2.4, P0006 §4.2.6, DB0007 §2.2): the mapping guard maps the token as
+- the earlier change T-B4d (set 3, the earlier implementation 2.4, the plan, ): the mapping guard maps the token as
   ``ai_start`` and, just before, lets the card's first AI start claim its title opportunity (``node_title_ai``, in its
   own savepoint). Only a start that claimed it gets the title request at the very end of its prompt, after the memos
   ([memos] [unreadable documents] [mention] [title request]): its token is recorded as asking
@@ -64,11 +64,11 @@ from .flow_guard import with_flow_guard
 
 
 def api_base_url(user_id: Optional[str] = None) -> str:
-    """0063 B7: the operator base of a Graph AI start, absolute as an HTTP-started run's is (``token_routes``);
+    """B7: the operator base of a Graph AI start, absolute as an HTTP-started run's is (``token_routes``);
     a relative base made the CLI launch refuse the run before its provider chain
     (``provider_api._resolve_agent_api_base``). The local CLI resolves its agent base downstream.
 
-    flowgate.v02test.0017 CH0002: the start is a post-commit or recovery job with no request to read the origin
+    the start is a post-commit or recovery job with no request to read the origin
     from. Loopback alone made a remote CLI refuse every Graph start before its Job
     (``remote_api_base_unreachable: api_base_loopback``) while chat on the same Agent worked, because chat hands
     over the person's request origin. ``operator_base.resolve`` answers the configured
@@ -90,7 +90,7 @@ def _module_of(flow_id: str) -> Optional[str]:
 def _map_if_open(job: dict, token_id: str, ai_run_id: Optional[str] = None) -> bool:
     """Map the AI start's token inside the Flow guard; True when the start claimed the card's title opportunity."""
     def body() -> bool:
-        run = run_store.run_by_id(job["run_id"])                   # re-read inside the guard (L0009 §2.1.1)
+        run = run_store.run_by_id(job["run_id"])                   # re-read inside the guard
         row = next((r for r in run_store.node_runs(job["run_id"]) if r["node_key"] == job["node_key"]), None)
         if run is None or run_store.completed(run) or row is None or row["status"] != "open":
             raise NodeNotStartable(f"node {job['node_key']} is no longer open")
@@ -150,7 +150,7 @@ def start_ai_invoke(job: dict) -> dict:
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
-            # flowgate.v02.0117: the instruction stage's edit writes the line's empty document for the first time —
+            # the instruction stage's edit writes the line's empty document for the first time —
             # no revision, no review feedback, and it keeps the document's own header (``first_write``).
             **({"first_write": True} if scope == "edit" and (job.get("stage") == "instruction"
                                                           or job.get("result_first_write")) else {}),
@@ -167,9 +167,9 @@ def start_ai_invoke(job: dict) -> dict:
         notice = card_settings_ports.upstream_notice(job)
         if notice:
             mention = notice + invoke_mention_service.SECTION_SEPARATOR + (mention or "")
-        mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # 0064 T-B1e: memos go in front of it
+        mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # T-B1e: memos go in front of it
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
-        if title_requested:                     # 0064 T-B4d: worded at the provider boundary, at the very end
+        if title_requested:                     # T-B4d: worded at the provider boundary, at the very end
             node_title_hooks.request_title(issue["raw_token"], job.get("locale"))
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
                 "scratch_dir": issue["scratch_dir"], "mention": mention or ""}

@@ -1,4 +1,4 @@
-"""0061 T#1 regression cases; execution belongs to the TS/TSR stage.
+"""regression cases; execution belongs to the TS/TSR stage.
 
 These fixtures use the real policy registry/scope and a recording store mock; no AI,
 DB, token issuance or Git operation is needed. TR checks this file's syntax only.

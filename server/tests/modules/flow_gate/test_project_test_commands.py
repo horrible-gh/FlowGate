@@ -1,4 +1,4 @@
-"""project_test_commands (flowgate.default.0152) — db + service + router full-stack test.
+"""project_test_commands — db + service + router full-stack test.
 
 Covers:
   - normalization / identity (trim + whitespace-collapse, case-sensitive)  → L §2-1

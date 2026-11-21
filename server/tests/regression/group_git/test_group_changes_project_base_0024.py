@@ -1,14 +1,14 @@
-"""flowgate.v02.0024 TR0004 rev2 — ``/changes`` and ``/diff`` against an explicit Base.
+"""``/changes`` and ``/diff`` against an explicit Base.
 
 The Designer File Explorer's ``변경됨`` filter is defined against the PROJECT Base
-branch (0024-D §5.2/§12: "whatever the Flow branch/worktree, compare with the project
+branch (the design: "whatever the Flow branch/worktree, compare with the project
 Base"). ``_group_diff_context`` resolves a group's own pinned ``work_base_ref`` first,
 so a group forked from a rolling branch (this very group: project Base ``main``,
 work base ``v0.2``) could not be listed against the project Base at all. These tests
 build that two-Base shape in a real repository and check that an explicit ``base``
 selects the comparison branch while the default stays the group's own work base.
 
-TR0006 adds ``git/status``'s ``base_branch_configured``: the status call still fills an
+adds ``git/status``'s ``base_branch_configured``: the status call still fills an
 unset Base with the legacy ``main``, and the flag tells the client that this is not a
 configured Project Base, so it must not compare against it.
 """
@@ -143,7 +143,7 @@ def test_routes_pass_the_base_query_through(two_base_group):
     assert refused.status_code == 404
 
 
-# ── 0024 TR0006: git/status says whether its base_branch is the configured Project Base ──
+# ── the earlier implementation: git/status says whether its base_branch is the configured Project Base ──
 
 @pytest.fixture
 def status_only_project(monkeypatch):
@@ -170,7 +170,7 @@ def test_status_flags_the_main_fallback_as_not_configured(status_only_project, s
     status = git_routes.get_git_status("p", user=None)["status"]
     # The legacy fallback is kept for every server-side consumer …
     assert status["base_branch"] == "main"
-    # … but it is never presented as the configured Project Base (0024-D §12).
+    # … but it is never presented as the configured Project Base.
     assert status["base_branch_configured"] is False
 
 

@@ -1,6 +1,6 @@
-"""flowgate.v02.0114 T#3: short real pytest runs of the Self-check result block plugin.
+"""short real pytest runs of the Self-check result block plugin.
 
-D 0006 9.2-5 (a)(b) and 9.2-6 (k)(l)(m)(o)(p)(q): a small synthetic test tree is run with
+9.2-5 (a)(b) and 9.2-6 (k)(l)(m)(o)(p)(q): a small synthetic test tree is run with
 the real plugin (tests/selfcheck_evidence.py, registered by its conftest the way
 tests/conftest.py does), the block is read back by the real server parser, and one input
 is changed between consecutive runs. What must move: the edited test's own evidence (body),

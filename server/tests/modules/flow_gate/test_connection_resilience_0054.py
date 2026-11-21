@@ -1,4 +1,4 @@
-"""0054: dead idle pools, authentication outages and independent token allocation."""
+"""dead idle pools, authentication outages and independent token allocation."""
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 import threading

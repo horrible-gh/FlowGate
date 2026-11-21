@@ -1,4 +1,4 @@
-// flowgate.v02.0059 T#2 (0011-CH contract C) — one entry of a Flow's undo / redo history. Structure
+// (CH contract C) — one entry of a Flow's undo / redo history. Structure
 // edits and card moves share one history (the draft editor's stacks), so they are taken back and
 // forward in the order they were made:
 // - `edit`: draft commands (graphEditCommands.ts) — stepping one changes the draft and saves it.

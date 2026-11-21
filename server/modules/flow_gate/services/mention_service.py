@@ -2,9 +2,9 @@
 
 After the R018 §2-1 enhancement, prompts are generated as ordered sections.
 
-Section layout (D027 §6, P005 §3). R0001/T0004 hoisted the Q guide from the
+Section layout (D027, P005). the requirement/the earlier implementation hoisted the Q guide from the
 bottom to right below Document information so workers actually read it, and the
-"don't offer choices" guard now lives inside it. B0001 (group 0063) / NR0003
+"don't offer choices" guard now lives inside it. the regression (the earlier change) / the review
 further aligned the guide with the real mechanism — questions are document-bound
 query data (POST /q/{doc_id}/questions), NOT a Q document — and embedded a
 ready-to-send POST so there is a zero-friction alternative to offering choices.
@@ -13,12 +13,12 @@ does not bury it:
   1. Document information
   2. Clarification guide      (query-registration POST address + no-choices guard; the
                                ready-to-send body example moved to the `question` help
-                               item — group 0372 D-0003 §3-2 "kept, abridged")
+                               item — the earlier change D-0003 "kept, abridged")
   3. Help                     (central help-index block, L-0005 §2-10 — once per worker
                                mention, right below the identity + guide blocks)
   4. Instruction to include the next document header
   5. Reference documents      (one line each for head + selected: {slash-path}: GET {url})
-  6. Recent documents in the group  — REMOVED (group 0372 D-0003 §3-2 "dropped"); the
+  6. Recent documents in the group — REMOVED (D-0003 "dropped"); the
                                        `group_documents` help item covers it
   7. Artifact registration    (edit: complete POST example, unchanged; new: address +
                                 a pointer to the `submit` help item — D-0003 §3-2/§3-5)
@@ -57,12 +57,12 @@ logger = logging.getLogger(__name__)
 
 
 # Investigation-only document types — they produce findings/reports, never code.
-# See R0013 (flowgate.default.0013.0001-R): workers asked to produce an
+# See the requirement: workers asked to produce an
 # investigation document were implementing code on their own. The mention must
 # state the scope boundary explicitly; implementation belongs in a T (work-instruction) doc.
 _INVESTIGATION_ONLY_TYPES = {"N", "NR"}
 # The "which step types may mutate source" constant used to live here as a second copy of
-# remote_tool_service's, and the two had already drifted (this one lacked TSR). 0349 D0004
+# remote_tool_service's, and the two had already drifted (this one lacked TSR). the design
 # D-2 removes the duplicate: tool_registry.kind_for_step is now the only judge, and both
 # this mention and the permission check ask it.
 
@@ -74,9 +74,9 @@ def _api_base(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
-# ── Dry-run usage hint (R0001 dry-run, group 0050) ──────────────────────────────
+# ── Dry-run usage hint (dry-run, the earlier change) ──────────────────────────────
 # Surfaced inside the POST block so a worker discovers it can validate a submission
-# without creating a real document (the accident R0001 fixes). Kept to two lines.
+# without creating a real document (the accident the requirement fixes). Kept to two lines.
 _DRYRUN_HINT = (
     'Dry-run: add "dry_run": true to the body above to validate this submission '
     "(URL/token/fields/permissions) WITHOUT registering anything — nothing is created "
@@ -101,14 +101,14 @@ def _remote_source_crud_lines(
     locale: str = "ko",
     kind: Optional[str] = None,
 ) -> list[str]:
-    """The five mention lines that survive the 0349 shrink (P0005 [notes] / D0004 D-4).
+    """The five mention lines that survive the 0349 shrink ([notes] / the design D-4).
 
     Every request format, field description and JSON example the mention used to carry now
     lives behind GET /help/tools — the mention was growing one block per tool and workers
-    were reading the top and skipping the rest (R0001). What stays is exactly what a worker
+    were reading the top and skipping the rest. What stays is exactly what a worker
     that never calls help must still know: call help first, do not touch the disk, which
     tools exist, the token, and where the detail is. All five are built from fixed strings
-    plus ``kind``, so no lookup failure can empty the section (D0004 D-6).
+    plus ``kind``, so no lookup failure can empty the section.
 
     ``kind`` comes from tool_registry — the same judge the permission check uses — so the
     mention can no longer advertise a tool the server would refuse. Pass it directly when
@@ -123,7 +123,7 @@ def _remote_source_crud_lines(
     names = tool_registry.tool_names(kind, action_scope)
     if not names:
         # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
-        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 normal-3).
+        # nothing to advertise. Matches the empty list /help/tools returns them (normal-3).
         return []
     text = tool_registry.MENTION_LINES[loc]
     return [
@@ -147,7 +147,7 @@ def _remote_source_crud_section(
     """``_remote_source_crud_lines`` as a mention section.
 
     The header stays "Remote project source CRUD": changing the title at the same time as
-    the body would mix two causes into every regression failure (P0005 [notes]).
+    the body would mix two causes into every regression failure ([notes]).
 
     ``locale`` stays positional-or-keyword: the chat mention pins it positionally
     (invoke_mention_service._chat_lookup_sections passes "en", because that mention is
@@ -156,7 +156,7 @@ def _remote_source_crud_section(
     and 0355 introduced the locale argument on separate branches, and only the merge sees
     both call shapes at once.
 
-    ``kind`` (0515 T0009 §8): passed straight through to ``_remote_source_crud_lines``.
+    ``kind``: passed straight through to ``_remote_source_crud_lines``.
     A chat (CH) caller that already knows its token's real ``read``/``read_write``
     capability (from the just-issued token's ``source_access``) passes it here so the
     mention advertises exactly that, not the generic chat default ``kind_for_step``
@@ -180,7 +180,7 @@ def _include_remote_source_crud(project: str) -> bool:
 
 
 # ── CH reference documents: inline turns instead of a bare GET link ──────
-# T0005 (rev3) work item 2. A '## Reference documents' entry naming a CH (chat)
+# work item 2. A '## Reference documents' entry naming a CH (chat)
 # document used to be the same bare `{doc_id}: GET {url}` line as every other
 # type. Fetching that URL returns only frontmatter — a CH document's real
 # content lives in the conversation_turns table, not the documents.content
@@ -242,7 +242,7 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
     return lines
 
 
-# 0064 T-B1e (D0004 §3.6 rules 1-5, L0005 2.15, P0006 §2.9): the one wording of the unread-body rules. The Q&A
+# T-B1e (rules 1-5, the earlier implementation 2.15, the plan): the one wording of the unread-body rules. The Q&A
 # answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
 # documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
 BODY_UNREADABLE_RULES: tuple[str, ...] = (
@@ -277,13 +277,13 @@ def _document_lookup_lines(
     project: str = "",
     doc_id: str = "",
 ) -> list[str]:
-    """Advertise the bounded document reads added by group 0370.
+    """Advertise the bounded document reads added by the earlier change.
 
     These endpoints existed but the worker mentions still advertised only the legacy full-body
     GET. Keep one shared block for creation/edit, workflow, review, chat and Q-answer work so a
     worker can discover the efficient route at the point where it is about to read documents.
 
-    Merge note (group 0372 set 3 x group 0370): the document mentions built in THIS module no
+    Merge note (set 3 x the earlier change): the document mentions built in THIS module no
     longer inline these lines — `document_access` (help_catalog._content_document_access) serves
     the same endpoints behind the help index, which every mention now teaches. The chat and
     Q-answer mentions are not help-index clients, so invoke_mention_service and
@@ -303,12 +303,12 @@ def _document_lookup_lines(
             f"?q=<keyword>{project_filter}&include_matches=true&context_lines=2&hits_per_doc=5"
         ),
         "Section reads accept exactly one of section, section_id, lines, or chars.",
-        *BODY_UNREADABLE_RULES,          # 0064 T-B1e: always, right before the credential line (P0006 §2.9 ②)
+        *BODY_UNREADABLE_RULES,          # T-B1e: always, right before the credential line (②)
         f"Authorization: Bearer {raw_token}",
     ]
 
 
-# ── Central help-index block (group 0372 set 3 — L-0005 §2-10) ────────────────
+# ── Central help-index block (set 3 — L-0005) ────────────────
 # Every worker mention carries this block exactly once, right below the identity
 # header and the unmanned/no-choices guide block. It replaces the per-section
 # bodies that moved behind help items: what the worker loses inline, it regains
@@ -355,12 +355,12 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
     ) + "\n\n" + cli_mention(base, None)
 
 
-# ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
-# B0001 recurred because the choice-prohibition guard was body text only AND the
+# ── Clarification / no-choices guide (the earlier change; the review) ───────────────
+# recurred because the choice-prohibition guard was body text only AND the
 # sanctioned alternative was reached through a 2-hop GET /help/question indirection.
 # That friction (no copy-paste POST in the mention, plus "Q document" wording that
 # does not match the live mechanism) pushed workers back toward offering console
-# choices the remote run can never answer. NR0003 (flowgate.default.0063.0003-NR)
+# choices the remote run can never answer. the review
 # friction-removal: state the real mechanism — questions are document-bound query
 # data (POST /q/{doc_id}/questions), NOT a Q document — and embed a ready-to-send
 # POST so the worker has a zero-friction path instead of presenting choices.
@@ -369,7 +369,7 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
 # spine for build_mention, the review target for build_review_mention). The q
 # route requires the URL doc_id to match the token's doc_ref, then re-aims the
 # question to the current work-context document via resolve_question_anchor.
-# rev2 (B0001 2026-06-15 reject "some ments stay fixed in Korean even when the locale is switched"): rev1 left the
+# (2026-06-15 reject "some ments stay fixed in Korean even when the locale is switched"): left the
 # guide/reminder text hardcoded with embedded Korean (short title, query, …) that ignored
 # the worker's display locale, so switching locale to ja/en still leaked Korean. All
 # worker-facing prose below now follows the requested locale via
@@ -378,7 +378,7 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
 # force-terminated / register a Q / definite answer / next action) are kept in EVERY
 # locale so the guard reads and asserts identically regardless of language.
 
-# group 0372 set 3 (D-0003 §3-2 "kept, abridged"): the placeholder question JSON the guide
+# set 3 (D-0003 "kept, abridged"): the placeholder question JSON the guide
 # used to embed (title/body/options) moved behind the `question` help item — the guide
 # keeps the token-specific POST address + credential and points at the item for the
 # body format. The help item's example (help_catalog.build_question_content) now also
@@ -389,7 +389,7 @@ _QUESTION_FORMAT_POINTER: dict[str, str] = {
     "en": "The question body format and an example are in the help item: GET {url}",
 }
 
-# flowgate.v02gui.0028: card AIs registered Qs the user's question policy says the AI decides itself (Q624: past run
+# card AIs registered Qs the user's question policy says the AI decides itself (Q624: past run
 # records / test-server reproduction; Q625: the same request for more permissions again) and never looked at the past
 # Q&A first — the policy only reached them through the `notices` help item, and the past Q&A search only reached the
 # answering AI (q_answer_invoke_service). Every Q-registration guide now carries the same check-before-asking steps
@@ -427,7 +427,7 @@ _QUESTION_PRECHECK_TEXT: dict[str, str] = {
 
 
 def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
-    """The check-before-asking steps with the token-specific past Q&A search address (flowgate.v02gui.0028)."""
+    """The check-before-asking steps with the token-specific past Q&A search address."""
     loc = template_provision.normalize_locale(locale)
     contract = {
         "ko": "\n서버도 등록 전에 낱말 OR 검색을 합니다. HTTP 200 status=reused_answer면 출처를 확인해 기존 답으로 진행하십시오. HTTP 409 existing_answer_requires_reason이면 같은 요청을 그대로 재전송하지 마십시오. 기존 답을 쓰거나 항목에 reuse_rejection_reason과 rejected_answer_id를 적어 재전송하십시오. next_cursor로 관련도 페이지를 이어갑니다."
@@ -437,7 +437,7 @@ def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str
         "en": "\nThe server also runs word OR search before registration. For HTTP 200 status=reused_answer, check the source and continue with the existing answer. On HTTP 409 existing_answer_requires_reason, do not resend unchanged: use the existing answer or resubmit the item with reuse_rejection_reason and rejected_answer_id. Use next_cursor for relevance pagination."
               "\nSearch results and candidates are a list (title, document number, Q number, answerer, first line of the answer) without bodies. Open only the rows you need with GET {detail}. reused_answer may come from another document of the same project and carries the full text. Only when it does not fit the current instruction, register again with its answer_id as rejected_answer_id and the reason in reuse_rejection_reason.",
     }
-    # flowgate.v02test.0051: the route refuses damaged text; say how to send before the first try.
+    # the route refuses damaged text; say how to send before the first try.
     from modules.flow_gate.services import ai_text_guard
     return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10") + contract[loc].replace(
         "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>") + "\n" + ai_text_guard.transport_rule(loc)
@@ -510,7 +510,7 @@ _CLARIFY_TEXT = {
     },
 }
 
-# Recency repeat of the no-choices guard for the bottom of a long prompt (NR0003).
+# Recency repeat of the no-choices guard for the bottom of a long prompt.
 # {post} is filled with the POST line at format time.
 _REMINDER_TEXT = {
     "ko": (
@@ -544,7 +544,7 @@ _REMINDER_TEXT = {
 # Edit-only (rejection rework) addendum: the run ends with the turn and is never
 # auto re-invoked, and long verification must run synchronously to completion
 # inside the turn rather than being handed to the background while waiting on a
-# completion notification (NR0003 §6-1 (a)(b) / T0005 group 0446). This is appended
+# completion notification (the review (a)(b) / the earlier implementation the earlier change). This is appended
 # AFTER the existing Q-registration guidance (_CLARIFY_TEXT / _REMINDER_TEXT), never
 # in place of it — a rejection rework still keeps the human-gated Q-registration
 # right (see build_mention's is_edit branch). Unlike _CONTINUOUS_TEXT this block is
@@ -584,7 +584,7 @@ _EDIT_TURN_END_TEXT = {
 }
 
 
-# ── Continuous (unmanned) work guide (group 0051 R0001 / 0574 T0004) ──
+# ── Continuous (unmanned) work guide ──
 # Continuous mode replaces the ordinary Q guide with scope-bounded autonomy:
 # routine implementation choices are made by the worker without confirmation, each
 # completed step advances to the next, and only genuine scope/information/destructive
@@ -648,7 +648,7 @@ _CONTINUOUS_TEXT = {
 }
 
 
-# AI review mode (group 0086 R0001 — TR0004 rework rev4): a continuous run the user launched
+# AI review mode: a continuous run the user launched
 # with AI review mode ON. Review mode is NOT "go" yet — it is the PRE-FLIGHT Q-registration
 # phase. Before the unmanned auto-run starts, the worker reads everything and registers any
 # clarifying questions (Q); it does NOT produce the next document and does NOT advance the
@@ -719,9 +719,9 @@ _CONTINUOUS_REVIEW_TEXT = {
 
 
 def _continuous_guide_body(locale: str = "ko", review_mode: bool = False) -> str:
-    """Continuous-mode replacement for the Clarification guide (R0001 / NR0003 §4-3).
+    """Continuous-mode replacement for the Clarification guide.
 
-    ``review_mode`` (group 0086 R0001, AI review mode): in review mode this returns the
+    ``review_mode`` (AI review mode): in review mode this returns the
     pre-flight Q-registration block (no "create the next document" guidance) — the worker
     registers Qs and the chain waits for the human go. ``build_mention`` additionally embeds
     a ready-to-send Q POST via ``_continuous_review_guide_body``; this text-only form is for
@@ -754,11 +754,11 @@ _CONTINUOUS_REVIEW_REMINDER = {
 def _continuous_review_guide_body(
     base: str, anchor_doc_id: str, raw_token: str, locale: str = "ko"
 ) -> str:
-    """Pre-flight review block + the Q-registration POST address (group 0086 rev4).
+    """Pre-flight review block + the Q-registration POST address.
 
     Review mode replaces the action:new "Artifact registration" guidance with Q registration.
     The POST address is anchored at the worker's bound document and carries the worker
-    token; the body format/example lives behind the `question` help item (group 0372
+    token; the body format/example lives behind the `question` help item (the earlier change
     set 3 — D-0003 §3-2 "move the question-registration example into the help").
     """
     loc = template_provision.normalize_locale(locale)
@@ -803,7 +803,7 @@ def _clarification_guide_body(
         "\n"
         f"{txt['positive']}"
     )
-    # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions additionally carry
+    # (edit) mentions additionally carry
     # the turn-end / no-background-wait addendum after the Q guidance above.
     if is_edit:
         body += f"\n\n{_EDIT_TURN_END_TEXT[loc]}"
@@ -816,11 +816,11 @@ def _no_choices_reminder(
     locale: str = "ko",
     is_edit: bool = False,
 ) -> str:
-    """Recency repeat of the no-choices guard for the bottom of a long prompt (NR0003)."""
+    """Recency repeat of the no-choices guard for the bottom of a long prompt."""
     loc = template_provision.normalize_locale(locale)
     post = f"POST {base}/q/{anchor_doc_id}/questions"
     text = _REMINDER_TEXT[loc].format(post=post)
-    # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions repeat the turn-end /
+    # (edit) mentions repeat the turn-end /
     # no-background-wait addendum here too, at the bottom-of-prompt recency slot.
     if is_edit:
         text += f"\n\n{_EDIT_TURN_END_TEXT[loc]}"
@@ -828,7 +828,7 @@ def _no_choices_reminder(
 
 
 # Other worker-facing strings that used to be Korean-fixed regardless of locale
-# (B0001 rev2). The "work instruction" doc-type gloss in the investigation-scope
+#. The "work instruction" doc-type gloss in the investigation-scope
 # guard and the rejection_response placeholder in the artifact POST now follow
 # the worker locale too.
 _WORK_INSTRUCTION_LABEL = {
@@ -843,7 +843,7 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
     "en": "<response to each rejection reason: describe how each one was addressed>",
 }
 
-# T0009 §2-3: emphasize `rejection_response` as a required field separate from `content`,
+# emphasize `rejection_response` as a required field separate from `content`,
 # inlined right above the artifact POST example (not only at the top of a long mention).
 # Structural keys (`rejection_response`/`rejection_id`/`review_id`) are never translated;
 # only this prose follows the worker locale.
@@ -869,7 +869,7 @@ _REJECTION_RESPONSE_REQUIRED_NOTICE: dict[str, str] = {
 }
 
 
-# ── Authoring guide / submission pointers (group 0372 set 3 — D-0003 §3-2) ───────────
+# ── Authoring guide / submission pointers (set 3 — D-0003) ───────────
 # The full "how to write it" content (TS/N/T grammar, the POST body format+example, the
 # changed-files section format) now lives behind help items. The mention keeps only what
 # D-0003 §3-1 says must stay: values unique to this token, and facts that break the run
@@ -957,7 +957,7 @@ _SEQUENCE_EDIT_METADATA_COPY: dict[str, dict[str, str]] = {
 }
 
 
-# 0649 T#1 (NR0003 O1): rows are recognised by id only. Always shown, because a protected
+# rows are recognised by id only. Always shown, because a protected
 # row exists in exactly the situations where an id-less echo is refused.
 _SEQUENCE_EDIT_ITEM_ID_COPY: dict[str, str] = {
     "ko": (
@@ -982,7 +982,7 @@ _SEQUENCE_EDIT_ITEM_ID_COPY: dict[str, str] = {
 }
 
 
-# 0393 T0005 §2-7: the review submission's file form. Kept to one sentence so the
+# the review submission's file form. Kept to one sentence so the
 # "address + pointer" shape of the section (0372 set 3) is preserved.
 _REVIEW_FILE_SUBMIT_TEXT: dict[str, str] = {
     "ko": (
@@ -1009,32 +1009,32 @@ _CHANGED_FILES_REQUIRED_TEXT: dict[str, str] = {
 }
 
 
-# ── 0405 P0004 [mention body] — work-plan (WP) proposal scope section ────────────
+# ── the plan [mention body] — work-plan (WP) proposal scope section ────────────
 # When the next action is a work plan, this is the ONLY channel carrying the scope a human
-# picked in the proposal dialog to the worker, exactly as P0004's "what this mention must guarantee" requires.
+# picked in the proposal dialog to the worker, exactly as the plan's "what this mention must guarantee" requires.
 #   - It appears only when the head type is WP and a work_plan_scope was given; every
 #     other mention is unchanged down to the byte.
 #   - Its position is right after '## Instruction to include next document header' and
 #     right before '## Document template' — the worker reads "what" then "in what format".
 #   - When both arrays are empty the section is kept and the line reads "none". If the whole
 #     section disappeared, "there is no scope" could not be told from "no scope section arrived".
-#   - 0405 T0011 rev1 (rejected: "steps to delegate??? why is this even here"): the field
+#   - the earlier implementation (rejected: "steps to delegate??? why is this even here"): the field
 #     letting a human pick steps was removed, so this section writes no such line either —
 #     step allocation is always the authoring worker's job, as the tail line below states.
 _WORK_PLAN_SCOPE_HEAD_TYPE = "WP"
 
-# What P0004's [DEFERRED] row handed to this instruction: P0004 fixed the ko copy, and the
+# What the plan's [DEFERRED] row handed to this instruction: the plan fixed the ko copy, and the
 # en and ja wordings are decided here.
 _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
     "ko": {
         "header": "작업계획 맡길 범위",
         "lead": "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오.",
         "quantities": "장수를 셀 타입",
-        # flowgate.default.0423 T0005 item 8: fills the gap where the §8 tail wording
+        # fills the gap where the tail wording
         # tells the worker to prefer a supplied workflow_type_counts value, without the
         # mention ever showing that value.
         "type_counts": "workflow_type_counts 제시값",
-        # 0416 TR0005 (rejected: "where did the run provider go?"): the run provider picked on
+        # (rejected: "where did the run provider go?"): the run provider picked on
         # screen — a different value from the multi-select candidates (providers). rev2 (review
         # finding 2): it is NOT the value to copy into the plan's defaults.provider_id. Doing so
         # would silently assign every created step to that provider — step assignment belongs to
@@ -1042,7 +1042,7 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         # mention right now", and default_provider_rule below states that to the worker directly.
         "default_provider": "실행 프로바이더",
         "providers": "후보 공급자",
-        # 0416 T0004 (B0001 "so there is no way to pass any note to the planner?"): the planner
+        # ("so there is no way to pass any note to the planner?"): the planner
         # note typed on screen is written as its own labelled line. It is the same value that
         # must be preserved verbatim as the plan's defaults.note (work_plan_service.py's rule).
         "note": "전달 멘트",
@@ -1057,7 +1057,7 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
-        # 0416 TR0005 rev2 (review finding 4): the run provider is independent of the candidate
+        # (review finding 4): the run provider is independent of the candidate
         # multi-select, so a provider outside the candidates can arrive. If the section carrying
         # it also held only the tail's "do not write a non-candidate provider into
         # steps[].provider_id", the worker would read two conflicting orders in one section with
@@ -1067,9 +1067,9 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "아닙니다 — steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 "
             "있는 값만 적으십시오."
         ),
-        # 0416 TR0005 rev2 (review finding 3): writing the value down without saying where to
+        # (review finding 3): writing the value down without saying where to
         # preserve it gives no guarantee the note survives into the final plan on the AI path.
-        # T0004 completion criterion 2 ("an AI-proposed plan must also preserve the input in
+        # completion criterion 2 ("an AI-proposed plan must also preserve the input in
         # defaults.note") reaches the worker through this one line and no other.
         "note_rule": (
             "위 '전달 멘트'는 작업계획을 쓸 때 참고할 입력 요구사항입니다. 참조 문서와 함께 "
@@ -1082,11 +1082,11 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "header": "Work plan scope to delegate",
         "lead": "A person chose the scope below on screen. Write the work plan to this scope.",
         "quantities": "Types to count",
-        # flowgate.default.0423 T0005 item 8: fills the gap where the §8 tail wording
+        # fills the gap where the tail wording
         # tells the worker to prefer a supplied workflow_type_counts value, without the
         # mention ever showing that value.
         "type_counts": "Supplied workflow_type_counts",
-        # flowgate.default.0416 TR0005 — the provider the person picked for this run,
+        # the provider the person picked for this run,
         # distinct from the candidate multi-select (providers).
         "default_provider": "Execution provider",
         "providers": "Candidate providers",
@@ -1121,10 +1121,10 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "header": "作業計画を任せる範囲",
         "lead": "以下の範囲は人が画面で選んだものです。この範囲どおりに作業計画を作成してください。",
         "quantities": "枚数を数えるタイプ",
-        # flowgate.default.0423 T0005 item 8: §8 の tail 文言が workflow_type_counts の
+        # の tail 文言が workflow_type_counts の
         # 提示値を優先根拠にせよと言いながら、その値自体を示していなかった間隙を埋める。
         "type_counts": "提示された workflow_type_counts",
-        # flowgate.default.0416 TR0005 — 画面で選んだ今回実行のプロバイダー。候補複数選択
+        # 画面で選んだ今回実行のプロバイダー。候補複数選択
         # (providers)とは別の値。
         "default_provider": "実行プロバイダー",
         "providers": "候補プロバイダー",
@@ -1182,7 +1182,7 @@ def _work_plan_provider_names(project_id: str) -> dict:
 
 
 def _work_plan_type_counts(parent_doc_id: str) -> dict:
-    """The workflow_type_counts value derived from this group's workflow sequence (T0005 item 8).
+    """The workflow_type_counts value derived from this group's workflow sequence.
 
     Computes the very value the tail wording tells the worker to prefer as its basis. An
     unreadable sequence yields an empty dict -- mention generation must not stop over this.
@@ -1204,7 +1204,7 @@ def _work_plan_type_counts(parent_doc_id: str) -> dict:
 
 
 def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_doc_id: str = "") -> str:
-    """Render the P0004 work-plan-scope section from the screen's scope payload."""
+    """Render the the plan work-plan-scope section from the screen's scope payload."""
     loc = template_provision.normalize_locale(locale)
     copy = _WORK_PLAN_SCOPE_COPY[loc]
     scope = scope if isinstance(scope, dict) else {}
@@ -1213,7 +1213,7 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_d
     provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
     type_counts = _work_plan_type_counts(parent_doc_id)
     type_counts_text = " / ".join(f"{code} {type_counts[code]}" for code in sorted(type_counts))
-    # 0416 TR0005 (rejected: "where did the run provider go?"): the run provider picked on the
+    # (rejected: "where did the run provider go?"): the run provider picked on the
     # screen. A different value from provider_ids (the candidates), so it gets its own line.
     default_provider_id = str(scope.get("provider_id") or "").strip()
 
@@ -1231,14 +1231,14 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_d
         f"{default_provider_id} · {names.get(default_provider_id, default_provider_id)}"
         if default_provider_id else copy["none"]
     )
-    # 0405 T0011 rev2: with no candidates, "do not write a non-candidate provider" tells the
+    # with no candidates, "do not write a non-candidate provider" tells the
     # worker nothing. "There are no providers, so leave it empty" is written instead.
     tail = copy["tail"] if provider_ids else copy["tail_no_providers"]
-    # 0416 T0004 -- the planner note typed on screen. An empty value writes "none", for the
+    # the planner note typed on screen. An empty value writes "none", for the
     # same reason the section itself is never dropped. It must be preserved verbatim as the
     # plan's defaults.note — note_rule below carries that order to the worker (comments do not).
     note_text = str(scope.get("note") or "").strip()
-    # 0416 TR0005 rev2 (review findings 3 and 4): merely writing the value down instructs the
+    # (review findings 3 and 4): merely writing the value down instructs the
     # worker in nothing. The section carrying the run provider also states that the value is not
     # for step assignment, and every section carries, after the tail, the order to copy the handoff note into defaults.note.
     rules = []
@@ -1264,20 +1264,20 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_d
 # it remotely from the project source root. Without this block the worker receives a
 # generic new-document mention and the TS it writes fails parse_test_plan
 # (no_test_cases / invalid_case_block). The three H2 headers and the Korean field labels
-# fields are matched verbatim by test_run_service.parse_test_plan; T0009 added the
+# fields are matched verbatim by test_run_service.parse_test_plan; the earlier implementation added the
 # English aliases (Setup/Test Cases/Teardown, expect|expected/start/wait) as a second
 # accepted spelling, not a replacement — either form parses. This guide was still
-# English-fixed regardless of the worker's requested locale (B0001 rev2 follow-up); it
-# now follows the same convention TR0012 set for the TR grammar: the ko request shows
+# English-fixed regardless of the worker's requested locale (follow-up); it
+# now follows the same convention the earlier implementation set for the TR grammar: the ko request shows
 # the Korean form as the primary example, en/ja requests show the English form as the
-# primary example (there is no ja grammar alias — T0009/0355), and both note the other
+# primary example (there is no ja grammar alias — the earlier implementation/0355), and both note the other
 # spelling still parses. 'cmd' and the section/field GRAMMAR TOKENS themselves are
 # never translated — only the surrounding prose is.
 _TS_AUTHORING_TYPES = {"TS"}
 
-# 0549 T0008: the default grammar for a NEW TS is the test specification (contract 2).
+# the default grammar for a NEW TS is the test specification (contract 2).
 # It is prepended to the legacy executable grammar below, which stays verbatim as the rule
-# for revising an existing unmarked TS (D0006 §5: legacy TS keep their meaning).
+# for revising an existing unmarked TS (legacy TS keep their meaning).
 _TS_SPEC_AUTHORING_TEXT = {
     "ko": (
         '새 TS는 사람이 검토·승인하는 시험사양서(test specification)로 작성하십시오. frontmatter에\n'
@@ -1611,7 +1611,7 @@ def _ts_authoring_section(locale: str = "ko") -> str:
     return _section("Test scenario authoring (TS)", body)
 
 
-# Host-shell guidance (flowgate.default.0277 B0001 -> NR0003 §4 F1).
+# Host-shell guidance.
 # Every cmd is spawned with shell=True, so it is interpreted by %COMSPEC% (cmd.exe) on
 # Windows and /bin/sh on POSIX. The guide never said which, so workers defaulted to POSIX
 # and their commands failed outright once FlowGate moved to a Windows host. State the
@@ -1691,7 +1691,7 @@ def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
     return _TS_POSIX_SHELL_GUIDANCE[loc]
 
 
-# ── N/T instruction authoring (group 0230 R0001 / T0005 WI-7) ────────────────────
+# ── N/T instruction authoring ────────────────────
 # When a continuous run chooses "the AI writes it directly" (continuation_instruction_mode = ai_direct),
 # advance_workflow SKIPS the server-side auto-complete of N/T instruction heads, so the head
 # reaches the worker mention as an N or T. Without a dedicated guide the worker would receive a
@@ -1703,7 +1703,7 @@ def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
 # code, so the section is only ever emitted when the flag is on — no regression to managed runs.
 _NT_AUTHORING_TYPES = {"N", "T", "T2"}
 
-# This guide was still English-fixed regardless of the worker's requested locale (B0001
+# This guide was still English-fixed regardless of the worker's requested locale (the regression
 # rev2 follow-up). Unlike _ts_authoring_section, the bullet labels below (purpose/background,
 # investigation scope, ...) are plain prose headings for the worker to fill in — nothing here is matched
 # by a parser — so, unlike the TS grammar tokens, they translate freely per locale.
@@ -1832,10 +1832,10 @@ def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
 def identifiable_review_row_id(value) -> Optional[object]:
-    """The value if it can BE a `document_reviews.id`, else None (0458 T0007 §2.2-1).
+    """The value if it can BE a `document_reviews.id`, else None.
 
     Mirrors the inbox boundary's rule at the producing end — the same
-    `pipeline_service.is_review_row_id` check the receiving side applies (0458 T0008): the
+    `pipeline_service.is_review_row_id` check the receiving side applies: the
     column is a positive integer, so a bool is not row 1, a blank/whitespace-only string
     names nothing, and neither does a non-numeric string. Without this, a value this
     function itself never PRODUCES (e.g. "abc") could still be accepted from a future
@@ -1852,7 +1852,7 @@ def identifiable_review_row_id(value) -> Optional[object]:
 def resolve_current_review_and_row_id(
     current_review: Optional[dict], doc_id: str, revision_no: int
 ) -> tuple:
-    """Pair the review content the mention prints with its row id (0458 T0007 §2.2-1, T0008 rev4).
+    """Pair the review content the mention prints with its row id.
 
     The mention is the producer of the `review_id` field, so the id has to be resolved HERE,
     inside the mention builder, rather than hoped for from whoever assembled `current_review`
@@ -1866,7 +1866,7 @@ def resolve_current_review_and_row_id(
          unchanged together with that same `current_review` — no query, and nothing here may
          second-guess it.
       2. otherwise ONE query for the document's latest review row, accepted only when it
-         targets the revision this mention is about. Earlier attempts at this fix (0458 T0008
+         targets the revision this mention is about. Earlier attempts at this fix (the earlier implementation
          rev1-rev3) ran this SELECT independently of the caller's own read and then tried to
          prove, after the fact, that it landed on the physical row the caller displayed — first
          by matching `revision_no` alone, then by `reviewed_at`, then by every field the
@@ -1881,7 +1881,7 @@ def resolve_current_review_and_row_id(
          `current_review` here is only a "there is a rejection to show" signal from the caller;
          the content actually printed and the id actually sent both come from this one query,
          so they can never disagree about which row they name. `token_routes.py` stays
-         untouched (T0007 §1 does not assign it) — once this function runs, the caller's bundle
+         untouched (does not assign it) — once this function runs, the caller's bundle
          is used only to decide whether to look, and, on failure, as the fallback display; it is
          never trusted as the printed content when this query succeeds.
 
@@ -1932,7 +1932,7 @@ def _parse_review_findings(raw) -> list:
     `token_routes._load_current_revision_review`) already parsed it into a list. Comparing
     the two content-equal instead of format-equal needs both in the same shape first --
     mirrors the parsing `_load_current_revision_review` does, kept local here rather than
-    imported so the fix stays inside `mention_service.py` (T0007 section 1 scope).
+    imported so the fix stays inside `mention_service.py` (scope).
     """
     if isinstance(raw, list):
         return raw
@@ -1982,7 +1982,7 @@ def build_mention(
     parent_content_state: Optional[str] = None,
     self_check_notice: Optional[str] = None,
     edit_reason: str = "user_comment",
-    # flowgate.v02.0117: an edit that writes the FIRST content into an existing empty
+    # an edit that writes the FIRST content into an existing empty
     # document (a Graph card's instruction stage writing into its line's empty document,
     # ``node_dispatch._instruction_job``). It is no revision: Section 2 says so, names no
     # review feedback and tells the worker to keep the document's existing header. Only
@@ -1991,7 +1991,7 @@ def build_mention(
     # Display locale for human-readable doc-type names (ko/ja/en). Codes stay bare
     # for machine round-trip; the localized name is emitted alongside as *_detail.
     locale: str = "ko",
-    # Section 1 ('## Document information') override (R0001 / T0004). In the advance/new
+    # Section 1 ('## Document information') override. In the advance/new
     # hand-off, parent_* describes the workflow-sequence-owning R (the spine, used for
     # target_id / prev_doc_id / token doc_ref). The head document the worker actually
     # builds upon is its predecessor — for an NR step the N, for a TR step the T. When
@@ -2001,15 +2001,15 @@ def build_mention(
     head_doc_type: Optional[str] = None,
     head_doc_number: Optional[str] = None,
     head_doc_title: Optional[str] = None,
-    # Continuous (unmanned) work (group 0051 R0001 / NR0003 §4-3). When True (and not an
+    # Continuous (unmanned) work. When True (and not an
     # edit), the Clarification guide §2 and the bottom Reminder §9 are replaced by the
     # delegation/unmanned/no-stop/autonomous block instead of the Q-registration guard.
     continuous: bool = False,
-    # Continuous AI-review mode (group 0086 R0001, AI review mode). When True (with
+    # Continuous AI-review mode (AI review mode). When True (with
     # ``continuous``), the replacement block is the review variant that keeps the Q
     # latitude (scrutinise → Q-if-blocked → else proceed) instead of "never stop, never ask".
     continuous_review_mode: bool = False,
-    # 0405 P0004: the work-plan proposal scope a person chose on screen
+    # the work-plan proposal scope a person chose on screen
     # ({quantity_type_codes, step_keys, provider_ids}). Read ONLY when the head type is
     # WP and this is not an edit; every other mention is byte-identical without it.
     work_plan_scope: Optional[dict] = None,
@@ -2035,13 +2035,13 @@ def build_mention(
     base = _api_base(api_base_url)
 
     is_edit = action_scope == "edit"
-    # Review phase (group 0086 R0001 — TR0004 rework rev4): a continuous run with AI review mode
+    # Review phase: a continuous run with AI review mode
     # ON is the pre-flight Q-registration phase, not "go". All "create the next document"
     # guidance (the new-document section) is removed so the worker only registers Qs.
     review_continuous = continuous and continuous_review_mode and not is_edit
 
     # Pair what this mention PRINTS about the current review with the row id it answers, from
-    # ONE query (0458 T0007 §2.2-1, T0008 rev4) — before the printing block below, so both that
+    # ONE query — before the printing block below, so both that
     # block and the artifact template's review_id use the same resolved content. Only for the
     # rejection-rework path: a normal edit answers no rejection and must not even look.
     review_row_id = None
@@ -2087,7 +2087,7 @@ def build_mention(
         loc = template_provision.normalize_locale(locale)
         s1_body += f"\n{_PREDECESSOR_IDENTITY_WARNING_TEXT[loc]}"
 
-    # ── Edit-only human rejection feedback (T0009 §2-1) ──────────────────────
+    # ── Edit-only human rejection feedback ──────────────────────
     # Rendered only for a rejection rework (action_scope="edit", edit_reason="rejected"),
     # from the SAME rejection_target object that fills the POST's rejection_id/review_id
     # below — the display here and the answered target can never name different
@@ -2144,10 +2144,10 @@ def build_mention(
     else:
         s2_header = "Instruction to include next document header"
         next_type_detail = f"next_type_detail: {get_type_name(head_type, locale)}\n" if head_type else ""
-        # T0004 task 2.5: fence the 7-field block so downstream Markdown viewers
+        # task 2.5: fence the 7-field block so downstream Markdown viewers
         # (MdViewer and any other renderer of this mention) preserve its line
         # breaks as-is instead of collapsing them as soft line breaks inside a
-        # normal paragraph (the group 0458 display bug R0001 reported). Only
+        # normal paragraph (the the earlier change display bug the requirement reported). Only
         # the wrapper is new -- the inner LF-per-field values are unchanged.
         s2_body = (
             "```text\n"
@@ -2161,7 +2161,7 @@ def build_mention(
             "```"
         )
 
-    # ── Work scope guard (R0013 / flowgate.default.0013.0001-R) ──────────────
+    # ── Work scope guard ──────────────
     # When the worker is asked to produce (or revise) an investigation document
     # (N investigation-instruction / NR investigation-report), state that the task is investigation-only.
     # This prevents workers from implementing code while writing a report —
@@ -2190,7 +2190,7 @@ def build_mention(
             "Test scenario authoring (TS)", "TS", locale, base
         )
 
-    # ── N/T instruction authoring guidance (group 0230 R0001 / T0005 WI-7) ────
+    # ── N/T instruction authoring guidance ────
     # Only reached when the run chose ai_direct: in auto_approved mode N/T are
     # auto-completed server-side and never arrive here as a worker mention.
     # Group 0372 set 3 (D-0003 §3-2): pointer only, same reduction as TS above.
@@ -2228,7 +2228,7 @@ def build_mention(
     s3_body = f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n" + "\n".join(s3_lines)
 
     # ── Edit-only automated review feedback for the current document revision ──
-    # Renamed from "Review feedback" (T0009 §2-2): header and lead line now say
+    # Renamed from "Review feedback": header and lead line now say
     # AUTOMATED so a worker cannot mistake this for the human rejection section
     # above — the two feedback sources render as separate, adjacent sections and are
     # never merged into one body.
@@ -2279,12 +2279,12 @@ def build_mention(
             "edit_reason": edit_reason,
             "content": "<Complete revised document content>",
             **({"expected_revision": parent_revision_no} if parent_content_state is not None else {}),
-            # 0391 T0005 §7-2: optional body fingerprint (proposal 4) + bypass door.
+            # optional body fingerprint (proposal 4) + bypass door.
             "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
             "body_chars": "<optional: character count of content>",
             "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
-        # Rejection rework (T0009 §2-3): the resubmission must carry the worker's
+        # Rejection rework: the resubmission must carry the worker's
         # response to the rejection as a field SEPARATE from `content`. The JSON
         # placeholder below is no longer the only prompt for it —
         # `_REJECTION_RESPONSE_REQUIRED_NOTICE`, inlined right above the POST example
@@ -2292,7 +2292,7 @@ def build_mention(
         # is required, distinct from `content`, and rejected with 422 when blank.
         # The server (inbox_routes pre-validation → pipeline_service
         # .resolve_rejection_target, folded into the Step 6/7 revision CAS — 0468
-        # T0007/0008-TR) then records the answer against the same rejection_history
+        # ) then records the answer against the same rejection_history
         # item this mention names below; an unresolvable target is rejected with 409
         # before anything is saved.
         rejection_required_notice = ""
@@ -2300,7 +2300,7 @@ def build_mention(
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
                 template_provision.normalize_locale(locale)
             ]
-            # 0458 T0007 §2.2-1 / 0468 T0007 §2-1: name the rejection this response
+            # name the rejection this response
             # answers with the SAME priority the server's resolve_rejection_target uses —
             # an explicit `rejection_id` first, the legacy `review_id` when that is
             # absent, and the latest `rejection_history` item when neither identifier is
@@ -2342,7 +2342,7 @@ def build_mention(
         if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/changed_files_format")
     else:
-        # group 0372 set 3 (D-0003 §3-2 / §3-5): the request format, the field-by-field
+        # set 3 (D-0003): the request format, the field-by-field
         # example and the dry-run guide now live behind the `submit` help item, which
         # already builds this exact body (including the TR content/commit_message
         # placeholders) for every action_scope. The mention keeps only what D-0003 §3-1
@@ -2361,7 +2361,7 @@ def build_mention(
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
                 url=f"{base}/help/items/changed_files_format"
             )
-        # group 0370 (merge): what the response CONTAINS is not a request format, so
+        # (merge): what the response CONTAINS is not a request format, so
         # D-0003 §3-1 keeps it inline — a worker cannot inspect a field it was never
         # told it receives.
         s5_body += (
@@ -2379,16 +2379,16 @@ def build_mention(
     if not review_continuous:
         s6_body += f" Submission file details: GET {base}/help/items/submit"
 
-    # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
+    # ── Section 7: doc_type guide — REMOVED (set 3, D-0003 "dropped") ──
     # It was already a bare one-line help URL; the always-visible `doc_type` entry of
     # the help index (taught by the central Help block below) absorbs it.
 
     # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
     # Anchor the embedded POST at the document the worker's token is bound to (the
     # inbox/edit spine = prev_doc_id_value); the q route re-aims it to the current
-    # work-context document. See _clarification_guide_body (B0001 / NR0003).
+    # work-context document. See _clarification_guide_body.
     #
-    # Continuous (unmanned) mode (group 0051 R0001): the Q-registration guard is
+    # Continuous (unmanned) mode: the Q-registration guard is
     # replaced — not removed — by the delegation/unmanned/no-stop/autonomous block.
     # Edits never run continuously (a rejection rework is a human-gated step), so the
     # branch is guarded by `not is_edit`.
@@ -2401,14 +2401,14 @@ def build_mention(
         s8_body = _continuous_review_guide_body(base, prev_doc_id_value, raw_token, locale)
     elif continuous_mode:
         s8_header = "Continuous work"
-        # flowgate.v02gui.0028: an unmanned card may still raise a question; it checks the policy and past Q&A first.
+        # an unmanned card may still raise a question; it checks the policy and past Q&A first.
         s8_body = (_continuous_guide_body(locale, review_mode=False) + "\n\n"
                    + _question_precheck(base, prev_doc_id_value, locale))
     else:
         s8_header = "Clarification guide"
         s8_body = _clarification_guide_body(base, prev_doc_id_value, raw_token, locale, is_edit=is_edit)
 
-    # ── Document template (group 0372 set 2): one help pointer, never the body ──
+    # ── Document template (set 2): one help pointer, never the body ──
     # The full D/P/L/DB template now lives behind the worker-authenticated help item.
     # New hand-offs point at head_type; edits point at the design document being revised.
     template_section = ""
@@ -2442,17 +2442,17 @@ def build_mention(
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
         _section("Document information", s1_body),
-        # R0001/T0004: the clarification guide is hoisted directly under the
+        # the clarification guide is hoisted directly under the
         # document-identity header (was last → ignored). The no-choices guard lives
         # inside s8_body so workers stop offering options the remote run can't answer.
         # In continuous mode the header/body swap to the unmanned work block (s8_header).
         _section(s8_header, s8_body),
-        # group 0372 set 3 (L-0005 §2-10): the central help-index block sits once per
+        # set 3 (L-0005): the central help-index block sits once per
         # mention, directly below the identity + guide blocks and above everything the
         # index can answer in depth.
         _help_index_section(base, raw_token, locale),
     ]
-    # 0349 D0004 D-5: the tool section moves up to the highest slot it is allowed to take —
+    # D-5: the tool section moves up to the highest slot it is allowed to take —
     # under the identity header and the continuous/clarification block (which tell the worker
     # who it is and how to ask), above the instruction/scope/authoring sections it used to
     # sit below. It was previously buried after the template and authoring blocks, which is
@@ -2462,7 +2462,7 @@ def build_mention(
     if snapshot_policy_section:
         sections.append(snapshot_policy_section)
     sections.append(_section(s2_header, s2_body))
-    # 0405 P0004 [mention body]: right after '## Instruction to include next document header'
+    # [mention body]: right after '## Instruction to include next document header'
     # and right before '## Document template'. With a non-WP head, or no scope received, nothing
     # is appended, so existing mentions are unchanged.
     if (
@@ -2480,11 +2480,11 @@ def build_mention(
         sections.append(nt_authoring_section)
     if ts_authoring_section and not review_continuous:
         sections.append(ts_authoring_section)
-        # flowgate.default.0152 / group 0372 set 3: the verified-commands list used to be
+        # set 3: the verified-commands list used to be
         # inlined here (D-0003 §3-2, "verified test commands: dropped") — it is now the `test_commands`
         # help item, auto-visible in the index whenever a TS is being authored, so no pointer
         # line is needed here either (same "absorbed into the index" rule as recent_documents).
-        # flowgate.default.0157's engine-recipe block ("prepare the execution environment" — same D-0003 row)
+        # 's engine-recipe block ("prepare the execution environment" — same D-0003 row)
         # rides along: help_catalog._content_test_commands now carries it as
         # `engine_recipes`, so the registry is still taught on the first help call
         # (L §2-7) without this mention inlining it.
@@ -2493,10 +2493,10 @@ def build_mention(
     sections.append(_section("Reference documents", s3_body))
     if qa_lines:
         sections.append("\n".join(qa_lines).strip())
-    # MERGE NOTE (branch base 241f00d predates group 0370 on main): main inserts an
+    # MERGE NOTE (branch base 241f00d predates the earlier change on main): main inserts an
     # inline "Efficient document lookup" section right here. Group 0372 absorbed that
     # guidance into the `document_access` help item (D-0003 §3-2, "reference documents: drop the
-    # lookup-method explanation" + M0009), so the inline section must NOT come back when this branch
+    # lookup-method explanation" + the earlier implementation), so the inline section must NOT come back when this branch
     # merges — resolve any conflict here by keeping NO inline lookup section.
     if human_rejection_section:
         sections.append(human_rejection_section)
@@ -2508,7 +2508,7 @@ def build_mention(
         sections.append(_section("Artifact registration", s5_body))
     sections.append(_section("Scratch directory", s6_body))
     # doc_type guide section — REMOVED (see the Section 7 comment above).
-    # NR0003 recency: repeat the no-choices guard at the very bottom so a long
+    # recency: repeat the no-choices guard at the very bottom so a long
     # prompt does not bury it; recency weighting keeps it in the worker's view.
     # Continuous mode repeats the unmanned directive instead (no Q-registration guard);
     # review phase repeats the "register a Q, do not create a document, wait for go" line.
@@ -2555,13 +2555,13 @@ def build_mention_from_token_rec(
     group_id format: {project}-{module}-{group} (example: flowgate-server-0001)
     group_recent_docs: recent document list in the group (up to 5). Omit section 4 when None.
     ref_doc_ids: canonical ID list of additional reference documents (T358). No additions when None.
-    head_context_doc: the predecessor document the current step builds upon (R0001 / T0004).
+    head_context_doc: the predecessor document the current step builds upon.
         When given and distinct from parent_doc, Section 1 'Document information' reflects it
         instead of the sequence-owning parent. parent_doc still drives target_id / prev_doc_id.
         Same fields as parent_doc (doc_id, type_code, seq, title).
     """
     project = token_rec.get("project", "")
-    group_id_full = token_rec.get("group_id", "")  # e.g. flowgate.server.0001
+    group_id_full = token_rec.get("group_id", "")  # e.g. the earlier change
     scratch_dir = token_rec.get("scratch_dir", "")
 
     # Split group_id: {project}.{module}.{group}
@@ -2579,7 +2579,7 @@ def build_mention_from_token_rec(
 
     parent_type = parent_doc.get("type_code", "")
     parent_seq = parent_doc.get("seq", 0)
-    # parent_doc_id: short form (e.g. "R0001") — doc_id in the DB is canonical;
+    # parent_doc_id: short form (e.g. "the requirement") — doc_id in the DB is canonical;
     # derive this value from type+seq
     parent_doc_id = f"{parent_type}{parent_seq:04d}" if parent_seq else parent_doc.get("doc_id", "")
     parent_canonical_doc_id = parent_doc.get("doc_id", "")
@@ -2670,7 +2670,7 @@ def build_workflow_decision_mention(
 ) -> str:
     """Build instructions for an AI worker to decide an R workflow.
 
-    Continuous (unmanned) work (group 0086 R0001): when ``continuous`` is set, this
+    Continuous (unmanned) work: when ``continuous`` is set, this
     decision step is the FIRST link of an unmanned chain that starts *before* the
     workflow is decided ("starting from the workflow decision"). The Clarification guide + bottom Reminder
     swap to the delegation/unmanned/no-stop/autonomous block (same one build_mention
@@ -2726,7 +2726,7 @@ def build_workflow_decision_mention(
             "work guide."
         )
     elif continuous and continuous_review_mode:
-        # PRE-FLIGHT REVIEW phase (group 0086 TR0004 rework rev5): review mode is "not go
+        # PRE-FLIGHT REVIEW phase: review mode is "not go
         # yet". Deciding the workflow is allowed (the sequence must exist before it can be
         # reviewed), but the worker must NOT auto-run the deliverables — the decide response
         # encloses the first step's REVIEW mention, which it reviews and answers with a Q.
@@ -2746,9 +2746,9 @@ def build_workflow_decision_mention(
         f"{doc_id}: GET {base}/document/{doc_id}"
     )
 
-    # R0001/T0004: clarification/no-choices guide hoisted directly under the
+    # clarification/no-choices guide hoisted directly under the
     # document-identity header (was last → ignored).
-    # Group 0110 B0001/NR0003: the non-continuous branch previously used inline text
+    # Group the regression/the review: the non-continuous branch previously used inline text
     # that ONLY told the worker to "explain what context is missing", with neither the
     # embedded Q-registration POST nor the "register a Q" guidance the other worker
     # mentions (build_mention/build_review_mention) carry via _clarification_guide_body.
@@ -2756,8 +2756,8 @@ def build_workflow_decision_mention(
     # actually get an answer (internal contradiction) and leaked English in ko/ja. We now
     # use the shared, locale-aware helper here too, anchoring the Q on the R-root doc_id —
     # the same doc_ref the workflow_decide token is minted with, which the Q endpoint
-    # accepts (NR0003 §feasibility check).
-    # Continuous (group 0086): this is the first link of an unmanned chain, so the guide
+    # accepts (§feasibility check).
+    # Continuous (the earlier change): this is the first link of an unmanned chain, so the guide
     # is REPLACED by the delegation/unmanned block — the worker decides autonomously and
     # never stops to ask (consistent with build_mention's continuous branch).
     if continuous:
@@ -2767,11 +2767,11 @@ def build_workflow_decision_mention(
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", clarification_body),
-        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # set 3 (L-0005): central help-index block, same slot as
         # build_mention — once, right below the identity + guide blocks.
         _help_index_section(base, raw_token, locale),
     ]
-    # 0349 D0004 D-3: a workflow_decide token already resolves to ["read", "grep"] server
+    # D-3: a workflow_decide token already resolves to ["read", "grep"] server
     # side, but this mention never said so — the worker deciding a sequence could not read
     # the source it was deciding about, and would not have known it was allowed to.
     if _include_remote_source_crud(project):
@@ -2783,7 +2783,7 @@ def build_workflow_decision_mention(
     sections.extend([
         _section("Workflow decision instructions", s2_body),
         _section("Reference documents", s3_body),
-        # MERGE NOTE (branch base predates group 0370 on main): main inserts an inline
+        # MERGE NOTE (branch base predates the earlier change on main): main inserts an inline
         # "Efficient document lookup" section here — absorbed into the `document_access`
         # help item (D-0003 §3-2); keep NO inline lookup section on merge.
     ])
@@ -2791,7 +2791,7 @@ def build_workflow_decision_mention(
     # Recent documents in group — REMOVED (D-0003 §3-2 "dropped"), see build_mention's
     # Section 4 comment. group_recent_docs stays accepted for caller compatibility.
 
-    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only;
+    # set 3 (D-0003, "result registration: kept, minimal"): address + credential only;
     # the request body format/example lives behind the `submit` help item, which the
     # help catalog builds per action_scope (workflow_decide included).
     loc = template_provision.normalize_locale(locale)
@@ -2806,13 +2806,13 @@ def build_workflow_decision_mention(
     if continuous:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=continuous_review_mode)))
     else:
-        # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
+        # Group the regression/the review: recency repeat of the no-choices / Q-registration guard
         # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
         sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
     return terminal_prompt.prepare("\n\n".join(sections), kind='workflow', locale=locale)
 
 
-# ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
+# ── Sequence-edit mention builder (the earlier change) ──────────────────────────
 # Post-decision counterpart of build_workflow_decision_mention: the workflow is ALREADY
 # decided, so instead of asking the worker to CHOOSE a sequence this shows it the current
 # sequence (locked steps it must not touch + editable pending steps) and asks it to edit the
@@ -2861,7 +2861,7 @@ def build_sequence_edit_mention(
     )
 
     # Current sequence, split into locked (immutable) vs pending (editable).
-    # 0649 T#1 (NR0003 O1): "locked" is the server's ``protected`` mark when it is given — a
+    # "locked" is the server's ``protected`` mark when it is given — a
     # pending report row right after a started instruction is protected too. Callers that
     # predate the mark fall back to the status split.
     items = sequence_items or []
@@ -2877,7 +2877,7 @@ def build_sequence_edit_mention(
         bool(it.get("note"))
         or it.get("source_doc_id") is not None
         or it.get("source_revision_no") is not None
-        # 0444 T0007 (NR0003 §4-6): a row whose only stored value is its provider got no JSON
+        # a row whose only stored value is its provider got no JSON
         # block at all, so the worker had nowhere to return that provider from.
         or it.get("provider_id") is not None
         for it in pending
@@ -2944,7 +2944,7 @@ def build_sequence_edit_mention(
         f"Current sequence: GET {base}/workflow/sequence?doc_id={doc_id}"
     )
 
-    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only;
+    # set 3 (D-0003, "result registration: kept, minimal"): address + credential only;
     # the PATCH body format lives behind the `submit` help item (workflow_sequence_edit).
     loc = template_provision.normalize_locale(locale)
     s5_body = (
@@ -2957,13 +2957,13 @@ def build_sequence_edit_mention(
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", _clarification_guide_body(base, doc_id, raw_token, locale)),
-        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # set 3 (L-0005): central help-index block, same slot as
         # build_mention. doc_type guide section — REMOVED (absorbed into the index).
         _help_index_section(base, raw_token, locale),
         _section("Sequence edit instructions", s2_body),
         _section("Current sequence", seq_body),
         _section("Reference documents", s3_body),
-        # MERGE NOTE (branch base predates group 0370 on main): keep NO inline
+        # MERGE NOTE (branch base predates the earlier change on main): keep NO inline
         # "Efficient document lookup" section here on merge — absorbed into the
         # `document_access` help item (D-0003 §3-2).
         _section("Sequence edit submission", s5_body),
@@ -2979,7 +2979,7 @@ def build_sequence_edit_mention(
 # resolved — the target IS the document, so this works for any non-R doc.
 
 def _scope_context_section(target_doc: dict) -> Optional[str]:
-    """0493 T0005: the reviewer-facing actual-vs-reported scope manifest.
+    """the reviewer-facing actual-vs-reported scope manifest.
 
     Reads the frozen tr_scope verdict off ``target_doc['meta']`` -- the same value
     tr_scope_service.evaluate() computed and inbox_routes._tr_scope_meta() stored at the
@@ -3000,7 +3000,7 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
                 if isinstance(verdict.get("file_manifest"), dict)
                 else verdict.get("file_manifest")) or []
     codes = verdict.get("codes") or []
-    # 0110 T#2: a Graph attempt token's work lives in its attempt worktree until approval;
+    # a Graph attempt token's work lives in its attempt worktree until approval;
     # the reviewer must know which tree (and from which commit) the manifest measured.
     # A verdict stored before scope_source existed was always measured on the group.
     scope_source = verdict.get("scope_source") or tr_scope_service.SCOPE_SOURCE_GROUP
@@ -3045,7 +3045,7 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
     else:
         lines.append("  (no actual changes detected in the assigned worktree)")
 
-    # 0009-TR#1 rev2: inbox_routes._tr_scope_meta() stores "unconfirmed" as
+    # #1: inbox_routes._tr_scope_meta stores "unconfirmed" as
     # {"count", "items"} (same shape as "file_manifest" above, unwrapped a few lines
     # up) -- not a bare list. A dict is truthy even when count==0, so reading it
     # directly here made an empty result iterate as its own KEYS ("count", "items"),
@@ -3161,7 +3161,7 @@ def build_review_mention(
     # caller compatibility but is no longer rendered.
 
     # ── Section 5: review submission (inbox action:review) ────────────────────
-    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only.
+    # set 3 (D-0003, "result registration: kept, minimal"): address + credential only.
     # The action:review body format/example (verdict enum, findings shape) lives behind
     # the `submit` help item, which builds the review contract for review tokens; the
     # Verdict guide section below keeps the verdict semantics inline (L-0006 §2-5 keeps
@@ -3203,19 +3203,19 @@ def build_review_mention(
 
     # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
     # The review token is bound to the target document, so anchor the embedded query
-    # POST at canonical_id. See _clarification_guide_body (B0001 / NR0003).
+    # POST at canonical_id. See _clarification_guide_body.
     s8_body = _clarification_guide_body(base, canonical_id, raw_token, locale)
 
     sections = [
         _section("Document information", s1_body),
-        # R0001/T0004: hoist the clarification guide (with the no-choices guard)
+        # hoist the clarification guide (with the no-choices guard)
         # directly under the document-identity header so it is actually read.
         _section("Clarification guide", s8_body),
-        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # set 3 (L-0005): central help-index block, same slot as
         # build_mention.
         _help_index_section(base, raw_token, locale),
     ]
-    # 0349 D0004 D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
+    # D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
     # TR against the source it claims to have changed needs exactly that, and the mention
     # withholding it made the reviewer take the report's word for it.
     if _include_remote_source_crud(project):
@@ -3230,14 +3230,14 @@ def build_review_mention(
         sections.append(_section("Actual changed-files manifest (server-computed)", scope_context_body))
     sections.extend([
         _section("Reference documents", s3_body),
-        # MERGE NOTE (branch base predates group 0370 on main): keep NO inline
+        # MERGE NOTE (branch base predates the earlier change on main): keep NO inline
         # "Efficient document lookup" section here on merge — absorbed into the
         # `document_access` help item (D-0003 §3-2).
     ])
     sections.append(_section("Review submission", s5_body))
     sections.append(_section("Scratch directory", s6_body))
     sections.append(_section("Verdict guide", s7_body))
-    # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
+    # recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
     return terminal_prompt.prepare("\n\n".join(sections), kind='review', locale=locale)
@@ -3295,7 +3295,7 @@ def build_work_plan_fill_mention(
         str(provider.get("provider_id")): provider
         for provider in body.get("provider_candidates") or []
     }
-    # 0411 T0004 (B0001): a step provider may now sit outside the candidates — merely registered
+    # a step provider may now sit outside the candidates — merely registered
     # in this project. Asking only the candidate snapshot for a name would send such an id into
     # the worker mention as a raw id, leaving the worker unable to tell who to pick. Lookup order
     # is snapshot (the name frozen at pick time) → registered list (current name) → id. Unreadable settings fall back to the id as before.

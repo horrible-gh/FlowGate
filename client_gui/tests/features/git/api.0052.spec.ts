@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02test.0052 0008 — features/git/api.ts: what the recovery screens read from the server: the session's recorded
+// features/git/api.ts: what the recovery screens read from the server: the session's recorded
 // abort failure, the files resolved along with it, git's reason of a refused request, and the administrator's forced cleanup.
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())

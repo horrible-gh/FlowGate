@@ -1,7 +1,7 @@
 """origin/repo_url invariant across every network Git entry point
-(flowgate.default.0361 — B0001/NR0003/T0004).
+.
 
-B0001: changing a project's Git integration `repo_url` never reached an EXISTING
+changing a project's Git integration `repo_url` never reached an EXISTING
 base checkout's actual `origin` remote — only a fresh clone/adopt ever wired it.
 `save_config()` only updates the DB row, and the "checkout" provision path used
 to be a bare pass-through with no origin check at all, so every fetch/push that
@@ -10,13 +10,13 @@ finalize's merge/push, cross-branch merge, the push-rejected re-review recovery)
 kept silently talking to the stale remote. `/remote/show` on a commit that only
 exists on the newly-connected GitHub remote then 404'd forever.
 
-NR0003 introduces one shared helper, `ensure_origin_matches_config`, called
+introduces one shared helper, `ensure_origin_matches_config`, called
 immediately before every one of those fetch/push sites. These tests exercise the
 helper against a REAL local git repository (init + `remote add/get-url/set-url`
 only — no clone, no network, so nothing here needs `file://` and nothing skips
 the way `test_git_integration_0115.needs_git` does on git-for-Windows), plus two
-of the entry points directly implicated by B0001's own reproduction steps: the
-"existing checkout" provision pass-through (B0001 §3.2/§5 step 6) and new
+of the entry points directly implicated by the regression's own reproduction steps: the
+"existing checkout" provision pass-through (step 6) and new
 group-worktree provisioning (B0001 §4 "신규 group worktree가 오래된 base에서 생성될
 수 있음"). `manual_fetch`'s own fast-forward behavior already has a dedicated
 host-portable suite (test_git_manual_fetch_0320.py); this file adds the missing
@@ -128,7 +128,7 @@ def test_adds_origin_when_missing(tmp_path):
 
 
 def test_already_matching_origin_is_a_noop(tmp_path):
-    # NR0003 §12 test I.
+    # test I.
     root = _init_repo(tmp_path)
     subprocess.run(
         ["git", "remote", "add", "origin", "https://same.example/repo.git"],
@@ -149,7 +149,7 @@ def test_blank_repo_url_is_a_noop(tmp_path):
 
 
 def test_sync_failure_raises_and_leaves_origin_untouched(tmp_path, monkeypatch):
-    # NR0003 §11/§12 test J: a failed set-url must not pass silently, and must
+    # test J: a failed set-url must not pass silently, and must
     # not leave origin looking synced when it is not.
     root = _init_repo(tmp_path)
     subprocess.run(
@@ -169,10 +169,10 @@ def test_sync_failure_raises_and_leaves_origin_untouched(tmp_path, monkeypatch):
     assert _origin_url(root) == "https://old.example/repo.git"
 
 
-# ── integration: existing-checkout provision (B0001 §3.2/§5 step 6) ─────────
+# ── integration: existing-checkout provision (step 6) ─────────
 
 def test_provision_existing_checkout_syncs_origin_before_returning(monkeypatch, tmp_path):
-    """The exact B0001 root cause: `state == 'checkout'` used to be a bare
+    """The exact the regression root cause: `state == 'checkout'` used to be a bare
     pass-through with no origin check at all."""
     base_root = tmp_path / "base"
     calls: list[list[str]] = []
@@ -288,11 +288,11 @@ def test_manual_fetch_syncs_origin_before_fetching(monkeypatch):
     )
 
 
-# ── integration: new group-worktree provisioning (B0001 §4) ─────────────────
+# ── integration: new group-worktree provisioning ─────────────────
 
 def test_ensure_worktree_locked_syncs_origin_before_fetching(monkeypatch, tmp_path):
-    """B0001 §4: 'a new group worktree can be created from a stale base' — this
-    is the worktree.py fetch NR0003 §5.2/§8.1 names explicitly."""
+    """'a new group worktree can be created from a stale base' — this
+    is the worktree.py fetch the review names explicitly."""
     from modules.flow_gate.services.git.worktree import _ensure_worktree_locked
 
     calls: list[list[str]] = []
@@ -350,7 +350,7 @@ def test_ensure_worktree_locked_syncs_origin_before_fetching(monkeypatch, tmp_pa
     )
 
 
-# ── the remaining NR0003 §12 D~H entry points (added on rejection rev0: these
+# ── the remaining the review D~H entry points (added on rejection: these
 # were the ones actually missing — see rejection at the top of this revision) ──
 #
 # D: update_from_base()               → finalize.py
@@ -367,7 +367,7 @@ def test_ensure_worktree_locked_syncs_origin_before_fetching(monkeypatch, tmp_pa
 # (2) a forced sync failure proving the network command is never reached.
 
 
-# ── D: update_from_base() (NR0003 §12 test D) ───────────────────────────────
+# ── D: update_from_base ───────────────────────────────
 
 def test_update_from_base_syncs_origin_before_fetching(monkeypatch, tmp_path):
     from modules.flow_gate.services.git import finalize
@@ -452,7 +452,7 @@ def test_update_from_base_sync_failure_stops_before_fetch(monkeypatch, tmp_path)
     )
 
 
-# ── G: _refreeze_for_re_review(reason="push_rejected") (NR0003 §12 test G) ──
+# ── G: _refreeze_for_re_review(reason="push_rejected") ──
 
 def test_refreeze_push_rejected_syncs_origin_before_fetching(monkeypatch):
     calls: list[list[str]] = []
@@ -520,7 +520,7 @@ def test_refreeze_push_rejected_sync_failure_stops_before_fetch(monkeypatch):
     )
 
 
-# ── H: push-only paths — manual_push() (NR0003 §12 test H) ─────────────────
+# ── H: push-only paths — manual_push ─────────────────
 
 def test_manual_push_syncs_origin_before_pushing(monkeypatch, tmp_path):
     calls: list[list[str]] = []
@@ -560,7 +560,7 @@ def test_manual_push_syncs_origin_before_pushing(monkeypatch, tmp_path):
     sync_idx = calls.index(
         ["remote", "set-url", "origin", "https://new.example/repo.git"]
     )
-    # 0669 unit 7c: the job pushes the pinned sha to the branch ref, not the branch name
+    # unit 7c: the job pushes the pinned sha to the branch ref, not the branch name
     push_idx = next(i for i, c in enumerate(calls) if c[:2] == ["push", "origin"])
     assert calls[push_idx][2] == f"{tip}:refs/heads/{branch}"
     assert sync_idx < push_idx, (
@@ -600,7 +600,7 @@ def test_manual_push_sync_failure_stops_before_push(monkeypatch, tmp_path):
 
     monkeypatch.setattr(svc, "ensure_origin_matches_config", boom)
 
-    # 0669 unit 7c: an origin that cannot be synced is a transient read failure of the push
+    # unit 7c: an origin that cannot be synced is a transient read failure of the push
     # job, not a request error: the job stays queued (409 git_busy + job id) and retries.
     with pytest.raises(GitServiceError) as caught:
         svc.manual_push("proj", branch)
@@ -612,7 +612,7 @@ def test_manual_push_sync_failure_stops_before_push(monkeypatch, tmp_path):
     )
 
 
-# ── H: push-only paths — _cleanup_group_slot retro-delete (NR0003 §12 test H) ──
+# ── H: push-only paths — _cleanup_group_slot retro-delete ──
 
 def test_cleanup_group_slot_syncs_origin_before_retro_delete_push(monkeypatch, tmp_path):
     from modules.flow_gate.services.git.worktree import _cleanup_group_slot
@@ -719,13 +719,13 @@ def test_cleanup_group_slot_retro_delete_sync_failure_skips_push_but_still_clean
     )
 
 
-# ── F: cross-branch merge fetch/push, real second remote (NR0003 §12 test F) ──
+# ── F: cross-branch merge fetch/push, real second remote ──
 
 @pytest.fixture
 def dual_remote_branch_repo(tmp_path, monkeypatch):
     """test_git_branches_0594.py's own `repo` fixture, wired to TWO bare remotes:
     `origin` stays pointed at the stale one (`remote_a`) exactly as an existing
-    checkout would after `save_config()` touched only the DB row (NR0003 §3);
+    checkout would after `save_config()` touched only the DB row;
     `_branch_context` reports `remote_b` as the current config's `repo_url`."""
     # Real Git setup/publish can outlive the instance self-validity window.
     # Keep the same real heartbeat as server startup; group_store owns shutdown.
@@ -817,7 +817,7 @@ def test_merge_branches_sync_failure_stops_before_fetch_or_push(
     )
 
 
-# ── E: normal finalize's fetch/push, real second remote (NR0003 §12 test E) ──
+# ── E: normal finalize's fetch/push, real second remote ──
 #
 # The full ensure_worktree()/finalize() harness, mirroring TestGitEndToEnd in
 # test_git_integration_0115.py (its own module docstring: each importing test
@@ -943,7 +943,7 @@ def test_finalize_merge_sync_failure_stops_before_fetch_or_push(dual_origin, mon
 #
 # `approve_merge_review()`'s own push — issued from `_conditionally_push_or_
 # reconcile()` via `git push --force-with-lease=... origin <base_branch>` —
-# never appeared in NR0003 §5's own file-by-file grep of git_service.py
+# never appeared in the review's own file-by-file grep of git_service.py
 # (which only found the `_refreeze_for_re_review` fetch at line 2671/2674);
 # it is a push-only entry point with no preceding fetch, exactly the shape
 # §12 test H describes, and §12 test J's sync-failure policy (no fetch/push,
@@ -961,7 +961,7 @@ def dual_remote_merge_review_repo(tmp_path, monkeypatch):
     the state `approve_merge_review()` is in right after `context["merge_commit"]
     = commit_sha` and right before it calls `_conditionally_push_or_reconcile`.
     `origin` stays stale at `remote_a` exactly as an existing checkout's would
-    after `save_config()` touched only the DB row (NR0003 §3)."""
+    after `save_config()` touched only the DB row."""
     root = tmp_path / "base"
     root.mkdir()
     subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
@@ -984,7 +984,7 @@ def dual_remote_merge_review_repo(tmp_path, monkeypatch):
         check=True, capture_output=True,
     )
     # The local merge commit approve_merge_review() already created before ever
-    # calling _conditionally_push_or_reconcile. 0153 T#2: that function now pins the
+    # calling _conditionally_push_or_reconcile. the earlier implementation: that function now pins the
     # approved commit under refs/flowgate/preserve/ first, which validates it as a
     # real two-parent merge of [base_head, merge_head] — so the fixture builds one.
     subprocess.run(["git", "checkout", "-b", "side"], cwd=root, check=True, capture_output=True)
@@ -1094,7 +1094,7 @@ def test_conditionally_push_or_reconcile_sync_failure_stops_before_push(
 def dual_remote_ref_repo(tmp_path, monkeypatch):
     """A real base checkout whose `origin` stays stale at `remote_a` exactly as
     an existing checkout's would after `save_config()` touched only the DB row
-    (NR0003 §3). `remote_b` is pushed one commit AHEAD of `remote_a` so their
+. `remote_b` is pushed one commit AHEAD of `remote_a` so their
     `main` tips are distinguishable SHAs, not just distinguishable URLs."""
     root = tmp_path / "base"
     root.mkdir()

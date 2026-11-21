@@ -1,4 +1,4 @@
-"""Durable start intent and process fencing for Graph AI executions (0061 T#4)."""
+"""Durable start intent and process fencing for Graph AI executions."""
 from __future__ import annotations
 
 import contextlib
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 def register():
     graph_execution_hooks.register(lambda action, *args, **kwargs: _ACTIONS[action](*args, **kwargs))
-    result_merge.install()      # T#9: every session close of a group reaches its Graph integrations
+    result_merge.install()      # every session close of a group reaches its Graph integrations
     from modules.flow_gate.services import graph_source_hooks
     graph_source_hooks.register(workspace.source_root, workspace.mutation, fencing.require_token)
 
@@ -28,8 +28,8 @@ def request_write(job):
     attempt = run_store.active_attempt_id(job["run_id"], job["node_key"])
     if not attempt:
         raise ledger.LeaseLost("write has no active attempt")
-    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node is no attempt token's
-    # write. 0083 WP-3 (0061 T#2 revision): a person's approval on an idle run opens the next one at once
+    # a stopping run requests nothing (inside the guard). The engine's own opening of a node is no attempt token's
+    # write. 0083 WP-3: a person's approval on an idle run opens the next one at once
     # (``frontier.defers``) after taking the run back to running (``command.wake_approval``), so the opening requests on
     # a running run; ``OPENING`` still admits idle as before (the settlement below), the acquire needs running / paused.
     fencing.check(attempt, "request_write", statuses=fencing.OPENING)
@@ -39,7 +39,7 @@ def request_write(job):
     payload.pop("graph_exec_id", None)
     # A dispatch token's raw bearer is never persisted in the execution journal.
     payload["token"] = {"token_id": (job.get("token") or {}).get("token_id")}
-    # flowgate.v02.0113 T#3 (P-1 §7.2): the assignment that made the request and the call's origin, at the top level
+    # (P-1): the assignment that made the request and the call's origin, at the top level
     # of the request (and in the ledger's assignment columns); a pre-feature attempt's card call names no assignment.
     ref = job.get("assignment_ref")
     origin = job.get("invocation_origin") or _legacy_origin(job, attempt)
@@ -122,7 +122,7 @@ def _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id, opera
             if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
                     and row.get("instruction_doc_id") == doc_id):
                 ledger.cancel(pending["exec_id"], None, "requested")
-    # 0145 T#2: only an explicit, real re-review can recover a missing legacy handoff.
+    # only an explicit, real re-review can recover a missing legacy handoff.
     recovery = None
     if not assignment and not existing and kind == "review" and payload.get("type") == "loop":
         from flowgate.card_settings.result_recovery import prepare_explicit_review
@@ -164,7 +164,7 @@ def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=
             raise ledger.LeaseLost("recovered attempt is no longer active")
         return None
     operation = "hop_" + kind
-    # T#7: a review / rework hop of an attempt that may not write any more (its run not running or paused, the attempt
+    # a review / rework hop of an attempt that may not write any more (its run not running or paused, the attempt
     # not active) is refused (and recorded) before its guard, and judged again inside it (a refusal there is recorded
     # after the rollback, ``fencing.guarded``). Q439: the hop of a person's explicit review request is also taken
     # on an idle run (and takes it back to running below); an automatic hop is not. ``attempt_id``: the attempt the
@@ -185,7 +185,7 @@ def request_hop(flow_id, bundle, gate, kind):
 
 
 def request_result_recovery(project_id, flow_id, doc_id, issued_to, loop):
-    """0145: the existing user's re-review route, before AI admission or token issuance.
+    """the existing user's re-review route, before AI admission or token issuance.
 
     Only a legacy AI result missing its assigned review takes this path. Every
     proof is repeated under request_loop's normal fences and Flow transaction.
@@ -220,7 +220,7 @@ def request_loop(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, 
 
 def request_loop_locked(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, *, assignment_ref,
                         origin=None, statuses="writable", attempt_id=None):
-    """flowgate.v02.0113 T#3 (L-2 §2.2.2): ``request_loop`` inside the caller's Flow guard (the review assignment's own
+    """(L-2): ``request_loop`` inside the caller's Flow guard (the review assignment's own
     transaction) — no guard of its own, no AI start: the same judgements (``fencing.check``, the Time Machine refusal,
     the pending instruction writer's cancel, the idle run's settlement) and a ledger request carrying the assignment
     (its columns, and ``assignment_ref`` / ``invocation_origin`` at the top of the request). ``statuses``:
@@ -268,7 +268,7 @@ def _hop_origin(payload, loop):
 
 
 def reopen_due(flow_id) -> bool:
-    """flowgate.v02.0113 T#3 (L-2 §2.10, T §4.5), outside every guard: an open node of the Flow's paused / idle run would
+    """(L-2, T), outside every guard: an open node of the Flow's paused / idle run would
     be replaced by an explicit command (``REOPEN_NEW_ATTEMPT``). Only a hint for the command's entry (``command_fence``):
     the replacement itself is judged again inside the command's guard. A read that fails answers False (no fence: the
     command then replaces nothing and the next command does)."""
@@ -327,10 +327,10 @@ def _reopen_refusal(ctx, row, attempt_id):
 
 
 def reopen_attempt(ctx, row):
-    """flowgate.v02.0113 T#3 (L-2 §2.10 ``REOPEN_NEW_ATTEMPT``), inside the explicit command's Flow guard, entered under
+    """(L-2 ``REOPEN_NEW_ATTEMPT``), inside the explicit command's Flow guard, entered under
     the Flow's exclusive Stop gate (``command_fence``): the node's attempt (an assigned one waiting for a setting, an
     unavailable AI, or failed) is invalidated with its tokens, the node reset and opened again as a new attempt, then
-    dispatched as any opening is (its stages resolved anew). 0038-T T#3 B-6: also a waiting write stage — a person's
+    dispatched as any opening is (its stages resolved anew). the earlier implementation the earlier implementation B-6: also a waiting write stage — a person's
     manual write, an AI setup or an unavailable AI's wait — whose role changed (``reinterpret_wait``, invalidated as
     ``stage_reinterpret``: its documents stay the card's); an unchanged wait is never replaced. The
     replacement is judged again here (T §4.5): the fence
@@ -348,7 +348,7 @@ def reopen_attempt(ctx, row):
     if why is not None:
         log.info("attempt not replaced run=%s node=%s: %s", ctx.run_id, row["node_key"], why)
         return None
-    # 0038-T T#3 B-6: a waiting stage whose role changed is resolved again as a new attempt — the old attempt's tokens
+    # B-6: a waiting stage whose role changed is resolved again as a new attempt — the old attempt's tokens
     # are revoked (a person's write permission of the old assignment), its documents stay the card's
     # (``run_store.REINTERPRET_REASON``)
     verdict = card_settings_ports.stage_needs_dispatch(ctx, current)
@@ -388,7 +388,7 @@ def validate_write(job):
     row = ledger.get(exec_id)
     if not row or row["run_id"] != job["run_id"]:
         raise ledger.LeaseLost("Graph write no longer belongs to the open attempt")
-    # T#7: no token for a stopping run's write, nor for an execution or attempt that no longer owns the node. Inside
+    # no token for a stopping run's write, nor for an execution or attempt that no longer owns the node. Inside
     # the mapping guard: the refusal is recorded once it rolled back (``start_failed``).
     if row["status"] not in ("requested", "running"):
         raise fencing.refuse(row["attempt_id"], "validate_write", "execution_" + str(row["status"]), exec_id=exec_id)
@@ -405,7 +405,7 @@ def _lock(run):
 
 
 def _remote_work_alive(run, exec_id):
-    """flowgate.v02.0129 T#2 (D0005 §3-3): a remote Job is a provider too. Alive while the
+    """a remote Job is a provider too. Alive while the
     run marks it, or while any remote Job of this run or of an execution of the same node
     (an earlier attempt / replay this launch follows) is not settled."""
     if run.get("remote_job_active"):
@@ -475,7 +475,7 @@ def _finish_owned(run):
     token = run.get("graph_lease_token")
     # A losing launcher never touches the winner's row or card.
     if run.get("graph_lease_lost") and not token:
-        # 0063 B7: a launcher whose provider chain failed before its acquire (a refused report: the execution is still
+        # B7: a launcher whose provider chain failed before its acquire (a refused report: the execution is still
         # requested) keeps its own admission claim, which no refill replays (``queue_requests``). It cancels that claim
         # only -- never a winner's -- and its node records the AI start failure (``finish``).
         if ledger.cancel_requested(run["graph_exec_id"], run.get("run_id")) == 1:
@@ -488,7 +488,7 @@ def _finish_owned(run):
     if not row:
         raise ledger.LeaseLost("execution disappeared")
     if token and row["status"] in ("cancelled", "lost") and row.get("lease_token") == token:
-        # T#7: a Stop (or the recovery) settled this execution after its process ended; this late end changes
+        # a Stop (or the recovery) settled this execution after its process ended; this late end changes
         # neither a node nor the run candidates.
         run["graph_report_late"] = True
         return True
@@ -503,7 +503,7 @@ def _finish_owned(run):
 
 
 def finish(run):
-    """The execution's ledger end (``terminal.cleanup``). T#7: only an end owned to its close — the launcher held the
+    """The execution's ledger end (``terminal.cleanup``). the earlier implementation: only an end owned to its close — the launcher held the
     lease (or cancelled its own request), the ledger took the end, the attempt is not invalidated, the run is not
     stopping and no Stop / recovery settled the execution first — is marked ``graph_end_owned``; the finalize hands
     nothing else on and settles nothing after it (``finalize._finalize_run``). An owned end the finalize hands on to
@@ -523,24 +523,24 @@ def finish(run):
     graph = run_store.run_by_id(row["run_id"]) if row.get("run_id") else None
     if graph is not None and graph["status"] == stop.STOPPING:
         run["graph_settle_skipped"] = True
-        stop.on_execution_finished(run["group_id"], graph["run_id"])     # T#7: a Stop waiting for this end
+        stop.on_execution_finished(run["group_id"], graph["run_id"])     # a Stop waiting for this end
         return
     attempt = fencing.attempt_row(row["attempt_id"]) if row.get("attempt_id") else None
     if run.get("graph_report_late") or (attempt and attempt["attempt_status"] == "invalidated"):
-        # T#7: an invalidated attempt's or a settled execution's end settles nothing — nor does the finalize's last
+        # an invalidated attempt's or a settled execution's end settles nothing — nor does the finalize's last
         # settle after it (``graph_settle_skipped``).
         run["graph_settle_skipped"] = True
         return
     run["graph_end_owned"] = True
     if run.get("graph_run_end_pending") and graph is not None:
-        ledger.begin_handoff(run["graph_exec_id"], graph["run_id"])      # T#7: settled after the run-end stage
+        ledger.begin_handoff(run["graph_exec_id"], graph["run_id"])      # settled after the run-end stage
         return
     settle(run["group_id"])
 
 
 def _start_failure(run, *, failure_info=None):
-    """0063 B7: the request its launcher cancelled before the acquire. A node write records the AI start failure as a
-    refused start does (``node_dispatch.record_ai_failure``, L0009 E-23: the token stays a person's, the run settles idle
+    """B7: the request its launcher cancelled before the acquire. A node write records the AI start failure as a
+    refused start does (``node_dispatch.record_ai_failure``, the earlier implementation E-23: the token stays a person's, the run settles idle
     with ``error``); a review / rework hop leaves the result to a person (``start_review_loop``) and the run settles."""
     row = ledger.get(run["graph_exec_id"]) or {}
     payload = json.loads(row.get("request_json") or "{}")
@@ -555,7 +555,7 @@ def _start_failure(run, *, failure_info=None):
 
 
 def handoff_end(run):
-    """T#7, the finalize after its run-end stage (whatever happened there): the run is no longer kept working by this
+    """the finalize after its run-end stage (whatever happened there): the run is no longer kept working by this
     execution's hand-off. The finalize's own settle follows for an owned end."""
     if run.get("graph_exec_id"):
         ledger.end_handoff(run["graph_exec_id"])
@@ -574,13 +574,13 @@ def transition(run, loop):
             raise ledger.LeaseLost("cancelled execution cannot advance a review loop")
         current = ledger.get(run["graph_exec_id"])
         if current:
-            # T#7: a review verdict reaches its next hop only while the run and attempt may take it (recorded here).
+            # a review verdict reaches its next hop only while the run and attempt may take it (recorded here).
             fencing.require(current["attempt_id"], "review_transition", statuses=fencing.REPORTING)
         def body():
             row = ledger.get(run["graph_exec_id"])
             if not row:
                 raise ledger.LeaseLost("review execution disappeared")
-            # T#7: judged again inside the guard; a refusal is recorded once the guard rolled back (``guarded``).
+            # judged again inside the guard; a refusal is recorded once the guard rolled back (``guarded``).
             if row["status"] != "running":
                 raise fencing.refuse(row["attempt_id"], "review_transition", "execution_" + str(row["status"]),
                                      exec_id=row["exec_id"])
@@ -597,7 +597,7 @@ def transition(run, loop):
             _finish_owned(run)
             payload["loop"] = dict(loop)
             payload["review_run_ids"] = sorted(set(payload.get("review_run_ids") or []) | {run["run_id"]})
-            ref = payload.get("assignment_ref")          # 0113 T#3: the same assignment on every hop (P-1 §7.2)
+            ref = payload.get("assignment_ref")          # the same assignment on every hop (P-1)
             hop_origin = _hop_origin(payload, loop)
             if hop_origin is not None:
                 payload["invocation_origin"] = hop_origin
@@ -643,14 +643,14 @@ BUSY_RETRY_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)
 _BUSY_RETRY_TTL = 3600.0
 _busy_retries: dict = {}          # exec_id -> (refusals so far, monotonic time of the last one)
 _busy_retries_lock = threading.Lock()
-# flowgate.v02gui.0006 CH: the requests whose retry timer is scheduled and has not fired yet. That timer owns the
+# CH: the requests whose retry timer is scheduled and has not fired yet. That timer owns the
 # request: the unowned-request close (``_request_has_owner``) must not cancel it meanwhile -- a recovery's own replay
 # refused ``git_busy`` was otherwise cancelled at once as ``restart_unowned_request`` by the same recovery.
 _busy_pending: set = set()
 
 
 def busy_retry_pending(exec_id):
-    """flowgate.v02gui.0006 CH: a ``git_busy`` retry of ``exec_id`` is scheduled and has not fired yet."""
+    """CH: a ``git_busy`` retry of ``exec_id`` is scheduled and has not fired yet."""
     with _busy_retries_lock:
         return exec_id in _busy_pending
 
@@ -702,10 +702,10 @@ def _retry_busy(exec_id, provision_error=None):
 
 def start_failed(exec_id, error=None):
     if error is not None:
-        fencing.recorded(error)          # T#7: a refusal judged inside the start's guard, recorded after its rollback
+        fencing.recorded(error)          # a refusal judged inside the start's guard, recorded after its rollback
     if not exec_id:
         return False
-    if isinstance(error, graph_execution_hooks.ExecutionLeaseLost):   # T#7: a fence refusal too
+    if isinstance(error, graph_execution_hooks.ExecutionLeaseLost):   # a fence refusal too
         ledger.cancel_ineligible(exec_id)
         return True
     detail = getattr(error, "detail", None)
@@ -756,7 +756,7 @@ def _request_has_owner(row, group_id):
     from modules.flow_gate.services.ai_invoke import remote_supervisor
     if ledger.handing_off(row["run_id"]) or result_merge.holding(row["run_id"]):
         return True
-    # flowgate.v02gui.0006 CH: an admission still preparing its run's worktree, or a scheduled ``git_busy`` retry,
+    # CH: an admission still preparing its run's worktree, or a scheduled ``git_busy`` retry,
     # owns the request although neither the registry nor the ledger shows it yet.
     if scheduling.starting(row["exec_id"]) or busy_retry_pending(row["exec_id"]):
         return True
@@ -847,20 +847,20 @@ def recover():
     from modules.flow_gate.graph_workflow.services import run_apply
     if not get_store().table_exists("graph_attempt_runs"):
         return
-    result_merge.recover()  # T#9: an integrating merge is finished or pending again, before a Stop goes on
-    stop.recover()          # T#7: a stopping run goes on with its stop, never with a replay or a lease loss
+    result_merge.recover()  # an integrating merge is finished or pending again, before a Stop goes on
+    stop.recover()          # a stopping run goes on with its stop, never with a replay or a lease loss
     rows = run_store._all(_RECOVER_ROWS_SQL + " ORDER BY e.created_at, e.exec_id", [])
     for snapshot in rows:
         _recover_snapshot(snapshot, ai_invoke_service, run_apply)
 
     _close_unowned_requests(started_before=ai_invoke_service.startup_recovery_started_at())
 
-    # Outside all Flow guards and DB transactions. T#10: invalidated and integrated (ended) attempts' trees.
+    # Outside all Flow guards and DB transactions. the earlier implementation: invalidated and integrated (ended) attempts' trees.
     workspace.cleanup_finished()
 
 
 def recover_execution(exec_id):
-    """flowgate.v02.0129 T#2 (D0005 §3-4 step 4): the startup recovery of ONE execution whose
+    """(step 4): the startup recovery of ONE execution whose
     restart recovery was held while its remote Job was alive, once that Job is settled and
     its lease expired. Same rules as ``recover`` for that row; nothing else is replayed."""
     from modules.flow_gate.services import ai_invoke_service
@@ -882,10 +882,10 @@ def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
             return
         if row["status"] == "requested":
             if _time_machine().busy(snapshot["group_id"]):
-                return              # T#13: kept requested; replayed once the Time Machine operation is finished
+                return              # kept requested; replayed once the Time Machine operation is finished
             if ledger.eligible(row):
                 if row.get("ai_run_id") and scheduling.starting(row["exec_id"], row["ai_run_id"]):
-                    # flowgate.v02gui.0006 CH: its admission is still preparing the run (worktree before
+                    # CH: its admission is still preparing the run (worktree before
                     # ``_register_run``); taking the id back here replayed it against itself and closed it unowned.
                     return
                 live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
@@ -911,7 +911,7 @@ def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
         if (live and (live.get("status") != "finished" or not provider_stopped(live))) or not ended:
             log.warning("Graph recovery has no confirmed AI termination: %s", row["exec_id"])
             return
-        # flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a remote Job not settled yet, or a
+        # (step 2): a remote Job not settled yet, or a
         # restart hold not resumed yet, is no confirmed termination either.
         from modules.flow_gate.services.ai_invoke import remote_supervisor
         if remote_supervisor.remote_alive(row.get("ai_run_id")):
@@ -928,9 +928,9 @@ def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
             return
         ctx = run_apply.load_context(run, (db_groups.get_by_id(snapshot["group_id"]) or {}).get("project_id"), None, jobs)
         stop.reset_node(ctx, node, "lease_expired")
-        run_apply.settle_run(ctx)  # T#2 command candidates preserve the step target set.
+        run_apply.settle_run(ctx)  # command candidates preserve the step target set.
     try:
-        # T#7: a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
+        # a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
         # worktree are (no side effect of its token runs across the commit).
         with fencing.exclusive(snapshot["group_id"], own_ok=True):
             with_flow_guard(snapshot["group_id"], body)
@@ -966,7 +966,7 @@ def map_token(exec_id, token_id):
             if not current or current["status"] not in ("requested", "running"):
                 raise fencing.refuse(row["attempt_id"], "map_token",
                                      "execution_" + str((current or {}).get("status") or "missing"), exec_id=exec_id)
-            # T#7: a stopping run or an invalidated attempt maps no new token (recorded after the rollback).
+            # a stopping run or an invalidated attempt maps no new token (recorded after the rollback).
             fencing.check(row["attempt_id"], "map_token")
             attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ? AND status = 'active'",
                                      [row["attempt_id"]])
@@ -983,11 +983,11 @@ def map_token(exec_id, token_id):
 
 
 def write_failure(row):
-    """0063: a finished result writer with no result stays open, but is no longer working.
+    """a finished result writer with no result stays open, but is no longer working.
     Derive from the current attempt's durable records, also for runs ended before this fix.
     No new node state or persisted failure is needed; a new request hides the old outcome.
 
-    0111 T#2 (T-A1): a writer that exited asking (stop code ``question_pending``) with questions it asked still open is
+    (T-A1): a writer that exited asking (stop code ``question_pending``) with questions it asked still open is
     ``question_pending`` — a question wait, no failure (``settle._failed``, ``needs_ai_dispatch``, the node wire's
     ``error_code``); once they are all answered it reads ``no_result``, retried as one (``retry_result_stage``).
     """
@@ -1032,12 +1032,12 @@ def _write_end(row):
 
 
 QUESTION_PENDING = "question_pending"
-# flowgate.v02.0121 T#2: the one ``ai_invoke_failed`` end an explicit command writes again on the same attempt.
+# the one ``ai_invoke_failed`` end an explicit command writes again on the same attempt.
 PROVIDER_FAILED = "provider_failed"
 
 
 def provider_failure_retry_due(row):
-    """flowgate.v02.0121 T#1 / T#2: the node's result writer ended because its provider itself failed — the finalized
+    """the node's result writer ended because its provider itself failed — the finalized
     run exited on its own (``end_reason`` ``exited``) with the canonical stop code ``provider_failed`` (a non-zero CLI
     exit or a ``turn.failed`` / ``error`` event, ``finalize.provider_failure_of``: a model at capacity, a dropped
     stream) and registered nothing, nothing refused. Read from the same durable records as ``write_failure`` (it is
@@ -1050,13 +1050,13 @@ def provider_failure_retry_due(row):
     return failure == "ai_invoke_failed" and ended is not None and ended.get("end_reason") == "exited"         and ended.get("stop_code") == PROVIDER_FAILED and not ended.get("register_errors")
 
 
-# flowgate.v02.0121 T#4: the short causes a failed result writer's card shows (the node wire's ``dispatch.error_detail``)
+# the short causes a failed result writer's card shows (the node wire's ``dispatch.error_detail``)
 PROVIDER_CAPACITY = "provider_capacity"
 _SHOWN_STOPS = (PROVIDER_FAILED, "timeout", "providers_exhausted")
 
 
 def write_failure_detail(row):
-    """flowgate.v02.0121 T#4: the short cause of the node's ``ai_invoke_failed`` result writer — ``provider_capacity``
+    """the short cause of the node's ``ai_invoke_failed`` result writer — ``provider_capacity``
     (its provider said the model is at capacity: the canonical ``stop_reason`` the finalize wrote from the provider's
     own words, ``finalize._stop_reason_text``), else its stop code when it is one of ``_SHOWN_STOPS``; None for any
     other end (nothing is guessed). The provider's whole output stays in the run's log and records."""
@@ -1070,7 +1070,7 @@ def write_failure_detail(row):
 
 
 def _asked_open(flow_id, ai_run_id):
-    """0111 T-A1: the questions ``ai_run_id`` asked in the Flow are not all answered (an unreadable read keeps the wait:
+    """T-A1: the questions ``ai_run_id`` asked in the Flow are not all answered (an unreadable read keeps the wait:
     nothing retries a writer whose questions cannot be told answered)."""
     from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run
     try:
@@ -1081,7 +1081,7 @@ def _asked_open(flow_id, ai_run_id):
 
 
 def instruction_continuation_due(row, asker_ai_run_id, answered=True):
-    """0111 T-A1: the instruction stage may go on from ``asker_ai_run_id``'s answers — the node's active attempt has no
+    """T-A1: the instruction stage may go on from ``asker_ai_run_id``'s answers — the node's active attempt has no
     requested / running execution and its latest execution is ``asker_ai_run_id``'s instruction write, and (``answered``)
     every question it asked is answered. So the same answers told twice (a person's answer and the responder's end)
     continue once, an attempt opened again since continues nothing, and an earlier run of the stage answered again after
@@ -1120,7 +1120,7 @@ def _time_machine():
 
 
 def _refuse_time_machine(flow_id, attempt_id, operation):
-    """T#13, inside the step's guard: while a Graph Time Machine operation of the Flow is unfinished no execution is
+    """inside the step's guard: while a Graph Time Machine operation of the Flow is unfinished no execution is
     requested — not an opened node's write (a person's approval opening the next node of the idle run), not a person's
     explicit review / rework (which would take the idle run back to running under the operation). Recorded as a fence
     refusal once the guard rolled back; the person's request answers 409 ``graph_attempt_inactive``."""
@@ -1129,7 +1129,7 @@ def _refuse_time_machine(flow_id, attempt_id, operation):
 
 
 def result_refused(run, kind, payload):
-    """T#7, inside the result binder's guard: a stopping run binds nothing, nor does a registration made with the
+    """inside the result binder's guard: a stopping run binds nothing, nor does a registration made with the
     token of an attempt that may not write any more. Recorded."""
     if fencing.run_refused(run, "result_" + kind, doc_id=payload.get("doc_id")):
         return True
@@ -1137,7 +1137,7 @@ def result_refused(run, kind, payload):
 
 
 def manual_git_blocker(run_id):
-    """0066 D#1 §3-6(3): what keeps a person's manual merge off the Flow's worktree, or None. Read only: a
+    """: what keeps a person's manual merge off the Flow's worktree, or None. Read only: a
     requested/running execution, a run-end hand-off of a running / paused run, an approved result's merge into the
     Flow's branch (pending / integrating). An open manual or gate node alone (an attempt without an execution) and a
     failed integration waiting for a person do not block."""
@@ -1159,45 +1159,45 @@ def _settle():
 _ACTIONS = {
     "manual_git_blocker": manual_git_blocker,
     "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
-    # flowgate.v02test.0004 T#1: a refused start that only repeated a start of the same execution (no refusal record)
+    # a refused start that only repeated a start of the same execution (no refusal record)
     "duplicate_start": scheduling.duplicate_start,
     "execution_wire": scheduling.wire, "opening": scheduling.opening, "can_open": scheduling.can_open,
     "prepare_workspace": workspace.prepare,
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
-    # flowgate.v02.0113 T#3: the review assignment's locked loop request and the explicit command's new attempt.
+    # the review assignment's locked loop request and the explicit command's new attempt.
     "request_loop_locked": request_loop_locked, "request_result_recovery": request_result_recovery,
     "reopen_attempt": reopen_attempt, "command_fence": command_fence,
-    # flowgate.v02.0124 T#1: an explicit command requests a card's spent result review again (``run_service``).
+    # an explicit command requests a card's spent result review again (``run_service``).
     "rerequest_review": command.rerequest_review,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
-    "instruction_continuation_due": instruction_continuation_due,       # 0111 T-A1
-    "provider_failure_retry_due": provider_failure_retry_due,           # flowgate.v02.0121 T#2
-    "write_failure_detail": write_failure_detail,                       # flowgate.v02.0121 T#4
+    "instruction_continuation_due": instruction_continuation_due,       # T-A1
+    "provider_failure_retry_due": provider_failure_retry_due,           # 
+    "write_failure_detail": write_failure_detail,                       # 
     "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
-    # T#9: an approved code node is done once its result is merged into the Flow's branch.
+    # an approved code node is done once its result is merged into the Flow's branch.
     "resume_approval": command.resume_approval, "continue_approval": command.continue_approval,
-    # 0083 WP-3 (0061 T#2 revision): a person's decision on an idle run opens the next cards, the run woken first.
+    # WP-3: a person's decision on an idle run opens the next cards, the run woken first.
     "approval_wakes": command.approval_wakes, "wake_approval": command.wake_approval,
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
     # v02gui.0015 T2: the earlier attempts' uncommitted changes the node's attempt did not take (the run read).
     "uncarried_wire": workspace.uncarried_wire,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
-    # T#11: the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
+    # the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
     "held_nodes": hold.held,
-    # 0085 T#3: gates waiting for a round split after an abandoned recovery, never opened either (not a Hold).
+    # gates waiting for a round split after an abandoned recovery, never opened either (not a Hold).
     "opening_held": lambda flow_id: _settle().opening_held(flow_id),
-    # flowgate.v02.0119 T#3 (T-2): a run read's idle reason, a stored ``waiting_approval`` read as waiting_confirm /
+    # (T-2): a run read's idle reason, a stored ``waiting_approval`` read as waiting_confirm /
     # needs_intervention (never converted).
     "idle_reason_read": lambda run: _settle().read_idle_reason(run),
-    # T#13: an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
+    # an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
-    # T#14: a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
+    # a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
     "chat_source_refusal": editing.chat_source_refusal,
-    # flowgate.v02gui.0019: a card whose run state changed is put back into the Flow's draft when a save left it out.
+    # a card whose run state changed is put back into the Flow's draft when a save left it out.
     "node_state_changed": lambda ctx, node_key, to_status: _draft_restore().on_node_state(ctx, node_key, to_status),
 }
 

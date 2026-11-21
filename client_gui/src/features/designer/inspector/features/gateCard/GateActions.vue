@@ -4,7 +4,7 @@
     <Button v-if="actions.confirm.visible" size="sm" variant="primary" :disabled="!actions.confirm.enabled" :loading="busy === 'confirm'"
       :title="tipOf(actions.confirm.reason)" data-test="gate-confirm" @click="decide('confirm')">{{ t(k('confirm')) }}</Button>
     <span v-if="shownReason" class="inspector-gate-reason" :title="shownReason" data-test="gate-confirm-reason">{{ shownReason }}</span>
-    <!-- flowgate.v02test.0052 0008 task 6: the failed approval is cancelled in the Git tab — take the person there. -->
+    <!-- task 6: the failed approval is cancelled in the Git tab — take the person there. -->
     <Button v-if="oldApprovalHeld" size="sm" variant="ghost" data-test="gate-open-git" @click="host?.request({ kind: 'show-tool', tool: 'git' })">{{ t(k('old_approval.open')) }}</Button>
     <span v-else-if="cancelledHint" class="inspector-gate-reason" :title="cancelledHint" data-test="gate-reapprove-hint">{{ cancelledHint }}</span>
   </div>

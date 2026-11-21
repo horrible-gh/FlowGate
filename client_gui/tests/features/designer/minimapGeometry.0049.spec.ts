@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0049 — MiniMap geometry (pure): Nodes / Edges as drawn, the Canvas's shown area,
+ * MiniMap geometry (pure): Nodes / Edges as drawn, the Canvas's shown area,
  * the drawn bounds and the MiniMap point -> Canvas Viewport mapping.
  */
 import { describe, expect, it } from 'vitest'

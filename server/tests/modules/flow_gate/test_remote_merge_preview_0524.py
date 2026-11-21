@@ -1,7 +1,7 @@
-"""Read-only 3-way merge preview (`merge_preview`) — group 0524 T0006.
+"""Read-only 3-way merge preview (`merge_preview`) — the earlier implementation.
 
-T0004/TR0005 explicitly deferred a merge-conflict preview to this T2 (T0004 §1,
-TR0005 §4). `merge_preview` simulates merging the authorized group worktree's HEAD
+explicitly deferred a merge-conflict preview to this T2 (the earlier implementation,
+). `merge_preview` simulates merging the authorized group worktree's HEAD
 onto target_ref via `git merge-tree --write-tree` (git 2.38+), without ever
 touching HEAD, the index or the working tree, and reports whether the merge is
 clean and which files would conflict.
@@ -198,7 +198,7 @@ def test_http_merge_preview_200_is_logged_and_never_gets_a_continuation(diverged
     payload = response.json()
     assert payload["clean"] is False
     assert payload["target_sha"] == target
-    assert "continuation" not in payload  # merge_preview is not a mutating op (L0006 §6.1)
+    assert "continuation" not in payload  # merge_preview is not a mutating op
     assert len(recorded) == 1
     assert recorded[0]["op"] == "merge_preview" and recorded[0]["result"] == "success"
 

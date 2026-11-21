@@ -1,7 +1,7 @@
-"""flowgate.v02.0083 T#3 (WP-3) — a person's approval on an idle run moves the run on to the next card, with no further
-resume (the flowgate.v02.0056 T#1 contract restored; 0061 T#2 revised).
+"""(WP-3) — a person's approval on an idle run moves the run on to the next card, with no further
+resume (the the earlier change the earlier implementation contract restored; the earlier implementation revised).
 
-0061 T#2 kept every propagation of a run that is not ``running`` waiting (``frontier.defers``: paused, idle) until the next
+kept every propagation of a run that is not ``running`` waiting (``frontier.defers``: paused, idle) until the next
 command, so a person's approval on an idle run — the exception path of a card: a review that did not pass or spent its
 count, a card a person writes — left the next card ``pending`` until someone pressed resume again. Revised here:
 
@@ -16,12 +16,12 @@ count, a card a person writes — left the next card ``pending`` until someone p
 Each approval case runs on two idle waits: ``command_chain`` — the run's events prove the unfinished command it waits in,
 so the existing ``command.resume_approval`` wakes it as well — and ``reported`` — the reported Flow's state, a run that
 went idle before 0083 WP-2 judged a person's open card ``waiting_approval`` (its idle transition's event says
-``no_targets``), so no command can be proven and only the revised ``defers`` moves it on. With the 0061 T#2 ``defers`` restored, the
+``no_targets``), so no command can be proven and only the revised ``defers`` moves it on. With the the earlier implementation ``defers`` restored, the
 reported wait keeps the next card pending until a resume
 (``test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume``).
 
 Rework (rej_01M5FKJYMETCGHGJ): a card whose attempt worked in a Git worktree is done only once its result is merged
-into the Flow's branch (0061 T#9 ``result_merge.defer_done``). On the reported wait such an approval was held for the
+into the Flow's branch (``result_merge.defer_done``). On the reported wait such an approval was held for the
 merge before the run was woken, so the integration took the idle run's hold (``result_merge._wake``), applied the
 approval's propagation as ``pending`` and left the run idle: the next card waited for a resume. Now the approval wakes
 the run when it is held (``run_apply.apply_decision``), the merge runs on the running run and its end opens the next
@@ -29,7 +29,7 @@ card. These cases use a prepared worktree attempt (its ``input_commit`` and mode
 them) whose result is a real commit on its own branch, merged by the real ``result_merge._merge`` (``git merge
 --no-ff``) into a real group repository; the group's Git lock, branch merge claim and worktree cleanup are stubbed.
 
-flowgate.v02.0119 T#3 (T-2): no person approves a card any more — the card approval route answers 409
+(T-2): no person approves a card any more — the card approval route answers 409
 ``needs_intervention`` and the run waits ``needs_intervention`` (no longer ``waiting_approval``). The decision these cases
 make on the idle run is now the card's automatic completion after its intervention — a re-review requested after a memo
 that passed (``card_settings.legacy_adapter.approve``, the T-1 completion; local ``_approve``) — whose propagation the
@@ -40,7 +40,7 @@ keep their 0083 wording. The ``reported`` wait is a run idle before T-2 too: its
 On the card settings suites' real SQLite DB, routes and fixtures (``test_fg_card_settings``,
 ``test_fg_card_settings_review``, ``test_fg_card_approval_0056``, ``test_fg_wp_ai_run_0083``). A paused or stopped
 run with a card in review cannot be reached through the routes alone (Stop / Pause need a running run, and a Stop takes
-its open / review cards back to pending), so those two states are set on the run row, as the 0083 T#2 suite does.
+its open / review cards back to pending), so those two states are set on the run row, as the the earlier implementation suite does.
 """
 from __future__ import annotations
 
@@ -61,11 +61,11 @@ from test_fg_card_approval_0056 import (  # noqa: F401 — card_outputs_port: re
     LEE, _chain, _current, _human_result, _run_id, _v01_approve, card_outputs_port,
 )
 from test_fg_wp_ai_run_0083 import _cards, _register, _run_status, _start_ai_run
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
-# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+# (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
 pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results")
 
 
@@ -90,7 +90,7 @@ def no_document_gates(monkeypatch):
 
 
 def _approve(env, key, body=None):
-    """flowgate.v02.0119 T#3 (T-2): the card's automatic completion of its result on the idle run (a re-review requested
+    """(T-2): the card's automatic completion of its result on the idle run (a re-review requested
     after a memo that passed), as the card stage makes it (T-1) — no person's card approval. -> ``{"run": …}`` read
     after it."""
     from flowgate.card_settings import legacy_adapter
@@ -141,7 +141,7 @@ def _person_waits(env, cards, mode=None, wait="command_chain"):
     """R -> t1 (a person's card) -> … with t1's result registered: the run idle, t1 awaiting its approval."""
     _admin_and_reviewer(env)
     keys = _begin(env, cards, mode)
-    assert _run_status(env) == ("idle", "needs_intervention")       # 0083 T#2: a person writes t1
+    assert _run_status(env) == ("idle", "needs_intervention")       # a person writes t1
     if wait == "reported":
         _reported(env)
     result = _human_result(env, keys[0])
@@ -152,7 +152,7 @@ def _person_waits(env, cards, mode=None, wait="command_chain"):
 WAITS = pytest.mark.parametrize("wait", ["command_chain", "reported"])
 
 
-# ── a person's approval on an idle run moves on (0061 T#2 revised) ───────────────────
+# ── a person's approval on an idle run moves on (revised) ───────────────────
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
@@ -167,7 +167,7 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_ai_card_and_creates_i
     assert _review_status(result) == "approved" and _propagations(env, t1) == ["done"]
     assert [j["node_key"] for j in env["jobs"]] == [t2]                 # the AI card's job is created
     assert _run_status(env) == ("running", None)                        # its execution keeps the run working
-    # 0119 T-2: the automatic completion records its authority first (B-4), then the idle run is woken
+    # T-2: the automatic completion records its authority first (B-4), then the idle run is woken
     assert _run_events_after(env, seq) == [("idle", "idle", "auto_approval_authority", "system"),
                                            ("idle", "running", "work_resumed", "approval")]
     assert commands == []
@@ -187,7 +187,7 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_person_s_card_and_the
                              "ON m.token_id = t.token_id WHERE m.node_key = ?", (t2,))
     assert issued == [{"issued_to": "u_lee", "provider_id": None}]
     assert _run_status(env) == ("idle", "needs_intervention")             # woken, then idle again: nothing works
-    assert _run_events_after(env, seq) == [("idle", "idle", "auto_approval_authority", "system"),     # 0119 T-2 (B-4)
+    assert _run_events_after(env, seq) == [("idle", "idle", "auto_approval_authority", "system"),     # T-2 (B-4)
                                            ("idle", "running", "work_resumed", "approval"),
                                            ("running", "idle", "run_idle", None)]
     assert commands == []
@@ -217,10 +217,10 @@ def test_the_last_card_s_approval_on_an_idle_run_completes_it_revised_0061_t2(pr
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @pytest.mark.parametrize("wait, before_resume", [("command_chain", "pending"), ("reported", "pending")])
 def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(pre_feature_attempts, env, decided, monkeypatch, wait, before_resume):
-    """What is revised: with the 0061 T#2 ``defers`` (every run not running waits) only a wait whose command its events
-    prove went on (``command.resume_approval``, 0083 T#2); the reported wait left the next card pending after the
+    """What is revised: with the the earlier implementation ``defers`` (every run not running waits) only a wait whose command its events
+    prove went on (``command.resume_approval``, the earlier implementation); the reported wait left the next card pending after the
     approval, and only the next resume opened it — the reported "a person approves, then resumes".
-    flowgate.v02.0119 T#3 (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
+    (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
     ``needs_intervention`` wait is never that command chain's either: under the old rule both waits need the resume; the
     revised ``defers`` (the cases above) moves both on at once."""
     from modules.flow_gate.graph_workflow.domain import frontier
@@ -314,7 +314,7 @@ def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
         return RunState(status, {"a": NodeRun("a", "review", "d")}, approval_wakes=wakes)
 
     assert defers(state("running")) is False
-    assert defers(state("idle", wakes=True)) is False                   # 0061 T#2 revised
+    assert defers(state("idle", wakes=True)) is False                   # revised
     assert defers(state("idle")) is True                                # stopped / Time Machine / a command
     assert defers(state("paused")) is True and defers(state("paused", wakes=True)) is True
     assert virtual(state("idle", wakes=True), Decision()).approval_wakes is True
@@ -325,7 +325,7 @@ def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
 def test_r_ai_cards_still_approve_by_themselves_with_no_person_s_approval(env, decided, monkeypatch):
     from modules.flow_gate.workflow import pipeline_service
 
-    # 0119 T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
+    # T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
     approvals = []
     real = pipeline_service.transition_document_review
     monkeypatch.setattr(pipeline_service, "transition_document_review",
@@ -391,7 +391,7 @@ def group_tree(tmp_path, monkeypatch):
 def _prepared_worktree(env, tree, key):
     """``key``'s attempt as ``workspace.prepare`` records a Git worktree attempt (``input_commit`` from the run base,
     its mode record: the attempt's first workspace event). Its result is a real commit on the attempt's own branch in a
-    linked worktree of the group repository, recorded as T#8 records it (``result_commit``, reused by
+    linked worktree of the group repository, recorded as the earlier implementation records it (``result_commit``, reused by
     ``result_commit.commit_result``)."""
     from flowgate.graph_run import workspace
     from modules.flow_gate.graph_workflow.store import run_store
@@ -414,7 +414,7 @@ def _prepared_worktree(env, tree, key):
 
 def _person_registers(env, key, seq=81, typ="T"):
     """As ``_human_result``, in the inbox's order: the Graph contact, then the node token's consume
-    (``token_consumed``: the result's authorship by the attempt, which T#8's ``commit_result`` checks)."""
+    (``token_consumed``: the result's authorship by the attempt, which the earlier implementation's ``commit_result`` checks)."""
     from modules.flow_gate.graph_workflow.api import v01_contact
     from modules.flow_gate.services import token_service
 

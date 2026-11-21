@@ -88,8 +88,8 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — conflict modeless (0033-D §6.3) on the non-blocking ModelessShell.
-// flowgate.v02gui.0004 (0001-B §A-3/§A-4) — this is now the direct resolver, opened over the
+// conflict modeless on the non-blocking ModelessShell.
+// this is now the direct resolver, opened over the
 // centre from the Git tab's conflict card (a file, [직접 해결], `외 N개 보기`). The duplicate
 // AI / "직접 해결" buttons and the technical block are gone: the card is the one entry point.
 // A file's chunks are shown side by side (current = the branch the merge lands on, incoming = the

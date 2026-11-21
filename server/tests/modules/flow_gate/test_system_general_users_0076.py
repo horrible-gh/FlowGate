@@ -235,7 +235,7 @@ DELEGATED = ("system.settings.manage", "system.user.read", "system.user.create",
 
 
 def _delegate(env, uid="usr_dd0076"):
-    """Test-only explicit delegation (D §5.1 D): the four system permissions the T#3 routes check,
+    """Test-only explicit delegation (D D): the four system permissions the the earlier implementation routes check,
     on a custom role assigned at __SYSTEM__. No migration ships these permission rows, so this is
     the shape a deployment would have only if someone created them — it is not deployment data."""
     from modules.flow_gate.rbac import permission_service, role_service
@@ -253,7 +253,7 @@ def _delegate(env, uid="usr_dd0076"):
 
 
 # What the real router/auth/RBAC answered for D (is_admin=0, the four permissions delegated) on
-# every T#3 route, as observed. Pinned so a change in the server's behaviour shows up; it records
+# every the earlier implementation route, as observed. Pinned so a change in the server's behaviour shows up; it records
 # the existing delegated-permission check, it is NOT an is_admin-only result and NOT a release basis.
 D_OBSERVED = {
     ("GET", "/system/storage-root"): 200,

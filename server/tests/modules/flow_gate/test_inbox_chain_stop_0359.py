@@ -141,7 +141,7 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "has_active_run", lambda _g: False)
     monkeypatch.setattr(svc, "get_active_status", lambda _g: {"run_id": "aiv_1"})
     monkeypatch.setattr(svc, "request_auto_resume", lambda *a, **kw: None)
-    # 0688 T#2: the inbox asks whether the submitting hop left a question of its own open, and
+    # the inbox asks whether the submitting hop left a question of its own open, and
     # a probe that cannot read the questions keeps the document unapproved. This rig has no questions table;
     # its hops ask nothing.
     from modules.flow_gate.services.ai_invoke import finalize
@@ -193,7 +193,7 @@ class TestStopCodeOnEveryBranch:
             "a human must triage."
         )
         assert e["continuation_paused"] is True
-        env.approve.assert_not_called()     # 0226 §5-3 stays: the stray doc is not approved
+        env.approve.assert_not_called()     # stays: the stray doc is not approved
 
     def test_approve_denied(self, env, monkeypatch):
         monkeypatch.setattr(
@@ -250,7 +250,7 @@ class TestStopCodeOnEveryBranch:
         assert svc.is_resumable(code) is resumable
 
     def test_existing_reason_prose_is_not_removed(self, env):
-        # P0006 appendix D: additive only. 0226's assertion reads continuation_reason.
+        # appendix D: additive only. 0226's assertion reads continuation_reason.
         env.completed_seq = None
         e = _chain(doc_type="M")
         assert "did not fill the current workflow head slot" in e["continuation_reason"]
@@ -370,7 +370,7 @@ class TestHumanSignal:
 
     @pytest.mark.parametrize("case", ["handoff", "completed", "review", "paused", "advanced"])
     def test_intended_stops_stay_quiet(self, env, monkeypatch, case):
-        # P0006: notify only for unintended stops. An intended stop that pages a
+        # notify only for unintended stops. An intended stop that pages a
         # human is how the old notification flood came back.
         if case == "handoff":
             monkeypatch.setattr(svc, "has_active_run", lambda _g: True)
@@ -388,7 +388,7 @@ class TestHumanSignal:
         assert env.notifications == []
 
     def test_the_notification_names_the_run_it_stopped(self, env, monkeypatch):
-        # NR0003 §4 found 1,346 continuous tokens with no bridge back to their execution. A
+        # The review found 1,346 continuous tokens with no bridge back to their execution. A
         # notification that cannot name its run is that same dead end in a new place.
         monkeypatch.setattr(svc, "_active_run_for_group",
                             lambda _g: {"run_id": "aiv_20260731_000041"})
@@ -405,7 +405,7 @@ class TestHumanSignal:
         assert env.notifications[0]["run_id"] is None
 
     def test_the_two_speakers_never_overlap(self):
-        # L0007 §2.11: a double notification is impossible by construction, not by a flag.
+        # a double notification is impossible by construction, not by a flag.
         assert not (svc.ENGINE_NOTIFY_STOP_CODES & svc.INBOX_NOTIFY_STOP_CODES)
         assert svc.NOTIFY_STOP_CODES == (
             svc.ENGINE_NOTIFY_STOP_CODES | svc.INBOX_NOTIFY_STOP_CODES
@@ -453,7 +453,7 @@ class TestRunTagging:
         assert e["continuation_stop_code"] == "head_slot_mismatch"
 
     def test_the_inbox_code_loses_to_a_cancel_or_a_deadline(self):
-        # L0007 §4.1: 1~4 outrank the inbox tag. A human cancel or a blown deadline is the
+        # 1~4 outrank the inbox tag. A human cancel or a blown deadline is the
         # truth no matter what the self-chain thought it was doing.
         for end_reason, expected in [("cancelled", "cancelled"), ("timeout", "timeout")]:
             run = {"end_reason": end_reason, "inbox_stop_code": "advance_blocked",

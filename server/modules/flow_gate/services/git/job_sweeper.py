@@ -1,4 +1,4 @@
-"""Unified sweep tick (flowgate.default.0669 unit 5b; 0666 0009-L §1.4, §2.17.2, §2.18, §2.26 steps 6~11).
+"""Unified sweep tick (unit 5b; the earlier implementation,,, steps 6~11).
 
 One daemon thread replaces the old 30-minute merge-sweep loop. Every
 ``SWEEP_TICK_SEC`` it runs, each step guarded so one failure never skips the rest:
@@ -7,7 +7,7 @@ One daemon thread replaces the old 30-minute merge-sweep loop. Every
    instances whose process is gone, become ``dead`` (L 2.8).
 2. step_stale_locks — long locks whose heartbeat lapsed and rows of non-alive owners,
    judged by ``is_stale`` and reclaimed by epoch CAS (L 2.9).
-   step_selfcheck_reaper (0080 T#3) — Self-check runs no worker drives, ended only when
+   step_selfcheck_reaper — Self-check runs no worker drives, ended only when
    their owner is proved dead and their process tree proved empty.
 3. step_expired_leases — running/freezing jobs whose lease lapsed or whose owner is
    not alive: reconcile claim (DB §4(k)), then the Runner's reconcile (L 2.17.3).
@@ -110,13 +110,13 @@ def step_stale_locks(full: bool = False) -> int:
             reclaimed += 1
             runner.notify_released(row["lock_key"], row.get("domain"), row.get("project_id"),
                                    row.get("group_id"), row.get("target_key"))
-            # 0156 T#2 (D3 ⓒ-5): the release listeners too (the Runner's own is woken just above).
+            # (D3 ⓒ-5): the release listeners too (the Runner's own is woken just above).
             locks.notify_reclaimed(row, skip=(runner._on_lock_released,))
     return reclaimed
 
 
 def step_selfcheck_reaper() -> int:
-    """0080 T#3 (NR0007 §5 item 5): end Self-check runs no worker drives, on proof only.
+    """end Self-check runs no worker drives, on proof only.
 
     A run whose owning server is proved dead (four-way, ``tr_self_check_proof``) -- or is this
     server with the run's worker gone -- and whose whole process tree is proved empty is

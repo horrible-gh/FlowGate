@@ -87,7 +87,7 @@ def judge_and_store(ctx, req, flow, holder, restore_log):
         from . import structured_ts_adapter
         text = structured_ts_adapter.build_text(req.structured, current, body)
     else:
-        # flowgate.v02gui.0009: a worker's body may end with its encoding probe line.
+        # a worker's body may end with its encoding probe line.
         probe = common_checks.split_probe(req.content, req.origin)
         text = probe.text
     if len(text) > CONTENT_MAX_CHARS:

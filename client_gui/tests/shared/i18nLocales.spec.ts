@@ -1,5 +1,5 @@
-// (A) Retained — 0394 T0016 / NR0003 §6.3 "Guards for global invariants".
-// flowgate.v02gui.0024: after removing v0.1 (client/), move this check to client_gui as well.
+// (A) Retained — the earlier implementation / the review "Guards for global invariants".
+// after removing v0.1 (client), move this check to client_gui as well.
 // Check matching ko/en/ja keys and placeholders, and wording rules in the shared catalog (src/shared/i18n).
 import en from '@shared/i18n/en'
 import ja from '@shared/i18n/ja'

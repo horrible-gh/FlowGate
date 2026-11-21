@@ -16,8 +16,8 @@ def pending(project_id:str|None=None,group_id:str|None=None,user=Depends(get_cur
  return {"ok":True,"requests":[]}
 @router.get("/active")
 def active(project_id:str|None=None,group_id:str|None=None,user=Depends(get_current_user)):
- # T0012 §13: small read-model connection this UX needs and T#1/T#2 did not expose —
- # db.list_created() already existed for T#2's own use, nothing new is written here.
+ # small read-model connection this UX needs and the earlier implementation/the earlier implementation did not expose —
+ # db.list_created already existed for the earlier implementation's own use, nothing new is written here.
  # group_id-scoped calls refresh staleness live (bounded to one group's rows) so the
  # warning reflects the current worktree, not a value cached at materialize time.
  rows=db.list_created(project_id,group_id)

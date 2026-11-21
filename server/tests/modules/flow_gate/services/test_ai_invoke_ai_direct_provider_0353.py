@@ -1,4 +1,4 @@
-"""flowgate.default.0353 B0001 regression coverage for mode-aware continuation hops."""
+"""regression coverage for mode-aware continuation hops."""
 from __future__ import annotations
 
 import os
@@ -216,7 +216,7 @@ def test_ts_never_folds_to_tsr_for_provider_or_note(run_env, instruction_mode):
 def test_unpinned_doctype_assignment_uses_mode_aware_worker_type_latent_non_b0001_path(
     run_env, monkeypatch, head_type, instruction_mode, expected_type
 ):
-    """Latent no-explicit-pin defect coverage; this is not the direct B0001 UI path."""
+    """Latent no-explicit-pin defect coverage; this is not the direct the regression UI path."""
     run_env["wfseq"].items = [
         {"item_seq": 1, "type": head_type, "result_doc_id": None},
     ]
@@ -328,7 +328,7 @@ def test_provider_override_and_note_resolve_the_same_item_seq(run_env, instructi
     assert (provider, note) == ("provider1", f"note-{item_seq}")
 
 
-# ── (0352 T0004 §2/§3.5) per-item_seq N/T auto-approve selection within ai_direct ─────
+# ── per-item_seq N/T auto-approve selection within ai_direct ─────
 
 def test_ai_direct_selected_item_seq_folds_report_row_for_provider_and_note(run_env):
     # §4 acceptance criteria 2: a selected ai_direct N/T item_seq folds to its paired report row for

@@ -1,21 +1,21 @@
-"""Work plan (WP) domain service — flowgate.default.0395.
+"""Work plan (WP) domain service — the earlier change.
 
 One validator, one writer, two callers. The human API (documents/routers/work_plan.py)
 and the AI inbox branch (api/inbox_routes.py) both come through this module, because
-D0007 §2.2 makes that the whole point of the design: "the validator and the save service are
+makes that the whole point of the design: "the validator and the save service are
 the only channel for both the human and the AI path". Two validators would drift within a release.
 
 Contracts implemented here
-  * P0009 §2   — canonical JSON schema, key order, unknown-field policy
-  * P0009 §1.2 — ``{"code", "message", "errors": [{loc, key, code, msg}]}`` failures
-  * P0009 §4   — create / read / save shapes (the routes only marshal)
-  * P0009 §5   — inbox flavour: same verdicts, inbox's own failure envelope
-  * L0010 §1   — every threshold; this module is the only place they are written
-  * L0010 §2.1 — quantity → step expansion (the definition of the canonical body)
-  * L0010 §2.3 — layered validation; a layer with errors never runs the next one
+  * canonical JSON schema, key order, unknown-field policy
+  * ``{"code", "message", "errors": [{loc, key, code, msg}]}`` failures
+  * create / read / save shapes (the routes only marshal)
+  * inbox flavour: same verdicts, inbox's own failure envelope
+  * every threshold; this module is the only place they are written
+  * quantity → step expansion (the definition of the canonical body)
+  * layered validation; a layer with errors never runs the next one
 
-Deliberately NOT here: apply/preview/fill (P0009 §7) and the applications journal
-(P0009 §8). Those need the workflow sequence and belong to the next task set.
+Deliberately NOT here: apply/preview/fill and the applications journal
+. Those need the workflow sequence and belong to the next task set.
 """
 from __future__ import annotations
 from modules.flow_gate.services import terminal_prompt
@@ -43,12 +43,12 @@ from modules.flow_gate.documents.constants import (
     WORK_PLAN_TYPE_UNITS,
 )
 
-# ── L0010 §1.1 thresholds — single source of truth ───────────────────────────
+# ── the earlier implementation thresholds — single source of truth ───────────────────────────
 WP_VERSION_SUPPORTED = 2
 COUNT_MIN = 0
 COUNT_MAX = 20
 STEPS_MAX = 100
-# 0406 T0022 item 6: documents.constants is the sole source of truth for the one-line note
+# documents.constants is the sole source of truth for the one-line note
 # cap. A separate 200 written here grew into three copies with the sequence's and the screen's.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 PRE_INSTRUCTION_TEXT_MAX_CHARS = 20_000
@@ -58,7 +58,7 @@ ERRORS_REPORTED_MAX = 50
 BINDING_ADVISORY = "advisory"
 LOCKED_REASON_SERVER_ASSEMBLED = "server_assembled"
 
-# 0649 T#1 (NR0003 §5.1 / O0): a card's identity survives renumbering and revisions. A set's
+# a card's identity survives renumbering and revisions. A set's
 # instruction and result share one value; single cards have their own. The ``retired:``
 # prefix is reserved for sequence rows whose card no longer exists (O0 backfill), so a live
 # card can never carry it and can never be matched to such a row.
@@ -73,7 +73,7 @@ OPTIONAL_STEP_FIELDS = frozenset({"card_id", "instruction_mode"})
 from modules.flow_gate.documents.type_code import STEP_KEY_RE as KEY_PATTERN
 from modules.flow_gate.services import work_plan_card_stages as card_stages
 PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
-# L0010 §1.1 note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
+# note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
 # included on purpose — a one-line note never legitimately holds them, and
 # silently replacing them would tell the AI its body was stored verbatim.
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
@@ -147,11 +147,11 @@ LOCKED_REASON_VALUES = (None, LOCKED_REASON_SERVER_ASSEMBLED)
 
 
 def step_contract() -> dict:
-    """The canonical steps[] schema, as data (T0004 §15/§16).
+    """The canonical steps schema, as data.
 
     validate() and the design_template/WP help item must never carry two separately
     typed-out copies of the same field list / enums / pair map — that drift is exactly
-    what NR0003 reported. Both now read this function instead of restating the values.
+    what the review reported. Both now read this function instead of restating the values.
     """
     return {
         "step_fields": list(STEP_FIELD_ORDER),
@@ -199,7 +199,7 @@ class RevisionSnapshotError(RuntimeError):
     """A revision snapshot is missing, unsafe, corrupt, or ambiguous."""
 
 
-# ── Copy (P0009 §1.3: message/msg follow the request locale) ─────────────────
+# ── Copy (message/msg follow the request locale) ─────────────────
 
 _ERROR_COPY: dict[str, dict[str, str]] = {
     "json_parse_failed": {
@@ -302,7 +302,7 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "en": "This step's type/ordinal/pair_key/pair_role do not match its key.",
         "ja": "この段階の type・ordinal・pair_key・pair_role がキーと一致しません。",
     },
-    # 0649 T#1 (NR0003 §5.1): mixed-mode structure rules and card identity.
+    # mixed-mode structure rules and card identity.
     "pair_not_adjacent": {
         "ko": "세트의 지시 단계 바로 다음에는 그 결과 단계가 와야 하며, 결과 단계는 단독으로 둘 수 없습니다.",
         "en": "A set's instruction step must be immediately followed by its result step, and a result step cannot stand alone.",
@@ -368,7 +368,7 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "en": "A locked step must have origin=system.",
         "ja": "ロックされた段階の origin は system でなければなりません。",
     },
-    # 0411 T0004: the code name stays (screens and tests pin this code) but the wording states
+    # the code name stays (screens and tests pin this code) but the wording states
     # the new rule — a candidate, or any provider registered in this project, may be chosen.
     "provider_not_candidate": {
         "ko": "{value} 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.",
@@ -598,7 +598,7 @@ def _error(code: str, loc: str, key: Optional[str] = None, **params) -> dict:
 
 
 def empty_selection_error(field: str) -> dict:
-    """"Nothing was chosen at all" for a create request that skipped the dialog (P0009 §4.3)."""
+    """"Nothing was chosen at all" for a create request that skipped the dialog."""
     return _error("empty_selection", field, what_key=field)
 
 
@@ -636,7 +636,7 @@ def render_errors(errors: list[dict], locale: str) -> list[dict]:
 
 
 def error_response(exc: WorkPlanValidationError, locale: str) -> dict:
-    """P0009 §1.2 body for the human routes."""
+    """body for the human routes."""
     locale = normalize_locale(locale)
     rendered = render_errors(exc.errors, locale)
     payload = {
@@ -650,7 +650,7 @@ def error_response(exc: WorkPlanValidationError, locale: str) -> dict:
 
 
 def inbox_error_message(exc: WorkPlanValidationError, locale: str) -> str:
-    """P0009 §5.3: the same verdicts, flattened into the inbox's one-line envelope."""
+    """the same verdicts, flattened into the inbox's one-line envelope."""
     locale = normalize_locale(locale)
     parts = []
     for index, err in enumerate(render_errors(exc.errors, locale), start=1):
@@ -663,7 +663,7 @@ def inbox_error_message(exc: WorkPlanValidationError, locale: str) -> str:
 
 
 def inbox_not_json_message(raw: str, exc: Optional[Exception], locale: str) -> str:
-    """P0009 §5.2: say where it broke, so an unattended worker can fix it."""
+    """say where it broke, so an unattended worker can fix it."""
     locale = normalize_locale(locale)
     where = ""
     line = getattr(exc, "lineno", None)
@@ -680,7 +680,7 @@ def inbox_not_json_message(raw: str, exc: Optional[Exception], locale: str) -> s
     return template.format(where=(where + " ") if where else "").strip()
 
 
-# ── Type registry (L0010 §2.1 decision 2: order comes from the table) ────────
+# ── Type registry (decision 2: order comes from the table) ────────
 
 def _best_rows_by_code(rows: Iterable[dict]) -> dict[str, dict]:
     """One row per countable code within a single project/global scope.
@@ -708,14 +708,14 @@ def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -
 
     The set of countable codes and their units are facts about the workflow and live
     in documents.constants; the ORDER is read from document_types so that adding a
-    design type does not require editing this file (L0010 §2.1 decision 2).
+    design type does not require editing this file (decision 2).
 
     Ordering rule: sheets before sets; within sheets the design *instruction* (DS)
     leads the design series; within each group, the table's own sort_order decides.
     That reproduces DS · D · P · L · DB · N · T · TS from the current table without
     naming any of them here.
 
-    0429 T0004: project_id is no longer discarded. A project row overrides the global
+    project_id is no longer discarded. A project row overrides the global
     row for the same code (display name, sort_order, active flag) — including turning it
     off: an inactive project override drops the code from the registry rather than
     falling back to the still-active global row. A code that is merely missing or
@@ -805,7 +805,7 @@ def _type_name(
 def annotate_types(rows: list[dict]) -> list[dict]:
     """Add ``unit``/``countable``/``pair_code`` to a document-type list response.
 
-    P0009 §4.1: without this the create dialog would have to hardcode the type codes
+    without this the create dialog would have to hardcode the type codes
     and would need editing every time a type is added. Purely additive — existing
     keys are untouched.
     """
@@ -825,7 +825,7 @@ def annotate_types(rows: list[dict]) -> list[dict]:
         pair = WORK_PLAN_PAIR_MAP.get(code) if countable else None
         if pair:
             item["pair_code"] = pair
-            # P0009 §4.1 / §10: the create dialog shows the pair's name too ("3 sets of work
+            # : the create dialog shows the pair's name too ("3 sets of work
             # instructions, work reports included"). It reuses names from the same response, so
             # the locale matches automatically, and when the pair type is absent from the list no
             # entry is built — better absent than showing a type code dressed up as a name.
@@ -841,9 +841,9 @@ def _order_codes(project_id: Optional[str] = None) -> list[str]:
 
 
 def type_order(counted_types: Iterable[str], project_id: Optional[str] = None) -> list[str]:
-    """L0010 §2.1 type_order: registry order first, then anything else by code.
+    """type_order: registry order first, then anything else by code.
 
-    0429 T0004: a stored plan can carry a code the active registry no longer lists (a
+    a stored plan can carry a code the active registry no longer lists (a
     since-deactivated project override, say). That code still needs a deterministic
     slot so read/save order never wobbles — WORK_PLAN_COUNTABLE_ORDER is the fallback
     rank, the same table list_countable_types falls back to on a DB outage.
@@ -861,7 +861,7 @@ def type_order(counted_types: Iterable[str], project_id: Optional[str] = None) -
     return ordered + remainder
 
 
-# ── Expansion (L0010 §2.1) ───────────────────────────────────────────────────
+# ── Expansion ───────────────────────────────────────────────────
 
 def make_key(type_code: str, ordinal: int) -> str:
     return f"{type_code}#{ordinal}"
@@ -870,7 +870,7 @@ def make_key(type_code: str, ordinal: int) -> str:
 def legacy_card_id(key: str, pair_key: Optional[str], pair_role: Optional[str]) -> str:
     """The card id a body without stored card ids implies: the instruction/single key.
 
-    0649 T#1 (NR0003 §5.1): this value tells cards apart *inside one body* only. It does not
+    this value tells cards apart *inside one body* only. It does not
     claim that the same key in another revision is the same card (§3.8) — linking across
     revisions is O0's continuity check, not this function.
     """
@@ -890,7 +890,7 @@ def make_step(
     key = make_key(type_code, ordinal)
     return {
         "key": key,
-        # 0649 T#1: a freshly expanded body is deterministic — card_id = the card's key.
+        # a freshly expanded body is deterministic — card_id = the card's key.
         "card_id": card_id or legacy_card_id(key, pair_key, pair_role),
         "type": type_code,
         "ordinal": ordinal,
@@ -942,7 +942,7 @@ def initial_body(
     type_providers: Optional[dict[str, str]] = None,
 ) -> dict:
     """Build a creation-time plan. Types absent from ``quantities`` fall back to count 0
-    (flowgate.default.0423 T0005 item 5) — never guessed as 1. Callers that have a
+    — never guessed as 1. Callers that have a
     workflow_type_counts-derived value should merge it into ``quantities`` themselves
     before calling this, so an explicit request value still wins over the derivation.
     """
@@ -1018,7 +1018,7 @@ def empty_recovery_body(project_id: Optional[str] = None) -> dict:
     }
 
 
-# ── Plans created outside the create dialog (0395 T0026 rework) ──────────────
+# ── Plans created outside the create dialog ──────────────
 #
 # The create dialog is not the only way a work-plan document appears. When the workflow head
 # slot is WP, "make an empty document" creates one too, and that path takes only a title and
@@ -1076,7 +1076,7 @@ def _registered_providers(project_id: Optional[str]) -> list[dict]:
 
 
 def _registered_provider_ids(project_id: Optional[str]) -> set[str]:
-    """0411 T0004 (B0001 "each provider should be changeable from the full provider list").
+    """("each provider should be changeable from the full provider list").
 
     What a human may pick by hand is not the provider_candidates frozen into the plan but
     "candidates ∪ providers currently registered in this project". provider_candidates keeps
@@ -1089,7 +1089,7 @@ def _registered_provider_ids(project_id: Optional[str]) -> set[str]:
 
 
 def _assigned_provider(project_id: Optional[str], type_code: str) -> Optional[str]:
-    """The provider the per-doc-type assignment table (0317 D0004) sets for this type, or None."""
+    """The provider the per-doc-type assignment table sets for this type, or None."""
     if not project_id:
         return None
     try:
@@ -1163,7 +1163,7 @@ def is_unwritten_plan(raw: Optional[str]) -> bool:
     return rest[closing + 4:].strip() == ""
 
 
-# ── Validation (L0010 §2.3) ──────────────────────────────────────────────────
+# ── Validation ──────────────────────────────────────────────────
 
 def review_count_choices() -> tuple[int, ...]:
     """Current selectable review counts, in the UI/API display order."""
@@ -1315,7 +1315,7 @@ def _check_defaults(
     errors = _unknown_fields(defaults, DEFAULTS_FIELD_ORDER, "defaults")
     provider_id = defaults.get("provider_id")
     if provider_id is not None:
-        # 0411 T0004: a candidate, or any currently registered provider, is enough (NR0003 §6 option B).
+        # a candidate, or any currently registered provider, is enough (option B).
         allowed_ids = _candidate_ids(candidates) | (registered_ids or set())
         if not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id):
             errors.append(_error("provider_id_format_invalid", "defaults.provider_id",
@@ -1329,7 +1329,7 @@ def _check_defaults(
 
 
 def card_id_is_valid(value: Any) -> bool:
-    """Format rule for a live card id (NR0003 §5.1): non-empty, bounded, not reserved."""
+    """Format rule for a live card id: non-empty, bounded, not reserved."""
     return (
         isinstance(value, str)
         and len(value) <= CARD_ID_MAX_CHARS
@@ -1389,7 +1389,7 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
         errors.append(_error("type_invalid", f"{loc}.provider_display_name", key,
                              field=f"{loc}.provider_display_name"))
     elif provider_id is None and display is not None:
-        # T0004 §12/§26.8: provider-unspecified is the pair (provider_id=null,
+        # provider-unspecified is the pair (provider_id=null,
         # provider_display_name=null) — never id=null with a leftover display name.
         errors.append(_error("provider_display_name_without_provider_id",
                              f"{loc}.provider_display_name", key))
@@ -1436,7 +1436,7 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
 
 
 def _structure_errors(steps: list[dict], expected_by_key: dict[str, dict]) -> list[dict]:
-    """Layer 6 structure rules for a mixed-order body (NR0003 §5.1 rules 2-3 and card ids).
+    """Layer 6 structure rules for a mixed-order body (rules 2-3 and card ids).
 
     Roles are read from the expected step of the same key, not from the submitted step, so
     a step that lies about its own pair_role is reported once — by layer 7 as
@@ -1489,14 +1489,14 @@ def validate(
     enforce_provider_scope: bool = True,
     allow_pre_instruction_attachments: bool = True,
 ) -> dict:
-    """Run every layer of L0010 §2.3 and return the canonical body.
+    """Run every layer of the earlier implementation and return the canonical body.
 
     Raises WorkPlanValidationError carrying all errors of the first failing layer.
-    Layers are not merged on purpose (L0010 §2.3 decision 5): reporting "the count is out
+    Layers are not merged on purpose (decision 5): reporting "the count is out
     of range" together with "the steps do not match the counts" would show two places
     to fix where there is only one.
 
-    0411 T0004: enforce_provider_scope=False is used only when reading a plan *already on
+    enforce_provider_scope=False is used only when reading a plan *already on
     disk* (load_body). A plan that passed validation when written must not become entirely
     unopenable just because a provider was later deleted from the project — the editor already
     handles a vanished provider as a greyed name (unavailable_provider). Format checks still run.
@@ -1575,7 +1575,7 @@ def validate(
         fail(errors)
 
     # ── layer 4: providers ──────────────────────────────────────────────────
-    # 0411 T0004: the registered list is read once per validation. The candidate list itself is
+    # the registered list is read once per validation. The candidate list itself is
     # not widened here — candidates are "the AI-delegation range", the registered list is "what a human may pick".
     registered_providers = (
         _registered_providers(project_id) if enforce_provider_scope else []
@@ -1604,7 +1604,7 @@ def validate(
         if key in seen_keys:
             errors.append(_error("duplicate_key", f"steps[{index}].key", key, value=key))
         seen_keys.add(key)
-    # 0649 T#1 (NR0003 §5.1): a body with no card_id anywhere is a legacy body — fill
+    # a body with no card_id anywhere is a legacy body — fill
     # card_id = key in memory. A body where only some steps carry one is not a legacy body
     # and not a complete one either; the save path assigns ids before this runs
     # (assign_card_ids), so a partial body here is refused rather than guessed at.
@@ -1630,7 +1630,7 @@ def validate(
         fail(errors)
 
     # ── layer 6: do the steps match the counts and the card structure ──────
-    # 0649 T#1 (NR0003 §5.1, mixed mode): the array order IS the plan order, so the steps
+    # (mixed mode): the array order IS the plan order, so the steps
     # are no longer compared with expand_steps() position by position. What is fixed is the
     # set of keys a quantity box expands to, and two structural invariants:
     #   (a) an instruction is immediately followed by its result, and a result never stands
@@ -1651,7 +1651,7 @@ def validate(
         fail(errors)
 
     # ── layer 7: what the values mean ───────────────────────────────────────
-    # 0411 T0004 (B0001): an unlocked step's provider need only be a candidate or currently registered.
+    # an unlocked step's provider need only be a candidate or currently registered.
     selectable_ids = _candidate_ids(body["provider_candidates"]) | registered_ids
     reviewer_names = {
         str(provider["id"]): provider.get("name")
@@ -1744,7 +1744,7 @@ def validate(
     return canonicalize(body)
 
 
-# ── Canonical form (P0009 §2.6 decisions 3 and 4) ────────────────────────────
+# ── Canonical form (decisions 3 and 4) ────────────────────────────
 
 def _canonical_step_value(step: dict, field: str) -> Any:
     value = step.get(field)
@@ -1835,7 +1835,7 @@ def canonical_path_for_doc(doc: dict):
 def plan_path_for_doc(doc: dict):
     """Path of the canonical JSON file one work-plan document reads and writes.
 
-    0403 NR0004 F3: if the place that reads a plan (the document route) and the place that
+    if the place that reads a plan (the document route) and the place that
     records applications (the sequence save) each computed the path, they would eventually point at different files. It is computed here only.
     """
     from modules.flow_gate.storage import paths as storage_paths
@@ -1854,7 +1854,7 @@ def plan_path_for_doc(doc: dict):
     return canonical_path_for_doc(doc)
 
 
-# ── Reading a stored plan (P0009 §4.4 / §4.5) ────────────────────────────────
+# ── Reading a stored plan ────────────────────────────────
 
 def load_body(
     path,
@@ -1863,7 +1863,7 @@ def load_body(
 ) -> dict:
     """Read + validate a canonical file. Raises WorkPlanUnreadable, never a 500.
 
-    0429 T0004: project_id now reaches validate() so a project's own countable-type
+    project_id now reaches validate so a project's own countable-type
     registry (order, overrides) decides layer 6/7, not just the global one — every
     caller of this function passes the document's own project_id.
     """
@@ -1883,7 +1883,7 @@ def load_body(
             "wp_version_unsupported", f"wp_version={version}", raw=raw
         )
     try:
-        # 0411 T0004: reads do not re-ask about provider scope. The save already did, and if a
+        # reads do not re-ask about provider scope. The save already did, and if a
         # deleted provider blocked the plan from opening, the "vanished provider" marker could never be seen.
         return validate(
             parsed,
@@ -1901,7 +1901,7 @@ def load_body(
 def load_previous_body(doc: Optional[dict]) -> Optional[dict]:
     """The body a save is about to replace, or None when there is nothing readable.
 
-    0649 T#1 (NR0003 §5.1): the card-id save checks compare against this. A missing or
+    the card-id save checks compare against this. A missing or
     unreadable file has no cards to protect, so the checks fall back to creation rules.
     """
     if not doc:
@@ -1937,7 +1937,7 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
 def new_card_id(taken: Iterable[str] = ()) -> str:
-    """A server-assigned card id that was never used before (NR0003 §5.1).
+    """A server-assigned card id that was never used before.
 
     ``c_`` + 12 base36 digits of randomness: never the ``<TYPE>#<n>`` shape a legacy id has,
     and never the reserved ``retired:`` prefix, so a re-added card can never collide with a
@@ -1986,7 +1986,7 @@ def assign_card_ids(
     project_id: Optional[str] = None,
     action: str = "save",
 ) -> Any:
-    """Apply the card-id save contract against the body being replaced (NR0003 §5.1).
+    """Apply the card-id save contract against the body being replaced.
 
     validate() only sees one body, so the rules that need the previous one live here and
     run before it, on every save path (PUT work-plan, inbox WP new/edit):
@@ -1997,7 +1997,7 @@ def assign_card_ids(
     * a step without ``card_id`` is a new card only if its key is new; the server gives it a
       fresh id. A step whose key existed but which lost its id is refused
       (``card_id_missing``) — after renumbering, the old key may belong to another card.
-      0649 T#3: the one exception is a key reused by renumbering while every previous card
+      the one exception is a key reused by renumbering while every previous card
       of that card type is still sent with its id — then no previous card can be the one
       that lost its id, so the step is a new card (the editor moved a new card ahead of an
       existing one of the same type);
@@ -2083,7 +2083,7 @@ def assign_card_ids(
 
     def _lost_previous_id(step: dict) -> bool:
         # A reused key is a lost id unless every previous card of this card type is accounted
-        # for by id in the sent body (0649 T#3 — a new card renumbered onto an old key).
+        # for by id in the sent body (a new card renumbered onto an old key).
         if step.get("key") not in prev_keys:
             return False
         return not prev_ids_by_type.get(card_type_of_step(step), set()) <= sent_ids
@@ -2257,7 +2257,7 @@ def ensure_revision_snapshot(
         raise
 
 
-# ── Derived views (P0009 §4.4: computed on read, never stored) ───────────────
+# ── Derived views (computed on read, never stored) ───────────────
 
 INSTRUCTION_MODE_PAIR_TYPES = ("N", "T")
 INSTRUCTION_MODE_DESIGN_TYPES = ("D", "P", "L", "DB")
@@ -2284,7 +2284,7 @@ def _carries_instruction_mode(step: Any) -> bool:
 def instruction_mode_changes(previous: Optional[dict], plan: dict) -> list[tuple[int, dict]]:
     """``(index, step)`` of the plan's steps carrying an instruction choice (N/T instruction, D/P/L/DB design)
     whose card had another instruction choice in ``previous`` (the body the save replaces; no field counts as
-    ``use``). A card the previous body did not have is new and has no run, so it is never listed (T0017: a started
+    ``use``). A card the previous body did not have is new and has no run, so it is never listed (the earlier implementation: a started
     card's choice is locked on save)."""
     before = {
         step["card_id"]: step.get("instruction_mode") or "use"
@@ -2304,7 +2304,7 @@ def instruction_mode_defaults(previous: Optional[dict], plan: dict) -> dict:
     No field reads as ``use`` wherever a plan is shown or counted, but the deploy leaves a card's setting alone on no
     field (a legacy plan never chose). Once a plan has chosen for a card, a body that drops the field (a JSON import,
     an AI edit, an older revision restored) withdraws that choice: it is stored as ``use``, so the read, the counts
-    and the deploy agree (T0017 rework). The field is the step's last canonical field, before its ``x_`` fields."""
+    and the deploy agree. The field is the step's last canonical field, before its ``x_`` fields."""
     if (previous or {}).get("card_stage_model") == card_stages.MODEL:
         plan = card_stages.upgrade(plan)
     chosen = {
@@ -2374,7 +2374,7 @@ def unassigned_step_count(body: dict) -> int:
 def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
     """Per-provider step counts, named with the CURRENT display name when known.
 
-    0411 T0004: a non-candidate (merely registered) provider can now be assigned to a step.
+    a non-candidate (merely registered) provider can now be assigned to a step.
     Name resolution runs registered list → candidate snapshot → id, so such a provider is
     counted under its current name rather than a raw id — this function has always counted steps, not the candidate list.
     """
@@ -2419,9 +2419,9 @@ def _used_provider_ids(body: dict) -> list[str]:
 
 
 def provider_status(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
-    """P0009 §4.4: is each candidate still registered, and did its name change.
+    """is each candidate still registered, and did its name change.
 
-    0411 T0004 (B0001): a step provider may now sit outside the candidates — merely registered
+    a step provider may now sit outside the candidates — merely registered
     in this project. The editor asks this list whether a provider "is still registered", so an
     id the body actually uses gets a row even when it is not a candidate. Without that, a
     perfectly registered provider gets labelled "unavailable provider". A non-candidate row has
@@ -2477,7 +2477,7 @@ def snapshot_candidates(provider_ids: list[str], providers: list[dict]) -> list[
     return snapshots
 
 
-# ── Change summary (P0009 §5.1 decision 10 / §5.4 decision 11) ───────────────
+# ── Change summary (decision 10 / decision 11) ───────────────
 
 _QUANTITY_SET_TEMPLATES = {
     "ko": "{code} {count}세트",
@@ -2513,7 +2513,7 @@ def change_summary(after: dict, before: Optional[dict] = None, locale: str = "ko
     whether it overwrote someone else's values.
     """
     steps = after.get("steps") or []
-    # Both examples in P0009 §5.1 and §5.4 satisfy assigned_steps + unassigned_steps == steps.
+    # Both examples in the plan and satisfy assigned_steps + unassigned_steps == steps.
     # "Unassigned" counts only cells a human has not chosen yet (a locked TSR cannot be chosen,
     # so it is not unassigned), and "assigned" is the remainder. Putting locked cells in
     # neither would make the two sum to less than the step count, leaving an unmanned worker
@@ -2557,13 +2557,13 @@ def change_summary(after: dict, before: Optional[dict] = None, locale: str = "ko
     return summary
 
 
-# ── Template served to AI workers (P0009 §6) ─────────────────────────────────
+# ── Template served to AI workers ─────────────────────────────────
 
 def template_body(project_id: Optional[str] = None) -> str:
     """A minimal valid body with the project's real provider candidates.
 
     All countable types render at count 0 here — this is a JSON *format* example, not a
-    recommended quantity (flowgate.default.0423 T0005 item 4). The worker still has to
+    recommended quantity. The worker still has to
     derive real counts from evidence per TEMPLATE_RULES; do not copy these zeros either.
     """
     providers = [
@@ -2577,7 +2577,7 @@ def template_body(project_id: Optional[str] = None) -> str:
 
 def canonical_step_examples() -> dict[str, dict]:
     """Filled steps[] field-value examples for the design_template/WP help child
-    (flowgate.default.0488 T0005). Every value comes from make_step() itself — never
+. Every value comes from make_step itself — never
     hand-authored JSON — so this cannot drift from what expand_steps() actually produces;
     see the drift-guard assertions in test_work_plan_0395.py.
     """
@@ -2592,11 +2592,11 @@ def canonical_step_examples() -> dict[str, dict]:
 def contract_example(project_id: Optional[str] = None) -> dict:
     """A worked WP body -- T x2, TS x2, D x1 -- built with expand_steps()/canonicalize().
 
-    0649 T#1 (NR0003 §5.1): the cards are laid out in a mixed order (T#1, D#1, TS#1, T#2,
+    the cards are laid out in a mixed order (the earlier implementation, the earlier implementation, TS#1, the earlier implementation,
     TS#2) so the example itself shows that the array order is the plan order, that a set
     stays adjacent, and that every step carries its card_id.
 
-    T0004 §13/§20: the help item must show a canonical example that actually passes
+    the help item must show a canonical example that actually passes
     validate() unchanged, so it is built from the very functions validate() itself
     calls instead of a second hand-written JSON blob that could silently drift from
     them. Every non-locked step keeps provider_id/provider_display_name at null (the
@@ -2710,7 +2710,7 @@ TEMPLATE_HEADING = {
 
 
 def _contract_rule_lines(locale: str) -> list[str]:
-    """Rules generated FROM step_contract()'s data, not retyped (T0004 §15/§17).
+    """Rules generated FROM step_contract's data, not retyped.
 
     A hand-written sentence naming '11 fields' would itself rot the moment a twelfth
     field were added. Building the sentence from STEP_FIELD_ORDER/PAIR_ROLES/ORIGINS/
@@ -2835,7 +2835,7 @@ def request_work_plan_fill(
     }
 
 
-# 0492 T0014: server-authoritative T/TR assignment gate.  The caller supplies only
+# server-authoritative T/TR assignment gate. The caller supplies only
 # acknowledgement keys; provider capabilities always come from effective settings.
 def capability_warning_findings(body: dict, project_id: str) -> list[dict]:
     from modules.flow_gate.settings import ai_settings_service
@@ -2859,7 +2859,7 @@ def capability_warning_findings(body: dict, project_id: str) -> list[dict]:
     seen: set[tuple] = set()
     for finding in raw:
         pair = finding.get("pair_key")
-        # pair_key points at the *sibling's* key, so T#1 and TR#1 disagree on it; a
+        # pair_key points at the *sibling's* key, so the earlier implementation and TR#1 disagree on it; a
         # symmetric identity is needed or the two sides of one pair never collide.
         pair_identity = frozenset((finding["step_key"], pair)) if pair else None
         signature = (pair_identity, finding["provider_id"], tuple(finding["missing_capabilities"]))

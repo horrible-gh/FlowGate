@@ -1,17 +1,17 @@
 """Contract-2 execution orchestration on the existing test-run worker.
 
-0684 T#1 (D#1 §3-1~§3-4): a run is admitted without asking whether a stored Basis still
+a run is admitted without asking whether a stored Basis still
 matches the source -- by TS approval (inside the approval transaction), by [run again] or
 by a single Case.
 
-0684 T#2 (D#1 §3-3): the run measures what it executes. Its preparing phase copies the
+the run measures what it executes. Its preparing phase copies the
 Group worktree into a disposable run root while fingerprinting the copied bytes (one read,
 under the Group's source lock), and that Basis is kept on the run -- no Source Bundle, no
 Basis on the TS. Cases execute in the copy through the shared process layer
 (tr_self_check_executor). Finalizing records the result under the executed Basis and
 measures the live source once to decide whether the result counts for it.
 
-0094 B0001, B0005: a Case runs its own ``run_command`` (any language, any framework) under
+a Case runs its own ``run_command`` (any language, any framework) under
 the TR Self-check command policy; the exit code is its verdict, a JUnit XML report it writes
 to ``{junit}`` adds the per-test detail. A ``.py`` target saved without a command keeps the
 pytest invocation it always had.
@@ -40,7 +40,7 @@ RUN_KIND = "spec_execution"
 ADMISSION_APPROVAL = "approval"
 ADMISSION_REQUEST = "request"
 
-# Run phases (D#1 §3-3), kept in result_meta.phase; "queued" is a running row not yet picked.
+# Run phases, kept in result_meta.phase; "queued" is a running row not yet picked.
 PHASE_QUEUED = "queued"
 PHASE_PREPARING = "preparing"
 PHASE_EXECUTING = "executing"
@@ -75,7 +75,7 @@ def _select(all_cases: list[dict], case_id: str | None, doc_id: str) -> list[dic
 
 
 def check_automation_assets(doc: dict, selected: list[dict]) -> None:
-    """Approval's light asset check (D#1 §3-1 step 4): exists and is safe, nothing hashed.
+    """Approval's light asset check (step 4): exists and is safe, nothing hashed.
 
     Raises ``ValueError("<code>: <case_id>: <path>")`` for the first Case whose test file
     is missing or unsafe in the Group worktree.
@@ -137,7 +137,7 @@ def merge_run_meta(run_id: str, **updates) -> dict:
 
 def admit_on_approval(doc: dict, parsed: dict, selected: list[dict], *, runner_id: str,
                       locale: str) -> dict:
-    """Queue the approved TS's automated Cases and open its report (D#1 §3-1 step 5).
+    """Queue the approved TS's automated Cases and open its report (step 5).
 
     Called inside the approval's DB transaction and admission lock, after the TS row was
     updated: a failure here rolls the approval back with it, so there is never an approved
@@ -157,7 +157,7 @@ ANY_RUN = object()
 def attach_chain(doc: dict, chain_context: dict, *, run_id=ANY_RUN) -> dict | None:
     """Hand an unmanned chain to the server run its TS approval already started.
 
-    0684 T#1: the chain reaches the TSR head after the approval queued a run. Instead of
+    the chain reaches the TSR head after the approval queued a run. Instead of
     refusing ``run_in_progress`` the chain rides that run (its context goes into the run's
     meta, so the recorded result carries it). A run that already PASSed the gate for this
     revision is attached as ``finished``. Anything else is not attachable: a new run starts.
@@ -193,7 +193,7 @@ _attach_chain = attach_chain
 
 
 def _stop_chain_without_result(doc: dict, run_id: str) -> None:
-    """A run that ended without recording a result still answers its chain (D#1 §3-9).
+    """A run that ended without recording a result still answers its chain.
 
     A prepare refusal or an execution error records no result, so the result path never
     reaches the test gate. A chain riding this run would wait forever: tell the human why it
@@ -212,7 +212,7 @@ def _stop_chain_without_result(doc: dict, run_id: str) -> None:
 
 def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
           triggered_via: str = "ui", chain_context: dict | None = None) -> dict:
-    """[Run again] / Case run / chain hand-off (D#1 §3-2).
+    """[Run again] / Case run / chain hand-off.
 
     The stored Basis is not asked: the run measures the source when it prepares. The
     remaining conditions are the existing ones -- valid TS, report not approved, no run
@@ -294,7 +294,7 @@ class ExecutionRootResolver:
 # Prepare refusals end the run under their own error, no Case started: the run could
 # not copy and measure its source (source busy or changed mid-copy, a limit, an automated
 # test file missing or not an asset) or the TS changed while queued. None of them is a
-# FAIL (D#1 §3-3 step 6).
+# FAIL (step 6).
 _PREPARE_REFUSALS = {"test_asset_not_captured", "basis_capture_failed",
                      "automation_asset_missing", "product_source_or_invalid_test_asset",
                      "test_asset_path_case_mismatch", "ts_changed_before_execution",
@@ -338,7 +338,7 @@ class ExistingRunnerAdapter:
         from modules.flow_gate.services import test_run_service as runner
         from modules.flow_gate.services import tr_self_check_executor as executor
         junit_path = scratch / ("junit_" + str(abs(hash(nodeid))) + ".xml")
-        # Server secrets filtered out, project variables kept (v02.0089 T0004). This one env
+        # Server secrets filtered out, project variables kept (v02.0089 the earlier implementation). This one env
         # is every sink executor.spawn feeds: the Windows child, the POSIX supervisor and
         # the supervisor->child JSON.
         env = process_runner.child_env(runner._execution_env(runner._allocate_port(), scratch),
@@ -485,7 +485,7 @@ def _enter_phase(doc: dict, run: dict, phase: str) -> None:
 
 
 def _record_basis(doc: dict, run: dict, basis: dict) -> dict:
-    """Keep the run's Basis on the run (D#1 §3-3 step 4) and leave an audit event."""
+    """Keep the run's Basis on the run (step 4) and leave an audit event."""
     from modules.flow_gate.db import events as db_events
     binding = basis.get("binding") or {}
     execution_root = {"kind": "disposable_copy", "basis_id": basis["basis_id"],
@@ -572,11 +572,11 @@ def execute(run: dict) -> None:
                                                identity=executed_identity,
                                                selected_ids=selected_ids, results=results)
             if node_results:
-                # D#1 §3-4: the Case result is kept and shown before the remaining Cases run.
+                # the Case result is kept and shown before the remaining Cases run.
                 reported_ids.extend(item["case_id"] for item in node_results)
                 merge_run_meta(run_id, reported_case_ids=reported_ids)
                 runner.record_execution_progress(doc, run_id, node_results)
-            # D#1 §3-3: one Case-finished event per Case as its result arrives.
+            # one Case-finished event per Case as its result arrives.
             for index, item in enumerate(node_results, start=len(reported_ids) - len(node_results) + 1):
                 runner._emit_case_finished(doc, run, {
                     "case_no": item["case_id"],
@@ -584,7 +584,7 @@ def execute(run: dict) -> None:
                     "result": item.get("status"), "exit_code": exit_code,
                 }, index, len(selected_ids))
         _enter_phase(doc, run, PHASE_FINALIZING)
-        # D#1 §3-3 finalizing step 3: measure the live source once, before any lock. The
+        # finalizing step 3: measure the live source once, before any lock. The
         # result is recorded under the executed Basis either way; this decides its gate.
         live = None
         if results and not active.cancel_event.is_set():

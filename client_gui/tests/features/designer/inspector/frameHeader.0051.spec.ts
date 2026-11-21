@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0051 stage 2 — the Frame's two new header places and the header's v7 line: a registration
+ * stage 2 — the Frame's two new header places and the header's v7 line: a registration
  * may contribute the kind badge (`headerKind`, replacing the static one) and ⋯ menu items (`headerMenu`,
  * after ID 복사); the three state texts sit in one pill group; a B root takes the bug look. Last, the real
  * registry on Nodes without a document: a Graph gate and a Graph R Node no longer show the header only.
@@ -123,7 +123,7 @@ describe('the Frame lays out the kind badge and the ⋯ menu items', () => {
 describe('the header line (flowgate.v02.0051 stage 2)', () => {
   const none = fixtureRegistry([])
 
-  // flowgate.v02.0052 batch A: one label (the Canvas state) in its tone; server states that say the same
+  // batch A: one label (the Canvas state) in its tone; server states that say the same
   // are not repeated; the raw values stay in hidden spans and the tooltip.
   it('the states sit in one pill that takes the Canvas state tone and says each thing once', () => {
     const w = mountFrame(SELECTIONS.graph, none)
@@ -165,8 +165,8 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A'])
-    // flowgate.v02.0056 F2-1: the card approval bar is a part of a Graph Flow's documents tab; a gate draws none.
-    // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
+    // the card approval bar is a part of a Graph Flow's documents tab; a gate draws none.
+    // the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['gateCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     expect(get(w, 'gate-result').text()).toContain('확인 결과')
@@ -180,8 +180,8 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A'])
-    // flowgate.v02.0056 F2-1: the card approval bar draws nothing on a card without a run.
-    // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
+    // the card approval bar draws nothing on a card without a run.
+    // the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['requirementCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     // flowgate.v02.0053 T#5: a line without a document is a hollow dot saying so — no "아직 없음" text.
@@ -198,7 +198,7 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A'])
-    // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
+    // the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['researchCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     const items = await openMenu(w)
@@ -215,7 +215,7 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'inspector-gate-card').find('[data-test="gate-result"] strong').text()).toBe('확인 결과')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
-    // flowgate.v02.0053 T#6: no "no linked document" sentence on Q&A.
+    // no "no linked document" sentence on Q&A.
     expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
     // flowgate.v02.0053 T#7: a Graph gate has the v7 확인 settings (purpose · Git apply), not an empty state.
     await clickTab(w, '설정')
@@ -251,7 +251,7 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     closeAllDocumentWindows()
   })
 
-  // flowgate.v02.0053 T#7: a Graph card has its own settings (T#2) — the v7 form, not "not supported yet".
+  // a Graph card has its own settings — the v7 form, not "not supported yet".
   it('shows the settings form on a Graph research card', async () => {
     const node = {
       ...UNASSIGNED_REQ_NODE,
@@ -269,8 +269,8 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(w.text()).not.toContain('아직 지원하지 않습니다')
   })
 
-  // flowgate.v02.0053 T#7 (0053 CH: no sentence on an empty screen): a Node with no settings (a document Node of
-  // an undecided Flow outside any card or sequence) has an empty settings area — the 0052 T#2 reason is gone.
+  // (CH: no sentence on an empty screen): a Node with no settings (a document Node of
+  // an undecided Flow outside any card or sequence) has an empty settings area — the the earlier implementation reason is gone.
   it('keeps the settings tab of a Node without settings empty, without a reason line', async () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'doc_n', kind: 'research', docType: 'N', document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'unassigned', nodes: [node] }, node.id))

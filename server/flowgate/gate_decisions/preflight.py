@@ -1,4 +1,4 @@
-"""The checks of a confirm before anything is accepted (flowgate.v02.0085 T#2, D0007 §7.1 / §7.3.1).
+"""The checks of a confirm before anything is accepted.
 
 A confirm fixes the gate card's settings as they are (the settings snapshot and version) and what they ask for:
 
@@ -13,7 +13,7 @@ A confirm fixes the gate card's settings as they are (the settings snapshot and 
   never a branch guessed from ``origin``; a work base that is missing or is the group's own branch is refused.
   The target branch's name and its SHA of the moment are recorded; commit records the group branch and its HEAD.
 
-The group result itself (the frozen SHA) is taken later by the job under the group's Git lock (D0007 §7.3), not here:
+The group result itself (the frozen SHA) is taken later by the job under the group's Git lock, not here:
 these checks only read local refs and the remote's presence - no lock, no network.
 """
 from __future__ import annotations

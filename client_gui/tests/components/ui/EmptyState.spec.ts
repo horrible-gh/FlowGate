@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
-// T0008 §7/§14: title/description, icon/action slots, compact density, no domain wording
+// title/description, icon/action slots, compact density, no domain wording
 // of its own -- everything shown comes from the caller.
 describe('components/ui/EmptyState (T0008)', () => {
   it('renders the caller-supplied title', () => {

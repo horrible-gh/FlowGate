@@ -1,6 +1,6 @@
 """Group worktree creation, synchronization, and disposal lifecycle.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def ensure_worktree(
     """Create/guarantee the group's branch + worktree. Idempotent; never raises.
 
     Returns 'skipped' | 'ok' | 'failed'. A failure only emits git_worktree_failed —
-    the workflow itself proceeds on the fallback source path (P0005 §4-2).
+    the workflow itself proceeds on the fallback source path.
     """
     from modules.flow_gate.services import git_service as _gs
     _note_worktree_failure(None)
@@ -136,7 +136,7 @@ def ensure_worktree(
             _note_worktree_failure("branch_merge_claim_active")
             return "failed"
 
-        # 0669 unit 7b: the plain path is a worktree_provision job (G/R/M) run once in
+        # unit 7b: the plain path is a worktree_provision job (G/R/M) run once in
         # this request; unit 7d adds a terminal reopen's start_point. A project whose
         # base checkout is not established yet keeps the old mutex path below.
         routed = _provision_by_job(cfg, project_id, project_name, group_id, branch, trigger,
@@ -144,7 +144,7 @@ def ensure_worktree(
         if routed is not None:
             return routed
 
-        # 0669 unit 9b: no base checkout yet. Provision it first (B/R, ``provision_base``),
+        # unit 9b: no base checkout yet. Provision it first (B/R, ``provision_base``),
         # then take the same job path; the old mutex path is no longer reached from here.
         provision = _gs.provision_base(project_id, trigger)
         if provision["status"] == "failed":
@@ -229,7 +229,7 @@ def _ensure_worktree_locked(
     secret = _gs._load_secret_for(cfg) or ""
 
     # Base checkout: clone (empty slot) or lossless adopt (occupied slot) —
-    # 0161 replaces the old clone-only path that died with E7 base_path_occupied.
+    # replaces the old clone-only path that died with E7 base_path_occupied.
     provision = _gs._provision_base_locked(cfg, project_id, project_name, trigger)
     if provision["status"] == "failed":
         _gs._fail_worktree(project_id, group_id, branch, provision["reason"] or "git_error")
@@ -242,7 +242,7 @@ def _ensure_worktree_locked(
         and state.get("worktree_registered")
         and state.get("branch") == branch
         and wt_path.is_dir()
-        # 0287 NR0004 §5.1: `is_dir()` alone declared a half-deleted corpse "ready"
+        # `is_dir()` alone declared a half-deleted corpse "ready"
         # and returned ok — no re-provisioning, and a git_worktree_ready event for
         # a tree that no longer holds the source.
         and _gs._worktree_link_ok(wt_path)
@@ -265,9 +265,9 @@ def _ensure_worktree_locked(
         return "failed"
 
     try:
-        # flowgate.default.0361 NR0003 §5.2/§8.1: without this, a new group worktree
+        # without this, a new group worktree
         # created straight after a repo_url change (no manual fetch in between)
-        # fetches the OLD remote — B0001 §4's "a new group worktree may be created
+        # fetches the OLD remote — the regression's "a new group worktree may be created
         # from an outdated base" scenario.
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
     except GitServiceError as exc:
@@ -308,13 +308,13 @@ def _ensure_worktree_locked(
                 cwd=base_root,
             )
         else:
-            # T0007 §4 condition 1 — re-provisioning from bare C1 would silently
+            # condition 1 — re-provisioning from bare C1 would silently
             # drop any base commit made after C1 was merged (base B1 = B0+C1 may
             # already have moved on to B2). C1 is an ancestor of the current base
             # tip whenever the merge that terminalized it actually landed, so fork
             # from that tip instead — C1's content stays in history either way.
             # If the tip does NOT contain C1, this base/history relationship
-            # cannot be trusted; fail closed rather than guess (T0007 §11).
+            # cannot be trusted; fail closed rather than guess.
             base_tip = _worktree_start_point(base_root, work_base_ref)
             contains_c1 = _gs._run_git(
                 ["merge-base", "--is-ancestor", start_point, base_tip], cwd=base_root,
@@ -332,7 +332,7 @@ def _ensure_worktree_locked(
             cwd=base_root,
         )
     else:
-        # flowgate.default.0665 T0004: resolve the start point to ONE commit and fork
+        # resolve the start point to ONE commit and fork
         # from that exact SHA, so the recorded floor is the real fork even if the
         # work-base ref moves between the two git calls.
         fork_ref = _worktree_start_point(base_root, work_base_ref)
@@ -373,7 +373,7 @@ def _worktree_start_point(base_root: Path, base_branch: str) -> str:
     NOT push (its commit rides along on the next finalize's base push), so a
     locally committed file stayed absent from every worktree created afterwards —
     i.e. "commit it and the agent can see it" was still false even *after* 0296
-    T0004 gave the operator a way to commit untracked files. The whole fix would
+    gave the operator a way to commit untracked files. The whole fix would
     have stopped one step short.
 
     So: prefer the LOCAL base branch whenever it already contains everything
@@ -398,7 +398,7 @@ def _record_floor_safe(
     kind: str, source_ref: Optional[str] = None, terminal_commit: Optional[str] = None,
     head: Optional[str] = None,
 ) -> None:
-    """Record the group's fork commit (0665 T0004).  A failure never breaks
+    """Record the group's fork commit. A failure never breaks
     provisioning: the group simply has no usable floor, which every scope read
     reports as ``group_work_base_unverified`` instead of guessing one."""
     from . import scope_base
@@ -456,7 +456,7 @@ def _emit_worktree_ready(
         "worktree_path": rel,
         "created": created,
     }
-    # 0296 T0004 (NR0003 R3): `worktree add` checks out a COMMIT, so whatever is
+    # `worktree add` checks out a COMMIT, so whatever is
     # sitting uncommitted in the base checkout does not exist in the tree the
     # workers read (NR §C1). That isolation is correct and stays — but the
     # operator learns about it, today, only by watching an agent claim a file is
@@ -521,14 +521,14 @@ def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
 
 def _has_legacy_source_history(group_id: str) -> bool:
     """Trustworthy evidence this group already did real source work before this
-    marker existed (T0004 SS16-19/SS24-25: a false-positive SKIP is preferable to
+    marker existed (the earlier implementation SS16-19/SS24-25: a false-positive SKIP is preferable to
     destroying prior work). A tr_commit_ledger row -- live OR canceled -- proves a
     TR actually committed source under this group at some point; canceled still
     counts because the commit genuinely happened (FlowGate never erases
-    history -- a cancel only records a revert on top of it, D0005).
+    history -- a cancel only records a revert on top of it, the design).
 
     A lookup failure is itself ambiguous evidence and is read the same way
-    (T0004 SS19: safety first, never destructively reset on an unclear signal).
+    (SS19: safety first, never destructively reset on an unclear signal).
     """
     try:
         return bool(db_tr_ledger.commit_rows_by_group(group_id))
@@ -539,7 +539,7 @@ def _has_legacy_source_history(group_id: str) -> bool:
 
 def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str) -> dict:
     """One-time, forced reset --hard + clean -fd of the group worktree to
-    the current configured base-branch HEAD (flowgate.default.0511 T0004).
+    the current configured base-branch HEAD.
 
     module is accepted only for call-site symmetry with ensure_worktree()
     -- the branch this function acts on always comes from db_git.get_state().
@@ -547,7 +547,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
     Never raises (same contract as ensure_worktree): every failure mode
     comes back as performed=False with a reason, and the caller decides
     which reasons are a safe no-op (git disabled, already synced, legacy
-    history) versus which must block the run (T0004 SS26-28/SS34 -- a verify
+    history) versus which must block the run (the earlier implementation SS26-28/SS34 -- a verify
     failure or a marker-write failure must never let the worker launch against
     an unconfirmed tree).
 
@@ -566,7 +566,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
         return {"performed": False, "reason": "git_disabled", "sha": None}
 
     try:
-        # Precheck OUTSIDE the lock (T0004 SS23/SS25.12): the common case -- a group
+        # Precheck OUTSIDE the lock: the common case -- a group
         # long past its first sync -- never waits on the mutex at all.
         state = _gs.db_git.get_state(group_id)
         if state is not None and state.get("initial_source_sync_at"):
@@ -576,7 +576,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
         if not project_name:
             return {"performed": False, "reason": "project_name_missing", "sha": None}
 
-        # 0669 unit 9b: the Group's G instead of the project mutex — reset --hard and
+        # unit 9b: the Group's G instead of the project mutex — reset --hard and
         # clean -fd touch only this Group's worktree. A frozen Group is not reset.
         lock_ctx, held, _refused = _slot_lock(project_id, group_id, holder_kind="initial_sync")
         if held is None:
@@ -597,7 +597,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
                 return {"performed": False, "reason": "worktree_missing", "sha": None}
 
             if _has_legacy_source_history(group_id):
-                # T0004 SS18: safe backfill, never a destructive reset -- the group
+                # SS18: safe backfill, never a destructive reset -- the group
                 # already has real source work; this only stops future invocations
                 # from re-running this same legacy check.
                 head_proc = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
@@ -621,7 +621,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
                 or (cfg.get("base_branch") or "main").strip()
                 or "main"
             )
-            # flowgate.default.0665 T0004: the recorded fork commit, never the
+            # the recorded fork commit, never the
             # current tip of the work-base NAME (a local tip behind origin would
             # rewind the fork).  Only a group forked before the record existed
             # falls back to the name-based merge-base; the reset then MAKES that
@@ -645,7 +645,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
             )
             if reset_proc.returncode != 0:
                 return {"performed": False, "reason": "reset_failed", "sha": None}
-            # T0004 SS25: -fd only, never -x -- ignored files are not this
+            # SS25: -fd only, never -x -- ignored files are not this
             # feature's business, the same restraint the existing worktree-clean
             # paths use.
             clean_proc = _gs._run_git(
@@ -689,7 +689,7 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
 def _slot_lock(project_id: str, group_id: str, *, holder_kind: str = "worktree_cleanup",
                publish: bool = False, mode: str = "interactive", guard: bool = True,
                fresh: bool = False) -> tuple:
-    """0669 unit 9b: the Group's G (and R when the step may touch origin), in L 2.4 order,
+    """unit 9b: the Group's G (and R when the step may touch origin), in L 2.4 order,
     instead of the project mutex, for the inline slot paths (dispose / backlog cleanup,
     no-work discard, initial source sync, work-base confirm, approval retry).
 
@@ -732,7 +732,7 @@ def _is_group_disposed(group_id: str) -> bool:
         return False
 
 
-# flowgate.v02test.0052 T0003: ``context.abort_failure.trigger`` when a disposed group's
+# ``context.abort_failure.trigger`` when a disposed group's
 # merge could not be aborted.
 DISPOSED_GROUP_ABORT_TRIGGER = "disposed_group_abort"
 
@@ -750,7 +750,7 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
         session = _gs.db_git.get_open_session_by_group(group_id)
         if session is None:
             return
-        # 0594 T0012: the merge lives in the attempt's pinned target root — the
+        # the merge lives in the attempt's pinned target root — the
         # managed workspace for a non-base target, never the base checkout then.
         target = (
             resolve_session_target(session)
@@ -759,7 +759,7 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
         root = target.root if target is not None and target.root is not None else base_root
         merge_id = session.get("merge_id")
         if root.exists() and _gs._merge_in_progress(root):
-            # flowgate.v02test.0052 T0003 task 3(b): audited on the session; and a
+            # task 3(b): audited on the session; and a
             # failed abort never closes the DB session over a workspace that is still
             # merging — it stays open, marked "정리 실패" with git's reason, for a person.
             proc = _gs._abort_merge(
@@ -796,14 +796,14 @@ def _cleanup_group_slot(
 
     Scope guard, consistent with E7: only a ledger-registered slot that is in a
     terminal status (merged/pushed), belongs to a disposed group, OR is being
-    force-discarded (0199 B0001: a no-work group, branch at base) is touched — an
+    force-discarded (a no-work group, branch at base) is touched — an
     unregistered directory is never deleted. A disposed or force-discarded work
     branch is force-deleted; for a disposed group its unmerged content is
     intentionally thrown away, and for a no-work group the branch holds no unique
     commit so nothing is lost, and origin was never pushed. The caller must hold
     the project git lock. Returns True when the slot ended up unregistered.
 
-    0287 NR0004: the worktree step is three-way, not two-way. A slot whose
+    the worktree step is three-way, not two-way. A slot whose
     directory git no longer owns (registration pruned, or the `.git` link
     destroyed by a delete that was interrupted mid-run) is an ORPHAN: `worktree
     remove` rejects it on every attempt, so it is pruned + deleted directly and
@@ -826,12 +826,12 @@ def _cleanup_group_slot(
                 return False
         except Exception:
             return False
-        # 0669 unit 7a: a worktree_cleanup job in flight owns this slot.
+        # unit 7a: a worktree_cleanup job in flight owns this slot.
         from .worktree_cleanup import owns_slot
         if owns_slot(group_id):
             return False
         status = (state.get("status") or "none")
-        # 0192 T0005 §3: a DISPOSED group's slot is a cleanup target regardless of
+        # a DISPOSED group's slot is a cleanup target regardless of
         # status. dispose_group never touched git, and the ledger gate below was
         # merged/pushed-only, so a discarded group's worktree dir + local work
         # branch + ledger row survived forever (and the stale row kept polluting
@@ -839,7 +839,7 @@ def _cleanup_group_slot(
         # (-D) — the discarded work is intentionally lost, matching the meaning of
         # disposal.
         disposed = _gs._is_group_disposed(group_id)
-        # 0199 B0001: a force-discarded no-work slot is cleaned up exactly like a
+        # a force-discarded no-work slot is cleaned up exactly like a
         # disposed one — worktree torn down and the (base-tip, no-unique-commit)
         # local work branch force-deleted, with NO merge and NO push.
         if status not in _gs.CLEANUP_STATUSES and not disposed and not force_discard:
@@ -861,7 +861,7 @@ def _cleanup_group_slot(
         wt_path = _gs.src_root(project_name, branch)
 
         if wt_path.is_dir():
-            # 0287 NR0004 §4: this used to be a two-state branch — directory present
+            # this used to be a two-state branch — directory present
             # meant "healthy worktree, call remove". The third state (directory
             # present, git registration missing or destroyed) fell into the remove
             # path, where git rejects it every single time ("is not a working tree"
@@ -929,7 +929,7 @@ def _cleanup_group_slot(
             elif status == "merged":
                 proc = _gs._run_git(["branch", "-d", branch], cwd=base_root)
                 if proc.returncode != 0:
-                    # 0594 T0012: a merge into a NON-base target is not reachable
+                    # a merge into a NON-base target is not reachable
                     # from the base HEAD, so `-d` refuses it. Force-delete only when
                     # the ledger's completed attempt proves the branch is fully
                     # contained in that target; otherwise keep the ref.
@@ -957,7 +957,7 @@ def _cleanup_group_slot(
             # Work branches pushed before the 0172 fix were never meant to be
             # published; retro-delete best-effort (failure is not a cleanup failure).
             try:
-                # flowgate.default.0361 NR0003 §8.1: this is the one origin push in
+                # this is the one origin push in
                 # this module, so it needs the same invariant as the fetch above —
                 # kept best-effort like the push itself (a sync failure here must
                 # not block the branch/ledger teardown below).

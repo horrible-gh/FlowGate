@@ -70,7 +70,7 @@ def _run_row(env):
 
 
 def _submitted(doc_id):
-    """The instruction submitted as the AI's inbox submission leaves it (0084: 0004-T ``pending_review``)."""
+    """The instruction submitted as the AI's inbox submission leaves it (``pending_review``)."""
     from modules.flow_gate.db import documents as db_documents
 
     db_documents.update(doc_id, {"doc_review_status": "pending_review"})
@@ -166,7 +166,7 @@ def test_a_pre_feature_instruction_nobody_judges_is_a_person_s_wait_and_the_read
                       _sql(env["db"], "SELECT doc_id, doc_review_status, revision_no FROM documents ORDER BY doc_id"))
     wire = _wire(detail.json()["run"], key)
     assert (wire["stage"], wire["instruction_doc_id"], wire["stage_assignments"]) == ("instruction", instruction, [])
-    # flowgate.v02.0119 T#3 (T-2 rework): its review that did not start is a system error of the instruction stage —
+    # (T-2 rework): its review that did not start is a system error of the instruction stage —
     # the node run tells it and the run is in its error family, never a person's wait
     assert wire["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
 
@@ -256,7 +256,7 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     instruction = save_instruction(env, key)
     ir = one(env, key, "instruction_review", 1)
     assert (ir["actor"], ir["actor_reason"]) == ("wait_setup", "setting_unreadable")
-    # flowgate.v02.0119 T#3 (T-2 rework): its ``review_result_unknown`` is a system error — the error family (never
+    # (T-2 rework): its ``review_result_unknown`` is a system error — the error family (never
     # "nothing to run", never a person's wait), the setting read again by the reads up to the limit
     assert _current(env)["idle_reason"] == "error"
     wire = _wire(_current(env), key)
@@ -291,7 +291,7 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
 
 
 def test_a_card_waiting_for_its_ai_setup_is_no_no_targets(env, decided, starts):
-    """pending_init / wait_setup (T#1's first setup): the account has no role defaults and AIs are selectable — the card
+    """pending_init / wait_setup ('s first setup): the account has no role defaults and AIs are selectable — the card
     waits for its setup (the client's [다음 단계] asks for it first, ``beforeRunPrepare``); the run never says
     "nothing to run", and nothing is written to the account."""
     key = flow(env)
@@ -542,7 +542,7 @@ def test_a_submission_without_its_review_assignment_whose_setting_is_unreadable_
         assert (a["actor"], a["actor_reason"]) == ("wait_setup", "setting_unreadable")
     else:
         assert (a["actor"], a["source"]) == ("wait_setup", "store_error")
-    # a wait with its cause, never "nothing to run"; flowgate.v02.0119 T#3 (T-2 rework): the instruction's
+    # a wait with its cause, never "nothing to run"; the earlier change the earlier implementation (T-2 rework): the instruction's
     # ``review_result_unknown`` is a system error (the error family), the result's store error a setup wait
     assert run["idle_reason"] == ("error" if stage == "instruction" else "needs_intervention")
     wait = _wire(run, key)["wait_reason"]

@@ -1,4 +1,4 @@
-"""The Graph Time Machine operation journal (0061 T#13) — the run event log, as T#12's contract fixed it.
+"""The Graph Time Machine operation journal — the run event log, as the earlier implementation's contract fixed it.
 
 Each phase of one operation is a ``graph_run_status_changed`` event of the run (status unchanged, cause
 ``graph_time_machine``) whose payload carries ``operation_id`` and ``operation_status``:
@@ -17,7 +17,7 @@ resolution of ledger_completed / compensated — but cannot hold a Graph operati
 ``reapply`` only, one row is one document with one ``source_ledger_row_id`` (NOT NULL), and every unresolved row is
 taken by the legacy ``recover_tr_history``, which would mark a Graph row ``recovery_required`` and block the legacy
 cancel / reapply of the group. ``revert_pending`` is a ledger reading of reopened TR2 documents, not a journal. The run
-event log already is the durable, ordered, Flow-scoped record T#12 reads, so no table or migration is added; the
+event log already is the durable, ordered, Flow-scoped record the earlier implementation reads, so no table or migration is added; the
 phase vocabulary and the recovery rule (a recorded Git result -> finish the DB step, none -> from the start, an
 unprovable state stays blocked) follow tr_history_recovery.
 """

@@ -1,4 +1,4 @@
-"""Schema and dialect regression tests for flowgate.default.0351 T0007."""
+"""Schema and dialect regression tests for the earlier change the earlier implementation."""
 from __future__ import annotations
 
 import sqlite3
@@ -20,8 +20,8 @@ def test_all_migrations_create_21_column_token_and_conversation_schema():
     conn.execute("PRAGMA foreign_keys=ON")
     _apply(conn)
     columns = [row[1] for row in conn.execute("PRAGMA table_info(tokens)")]
-    # 0352 T0004 §3.1 / migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
-    # 0447 T0007 review rev1 / migration 089 added revoke_claim (22 -> 23).
+    # migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
+    # review / migration 089 added revoke_claim (22 -> 23).
     assert len(columns) == 23
     assert {
         "continuation_instruction_mode", "provider_id", "ai_run_id",

@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#2 rework (0030-M §2, 0002-D revised §3.1-6 · §3.2 · §3.2-A · §3.3-6 · §3.4) — the first AI setup saved
+"""(M, the design revised · · · ·) — the first AI setup saved
 and applied to the current Flow's AI-settings cards in one transaction (``POST /flows/{flow_id}/ai-roles/first-setup``).
 
 - Success: the account's three values and its setup completed marker; every run / test / WP card of the Flow's current

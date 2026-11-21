@@ -3,7 +3,7 @@
 Endpoints:
   POST  /api/v1/groups                              create a new group
   PUT   /api/v1/groups/{group_id}                   update a group (T191)
-  GET   /api/v1/groups/{group_id}/work-base         an existing group's work base (0104 D0004 §5.3)
+  GET /api/v1/groups/{group_id}/work-base an existing group's work base
   PATCH /api/v1/groups/{group_id}/work-base         change it before Git work starts (§5.4)
   POST  /api/v1/groups/{gid}/transitions/{action}  transition a group state
   GET   /api/v1/groups/{gid}/timeline               group event log
@@ -103,7 +103,7 @@ def _get_user_permissions(user: dict) -> set[str]:
     }
 
 
-# ── Disposed-group action guard (TR0079.0003 rework) ──────────────────────────
+# ── Disposed-group action guard ──────────────────────────
 # The review feedback asked for an authoritative server-side block on actions
 # against documents in a disposed (DC) group — hiding the action bar client-side
 # is UX only and can be bypassed by a stale tab that never received the SSE
@@ -179,10 +179,10 @@ class DocumentBodyRequest(BaseModel):
     expected_revision: Optional[int] = None
     request_key: Optional[str] = None
     expected_command_admission_fingerprint: Optional[str] = None
-    # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
+    # final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
-    # flowgate.default.0594 T0012 — the local branch the git_action's merge lands
+    # the local branch the git_action's merge lands
     # on. Omitted → the project base (legacy behavior). Validated server-side.
     git_target_branch: Optional[str] = None
 
@@ -218,7 +218,7 @@ def list_groups_endpoint(
         raise HTTPException(status_code=403, detail="document.read permission required.")
     groups = db_groups.list_groups(project_id=project_id, module=module, status=status)
     config = git_service.db_git.get_config(project_id)
-    # flowgate.default.0613 TR0014 rev2: one batch lookup for the whole project
+    # one batch lookup for the whole project
     # (never one per group) so the requirement dialog can tell an editable
     # existing-group Base Branch from one that Git work has already locked.
     locked_ids = git_service.locked_group_ids(project_id)
@@ -288,7 +288,7 @@ def update_group_endpoint(
     if "project.group.manage" not in user_permissions:
         raise HTTPException(status_code=403, detail="project.group.manage permission required.")
 
-    # TR0079.0003 rework (3rd pass): a disposed (DC) group's title (group-name change) must
+    # (3rd pass): a disposed (DC) group's title (group-name change) must
     # not be editable. _guard_group_not_disposed keys off a document; here we have the
     # group_id directly, so call the shared signal straight. Fails open for live groups.
     if process_service.is_group_disposed(group_id):
@@ -577,7 +577,7 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
-    # flowgate.default.0594 T0012: the merge target rides along with git_action only.
+    # the merge target rides along with git_action only.
     git_target_branch = body.git_target_branch
     if git_target_branch is not None and git_action is None:
         return JSONResponse(
@@ -588,7 +588,7 @@ async def document_review_transition_rpc(
             }},
         )
     if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
-        # 0555 A11/B8: a terminal Git result may outlive its coupled approval
+        # A11/B8: a terminal Git result may outlive its coupled approval
         # transaction. Clean attempts live on group_git_state; conflict attempts
         # keep using their closed merge-session context. Both paths only retry the
         # approval and revalidate the exact AC/group under the project Git lock.
@@ -632,7 +632,7 @@ async def document_review_transition_rpc(
             return JSONResponse(status_code=409, content={"ok": False, "error": error})
 
         if retry_source is not None:
-            # 0669 unit 6b (D 3.7 approval-retry): while this Group's approval job is
+            # unit 6b (D 3.7 approval-retry): while this Group's approval job is
             # still queued or running it owns the approval — answer with its state.
             # A job parked in recovery_required leaves the retry to the person here.
             from modules.flow_gate.services.git import approval_publish
@@ -657,7 +657,7 @@ async def document_review_transition_rpc(
                     error = {"code": "approval_precheck_failed", "message": str(exc)}
                     return status, {"ok": False, "error": error}
                 project_id = git_service._project_of_group(group_id)
-                # 0669 unit 9b: the Group's G, no wait, instead of the project mutex. No
+                # unit 9b: the Group's G, no wait, instead of the project mutex. No
                 # freeze guard: a recovery_required approval job may still hold the claim,
                 # and this retry only records the approval (no source change).
                 from modules.flow_gate.services.git import lock_manager as git_locks
@@ -746,7 +746,7 @@ async def document_review_transition_rpc(
             fresh_doc = db_docs.get_by_id(body.doc_id)
             group_id = git_service.precheck_approve_git_action(fresh_doc, git_action)
             if git_target_branch is not None and group_id:
-                # 0594 T0012 §10: an invalid/stale target refuses the approval
+                # an invalid/stale target refuses the approval
                 # before it is applied, exactly like an invalid git_action.
                 git_service.precheck_approve_git_target(
                     group_id, git_action, git_target_branch
@@ -758,12 +758,12 @@ async def document_review_transition_rpc(
             code = exc.code if isinstance(exc, GitServiceError) else "approval_precheck_failed"
             error = {"code": code, "message": str(getattr(exc, "message", exc))}
             if isinstance(exc, GitServiceError) and getattr(exc, "details", None):
-                # 0594 T0012: a refused target names itself (target_branch/action).
+                # a refused target names itself (target_branch/action).
                 error["details"] = exc.details
             pending["stage"] = "precheck"
             return status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
 
-        # 0669 unit 6b (0666 D 3.7): the approval is a final_approval_publish job. The
+        # unit 6b: the approval is a final_approval_publish job. The
         # request freezes the Group and makes one publish attempt with the job's lease;
         # a busy lock leaves the job queued (approval.stage="queued") instead of the old
         # project-lock `git_busy` 409 that dropped the approval intent.
@@ -777,7 +777,7 @@ async def document_review_transition_rpc(
         except GitServiceError as exc:
             error = {"code": exc.code, "message": str(getattr(exc, "message", exc))}
             if getattr(exc, "details", None):
-                # 0683 T0004 §3: a merge_target_busy refusal names its blocker here too.
+                # a merge_target_busy refusal names its blocker here too.
                 error["details"] = exc.details
             pending["stage"] = "precheck"
             return exc.status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
@@ -787,7 +787,7 @@ async def document_review_transition_rpc(
     return JSONResponse(status_code=status_code, content=payload)
 
 
-# 0275 T0007 (NR0003 cause 2): sync DB/git work only — plain `def` runs in the
+# sync DB/git work only — plain `def` runs in the
 # threadpool instead of blocking the event loop.
 @router.post("/documents/workflow/finalize")
 def finalize_workflow_endpoint(
@@ -880,7 +880,7 @@ def finalize_workflow_endpoint(
         )
 
     updated = db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
-    # 0177 NR0016 §3: same eager realization as the AC-approve cascade — emit the
+    # same eager realization as the AC-approve cascade — emit the
     # git_pending_changed SSE at final-approval time. Never raises.
     git_service.realize_wf_done_transition(group_id)
     return {"document": updated or root_doc}
@@ -1052,7 +1052,7 @@ def recover_orphaned_workflow_document_endpoint(
             f"Cannot recover {doc_id}: the document has no registered file path.",
         )
 
-    # 0457 T0005: the occupancy check above reads the slot, this claims it, and between
+    # the occupancy check above reads the slot, this claims it, and between
     # the two another registration can land. register_workflow_result refuses to evict
     # in that case; surface the refusal as the same 409 the pre-check would have given
     # instead of a 500. The pre-check stays — it answers before any write and can name
@@ -1095,13 +1095,13 @@ async def document_review_transition_endpoint(
     Permission: approve → document.approve, reject → document.reject, mark_revised → document.update
     M026 §8-1.
     """
-    # 0275 T0007 (NR0003 cause 2): the transition + AC cascade are sync DB/git
+    # the transition + AC cascade are sync DB/git
     # work — run them in the threadpool so a slow transition cannot stall the
     # event loop. Only the SSE broadcast below needs the loop; HTTPExceptions
     # raised inside the closure propagate unchanged through run_sync.
     def _transition_sync():
         user_permissions = _get_user_permissions(current_user)
-        # T0009 task 4: pipeline_service's approval-rejection messages (empty body /
+        # task 4: pipeline_service's approval-rejection messages (empty body /
         # "not the current workflow head") became ko/en/ja dictionaries, and this is the
         # human approve/reject path — the one surface where a reviewer actually reads
         # them. Without this hop the dictionary would exist with nothing selecting a
@@ -1120,11 +1120,11 @@ async def document_review_transition_endpoint(
         # path-shaped legacy endpoint has no git_action field and must not bypass
         # finalize-before-approval by approving the document directly.
         #
-        # 0609 T0004: git-active alone used to be enough to demand git_action, which
+        # git-active alone used to be enough to demand git_action, which
         # blocked approval for groups whose worktree is still registered but that
         # provably have nothing left to merge/push (no-work / already-applied).
         # group_finalize_is_noop() is the same real-Git-state judgment the finalize
-        # panel/gate already use (flowgate.default.0548 T0004) -- only require
+        # panel/gate already use -- only require
         # git_action when there is an actual pending choice.
         if action == "approve" and str((prev_doc or {}).get("type_code") or "").upper() == "AC":
             group_id = (prev_doc or {}).get("group_id") or ""
@@ -1179,18 +1179,18 @@ async def document_review_transition_endpoint(
                     roots.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
                     if roots:
                         db_docs.update(roots[0]["doc_id"], {"doc_review_status": "wf_done"})
-                        # 0177 NR0016 §3: realize the git none→awaiting_choice transition
+                        # realize the git none→awaiting_choice transition
                         # NOW so the header badge SSE (git_pending_changed) fires at
                         # approval time instead of on the next status query. Never raises.
                         git_service.realize_wf_done_transition(group_id)
             except Exception:
                 pass
 
-        # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the decision to the result binder.
+        # a Graph-owned Flow hands the decision to the result binder.
         from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
         _graph_contact.after_review_decided((result or {}).get("group_id"), doc_id, action)
 
-        # 0332 D0005 K1 — TR approval commit point. It belongs here for three reasons:
+        # K1 — TR approval commit point. It belongs here for three reasons:
         #   * The approval transition is already committed to the DB (pipeline_service does not open
         #     its own transaction). Approval therefore stands regardless of what Git does.
         #   * This closure already runs inside anyio.to_thread, so synchronous Git commands cannot
@@ -1221,7 +1221,7 @@ async def document_review_transition_endpoint(
             "prev_status": prev_review_status,
             "next_status": result.get("doc_review_status"),
             "rejection_reason": body.comment if action == "reject" else None,
-            # 0582 TR0006 rev1: DocHeader's fg:doc_review_status_changed listener replaces
+            # DocHeader's fg:doc_review_status_changed listener replaces
             # the open tab's whole (already-enriched, from GET /document) rejection_history
             # array with whatever this payload carries -- enrich here too, the same way
             # GET /document does.
@@ -1229,7 +1229,7 @@ async def document_review_transition_endpoint(
                 _parse_rejection_history(result.get("rejection_history"))
             ),
         }
-        # 0332 P0006 §1-7: the strip marker and the Git panel repaint off this event,
+        # the strip marker and the Git panel repaint off this event,
         # so the commit result rides along instead of forcing a poll. Only present on a
         # TR approval — every other event stays byte-identical.
         if tr_commit is not None:
@@ -1244,7 +1244,7 @@ async def document_review_transition_endpoint(
     except Exception:
         pass  # SSE emission failure does not affect the transition result
 
-    # P0006 §1-8: the key exists only for a TR approval. A non-TR approval response is
+    # the key exists only for a TR approval. A non-TR approval response is
     # byte-identical to what it was before this feature, so no existing caller changes.
     if tr_commit is not None:
         return {"document": result, "tr_commit": tr_commit}
@@ -1276,7 +1276,7 @@ async def update_rejection_reason_endpoint(
     if not reason:
         raise HTTPException(status_code=400, detail="reason must not be empty")
 
-    # 0419 T0006: the whole read-guard-write sequence is sync DB work, so it
+    # the whole read-guard-write sequence is sync DB work, so it
     # runs in the threadpool (event-loop-blocking guard) just like the sibling
     # review-transition endpoint above; only the SSE broadcast needs the loop.
     def _correct_sync() -> dict[str, Any]:
@@ -1325,7 +1325,7 @@ async def update_rejection_reason_endpoint(
     updated = await anyio.to_thread.run_sync(_correct_sync)
 
     # SSE broadcast so other open tabs pick up the corrected reason/history without a
-    # manual refresh (NR0003 §2 risk 4). next_status is unchanged ('rejected'); the
+    # manual refresh (risk 4). next_status is unchanged ('rejected'); the
     # existing DocHeader listener applies rejection_reason/rejection_history from any
     # DOC_REVIEW_STATUS_CHANGED event regardless of whether the status itself moved.
     try:
@@ -1338,7 +1338,7 @@ async def update_rejection_reason_endpoint(
                 "prev_status": "rejected",
                 "next_status": updated.get("doc_review_status"),
                 "rejection_reason": reason,
-                # 0582 TR0006 rev1: same DocHeader whole-array replacement as above.
+                # same DocHeader whole-array replacement as above.
                 "rejection_history": enrich_rejection_history_provenance(
                     _parse_rejection_history(updated.get("rejection_history"))
                 ),
@@ -1367,7 +1367,7 @@ async def register_document_result_endpoint(
     from modules.flow_gate.db.connection import now_iso as _now_iso
     from modules.flow_gate.db import workflow_sequences as _db_wseq
 
-    # 0275 T0007 (NR0003 cause 2): permission check, result registration and the
+    # permission check, result registration and the
     # auto submit transition are sync DB work — run them in the threadpool so
     # they cannot stall the event loop. Only the SSE broadcast below needs the
     # loop; HTTPExceptions raised inside the closure propagate through run_sync.
@@ -1380,7 +1380,7 @@ async def register_document_result_endpoint(
         if not doc:
             raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
-        # TR0079.0003 rework (6th pass): register_result mutates the document
+        # (6th pass): register_result mutates the document
         # (register_workflow_result + rejected->revised transition). A disposed (DC)
         # group must not accept result re-registration that flips review_status. This
         # endpoint lives in workflow.py, so documents.py's _reject_if_group_disposed

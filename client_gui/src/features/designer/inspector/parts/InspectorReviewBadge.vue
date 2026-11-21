@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 🛡 n review badge (0035 insp-v4 `.ib.rv`): on a slot line, the
+  <!-- the v7 🛡 n review badge (insp-v4 `.ib.rv`): on a slot line, the
        number of AI review rounds with the round state as its color — pass (green: no finding
        left), warn (amber: a response is needed), run (purple: a round is running), limit (red: the
        rounds are used up and findings remain). The hover title spells it out. What pressing it

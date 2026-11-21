@@ -4,7 +4,7 @@ import { createConversationSession } from '@/features/conversation/conversationS
 import type { AiRunState } from '@/features/conversation/types'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// flowgate.v02gui.0011 A — opening a long chat showed every message: restoreRuns' final read starts at seq 0 to look
+// A — opening a long chat showed every message: restoreRuns' final read starts at seq 0 to look
 // for the reply of a run whose body is not on screen, and merged everything it read into the list. Now only turns from
 // the oldest one on screen on are merged; the older ones are evidence only, and scrolling up still loads them.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }

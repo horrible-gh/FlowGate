@@ -1,6 +1,6 @@
-"""flowgate.default.0252 T: run miniplayer: boundary pause/resume and global active-run list.
+"""T: run miniplayer: boundary pause/resume and global active-run list.
 
-Covers the server half of D0007/P0008/L0009/DB0010:
+Covers the server half of the design/the plan/the earlier implementation/:
   * pause_run admission (§2.1): continuous-only 422 guard, snapshot upsert, idempotency,
     pause_requested surfaced by get_status.
   * end_reason "user_paused" classification and the paused row's survival across the
@@ -25,7 +25,7 @@ import pytest
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
-# T0005 §4-2: the /resume route imports token_routes for _build_api_base, which
+# the /resume route imports token_routes for _build_api_base, which
 # pulls in config.settings -- unneeded by every other test in this file, so these
 # three are only required now that a route-level test exercises that path.
 os.environ.setdefault("CONTEXT", "/flowgate")
@@ -70,20 +70,20 @@ class FakePausedStore:
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
                continuation_provider_overrides=None,
-               # flowgate.default.0596 T0004 (NR0003 rev3): the ACTUAL work-hop executor,
+               # the ACTUAL work-hop executor,
                # named explicitly like the [검수] maps below -- a permissive double would
                # pass while the real upsert silently dropped the captured executor.
                continuation_work_executor_provider_id=None,
                continuation_default_note=None, continuation_note_overrides=None,
-               # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
+               # the N/T authoring mode + its per-item_seq auto-approve
                # selection — the pause->resume mode-loss bug fix under test in this file.
                continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
-               # flowgate.default.0400 M0005: the per-hop budget pick, same "rides every
+               # the per-hop budget pick, same "rides every
                # upsert call, including system rows" treatment as instruction_mode above.
                continuation_step_timeout_sec=None,
-               # flowgate.default.0443 T0002: same treatment as the budget pick above.
+               # same treatment as the budget pick above.
                continuation_restart_max_attempts=None,
-               # 0414 DB0009 §5-3: named explicitly, not swallowed by **kwargs. A permissive
+               # : named explicitly, not swallowed by **kwargs. A permissive
                # double would pass while the real upsert silently dropped the [검수] selection
                # — the exact class of miss DB0009 warns about, and the worst one, because a
                # dropped review selection means "approved with nobody reviewing it".
@@ -94,13 +94,13 @@ class FakePausedStore:
             "paused_by": paused_by, "paused_at": paused_at,
             "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
-            # group 0357 T0004: chain-lifetime progress across the per-hop runs.
+            # chain-lifetime progress across the per-hop runs.
             "chain_id": chain_id, "chain_docs_target": chain_docs_target,
             "chain_docs_reached": chain_docs_reached,
-            # group 0359 DB0008 Q7 / L0007 §2.8: who parked this chain and why.
+            #  Q7 / the earlier implementation: who parked this chain and why.
             "stop_kind": stop_kind, "stop_code": stop_code, "stop_run_id": stop_run_id,
             "stop_last_message_excerpt": stop_last_message_excerpt,
-            # 0365 DB0004: stored exactly as the real columns store them — normalized
+            # : stored exactly as the real columns store them — normalized
             # text — so the resume path is exercised through the production decoders.
             "continuation_base_provider_id": continuation_base_provider_id or None,
             "continuation_provider_pinned": bool(continuation_provider_pinned),
@@ -111,13 +111,13 @@ class FakePausedStore:
             "continuation_default_note": (continuation_default_note or "").strip() or None,
             "continuation_note_overrides": db_paused.dump_json_map(
                 continuation_note_overrides),
-            # 0352 T0004 §3.6: same normalized-text storage contract as the fields above.
+            # same normalized-text storage contract as the fields above.
             "continuation_instruction_mode": (continuation_instruction_mode or "").strip() or None,
             "continuation_auto_approve_item_seqs": db_paused.dump_json_list(
                 continuation_auto_approve_item_seqs),
             "continuation_step_timeout_sec": continuation_step_timeout_sec,
             "continuation_restart_max_attempts": continuation_restart_max_attempts,
-            # 0414: stored as normalized TEXT like the two maps above it, so the resume path
+            # stored as normalized TEXT like the two maps above it, so the resume path
             # is exercised through the production decoder rather than a friendlier dict.
             "continuation_review_count_overrides": db_paused.dump_json_map(
                 continuation_review_count_overrides),
@@ -137,7 +137,7 @@ class FakePausedStore:
         return dict(row) if row else None
 
     def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
-        # 0459 TR0008 rev1: resume_chain() now consumes via the same CAS predicate
+        # resume_chain now consumes via the same CAS predicate
         # release_paused_chain() uses, tied to the exact row its ownership check
         # read -- mirrors the production ai_invoke_paused_chains.release_owned
         # contract so this fixture keeps exercising resume_chain through the real
@@ -241,7 +241,7 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
                         lambda pid: {"ok": True, **chain_holder})
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: None)
-    # T0005 §2/§8-1: a secret-stripped config view distinct from the ENABLED-only
+    # a secret-stripped config view distinct from the ENABLED-only
     # chain_holder above -- lets a test give a display name to a provider that is no
     # longer in the effective chain (disabled/removed), same as production's
     # ai_settings_service.get_project_settings.
@@ -312,7 +312,7 @@ def _slow_cmd(seconds=20):
     return f'"{PY}" -c "import sys, time; time.sleep({seconds})"'
 
 
-# ── pause_run (L0009 §2.1) ────────────────────────────────────────────────────
+# ── pause_run ────────────────────────────────────────────────────
 
 class TestPauseRun:
     def test_single_mode_is_rejected_422(self, fake_env):
@@ -380,9 +380,9 @@ class TestPauseRun:
         assert row["chain_docs_target"] == 2
 
     def test_no_output_finish_parks_a_system_row(self, fake_env):
-        # 0359 L0007 §2.8 (was: "anything but user_paused deletes the row"). A hop that ends
+        # (was: "anything but user_paused deletes the row"). A hop that ends
         # having produced nothing is resumable, so the miniplayer must keep a card for it —
-        # deleting it is precisely why NR0003 §6's 24 dead chains could not be resumed at all.
+        # deleting it is precisely why the review's 24 dead chains could not be resumed at all.
         res = _start(fake_env)
         run = _wait_finished(res["run_id"])
         assert (run["end_reason"], run["stop_code"]) == ("exited", "no_output_exhausted")
@@ -395,7 +395,7 @@ class TestPauseRun:
         assert row["paused_by"] == "usr_admin"
 
     def test_no_output_system_row_preserves_instruction_mode_and_selection(self, fake_env):
-        # 0352 T0004 §3.6: unlike the provider/note preference columns, instruction_mode is
+        # unlike the provider/note preference columns, instruction_mode is
         # the chain's actual running policy — a system stop (e.g. no_output_exhausted) that
         # dropped it would resume an ai_direct chain back to auto_approved and silently
         # auto-approve N/T the user chose to author themselves. Written on EVERY system row,
@@ -422,7 +422,7 @@ class TestPauseRun:
 
     def test_user_row_outranks_the_system_row(self, fake_env):
         # Pause accepted, then the chain died before reaching any boundary. The row a HUMAN
-        # put there is the one that survives; the system never overwrites it (L0007 §5).
+        # put there is the one that survives; the system never overwrites it.
         res = _start(fake_env, cmd=_slow_cmd(1))
         svc.pause_run(res["run_id"], "usr_admin")
         run = _wait_finished(res["run_id"])
@@ -431,7 +431,7 @@ class TestPauseRun:
 
     def test_cancelled_finish_still_cleans_row(self, fake_env):
         # A stop that is NOT resumable still drops the row: no ghost card for a chain a
-        # person deliberately ended (L0007 §4.5, default branch — unchanged behaviour).
+        # person deliberately ended (default branch — unchanged behaviour).
         res = _start(fake_env, cmd=_slow_cmd(20))
         svc.pause_run(res["run_id"], "usr_admin")
         svc.cancel_run(res["run_id"])
@@ -448,7 +448,7 @@ class TestPauseRun:
             admission.db_wfseq, "get_effective_head",
             lambda _sequence_id: {"item_seq": 3, "type": "T"},
         )
-        # 0365 B0001/DB0004 §5-3 case 1/4: the values chosen when the run was started
+        #  case 1/4: the values chosen when the run was started
         # must be the values written into the paused row, not lost between memory
         # and storage.
         fake_env["chain"]["providers"] = [
@@ -480,19 +480,19 @@ class TestPauseRun:
             assert row["continuation_default_note"] == "공통멘트"
             assert db_paused.load_json_map(
                 row["continuation_note_overrides"]) == {"3": "개별멘트"}
-            # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq selection must
+            # the N/T authoring mode + its per-item_seq selection must
             # survive the pause exactly like the provider/note selections above.
             assert row["continuation_instruction_mode"] == "ai_direct"
             assert db_paused.load_json_list(
                 row["continuation_auto_approve_item_seqs"]) == [3]
-            # flowgate.default.0400 M0005: same "survives the pause" contract.
+            # same "survives the pause" contract.
             assert row["continuation_step_timeout_sec"] == 10800
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
 
     def test_boundary_stop_preserves_provider_selection_through_w2(self, fake_env):
-        # 0365 DB0004 §5-3 case 2 / invariant I3: the run-end upsert (end_reason ==
+        #  case 2 / invariant I3: the run-end upsert (end_reason ==
         # "user_paused") must re-send the same values pause_run just stored, or W2
         # wipes them the moment the boundary-stop cleanup upsert runs.
         fake_env["chain"]["providers"] = [_provider(_slow_cmd(1), pid="aip_picked")]
@@ -519,7 +519,7 @@ class TestPauseRun:
         assert row["continuation_base_provider_id"] == "aip_picked"
         assert row["continuation_provider_pinned"] is True
         assert row["continuation_default_note"] == "공통멘트"
-        # 0352 T0004 §3.6: the same "refresh, don't erase" contract now covers the mode +
+        # the same "refresh, don't erase" contract now covers the mode +
         # selection too — the boundary-stop upsert must re-send what pause_run just stored.
         assert row["continuation_instruction_mode"] == "ai_direct"
         assert db_paused.load_json_list(
@@ -544,7 +544,7 @@ class TestPauseRun:
             _wait_finished(res["run_id"])
 
 
-# ── validation message contract (0463 T0005 §2.1-4) ──────────────────────────
+# ── validation message contract ──────────────────────────
 
 class TestStartRunValidationMessages:
     def test_missing_sequence_has_top_level_message(self, fake_env):
@@ -569,7 +569,7 @@ class TestStartRunValidationMessages:
         assert exc.value.detail["message"] == exc.value.detail["errors"][0]["msg"]
 
 
-# ── resume_chain (L0009 §2.4) ─────────────────────────────────────────────────
+# ── resume_chain ─────────────────────────────────────────────────
 
 def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None, overrides=None,
                  default_note=None, note_overrides=None,
@@ -699,9 +699,9 @@ class TestResumeChain:
         assert GROUP in fake_env["paused"].rows
 
     def test_resume_launches_with_pinned_provider_not_default(self, fake_env, monkeypatch):
-        # 0365 B0001/DB0004 §5-3 case 3: the paused chain's pin must win over the
+        #  case 3: the paused chain's pin must win over the
         # project default chain's first (most expensive) entry — this reproduces
-        # B0001's exact symptom if it regresses.
+        # 's exact symptom if it regresses.
         _seed_paused(fake_env, base_provider_id="aip_picked", provider_pinned=True)
         _patch_advance(monkeypatch, fake_env["tmp"])
         fake_env["chain"]["providers"] = [
@@ -746,7 +746,7 @@ class TestResumeChain:
         assert captured["continuation_note_overrides"] == note_overrides_in
 
     def test_resume_restores_instruction_mode_and_selection_to_start_run(self, fake_env, monkeypatch):
-        # 0352 T0004 §3.6: the pause->resume mode-loss bug, execution-creation path.
+        # the pause->resume mode-loss bug, execution-creation path.
         # resume_chain used to hard-code continuation_instruction_mode="auto_approved" on
         # this exact call — an ai_direct chain resumed as if the user had never chosen
         # ai_direct. Both the mode AND its per-item_seq selection must round-trip.
@@ -789,7 +789,7 @@ class TestResumeChain:
         assert captured["continuation_reviewer_overrides"] == reviewers
 
     def test_resume_forwards_step_timeout_to_start_run(self, fake_env, monkeypatch):
-        # flowgate.default.0400 M0005: the per-hop budget pick is exactly as perishable as
+        # the per-hop budget pick is exactly as perishable as
         # the provider/note selections above — the paused row is the only place it survives
         # a pause, so resume_chain must read it back and hand it to start_run.
         _seed_paused(fake_env, step_timeout_sec=14400)
@@ -807,7 +807,7 @@ class TestResumeChain:
         assert captured["continuation_step_timeout_sec"] == 14400
 
     def test_resume_restores_instruction_mode_to_the_token_advance_path(self, fake_env, monkeypatch):
-        # 0352 T0004 §3.6: the pause->resume mode-loss bug, TOKEN-issuance path (the other
+        # the pause->resume mode-loss bug, TOKEN-issuance path (the other
         # half of the fix — _issue_resume never forwarded continuation_instruction_mode to
         # advance_workflow at all, so even a correctly-restored run-level mode would still
         # mint a token that silently normalized back to auto_approved on the FIRST hop).
@@ -856,7 +856,7 @@ class TestResumeChain:
         assert restored["continuation_provider_pinned"] is True
 
     def test_failed_launch_restores_provider_and_note_selections(self, fake_env, monkeypatch):
-        # 0365 DB0004 §5-3 case 5 (W3): a retry after a failed resume must still find
+        #  case 5 (W3): a retry after a failed resume must still find
         # the user's provider/note selections on the restored row.
         overrides_in = {"3": "aip_other"}
         note_overrides_in = {"3": "개별멘트"}
@@ -880,7 +880,7 @@ class TestResumeChain:
         assert row["continuation_default_note"] == "공통멘트"
         assert db_paused.load_json_map(
             row["continuation_note_overrides"]) == note_overrides_in
-        # 0352 T0004 §3.6: a retry after a failed resume must still find the mode +
+        # a retry after a failed resume must still find the mode +
         # selection restored too — not just the provider/note preferences.
         assert row["continuation_instruction_mode"] == "ai_direct"
         assert db_paused.load_json_list(
@@ -941,7 +941,7 @@ class TestPauseIdentityAndRestoreRegression:
 
     def test_pause_apply_stop_row_resume_round_trip_preserves_work_executor(
             self, fake_env, monkeypatch):
-        # flowgate.default.0596 TR0005 rev1: full pause_run -> _apply_stop_row
+        # full pause_run -> _apply_stop_row
         # (user_paused refresh) -> resume_chain round trip. The refresh upsert that
         # ALWAYS runs right after a user pause previously omitted
         # continuation_work_executor_provider_id, so its default (None) immediately
@@ -995,11 +995,11 @@ class TestPauseIdentityAndRestoreRegression:
         _wait_finished(result["run_id"])
 
 
-# ── /resume HTTP route (T0005 §3 item 2 / §4 item 2) ──────────────────────────
+# ── resume HTTP route ──────────────────────────
 
 class TestResumeRoute:
     """The route wrapper owns nothing of its own -- it must pass resume_chain's 422
-    body through with its top-level {code, message} shape intact (T0005 §5), and a
+    body through with its top-level {code, message} shape intact, and a
     launch failure must leave the paused row exactly as resume_chain restored it."""
 
     @pytest.fixture
@@ -1143,7 +1143,7 @@ class TestResumeRoute:
         assert conflict.json() == {"code": "resume_conflict", "message": "resume raced"}
 
 
-# ── active_all (L0009 §2.8 / P0008 S1) ────────────────────────────────────────
+# ── active_all ────────────────────────────────────────
 
 class TestActiveAll:
     def test_reload_discards_reopened_workflow_system_stop_after_single_success(
@@ -1268,7 +1268,7 @@ class TestActiveAll:
 
     def test_system_stop_staleness_check_reuses_batch_sequence_snapshot(
             self, fake_env, monkeypatch):
-        """0385 TR0010 rework: a stop_kind='system' row is judged for staleness
+        """a stop_kind='system' row is judged for staleness
         BEFORE resume-state (chain.py active_all()'s paused loop), and that
         staleness check must reuse the same get_sequence_snapshots_for_member_docs
         batch read active_all() already made -- not re-read the sequence/items for
@@ -1355,7 +1355,7 @@ class TestActiveAll:
 
         self._assert_hint_matches_resume(fake_env, "no_enabled_provider")
 
-    # T0005 §2/§8-1: an explicit base-provider pin whose provider fell out of the
+    # an explicit base-provider pin whose provider fell out of the
     # project's current enabled chain must surface as a non-resumable card, with the
     # exact 422 sentence start_run would give and (when findable) the pin's own name.
     def test_flags_unavailable_pinned_provider_as_not_resumable(self, fake_env):
@@ -1382,7 +1382,7 @@ class TestActiveAll:
     # Counterpart contract: an active pin and an ordinary unpinned paused row both
     # default to resume_available=true/no blocker -- the new fields must not invent
     # a false blocker. An active pin's name IS resolved from the same enabled-chain
-    # record that proved it still resolves (0006-TR rev1 review finding); only the
+    # record that proved it still resolves (TR review finding); only the
     # genuinely unpinned row has no provider to name, so it stays null.
     def test_active_pin_and_unpinned_rows_default_to_resumable(self, fake_env):
         _seed_paused(fake_env, base_provider_id="aip_default", provider_pinned=True)
@@ -1404,7 +1404,7 @@ class TestActiveAll:
         assert unpinned_row["resume_provider_name"] is None
 
 
-# ── inbox boundary hook (L0009 §2.2) ─────────────────────────────────────────
+# ── inbox boundary hook ─────────────────────────────────────────
 
 class TestInboxBoundaryHook:
     @staticmethod
@@ -1447,7 +1447,7 @@ class TestInboxBoundaryHook:
             assert "next_token" not in envelope
             # The live run got tagged so its finish classifies as user_paused.
             assert svc.get_run_record(res["run_id"])["user_paused"] is True
-            # The row is NOT consumed at the boundary — resume owns that (L0009 §2.4).
+            # The row is NOT consumed at the boundary — resume owns that.
             assert GROUP in fake_env["paused"].rows
         finally:
             svc.cancel_run(res["run_id"])

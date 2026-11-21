@@ -1,22 +1,22 @@
-"""flowgate.default.0280 T0007 — REAL-worktree resolution for the test runner.
+"""REAL-worktree resolution for the test runner.
 
-NR0003 §5 found the hole this file fills. ``test_test_run_src_root_0152.py``
+The review found the hole this file fills. ``test_test_run_src_root_0152.py``
 pins the 0190 fix by monkeypatching ``resolve_project_src_root`` itself, so it
 proves only that the runner *forwards* group_id — never that a forwarded group_id
 actually resolves to the group's worktree. Every layer below the forward
 (git config → ledger → directory) was untested end-to-end, which is precisely
-where B0001's "the tests ran in main" would live if it were real.
+where the regression's "the tests ran in main" would live if it were real.
 
 These tests provision a real git worktree through ``ensure_worktree`` and then
 assert on the resolver the runner actually calls, with nothing mocked in between:
 
   - the resolver returns the worktree, not the base tree;
   - work-branch-only files are visible through the resolved root and absent from
-    base (the B0001 symptom stated as an assertion);
+    base (the the regression symptom stated as an assertion);
   - the admission guard and the async worker resolve the SAME tree (the 0190
     invariant, verified through the real resolver rather than a recorded call);
   - a released worktree — the post-merge re-run — falls back to base AND reports
-    ``worktree_unregistered`` as the reason (0280 T0005).
+    ``worktree_unregistered`` as the reason.
 
 Harness mirrors test_git_integration_0115.py: TESTING=1, a temporary SQLite built
 from the real sqlite migrations, a temporary FLOWGATE_STORAGE_DIR, and a skip
@@ -234,7 +234,7 @@ def worktree(seed):
 
 class TestMigration:
     def test_test_runs_has_source_root_columns(self, tmp_db):
-        """069_test_run_source_root.sql must apply (0280 T0005)."""
+        """069_test_run_source_root.sql must apply."""
         mock_db, _ = tmp_db
         cols = [r["name"] for r in mock_db.fetch_all("PRAGMA table_info(test_runs)")]
         assert "source_root" in cols
@@ -280,7 +280,7 @@ class TestWorktreeResolution:
         assert resolved.name == "main"
 
     def test_work_branch_files_are_visible_through_the_resolved_root(self, worktree):
-        """The B0001 symptom as an assertion.
+        """The the regression symptom as an assertion.
 
         A TS case referencing a file created on the work branch failed with a fast
         file-not-found when the runner resolved base. The resolved root must be the
@@ -297,7 +297,7 @@ class TestWorktreeResolution:
         assert not (worktree["base"] / "branch_only.txt").exists()
 
     def test_admission_guard_and_worker_resolve_the_same_tree(self, worktree, monkeypatch):
-        """0190 invariant: the guard must not check a different tree than the run uses.
+        """invariant: the guard must not check a different tree than the run uses.
 
         Verified through the REAL resolver — a recorded-call assertion (0152) passes
         even if the two call sites resolve to different places.
@@ -345,7 +345,7 @@ class TestWorktreeResolution:
         assert resolved[0] == resolved[1] == worktree["worktree"]
 
     def test_run_records_the_worktree_it_used(self, worktree, monkeypatch):
-        """T0005's bookkeeping, exercised against a real worktree."""
+        """'s bookkeeping, exercised against a real worktree."""
         from modules.flow_gate.services import test_run_service
         from modules.flow_gate.storage import paths as storage_paths
 
@@ -375,18 +375,18 @@ class TestWorktreeResolution:
         ) == "worktree"
 
 
-# ── post-merge re-run: the silent switch NR0003 §4-B warned about ────────────
+# ── post-merge re-run: the silent switch the reviewB warned about ────────────
 
 
 @needs_git
 class TestReleasedWorktree:
     def test_released_worktree_still_resolves_while_its_dir_survives(self, worktree):
-        """0284 T0005: clearing the ledger flag must NOT silently move a re-run to base.
+        """clearing the ledger flag must NOT silently move a re-run to base.
 
         Merge/push cleanup resets worktree_registered=0 (unregister_worktree). Before
-        0284 that alone dropped the re-run to the base(main) tree even though the group's
+        that alone dropped the re-run to the base(main) tree even though the group's
         branch worktree was still on disk — the "re-run hazard" that made every
-        post-merge fix-verification run against a tree lacking the fix (B0001 / NR0003
+        post-merge fix-verification run against a tree lacking the fix (the regression / the review
         §4). resolve_project_src_root now recovers the on-disk worktree; only a genuinely
         pruned directory falls back. The low-level ledger fact stays truthful for
         observability — effective_src_root_ex still reports worktree_unregistered.

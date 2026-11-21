@@ -3,7 +3,7 @@
 Group-level terminal events (group_disposed / group_closed) belong to a GROUP, not a
 document. They used to be written into the document-scoped `events` table with
 doc_id = group_id, which violates `events.doc_id REFERENCES documents(doc_id)` once FK
-enforcement is on (B0001 / NR0003). This dedicated table references `groups` instead, so
+enforcement is on. This dedicated table references `groups` instead, so
 both the dispose and close paths record their event without a documents FK.
 """
 from __future__ import annotations

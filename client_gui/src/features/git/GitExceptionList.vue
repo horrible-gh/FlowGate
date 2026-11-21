@@ -11,7 +11,7 @@
       <div class="gx-title">{{ t('gui.git.reapprove.title') }}</div>
       <p class="gx-desc">{{ reapproval.code ? t('gui.git.reapprove.cancel_failed', { reason: reapprovalReason }) : t('gui.git.reapprove.ready') }}</p>
       <div class="gx-actions">
-        <!-- flowgate.v02test.0052 (0008 task 1·4): the next press is on the check card — take the person there. -->
+        <!-- (task 1·4): the next press is on the check card — take the person there. -->
         <button v-if="!reapproval.code && reapproval.nodeKey" type="button" class="gx-btn primary" data-test="git-reapprove-goto" @click="openGateCard(session.state.flow?.groupId, reapproval.nodeKey)">{{ t('gui.git.reapprove.goto_gate') }}</button>
         <button type="button" class="gx-btn ghost" data-test="git-reapprove-dismiss" @click="gateJobs!.reapproval.value = null">{{ t('gui.git.reapprove.dismiss') }}</button>
       </div>
@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — Git Exception Area (0033-D §3): only the cards the session state calls
+// Git Exception Area: only the cards the session state calls
 // for — at most one card of the active Flow's group, the project's uncommitted Base changes,
 // and this session's remote-apply failure. Nothing to do = nothing here (no success card).
 import { computed } from 'vue'
@@ -44,7 +44,7 @@ const reapprovalReason = computed(() => {
 })
 const session = useGitPanel().session
 const card = computed(() => session.groupCard.value)
-// flowgate.v02gui.0004 (0001-B §A-1): one card per conflict. While the group's conflict / AI / review card is up,
+// one card per conflict. While the group's conflict / AI / review card is up,
 // the held decision parked on that same conflict is part of it, not a second "Git 작업 실패" card.
 const conflictShown = computed(() => card.value === 'conflict' || card.value === 'ai' || card.value === 'review' || card.value === 'unsupported')
 const jobCards = computed(() => (gateJobs?.operations.value ?? []).filter((operation) => !(conflictShown.value && isConflictOperation(operation.gate))))

@@ -1,15 +1,15 @@
 <template>
-  <!-- flowgate.v02.0026 — FlowGate Node card (0003-D §6.3, look of MirageGlass 03-designer-shell):
+  <!-- FlowGate Node card (D, look of MirageGlass 03-designer-shell):
        a fixed 176x92 card in a kind-colored frame. The head row holds the kind icon box, the kind
        name and the state; the body holds the one-line title. The handles give Edges an anchor
-       (target on the left, source on the right). flowgate.v02.0045 S3: on a node of an editable
+       (target on the left, source on the right). the earlier change S3: on a node of an editable
        draft (`data.connectable`) they are shown and a connection can be dragged from / to them;
        otherwise they stay invisible and never connectable. `data.issue` marks a node the last
        validation reported. flowgate.v02.0045 T0019: a 설계 card is named like its Palette card.
-       flowgate.v02.0045 TR0020 rev2: no handle dots. On a connectable card a connection ends
+       no handle dots. On a connectable card a connection ends
        anywhere on the target card — the target handle covers the whole card and takes the pointer
        only while a connection is being dragged (FlowCanvas `is-connecting`). A 설계 card shows its
-       document type's glyph. TR0020 rev4 (rejection item 3): a connection starts from any side —
+       document type's glyph. the earlier implementation (rejection item 3): a connection starts from any side —
        four start strips run along the card's top, right, bottom and left edges (one source handle
        each); the Edge itself is drawn between the facing sides (FlowEdgePath / edgeGeometry.ts).
        A card the last validation reported names the problem on hover (`data.issueText`).
@@ -20,12 +20,12 @@
        flowgate.v02.0061 T#14: the card attempt's result integration when it needs a look (병합 대기 ·
        병합 중 · 병합 충돌 · 병합 실패) only. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
        conflict session is resolved (a `conflict` event, never the selection or a drag).
-       flowgate.v02.0061 T#15: a held card shows the Hold mark (an open palm in a round frame) at the end of its head row,
+       a held card shows the Hold mark (an open palm in a round frame) at the end of its head row,
        with its tooltip / accessible name. While held, the state text and duplicate Hold chip are hidden.
-       flowgate.v02.0063: a card whose document holds a question still unanswered shows the [Q] mark in its head row.
-       flowgate.v02.0070 T#1 (B1): the card only shows its title (the session's, one line) — a click on it is the card's
+       a card whose document holds a question still unanswered shows the [Q] mark in its head row.
+       (B1): the card only shows its title (the session's, one line) — a click on it is the card's
        selection as anywhere else on the card. The title is edited in the Inspector header (InspectorHeader).
-       flowgate.v02test.0044 (mockup v4): every card is exactly 176x92, whatever it shows, so cards line up and the
+       (mockup v4): every card is exactly 176x92, whatever it shows, so cards line up and the
        Edges meet them evenly. The head row carries the integration states one only looks at (병합 대기 · 병합 중 ·
        병합 실패) and 미인계 as 18px icons next to the state / Q / Hold marks. The footer is the card's buttons only, all
        22x22 icon buttons on one line: its documents on the left; 병합 충돌 and [승인] at the right end. Every icon names
@@ -212,7 +212,7 @@ function documentIcon(doc: CardDocumentButton): string {
 /** flowgate.v02test.0044: the integration / Not handed over marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
  * with a cross — never the card state 오류's circled cross, so the two stay apart. */
 const CARD_MARK_ICONS = {
-  // flowgate.v02test.0042 (mockup v7): a waiting merge is an hourglass; its tooltip names the card it waits for.
+  // (mockup v7): a waiting merge is an hourglass; its tooltip names the card it waits for.
   pending: 'M6 3h12 M6 21h12 M7 3c0 5 10 6 10 9s-10 4-10 9 M17 3c0 5-10 6-10 9s10 4 10 9',
   integrating: 'M21 12a9 9 0 1 1-3-6.7 M21 4v5h-5',
   failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
@@ -247,7 +247,7 @@ const headerTitle = computed(() => {
   const shown = headerState.value
   if (!shown) return undefined
   const label = t(shown.labelKey)
-  // flowgate.v02.0121 T#4: a failed AI call's short cause is a sentence of its own, worded as the Inspector words it
+  // a failed AI call's short cause is a sentence of its own, worded as the Inspector words it
   // (cardStateReasonText); any other reason as sent.
   const reason = cardStateReasonText(shown, t)
   return reason ? `${label} (${reason})` : label
@@ -273,7 +273,7 @@ const uncarriedTitle = computed(() => {
 const integrationLabel = computed(() => props.data.integration ? t(`gui.designer.center.integration.${props.data.integration}`) : '')
 const integrationTitle = computed(() => {
   if (props.data.verificationFailed) return `${integrationLabel.value} · ${t('gui.designer.center.integration.verification_failed')}`
-  // flowgate.v02test.0042: a waiting merge says what it waits for — the named card's conflict, else its turn.
+  // a waiting merge says what it waits for — the named card's conflict, else its turn.
   if (props.data.integration === 'pending') {
     return props.data.integrationBlockedTitle
       ? t(props.data.integrationBlockedConflict ? 'gui.designer.center.integration.waiting_for' : 'gui.designer.center.integration.waiting_behind', { title: props.data.integrationBlockedTitle })
@@ -302,7 +302,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 <style scoped>
 .flow-node-body-warning { color: var(--fg2-status-warning-fg); margin-left: 4px; }
 
-/* flowgate.v02test.0044: a fixed 176x92 whatever the card shows (Edges are drawn from the measured size). */
+/* a fixed 176x92 whatever the card shows (Edges are drawn from the measured size). */
 .flow-node-card {
   position: relative;
   box-sizing: border-box;
@@ -327,7 +327,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
     0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
-/* flowgate.v02test.0042 (mockup v7): a card whose merge conflicts waits for a person — a red ring, also when selected. */
+/* (mockup v7): a card whose merge conflicts waits for a person — a red ring, also when selected. */
 .flow-node-card.has-conflict {
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--fg2-status-danger-fg) 35%, transparent),
@@ -424,7 +424,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   to { transform: rotate(360deg); }
 }
 
-/* flowgate.v02.0061 T#15: the Hold mark — the warning tokens, at the end of the head row (after the state, if any). */
+/* the Hold mark — the warning tokens, at the end of the head row (after the state, if any). */
 .flow-node-hold {
   display: grid;
   flex: 0 0 18px;
@@ -443,7 +443,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   height: 16px;
 }
 
-/* flowgate.v02.0063: the [Q] mark — the info tokens, before the Hold mark (after the state, if any). */
+/* the [Q] mark — the info tokens, before the Hold mark (after the state, if any). */
 .flow-node-question {
   display: grid;
   flex: 0 0 18px;
@@ -519,7 +519,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: #fff;
 }
 .flow-node-document:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
-/* flowgate.v02test.0044: a document without a body yet looks disabled (dashed, faded) but still opens on a press. */
+/* a document without a body yet looks disabled (dashed, faded) but still opens on a press. */
 .flow-node-document.is-empty {
   border-style: dashed;
   border-color: color-mix(in srgb, var(--flow-node-accent) 30%, transparent);
@@ -616,7 +616,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   pointer-events: none;
 }
 
-/* flowgate.v02.0045 TR0020 rev2 / rev4: a draft node's connection areas, no dots.
+/* : a draft node's connection areas, no dots.
    Start: a strip along each of the four sides (inside the card — the card clips what sticks
    out). Hovering the card shows the strips as a soft frame in the card color; the cursor turns to
    a crosshair over them. The middle of the card still drags the card.

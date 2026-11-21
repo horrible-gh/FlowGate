@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0026 — sample Graph source (0003-D §3.2.3 / §7.1).
+ * sample Graph source.
  */
 import { describe, expect, it } from 'vitest'
 import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'

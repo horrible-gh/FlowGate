@@ -9,7 +9,7 @@ import { createConversationSession, SEND_RETRY_MAX } from '@/features/conversati
 import type { ChatSummary, ConversationScope, ConversationTurn, SendAction } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
-// flowgate.v02gui.0009 — "Messages are lost when switching to another Flow immediately after sending". A message whose send started belongs
+// "Messages are lost when switching to another Flow immediately after sending". A message whose send started belongs
 // to the Flow and chat it was written in: moving to another Flow (or chat, or draft) right after pressing send neither
 // drops it nor sends it anywhere else. A first message of a new chat goes to the chat its create made even when the
 // screen moved on during the create or while that chat opened; a send failure off screen is kept for its chat (failed
@@ -25,7 +25,7 @@ const A1 = 'p.m.0001.0002-CH'
 const B1 = 'p.m.0002.0002-CH'
 const B2 = 'p.m.0002.0003-CH'
 const B_TURNS = ['B 대화', '네']
-// flowgate.v02gui.0028: unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
+// unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
 beforeEach(() => localStorage.clear())
 
 function deferred<T = void>() {
@@ -416,7 +416,7 @@ describe('ConversationPanel: send in Flow A, move to Flow B at once, come back',
   })
 })
 
-// flowgate.v02gui.0009 (continued) — "I even pressed Enter; of course it should send": a pressed send reaches the AI too. The send-time
+// (continued) — "I even pressed Enter; of course it should send": a pressed send reaches the AI too. The send-time
 // action is the one of the message's own Flow, read when send was pressed; an AI run starts for the chat the message
 // went to even after the screen moved on, and the screen open now shows nothing of it. A mention copy (clipboard) is
 // not run off screen.

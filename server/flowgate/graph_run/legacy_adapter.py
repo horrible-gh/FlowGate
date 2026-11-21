@@ -1,19 +1,19 @@
-"""Reuse boundary of the Graph run state (flowgate.v02.0061 T#2, D0006 §2.2).
+"""Reuse boundary of the Graph run state.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never changed: the run store
 (the run row, its node runs, its policy snapshot, the conditional status / command / idle reason updates), the run step
 writes of ``run_apply`` (a decision, the run status event, the run state the resolver reads), the resolver's run
 candidates (``frontier.command_candidates``, a step's targets applied), the completion policy restore and the node
 approval state (``node_approval``: a gate, a card awaiting a person's approval, AI still working on a card in review).
-0061 T#11 (Hold): the Flow's run (``active_run``), the run context and the node state event (``load_context``,
+(Hold): the Flow's run (``active_run``), the run context and the node state event (``load_context``,
 ``emit_node_state``) and the Graph error (``GraphApiError``); the whole run candidates (``frontier.run_candidates``, no
 step applied: the idle reason ``hold``) and the Canvas refresh signal (``canvas_events.publish_canvas_changed``).
-flowgate.v02.0113 T#5 (the command result, ``command_result``): the run row and its event log as stored, the run / node
+(the command result, ``command_result``): the run row and its event log as stored, the run / node
 status event types, the Flow's card titles, an ended AI run's durable row and the run event each execution request
 was made at (``execution_anchors``) — reads only.
-flowgate.v02.0119 T#3 (T-2): the node's intervention state (``node_approval.intervention``: ``needs_intervention`` /
+(T-2): the node's intervention state (``node_approval.intervention``: ``needs_intervention`` /
 ``system_error`` of a general card in review that nothing completes) — no card awaits a person's approval any more.
-flowgate.v02.0143 T#1 (W6): a Q&A item's automatic responder state as stored (``question_responder_state``) — a read only.
+(W6): a Q&A item's automatic responder state as stored (``question_responder_state``) — a read only.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ RUNNING, PAUSED, IDLE = run_store.RUNNING, run_store.PAUSED, run_store.IDLE
 RUN_STATUS_EVENT, NODE_STATE_EVENT = run_event_types.RUN_STATUS, run_event_types.NODE_STATE
 GATE_NODE_TYPE = node_approval.GATE_NODE_TYPE
 AI_RUNNING, NO_RESULT = node_approval.AI_RUNNING, node_approval.NO_RESULT
-NEEDS_INTERVENTION, SYSTEM_ERROR = node_approval.NEEDS_INTERVENTION, node_approval.SYSTEM_ERROR    # 0119 T-2
+NEEDS_INTERVENTION, SYSTEM_ERROR = node_approval.NEEDS_INTERVENTION, node_approval.SYSTEM_ERROR    # T-2
 
 
 def active_run(flow_id: str):
@@ -69,7 +69,7 @@ def awaiting_approval(flow_id: str, row: dict, node_type) -> bool:
 
 
 def intervention(flow_id: str, row: dict, node_type):
-    """0119 T-2: ``{"kind", "reason"}`` of a general card in review that nothing completes, else None."""
+    """T-2: ``{"kind", "reason"}`` of a general card in review that nothing completes, else None."""
     return node_approval.intervention(flow_id, row, node_type)
 
 
@@ -125,7 +125,7 @@ def execution_anchors(run_id: str) -> dict:
 
 
 def question_responder_state(item_id):
-    """flowgate.v02.0143 T#1 (W6): the automatic responder state of the Q&A item ``item_id`` as stored
+    """(W6): the automatic responder state of the Q&A item ``item_id`` as stored
     (``question_items.responder_state``: ``dispatched`` / ``answered`` / ``failed`` / ``user_decision`` / None), or None when
     there is no such item. Raises on a failed read."""
     from modules.flow_gate.db import question_items  # noqa: PLC0415

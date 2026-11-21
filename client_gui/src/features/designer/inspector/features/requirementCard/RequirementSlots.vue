@@ -63,12 +63,12 @@ function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key === 'document' ? 'requirement' : line.key) })
 }
 
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key === 'document' ? 'requirement' : line.key) })
 }
 
-/** The history button: the document's review·rejection history window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }

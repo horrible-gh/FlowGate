@@ -68,7 +68,7 @@ export function checkOperationErrorKey(code: string | null | undefined, decision
     merge_conflict: 'merge_conflict', merge_conflict_aborted: 'merge_aborted', merge_failed: 'merge_aborted',
     merge_attempt_unsettled: 'target_check', target_moved: 'target_check', target_branch_missing: 'target_check',
     target_ref_unreadable: 'target_check', gate_git_unavailable: 'target_check',
-    // flowgate.v02.0132 T#4 (NR §4.2/§4.5): the remote sync and the parks that wait for a recovery
+    // (NR): the remote sync and the parks that wait for a recovery
     push_remote_ahead: 'remote_ahead', push_protected: 'push_protected', push_remote_race: 'remote_race',
     target_checkout_mismatch: 'checkout_mismatch', target_diverged: 'diverged', sync_unsettled: 'sync_unsettled',
     push_sync_conflict_aborted: 'sync_conflict_aborted',

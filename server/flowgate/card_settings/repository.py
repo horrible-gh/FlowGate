@@ -1,11 +1,11 @@
-"""Card settings store (flowgate.v02.0053 T#2).
+"""Card settings store.
 
 Migration 146_graph_node_settings.sql. One row per (Flow, node, field) holding the JSON value; no row
 = the field's default. Rows are keyed by node key, so a card keeps its settings whether it is only in
 the draft or in confirmed revisions (a removed node's key is retired and never reused, and the Flow's
 rows go with the Flow). A value is replaced on its own, inside the caller's Flow guard.
-0061 T#11: Hold is the field ``hold`` (true) of the same table, kept by node key across revisions like any setting.
-flowgate.v02.0085 T#1 (migration 158): a card's settings version (``graph_node_settings_version``) counts the writes that
+Hold is the field ``hold`` (true) of the same table, kept by node key across revisions like any setting.
+(migration 158): a card's settings version (``graph_node_settings_version``) counts the writes that
 changed a stored value; a gate settings PATCH is checked against it (``settings.write``). A card that never changed has
 version 0, also before the migration. ``put`` / ``remove`` tell whether the stored value changed; the version itself is
 moved by the caller (``bump_version``, inside the same Flow guard).
@@ -26,7 +26,7 @@ _NODE_COLUMNS = "node_key, node_type, doc_type, label, assignee_kind, assignee_p
 
 
 def _now() -> str:
-    """ISO 8601 UTC with milliseconds, like the other Graph rows (P0008 §1.1)."""
+    """ISO 8601 UTC with milliseconds, like the other Graph rows."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
@@ -57,7 +57,7 @@ UNREADABLE = object()                       # a stored row whose value does not 
 
 
 def stored(flow_id: str, node_key: str, field: str) -> Any:
-    """flowgate.v02.0105 T#2 (B-3): ``field``'s row of one card as stored — ``ABSENT`` when there is no row, ``UNREADABLE``
+    """(B-3): ``field``'s row of one card as stored — ``ABSENT`` when there is no row, ``UNREADABLE``
     when its value does not parse (``values`` leaves such a row out), else the parsed value."""
     if not available():
         return ABSENT
@@ -74,7 +74,7 @@ def stored(flow_id: str, node_key: str, field: str) -> Any:
 
 
 def keys_with(flow_id: str, field: str, value: Any) -> frozenset:
-    """0061 T#11: the node keys of the Flow whose ``field`` is stored as ``value`` (Hold: ``hold`` = true)."""
+    """the node keys of the Flow whose ``field`` is stored as ``value`` (Hold: ``hold`` = true)."""
     if not available():
         return frozenset()
     found = get_store()._fetch_all(

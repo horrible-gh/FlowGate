@@ -17,7 +17,7 @@
 <script setup lang="ts">
 // flowgate.v02.0066 — one section of the changed-files list: "변경 사항" (working changes and new
 // files) or Stagedone (index changes, plus the pathless line for a Stage the list does not show).
-// flowgate.v02.0067 T#2: the full Stage / full unstage live once, in the selection bar above the
+// the full Stage / full unstage live once, in the selection bar above the
 // list (0067-R §4-4), so the section head carries only its title and count.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

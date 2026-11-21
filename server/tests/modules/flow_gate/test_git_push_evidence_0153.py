@@ -1,4 +1,4 @@
-"""0153 T#1: persistent push evidence and application ref attribution.
+"""persistent push evidence and application ref attribution.
 
 Real sqlite migrations come from 0115; local-path Git repositories deliberately
 avoid its Windows file:// capability skip. Reconcile policy is characterized,
@@ -37,10 +37,10 @@ def project(patch_store):
 
 @pytest.fixture(autouse=True)
 def preserve_gate_passes(monkeypatch):
-    """0153 T#2 added a preservation gate before every push and every existing reset.
-    These T#1 contracts drive those paths with synthetic SHAs and a scripted runner, so
+    """added a preservation gate before every push and every existing reset.
+    These the earlier implementation contracts drive those paths with synthetic SHAs and a scripted runner, so
     the gate is passed here (no Git command, no state beyond the preserve_* fields) and
-    every T#1 command/state assertion stays exactly as it was. The gate itself is
+    every the earlier implementation command/state assertion stays exactly as it was. The gate itself is
     proven against real Git in test_git_preserve_ref_0153.py."""
     from modules.flow_gate.services.git import preserve
 
@@ -270,7 +270,7 @@ def reconcile_setup(session, monkeypatch, tmp_path, observed):
     monkeypatch.setattr(gs.merge_target, 'resolve_session_target',
                         lambda row: SimpleNamespace(root=tmp_path, target_branch='main'))
     probes = []
-    # 0153 T#3: reconcile reads the remote through the detailed variant (patch target only).
+    # reconcile reads the remote through the detailed variant (patch target only).
     monkeypatch.setattr(gs, '_query_remote_ref_detail', lambda *a: probes.append(a) or {
         'sha': observed, 'cause': None if observed else 'network',
         'returncode': 0 if observed else 128, 'detail': None, 'stderr': ''})
@@ -280,7 +280,7 @@ def reconcile_setup(session, monkeypatch, tmp_path, observed):
 
 
 def scripted_checkout(cmds, push_code, fetched):
-    """0153 T#3: a scripted checkout for the synthetic SHAs — HEAD is LOCAL, no merge in
+    """a scripted checkout for the synthetic SHAs — HEAD is LOCAL, no merge in
     progress, clean, FETCH_HEAD is ``fetched`` and neither SHA is its ancestor."""
     def run(args, **kw):
         cmds.append(args)
@@ -306,7 +306,7 @@ def scripted_checkout(cmds, push_code, fetched):
 @pytest.mark.parametrize('push_code', [0, 128])
 def test_reconcile_contract_and_cross_instance_audit(session, monkeypatch, tmp_path,
                                                     observed, status, pushes, probes_expected, push_code):
-    # 0153 T#3: the remote-unchanged branch re-pushes the same commit (no reset); a
+    # the remote-unchanged branch re-pushes the same commit (no reset); a
     # third SHA confirmed by fetch with neither the commit nor the lease in it is a
     # rewritten remote. The time/instance attribution of every record is unchanged.
     mid, ctx, row = session
@@ -330,7 +330,7 @@ def test_reconcile_contract_and_cross_instance_audit(session, monkeypatch, tmp_p
     ] * pushes
     assert after['reconcile_attempt_count'] == 1
     if pushes and push_code != 0:
-        # result unknown again: the T#1 shape, now attributed to this instance and stage
+        # result unknown again: the the earlier implementation shape, now attributed to this instance and stage
         assert after['last_error'] == dict(code='push_remote_unknown', returncode=push_code,
             cause='unknown', detail='git command failed', local_sha=LOCAL,
             expected_remote_head=EXPECTED, at=RESET_AT, instance_id='inst_B',
@@ -512,7 +512,7 @@ def test_real_local_reset_reflog_identity_and_cross_instance_evidence(session, m
     monkeypatch.setenv('GIT_COMMITTER_NAME', 'operator')
     monkeypatch.setenv('GIT_COMMITTER_EMAIL', 'operator@example.invalid')
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    # 0153 T#3: the unchanged remote gets the same commit re-pushed (no reset); the
+    # the unchanged remote gets the same commit re-pushed (no reset); the
     # local ref moves it makes (the remote-tracking ref) still carry FlowGate's identity.
     assert out['result']['status'] == 'merged'
     assert git(['rev-parse', 'HEAD'], repo) == local

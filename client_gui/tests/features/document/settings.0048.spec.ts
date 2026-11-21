@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#9 — the settings tab's calls in features/document/api/settings.ts (D#1 §6.3, §12.1;
+ * the settings tab's calls in features/document/api/settings.ts (the earlier implementation;
  * D#2 §2.1 / §2.4): the request each one sends to the existing endpoint (the Flow's graph read for the
  * sequence root, GET / PATCH /workflow/sequence, the providers read, the active run), the answers ->
  * camelCase (a sequence row as the dev server answers it, choices from execution_policy, a run and the hop

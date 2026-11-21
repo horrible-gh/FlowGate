@@ -1,28 +1,28 @@
-"""Git integration API (flowgate.default.0115 — P0005).
+"""Git integration API.
 
 GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
-GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
+GET/POST /api/v1/projects/{project_id}/git/provision
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
-GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
-GET            /api/v1/projects/{project_id}/git/work-base-options (0613 T0013 — perm_document_create)
-POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
-DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
-GET            /api/v1/projects/{project_id}/git/branches/tree (0615 T0004 — checkout-free ordinary local branch)
-GET            /api/v1/projects/{project_id}/git/branches/blob (0615 T0004 — checkout-free ordinary local branch)
+GET /api/v1/projects/{project_id}/git/branches
+GET /api/v1/projects/{project_id}/git/work-base-options (perm_document_create)
+POST /api/v1/projects/{project_id}/git/branches
+DELETE /api/v1/projects/{project_id}/git/branches/{name:path}
+GET /api/v1/projects/{project_id}/git/branches/tree (checkout-free ordinary local branch)
+GET /api/v1/projects/{project_id}/git/branches/blob (checkout-free ordinary local branch)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
-POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
-POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
-POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
-POST           /api/v1/projects/{project_id}/git/base-remove  (0350 T0004)
-GET            /api/v1/projects/{project_id}/git/diff         (0326 NR0005 §4)
-GET            /api/v1/projects/{project_id}/git/groups/{group_id}/diff (0326 NR0005 §4)
+POST /api/v1/projects/{project_id}/git/cleanup
+POST /api/v1/projects/{project_id}/git/base-commit
+POST /api/v1/projects/{project_id}/git/base-revert
+POST /api/v1/projects/{project_id}/git/base-remove
+GET /api/v1/projects/{project_id}/git/diff
+GET /api/v1/projects/{project_id}/git/groups/{group_id}/diff
 GET/POST       /api/v1/groups/{group_id}/git/finalize
-GET            /api/v1/groups/{group_id}/git/finalize-target  (0665 T0004 — target preview)
-GET            /api/v1/groups/{group_id}/git/work-base        (0665 T0004 — recorded floor + audit)
-POST           /api/v1/groups/{group_id}/git/work-base/confirm (0665 T0004 — administrator only)
-GET/POST       /api/v1/projects/{project_id}/git/work-base-backfill (0665 T0004 — administrator only; GET = dry-run)
+GET /api/v1/groups/{group_id}/git/finalize-target (target preview)
+GET /api/v1/groups/{group_id}/git/work-base (recorded floor + audit)
+POST /api/v1/groups/{group_id}/git/work-base/confirm (administrator only)
+GET/POST /api/v1/projects/{project_id}/git/work-base-backfill (administrator only; GET = dry-run)
 POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/tr-commit
@@ -30,29 +30,29 @@ POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve-token
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/hold
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
-GET/POST       /api/v1/groups/{group_id}/git/merge/{merge_id}/force-cleanup  (v02test.0052 T0003 — administrator only; GET = preview)
-GET            /api/v1/projects/{project_id}/git/merge-abort-failures        (v02test.0052 T0003 — administrator only)
-GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review          (0481 D0006/L0007)
-GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review-diff     (0481 D0006/L0007)
-POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/approve         (0481 D0006/L0007 — human only)
-POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/reject          (0481 D0006/L0007 — human only)
-POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/review-message  (0481 D0006/L0007 — human only)
-POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/write-plan-token (0481 T0008 item 1 — resolve_conflict worker token only)
-GET            /api/v1/projects/{project_id}/git/merge                            (0630 T0005 — open branch-merge attempts)
-GET            /api/v1/projects/{project_id}/git/merge/{merge_id}                 (0630 T0005 — attempt state)
-GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/conflicts       (0630 T0005)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve         (0630 T0005)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve-token   (0630 T0005 — worker token only)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/ai-resolve      (0630 T0005 — re-invoke resolver)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/abort           (0630 T0005)
-GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/review          (0630 T0005)
-GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/review-diff     (0630 T0005)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/approve         (0630 T0005 — human only)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/reject          (0630 T0005 — human only)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/review-message  (0630 T0005 — human only)
-POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/write-plan-token (0630 T0005 — worker token only)
+GET/POST /api/v1/groups/{group_id}/git/merge/{merge_id}/force-cleanup (v02test.0052 the earlier implementation — administrator only; GET = preview)
+GET /api/v1/projects/{project_id}/git/merge-abort-failures (v02test.0052 the earlier implementation — administrator only)
+GET /api/v1/groups/{group_id}/git/merge/{merge_id}/review
+GET /api/v1/groups/{group_id}/git/merge/{merge_id}/review-diff
+POST /api/v1/groups/{group_id}/git/merge/{merge_id}/approve (human only)
+POST /api/v1/groups/{group_id}/git/merge/{merge_id}/reject (human only)
+POST /api/v1/groups/{group_id}/git/merge/{merge_id}/review-message (human only)
+POST /api/v1/groups/{group_id}/git/merge/{merge_id}/write-plan-token (item 1 — resolve_conflict worker token only)
+GET /api/v1/projects/{project_id}/git/merge (open branch-merge attempts)
+GET /api/v1/projects/{project_id}/git/merge/{merge_id} (attempt state)
+GET /api/v1/projects/{project_id}/git/merge/{merge_id}/conflicts
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve-token (worker token only)
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/ai-resolve (re-invoke resolver)
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/abort
+GET /api/v1/projects/{project_id}/git/merge/{merge_id}/review
+GET /api/v1/projects/{project_id}/git/merge/{merge_id}/review-diff
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/approve (human only)
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/reject (human only)
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/review-message (human only)
+POST /api/v1/projects/{project_id}/git/merge/{merge_id}/write-plan-token (worker token only)
 
-RBAC (P0005, common): read = project.settings.read, mutate = project.settings.edit.
+RBAC (common): read = project.settings.read, mutate = project.settings.edit.
 Group-scoped routes resolve the project from the group_id prefix and check the
 same keys manually (require_permission needs a path param named project_id).
 Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
@@ -87,7 +87,7 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 def _error_response(status_code: int, code: str, message: str, details: Optional[dict] = None) -> JSONResponse:
     error: dict = {"code": code, "message": message}
     # Structured payload (e.g. base_dirty's file list) surfaced verbatim so the FE
-    # can render an actionable, user-visible error (flowgate.default.0176 T0010 §b).
+    # can render an actionable, user-visible error.
     if details:
         error["details"] = details
     return JSONResponse(
@@ -109,7 +109,7 @@ def _check_group_permission(user: dict, group_id: str, permission: str) -> Optio
     return None
 
 
-# ── Project config (P0005 §1·§2) ─────────────────────────────────────────────
+# ── Project config ─────────────────────────────────────────────
 
 @router.get("/projects/{project_id}/git/config")
 def get_git_config(
@@ -126,20 +126,20 @@ class GitConfigPut(BaseModel):
     repo_url: str
     provider: str | None = None
     username: str | None = None
-    # None (or omitted) = keep the stored secret, "" = clear it (P0005 §2-1).
+    # None (or omitted) = keep the stored secret, "" = clear it.
     secret: str | None = None
     base_branch: str | None = None
     default_finalize_action: str | None = None
     enabled: bool = False
-    # LibreTranslate base URL for commit-subject translation (0173 P0003 §4-1).
+    # LibreTranslate base URL for commit-subject translation.
     # Omitted = keep stored; "" = clear (disable). exclude_unset preserves "omitted".
     translate_url: str | None = None
-    # Author of server-made commits (0237 R0001). Same omitted=keep / ""=clear
+    # Author of server-made commits. Same omitted=keep / ""=clear
     # protocol; cleared → commits fall back to the default FlowGate identity.
     # Validated as a pair by the service (both set, or both cleared).
     author_name: str | None = None
     author_email: str | None = None
-    # TR work-scope check enforcement stage: observe | warn | enforce (0299 D0004 §3.6).
+    # TR work-scope check enforcement stage: observe | warn | enforce.
     # Omitted = keep stored (exclude_unset), so an older client cannot reset it.
     tr_scope_stage: str | None = None
 
@@ -189,7 +189,7 @@ def test_git_connection(
         return _guard(exc)
 
 
-# ── Base provisioning status / manual trigger (0161 P0004) ──────────────────
+# ── Base provisioning status / manual trigger ──────────────────
 
 @router.get("/projects/{project_id}/git/provision")
 def get_git_provision(
@@ -207,7 +207,7 @@ def post_git_provision(
     project_id: str,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    # Synchronous by design (P0004): clone/fetch runs under GIT_NET_TIMEOUT_SEC;
+    # Synchronous by design: clone/fetch runs under GIT_NET_TIMEOUT_SEC;
     # a provisioning failure is a 200 with result.status="failed", not an error.
     try:
         return git_service.provision_manual(project_id)
@@ -215,7 +215,7 @@ def post_git_provision(
         return _guard(exc)
 
 
-# ── Project branches (0594 T0010) ────────────────────────────────────────────
+# ── Project branches ────────────────────────────────────────────
 
 class BranchCreateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -243,10 +243,10 @@ class BranchMergeBody(BaseModel):
     target_group_id: Optional[str] = None
     source: Optional[MergeEndpointIdentity] = None
     target: Optional[MergeEndpointIdentity] = None
-    # T0006: publish the merge result to origin (default True keeps every
+    # publish the merge result to origin (default True keeps every
     # existing caller's behavior — an omitted field still pushes).
     push: bool = True
-    # 0630 T0005 (D0004 §12 tier 1): the provider the conflict resolver starts with when
+    # (tier 1): the provider the conflict resolver starts with when
     # this merge stops on a conflict. Omitted = the server's own selection policy.
     provider_id: Optional[str] = None
 
@@ -352,8 +352,8 @@ def post_git_branch_merge(
     if not (isinstance(result, dict) and result.get("status") == "conflict"
             and result.get("merge_id") is not None):
         return result
-    # 0630 T0005 / T#3 (D0004 §10): the conflict is durable and the Git lock is released.
-    # T#3: the server no longer auto-starts the resolver here. EOL-only conflicts are still
+    # the conflict is durable and the Git lock is released.
+    # the server no longer auto-starts the resolver here. EOL-only conflicts are still
     # frozen to review automatically. For real conflicts the attempt stays open in "conflict"
     # state; the user opens GitConflictResolverDialog and clicks [AI invoke] → /ai-resolve.
     merge_id = int(result["merge_id"])
@@ -403,10 +403,10 @@ def put_git_default_merge_target(
         return _guard(exc)
 
 
-# ── Ordinary local branch: checkout-free tree/blob (0615 T0004) ──────────────
+# ── Ordinary local branch: checkout-free tree/blob ──────────────
 # A plain query-parameter shape (rather than /branches/{branch:path}/tree) sidesteps
 # any ambiguity a slash-containing branch name would create against a trailing
-# literal path segment (T0004 §3 permits either; this is the simpler one).
+# literal path segment (permits either; this is the simpler one).
 
 @router.get("/projects/{project_id}/git/branches/tree")
 def get_local_branch_tree(
@@ -497,9 +497,9 @@ def post_git_cleanup(
 
 class BaseCommitBody(BaseModel):
     # Commit subject; blank/omitted → the server derives "fix: <files>" itself
-    # (0177 L0002 §2.2 — the same rule the FE uses to seed its input).
+    # (the same rule the FE uses to seed its input).
     message: str | None = None
-    # 0296 T0004 (NR0003 R1): explicit base-checkout-relative paths to stage.
+    # explicit base-checkout-relative paths to stage.
     # Omitted → the legacy all-dirty-tracked commit. Given → exactly these paths,
     # which MAY be untracked new files; that is the only way to get a new file
     # into the commit the group worktrees are cut from.
@@ -563,7 +563,7 @@ def post_git_base_remove(
         return _guard(exc)
 
 
-# ── Group branch file explorer: checkout-free tree/blob (0186 P0005) ─────────
+# ── Group branch file explorer: checkout-free tree/blob ─────────
 
 @router.get("/projects/{project_id}/git/groups/{group_id}/tree")
 def get_group_branch_tree(
@@ -689,7 +689,7 @@ def get_group_branch_blob(
         return _guard(exc)
 
 
-# ── Group finalize (P0005 §5) ────────────────────────────────────────────────
+# ── Group finalize ────────────────────────────────────────────────
 
 @router.get("/groups/{group_id}/git/finalize")
 def get_group_finalize_state(
@@ -701,7 +701,7 @@ def get_group_finalize_state(
     try:
         # context="approval" → the AC final-approval confirm dialog, which asks
         # for a display-only preliminary awaiting_choice so the git choice block
-        # renders while the root is still wf_in_progress (0197 T0004 §B). Any
+        # renders while the root is still wf_in_progress. Any
         # other caller (GitFinalizePanel, header) gets the persisted state.
         return git_service.get_finalize_state(
             group_id, preview_ac=(context == "approval")
@@ -753,10 +753,10 @@ def post_group_untracked_remove(group_id: str, body: GroupUntrackedBody, user=De
 
 class FinalizeBody(BaseModel):
     action: str | None = None  # default = the project's configured default
-    # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
+    # Confirmed commit subject for the absorb commit. Blank/omitted
     # → the server resolves it (unmanned path); >200 chars (normalized) → 422.
     commit_message: str | None = None
-    # flowgate.default.0594 T0012: the local branch a merge lands on. Omitted -> the
+    # the local branch a merge lands on. Omitted -> the
     # project base (or, while an attempt is open, that attempt's pinned target).
     git_target_branch: str | None = None
 
@@ -893,7 +893,7 @@ def post_group_unmerge(
         return _guard(exc)
 
 
-# ── Conflict session (P0005 §6) ──────────────────────────────────────────────
+# ── Conflict session ──────────────────────────────────────────────
 
 @router.get("/groups/{group_id}/git/merge/{merge_id}/conflicts")
 def get_merge_conflicts(group_id: str, merge_id: int, user=Depends(get_current_user)):
@@ -907,7 +907,7 @@ def get_merge_conflicts(group_id: str, merge_id: int, user=Depends(get_current_u
 
 
 class ResolveSupersede(BaseModel):
-    # 0604 D0005 §3.4 / §5: the resolver's explicit "the kept side already carries the
+    # : the resolver's explicit "the kept side already carries the
     # other side's changes" declaration. Checked (and recorded) by resolve_conflicts;
     # `side`/`reason` stay plain strings so a bad value comes back as that service's
     # 422 conflict_supersede_invalid instead of a generic validation error.
@@ -918,7 +918,7 @@ class ResolveSupersede(BaseModel):
 
 
 class ResolveChunk(BaseModel):
-    # 0608 T0007: one chunk's resolution -- the lines that replace marker block `chunk`
+    # one chunk's resolution -- the lines that replace marker block `chunk`
     # (1-based, file order, as the conflict mention numbers them). resolve_conflicts
     # assembles the file from these and validates it like a whole-file `content`.
     model_config = ConfigDict(extra="forbid")
@@ -946,7 +946,7 @@ class ResolveFile(BaseModel):
 
 
 class ResolveBody(BaseModel):
-    # 0481 D0006 §3.2 / L0007 §2.2: extra="forbid" rejects (422) any stray
+    # extra="forbid" rejects  any stray
     # auto_apply/write/approve field outright instead of silently ignoring it —
     # this endpoint has exactly two legitimate fields, files and complete, plus
     # (on the human route's subclass below) the [자동] checkbox itself.
@@ -1013,9 +1013,9 @@ def post_merge_resolve_token(
             bool(body.complete),
             resolver_run_id=auth.get("ai_run_id"),
         )
-        # TR0019 — a TR conflict session ends the worker's job at `resolved_pending_review`,
+        # a TR conflict session ends the worker's job at `resolved_pending_review`,
         # not at `merged`: the commit is a person's press. Both are "this token is done".
-        # 0481 T0008 — a general merge session now ends the worker's job the same way, at
+        # a general merge session now ends the worker's job the same way, at
         # resolved_pending_review (this submission's job was resolving, not approving).
         if result.get("ok") and result.get("result", {}).get("status") in (
             "merged", "resolved_pending_review",
@@ -1045,7 +1045,7 @@ def post_merge_abort(group_id: str, merge_id: int, user=Depends(get_current_user
     try:
         parked = git_service.tr_conflict_session(group_id)
         if parked and int(parked.get("merge_id") or -1) == int(merge_id):
-            # TR0019 — same button and the same restore underneath, routed through the
+            # same button and the same restore underneath, routed through the
             # service that owns the ledger so the abandoned attempt gets its log line.
             return tr_commit_service.abort_conflict_resolution(group_id, merge_id)
         return git_service.abort_merge(group_id, merge_id)
@@ -1053,7 +1053,7 @@ def post_merge_abort(group_id: str, merge_id: int, user=Depends(get_current_user
         return _guard(exc)
 
 
-# ── flowgate.v02test.0052 T0003: abort failure visibility + administrator force cleanup ──
+# ── the earlier change the earlier implementation: abort failure visibility + administrator force cleanup ──
 
 @router.get("/groups/{group_id}/git/merge/{merge_id}/force-cleanup")
 def get_merge_force_cleanup(group_id: str, merge_id: int, user=Depends(get_current_user)):
@@ -1114,9 +1114,9 @@ def post_tr_conflict_commit(group_id: str, merge_id: int, user=Depends(get_curre
         return _guard(exc)
 
 
-# ── General-merge review gate (flowgate.default.0481 D0006/L0007, T0008) ────
+# ── General-merge review gate ────
 # GET review / POST approve / POST reject / POST review-message are the four new
-# windows D0006 §4 [DEFERRED] left to this WP's logic design (L0007 §2.11); all
+# windows the design [DEFERRED] left to this WP's logic design; all
 # four require a human (project.settings.edit) — a resolve_conflict worker token
 # can reach /resolve and /resolve-token above, never these.
 
@@ -1170,7 +1170,7 @@ def _start_resolve_conflict_run(
     from modules.flow_gate.services import ai_invoke_service
 
     project_id, module = _review_group_parts(group_id)
-    # 0578 T0006 §3 work item 3-1/3-2 / D0005 §3.3: ONE normalization for this run. The
+    # work item 3-1/3-2 / the design: ONE normalization for this run. The
     # caller that already fixed the turn's start locale hands it down (so the pending row
     # and the run agree by construction); the [Reject] path still has none of its own and
     # falls back to this request's header -- now through the same normalizer, so an
@@ -1183,7 +1183,7 @@ def _start_resolve_conflict_run(
         project_id=project_id, module=module, group_id=group_id,
         doc_ref="", action_scope="resolve_conflict", mode="single",
         continuation_target_seq=None, continuation_review_mode=False,
-        # 0578 T0006 §3 work item 3-3 / D0005 §3.3: the worker reaches back for help and
+        # work item 3-3 / the design: the worker reaches back for help and
         # tool prose with THIS token; `continuation_locale` is the existing carrier for
         # "the language this run started in", so a merge-review run gets it too.
         continuation_instruction_mode=None, continuation_locale=locale,
@@ -1292,7 +1292,7 @@ def post_merge_review_approve(
     try:
         parked = git_service.tr_conflict_session(group_id)
         if parked and int(parked.get("merge_id") or -1) == int(merge_id):
-            # 0668 T0004 — a TR conflict is approved on the common review screen. The
+            # a TR conflict is approved on the common review screen. The
             # fingerprint it showed travels into the TR commit, which still runs under its
             # own lock (TR commit and merge review apply never share one lock span) and
             # still writes the ledger through the service that owns it. `tr-commit` stays
@@ -1361,7 +1361,7 @@ class ReviewMessageBody(BaseModel):
     provider_id: str
     provider_pinned: bool = False
     apply_requested: bool = False
-    # 0481 T0008 item 1 / L0007 §2.7: only meaningful with apply_requested=true —
+    # only meaningful with apply_requested=true —
     # [테스트 편집 포함 재지시]. A propose-only or plain apply turn defaults this
     # to false, which is also what a missing/omitted value must mean (the server
     # fixes this, never the model's own plan — see _apply_write_plan_locked).
@@ -1381,7 +1381,7 @@ def post_merge_review_message(
     user_id = user.get("user_id") or user.get("id") or user.get("email") or "unknown"
     apply_requested = bool(body.apply_requested)
     allow_test_edits = bool(body.allow_test_edits) and apply_requested
-    # 0578 T0006 §3 work item 3-1: normalized ONCE here and handed to both halves, so the
+    # work item 3-1: normalized ONCE here and handed to both halves, so the
     # locale pinned on the pending row and the locale the run is launched in cannot drift
     # apart. Deliberately read from the header only -- no body field, no second source.
     locale = template_provision.normalize_locale(request.headers.get("x-locale"))
@@ -1397,7 +1397,7 @@ def post_merge_review_message(
                 messages=[body.message], locale=locale,
                 write_requested_by_human=apply_requested,
                 allow_test_edits=allow_test_edits,
-                # 0481 T0010 rev6 (rejection 3): a question typed at the approval screen
+                # (rejection 3): a question typed at the approval screen
                 # is a conversation turn, not a resolver run. The reject route above is the
                 # opposite -- it restores the conflict and wants a new resolution -- so it
                 # deliberately does not pass this.
@@ -1479,7 +1479,7 @@ def post_merge_write_plan_token(
         return _guard(exc)
 
 
-# ── Ordinary Branch Merge conflict / review (flowgate.default.0630 T0005, D0004 §8) ─
+# ── Ordinary Branch Merge conflict / review ─
 # An ordinary branch merge has no group, so its persistent attempt is addressed by
 # project. Every route below is a thin project-scoped window onto the SAME service the
 # group routes above use (`resolve_conflicts`, `list_conflicts`, `get_merge_review`,
@@ -1787,7 +1787,7 @@ def post_branch_merge_write_plan_token(
         return _guard(exc)
 
 
-# ── Group worktree manual index operations (0066 D#1 E1--E6) ──────────────
+# ── Group worktree manual index operations ──────────────
 
 class WorktreeRequestRoute(APIRoute):
     """Bound E2--E6 bodies before JSON decoding, including chunked requests."""
@@ -1929,7 +1929,7 @@ def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = No
 router.include_router(_worktree_mutations)
 
 
-# ── Manual merge, merge results, follow-up push, fetch-only (0066 D#1 E8--E12) ──
+# ── Manual merge, merge results, follow-up push, fetch-only ──
 
 def _manual_guard(exc: GitServiceError) -> JSONResponse:
     """D#1 §3-1(3): no hidden path in any manual Git error detail."""

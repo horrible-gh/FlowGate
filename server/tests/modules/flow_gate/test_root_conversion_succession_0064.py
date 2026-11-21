@@ -320,7 +320,7 @@ def test_attachments_are_copied_and_ghosts_stay_ghosts(env, counting):
     assert (counting["stage_attachments"], counting["copy_files"]) == (1, 0)
     assert (counting["finish_room"], counting["cleanup_room"]) == (0, 0)          # no original cleanup queued
     [converted] = events_of(env, "doc_type_converted")
-    assert converted["metadata"] == NOTE_RB                                       # no attachment counts (P0006 §3.4)
+    assert converted["metadata"] == NOTE_RB                                       # no attachment counts
 
 
 def test_a_reserved_ghost_of_the_new_document_keeps_the_delete_refusal(env):
@@ -856,7 +856,7 @@ def test_a_missing_body_keeps_the_number_swap_and_refuses_the_succession(env, st
     assert snapshot(env) == before
 
 
-# ── card lines, draft cards, Canvas and the live root (V-B3-3, V-B3-11, L0005 2.10 P1~P10) ───────────
+# ── card lines, draft cards, Canvas and the live root ───────────
 
 def _draft(nodes):
     from modules.flow_gate.db.connection import get_store
@@ -1058,7 +1058,7 @@ def test_a_succeeded_root_reads_and_writes_by_its_live_root_final_approval(env, 
     assert document_service.is_final_approved(db_docs.get_by_id(other)) is False
 
 
-# ── the console read (P0006 §3.1, V-P-10) and the refusals (§3.5, V-P-12) ─────────────────────────
+# ── the console read and the refusals  ─────────────────────────
 
 def _read(client, doc_id, include=True):
     res = client.get(f"/api/v1/documents/{doc_id}", params={"include": "root_conversion"} if include else None)

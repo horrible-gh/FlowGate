@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — a single AI call on one document (O3 flowgate.v02.0056.0009-TR §4-3, the v0.1 route
+// a single AI call on one document (O3 the earlier change, the v0.1 route
 // reused): the user picks the AI, writes an opinion and the AI works on the document once (`edit`). No review
 // loop is sent (`document_review_loop` stays out), so no review · rework round and no card approval follow the
 // run — even when the document is a card's result.

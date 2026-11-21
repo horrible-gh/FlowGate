@@ -1,4 +1,4 @@
-// How a system Agent's state reads on screen (mockup ⑩, flowgate.v02.0077), shared by System Agent
+// How a system Agent's state reads on screen (mockup ⑩, the earlier change), shared by System Agent
 // and the overview's "확인 필요" list. Everything is derived from one GET /system/agents answer
 // (services/agent_registry.detail); nothing here sends a request.
 import type { AgentCapability, SystemAgent } from './types'

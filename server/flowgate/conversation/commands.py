@@ -1,4 +1,4 @@
-"""Chat command requests: state machine, decision, waiting, execution, AI result (D0006 §3.1-§3.7).
+"""Chat command requests: state machine, decision, waiting, execution, AI result.
 
 One contract, two transports:
 
@@ -16,9 +16,9 @@ browser or a provider prompt. The user's command policy decides the first transi
 
 Time: waiting for approval and for a running command is bounded by the run's hard
 ceiling only -- :func:`chat_run_budget_sec` -- never by the hop's ``_remaining_sec``,
-which turns negative for a run that keeps working past ``timeout_sec`` (D0006 §3.5.1).
+which turns negative for a run that keeps working past ``timeout_sec``.
 Every wait step records run progress so the no-progress watchdog never ends a run that
-is waiting for its user (D0006 §3.6).
+is waiting for its user.
 
 No repository lock is taken for a pending approval or a running command (main's git
 concurrency layer is not part of v0.2); only the self-check process ownership layer
@@ -101,7 +101,7 @@ _lock = threading.RLock()
 def chat_run_budget_sec(run: Optional[dict]) -> float:
     """Seconds a command of ``run`` may still wait or run: hard-ceiling remainder minus safety.
 
-    ``= _absolute_remaining_sec(run) - RUN_SAFETY_SEC`` (D0006 §3.5.1). Recomputed at every
+    ``= _absolute_remaining_sec(run) - RUN_SAFETY_SEC``. Recomputed at every
     check by its callers. A run whose clock cannot be read has no budget.
     """
     if not run:
@@ -114,7 +114,7 @@ def chat_run_budget_sec(run: Optional[dict]) -> float:
 
 
 def note_progress(run: Optional[dict]) -> None:
-    """Record command activity as progress of ``run`` (D0006 §3.6). Never raises."""
+    """Record command activity as progress of ``run``. Never raises."""
     if not run:
         return
     try:
@@ -187,7 +187,7 @@ def _token_expired(rec: dict) -> bool:
 
 
 def _require_execute_scope(command: object) -> None:
-    """Execute mode (flowgate.v02test.0026): refuse a command that changes files.
+    """Execute mode: refuse a command that changes files.
 
     ``command`` is a validated :class:`policy.ChatCommand`, or a stored request row, which is
     validated and classified again here -- the stored category is never trusted.
@@ -217,7 +217,7 @@ def _require_command_access(run: dict, token_id: Optional[str], command: object 
 
     Returns ``"edit"`` (a ``read_write`` token: edit, or an edit_once that won its claim --
     the 0180 rule) or ``"execute"`` (an execute-mode token: commands only, its source stays
-    ``read``; flowgate.v02test.0026). A reading-mode token is refused. With ``command``
+    ``read``; the earlier change). A reading-mode token is refused. With ``command``
     given, an execute token is also held to :func:`_require_execute_scope`.
 
     The authority is the persisted row of the run's current token -- never the run's own
@@ -299,7 +299,7 @@ def _authorize_run(run: Optional[dict], token_id: Optional[str] = None, command:
             token_id = _run_token_id(run)
         try:
             token = db_tokens.get_by_id(token_id) if token_id else None
-            # flowgate.v02.0061 T#7: a stopping run's / inactive attempt's token gets no command — judged before
+            # a stopping run's / inactive attempt's token gets no command — judged before
             # its source root, so the refusal is graph_attempt_inactive (recorded), never a source error.
             graph_source_hooks.require_writable(token, "chat_command")
             graph_source_hooks.source_root(
@@ -532,7 +532,7 @@ def _clip_args(args: list[str], limit: int) -> tuple[list[str], bool]:
 
 
 def _allocate_streams(out: str, err: str, budget: int) -> tuple[str, str]:
-    """Tails of both streams within one shared budget (D0006 §3.5.3 rule 2)."""
+    """Tails of both streams within one shared budget (rule 2)."""
     budget = max(0, int(budget))
     half = budget // 2
 
@@ -549,11 +549,11 @@ def _allocate_streams(out: str, err: str, budget: int) -> tuple[str, str]:
 
 
 def ai_result(row: dict) -> dict:
-    """What the model gets back (D0006 §5.2), built to fit ``AI_RESULT_MAX_CHARS`` serialized.
+    """What the model gets back, built to fit ``AI_RESULT_MAX_CHARS`` serialized.
 
     Item order is the serialization order; ``stdout``/``stderr`` come last. The whole
     ``json.dumps(result, ensure_ascii=False)`` stays within the API worker's tool-result
-    cap so its safety-net cut never breaks this JSON (D0006 §3.5.3).
+    cap so its safety-net cut never breaks this JSON.
     """
     args = [str(a) for a in (row.get("args") or [])]
     limit = c.RESULT_META_FIELD_CHARS
@@ -615,7 +615,7 @@ def ai_result(row: dict) -> dict:
 
 
 def error_result(code: str, message: str) -> dict:
-    """Error-shaped tool result (D0006 §3.3), held to the same caps as ``ai_result``.
+    """Error-shaped tool result, held to the same caps as ``ai_result``.
 
     Input errors may echo what the model sent (an unknown field name, a program), so the
     code and message are clipped like meta fields and the whole serialized result stays
@@ -646,7 +646,7 @@ def resolve_policy(user_id: Optional[str]) -> str:
 def create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
     """Validate, bind to the worktree, apply the user's policy and store. Returns the row.
 
-    flowgate.v02.0061 T#7: one Graph attempt-token write session — the judgement of the token (``_authorize_run``)
+    one Graph attempt-token write session — the judgement of the token (``_authorize_run``)
     keeps the Stop gate's shared hold it was made under until the row is stored, so a Stop's
     ``stopping`` commits before the judgement (refused) or after the request exists (cancelled with the run)."""
     from modules.flow_gate.services import graph_source_hooks
@@ -663,7 +663,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         command = policy.validate_request(payload)
     except policy.CommandPolicyError as exc:
         raise c.ConversationError(422, exc.code, exc.message) from exc
-    # flowgate.v02test.0026: an execute-mode token runs only commands that do not change
+    # an execute-mode token runs only commands that do not change
     # files -- refused here, before any row exists or any policy applies.
     _require_command_access(run, token_id, command)
     root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"),
@@ -678,7 +678,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
     if user_policy == c.POLICY_REJECT:
         status = c.REJECTED
     elif chat_run_budget_sec(run) <= 0:
-        # No time left to wait or run: closed at once, never pending (D0006 §3.5.2 rule 3).
+        # No time left to wait or run: closed at once, never pending (rule 3).
         status, error_code, decision_source = c.CANCELLED, c.REASON_RUN_BUDGET_EXHAUSTED, None
     elif user_policy == c.POLICY_ALWAYS_APPROVE:
         status = c.APPROVED
@@ -699,7 +699,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         row = repo.get_command(row["request_id"]) or row
     except Exception:
         logger.warning("chat command anchor resolve failed for %s", row["request_id"], exc_info=True)
-    # Stored while the run was ending: re-check right after the insert (D0006 §3.7).
+    # Stored while the run was ending: re-check right after the insert.
     try:
         _authorize_run(run, token_id, command)
     except c.ConversationError as exc:
@@ -820,7 +820,7 @@ def _await_execution(request_id: str, execution: threading.Event) -> None:
 
 
 def cancel_for_run(run_id: str, reason: str = c.REASON_RUN_FINISHED) -> int:
-    """Finalize: nothing of a finished run may stay open (D0006 §3.7).
+    """Finalize: nothing of a finished run may stay open.
 
     Returns once every command of the run is terminal and its process is gone, so the
     end snapshot taken right after includes everything the commands wrote.
@@ -964,7 +964,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         env = policy.environment(path_value, runtime)
         # Last gate before a process exists. The check, the spawn and the control install
         # happen under the run's launch gate, so no cancellation begins in between.
-        # flowgate.v02.0061 T#7: a Graph attempt token's judgement (``_live_refusal``) keeps the Stop gate's shared
+        # a Graph attempt token's judgement (``_live_refusal``) keeps the Stop gate's shared
         # hold through the spawn: a Stop's ``stopping`` commits before it (refused) or after the process exists
         # (killed with its run). The gate is taken inside the launch gate; the Stop never holds it while it kills.
         from modules.flow_gate.services import graph_source_hooks
@@ -1060,7 +1060,7 @@ def wait_for(request_id: str, max_wait: float, run: Optional[dict] = None) -> tu
     or the run is cancelled. Returns (row, why).
 
     The budget is recomputed at every check (never once at the start), and while the
-    row is pending or running each check notes run progress (D0006 §3.5.1, §3.6).
+    row is pending or running each check notes run progress.
     """
     started = time.monotonic()
     event = _event(request_id)
@@ -1089,7 +1089,7 @@ def run_tool(run: dict, tool_input: object) -> tuple[int, dict]:
     """API-provider tool entry: create, wait in this same run, return the result.
 
     Input / policy / worktree errors come back as an error-shaped tool result and never
-    fail the run (D0006 §3.3). Rejections, expiries and cancels are normal results.
+    fail the run. Rejections, expiries and cancels are normal results.
     """
     try:
         row = create_request(run, tool_input)
@@ -1097,7 +1097,7 @@ def run_tool(run: dict, tool_input: object) -> tuple[int, dict]:
         return exc.status, error_result(exc.code, exc.message)
     request_id = row["request_id"]
     if row["status"] == c.PENDING_APPROVAL:
-        # Decided once, right after the creation's progress note (D0006 §3.5.2 rule 2).
+        # Decided once, right after the creation's progress note (rule 2).
         approval_window = min(c.APPROVAL_WAIT_MAX_SEC, chat_run_budget_sec(run))
         row, why = wait_for(request_id, approval_window, run)
         if row is not None and row["status"] == c.PENDING_APPROVAL:
@@ -1187,7 +1187,7 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
     return "\n".join(lines)
 
 
-# flowgate.v02test.0026: what an execute-mode chat is told (API tool text and CLI mention).
+# what an execute-mode chat is told (API tool text and CLI mention).
 EXECUTE_MODE_NOTE = (
     "This chat is in execute mode: you may run commands, but you must not change source or "
     "documents. Only read, git read and test/build commands run; a command that changes files "

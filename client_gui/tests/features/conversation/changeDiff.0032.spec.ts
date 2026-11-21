@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { diffLines, diffUnavailableReason } from '@/features/conversation/changeDiff'
 import type { RunFileDiff, RunFileDiffSide } from '@/features/conversation/types'
 
-// flowgate.v02.0032 — line diff of a stored run change file (D0006 §3.8.3, §6.1).
+// line diff of a stored run change file.
 const render = (old: string | null, next: string | null, maxCells?: number) =>
   diffLines(old, next, maxCells).map((l) => `${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}${l.text}`)
 

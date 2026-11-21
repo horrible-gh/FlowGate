@@ -1,9 +1,9 @@
 <template>
-  <!-- flowgate.v02.0031 — a non-message entry of the timeline: a command request (R0001 §5),
+  <!-- a non-message entry of the timeline: a command request,
        a work change (§6) or a status event (§3). It is recorded where it happened and scrolls
        up with the messages after it; nothing here is pinned above the composer.
-       flowgate.v02.0032 — the command card shows the server state and its reason code
-       (D0006 §6.1) and the run change card lists its files, each opening the stored diff. -->
+       the command card shows the server state and its reason code
+       and the run change card lists its files, each opening the stored diff. -->
   <div
     v-if="activity.kind === 'command'"
     ref="rootEl"
@@ -15,7 +15,7 @@
       <span aria-hidden="true">⌘</span>
       <span>{{ t('gui.conversation.command.title') }}</span>
       <span class="tl-act-state" data-test="tl-command-state">{{ commandStateText }}</span>
-      <!-- flowgate.v02test.0024 C: a failed / refused command copies its whole failure (command, path, reason, output). -->
+      <!-- C: a failed / refused command copies its whole failure (command, path, reason, output). -->
       <button
         v-if="copyText"
         type="button"
@@ -34,7 +34,7 @@
       <p v-if="commandReason" class="tl-act-detail" data-test="tl-command-reason">{{ commandReason }}</p>
       <p v-if="activity.detail" class="tl-act-detail">{{ activity.detail }}</p>
       <div class="tl-act-actions">
-        <!-- flowgate.v02.0150 — every command card opens its detail in place (one column),
+        <!-- every command card opens its detail in place (one column),
              whatever its state and also read-only: the full command, its output and exit. -->
         <button
           type="button"
@@ -166,7 +166,7 @@
       <button type="button" class="tl-act-btn" data-test="tl-history-dismiss" @click="emit('dismiss-history')">{{ t('gui.conversation.close') }}</button>
     </template>
     <span v-if="activity.createdAt" class="tl-status-time" :title="activity.createdAt">{{ formatTimelineTime(activity.createdAt) }}</span>
-    <!-- flowgate.v02test.0024 C: a warning / error line copies its whole text (the wording and the server detail). -->
+    <!-- C: a warning / error line copies its whole text (the wording and the server detail). -->
     <button
       v-if="copyText"
       type="button"
@@ -289,14 +289,14 @@ const running = computed(() => props.activity.kind === 'status' && props.activit
 const statusText = computed(() => {
   const a = props.activity
   if (a.kind !== 'status') return ''
-  // flowgate.v02test.0024 D: the run in progress line — which AI runs and with which access, each once it is known.
+  // D: the run in progress line — which AI runs and with which access, each once it is known.
   if (a.code === 'run_running') {
     const access = a.run?.access === 'read_write' ? t('gui.conversation.composer.source.edit')
       : a.run?.access === 'execute' ? t('gui.conversation.composer.source.execute')
       : a.run?.access === 'read' ? t('gui.conversation.composer.source.read_only') : ''
     return [t('gui.conversation.status.run_running'), a.run?.providerName, access].filter(Boolean).join(' · ')
   }
-  // flowgate.v02test.0024 B: a recorded chat error keeps the wording its notice had.
+  // B: a recorded chat error keeps the wording its notice had.
   const key = a.code ? `gui.conversation.status.${a.code}` : ''
   const noticeKey = a.code ? `gui.conversation.notice.${a.code}` : ''
   const known = key && te(key) ? t(key) : a.chatError && noticeKey && te(noticeKey) ? t(noticeKey) : ''
@@ -305,7 +305,7 @@ const statusText = computed(() => {
   return known || a.text || a.code || ''
 })
 
-// ── flowgate.v02test.0024 C: copy of a failure (same icon, feedback and wording as a message's copy) ──
+// ── the earlier change C: copy of a failure (same icon, feedback and wording as a message's copy) ──
 const FAILED_COMMANDS = new Set(['failed', 'timed_out', 'cancelled', 'rejected'])
 
 /** The whole failure text, or '' when this entry is no failure. */
@@ -370,7 +370,7 @@ async function copyError(): Promise<void> {
   border-radius: var(--fg2-control-radius);
   background: var(--fg2-control-surface-flat);
   overflow: hidden;
-  /* flowgate.v02.0147 T0005: a direct child of the column-flex .conv-log must never be
+  /* a direct child of the column-flex .conv-log must never be
      shrunk below its content height (overflow:hidden would clip it to ~2px). */
   flex-shrink: 0;
 }
@@ -696,7 +696,7 @@ async function copyError(): Promise<void> {
   overflow-wrap: anywhere;
 }
 
-/* flowgate.v02gui.0026: same look as the question policy conversation (QuestionPolicyPanel .qp-thinking / .qp-dots). */
+/* same look as the question policy conversation (QuestionPolicyPanel .qp-thinking / .qp-dots). */
 .tl-status--running {
   align-self: flex-start;
   padding: 2px 4px;
@@ -740,7 +740,7 @@ async function copyError(): Promise<void> {
   color: var(--fg2-muted-2);
 }
 
-/* flowgate.v02test.0024 C: the message copy button (TimelineMessage .tl-copy), same look and feedback. */
+/* C: the message copy button (TimelineMessage .tl-copy), same look and feedback. */
 .tl-copy {
   flex-shrink: 0;
   width: 18px;

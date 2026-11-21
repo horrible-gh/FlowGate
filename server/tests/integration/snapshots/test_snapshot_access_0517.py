@@ -468,7 +468,7 @@ def test_c10_c19_canonical_mutation_and_tr_scope_contracts_remain_separate():
 def test_cli_request_approve_materialize_access_run_share_one_snapshot(
     snapshot_env, monkeypatch,
 ):
-    """T#2 connected regression (rework of the prior TR0021 rejection): the snapshot the
+    """connected regression (rework of the prior the earlier implementation rejection): the snapshot the
     CLI *requests* through the real worker-token HTTP boundary is the exact same
     snapshot that human approval/materialization publishes and that the CLI later
     reads/searches/globs/stats and runs a command against — never two disconnected
@@ -771,7 +771,7 @@ def test_lineage_authorization_rejects_forged_axes(access_env):
 
 
 # ---------------------------------------------------------------------------
-# 0517 T0022: no worker-facing boundary may carry a server-internal absolute path,
+# no worker-facing boundary may carry a server-internal absolute path,
 # including the live FlowGate worktree path an OSError names on materialize.
 # ---------------------------------------------------------------------------
 
@@ -828,7 +828,7 @@ def test_t0022_live_worktree_oserror_on_materialize_never_reaches_a_worker(
 ):
     """Real reproduction: the requested file disappears between the scope scan and the
     copy, so os.open() raises a genuine FileNotFoundError whose str() names the live
-    FlowGate worktree path. Before T0022 that text was stored verbatim in failure_reason
+    FlowGate worktree path. Before the earlier implementation that text was stored verbatim in failure_reason
     (the old sanitizer only knew the token scratch root) and re-served on every
     status/access/run call; CLI materialize surfaced it as an unhandled exception.
     """
@@ -905,7 +905,7 @@ def test_t0022_live_worktree_oserror_on_materialize_never_reaches_a_worker(
 
 
 def test_t0022_legacy_stored_worktree_path_is_scrubbed_on_read(snapshot_env, monkeypatch):
-    """A failure_reason persisted before T0022 (raw OSError text naming the worktree, in
+    """A failure_reason persisted before the earlier implementation (raw OSError text naming the worktree, in
     the doubled-backslash repr spelling) is still scrubbed when it is re-served."""
     client, headers, run = _cli_client(snapshot_env, monkeypatch)
     leaked = snapshot_env.worktree / "dir" / "a.txt"
@@ -952,7 +952,7 @@ def test_t0022_real_oserror_inside_run_is_scrubbed_on_cli_and_api(snapshot_env, 
 @pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_success_payloads_redact_the_live_worktree_path_too(snapshot_env, monkeypatch):
     """A snapshot file (or a command's output) that mentions the live worktree path must
-    not hand it to the worker; before T0022 only the scratch root was redacted."""
+    not hand it to the worker; before the earlier implementation only the scratch root was redacted."""
     client, headers, run = _cli_client(snapshot_env, monkeypatch)
     snapshot_env.worktree.joinpath("one.txt").write_text(
         f"root={snapshot_env.worktree}\n", encoding="utf-8", newline="\n",

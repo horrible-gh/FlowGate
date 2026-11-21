@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#4 — the special views' pure rules: a document type is shown by its name (never its
+ * the special views' pure rules: a document type is shown by its name (never its
  * code), the work plan's cards and Step labels (the v0.1 WorkPlanEditor table: rowNo, stepDocParts, a set
  * card with its result row), the test marks / flags that replace the v0.1 badges and bands, and the Case rows
  * of a test report read from its saved text (testReportRows: only the lines and cell values the server writes,

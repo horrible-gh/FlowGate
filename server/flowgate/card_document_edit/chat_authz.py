@@ -187,7 +187,7 @@ def authorize_chat_run(via: str, token_raw: Optional[str], run_hint: Optional[di
     return run, token_row
 
 
-# ── flowgate.v02gui.0010: the live recheck of a non-edit write (a card question's answer) ──
+# ── the earlier change: the live recheck of a non-edit write (a card question's answer) ──
 
 def chat_recheck_alive(run: dict, token_row: dict, holder: chat_gate.TicketHolder) -> None:
     """Gate first, then one token read: the run is still alive and its current token is still this one.

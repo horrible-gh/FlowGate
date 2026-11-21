@@ -1,8 +1,8 @@
-"""flowgate.v02.0045 T0015 (S5) — Graph runs on a real SQLite DB (all migrations, TestClient).
+"""(S5) — Graph runs on a real SQLite DB (all migrations, TestClient).
 
-P0008 §7 S5-1~S5-5 and §8.3 run events, L0009 §2.6.5~§2.6.9 (start with root binding, apply,
+S5-1~S5-5 and run events, the earlier implementation~ (start with root binding, apply,
 stop / resume, result binding, reconciliation, dispatch failure), DB0010 §3.5 (migration 144)
-and §5.3 (Flow delete cleanup). Until D0004 §8 is answered a start is refused with
+and (Flow delete cleanup). Until the design is answered a start is refused with
 ``run_policy_undecided``; the rest uses decided *test* policies registered under their own value
 (the product default stays ``undecided``). Auth, RBAC and SSE delivery are stubbed; the token
 service runs for real with its scratch directory moved under pytest's tmp_path.
@@ -191,7 +191,7 @@ def _confirm(flow, nodes, edges):
 
 
 def _confirm_next(flow, nodes, edges):
-    """Confirm the next revision on top of the latest one (P0008 S4)."""
+    """Confirm the next revision on top of the latest one."""
     from modules.flow_gate.db.connection import get_store
     from modules.flow_gate.graph_workflow.services import confirm_service
     from modules.flow_gate.graph_workflow.store import definition_store
@@ -362,7 +362,7 @@ def test_start_binds_the_root_and_opens_the_next_node(env, decided):
 
 
 def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
-    """0056 T#1 revised: root input bypasses review without changing the rejected document."""
+    """revised: root input bypasses review without changing the rejected document."""
     run = start(env, FH).json()["run"]
     root = nodes_of(run)["gn_r"]
     assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("done", False, ["gn_d"])
@@ -376,7 +376,7 @@ def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
                 (f"{FH}.0001-R",))[0]["doc_review_status"] == "rejected"
 
 
-# ── result binding (L0009 §2.6.8) ────────────────────────────────────────────
+# ── result binding ────────────────────────────────────────────
 
 def test_results_move_the_run_to_completion(env, decided):
     run_id = start(env).json()["run"]["run_id"]
@@ -431,7 +431,7 @@ def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
     start(env)
     d1 = _doc(FG, 2, "D")
     submit(FG, d1, "D", token_of(env))
-    decide_review(FG, d1, "reject", "rejected")                      # flowgate.v02.0056 T#1: no node event
+    decide_review(FG, d1, "reject", "rejected")                      # no node event
     assert nodes_of(current(env))["gn_d"]["status"] == "review"
     d2 = _doc(FG, 3, "D", "rejected")                              # revision of d1, rejected, both unreported
     db_documents.set_superseded_by(d1, d2)
@@ -447,7 +447,7 @@ def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
     assert nodes_of(current(env))["gn_d"]["result_doc_id"] == d4
 
 
-# ── S5-5: stop / resume (L0009 §2.6.7) ───────────────────────────────────────
+# ── S5-5: stop / resume ───────────────────────────────────────
 
 def test_stop_and_resume(env, decided):
     run_id = start(env).json()["run"]["run_id"]
@@ -489,7 +489,7 @@ def test_resume_refuses_an_unrestorable_snapshot(env, decided):
     assert _sql(env["db"], "SELECT status FROM graph_runs")[0]["status"] == "stopped"     # E-33: nothing written
 
 
-# ── reconciliation (L0009 §2.6.8, E-27) ──────────────────────────────────────
+# ── reconciliation ──────────────────────────────────────
 
 def test_a_lost_delegation_is_recovered_before_a_run_read(env, decided, monkeypatch):
     from modules.flow_gate.graph_workflow.services import result_binder
@@ -509,10 +509,10 @@ def test_a_lost_delegation_is_recovered_before_a_run_read(env, decided, monkeypa
     assert [c for *_x, c in run_events(env)][3:6] == ["result_submitted", "review_approved", "opened"]
 
 
-# ── dispatch (L0009 §2.6.6, E-22 / E-23) ─────────────────────────────────────
+# ── dispatch ─────────────────────────────────────
 
 def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decided):
-    # flowgate.v02.0083 T#1 (0056 T#1 revised): the rejected bound root is the run's input, done at start;
+    # (revised): the rejected bound root is the run's input, done at start;
     # gn_d opens at once and its token issue to u_ghost (no users row) fails. No root revision is needed.
     res = start(env, FH)
     assert res.status_code == 201
@@ -525,7 +525,7 @@ def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decide
     _sql(env["db"], "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
                     "VALUES ('u_ghost', 'u_ghost', 'g@x', 'x', 't', 't')")
     rid = run["run_id"]
-    # 0061 T#7: the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
+    # the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
     seen = len(run_events(env))
     assert control(env, rid, "resume").status_code == 200
     d = nodes_of(current(env, FH))["gn_d"]
@@ -614,7 +614,7 @@ def test_a_refused_ai_start_marks_the_node_and_keeps_its_token(env, decided, mon
     assert [c for *_x, c in run_events(env)][-1] == "dispatch_failed"
 
 
-# ── Canvas (P0008 S1-3) and reads ────────────────────────────────────────────
+# ── Canvas and reads ────────────────────────────────────────────
 
 def test_canvas_absorbs_root_and_result_documents(env, decided):
     """Keep projection coverage independent of the legacy run status/event assertions below."""
@@ -635,7 +635,7 @@ def test_canvas_shows_the_run(env, decided):
     submit(FG, d, "D", token_of(env))
     body = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h()).json()
     assert {k: body["run"][k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")} ==         {"run_id": run_id, "status": "running", "revision_no": 1, "open_node_keys": [], "last_event_seq": 4}
-    # flowgate.v02.0083 T#4 rev1: with the band's facts of the same run read
+    # with the band's facts of the same run read
     assert body["run"]["idle_reason"] is None and body["run"]["pending_node_keys"] == []
     nodes = {n["node_key"]: n for n in body["nodes"]}
     assert nodes["gn_r"]["state"] == "done" and nodes["gn_r"]["node_run"]["status"] == "done"
@@ -653,7 +653,7 @@ def test_canvas_draws_the_revision_the_run_pinned(env, decided):
     _confirm_next(FG, [_node("gn_r", "R"), _node("gn_d", "D", "human", user="u_lee"),
                        _node("gn_q", "T", "human", user="u_kim")],
                   [_edge("ge_rd", "gn_r", "gn_d"), _edge("ge_dq", "gn_d", "gn_q")])
-    run_id = start(env, body={"revision_no": 1}).json()["run"]["run_id"]          # P0008 S5-2: an older revision
+    run_id = start(env, body={"revision_no": 1}).json()["run"]["run_id"]          # S5-2: an older revision
 
     def canvas(query=""):
         res = env["client"].get(f"/api/v1/flows/{FG}/canvas{query}", headers=_h())

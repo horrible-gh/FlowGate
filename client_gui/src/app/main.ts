@@ -11,14 +11,14 @@ import { ensureValidAccessToken, isAuthRejection, startTokenAutoRefresh, flushPe
 import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 import { startFlowAttachmentOperations } from '@/features/designer/flowAttachments/operations'
 
-// Mirrors client/src/main/main.ts's bootstrap exactly (T0005 §5: auth reuse, not a
+// Mirrors client/src/main/main.ts's bootstrap exactly (the earlier implementation: auth reuse, not a
 // second policy): recover the access token for an F5 refresh, rotate it up-front if
 // it is near/already expired, and validate it once against the server before the
 // router guard makes its first decision.
 const getStoredAccessToken = (): string | null =>
   window.__accessToken__ || sessionStorage.getItem('fg_access_token') || null
 
-// flowgate.v02gui.0017 B2: background re-ask of /auth/me after a bootstrap failure without a
+// B2: background re-ask of /auth/me after a bootstrap failure without a
 // verdict. Stops on success, on a definitive rejection (the 401 interceptor already handles the
 // session then) or after CURRENT_USER_RETRY_MAX attempts.
 const CURRENT_USER_RETRY_MAX = 6
@@ -36,10 +36,10 @@ function retryCurrentUser(attempt: number): void {
 
 async function initializeApp() {
   registerAppMessages(i18n)
-  // flowgate.v02test.0036 T#1: the Flow attachment work manager listens for the end of the session from here, once.
+  // the Flow attachment work manager listens for the end of the session from here, once.
   startFlowAttachmentOperations()
 
-  // flowgate.v02.0076 T#1 (D §1.2, §5.2 V03): until /auth/me answers, the start screen shows
+  // (D, V03): until /auth/me answers, the start screen shows
   // only a neutral loading state. The router is not installed yet, so no route — and no
   // settings view, project picker or system/project request — exists before the answer.
   let startup: ReturnType<typeof createApp> | null = null
@@ -65,7 +65,7 @@ async function initializeApp() {
         sessionStorage.removeItem('fg_access_token')
         delete window.__accessToken__
       } else {
-        // flowgate.v02gui.0017 B2: /auth/me never got a verdict (F5 while the server restarts, a
+        // B2: /auth/me never got a verdict (F5 while the server restarts, a
         // network drop, a 5xx). That says nothing about the session, so the tokens stay and the
         // app opens; who is signed in is asked again in the background until the server answers.
         startTokenAutoRefresh()

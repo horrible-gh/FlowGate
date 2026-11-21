@@ -1,4 +1,4 @@
-"""0126 T#2 B5/B7: real ended review assignments/ledger and human decision HTTP."""
+"""B5/B7: real ended review assignments/ledger and human decision HTTP."""
 import pytest
 from test_fg_ai_roles_l2_assignment import (
     FA, A, B, X, _sql, db_path, decided, env, wired, starts, record_starts, roles, stored,

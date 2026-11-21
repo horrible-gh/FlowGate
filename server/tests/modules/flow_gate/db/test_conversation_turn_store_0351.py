@@ -1,4 +1,4 @@
-"""Conversation turn store invariants (flowgate.default.0351)."""
+"""Conversation turn store invariants."""
 from __future__ import annotations
 
 import hashlib

@@ -1,4 +1,4 @@
-"""0064 T#1: atomic card files, rollback lifecycle, path identity, and default titles."""
+"""atomic card files, rollback lifecycle, path identity, and default titles."""
 from __future__ import annotations
 
 import ast
@@ -275,7 +275,7 @@ def test_japanese_slot_names_match_client_messages(env):
 
 
 
-# ── flowgate.v02.0088 T#1: a new document's title in the request's language (D0010 §3.2 / §6) ──────────────
+# ── the earlier change the earlier implementation: a new document's title in the request's language ──────────────
 
 R_NAMES = {"ko": "요구사항", "ja": "要件", "en": "Requirement"}
 B_NAMES = {"ko": "요구사항", "ja": "バグレポート", "en": "Requirement"}      # ko / en: one requirement name for R and B

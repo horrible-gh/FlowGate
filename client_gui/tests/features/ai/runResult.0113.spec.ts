@@ -10,7 +10,7 @@ import RunResultWindow from '@/features/ai/runResult/RunResultWindow.vue'
 import RunResultDetailWindow from '@/features/ai/runResult/RunResultDetailWindow.vue'
 import { prepareInspectorI18n } from '../designer/inspector/support/inspectorSupport'
 
-// flowgate.v02.0113 T#5 — the run result windows (0030-M §5, D revision §3.14 / §6.5): the command result read, when the 1st
+// the run result windows: the command result read, when the 1st
 // window opens (completed / failed only, also when a waiting command later completes or fails), its content, and the 2nd
 // window's messages (Markdown, many and long, each launch's own output, copy all).
 const i18n = prepareInspectorI18n()
@@ -65,7 +65,7 @@ describe('when the 1st window opens', () => {
     expect(view.querySelector('.is-held')).not.toBeNull()
     expect(view.textContent).toContain('검토 보류')
     expect(view.textContent).toContain('보류 1')
-    // flowgate.v02gui.0020 mock ②: orange triangle, done / held / failed, who acts next and the hold's own reason line.
+    // mock ②: orange triangle, done / held / failed, who acts next and the hold's own reason line.
     expect(view.querySelector('[data-test="run-result-warning"] path')).not.toBeNull()
     expect(view.querySelector('[data-test="run-result-state"] .run-result-symbol')!.textContent?.trim()).toBe('')
     expect(view.querySelector('[data-test="run-result-counts"]')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('완료 0 · 보류 1 · 실패 0')
@@ -107,7 +107,7 @@ describe('when the 1st window opens', () => {
     expect(watch.state.resultOpen).toBe(true)
   })
 
-  // flowgate.v02.0143 T#1 (NR 0143.0003 §5-4, §7): a read refused for good (the command gone: 404, refused: 401 / 403)
+  // a read refused for good (the command gone: 404, refused: 401 / 403)
   // drops the watch with no window, and another Project (`clear`) drops every watch; a passing read failure no longer
   // drops it (it is read again: runResultWatch.0143.spec.ts R3 / R3b).
   it('a gone or refused read (404 / 403) and another Project drop the watch with no window', async () => {

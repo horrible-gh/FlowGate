@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0053 T#9 — Graph run transport in features/project (P0008 §7 S5-1 ~ S5-5): the current run
+ * Graph run transport in features/project: the current run
  * read, start, stop and resume requests, the run object they answer, a refusal's server code, the store
  * loaders, and the run events as Canvas refresh signals. Every request carries this tab's
  * `x-canvas-client-id`.
@@ -66,7 +66,7 @@ describe('run reads (P0008 S5-4)', () => {
         { nodeKey: 'gn_b', status: 'open', resultDocId: null },
       ],
       lastEventSeq: 4,
-      // flowgate.v02.0056 F2-1: none pending when the server sends none (flowRunApproval.0056).
+      // none pending when the server sends none (flowRunApproval.0056).
       pendingPropagationCount: 0,
       pendingNodeKeys: [],
       mode: null,

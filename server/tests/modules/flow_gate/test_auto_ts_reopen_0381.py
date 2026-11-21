@@ -269,7 +269,7 @@ def test_1_unmanned_code_red_reopens_preserves_run_and_notifies_once(auto_store,
 
 
 def test_1b_rework_instruction_lands_only_on_the_reopened_ts(auto_store, monkeypatch):
-    """T3 rework handoff (NR0003 §10-12): the classification-specific instruction and
+    """T3 rework handoff: the classification-specific instruction and
     evidence must be readable off the reopened TS document itself (rejection_reason /
     rejection_history), not just implied by a bare reason string, and must not leak onto
     sibling documents (e.g. the TR at a later seq) swept into the same rewind."""
@@ -306,7 +306,7 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="cod
 
     ``recovery`` mirrors what the real ``engine_recipe_service.handle_run_failure`` returns:
     "skip" for a manual/UI run (no consumed chain token) and "code" for an unmanned/continuous
-    one (T3, NR0003 §14.1) — the classification-pending branch that "code" now takes needs its
+    one — the classification-pending branch that "code" now takes needs its
     own DB writes stubbed out since these tests never touch a real store.
     """
     from modules.flow_gate.db import test_runs as db_test_runs
@@ -340,7 +340,7 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="cod
 def test_2_manual_code_red_emits_post_rework_refresh(monkeypatch):
     # A manual/UI run carries no consumed chain token, so the real
     # engine_recipe_service.handle_run_failure returns "skip" here — CODE reds outside an
-    # Unmanned chains still reopen immediately (T0009 §6 preserves manual/UI behavior),
+    # Unmanned chains still reopen immediately (preserves manual/UI behavior),
     # unlike the continuous code path covered by test_11 below.
     emitted = _drive_code_red_broadcasts(monkeypatch, continuation_token=None, recovery="skip")
     assert [kind for kind, _ in emitted] == [
@@ -366,7 +366,7 @@ def test_11_unmanned_code_red_defers_reopen_then_refreshes_once_classified(monke
     post-rewind refresh on "manual runs only" made the unmanned chain — the main automation
     path — silently keep the stale, pre-rewind screen until a hand reload.
 
-    T3 (NR0003 §14.1) inserted failure-origin classification between a continuous CODE red and
+    T3 inserted failure-origin classification between a continuous CODE red and
     its reopen, so the second refresh no longer fires inside _handle_terminal_case_failure
     itself (it only dispatches the classifier and parks the run) — it fires once
     resume_failure_origin_branch performs the now-classified reopen. Both halves are checked
@@ -554,7 +554,7 @@ def test_9_sequence_mutation_archives_approved_ac_and_reopens_atomically(auto_st
     assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"
     assert git_service._group_ac_doc_id(ids["group_id"]) is None
     parsed = doc_routes._parse_doc_workflow(db_docs.get_by_id(ids["R"]))
-    # 0649 T#1 (NR0003 O1): the pending TSR right after the started TS is protected — it
+    # the pending TSR right after the started TS is protected — it
     # stays in place ahead of the new M row instead of being deleted, so it is the head.
     assert parsed["workflow_head_type"] == "TSR"
     assert parsed["workflow_head_status"] == "pending"
@@ -570,7 +570,7 @@ def test_10_empty_pending_tail_mutation_archives_approved_ac(auto_store):
     # Without TSR, the seeded sequence has locked realised rows plus one pending TSR tail.
     ids = _seed_group(auto_store, "seqempty", root_done=True, with_ac=True)
     sequence = db_wfseq.get_sequence_by_doc_id(ids["R"])
-    # 0649 T#1 (NR0003 O1): that pending TSR follows a started TS, so it is protected and no
+    # that pending TSR follows a started TS, so it is protected and no
     # edit removes it. The removable pending tail is an ordinary row after it.
     db_wfseq.insert_sequence_item(sequence["id"], 9, "M", "Tail", "doc", 9)
     pending = [
@@ -696,7 +696,7 @@ def test_10_full_worker_pipeline_real_code_red_reopens_ts_end_to_end(auto_store,
     assert emitted[-1][1]["doc_id"] == ids["TS"]
 
 
-# ── production-shape replay (R0001 0381 — the rewind must fire on REAL runs) ──
+# ── production-shape replay (the rewind must fire on REAL runs) ──
 #
 # Tests 1-11 build a synthetic group. The rejections said the opposite of what those
 # The reported symptom was that actual test runs still left the instruction approved.
@@ -1059,7 +1059,7 @@ def test_16_production_shape_sequence_head_returns_to_the_ts(auto_store, monkeyp
 # The strip still paints [테스트시나리오지시] green (complete), and the action bar shows
 # no 승인/반려. Pin the exact payload the browser receives. (The v0.1 client
 # spec that rendered the real components from the same fixture went away with client/ in
-# flowgate.v02gui.0024; the fixture now lives with the server tests.)
+# the fixture now lives with the server tests.)
 
 _UI_CONTRACT_FIXTURE = (
     Path(__file__).resolve().parents[2] / "fixtures" / "autoReopenWorkflowHead.0381.json"
@@ -1205,7 +1205,7 @@ def test_18_manual_setup_abort_sends_the_scenario_back_to_pre_approval(
 
 
 def test_19_unmanned_setup_abort_still_belongs_to_the_repair_loop(monkeypatch):
-    """Do not steal the 0157 INFRA loop's failure (T0004 acceptance criteria 3)."""
+    """Do not steal the 0157 INFRA loop's failure (acceptance criteria 3)."""
     from modules.flow_gate.services import engine_recipe_service
     from modules.flow_gate.services import test_run_service
     from modules.flow_gate.services import workflow_rework_service as rework

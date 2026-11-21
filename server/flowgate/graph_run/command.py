@@ -1,4 +1,4 @@
-"""The step / full command (flowgate.v02.0061 T#2, 0002-CH turn 33).
+"""The step / full command.
 
 A command is ``step`` (open the run candidates of the moment; what they make runnable waits for the next command) or
 ``full`` (go on opening until no candidate is left). ``POST /flows/{flow_id}/runs`` and ``POST /runs/{run_id}/resume``
@@ -10,19 +10,19 @@ records it through here:
 - ``record_command``: the new command is stored on the running run — mode, no step targets yet — before the run
   status event, so the event, the stored run and the response tell the same command.
 - ``record_step_targets``: a step's targets are the nodes its command's decision opens (the drained propagations and
-  the run candidates of the moment); a full command has none. T#11: never a held node (the decision opens none; one is
-  dropped all the same, so a refill of the step cannot open it either). flowgate.v02.0124 T#1 (0003-NR §5.1.1): also
+  the run candidates of the moment); a full command has none. the earlier implementation: never a held node (the decision opens none; one is
+  dropped all the same, so a refill of the step cannot open it either). the earlier change the earlier implementation (NR): also
   the cards whose result review the command requested again (``rerequested``) — in review, so never in the
   decision's openings; without them a step that only re-requested would store no targets and settle ``no_targets``.
-- ``rerequest_review`` (flowgate.v02.0124 T#1, ``graph_execution_hooks`` ``rerequest_review``): inside an explicit
+- ``rerequest_review`` (``graph_execution_hooks`` ``rerequest_review``): inside an explicit
   step / full command's Flow guard, a card in review whose ``needs_intervention`` is a review loop's spent budget is
   requested again as its result review's next assignment (``card_settings.assigned_review.rerequest_review_locked``,
-  0003-NR §5.1.2 / §5.1.3). Step and full alike take every card admitted at the command; a step's next cards still
+  ). Step and full alike take every card admitted at the command; a step's next cards still
   wait for the next command (0053: a target's propagation waits, ``frontier.RunState.in_command``), a full command's
   follow as its cards finish.
 
-0083 WP-3 (0061 T#2 revision, revised): a person's approval is the exception path of a card (a review that did not pass or
-spent its count, a card a person writes) and moves the node on with no further resume (the flowgate.v02.0056 T#1
+WP-3 (revision, revised): a person's approval is the exception path of a card (a review that did not pass or
+spent its count, a card a person writes) and moves the node on with no further resume (the the earlier change the earlier implementation
 contract). ``approval_wakes`` judges whether a person's decision on an idle run may open the next cards — the
 conditions of ``card_settings.legacy_adapter.wake_graph_run`` (the Flow's active run, idle, not ``stopped``, no Time
 Machine operation unfinished), outside an explicit command (it drains what waits itself), and not a step that has no
@@ -66,7 +66,7 @@ def record_step_targets(ctx, mode: str, decision, rerequested=()) -> None:
 
 
 def rerequest_review(ctx, row: dict) -> bool:
-    """flowgate.v02.0124 T#1: the ``rerequest_review`` hook — True when the explicit command requested the result
+    """the ``rerequest_review`` hook — True when the explicit command requested the result
     review of the node run ``row``'s card again (the card stage judges and writes it inside this guard)."""
     from flowgate.card_settings import assigned_review  # noqa: PLC0415 — the card stage (v0.2), on use
 
@@ -79,8 +79,8 @@ def _waiting_command(ctx, *, human: bool = False) -> bool:
     An idle reason can change on a read, so waiting_confirm alone is not execution intent. 0119 T-2: only a confirm
     wait counts (``waiting_confirm``, or ``waiting_approval`` stored before T-2 — the caller judged the run's reason as
     read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request,
-    or by a new explicit step / full command that asks a spent review again — flowgate.v02.0124 T#1, a review loop's
-    spent budget (``rerequest_review``), and flowgate.v02.0125 T#1 (Q #544), a review count spent on a revision no
+    or by a new explicit step / full command that asks a spent review again — the earlier change the earlier implementation, a review loop's
+    spent budget (``rerequest_review``), and the earlier change the earlier implementation (Q #544), a review count spent on a revision no
     review answered (``card_settings_ports.command_review``). That command is its own ``user_command`` /
     ``user_resume`` start, never this reconstruction; an approval never wakes it here.
     A review explicitly requested during that wait may have woken the run; trace only such
@@ -121,9 +121,9 @@ def resume_approval(ctx, decision) -> bool:
     Keep the run, revision, mode and step targets. A deferred code approval still goes through
     its existing integration before becoming done; a failed/rejected approval never gets here.
 
-    0083 WP-3 (0061 T#2 revision): only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
+    WP-3: only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
     are not woken here either (their propagation waits for the next command), as ``wake_graph_run``.
-    0119 T-2: only a run idle ``waiting_confirm`` (its reason as read: a stored ``waiting_approval`` with a gate open for
+    T-2: only a run idle ``waiting_confirm`` (its reason as read: a stored ``waiting_approval`` with a gate open for
     its decision) — never ``needs_intervention``.
     """
     from flowgate.graph_run import settle
@@ -153,11 +153,11 @@ def _confirm_waits() -> tuple:
 
 
 def approval_wakes(ctx) -> bool:
-    """0083 WP-3 (0061 T#2 revision): may a person's decision on this idle run open its next cards at once
+    """WP-3: may a person's decision on this idle run open its next cards at once
     (``frontier.defers``)? ``wake_graph_run``'s conditions, judged on the guarded context: idle, the Flow's active run,
     not stopped, no Time Machine operation unfinished; and not inside an explicit command, nor a step with no targets."""
     run = ctx.run
-    # 0132 T#3: the asynchronous gate publisher already judged its recorded command intent.
+    # the asynchronous gate publisher already judged its recorded command intent.
     if getattr(ctx, "gate_resume_deferred", False):
         return False
     if run.get("status") != engine.IDLE or run.get("idle_reason") == "stopped" or ctx.command_pending:
@@ -171,7 +171,7 @@ def approval_wakes(ctx) -> bool:
 
 
 def wake_approval(ctx) -> None:
-    """0083 WP-3 (0061 T#2 revision): before a person's decision opens the next cards of an idle run, the run goes running
+    """WP-3: before a person's decision opens the next cards of an idle run, the run goes running
     in the same guard (cause ``work_resumed``, reason ``approval``, as ``resume_approval``), so an AI card's dispatch
     requests its execution on a running run; the settlement after the openings judges it idle again when nothing
     works. Only a run ``approval_wakes`` admits gets here (the decision deferred otherwise)."""

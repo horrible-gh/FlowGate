@@ -1,14 +1,14 @@
 """flowgate.default.0414 T0010: continuous-work [검수] gate: request contract, state derivation, persistence.
 
-Covers the server half of P0007 / L0008 / DB0009:
+Covers the server half of the plan / the earlier implementation / :
 
-  * request contract (P0007): the two maps' normalization, the ONE 422 envelope every
+  * request contract: the two maps' normalization, the ONE 422 envelope every
     shape/value/sequence violation produces, `reviewer_unavailable`, and the single /
     workflow_decide paths that drop the maps instead of refusing them.
-  * gate derivation (L0008 §2.3): every branch of resolve_review_gate, derived from
+  * gate derivation: every branch of resolve_review_gate, derived from
     document_reviews + revision_no + doc_review_status with nothing persisted.
   * automatic rejection (§2.6): permission refusal, transition failure, the reason text.
-  * carriers (P0007 propagation points 1~7 + L0008 §2.9 8~10 / DB0009 I3): the two maps survive
+  * carriers (propagation points 1~7 + the earlier implementation 8~10 /  I3): the two maps survive
     pause, system stop, hop settlement, resume and a failed resume's row restore — with an
     AST guard that no paused-row upsert caller can quietly omit them again.
   * the omitted-maps control group: a request that sends neither map behaves EXACTLY as
@@ -53,7 +53,7 @@ SPINE = "flowgate.default.0414.0001-R"
 API_BASE = "http://127.0.0.1:8089/flowgate/api/v1"
 USER = "4d96c7c2-c0be-4f4e-8594-bd65d2a8fa39"
 
-# P0007's own worked example: 1 P · 2 L · 3 DB · 4 T · 5 TR · 6 T · 7 TR · 8 TS · 9 TSR,
+# 's own worked example: 1 P · 2 L · 3 DB · 4 T · 5 TR · 6 T · 7 TR · 8 TS · 9 TSR,
 # instruction_mode auto_approved, so 4 and 6 (T) are server-handled and 9 (TSR) is
 # server-assembled — the worker slots are 1, 2, 3, 5, 7, 8.
 SEQUENCE = [
@@ -85,7 +85,7 @@ def _seq_items(overrides=None):
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# P0007 — normalization
+# normalization
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestNormalization:
@@ -171,7 +171,7 @@ class TestNormalization:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# P0007 — sequence-aware validation
+# sequence-aware validation
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture
@@ -197,7 +197,7 @@ class TestSequenceValidation:
         assert "no worker output to review" in str(exc.value)
 
     def test_the_same_step_is_eligible_under_ai_direct(self, fake_sequence):
-        """P0007: eligibility reads the request's OWN mode, so the same map is valid under
+        """eligibility reads the request's OWN mode, so the same map is valid under
         ai_direct and invalid under auto_approved. That difference is the contract."""
         wds.validate_continuation_review_item_seqs(
             {"4": 1}, SPINE, 9,
@@ -220,7 +220,7 @@ class TestSequenceValidation:
         assert str(exc.value).startswith("ineligible_review_item_seq:12")
 
     def test_first_violation_wins_in_ascending_order(self, fake_sequence):
-        """P0007's own example {4,9,12} reports ONE error, and it is the lowest slot."""
+        """'s own example {4,9,12} reports ONE error, and it is the lowest slot."""
         with pytest.raises(ValueError) as exc:
             wds.validate_continuation_review_item_seqs(
                 {"4": 1, "9": 2, "12": 1}, SPINE, 9, instruction_mode="auto_approved")
@@ -270,7 +270,7 @@ class TestReviewerAvailability:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# P0007 — the route's ONE 422 envelope
+# the route's ONE 422 envelope
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class _Req:
@@ -389,7 +389,7 @@ class TestRouteContract:
         assert route_env["continuation_reviewer_overrides"] is None
 
     def test_the_model_does_not_narrow_the_dict_types(self):
-        """P0007: narrowing would split the error envelope in two — FastAPI's own for a bad
+        """narrowing would split the error envelope in two — FastAPI's own for a bad
         value, validation_failed for everything else — and force clients to parse both."""
         fields = routes.AiInvokeStartRequest.model_fields
         for name in ("continuation_review_count_overrides", "continuation_reviewer_overrides"):
@@ -398,7 +398,7 @@ class TestRouteContract:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# L0008 §2.3 — gate derivation
+# gate derivation
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 # Captured BEFORE any fixture can wrap it. World.reject models a rejection that already
@@ -409,7 +409,7 @@ _REAL_AUTO_REJECT = svc._auto_reject
 class World:
     """The four facts §2.3 derives everything from, and nothing else.
 
-    0458 NR0003: "nothing else" grew one member. `rejection_history` is the accumulated
+    "nothing else" grew one member. `rejection_history` is the accumulated
     record of which review rows were already rejected, and unlike doc_review_status it is
     not erased by ('rejected', 'submit') -> 'revised'. So this World keeps documents as
     STATE, not as constants: the rejections it records are written by the real
@@ -474,7 +474,7 @@ class World:
         """A human pressing [수정요청 취소]: ('rejected','mark_revised') -> 'pending_review'.
 
         The revision does NOT move, so the rework never landed — only the status guard is
-        gone. NR0003 I5: the review that was already applied must still not come back.
+        gone. the review I5: the review that was already applied must still not come back.
         """
         pipeline_service.transition_document_review(
             doc_id=doc_id, action="mark_revised", actor_user_id=USER,
@@ -520,7 +520,7 @@ def world(monkeypatch):
                         lambda doc_id: dict(w.reviews[doc_id][0]) if w.reviews.get(doc_id) else None)
     monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
                         lambda pid: {"ok": True, "providers": list(PROVIDERS)})
-    # 0688 T#2: every approval reads the slot's answered questions first, and a question
+    # every approval reads the slot's answered questions first, and a question
     # record that cannot be read holds the slot (review_history_unreadable). No hop in this
     # World asks anything: no document has a question container.
     # The hand-off's own-question probe lists the group's open containers first and parks
@@ -576,7 +576,7 @@ class TestGateDerivation:
         assert svc.is_resumable(gate["stop_code"]) is False
 
     def test_count_one_issues_rejects_reworks_then_advances(self, world):
-        """0414 M0020 / CH0019: the count is a budget of review+rework PAIRS, so the LAST
+        """the count is a budget of review+rework PAIRS, so the LAST
         round's issues is not just recorded — it is rejected, handed to the step's own
         worker, and the fix that comes back is what the chain carries on with.
 
@@ -605,7 +605,7 @@ class TestGateDerivation:
         assert gate.get("reject_first") is False
 
     def test_a_landed_rework_earns_the_next_review_round(self, world):
-        """0458 NR0003 §7(a): a landed rework leaves `revised`, never `rejected` —
+        """(a): a landed rework leaves `revised`, never `rejected` —
         ('rejected','submit') -> 'revised' is exactly what the re-submission does. Pinning
         `rejected` here was the one value that kept the duplicate-rejection guard closed,
         so this test walked through the defective branch and saw nothing."""
@@ -620,7 +620,7 @@ class TestGateDerivation:
             "I2: reaching this branch IS the proof the complaint was rejected and fixed")
 
     def test_count_three_runs_three_review_rework_pairs_then_advances(self, world):
-        """review1 → rework1 → review2 → rework2 → review3 → rework3 → next step (M0020 / CH0019)."""
+        """review1 → rework1 → review2 → rework2 → review3 → rework3 → next step."""
         counts = {"5": 3}
         world.fill(5, "doc-5")
         for round_no in (1, 2, 3):
@@ -661,7 +661,7 @@ class TestGateDerivation:
         assert len(world.history("doc-5")) == 2
 
     def test_unbounded_never_stops_on_a_round_count(self, world):
-        """0414 0022-TR rejection: -1 must keep looping without a cap until a pass.
+        """rejection: -1 must keep looping without a cap until a pass.
 
         Thirty review+rework rounds in — three times the ceiling this used to have — the
         gate is still running the loop and has never once handed the chain to a human."""
@@ -707,7 +707,7 @@ class TestGateDerivation:
         assert gate["stop_code"] == svc.REVIEW_STALLED_STOP_CODE
 
     def test_the_target_slot_is_reviewed_like_any_other(self, world):
-        """L0008 §2.7 review the final slot too — the target check comes after approval, and
+        """review the final slot too — the target check comes after approval, and
         approval comes after the pass."""
         world.fill(8, "doc-8")
         gate = svc.resolve_review_gate(
@@ -833,11 +833,11 @@ class TestValueResolution:
         assert svc.review_rounds_remain(2, 2) is False      # a finite budget does run out
 
     def test_neither_round_stop_code_is_emitted_but_both_explain_old_rows(self):
-        """0414 M0020 + the 0022-TR rejection: the gate no longer stops on a round COUNT at
+        """+ the the earlier implementation rejection: the gate no longer stops on a round COUNT at
         all — a finite budget reworks its last round and advances, and -1 has no ceiling.
         Chains parked BEFORE those changes still carry both codes, so their sentences and
         their notifications have to survive the removal. The cap code additionally became
-        resumable in the 0022-TR review rework (below): resolve_review_gate no longer has a
+        resumable in the the earlier implementation review rework (below): resolve_review_gate no longer has a
         round-count branch, so resuming one just re-derives the gate like a fresh -1 chain."""
         import inspect
 
@@ -870,7 +870,7 @@ class TestValueResolution:
         assert svc.resolve_reviewer({"5": "aip_gone"}, 5, "flowgate") == "aip_default"
 
     def test_the_step_executor_is_resolved_separately_from_the_reviewer(self, world):
-        """L0008 §2.2: a rework is done by the step's own worker, not by its reviewer."""
+        """a rework is done by the step's own worker, not by its reviewer."""
         b = bundle(provider_overrides={"5": "aip_step5"}, reviewer_overrides={"5": "aip_rev"})
         assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_step5"
         assert svc.resolve_reviewer(b["reviewer_overrides"], 5, "flowgate") == "aip_rev"
@@ -891,7 +891,7 @@ class TestValueResolution:
             bundle(provider_overrides=None, provider_pinned=False), 7, "flowgate",
             SPINE) == "aip_default"
 
-    # flowgate.default.0596 T0004 (NR0003 rev3): base_provider_id is the run's header/
+    # base_provider_id is the run's header/
     # default selection, not necessarily the provider that actually executed the hop being
     # reworked -- a step-level resolution (override / stored sequence) can win the per-hop
     # pick while the header stays whatever the chain was started with. work_executor_
@@ -932,7 +932,7 @@ class TestValueResolution:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# L0008 §2.6 — the automatic rejection
+# the automatic rejection
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestAutoReject:
@@ -1019,7 +1019,7 @@ class TestAutoReject:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# L0008 §1.2 / §2.5 — stop codes, notification split, the engine's review clause
+# — stop codes, notification split, the engine's review clause
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestStopCodesAndMention:
@@ -1059,7 +1059,7 @@ class TestStopCodesAndMention:
             "the reviewer must not be told a round number ends this")
 
     def test_the_clause_no_longer_makes_the_fix_conditional(self):
-        """0414 M0020: every round's findings are fixed, so the reviewer must not be told
+        """every round's findings are fixed, so the reviewer must not be told
         the hand-back only happens \"when a round remains\"."""
         for gate in ({"count": 2, "round_no": 1, "limit": 2},
                      {"count": 1, "round_no": 1, "limit": 1},
@@ -1092,7 +1092,7 @@ class TestStopCodesAndMention:
         assert "Automated follow-up" not in source
 
     def test_the_shared_rework_issuer_exists_for_both_callers(self):
-        """L0008 §2.6: kept in the route, the engine would grow a second copy of the
+        """kept in the route, the engine would grow a second copy of the
         rejection-history + edit-mention assembly, and two copies always drift."""
         import inspect
 
@@ -1157,7 +1157,7 @@ class FakePausedStore:
         return dict(row) if row else None
 
     def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
-        # 0459 TR0008 rev1: resume_chain() consumes via this CAS predicate, tied to
+        # resume_chain consumes via this CAS predicate, tied to
         # the exact row its ownership check read, instead of a bare group-only
         # delete_and_return(group_id).
         row = self.rows.get(group_id)
@@ -1230,12 +1230,12 @@ class TestCarriers:
     def test_every_paused_row_writer_passes_both(self):
         """DB0009 I3, enforced structurally. The upsert overwrites EVERY column, so a single
         caller that forgets these two wipes the selection and the chain resumes with the gate
-        switched off — L0008 R1 broken from outside the schema."""
+        switched off — the earlier implementation R1 broken from outside the schema."""
         offenders = []
-        # 0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12). Every
+        # moved the engine into the ai_invoke/ package. Every
         # paused-row writer must still be scanned, so the package is GLOBBED rather than
         # listed file by file -- a hardcoded list is exactly the "physical filenames became
-        # a test contract" problem NR0003 §9 named, and it silently stops covering a module
+        # a test contract" problem the review named, and it silently stops covering a module
         # the next split adds.
         _pkg = _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke"
         for path in list(sorted(_pkg.glob("*.py"))) + [
@@ -1323,7 +1323,7 @@ class TestCarriers:
 
     def test_rework_inbox_handoff_cannot_overwrite_the_gate_owned_queue(
             self, paused, monkeypatch, world):
-        """0536 T0005: the edit submitted by a rework reaches inbox after the gate has
+        """the edit submitted by a rework reaches inbox after the gate has
         already queued its successor.  That ordinary handoff must refresh routing without
         erasing last_stage/progress or the maps a single-mode child cannot carry itself."""
         gate_owned = {
@@ -1384,7 +1384,7 @@ class TestCarriers:
     def test_every_rework_inbox_boundary_preserves_multi_round_gate_state(
             self, paused, monkeypatch, world, count, verdicts,
             expected_reviews, expected_reworks):
-        """0536 T0007: exercise the production queue collision on every landed edit.
+        """exercise the production queue collision on every landed edit.
 
         The second request is the exact gate-field-free payload emitted by
         inbox_routes._hand_off_to_engine.  Each iteration checks both the live queue and
@@ -1520,8 +1520,8 @@ class TestCarriers:
 class TestResumeReviewGateDispatch0466:
     @pytest.fixture(autouse=True)
     def _quiet_resettle_surfaces(self, monkeypatch):
-        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
-        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        """x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park`, which also refreshes the persisted
         run record and re-broadcasts the finished payload. The tests in this class hand
         `_park_handoff` a deliberately partial run dict because they assert ONE surface --
         the durable paused row / the notify scope -- so the other two are stubbed out here.
@@ -1625,7 +1625,7 @@ class TestResumeReviewGateDispatch0466:
 
     def test_a_resumed_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
             self, world, paused, monkeypatch):
-        """0476 NR0003 defect1 / T0005 end-to-end: a rework hop parked mid-chain must not
+        """defect1 / the earlier implementation end-to-end: a rework hop parked mid-chain must not
         lose the "재실행 횟수" pick across a cold resume_chain() dispatch. Mirrors
         test_spawn_auto_resume_does_not_crash_on_the_resumed_bundle's two-step shape
         (dispatch, then feed the dispatched bundle to the real hop spawner), applied to
@@ -1671,7 +1671,7 @@ class TestResumeReviewGateDispatch0466:
             self, world, paused, monkeypatch):
         """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
         bundle exactly like the plain 'new' resume path already proves in TestCarriers —
-        including the disabled-reviewer-degrades-but-count-survives edge (P0007 [edge])."""
+        including the disabled-reviewer-degrades-but-count-survives edge ([edge])."""
         world.fill(5, "doc-5", status="revised", revision_no=1)
         world.review("doc-5", "issues", revision_no=0)
         run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
@@ -1718,7 +1718,7 @@ class TestResumeReviewGateDispatch0466:
 
     def test_the_dispatched_gate_bundle_carries_target_seq_and_note_policy(
             self, world, paused, monkeypatch):
-        """T0007 §3.3.1: the cold-resume gate bundle is not a one-shot dispatch payload — it
+        """the cold-resume gate bundle is not a one-shot dispatch payload — it
         is QUEUED (`_queue_gate_bundle`) and becomes the bundle `run_review_gate` reads back
         once the resumed hop records its verdict (§2.9, `_finalize_run` → auto-resume queue).
         `target_seq`/`note_overrides`/`default_note`/`restart_max_attempts` all have to be in
@@ -1843,16 +1843,16 @@ class TestResumeReviewGateDispatch0466:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0466 T0007 A10 §3.2 — the review_no_verdict stop card's failure detail:
+# A10 — the review_no_verdict stop card's failure detail:
 # the excerpt must not collapse to nothing just because last_message happens to be empty,
-# which is exactly the usage-limit-crash shape T0007 names.
+# which is exactly the usage-limit-crash shape the earlier implementation names.
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestReviewNoVerdictExcerpt0466:
     @pytest.fixture(autouse=True)
     def _quiet_resettle_surfaces(self, monkeypatch):
-        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
-        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        """x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park`, which also refreshes the persisted
         run record and re-broadcasts the finished payload. The tests in this class hand
         `_park_handoff` a deliberately partial run dict because they assert ONE surface --
         the durable paused row / the notify scope -- so the other two are stubbed out here.
@@ -1906,7 +1906,7 @@ class TestReviewNoVerdictExcerpt0466:
         THIS run's own `stderr_tail`/`last_message`, not in the history entry. Returning
         history[-1] first (the earlier shape of this function) would hide the real error
         behind attempt 1's generic "worker exited ... without registering a document"
-        sentence — exactly the regression T0007 rejected."""
+        sentence — exactly the regression the earlier implementation rejected."""
         excerpt = self._park(monkeypatch, paused, {
             "fallback_history": [{"provider_id": "aip_rev", "reason": "no_output",
                                   "detail": "worker exited 1 after 12s without registering "
@@ -1957,7 +1957,7 @@ class TestReviewNoVerdictExcerpt0466:
         start, `_execute_provider_chain` falls back and actually starts aip_2, and BOTH
         attempts run on aip_2. `continuation_selected_provider_name` is set once from
         chain[0] before the walk and is never updated afterward — it still reads "aip_1" —
-        while `run["provider"]` was moved to aip_2 by the fallback (L2620-2626). The card
+        while `run["provider"]` was moved to aip_2 by the fallback. The card
         must blame the provider that actually ran and produced this exit_code/attempts_used,
         not the one that never started."""
         excerpt = self._park(monkeypatch, paused, {
@@ -1971,7 +1971,7 @@ class TestReviewNoVerdictExcerpt0466:
 
     def test_stderr_and_stdout_tails_are_redacted_before_reaching_the_card(
             self, paused, monkeypatch):
-        """T0007 §3.2.3: stderr_tail/stdout_tail are the provider process's raw, unfiltered
+        """stderr_tail/stdout_tail are the provider process's raw, unfiltered
         output, so nothing upstream scrubs them before they reach here. A provider that
         echoes its own outgoing Authorization header (or a bare Bearer token) on failure
         must not have that value ride verbatim into stop_last_message_excerpt."""
@@ -1991,7 +1991,7 @@ class TestReviewNoVerdictExcerpt0466:
         """rev3 review finding: `last_message` was left out of rev2's redaction even though
         it is exactly as raw as stderr_tail/stdout_tail for a `claude`-kind attempt —
         `_recover_cli_last_message` sets it to the CLI's full trimmed stdout, not a parsed
-        answer field (L3587-3588), so a provider echoing its own outgoing Authorization
+        answer field, so a provider echoing its own outgoing Authorization
         call lands the same way here as in the tail fields."""
         excerpt = self._park(monkeypatch, paused, {
             "last_message": "call failed: Authorization: Bearer sk-live-abcdef123456 rejected",
@@ -2002,7 +2002,7 @@ class TestReviewNoVerdictExcerpt0466:
     def test_a_bare_unlabeled_raw_token_echo_is_redacted_too(self, paused, monkeypatch):
         """rev4 review finding #2: `_redact_secrets`'s two regexes only strip a token
         wearing an `Authorization:`/`Bearer ` label. The run's own raw task token reaches
-        the provider process unlabeled, as the `FLOWGATE_TOKEN` env var (L3477) — a
+        the provider process unlabeled, as the `FLOWGATE_TOKEN` env var — a
         process that echoes its own environment or a bare env dump on failure leaks the
         value with neither label, past both regexes. `_known_run_raw_tokens` (built from
         every token `_note_issued_raw_token` saw this run issue) catches it by exact
@@ -2037,7 +2037,7 @@ class TestReviewNoVerdictExcerpt0466:
     def test_an_archived_earlier_attempts_message_is_redacted_when_it_becomes_the_core(
             self, paused, monkeypatch):
         """rev3: the fallback_history[-1] detail this function falls back to is
-        `_no_output_detail`'s sentence (L3005-3016), which embeds attempt 1's own
+        `_no_output_detail`'s sentence, which embeds attempt 1's own
         `last_message` verbatim — so a secret in an EARLIER, archived attempt's message
         must be caught here too, not just a secret in the current attempt's own fields."""
         excerpt = self._park(monkeypatch, paused, {
@@ -2098,7 +2098,7 @@ class TestReviewNoVerdictExcerpt0466:
             self, paused, monkeypatch):
         """Mirrors `test_an_earlier_attempts_reissued_token_is_redacted_from_the_archived_
         detail`: a review-hop retry rebuilds `run["mention"]` in place for attempt 2
-        (L3048), so attempt 1's own prompt text no longer lives there by the time this
+        , so attempt 1's own prompt text no longer lives there by the time this
         function runs — it only survives via `_note_issued_prompt`'s running set. A leak of
         that OLDER, already-rotated prompt in the archived fallback detail must still be
         caught."""
@@ -2167,7 +2167,7 @@ class TestReviewNoVerdictExcerpt0466:
 
 
 class TestReviewNoVerdictStopReasonAttempts0476:
-    """flowgate.default.0476 T0007 §3: `stop_reason` on REVIEW_NO_VERDICT_STOP_CODE must let
+    """`stop_reason` on REVIEW_NO_VERDICT_STOP_CODE must let
     a human reading the record after the fact tell "both attempts ran and still left no
     verdict" apart from "the second attempt never opened because of budget/provider/token
     exhaustion" — same `blocked_text` composition `no_output_exhausted` already uses."""
@@ -2198,12 +2198,12 @@ class TestReviewNoVerdictStopReasonAttempts0476:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0466 TR0008 rev8 review finding — `_park_handoff`'s notify call is
-# scoped to REVIEW_NO_VERDICT_STOP_CODE. T0007 §3.2.5 only asks for a failure signal on
+# review finding — `_park_handoff`'s notify call is
+# scoped to REVIEW_NO_VERDICT_STOP_CODE. the earlier implementation only asks for a failure signal on
 # that one stop code; the other six REVIEW_STOP_CODES are all members of
 # ENGINE_NOTIFY_STOP_CODES too (L194-199), so calling `_notify_chain_failure_if_needed`
 # unconditionally would also fire on review_verdict_hold/review_stalled/
-# review_reject_denied/review_reject_failed — none of which T0007 asked for, and the
+# review_reject_denied/review_reject_failed — none of which the earlier implementation asked for, and the
 # first of which is "waiting on a human answer, not a failure" by the same reasoning
 # `question_pending` is kept out of the notify set entirely.
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -2211,8 +2211,8 @@ class TestReviewNoVerdictStopReasonAttempts0476:
 class TestParkHandoffNotifyScope0466:
     @pytest.fixture(autouse=True)
     def _quiet_resettle_surfaces(self, monkeypatch):
-        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
-        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        """x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park`, which also refreshes the persisted
         run record and re-broadcasts the finished payload. The tests in this class hand
         `_park_handoff` a deliberately partial run dict because they assert ONE surface --
         the durable paused row / the notify scope -- so the other two are stubbed out here.
@@ -2243,7 +2243,7 @@ class TestParkHandoffNotifyScope0466:
 
     def test_review_verdict_hold_does_not_notify(self, paused, monkeypatch):
         """The reviewer's own finding: `review_verdict_hold` is a human-decision stop, the
-        same shape as `question_pending` (L4991-4993 "waiting on a human answer, not
+        same shape as `question_pending` (the earlier implementation-4993 "waiting on a human answer, not
         because it failed") — an unconditional notify call would wrongly fire on every
         ordinary reviewer hold."""
         signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_VERDICT_HOLD_STOP_CODE)
@@ -2263,7 +2263,7 @@ class TestParkHandoffNotifyScope0466:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# L0008 §2.4 — the gate's execution: queue first, then launch; park instead of advancing
+# the gate's execution: queue first, then launch; park instead of advancing
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture
@@ -2283,7 +2283,7 @@ def gate_exec(monkeypatch, world):
     monkeypatch.setattr(svc, "_spawn_auto_resume",
                         lambda g, b: seen["work"].append(dict(b)))
     def _counted_auto_reject(slot, review, b):
-        """Counted AND performed. 0458 NR0003 §7(b): the old double only counted, so a
+        """Counted AND performed. the review(b): the old double only counted, so a
         second rejection left no trace for the next gate call to see, and no test in this
         file could ever observe one review row being rejected twice."""
         seen["rejected"].append(slot["doc_id"])
@@ -2378,7 +2378,7 @@ class TestGateExecution:
         assert gate_exec["queued"] == []
 
     def test_the_last_round_rejects_and_still_launches_its_rework(self, world, gate_exec):
-        """10-1: the rejection is independent of what comes next. 0414 M0020: what comes
+        """10-1: the rejection is independent of what comes next. the earlier implementation: what comes
         next is a rework even in the last round — the findings are fixed, not just filed."""
         world.fill(5, "doc-5").review("doc-5", "issues")
         assert svc.run_review_gate(
@@ -2439,7 +2439,7 @@ class TestGateExecution:
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════
-# 0458 B0001 / NR0003 I1~I6 — one review row makes at most ONE rejection (R1~R10)
+# I1~I6 — one review row makes at most ONE rejection (R1~R10)
 # ═════════════════════════════════════════════════════════════════════════════════════
 
 class TestOneRejectionPerReviewRow:
@@ -2749,7 +2749,7 @@ class TestRejectionHistoryCompatibility:
         An item written with review_id: null identifies no review row, so it must match
         nothing at all. Reading the VALUE instead of the key's presence dropped such an item
         into B', where a different review row rendering the same text would be suppressed and
-        its complaint lost (T0005 2.3.1/2.3.3)."""
+        its complaint lost."""
         world.fill(5, "doc-5")
         world.review("doc-5", "issues", revision_no=0,
                      findings=[{"locus": "§1", "note": "a brand new complaint"}])
@@ -2833,7 +2833,7 @@ class TestHopLaunchContract:
         assert svc._resolve_timeout_sec("single", 0, False, None,
                                         svc.REVIEW_HOP_KIND) == svc.HOP_TIMEOUT_SEC
         # This line used to read "an ordinary single run is untouched: 1 document ->
-        # RUN_TIMEOUT_BASE_SEC", and it was true on 0414's branch base. 0446 T0010 3-1
+        # RUN_TIMEOUT_BASE_SEC", and it was true on 0414's branch base. the earlier implementation 3-1
         # (merged 2026-08-22, one day BEFORE d4d9656 was authored on a base that predated
         # it) then moved the explicit pick ABOVE the mode branch for every mode, because a
         # rejection rework otherwise bottomed out at exactly 3600 and no screen could ask
@@ -2862,7 +2862,7 @@ class TestHopLaunchContract:
 
     def test_the_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
             self, world, launched, monkeypatch):
-        """0476 NR0003 defect1 / T0005: `_spawn_rework_hop` must forward the bundle's
+        """defect1 / the earlier implementation: `_spawn_rework_hop` must forward the bundle's
         `restart_max_attempts` to `start_run` exactly like `_spawn_auto_resume` already
         does, and `_resolve_restart_max_attempts` must turn a pick of 3 restarts into a
         total attempts ceiling of 4 (1 initial + 3 restarts)."""
@@ -2914,19 +2914,19 @@ class TestHopLaunchContract:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# flowgate.default.0501 T0004 required item 1 -- the mandatory GOOD/BAD sentinel, through the real
+# required item 1 -- the mandatory GOOD/BAD sentinel, through the real
 # gate dispatch (svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run), not
 # resolve_step_executor() called in isolation.
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 class TestBaselineLockGoodBadSentinel0501:
-    """0501 T0004 required item 1's mandatory integration test: work provider = GOOD, stored
+    """required item 1's mandatory integration test: work provider = GOOD, stored
     sequence provider = BAD, review provider = REVIEWER, verdict = issues, and the
     automatic rework must run as GOOD with BAD never invoked -- asserted through the real
     svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run dispatch (worker chain
     captured, not executed), not a bare svc.resolve_step_executor() call.
 
-    T0004's rework priority has no separate force-all tier ("rework after review issues:
+    's rework priority has no separate force-all tier ("rework after review issues:
     step override -> current request selection -> stored sequence provider -> project
     default") -- CURRENT SELECTION must outrank stored, pinned or not. This class proves
     both tiers through that same real gate dispatch:
@@ -3019,7 +3019,7 @@ class TestBaselineLockGoodBadSentinel0501:
             self, world, monkeypatch, tmp_path):
         """Same GOOD/BAD/REVIEWER/issues setup as the sibling test above, but
         provider_pinned=False -- an ordinary current selection, not an explicit
-        force-all pick. T0004's rework priority list has no separate force-all tier:
+        force-all pick. the earlier implementation's rework priority list has no separate force-all tier:
         current selection must outrank stored regardless of pin state. Dispatched
         through the same real svc.resolve_review_gate -> svc.run_review_gate ->
         svc._spawn_rework_hop -> svc.start_run path (worker chain captured, not
@@ -3102,7 +3102,7 @@ class TestOmittedMapsAreUnchanged:
         assert svc.resolve_review_count(None, 5) == 0
 
     def test_docs_target_is_not_changed_by_a_review_selection(self, route_env):
-        """P0007: `docs_target: 6` is the SAME value with and without the maps — review
+        """`docs_target: 6` is the SAME value with and without the maps — review
         rounds are not documents."""
         _post()
         without = route_env.get("continuation_target_seq")
@@ -3252,7 +3252,7 @@ class TestReviewModePriority:
             paused.rows[GROUP]["continuation_review_count_overrides"]) == {"5": 2, "7": 3}
 
     def test_a_copy_mention_chain_is_never_gated(self, monkeypatch):
-        """L0008 §2.8 condition 3: with no engine run there is nobody to launch a review hop, so
+        """condition 3: with no engine run there is nobody to launch a review hop, so
         the old path is kept rather than silently deciding to review and then not."""
         monkeypatch.setattr(svc, "_runs", {})
         assert svc.has_active_run(GROUP) is False
@@ -3290,7 +3290,7 @@ class TestSettleExtraction:
         assert "transition_document_review" not in chain_source
 
     def test_the_reworked_revision_is_in_a_state_approve_accepts(self):
-        """0414 M0020: the advance branch approves a document that was REJECTED and then
+        """the advance branch approves a document that was REJECTED and then
         reworked, not one that passed. The rework hop re-submits through the inbox, so the
         row settle_completed_step receives is 'revised' — ('revised', 'approve') has to be a
         legal transition or every finite chain would park on approve_failed instead of
@@ -3314,7 +3314,7 @@ class TestSettleExtraction:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# T0005 2.1/2.3 — the review_id anchor AND the current-revision guard, combined (A1-A9)
+# 2.1/2.3 — the review_id anchor AND the current-revision guard, combined (A1-A9)
 #
 # One document_reviews ROW makes at most one automatic rejection -- even across a human
 # mark_revised that leaves the revision unchanged (A6, RED on main before this change).
@@ -3331,7 +3331,7 @@ _REAL_AUTO_REJECT = svc._auto_reject
 def real_gate_exec(monkeypatch, world, gate_exec):
     """gate_exec's spawn captures, with _auto_reject restored to the real function and
     just enough of transition_document_review's dependencies patched (state-preserving,
-    T0005 2.3) that it writes review_id-tagged rejection_history into world.docs."""
+    2.3) that it writes review_id-tagged rejection_history into world.docs."""
     from modules.flow_gate.workflow import pipeline_service as ps
     from modules.flow_gate.workflow.routers import workflow as wf_router
 
@@ -3365,7 +3365,7 @@ def _history_of(world, doc_id):
 
 
 class TestT0005ReviewIdAnchor:
-    """A1-A9 (T0005 item 3)."""
+    """A1-A9."""
 
     def test_a1_one_rejection_per_review_row_then_round_two_after_rework(
             self, world, real_gate_exec):
@@ -3434,7 +3434,7 @@ class TestT0005ReviewIdAnchor:
         world.rework("doc-5", 1)
         real_gate_exec["rejected"].clear()
 
-        # A bundle with no last_stage IS the cold-resume shape already (P0007/L0008 2.9) --
+        # A bundle with no last_stage IS the cold-resume shape already --
         # re-derive it twice, exactly as a restart followed by a resume would.
         gate1 = svc.resolve_review_gate(bundle())
         gate2 = svc.resolve_review_gate(bundle())
@@ -3452,7 +3452,7 @@ class TestT0005ReviewIdAnchor:
         assert len(_history_of(world, "doc-5")) == 1
 
     def test_a6_mark_revised_at_the_same_revision_does_not_re_reject(self, world, real_gate_exec):
-        """The money test (T0005): RED on main before the review_id anchor. A human's
+        """The money test: RED on main before the review_id anchor. A human's
         mark_revised puts the document back at pending_review WITHOUT bumping the
         revision -- exactly the state a landed rework does NOT produce -- so the old
         status-only + revision-match guard alone re-opens it for a second rejection."""
@@ -3573,7 +3573,7 @@ class TestT0005ReviewIdAnchor:
 
 
 class TestReviewFindingsToNextStepEndToEnd0476:
-    """0476 T0009: findings -> auto-reject -> rework -> pass -> settle, as one chain.
+    """findings -> auto-reject -> rework -> pass -> settle, as one chain.
 
     TestGateDerivation.test_count_one_issues_rejects_reworks_then_advances only watches
     resolve_review_gate's derivation, and TestT0005ReviewIdAnchor.test_a3_a_pass_after_
@@ -3604,7 +3604,7 @@ class TestReviewFindingsToNextStepEndToEnd0476:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# 0458 T0007 §3.1 — the failure detail survives all the way to the sentence a human reads
+# the failure detail survives all the way to the sentence a human reads
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 
@@ -3615,7 +3615,7 @@ class TestApproveAndAdvanceStopDetail:
     `review_reject_detail` (_settle_gate_pass); the inbox self-chain has only an envelope and
     goes through stop_reason_text(..., detail=...), which lands on `inbox_stop_detail`. With
     only the second key read, every gate-side failure printed "unknown error" while the real
-    cause sat one key away (0003-NR §11-1).
+    cause sat one key away (NR).
     """
 
     def test_approve_failed_carries_the_review_gates_own_detail(self):
@@ -3664,7 +3664,7 @@ class TestApproveAndAdvanceStopDetail:
         assert svc._stop_reason_text("approve_failed", run).startswith("Auto-approval failed:")
         assert svc._stop_reason_text("advance_blocked", run).startswith(
             "Could not advance to the next step:")
-        # Neither code is resumable — a human has to clean these up (L0007 §4.2).
+        # Neither code is resumable — a human has to clean these up.
         assert not svc.is_resumable("approve_failed")
         assert not svc.is_resumable("advance_blocked")
 
@@ -3731,7 +3731,7 @@ class TestApproveAndAdvanceStopDetail:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# 0458 T0007 §3.1 / §4-1 — the REAL order: finalize closes the run, THEN the gate stops it
+# — the REAL order: finalize closes the run, THEN the gate stops it
 #
 # The worker tail is `_finalize_run(run)` and then `_maybe_auto_resume_hop(run)`. Finalize
 # sees the queued next hop, so it decides `hop_handoff` — "this hop produced its document;
@@ -3813,7 +3813,7 @@ def _live_run(tmp_path, **overrides):
         resumable=False,
         failure_signal_sent=False,
         # no review selection anywhere, so the gate resolves to "approve and continue" —
-        # the branch that calls settle_completed_step (L0008 §2.3, count 0).
+        # the branch that calls settle_completed_step (count 0).
         continuation_review_count_overrides=None,
         continuation_reviewer_overrides=None,
         # finished_payload reads these straight off the run.

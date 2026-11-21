@@ -1,10 +1,10 @@
-"""AI-run lease recovery after a server restart, and the manual unlock path (0401 T0004).
+"""AI-run lease recovery after a server restart, and the manual unlock path.
 
-B0001 reported a group stuck for 4h05m with no way out: an AI run's group lease lives in
+The review reported a group stuck for 4h05m with no way out: an AI run's group lease lives in
 the durable `group_ai_leases` table, but the only code that ever releases one runs inside
 the SAME process that acquired it. A restart mid-run kills the process and leaves the
-lease behind; NR0003 read the live database and found exactly this. This file pins the
-two fixes NR0003 §6 asked for:
+lease behind; the review read the live database and found exactly this. This file pins the
+two fixes the review asked for:
 
   * `group_ai_leases.reclaim_orphaned` / `ai_invoke_service.startup_recover_leases` --
     every lease still on the table when a process boots is definitionally dead (that
@@ -15,7 +15,7 @@ two fixes NR0003 §6 asked for:
     run actually alive" answer with the 423 rejection body (`mutation_policy._locked`)
     so the screen and the server never again tell two different stories.
 
-Also pinned: the run_id continuity fix (T0004 task 7) -- the in-memory run-id counter
+Also pinned: the run_id continuity fix (task 7) -- the in-memory run-id counter
 used to reset to 1 every restart, so a fresh process could reissue a serial an earlier
 process already used that day and silently overwrite its `ai_invoke_runs` row at the
 next finalize.
@@ -53,7 +53,7 @@ from modules.flow_gate.db import ai_run_identity
 GROUP = "flowgate.default.0401"
 OTHER_GROUP = "flowgate.default.9999"
 PROJECT = "flowgate"
-RUN_ID = "aiv2_20260810_000099"  # 0139: v0.2 namespace (aiv_ is v0.1's)
+RUN_ID = "aiv2_20260810_000099"  # v0.2 namespace (aiv_ is v0.1's)
 V01_RUN_ID = "aiv_20260810_000098"
 PAST = "2000-01-01T00:00:00+00:00"
 FUTURE = "2999-01-01T00:00:00+00:00"
@@ -305,7 +305,7 @@ def test_leases_route_reports_run_live_true_for_a_tracked_run(client, fake_runs)
 
 
 def test_leases_route_is_declared_ahead_of_the_run_id_route():
-    """L0007 §2.10.3's own routing-order requirement, restated for /leases: it must
+    """'s own routing-order requirement, restated for /leases: it must
     resolve to the list handler and never be read as a run_id by GET /{run_id}."""
     source = Path(ai_invoke_routes.__file__).read_text(encoding="utf-8")
     assert source.index('@router.get("/leases")') < source.index('@router.get("/{run_id}")')
@@ -407,7 +407,7 @@ def test_next_run_id_refuses_incomplete_seed_inventory(identity_db, monkeypatch)
     monkeypatch.setattr(store, "_fetch_all", unavailable)
     with pytest.raises(RuntimeError, match="db down"):
         ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
-    # 0139: the first allocation self-activates; an incomplete inventory still refuses it.
+    # the first allocation self-activates; an incomplete inventory still refuses it.
     with pytest.raises(RuntimeError, match="db down"):
         svc._next_run_id()
     assert store._fetch_one("SELECT version FROM ai_run_id_contract")["version"] == 0

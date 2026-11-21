@@ -308,7 +308,7 @@ def delete_owned(project_id: str, token_id: str, scratch: Path, *, rollback: boo
 
 
 def _extra_roots() -> list[Path]:
-    # The journal must stay outside the source tree too (NR0003 §5.2).
+    # The journal must stay outside the source tree too.
     return [storage_paths.get_storage_root() / "src"]
 
 
@@ -463,7 +463,7 @@ def _sweep_in_background(project_id: str) -> None:
 def sweep_on_issue(project_id: str) -> threading.Thread | None:
     """Start at most one hourly sweep per project off the token-issue request path.
 
-    flowgate.v02.0084 T#1: a synchronous sweep over thousands of tok_* folders
+    a synchronous sweep over thousands of tok_* folders
     made the issuing /ai-invoke/start request exceed the 30s client timeout.
     """
     now = time.monotonic()
@@ -486,7 +486,7 @@ def sweep_on_issue(project_id: str) -> threading.Thread | None:
     return thread
 
 
-# ── flowgate.v02.0137 T0004 §3 (A-2): copy unsubmitted drafts into the NEXT token's scratch ──
+# ── the earlier change the earlier implementation (A-2): copy unsubmitted drafts into the NEXT token's scratch ──
 # A worker may only submit `doc_path` files from its OWN token scratch (inbox
 # `validate_doc_path`). When a run changes token (review-loop stage switch, reissue) or a
 # follow-up run starts, the previous drafts sit in a directory the new token cannot submit
@@ -503,7 +503,7 @@ CARRYOVER_MAX_DEPTH = 8
 _CARRYOVER_LABEL = re.compile(r"[^A-Za-z0-9_\-]")
 _CARRYOVER_SECRET_NAMES = re.compile(r"(?i)\A(\.env(\..*)?|.*\.(pem|key|pfx|p12)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?)\Z")
 _COPY_CHUNK = 1024 * 1024
-# TR0005 rev1 (T0004 §3-5): a file is refused on its CONTENT, not only on the raw tokens
+# a file is refused on its CONTENT, not only on the raw tokens
 # this run handed out. A follow-up run's sources were written under an EARLIER run's token,
 # which the new run never saw. Two layers, no raw token stored anywhere new:
 #   * credential shapes — an Authorization/Bearer header value, a FLOWGATE_TOKEN=... line;
@@ -580,7 +580,7 @@ def _carryover_candidates(source: dict, skipped: list[dict], top: Path | None = 
 
 
 def _relayed_carryovers(source: dict, skipped: list[dict]):
-    """TR0005 rev1: what an earlier carry-over left in a SOURCE token scratch, flattened.
+    """what an earlier carry-over left in a SOURCE token scratch, flattened.
 
     A worker edits a carried draft where it was put (`carryover/<label>/<origin>/...`). The
     next token must receive that newest content, but never `carryover/<l1>/<origin>/
@@ -699,7 +699,7 @@ def carry_over(project_id: str, *, target_token_id: str, target_scratch: Path, l
     reasons only). A file is refused when it contains one of the raw `secrets`, a
     credential shape, or a string `token_probe` recognizes as a FlowGate token.
 
-    TR0005 rev1: a token source with `relay_carryover` also hands on what earlier
+    a token source with `relay_carryover` also hands on what earlier
     carry-overs put into it (`_relayed_carryovers`), flattened to `<origin>/<rest>`, so a
     chain of reissues / failed runs keeps the newest draft without nesting. When two
     candidates land on the same destination the newest file wins; the other is listed
@@ -824,7 +824,7 @@ def carry_over(project_id: str, *, target_token_id: str, target_scratch: Path, l
 def startup_sweep() -> int:
     """Sweep every known project once, under the same per-project claim as sweep_on_issue.
 
-    flowgate.v02gui.0011 (0004-CH): the boot sweep did not claim ``_sweeping``, so a token issued right
+    (CH): the boot sweep did not claim ``_sweeping``, so a token issued right
     after a restart started a second sweep of the same project and both walked the same backlog side by
     side. A project an issue sweep already holds is left to that sweep.
     """

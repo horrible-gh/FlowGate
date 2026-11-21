@@ -1,5 +1,5 @@
 <template>
-  <!-- D0007 §6: live gate result and decisions; other card document lines are unchanged. -->
+  <!-- live gate result and decisions; other card document lines are unchanged. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
     <!-- v02gui.0029: the cards before this 확인 card that came through without passing their review. -->
     <GateExhaustedNotice v-if="shape === 'gate'" :cards="target.exhaustedUpstream ?? []" />
@@ -61,7 +61,7 @@ function lineOf(slot: GateSlot): InspectorSlotView {
     key: slot.key,
     kind: slot.kind,
     name: t(k(`slot.${slot.key}`)),
-    // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+    // the kind's key travels with the line (see openCardLineAction).
     nameKey: k(`slot.${slot.key}`),
     id: slot.id,
     empty: slot.empty,
@@ -87,12 +87,12 @@ function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same document window, straight in its editor. */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
-/** The history button: the document's review·rejection history window (flowgate.v02.0056 F1). */
+/** The history button: the document's review·rejection history window. */
 function history(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
 }
@@ -101,7 +101,7 @@ function history(line: InspectorSlotView) {
  * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window, [AI 호출] the
  * document's AI call window (openCardLineAction; the Canvas is read again after them).
  */
-/** flowgate.v02gui.0004 (0001-B §A-1): a conflict is worked on in the Git tab; this line only points there. */
+/** a conflict is worked on in the Git tab; this line only points there. */
 function openGit() {
   host?.request({ kind: 'show-tool', tool: 'git' })
 }

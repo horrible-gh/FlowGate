@@ -1,4 +1,4 @@
-"""flowgate.default.0410 TR0009 rev2: regressions for 082_document_origin_backfill.sql.
+"""regressions for 082_document_origin_backfill.sql.
 
 081 only added documents.origin_provider_name and origin_ai_run_id. Older
 documents retained NULL, so the author column showed their registered account

@@ -18,7 +18,7 @@ import type { CardLineRecord, CardLineWriteResult } from '@/features/document'
 export interface SlotWriteRequest {
   readonly flowId: string
   readonly nodeKey: string
-  /** The card's project (flowgate.v02.0127 T#5 §2.11: the card coordinates handed to the document window that opens). */
+  /** The card's project (the card coordinates handed to the document window that opens). */
   readonly projectId?: string | null
   /** The card line's slot (O3 §4-2 `slot`). */
   readonly slot: string
@@ -27,7 +27,7 @@ export interface SlotWriteRequest {
   /** The line's name as the documents tab shows it (instruction · report …). */
   readonly name: string
   /**
-   * flowgate.v02.0088 F14: the i18n key of that name, when the opener has one. The window shows the key in the
+   * the i18n key of that name, when the opener has one. The window shows the key in the
    * current language; without it (an older caller) or for a key the catalog does not have, `name` as it came.
    * UI only — never written, sent or used to tell windows apart (the key stays flow / node / slot).
    */

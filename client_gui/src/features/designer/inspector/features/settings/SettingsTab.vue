@@ -1,22 +1,22 @@
 <template>
-  <!-- flowgate.v02.0048 T#9 — settings tab (D#1 §10.2 T#9 row, D#2 §2.2): the run settings of the selected
+  <!-- settings tab (row, the earlier implementation): the run settings of the selected
        Node. A thin container: the composables read and save, the models decide the values, the choices and
        availability.
-       flowgate.v02.0053 T#7 — drawn as v7 draws it (0035 insp.js execSettings / testSettings), on every
+       drawn as v7 draws it (insp.js execSettings / testSettings), on every
        조사 · 작업 · 설계 · Custom · 테스트 card, just placed or done alike: the 🔒 실행 중 line of a running
        card, the 지시서 사용 / 생략 row, then the 실행 설정
        block (실행 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾ 실행 제한 시간 · 검수 기준) — or, on a 테스트 card,
        the 시나리오 작성 block (작성 AI | 검수 AI · 검수 횟수; its 실행 block is testRunSettings'). A change is
        saved at once (no save button, no "saved" line). Explanations are tooltips; a refused change is a red !
-       beside its control. A Graph card keeps its settings itself (T#2, useCardSettings); a v0.1 Flow's Node
+       beside its control. A Graph card keeps its settings itself (useCardSettings); a v0.1 Flow's Node
        keeps the three of its sequence row (0048, useSettings) and the rest is drawn off. A failed read with
        nothing shown is the read failure icon (why: its tooltip) with a ↻ retry, as on every settings form.
-       flowgate.v02.0056 F2-1: the progress-after-review row is gone with its setting (O1 0005-TR §1-1, §4-3);
+       the progress-after-review row is gone with its setting;
        a RUN card whose instruction is used has the 지시 AI row under it (O2 0007-TR §4-1: none = the run AI,
        then the assigned AI).
        flowgate.v02.0061 T#14: a Graph card is also locked (the same 🔒 실행 중 line, every control off) while its Flow's
        run is running, paused or stopping (`target.editLock`), without waiting for the settings read to say so.
-       TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so).
+       also while the run's status is not confirmed (`unknown`; the lock line then says so).
        flowgate.v02.0113 T#1 (0002-D 개정 §3.13) replaces the run lock here: only an actually running card is locked
        (the server's `locked` or the node run's `node_running`); a waiting, done or error card takes its settings.
        flowgate.v02.0072 T#3: a Graph work plan (WP) card — the [switch] AI 사전 지시서 작성 line, then the same 실행 설정
@@ -254,7 +254,7 @@ const { t } = composer
 
 const k = (key: string) => `gui.inspector.settings.${key}`
 
-/** card = a Graph card (T#2 card settings); sequence = a v0.1 Flow's Node (its sequence row). */
+/** card = a Graph card (card settings); sequence = a v0.1 Flow's Node (its sequence row). */
 const source = computed<'card' | 'sequence'>(() => (props.target.nodeType !== null ? 'card' : 'sequence'))
 const kind = computed<'run' | 'test' | 'plan'>(() => {
   const settingsKind = inspectorSettingsKind(props.target)
@@ -294,7 +294,7 @@ function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role'
 }
 /** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and instruction review values, off. */
 const instructionHeld = computed(() => cardSettingsValue(card.node.value, card.pending.value, 'instruction') === 'omit')
-/** flowgate.v02.0113 T#4: a field the card's kind puts on the AI tab and the card has. */
+/** a field the card's kind puts on the AI tab and the card has. */
 function aiFieldOf(field: CardSettingsField): boolean {
   return (AI_FIELDS[kind.value] as readonly string[]).includes(field) && !!card.node.value?.fields[field]
 }
@@ -336,7 +336,7 @@ const gearOpen = ref<string | null>(null)
 function toggleGear(role: string) {
   gearOpen.value = gearOpen.value === role ? null : role
 }
-// flowgate.v02gui.0029 (0003-CH QA): only another card or tab closes the window. Each source is compared on its own:
+// (CH QA): only another card or tab closes the window. Each source is compared on its own:
 // a value saved from the window re-reads the Flow and hands down a new target object for the same card, which the
 // former single getter (a new array every time) took for a card change and so closed the window on every pick.
 watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = null; verifyCustom.value = {} })
@@ -351,7 +351,7 @@ function onKey(event: KeyboardEvent) {
 }
 
 /**
- * flowgate.v02gui.0029 (0003-CH QA): where the open window goes inside the Inspector's scrolling body. Under its row
+ * (CH QA): where the open window goes inside the Inspector's scrolling body. Under its row
  * when it fits there; else above the row when it fits there; else under the row with the body scrolled just enough to
  * show it whole — its height capped (scrolling inside) only when even the whole body is too low for it. Under the row
  * an invisible 1px mark is kept GEAR_EDGE past the window, so the body can scroll the window clear of its bottom edge
@@ -436,13 +436,13 @@ const errorKey = computed(() => {
 })
 
 /**
- * flowgate.v02.0113 T#1 (0002-D revision §3.13): a Graph card is locked only while it actually runs — the server's card lock
+ * a Graph card is locked only while it actually runs — the server's card lock
  * (`locked`) or its node run's `node_running` (an AI execution of it requested / running, or its AI review), the same
  * judgement — never because its Flow's run is running or the node is merely open (a person's or a setup wait). Until
  * the run status is confirmed (`editLock` `unknown`) it still waits.
  */
 function cardLocked(): boolean {
-  // flowgate.v02.0130: the unconfirmed run status only waits until the card's own settings are read — after that the
+  // the unconfirmed run status only waits until the card's own settings are read — after that the
   // server's answer (`locked`, which already holds `node_running`) decides.
   return card.node.value?.locked === true || props.target.nodeRun?.nodeRunning === true || (props.target.editLock === 'unknown' && card.node.value === null)
 }
@@ -527,7 +527,7 @@ const views = computed(() => {
   return out
 })
 
-/** flowgate.v02.0072 T#3 — the WP card's AI pre-instruction writing switch: its value, whether it may change, its tooltip. */
+/** the WP card's AI pre-instruction writing switch: its value, whether it may change, its tooltip. */
 const preInstruction = computed(() => {
   const view = views.value.pre_instruction_auto
   const on = cardSettingsSwitchOn(cardSettingsValue(card.node.value, card.pending.value, 'pre_instruction_auto'))
@@ -560,13 +560,13 @@ const instructionAiShown = computed(() => {
 /**
  * flowgate.v02.0144 T-B (0003-NR §4.2a(6)(7)): the older AI form (지시 AI row, 실행 설정 block, instruction review block) is
  * drawn only for a Graph card whose settings answer has come without AI roles (`ai_roles` null or missing). Before
- * the answer (loading, a card just placed) none of it is drawn. flowgate.v02test.0048: a re-read after the settings
+ * the answer (loading, a card just placed) none of it is drawn. the earlier change: a re-read after the settings
  * context moved keeps the last answer drawn until the new one comes (useCardSettings `identity`).
  */
 const legacyAiShown = computed(() => source.value === 'card' && card.node.value !== null && !card.node.value.aiRoles)
 
 /**
- * Why the server refused the field's last change (the ! icon's tooltip), or null. flowgate.v02.0056 F2-1: on the
+ * Why the server refused the field's last change (the ! icon's tooltip), or null. the earlier change F2-1: on the
  * 지시 AI the server's own message (x-locale) follows the code's sentence (cardSettingsFailureText).
  */
 function failureOf(field: CardSettingsField): string | null {
@@ -584,7 +584,7 @@ function fieldLabel(field: CardSettingsField): string {
   return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
 }
 
-/** flowgate.v02.0072 T#3 — the WP card names its run AI task AI; the other cards keep the common names. */
+/** the WP card names its run AI task AI; the other cards keep the common names. */
 const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}) }))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
@@ -626,7 +626,7 @@ function onChange(field: CardSettingsField, text: string) {
 }
 
 /**
- * flowgate.v02.0113 T#4 — a select's options on the AI tab. flowgate.v02gui.0007 B: the two review counts offer the
+ * a select's options on the AI tab. the earlier change B: the two review counts offer the
  * server's choices up to its effective maximum (안 함 · 1 time … n times), without "until it passes" (-1); a stored value
  * outside them stays shown so nothing is changed by opening the card.
  */
@@ -713,7 +713,7 @@ function reload() {
   padding: 6px 12px;
 }
 
-/* flowgate.v02.0072 T#3: the WP card's switch line — the switch first, its name right of it. */
+/* the WP card's switch line — the switch first, its name right of it. */
 .inspector-settings-switch {
   display: flex;
   align-items: center;
@@ -752,13 +752,13 @@ function reload() {
   font-size: 12px;
 }
 
-/* flowgate.v02.0113 T#4 (0029-TR mockup): the AI tab — selects as tall as the run settings'. */
+/* (TR mockup): the AI tab — selects as tall as the run settings'. */
 .inspector-settings :deep(.ui-select) {
   height: 32px;
   font-size: 12px;
 }
 
-/* flowgate.v02gui.0029 (0003-CH Coff): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
+/* (CH Coff): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
    under the row. The block of an open ⚙ is lifted over the blocks below it (each block is its own stacking context);
    the ⚙ and its window still take a click on a locked card (its values are seen, its selects stay off). */
 .inspector-ai-role.is-gear-open {

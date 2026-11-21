@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0027 (0006-T) — display-only Group (module) archive / restore.
+"""display-only Group (module) archive / restore.
 
 Real SQLite with every migration, the real FlowGateStore, the real module routes and the real tree
 builders; only authentication and the SSE delivery are replaced. Covers the routes (archive,

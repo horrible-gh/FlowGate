@@ -1,4 +1,4 @@
-// flowgate.v02.0072 T#1 — a work plan read answer (`GET …/work-plan`, documents/routers/work_plan.py _read_view) for the
+// a work plan read answer (`GET …/work-plan`, documents/routers/work_plan.py _read_view) for the
 // edit window tests: a design sheet that already started, two work sets (one with a review and a pre-instruction, one
 // on an AI that is no longer registered), a TS set whose result (TSR) the server builds, and fields the window has no
 // control for (provider candidates, a top-level x_* extension, an attachment reference) that a save must keep.

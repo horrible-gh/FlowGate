@@ -1,4 +1,4 @@
-"""Card run settings rules (flowgate.v02.0053 T#2): read a card's settings, change one value, and
+"""Card run settings rules: read a card's settings, change one value, and
 answer what a node's AI start takes from its card.
 
 - A card is a node key of the Flow's Graph definition: a card only in the draft (just placed) and a
@@ -6,21 +6,21 @@ answer what a node's AI start takes from its card.
   kind (``fields.card_kind``) follows the draft node, else the latest revision node.
 - One request changes one value, saved at once (no save button): ``value`` null takes the default
   back. The write runs inside the Flow guard, so it orders with draft saves and run steps.
-- 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
+- the earlier implementation: running/paused flows lock every card setting (409 ``graph_run_locked``).
   Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
   instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
-  flowgate.v02.0113 T#1 (0030-M §4, 0002-D revision §3.13) replaces both for card settings: a card is locked only while
+  replaces both for card settings: a card is locked only while
   it actually runs (``legacy.node_running``: an AI execution of it requested or running, or an AI review loop on its
   result; 409 ``node_settings_locked``). Waiting (ready, a person's writing, AI setup needed / unavailable, a question,
   an approval), done and error cards take their settings whatever the run's status — all three roles ``not_used``
   too. An unfinished Time Machine operation still refuses (``editing.require_settings_editable``).
-- 0061 T#11: Hold (``hold``: true / false or null) is written through the same PATCH for every card, with the Graph
+- the earlier implementation: Hold (``hold``: true / false or null) is written through the same PATCH for every card, with the Graph
   run's rules instead of the lock above (``flowgate.graph_run.hold``): refused while a run is running / paused /
   stopping (409 ``graph_run_locked``), setting refused on a node done in the Flow's run (409 ``graph_hold_done_node``),
   allowed on an open / in-review node (it bounds the opening only). Releasing changes the setting only: nothing opens
   until the next step / full command. Every change is a ``graph_canvas_changed`` (reason ``hold``) after the commit,
   with or without a run, and a ``graph_node_state_changed`` too when the Flow's run has the node.
-- flowgate.v02.0085 T#1 (D0007 §7.2): a confirm gate (check card) is the exception to that lock. Its settings change
+- the earlier change the earlier implementation: a confirm gate (check card) is the exception to that lock. Its settings change
   while the gate is pending or open in a running or idle run (or in a Flow with no run) and nothing holds it - no
   reserved decision, no finished gate, no Time Machine operation, no open merge conflict, no pending round split
   (``flowgate.gate_decisions.settings_lock``); anything else is 409 ``gate_settings_locked`` with a reason. Every card
@@ -29,9 +29,9 @@ answer what a node's AI start takes from its card.
   written. The structure lock of the definition is not touched.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
-- flowgate.v02.0072 T#3: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
+- the earlier change the earlier implementation: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
   pre-instruction writing switch and the run block) by the same GET / PATCH, locks and failures. Nothing here touches
-  the plan document (its Steps' AI, review AI, pre-instructions and attachments). flowgate.v02.0083 T#1 — 0072 T#3 revision
+  the plan document (its Steps' AI, review AI, pre-instructions and attachments). the earlier change the earlier implementation — the earlier implementation revision
   (revised): the run block is read by a run now. ``uses_ai`` judges the plan card's writer (an explicit person assignee,
   else the card's work AI, else an explicit AI assignee, else a person) and ``run_settings`` hands an AI writer its
   work AI, time limit and restarts (``fields.run_plan``).
@@ -40,16 +40,16 @@ answer what a node's AI start takes from its card.
   ``result_type`` handler: the type an AI node's result is bound as (the dispatch told the AI the same).
 - ``token_step_type`` is the source tools' ``worker_step_type_hooks`` handler: the token of an open AI
   node whose card changes what it writes is judged by that type (an omitted instruction's report),
-  so the source access of the token follows what the AI was told to write. flowgate.v02.0083 T#2: a card
+  so the source access of the token follows what the AI was told to write. the earlier change the earlier implementation: a card
   that changes nothing (a WP / TS card, an omitted D / P / L / DB / T2 instruction, a card run opened before
   migration 148, a person's node) answers its node's own type, as the result binder binds it
   (``result_binder.result_type``) — never None, which the source tools read as the Flow root's type.
-- flowgate.v02.0056 T#2: ``instruction_document`` is the Graph's ``card_settings_ports.instruction_document``
+- the earlier change the earlier implementation: ``instruction_document`` is the Graph's ``card_settings_ports.instruction_document``
   handler — an AI card that runs an instruction stage (instruction use) names its instruction type and its
   instruction line's document, and whether that document is written (``card_documents.lines.has_body``: its
   body, not its existence, decides whether the instruction AI runs). While a node is in that stage its
   tokens write the instruction, so ``token_step_type`` judges them by the instruction type.
-- flowgate.v02.0098 T#1 (D0004 §3.1 / §3.3 / §3.5): a check card's ``merge_target_branch`` (an exact local branch, null:
+- the earlier change the earlier implementation: a check card's ``merge_target_branch`` (an exact local branch, null:
   the group's work base) is saved only after the Git merge target judgement of the authenticated group's project passes
   (``legacy.judge_merge_target``, in the same Flow guard, after the lock and version checks, in every merge mode); a
   refusal changes neither the value nor the version and keeps its own code (``_merge_target_refusal``). Null is removed
@@ -76,7 +76,7 @@ from flowgate.gate_decisions import settings_lock as gate_lock
 from flowgate.graph_run import editing, hold
 
 _log = logging.getLogger(__name__)
-# flowgate.v02.0113 T#3 (L-2 §2.14, T §4.6): the result type of a node whose stage plan could not be read — a type no
+# (L-2, T): the result type of a node whose stage plan could not be read — a type no
 # document has, so the binder binds nothing (never a type guessed from the card) and its reconciliation waits.
 UNREADABLE_RESULT_TYPE = "?unreadable"
 
@@ -112,7 +112,7 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
     # A gate is open while it waits for the person: only the gate's own lock decides. Every other card is locked only
-    # while it actually runs (flowgate.v02.0113 T#1: ``legacy.node_running``) or a Time Machine operation is unfinished.
+    # while it actually runs (``legacy.node_running``) or a Time Machine operation is unfinished.
     node_running = legacy.node_running(flow_id, node["node_key"])
     if kind == fields.CHECK:
         locked = reason is not None
@@ -123,7 +123,7 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
         settings_context.require_owner(flow_id)
     except legacy.GraphApiError as exc:
         owner_reason = exc.code
-    # flowgate.v02.0130: the screen's view (revision / draft / run it draws) never locks a card. 0126 locked the card
+    # the screen's view (revision / draft / run it draws) never locks a card. 0126 locked the card
     # whenever the context the screen built differed from ``context.current`` — and the screen builds it from another
     # run choice (the Canvas run) and another view (draft), so a waiting ToD card read locked with nothing running.
     # The answer carries the server's context; the screen sends that one back with a PATCH (a stale one is still 409).
@@ -147,7 +147,7 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
 
 
 def _with_merge_targets(group: dict, payload: dict, refresh: bool = False, *, keep: bool = False) -> dict:
-    """flowgate.v02.0098 T#1 (D0004 §3.1 / §5): a check card's answer + the merge target outputs -
+    """a check card's answer + the merge target outputs -
     ``merge_target_options``, ``default_target_branch``, ``merge_target_state`` (``merge_target.check_target_view``) and
     ``push_remote_check_required`` (push on with no remote chosen). Read-only: nothing stored changes, and a Git read
     failure is a state, never a failed response. An opted-in unrelated PATCH keeps the client's previous
@@ -184,7 +184,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
           locale: Optional[str] = None, expected_version: Optional[int] = None, expected_context=None, *,
           keep_merge_targets: bool = False, origin_client_id: Optional[str] = None) -> dict:
     """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
-    titles an AI delegation line document the change makes (flowgate.v02.0088). ``expected_version`` is the
+    titles an AI delegation line document the change makes. ``expected_version`` is the
     settings version the screen was drawn from (None: not checked). ``keep_merge_targets`` opts in to omitting
     the target view only for a check card writing a field other than ``merge_target_branch``."""
     flow_id = group["group_id"]
@@ -197,7 +197,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
     def body() -> dict:
         settings_context.require_owner(flow_id)
         # Same guard as the write: a run/revision/draft change after the screen's read cannot redirect an old view.
-        # flowgate.v02.0130: the context compared is the one the read answered (never one the screen built).
+        # the context compared is the one the read answered (never one the screen built).
         if expected_context is not None:
             settings_context.require_current(flow_id, node_key, expected_context)
         if expected_version is not None:
@@ -210,10 +210,10 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             return _write_hold(group, node_key, value, user_id)
         found = repository.card_node(flow_id, node_key)
         if found is not None and fields.card_kind(found.get("node_type"), found.get("doc_type")) == fields.CHECK:
-            gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
+            gate_lock.require_unlocked(flow_id, node_key)             # the gate's own lock
         else:
-            editing.require_settings_editable(flow_id)                # 0113 T#1: the running check below locks
-        node = _card(flow_id, node_key)       # 0130: a card only in the draft keeps its settings during a run too
+            editing.require_settings_editable(flow_id)                # the running check below locks
+        node = _card(flow_id, node_key)       # a card only in the draft keeps its settings during a run too
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         role_write = name in card_roles.ROLE_FIELDS and role_store.available()
         if name in card_roles.NEW_FIELDS and not role_write:
@@ -262,7 +262,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
 
 
 def _check_merge_target(group: dict, node_key: str, branch: str) -> None:
-    """The repository check of a new ``merge_target_branch`` (D0004 §3.1): the authenticated group's own project,
+    """The repository check of a new ``merge_target_branch``: the authenticated group's own project,
     judged now (never the candidate cache). A refusal is raised as its own API error, nothing written."""
     try:
         legacy.judge_merge_target(group, branch)
@@ -271,7 +271,7 @@ def _check_merge_target(group: dict, node_key: str, branch: str) -> None:
 
 
 def _merge_target_refusal(flow_id: str, node_key: str, branch: str, exc: Exception) -> legacy.GraphApiError:
-    """``GitServiceError`` -> the D0004 §3.3 PATCH answer: the judgement's own status and code, the field and the target
+    """``GitServiceError`` -> the the design PATCH answer: the judgement's own status and code, the field and the target
     named, only name / count details (never a Git diagnostic, a remote URL or a worktree path). Git missing or
     unusable is 409 ``gate_git_unavailable`` with its reason; any other Git error is a Git failure, never
     ``invalid_request``."""
@@ -290,7 +290,7 @@ def _merge_target_refusal(flow_id: str, node_key: str, branch: str, exc: Excepti
 
 
 def _push_on(flow_id: str, node_key: str, user_id: Optional[str]) -> bool:
-    """D0004 §3.5: a check card's ``push`` true together with its remote ``merge_target`` = origin, inside the caller's
+    """a check card's ``push`` true together with its remote ``merge_target`` = origin, inside the caller's
     Flow guard transaction (a refusal rolls back both). An old branch name still in ``merge_target`` (not moved by
     migration 158) is kept as ``legacy_merge_target`` first, unless a different legacy value is already kept: then the
     whole change is refused. An existing ``legacy_merge_target`` is never removed or overwritten. True when anything
@@ -312,7 +312,7 @@ def _push_on(flow_id: str, node_key: str, user_id: Optional[str]) -> bool:
 
 
 def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) -> dict:
-    """0061 T#11, inside the Flow guard: Hold on (true) / off (false or null: the default, no row). Not the card
+    """inside the Flow guard: Hold on (true) / off (false or null: the default, no row). Not the card
     settings lock — the Graph run's rules (``hold.require_settable``): any card, also one open / in review."""
     flow_id = group["group_id"]
     if value is not None and not isinstance(value, bool):
@@ -332,7 +332,7 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
 
 
 def _assigned(flow_id: str, node: dict) -> Optional[tuple]:
-    """flowgate.v02.0113 T#3: ``(attempt_id, plan)`` when the node's active attempt in the Flow's active run is an
+    """``(attempt_id, plan)`` when the node's active attempt in the Flow's active run is an
     assigned one (L-2 §2.13), else None (the feature off, a pre-feature attempt, no run, not a role card)."""
     from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
 
@@ -345,7 +345,7 @@ def _assigned(flow_id: str, node: dict) -> Optional[tuple]:
 
 
 def uses_ai(flow_id: str, node: dict) -> bool:
-    """flowgate.v02.0113 T#3 (L-1 §2.9, T §4.1): the registered ``USES_AI`` handler stays this function; with the stage
+    """(L-1, T): the registered ``USES_AI`` handler stays this function; with the stage
     assignment feature on, the judgement is ``resolve.card_execution_is_ai`` of the node's active attempt (its result
     assignment first, else the execution role); with it off, the function below as before."""
     from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
@@ -360,11 +360,11 @@ def uses_ai(flow_id: str, node: dict) -> bool:
 
 
 def legacy_uses_ai(flow_id: str, node: dict) -> bool:
-    """0063 B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
+    """B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
     then the invoke service's project default. An explicit human assignment is never overridden;
     requirement delegation, gates and cards without a run plan retain their own contracts.
 
-    flowgate.v02.0083 T#1 (0072 T#3 revision): a work plan card (WP) is judged in this order — an explicit person assignee:
+    a work plan card (WP) is judged in this order — an explicit person assignee:
     a person; the card's work AI (``run_ai``) stored: AI; an explicit AI assignee: AI; nothing: a person (the default
     stays a person's writing, so a WP a person already writes is never handed to an AI by a later command). Run / test
     cards keep their judgement (unassigned: AI, the project default when the card names none)."""
@@ -393,7 +393,7 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
 
     Only an AI node reads its card at dispatch, so only an AI node's result type follows the card.
     The card cannot change while the node is open (locked), so this is the type its AI was told.
-    flowgate.v02.0056 T#2: a node row that carries its node run's stage as ``run_stage`` None (the result binder,
+    a node row that carries its node run's stage as ``run_stage`` None (the result binder,
     the source tools) is an AI card run opened before migration 148 — its AI was told the one-stage type of that
     time (``fields.result_doc_type`` ``one_stage``), so that type stays its result's.
     """
@@ -403,7 +403,7 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
         _log.warning("stage plan not read flow=%s node=%s", flow_id, node.get("node_key"), exc_info=True)
         return UNREADABLE_RESULT_TYPE
     if assigned is not None:
-        return assigned[1]["result_type"]                   # 0113 T#3: the attempt's plan, whoever writes it
+        return assigned[1]["result_type"]                   # the attempt's plan, whoever writes it
     if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return None
     one_stage = "run_stage" in node and node.get("run_stage") is None
@@ -414,7 +414,7 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
 def instruction_document(flow_id: str, node: dict) -> dict:
     """``{doc_type, doc_id, written}`` of an AI card's instruction when the card runs an instruction stage
     (``node``: the run's node row), else ``{}``: its instruction type, its instruction line's live document
-    (None when the line has none) and whether that document has a body. flowgate.v02.0113 T#3: an assigned attempt's
+    (None when the line has none) and whether that document has a body. the earlier change the earlier implementation: an assigned attempt's
     plan names the type (TEST: TS), whoever writes it."""
     assigned = _assigned(flow_id, node)
     if assigned is not None:
@@ -430,7 +430,7 @@ def instruction_document(flow_id: str, node: dict) -> dict:
                                     node.get("doc_type")) or {}
     doc = line.get("document")
     if doc and doc["doc_id"] in legacy.invalidated_documents(flow_id, node["node_key"]):
-        # 0061 T#7: what an invalidated attempt of the node wrote is not this attempt's instruction: the line counts
+        # what an invalidated attempt of the node wrote is not this attempt's instruction: the line counts
         # as having none, so the instruction AI writes a new one (never into the old attempt's document).
         doc = None
     return {"doc_type": doc_type, "doc_id": doc["doc_id"] if doc else None,
@@ -438,7 +438,7 @@ def instruction_document(flow_id: str, node: dict) -> dict:
 
 
 def required_instruction(flow_id: str, node: dict) -> Optional[str]:
-    """flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 "required outputs"): the instruction type the card's completion requires
+    """(T-3, the discussion seq 9 T-3 "required outputs"): the instruction type the card's completion requires
     approved — the card uses an instruction — whoever writes it, else None. An assigned attempt: its plan names it (a test
     card's TS unless omitted; a plan card none). A pre-feature attempt: the card's stored instruction use — a run card's
     instruction stage type (``fields.instruction_stage``: none when omitted), a test card's TS unless omitted. A card with
@@ -462,7 +462,7 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     start's retries minted) counts, and only while the node is open in its Flow's active run: the card is
     locked then, so this is the type the dispatch told the AI and the result binder binds (``result_type``)
     — or, while the node is in its instruction stage, the instruction type that stage writes.
-    flowgate.v02.0083 T#2: when the card changes nothing it is the node's own type (``graph_model.run_doc_type``,
+    when the card changes nothing it is the node's own type (``graph_model.run_doc_type``,
     the result binder's fallback), so the token is never judged by its ``doc_ref`` (the Flow's root R / B).
     """
     if not repository.available():
@@ -472,7 +472,7 @@ def token_step_type(token_rec: dict) -> Optional[str]:
         return None
     flow_id, node = found
     assigned = _assigned(flow_id, node)
-    if assigned is not None:                                 # 0113 T#3: the attempt's plan (L-2 §2.5.1)
+    if assigned is not None:                                 # the attempt's plan (L-2)
         plan = assigned[1]
         if node.get("run_stage") == fields.INSTRUCTION_STAGE and plan.get("instruction_type"):
             return plan["instruction_type"]

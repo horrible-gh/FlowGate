@@ -1,4 +1,4 @@
-"""Group 0243 L0008 §2.6: the worker prescription now points at options-carrying Qs.
+"""Group the earlier implementation: the worker prescription now points at options-carrying Qs.
 
 Only the PRESCRIPTION (the positive/guidance half) changes. The ⚠️ prohibition block is
 untouched: a worker demanding an interactive choice through its own output is still banned,
@@ -49,7 +49,7 @@ def test_prohibition_block_is_unchanged(locale):
 
 @pytest.mark.parametrize("locale", _LOCALES)
 def test_options_example_moved_behind_the_question_help_item(locale):
-    """group 0372 set 3 (D-0003 §3-2 "move question-submission examples to help"): the guide no longer
+    """set 3 (D-0003 "move question-submission examples to help"): the guide no longer
     embeds the placeholder POST JSON — it keeps the address + credential and points at
     the `question` help item, whose example now carries the §2.6 duty of demonstrating
     the optional `options` field."""

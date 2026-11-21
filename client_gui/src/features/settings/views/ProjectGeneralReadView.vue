@@ -48,7 +48,7 @@
 // 프로젝트 › 기본 정보 (flowgate.v02.0076 T#5, D §2.3): the selected row of the project list — name,
 // description, active state and modules — read only. There is no separate detail API, no request
 // of its own and no save of the name or description. The project ID is an internal key (group /
-// document IDs, paths) and is not shown here (mockup ⑩, flowgate.v02.0077).
+// document IDs, paths) and is not shown here (mockup ⑩, the earlier change).
 import { useI18n } from 'vue-i18n'
 import SettingsIcon from '../SettingsIcon.vue'
 import type { ProjectModuleRef, ProjectRow } from '../types'

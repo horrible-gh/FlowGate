@@ -1,11 +1,11 @@
-"""NR 0003 section 4 incident reproduction promoted to an expected-behavior regression.
+"""incident reproduction promoted to an expected-behavior regression.
 
 The original scratch reproduction is absent, so this is rewritten from NR section
 4.1's procedure. Reuse 0555's actual final-approval orchestrator, migrated SQLite,
 local bare origin and live registry. Only push results are injected at _run_git;
 all resolution, claims, sweeps, ref preservation and approval transactions are real.
 Auth and remote-hook rejection intentionally require explicit recovery even after
-the external cause disappears (T#5); automatic sweeps must never bypass that hold.
+the external cause disappears; automatic sweeps must never bypass that hold.
 """
 import copy
 import json

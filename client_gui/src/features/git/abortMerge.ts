@@ -1,4 +1,4 @@
-// flowgate.v02test.0052 (0008) — the two confirm questions that end a conflict in one press, shared by the conflict card
+//  — the two confirm questions that end a conflict in one press, shared by the conflict card
 // and the merge-approval card: [병합 중단] and the administrator's [강제 정리].
 //
 // Merge abort: close the conflict review AND cancel the approval parked on it, then direct the user to the check card

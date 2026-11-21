@@ -1,4 +1,4 @@
-// flowgate.v02.0053 T#3 (rework) — an open document window hears its document's server events on the
+// (rework) — an open document window hears its document's server events on the
 // v0.2 project event hub (features/project projectEvents.ts, through the project store), so the window
 // shows what the server has now: the AI filling a report that opened empty, an edit or a review
 // elsewhere. The v0.1 `fg:document_content_changed` window event is sent by the v0.1 screen's SSE

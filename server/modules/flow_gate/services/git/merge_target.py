@@ -1,6 +1,6 @@
 """Central merge-target resolver for group finalize attempts.
 
-flowgate.default.0594 T0012 (D0009 §T#2). The work base (group worktree origin,
+The work base (group worktree origin,
 update-from-base, base status, fetch/push monitoring, group diff, review package)
 and the finalize TARGET (the branch a group's work is merged into) are separate
 axes. This module owns only the second one:
@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.db.git_integration import (  # pure session readers (0630 T0005)
+from modules.flow_gate.db.git_integration import (  # pure session readers
     MERGE_REVIEW_SESSION_KINDS as _MERGE_REVIEW_KINDS,
     is_branch_merge_session as _is_branch_merge_session,
 )
@@ -44,14 +44,14 @@ from modules.flow_gate.storage.paths import project_dir_name
 from ..route_logging import forward_to_file_log
 from .credentials import GitServiceError
 
-# flowgate.v02test.0020: this module's WARNING lines (the 0119 ``check target lookup`` diagnostic among them) reach
+# this module's WARNING lines (the 0119 ``check target lookup`` diagnostic among them) reach
 # logs/default.log. A plain getLogger(__name__) propagates to a handler-less root (route_logging.get_logger), so the
 # diagnostic line had never been written to the server log.
 _log = forward_to_file_log(logging.getLogger(__name__))
 
 # Session-context keys (git_merge_session.context JSON — no schema change).
 TARGET_RECORD_KEY = "merge_target"
-# Top-level mirror of the target branch; T#1's branch-delete guard reads this key.
+# Top-level mirror of the target branch; the earlier implementation's branch-delete guard reads this key.
 TARGET_BRANCH_KEY = "target_branch"
 ATTEMPT_STATE_KEY = "attempt_state"
 
@@ -83,7 +83,7 @@ _LANDED_UNKNOWN = "unknown"
 
 MERGE_ACTIONS = ("merge", "merge_only")
 
-# 0066 D#1 §2-2: optional target-record keys. A record without them is read exactly as
+# optional target-record keys. A record without them is read exactly as
 # before; ``origin=manual_merge`` marks a manual merge attempt (Group kept on success),
 # ``recovery_merge_commit`` an attempt that completes an earlier unpushed merge.
 ORIGIN_MANUAL_MERGE = "manual_merge"
@@ -116,7 +116,7 @@ class MergeTargetContext:
     target_kind: str = "branch"
     target_group_id: Optional[str] = None
     managed_workspace: bool = True
-    # 0665 T0004: the target came from the group's work base (no explicit request).
+    # the target came from the group's work base (no explicit request).
     defaulted_to_work_base: bool = False
 
     @property
@@ -220,7 +220,7 @@ def _write_owner_marker(ctx: MergeTargetContext) -> None:
 
 def target_record(session: Optional[dict]) -> Optional[dict]:
     from modules.flow_gate.services import git_service as _gs
-    # 0630 T0005: a branch_merge attempt pins its target the same way a finalize does.
+    # a branch_merge attempt pins its target the same way a finalize does.
     if not session or _gs.db_git.session_kind(session) not in _MERGE_REVIEW_KINDS:
         return None
     rec = _gs.db_git.session_context(session).get(TARGET_RECORD_KEY)
@@ -285,7 +285,7 @@ def resolve_session_target(session: dict) -> MergeTargetContext:
     """THE target of one merge session (the single source of truth after start).
 
     Legacy fallback: no record → the project base and its shared checkout.
-    0630 T0005: the project comes from the session's owner — a branch_merge row has no group."""
+    the project comes from the session's owner — a branch_merge row has no group."""
     from modules.flow_gate.services import git_service as _gs
     project_id = _gs._session_project(session)
     cfg = _gs.db_git.get_config(project_id) or {}
@@ -336,7 +336,7 @@ def resolve_session_target(session: dict) -> MergeTargetContext:
 def session_merge_root(session: dict) -> tuple[Optional[Path], bool]:
     """``(root, is_base)`` where this merge session's merge state lives.
 
-    A legacy row takes exactly the pre-T0012 route (``_base_root_of``) so recovery
+    A legacy row takes exactly the pre-the earlier implementation route (``_base_root_of``) so recovery
     of old sessions does not even read anything new."""
     from modules.flow_gate.services import git_service as _gs
     if target_record(session) is None:
@@ -351,7 +351,7 @@ def resolve_merge_id_target(merge_id: int) -> Optional[MergeTargetContext]:
     return resolve_session_target(session) if session else None
 
 
-# flowgate.v02.0158: inside one check card candidate computation (``_compute_snapshot``) every listed name's
+# inside one check card candidate computation (``_compute_snapshot``) every listed name's
 # ``inspect_workspace`` (and the base slot check) asked for the same open attempts, re-reading every open session of
 # the server once per candidate under the view's one CHECK_TARGET_BUDGET_SEC budget. There the first read is kept
 # for the rest of that computation (project -> attempts). Outside it -- saving, confirming, running, every merge
@@ -362,7 +362,7 @@ _attempts_memo: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
 
 def open_merge_attempts(project_id: str) -> list[dict]:
     """Every open merge attempt of the project (any phase, any target): group finalize
-    merges and — 0630 T0005 — ordinary branch merges, so a workspace/target claim or a
+    merges and — the earlier implementation — ordinary branch merges, so a workspace/target claim or a
     branch-delete guard sees both owners."""
     memo = _attempts_memo.get()
     if memo is None:
@@ -397,7 +397,7 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
     A legacy row (no target record) was only ever written on a conflict, so it
     keeps meaning exactly that.
 
-    0669 unit 6b: a final approval's attempt names ``job:{job_id}``. That job owns
+    unit 6b: a final approval's attempt names ``job:{job_id}``. That job owns
     the attempt's recovery for as long as it is not terminal — it settles the attempt
     itself, under its own W/B and R, when it resumes (``approval_publish``) — so it
     reads as in progress, at boot too. Only a terminal (or vanished) job hands the
@@ -443,7 +443,7 @@ def holds_base_checkout(session: dict) -> bool:
 
     A non-base target never touches the base checkout — but that does not make it
     harmless: it owns its own target's managed workspace and blocks every other attempt
-    into that target (``inspect_workspace`` → ``merge_target_busy``, 0683 T0004 §5).
+    into that target (``inspect_workspace`` → ``merge_target_busy``, the earlier implementation).
     This predicate answers only the base-checkout question. A base attempt that has not
     produced a conflict is either running under the project lock (the lock already
     serializes it) or interrupted (startup/TTL recovery closes it) — neither is a
@@ -517,7 +517,7 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
             "started_at": rec.get("started_at"),
         }
         if _is_branch_merge_session(session):
-            # 0630 T0005: the claim is an ordinary branch merge, not a group's finalize.
+            # the claim is an ordinary branch merge, not a group's finalize.
             details["blocking_owner_type"] = _gs.db_git.OWNER_BRANCH_MERGE
             details["source_branch"] = rec.get("source_branch")
         details.update(_blocker_details(project_id, session, rec, details))
@@ -550,7 +550,7 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
 
 
 def _blocker_details(project_id: str, session: dict, rec: dict, details: dict) -> dict:
-    """0683 T0004 §3 — what the refused caller needs to find the blocker: its owner type,
+    """what the refused caller needs to find the blocker: its owner type,
     source, where it stands (state/review_state) and the route of its own screen.
     Best-effort: a read failure here never changes the verdict it decorates."""
     from modules.flow_gate.services import git_service as _gs
@@ -591,7 +591,7 @@ def _busy_message(branch: str, details: dict) -> str:
 
 
 def _reclaim_interrupted_claim(project_id: str, merge_id) -> bool:
-    """0683 T0004 §4 — re-check a busy claim at plan time instead of waiting for the sweep.
+    """re-check a busy claim at plan time instead of waiting for the sweep.
 
     Only an attempt whose runner is gone without ever reaching a conflict/review
     (``PHASE_INTERRUPTED``) is settled here, through the same lock + recovery the sweep
@@ -635,7 +635,7 @@ def raise_if_workspace_unavailable(project_id: str, branch: str) -> str:
 def raise_if_base_checkout_off_branch(project_id: str, base_branch: str) -> None:
     """Invariant: the shared base checkout has the project ``base_branch`` checked out.
 
-    flowgate.v02.0086 NR0003 §5.2: a base checkout switched to another branch makes a
+    a base checkout switched to another branch makes a
     non-base attempt fail at ``worktree add`` (the branch is "already used") and a base
     attempt merge into the wrong branch. Read-only — one ``symbolic-ref`` — and never
     switches, stashes or resets the checkout. A base slot that is not ``checkout``
@@ -646,7 +646,7 @@ def raise_if_base_checkout_off_branch(project_id: str, base_branch: str) -> None
         return
     if _gs._judge_base_slot(base_root, base_branch) != "checkout":
         return
-    # The full refname less its exact ``refs/heads/`` prefix (flowgate.v02.0098 T#1): ``--short``
+    # The full refname less its exact ``refs/heads/`` prefix: ``--short``
     # answers ``heads/main`` once a tag ``main`` exists.
     proc = _gs._run_git(["symbolic-ref", "--quiet", "HEAD"], cwd=base_root)
     head_ref = (proc.stdout or "").strip() if proc.returncode == 0 else ""
@@ -695,7 +695,7 @@ def raise_if_retarget(group_id: str, requested: Optional[str]) -> Optional[Merge
 
 
 def set_project_default_target(project_id: str, requested: Optional[str]) -> dict:
-    """Directly set/clear the project's suggested finalize target (T0016 §3.2's
+    """Directly set/clear the project's suggested finalize target (the earlier implementation's
     "set/change merge target" action, distinct from actually running a branch
     merge). Reuses the same server-side allow-list a finalize attempt is
     checked against — never trusts the UI's filtered branch list alone."""
@@ -719,10 +719,10 @@ def plan_finalize_target(
     if fixed is not None:
         return fixed
     base_branch = project_base_branch(cfg)
-    # flowgate.v02.0086: before the base/non-base split and outside the work-base
+    # before the base/non-base split and outside the work-base
     # re-wrap below, so the code reaches the caller unchanged and no attempt opens.
     raise_if_base_checkout_off_branch(project_id, base_branch)
-    # flowgate.default.0665 T0004 (W7): an omitted target is the GROUP's work base,
+    # (W7): an omitted target is the GROUP's work base,
     # never the project base -- merging a branch forked from ``v0.2`` into ``main``
     # would carry the whole ``main..v0.2`` history along.  The project's remembered
     # default target is a UI suggestion only and does not participate here.
@@ -752,7 +752,7 @@ def plan_finalize_target(
 
 
 def default_target_of_group(project_id: str, group_id: str, cfg: Optional[dict]) -> str:
-    """The merge target an omitted request means: the group's work base (0665 T0004)."""
+    """The merge target an omitted request means: the group's work base."""
     from modules.flow_gate.services import git_service as _gs
     return (
         _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
@@ -770,7 +770,7 @@ def preview_target(
     does not contain yet -- history that would flow into the target alongside the
     group's own change when the target is not the group's work base.
 
-    flowgate.v02.0098 T#1: ``work_base_ref`` / ``floor_sha`` stand in for the group's
+    ``work_base_ref`` / ``floor_sha`` stand in for the group's
     current work base and its scope floor (a check card's execution re-checks against
     what its confirm recorded); ``scope_floor`` is the commit-ish the count used
     (None when nothing was counted).
@@ -844,11 +844,11 @@ def work_base_floor(project_id: str, group_id: str, base_root: Path, cfg: Option
     return upper
 
 
-# ── Check card merge target (flowgate.v02.0098 T#1, D0004 §3.2 / §3.3) ───────
+# ── Check card merge target ───────
 #
 # One read-only judgement of "may this group's confirm merge into this local branch",
 # used alike by the check card's candidate list, its ``merge_target_branch`` save, the
-# confirm's preflight and the run right before the merge (T#2). It reuses
+# confirm's preflight and the run right before the merge. It reuses
 # ``validate_target_branch``, ``inspect_workspace``, ``preview_target`` and the base
 # checkout checks, and never changes a setting, a ref, a workspace or a ledger row,
 # never records a floor (no legacy auto-recovery), never reclaims a stale owner and
@@ -857,16 +857,16 @@ def work_base_floor(project_id: str, group_id: str, base_root: Path, cfg: Option
 CHECK_GIT_UNAVAILABLE = "gate_git_unavailable"
 CHECK_OPTIONS_TIMEOUT = "merge_target_options_timeout"
 CHECK_OPTIONS_UNAVAILABLE = "merge_target_options_unavailable"
-# flowgate.v02test.0020 rev2: the candidate list is served stale-while-revalidate. An ok / empty list is served for
+# the candidate list is served stale-while-revalidate. An ok / empty list is served for
 # CHECK_TARGET_CACHE_SEC; once older than CHECK_TARGET_REFRESH_SEC, or marked stale by ``invalidate_check_targets``,
 # it is still served at once and recomputed in the background (the next read gets the new list). A pick from a list
 # that has gone out of date is still refused on save / confirm / run: those judge the one name (``judge_check_target``).
 CHECK_TARGET_CACHE_SEC = 1800.0
 CHECK_TARGET_REFRESH_SEC = 60.0
-# 0148: a timed-out view's negative snapshot (no candidates) is kept this long, without renewing its age on hits.
+# a timed-out view's negative snapshot (no candidates) is kept this long, without renewing its age on hits.
 CHECK_TARGET_TIMEOUT_CACHE_SEC = 5.0
 CHECK_TARGET_BUDGET_SEC = 3.0
-# flowgate.v02test.0020: the candidate computation runs on its own thread under this budget. A request waits for it
+# the candidate computation runs on its own thread under this budget. A request waits for it
 # at most CHECK_TARGET_BUDGET_SEC (its answer is then ``timeout``), but the computation still ends and is cached, so a
 # later read gets its result instead of starting over under the same 3 s and timing out again on a slow host.
 CHECK_TARGET_COMPUTE_SEC = 30.0
@@ -917,7 +917,7 @@ def check_target_basis(project_id: Optional[str], group_id: str, *,
     ``no_project`` / ``project_mismatch`` / ``git_disabled`` / ``git_unavailable`` / ``checkout_unavailable`` /
     ``group_slot_missing`` / ``probe_failed``. ``project_id`` is the authenticated group's own project.
 
-    flowgate.v02.0098 T0012: ``require_slot=False`` (the settings candidate list and a ``merge_target_branch`` save)
+    ``require_slot=False`` (the settings candidate list and a ``merge_target_branch`` save)
     also takes a group whose worktree is not provisioned yet -- a card is set up before the group's work starts. Its
     floor is then where its branch will fork (:func:`check_scope_floor`). The confirm and the run keep the slot."""
     from modules.flow_gate.services import git_service as _gs
@@ -1008,7 +1008,7 @@ def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optio
     """The project base target's existing slot checks: an open conflict / stopped merge, tracked local changes, and
     another open attempt into the base (in use). ``own_merge_id`` is the caller's own attempt, never "another".
     The tracked-change read happens only when nothing is stopped; it failing refuses (``gate_git_unavailable``).
-    ``tracked_changes=False`` (the candidate list, flowgate.v02test.0020 rev2) leaves that one Git read to the single
+    ``tracked_changes=False`` (the candidate list, the earlier change) leaves that one Git read to the single
     judgement; the other checks read the ledger and the checkout's MERGE_HEAD file only."""
     from .lock import base_merge_in_progress, guard_base_free
 
@@ -1041,7 +1041,7 @@ def judge_check_target(
 ) -> dict:
     """THE judgement of one exact local branch name as the check card merge target of ``group_id``.
 
-    Raises ``GitServiceError`` with the D0004 §3.3 codes: 409 ``gate_git_unavailable`` (``details.reason``), 422
+    Raises ``GitServiceError`` with the the design codes: 409 ``gate_git_unavailable`` (``details.reason``), 422
     ``merge_target_invalid``, 409 ``merge_target_remote_only`` / ``merge_target_internal_slot`` /
     ``merge_target_same_branch`` / ``base_checkout_branch_mismatch`` / ``base_dirty`` / ``merge_conflict_open`` /
     ``merge_target_busy`` / ``merge_target_owner_mismatch`` / ``merge_target_preview_unavailable`` /
@@ -1051,7 +1051,7 @@ def judge_check_target(
          is_work_base, unmerge_supported, incoming_work_base_commits, scope_floor_sha, warnings}
 
     ``incoming_work_base_commits`` / ``scope_floor_sha`` are None for the work base itself (no count needed).
-    ``work_base_ref`` / ``scope_floor_sha`` are what a confirm recorded (T#2 re-checks a run against them instead of
+    ``work_base_ref`` / ``scope_floor_sha`` are what a confirm recorded (the earlier implementation re-checks a run against them instead of
     the group's current work base and floor); ``own_merge_id`` is the caller's own open attempt, never "busy" (an owner
     mismatch on its workspace is still refused). Without a recorded floor the group's verified floor is read without
     any write (:func:`check_scope_floor`); a group with none cannot have a target other than its work base told.
@@ -1115,7 +1115,7 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
     judgement and the candidate list. ``incoming_of(name)`` answers ``(incoming_work_base_commits | None when it
     cannot be told, scope floor sha)`` for a name other than the work base.
 
-    ``listing=True`` is the candidate list's share (flowgate.v02test.0020 rev2): only the steps that need no Git
+    ``listing=True`` is the candidate list's share: only the steps that need no Git
     read of their own -- the group's own branch, a Graph attempt branch, the target workspace / base slot in use.
     The base checkout's branch, its tracked changes and the work base history the target lacks (``incoming_of``
     is not called) are left to the single judgement of the name that is saved, confirmed or run."""
@@ -1163,9 +1163,9 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
 # share one computation; ``invalidate_check_targets`` moves the epoch, so a computation that began before it is
 # neither cached nor joined afterwards. Timeout views are kept CHECK_TARGET_TIMEOUT_CACHE_SEC (with no partial
 # candidates or basis), checked before any new basis probe; they never serve as a save/confirm judgement.
-# flowgate.v02test.0020 rev2: an ok / empty snapshot older than CHECK_TARGET_REFRESH_SEC or marked ``stale`` by an
+# an ok / empty snapshot older than CHECK_TARGET_REFRESH_SEC or marked ``stale`` by an
 # invalidation is still served, and the read that serves it starts (or leaves running) one background recomputation.
-# flowgate.v02test.0020: a miss is computed on a background thread (``_run_check_flight``) under its own
+# a miss is computed on a background thread (``_run_check_flight``) under its own
 # CHECK_TARGET_COMPUTE_SEC budget; the request that started it and the requests joining it each wait at most their own
 # CHECK_TARGET_BUDGET_SEC. A newer computation of the same key cancels the older ones (their results could no longer
 # be cached), so one key keeps at most one computation spending Git time.
@@ -1195,8 +1195,8 @@ def invalidate_check_targets(project_id: Optional[str] = None, group_id: Optiona
     """Mark the cached check card candidates of one group, of a whole project (``group_id`` None) or of all stale.
 
     Called when a card's target, a work base or a project's Git settings change, and by every server path that
-    changes refs, the internal slot ledger, a merge attempt or a target workspace (T#2's run paths).
-    flowgate.v02test.0020 rev2: a stale list is still served (the card opens at once, right after a merge too) and
+    changes refs, the internal slot ledger, a merge attempt or a target workspace ('s run paths).
+    a stale list is still served (the card opens at once, right after a merge too) and
     the read serving it recomputes it in the background; a computation that began before this call is never cached.
     A timeout snapshot is dropped. A list whose basis changed (work base, base branch, own branch) is never served:
     the cache key's fingerprint no longer matches."""
@@ -1250,7 +1250,7 @@ def _verdict(basis: CheckTargetBasis, name: str) -> dict:
     return _entry(name, checked=True, unmerge_supported=judged["unmerge_supported"], warnings=judged["warnings"])
 
 
-# ── flowgate.v02.0119 T#1 (T-0, NR §2.6 (c)): one diagnostic line for a lookup that did not list ─────────────────
+# ── the earlier change the earlier implementation (T-0, NR (c)): one diagnostic line for a lookup that did not list ─────────────────
 # Diagnostics only: the trace lives in a context variable of one ``check_target_view`` call, is never part of its
 # response or of the cached snapshot, and is written as one WARNING line only when the view ends ``failed`` /
 # ``timeout`` (or ``git_unavailable``). It says which shared read, which name and which stage the budget went to, so
@@ -1367,7 +1367,7 @@ def _log_check_trace(project_id: Optional[str], group_id: str, refresh: bool, st
                      trace: _CheckTrace, *, kind: str = "lookup", budget_sec: Optional[float] = None) -> None:
     """The one line of a failed / timed-out view (never raises: diagnostics do not change the response).
 
-    flowgate.v02test.0020: ``kind="background"`` is the line of a background computation that ended after its
+    ``kind="background"`` is the line of a background computation that ended after its
     waiters had given up -- its real total time and every name judged, under its own budget (``budget_sec``)."""
     try:
         with trace.lock:
@@ -1399,7 +1399,7 @@ def _failed_snapshot(status: str, code: str, reason: Optional[str] = None, **ext
 def _listed_verdict(basis: CheckTargetBasis, name: str, ref: tuple, slots: dict) -> dict:
     """One listed local branch's entry from the batch facts — the judgement's own Git-free steps: the ledger verdict
     of ``validate_target_branch`` (the listed name exists locally), a commit tip, then ``_judge_local_target`` with
-    ``listing=True`` (flowgate.v02test.0020 rev2). A tip that is no plain commit takes the single judgement."""
+    ``listing=True``. A tip that is no plain commit takes the single judgement."""
     sha, kind = ref
     try:
         if name in slots:
@@ -1429,7 +1429,7 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
     """The candidate list of every local branch name, the work base and ``extra`` (the stored target) under
     ``budget``, which bounds every Git call of this context.
 
-    flowgate.v02test.0020 rev2: two facts every name shares are read once -- the slot ledger and the local branch
+    two facts every name shares are read once -- the slot ledger and the local branch
     names with their tips (one ``for-each-ref``) -- and each name is kept when the judgement's Git-free steps allow it
     (``_listed_verdict``): never the group's own branch, a registered worktree, a Graph attempt branch, a target
     workspace or a base slot in use. The base checkout's branch, its tracked changes and the work base history a
@@ -1441,7 +1441,7 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
     from .group_work_base import local_branch_refs
 
     common = {"default_branch": basis.work_base_ref, "basis": basis}
-    trace = _check_trace.get()                    # 0119 T#1: diagnostics only (None outside a view)
+    trace = _check_trace.get()                    # diagnostics only (None outside a view)
     memo_token = None
     try:
         _trace_stage(trace, "shared_reads")
@@ -1451,7 +1451,7 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
         slots = {row.get("branch"): row.get("group_id")
                  for row in _traced_read("slots", _gs.db_git.list_states_of_project, basis.project_id)}
         refs = _traced_read("refs", local_branch_refs, basis.base_root)
-        # flowgate.v02.0158: the names below share one read of the open attempts (``open_merge_attempts``).
+        # the names below share one read of the open attempts (``open_merge_attempts``).
         memo_token = _attempts_memo.set({})
         verdicts: dict[str, dict] = {}
         _trace_stage(trace, "names")
@@ -1469,7 +1469,7 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
     except GitServiceError as exc:
-        _trace_error(trace, exc)                  # 0119 T#1: this path logs nothing else (NR §2.4)
+        _trace_error(trace, exc)                  # this path logs nothing else (NR)
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
         if exc.code == "base_checkout_branch_mismatch":
@@ -1497,7 +1497,7 @@ def _servable_hit(hit: Optional[dict], fingerprint: tuple) -> bool:
 
 
 def _revalidation_due(hit: dict) -> bool:
-    """flowgate.v02test.0020 rev2: a served snapshot is recomputed in the background once an invalidation marked it
+    """a served snapshot is recomputed in the background once an invalidation marked it
     stale or it is older than CHECK_TARGET_REFRESH_SEC."""
     return hit.get("stale") is True or time.monotonic() - hit["at"] >= CHECK_TARGET_REFRESH_SEC
 
@@ -1535,7 +1535,7 @@ def _start_check_flight(flight_key: tuple, basis: CheckTargetBasis, extra: tuple
 
 def _run_check_flight(flight: _CheckFlight, flight_key: tuple, basis: CheckTargetBasis, extra: tuple,
                       trace: Optional[_CheckTrace], refresh: bool) -> None:
-    """One candidate computation on its own thread under the flight's budget (flowgate.v02test.0020). Its result goes
+    """One candidate computation on its own thread under the flight's budget. Its result goes
     to the waiters still there and, when ok / empty and no invalidation came meanwhile, into the cache, so the next
     read gets it instead of computing again. A failed one leaves the cache as it was (a stale list stays served).
     Its diagnostic line is written when every waiter had given up first (``late``), and for a background
@@ -1581,8 +1581,8 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
                     selected: Optional[str] = None) -> dict:
     """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis and the wait for
     the computation (this request's own or another one's) spend the same deadline. The computation itself runs in
-    the background under CHECK_TARGET_COMPUTE_SEC and is not abandoned when the wait ends (flowgate.v02test.0020)."""
-    trace = _check_trace.get()                    # 0119 T#1: diagnostics only
+    the background under CHECK_TARGET_COMPUTE_SEC and is not abandoned when the wait ends."""
+    trace = _check_trace.get()                    # diagnostics only
     key = (project_id, group_id)
     with _check_lock:
         hit = _check_cache.get(key)
@@ -1618,7 +1618,7 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
         flight_key = (key, epoch, fingerprint)
         hit = _check_cache.get(key)
         if not refresh and _servable_hit(hit, fingerprint):
-            # flowgate.v02test.0020 rev2: served at once, stale or not; a stale / old one is recomputed behind it
+            # served at once, stale or not; a stale / old one is recomputed behind it
             # (one computation per key: a running one is left to finish).
             if _revalidation_due(hit) and flight_key not in _check_inflight:
                 background = _CheckTrace()
@@ -1638,7 +1638,7 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
             trace.source = "joined"
         _trace_stage(trace, "flight_wait")
     # The starter and the joiners alike wait at most their own deadline; one that ends first answers ``timeout`` and
-    # marks the result ``late`` (flowgate.v02test.0020). The computation goes on under its own budget either way.
+    # marks the result ``late``. The computation goes on under its own budget either way.
     flight.done.wait(max(budget.remaining(), 0.0))
     with _check_lock:
         result = flight.result
@@ -1667,7 +1667,7 @@ def _entry_of(snapshot: dict, name: Optional[str], budget) -> dict:
         return {**found, "warnings": list(found["warnings"])}
     if _spent(budget):
         raise _BudgetSpent()
-    trace = _check_trace.get()                    # 0119 T#1: this judgement's name / time / error (diagnostics only)
+    trace = _check_trace.get()                    # this judgement's name / time / error (diagnostics only)
     try:
         found = _traced_name(trace, name, lambda: _verdict(snapshot["basis"], name), kind="entry")
     except Exception as exc:  # noqa: BLE001 — could not be judged now; the list keeps its own status
@@ -1685,7 +1685,7 @@ def _entry_of(snapshot: dict, name: Optional[str], budget) -> dict:
 
 def check_target_view(project_id: Optional[str], group_id: str, selected: Optional[str], *,
                       refresh: bool = False) -> dict:
-    """The read-only merge target outputs of a check card's settings response (D0004 §3.1 / §5)::
+    """The read-only merge target outputs of a check card's settings response::
 
         {"merge_target_options": [branch, ...],          # names the list keeps (_compute_snapshot), sorted
          "default_target_branch": work base | None,
@@ -1698,21 +1698,21 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
              "default": {branch, checked, error, unmerge_supported, warnings}}}
 
     ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). A cached list is served
-    stale-while-revalidate (CHECK_TARGET_CACHE_SEC / CHECK_TARGET_REFRESH_SEC, flowgate.v02test.0020 rev2);
+    stale-while-revalidate (CHECK_TARGET_CACHE_SEC / CHECK_TARGET_REFRESH_SEC, the earlier change);
     ``refresh`` skips it and waits for a computation (a running one is joined). One CHECK_TARGET_BUDGET_SEC budget
     covers the whole view -- the basis, the wait for the candidates and the current / default states; when it runs
     out the view is ``timeout`` with no candidates and unchecked states. That negative snapshot is cached for
     CHECK_TARGET_TIMEOUT_CACHE_SEC, without renewing its age on hits. The candidate
-    computation itself is not bounded by the view's budget (flowgate.v02test.0020): it ends in the background under
+    computation itself is not bounded by the view's budget: it ends in the background under
     CHECK_TARGET_COMPUTE_SEC and its ok / empty result replaces the negative snapshot, so the next read (a client
     retry) gets the list. Never raises for a Git / ledger read: the status says what failed. Saving, confirming and
     running never read this (they call ``judge_check_target``)."""
     from .command import git_budget
 
-    trace = _CheckTrace()                         # 0119 T#1: the failed / timed-out view's one diagnostic line
+    trace = _CheckTrace()                         # the failed / timed-out view's one diagnostic line
     token = _check_trace.set(trace)
     if refresh:
-        # flowgate.v02test.0020 rev2: the cached list is not served, but the epoch stays: a computation already
+        # the cached list is not served, but the epoch stays: a computation already
         # running for this group is joined, not cancelled and started over (``_check_snapshot``).
         with _check_lock:
             _check_cache.pop((project_id, group_id), None)
@@ -1739,7 +1739,7 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
                 with _check_lock:
                     key = (project_id, group_id)
                     existing = _check_cache.get(key)
-                    # flowgate.v02test.0020: a background result that landed while this view was giving up (one
+                    # a background result that landed while this view was giving up (one
                     # this view never received) is never replaced by this view's negative snapshot.
                     landed = (existing is not None and existing is not got
                               and existing.get("status") in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY)
@@ -1770,7 +1770,7 @@ def open_attempt(
 ) -> MergeTargetContext:
     """Write the attempt record (before any git merge work) and return the pinned context.
 
-    ``origin`` / ``recovery_merge_commit`` (0066 D#1) are written only when given."""
+    ``origin`` / ``recovery_merge_commit`` are written only when given."""
     from modules.flow_gate.services import git_service as _gs
     base_root = _gs._base_root_of(target.project_id)
     remote_expectation = (
@@ -1790,7 +1790,7 @@ def open_attempt(
         "remote_expectation": remote_expectation,
         "finalize_action": action,
         "push": action == "merge",
-        # 0665 T0004: recorded for unattended runs that had no confirmation step.
+        # recorded for unattended runs that had no confirmation step.
         "unmerge_supported": target.unmerge_supported,
         "defaulted_to_work_base": target.defaulted_to_work_base,
     }
@@ -1847,7 +1847,7 @@ def close_attempt(merge_id: int, state: str, *, result: Optional[dict] = None,
 def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = None) -> bool:
     """Close an open merge session found by abort/sweep/orphan recovery.
 
-    A T0012 attempt records its outcome and releases ONLY its own workspace; a
+    A the earlier implementation attempt records its outcome and releases ONLY its own workspace; a
     legacy row (no target record) is closed exactly as before this change.
 
     Returns False — and changes nothing — when the target workspace is not this
@@ -1876,7 +1876,7 @@ def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = 
 def _return_merging_to_waiting(group_id: Optional[str]) -> None:
     from modules.flow_gate.services import git_service as _gs
     if not group_id:
-        return   # 0630 T0005: a branch_merge attempt has no group ledger row to move
+        return   # a branch_merge attempt has no group ledger row to move
     state = _gs.db_git.get_state(group_id) or {}
     if (state.get("status") or "none") == "merging":
         _gs._set_status(group_id, "waiting")
@@ -1886,7 +1886,7 @@ def record_merge_inputs(
     ctx: MergeTargetContext, *, pre_head: Optional[str], source_head: Optional[str],
     expected_remote_head: Optional[str],
 ) -> None:
-    """Pin what the merge is about to run from, BEFORE ``git merge`` (T0012 §6.3).
+    """Pin what the merge is about to run from, BEFORE ``git merge``.
 
     After a crash these let recovery tell "never merged" from "the merge commit
     landed (and maybe was pushed)" instead of reading a vanished MERGE_HEAD as
@@ -1900,13 +1900,13 @@ def record_merge_inputs(
 
 
 def _remember_default_target(ctx: MergeTargetContext) -> None:
-    """T0016 §2.2: a non-base integration branch (e.g. "flowgate-v0.2") that a
+    """a non-base integration branch (e.g. "flowgate-v0.2") that a
     finalize actually merged into becomes the project's suggested default target
     for the NEXT group's finalize dialog, instead of resetting to base_branch
     every time this dialog opens. The base branch itself is never remembered
     here — it is already the fallback default when nothing is suggested.
 
-    0665 T0004: this project-level memory ranks BELOW the group's own work base
+    this project-level memory ranks BELOW the group's own work base
     (server default and UI order: pinned target → work base → remembered → base),
     so it can no longer send a main-based group into ``v0.2``."""
     if ctx.is_project_base:
@@ -1941,7 +1941,7 @@ def finish_manual_attempt(
     ctx: MergeTargetContext, *, merge_commit: Optional[str], merge_commit_sha: Optional[str],
     pushed: bool, recovered: bool = False,
 ) -> None:
-    """0066 D#1 §3-6(7): the end of a manual merge that really is in its target.
+    """: the end of a manual merge that really is in its target.
 
     The ledger goes back to ``none`` (merge id/commit cleared) FIRST, then the attempt
     row is closed as completed — it is the per-target merge history E10/E11 read — and
@@ -1993,7 +1993,7 @@ def _manual_result_row(session: Optional[dict]) -> Optional[dict]:
 
 
 def manual_merge_results(group_id: str) -> list[dict]:
-    """0066 D#1 §3-8(0): the latest completed manual merge attempt of each target branch
+    """: the latest completed manual merge attempt of each target branch
     of the group, newest completion first. Read from the existing attempt rows."""
     from modules.flow_gate.services import git_service as _gs
     latest: dict[str, dict] = {}
@@ -2230,13 +2230,13 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     from modules.flow_gate.services import git_service as _gs
     rec = target_record(session) or {}
     if rec.get(RECOVERY_MERGE_COMMIT_KEY):
-        # 0066 D#1 §3-6(7-1): an unpushed-merge recovery row has no merge inputs; it is
+        # : an unpushed-merge recovery row has no merge inputs; it is
         # judged by the merge commit it names.
         return _recover_recovery_attempt(session, ctx, rec, reason)
     root = ctx.root
     if ownership == OWN_OWNED and root is not None and root.exists():
         if _gs._merge_in_progress(root):
-            # flowgate.v02test.0052 T0003 task 3(b): audited on the attempt's session.
+            # task 3(b): audited on the attempt's session.
             proc = _gs._abort_merge(
                 root, merge_id=ctx.merge_id, reason="interrupted_recovery_abort",
             )
@@ -2267,7 +2267,7 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
 def _recover_recovery_attempt(
     session: dict, ctx: MergeTargetContext, rec: dict, reason: str,
 ) -> Optional[str]:
-    """Restart table of D#1 §3-6(7-1): local target lost M -> interrupted; no push ->
+    """Restart table of the earlier implementation: local target lost M -> interrupted; no push ->
     completed; push and origin has M (a crash right after the push) -> completed without
     pushing again; push and origin lacks M -> interrupted (M is never rewound); origin
     unreadable -> left open."""
@@ -2302,7 +2302,7 @@ def _remote_contains(ctx: MergeTargetContext, sha: str) -> Optional[bool]:
 
 
 def fetch_origin_pruned(project_id: str, repo: Path) -> bool:
-    """0066 D#1 §3-7/§3-8: origin synced with the config, then ``fetch --prune origin``.
+    """origin synced with the config, then ``fetch --prune origin``.
     Pruning drops the tracking ref of a branch deleted on origin, so a later read of
     ``refs/remotes/origin/<b>`` never reports a deleted branch as still holding its old
     tip (``fetch.prune=false`` repositories included). False = sync or fetch failed."""
@@ -2341,7 +2341,7 @@ def _flag_manual_reconciliation(merge_id: int, reason: str, observed: Optional[s
 def _query_target_remote(ctx: MergeTargetContext) -> tuple[bool, Optional[str]]:
     """``(reachable, sha)`` of ``refs/heads/<target>`` on origin; sha None = absent.
 
-    flowgate.default.0361 NR0003 §7/§16: this backs crash/startup recovery of an
+    this backs crash/startup recovery of an
     interrupted finalize attempt — if ``repo_url`` was repointed at a different
     remote after the merge/push that this call is trying to settle, reading a
     stale ``origin`` could close the attempt as pushed, undo a landed merge
@@ -2417,13 +2417,13 @@ def _finish_landed_merge(
     from modules.flow_gate.services import git_service as _gs
     assert ctx.merge_id is not None
     if _is_branch_merge_session(session):
-        # 0630 T0005: no group ledger, no slot — the attempt row IS the whole record.
+        # no group ledger, no slot — the attempt row IS the whole record.
         from . import branch_merge
         branch_merge.finish_landed_merge(session, ctx, merge_commit, pushed=pushed)
         return
     group_id = session["group_id"]
     if is_manual_session(session):
-        # 0066 D#1 §3-6(7): a recovered manual merge keeps the Group as well.
+        # : a recovered manual merge keeps the Group as well.
         finish_manual_attempt(
             ctx, merge_commit=merge_commit,
             merge_commit_sha=_gs._rev_parse(ctx.root, merge_commit) if ctx.root and merge_commit else None,

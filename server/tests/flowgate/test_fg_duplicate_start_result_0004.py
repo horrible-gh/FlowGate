@@ -1,6 +1,6 @@
-"""flowgate.v02test.0004 T#3 / T#4 — the command result of a card whose execution was started twice.
+"""the command result of a card whose execution was started twice.
 
-B flowgate.v02test.0004.0001-R: a duplicate start's refusal stored before T#1 (``admission_refused`` /
+B the earlier change: a duplicate start's refusal stored before the earlier implementation (``admission_refused`` /
 ``run_in_progress`` of the same execution while its launch ran) made the command result show
 "오류 전문: admission_refused (run_in_progress)" and fail the command, though the card's AI ran once and succeeded.
 
@@ -31,7 +31,7 @@ BUSY = {"code": "run_in_progress", "message": "An AI run is already in progress.
 
 
 def _stored_refusal(env, run_id, key, exec_id, at):
-    """A start refusal as the launch journal stored it before T#1 (``invocations.refused``), made at ``at``."""
+    """A start refusal as the launch journal stored it before the earlier implementation (``invocations.refused``), made at ``at``."""
     origin = {"origin_kind": "card_assigned", "purpose": "result_write_retry", "requested_ai_id": X,
               "role_source": "card_explicit",
               "target": {"flow_id": FA, "graph_run_id": run_id, "node_key": key, "attempt_id": "att_t5",

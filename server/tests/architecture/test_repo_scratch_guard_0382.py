@@ -1,4 +1,4 @@
-"""Static repository-write guard (0382 B0001 / NR0003 proposal 2-c).
+"""Static repository-write guard (proposal 2-c).
 
 The 0382 incident had no runtime signal: two specs defaulted scratch paths to
 server/.test-tmp-<number>, hidden by the UI, and 261 artifacts reached main in

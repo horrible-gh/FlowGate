@@ -1,4 +1,4 @@
-"""Worker ment Q&A block rendering with query options (group 0243 L0008 §2.5).
+"""Worker ment Q&A block rendering with query options.
 
 The ment is what tells a worker which options were offered and what came back. An
 unanswered query lists its options WITH their ids, because a worker answering through the
@@ -66,7 +66,7 @@ def test_query_without_options_renders_pre_extension_format():
 
 
 def test_malformed_options_fall_back_to_plain_line():
-    """Parsing failure, unreachable on the normal path, must not break mention assembly (L0008 §5)."""
+    """Parsing failure, unreachable on the normal path, must not break mention assembly."""
     lines = _render([{
         "seq": 1, "title": "범위", "body": "scope?", "asker_kind": "ai",
         "options": "{ not json", "author_kind": None, "answer_body": None,

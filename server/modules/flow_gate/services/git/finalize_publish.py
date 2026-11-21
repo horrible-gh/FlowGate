@@ -1,5 +1,5 @@
-"""Manual finalize job (flowgate.default.0669 unit 9a; 0666 0008-D §3.6.1, §7 "finalize
-ordinary (non-approval)", 0009-L §2.28, §4.4).
+"""Manual finalize job (the earlier change unit 9a; the design, "finalize
+ordinary (non-approval)", the earlier implementation).
 
 ``finalize`` without a final approval no longer takes the old project mutex. After its
 prechecks the request registers a ``base_publish`` job with action ``finalize`` and runs it
@@ -126,7 +126,7 @@ def _wanted(project_id: str, group_id: str, p: dict) -> list:
 
 
 def _admit(ctx: store.JobContext, p: dict, held: list, wanted: Optional[list] = None) -> None:
-    """L 2.4 admission. ``wanted`` (0066 D#1: merge_result_push) replaces the finalize
+    """L 2.4 admission. ``wanted`` (merge_result_push) replaces the finalize
     lock list; omitted, the behavior is the finalize job's own."""
     mode = getattr(base_publish._origin, "mode", None) or "job"
     project_id, group_id = ctx.job["project_id"], ctx.job["group_id"]

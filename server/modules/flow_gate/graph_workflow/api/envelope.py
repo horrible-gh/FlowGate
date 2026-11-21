@@ -1,4 +1,4 @@
-"""P0008 §1.2 / §1.3 response envelopes and request context for the Graph API."""
+"""response envelopes and request context for the Graph API."""
 from __future__ import annotations
 
 import logging
@@ -124,7 +124,7 @@ _MESSAGES = {
     "feature_not_enabled": {
         "ko": "이 기능은 아직 열리지 않았습니다.", "en": "This feature is not enabled yet.", "ja": "この機能はまだ有効ではありません。",
     },
-    # 0064 T-B4b — the card title save (P0006 §4.2.3).
+    # T-B4b — the card title save.
     "title_empty": {"ko": "제목을 입력하세요.", "en": "Enter a title.", "ja": "タイトルを入力してください。"},
     "title_too_long": {
         "ko": "제목은 30자 이하여야 합니다.", "en": "A title must be 30 characters or fewer.",
@@ -178,7 +178,7 @@ def invalid(request: Request, errors: list[dict], message_key: str = "invalid_re
 
 
 def authenticate(request: Request) -> str:
-    """User access JWT only (P0008 §1.1). Returns the user id."""
+    """User access JWT only. Returns the user id."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         # verify_bearer answers 403 only for a valid worker token lacking read permission.
@@ -190,7 +190,7 @@ def authenticate(request: Request) -> str:
     user_id = auth.get("issued_to") or auth.get("sub")
     if not user_id:
         raise GraphApiError(401, "unauthorized")
-    # flowgate.v02test.0017 CH0002: the origin this person reached the server on, for their request-less AI starts
+    # the origin this person reached the server on, for their request-less AI starts
     # (a remote Agent must not be handed loopback; ``operator_base``). Never refuses the request.
     from modules.flow_gate.graph_workflow.services import operator_base  # noqa: PLC0415
     operator_base.remember(str(user_id), request)
@@ -212,13 +212,13 @@ def client_id_of(request: Request) -> Optional[str]:
     return raw
 
 
-# flowgate.v02.0085 T#2: a handler whose answer status depends on the outcome (a gate decision: 200 done / 202
+# a handler whose answer status depends on the outcome (a gate decision: 200 done / 202
 # accepted) names it under this key of its body; the key itself is never sent.
 STATUS_KEY = "__http_status__"
 
 
 def run(request: Request, handler: Callable[[], dict], status: int = 200) -> JSONResponse:
-    """Call the handler and map every outcome onto the P0008 envelope."""
+    """Call the handler and map every outcome onto the the plan envelope."""
     try:
         body = handler()
         if isinstance(body, dict) and STATUS_KEY in body:
@@ -231,7 +231,7 @@ def run(request: Request, handler: Callable[[], dict], status: int = 200) -> JSO
             params = {**params, "issues": fill_issue_messages(params.get("issues") or [], locale_of(request))}
             text = text or message(exc.code, request).format(count=len(params["issues"]))
         return fail(request, exc.status, exc.code, params, text)
-    except (FlowLockTimeout, Exception) as exc:  # noqa: BLE001 — L0009 E-02/E-03: rolled back, 500
+    except (FlowLockTimeout, Exception) as exc:  # noqa: BLE001 — the earlier implementation E-02/E-03: rolled back, 500
         trace_id = f"gw_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(2)}"
         _log.exception("graph api failure trace_id=%s: %s", trace_id, exc)
         return fail(request, 500, "internal_error", {"trace_id": trace_id})

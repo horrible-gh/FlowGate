@@ -1,12 +1,12 @@
-"""Attachment limits and policy tables — flowgate.default.0060 L0012 §1.
+"""Attachment limits and policy tables — the earlier change the earlier implementation
 
-L0012 §1 calls itself "the single source of truth for every number", and this module is
+calls itself "the single source of truth for every number", and this module is
 that section transcribed. Implementation, tests and screen copy all read from here; none
 of these values is re-derived anywhere else.
 
-One trap worth naming: P0011 §2 shows ``limit_bytes: 10485760`` in its
+One trap worth naming: the plan shows ``limit_bytes: 10485760`` in its
 [failure — upload too large] example. That is an *example* written while P had already
-delegated the number to L, and L0012 §1-1 explicitly warns not to copy it into the
+delegated the number to L, and the earlier implementation explicitly warns not to copy it into the
 implementation. The real ceiling is ``ATTACH_MAX_UPLOAD_BYTES`` (20 MiB), taken from the
 approved deck's own caption ("20MB max per file").
 """
@@ -41,7 +41,7 @@ ATTACH_DOWNLOAD_FORCED_OCTET_TYPES = frozenset({
 
 # ── §1-3 extension policy — accepted at the door, neutralized on the way out ────
 # This list used to be a DENY list: an upload whose last extension was on it was refused
-# with 400 UNSUPPORTED_EXTENSION. TR0017 rev3 was rejected for exactly that wall — a person
+# with 400 UNSUPPORTED_EXTENSION. the earlier implementation was rejected for exactly that wall — a person
 # picked their own work file and the screen answered "that extension cannot be attached".
 # Attachments are work material whose kinds cannot be enumerated in advance (the deck
 # caption itself says "Excel, images, PDF and so on", and that "and so on" is doing real work: a .ps1, a .js,
@@ -59,7 +59,7 @@ ATTACH_DOWNLOAD_FORCED_OCTET_TYPES = frozenset({
 #   * download serves them as octet-stream with `Content-Disposition: attachment` and
 #     `X-Content-Type-Options: nosniff` (`service.resolve_download`).
 # So the table still decides something — how a file is *served*, not whether it is
-# *accepted*. Note it does not apply to a copy target path either — see L0012 §2-10 C4.
+# *accepted*. Note it does not apply to a copy target path either — see the earlier implementation C4.
 ATTACH_EXECUTABLE_EXTENSIONS = frozenset({
     "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "cpl", "dll", "sys", "drv",
     "vbs", "vbe", "js", "jse", "wsf", "wsh", "ps1", "psm1", "ps1xml", "reg", "hta",

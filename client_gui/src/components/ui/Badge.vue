@@ -6,9 +6,9 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free label chip (T0004 §5.7): label + size + tone only. Mapping a domain state
+// Domain-free label chip: label + size + tone only. Mapping a domain state
 // (Git conflict, approval status, document type, ...) to a tone/label is the owning
-// feature's job, not this component's (T0004 §11) — it never imports feature/API code.
+// feature's job, not this component's — it never imports feature/API code.
 withDefaults(
   defineProps<{
     tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger'
@@ -46,14 +46,14 @@ withDefaults(
 
 .ui-badge--neutral {
   /* Own dashed/transparent chip look -- not shared with any other component, so this
-     stays a literal instead of a --fg2-status-neutral-* token (T0008 §13 rework). */
+     stays a literal instead of a --fg2-status-neutral-* token. */
   border-style: dashed;
   color: #95a8bd;
   background: transparent;
 }
 
 /* info/success/warning/danger reuse the same --fg2-status-* triplet Toast consumes
-   (theme.css T0008 §11 rework) -- these are the values this component originally
+   (theme.css the earlier implementation rework) -- these are the values this component originally
    established, now shared instead of duplicated. */
 .ui-badge--info {
   border-color: var(--fg2-status-info-border);

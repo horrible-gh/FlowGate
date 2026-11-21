@@ -1,5 +1,5 @@
-"""Run settings of the cards a chat placed: review count, restarts, time limit (flowgate.v02gui.0032, 0002-CH seq 15-17),
-and the two verification options (flowgate.v02test.0053 0003-T: ``verify_max_runs`` / ``verify_run_minutes``, a run card only).
+"""Run settings of the cards a chat placed: review count, restarts, time limit (seq 15-17),
+and the two verification options (``verify_max_runs`` / ``verify_run_minutes``, a run card only).
 
 The chat's card role API wrote only the three AI roles, so a chat could neither read nor change a card's review count:
 it had to ask the user to set it in the Inspector AI tab. The same three run values the AI tab shows next to the roles

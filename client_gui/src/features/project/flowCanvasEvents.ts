@@ -1,11 +1,11 @@
-// flowgate.v02.0045 S2 — Canvas change signals over the existing SSE stream (P0008 §8.1: the
+// S2 — Canvas change signals over the existing SSE stream (the plan: the
 // screen push stream `GET /api/v1/events/stream?project=…`, no new stream). Events are refresh
 // signals, never state: on `graph_canvas_changed` from another tab, device or user the Canvas of
 // that Flow is read again, and after a reconnect every open Canvas is (events may have been
 // missed). An event whose `origin_client_id` is this tab's `x-canvas-client-id` is dropped — this
 // tab already applied its own response (P0008 §8.1 / §8.3: judged per tab, not per user).
 // The Designer reaches this only through the project store (subscribeFlowCanvasChanges).
-// flowgate.v02.0048 T#2 (D#1 §7.1): an adapter over the project event hub (projectEvents.ts), so
+// an adapter over the project event hub (projectEvents.ts), so
 // the Canvas and the Inspector share one stream per project. The connection, its reconnects and
 // the resync live in the hub; the Canvas filter (own tab, Flow id) stays here.
 import { CANVAS_CLIENT_ID, settleUnansweredCanvasWrite } from './flowCanvasApi'
@@ -13,14 +13,14 @@ import { PROJECT_STREAM_RETRY_MS, subscribeProjectEvents, type ProjectEventFrame
 
 /**
  * Event types that mean "read this Flow's Canvas again" (P0008 §8.2; ownership arrives with S4).
- * flowgate.v02.0053 T#9: a run's status and node state changes too — the Canvas read carries each card's
+ * a run's status and node state changes too — the Canvas read carries each card's
  * run state (its colour dot) and the top band its run. They carry no `origin_client_id`, so this tab's own
  * "실행" / "중지" is read again as well.
  */
 export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_changed', 'graph_run_status_changed', 'graph_node_state_changed'] as const
 
 /**
- * flowgate.v02.0056 F2-1 (O1 / O2 0005·0007-TR §4-2): a card's step (Writing instruction → Writing result) and its wait for
+ * a card's step (Writing instruction → Writing result) and its wait for
  * approval move without a node event — the instruction is approved (`doc_review_status_changed`), the result AI
  * starts (`ai_invoke_started`), an AI run ends and leaves the card to a person (`ai_invoke_finished`). A Flow's
  * frames of these read its Canvas again too, once per burst (CANVAS_CARD_STEP_COALESCE_MS), so every card's chip
@@ -28,7 +28,7 @@ export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_ch
  */
 export const CANVAS_CARD_STEP_EVENTS = ['document_explorer_refresh', 'doc_review_status_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
 /**
- * flowgate.v02.0132 T#4 (review): a confirm gate's Git work moves (a retry accepted, the automatic sync going on, parked
+ * (review): a confirm gate's Git work moves (a retry accepted, the automatic sync going on, parked
  * again) with a job event of its own — no run or node event follows when the run stays idle (e.g. after a Stop). The
  * Canvas read carries each gate's `git_active` / `parked`, and it locks the structure by them, so the job's frames read
  * the Flow's Canvas (and its run) again too, coalesced like the card step frames.
@@ -55,7 +55,7 @@ type Raw = Record<string, any>
 function changedFlowOfFrame(payload: Raw, groupId: unknown): string | null {
   const raw = payload.flow_id ?? groupId
   const flowId = typeof raw === 'string' && raw ? raw : null
-  // flowgate.v02.0135 T#4: this tab's own change was applied from its answer — unless it is the late commit of a
+  // this tab's own change was applied from its answer — unless it is the late commit of a
   // write that got none (matched by draft version / moved cards, see settleUnansweredCanvasWrite).
   if (payload.origin_client_id === CANVAS_CLIENT_ID && !(flowId && settleUnansweredCanvasWrite(flowId, payload))) return null
   return flowId
@@ -75,7 +75,7 @@ export function changedFlowOf(data: string): string | null {
 
 /** Subscribes to the project's Canvas changes; returns the unsubscribe. No-op without EventSource. */
 export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanvasChangeHandlers): () => void {
-  // flowgate.v02.0056 F2-1: card step frames wait for the burst to end, per Flow.
+  // card step frames wait for the burst to end, per Flow.
   const waiting = new Map<string, ReturnType<typeof setTimeout>>()
   const stepChanged = (flowId: string) => {
     if (waiting.has(flowId)) return

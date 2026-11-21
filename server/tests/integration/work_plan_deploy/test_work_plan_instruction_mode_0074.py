@@ -1,4 +1,4 @@
-"""T0017: saved instruction omission, real API deploy and report-only Graph execution."""
+"""saved instruction omission, real API deploy and report-only Graph execution."""
 from copy import deepcopy
 
 import pytest
@@ -389,7 +389,7 @@ def test_mode_on_a_hidden_ds_step_is_rejected(api):
     assert _read(api, doc)["body"] == before
 
 
-# ── T0017 rework (rej_01M5BT6J13Z9GCWX): a dropped choice, and the revision restore ──────────────────────────
+# ── the earlier implementation rework (rej_01M5BT6J13Z9GCWX): a dropped choice, and the revision restore ──────────────────────────
 
 def _restore(env, doc, revision, base):
     return env["api"].post(f"/api/v1/documents/{doc}/work-plan/revisions/{revision}/restore",

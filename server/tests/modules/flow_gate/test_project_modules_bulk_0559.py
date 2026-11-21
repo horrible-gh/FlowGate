@@ -1,4 +1,4 @@
-"""Project-list N+1 removal (flowgate.default.0559 T0005 / B0001) — unit suite.
+"""Project-list N+1 removal — unit suite.
 
 B0001 ("리팩터링 하다 만거같은데?") and 0559 NR0003 §7·§10 recommendation 1: one
 ``GET /projects?status=active`` fired ``1 + 2N`` queries because

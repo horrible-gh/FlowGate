@@ -14,7 +14,7 @@ RETIRE_REASONS = ("rematch", "supersede", "root_binding", "draft_removed", "revi
 
 
 def utc_now_ms() -> str:
-    """ISO 8601 UTC with milliseconds (P0008 §1.1, DB0010 §2.0)."""
+    """ISO 8601 UTC with milliseconds."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
@@ -30,7 +30,7 @@ def ensure_guard_row(flow_id: str) -> None:
 
 
 def bump_guard(flow_id: str) -> int:
-    """Q-W2. Must be the first statement of the guarded transaction (L0009 §2.1.3)."""
+    """Q-W2. Must be the first statement of the guarded transaction."""
     return get_store()._execute_affected(
         "UPDATE graph_flow_guards SET guard_seq = guard_seq + 1 WHERE group_id = ?", [flow_id]
     )
@@ -88,7 +88,7 @@ def save_viewport(flow_id: str, user_id: str, x: float, y: float, zoom: float) -
 # ── Identity mapping (T04 / T05) ─────────────────────────────────────────────
 
 def identity_record(flow_id: str) -> Optional[dict]:
-    """Q-R3. ``None`` when the Flow was never recorded (L0009 E-08)."""
+    """Q-R3. ``None`` when the Flow was never recorded."""
     store = get_store()
     head = store._fetch_one(
         "SELECT sequence_tag FROM graph_identity_records WHERE group_id = ?", [flow_id]
@@ -149,7 +149,7 @@ def retire(flow_id: str, node_key: str, reason: str) -> None:
 
 
 def release_retired(flow_id: str, node_keys: Iterable[str], reason: str = "draft_removed") -> int:
-    """flowgate.v02gui.0019: a card a draft save left out comes back to the draft under its own key once the run
+    """a card a draft save left out comes back to the draft under its own key once the run
     opened it (``flowgate.graph_run.draft_restore``): its retirement row of ``reason`` goes. A key retired for any
     other reason stays retired. Returns the rows removed."""
     removed = 0

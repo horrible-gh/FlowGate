@@ -1,9 +1,9 @@
-// flowgate.v02.0045 S3-5 + S4 — the draft actions of an open Flow (D0004 §2.3 center/edit): validate the
+// S3-5 + S4 — the draft actions of an open Flow (center/edit): validate the
 // saved draft, and confirm it as the next revision. One action of a Flow runs at a time; a refusal shows
 // its issues (or its code) on the Flow's edit state, and a refusal that means the shown Graph is outdated
-// reads the Flow again. flowgate.v02.0059 T#2: moved here from draftController.ts as it was (that file
+// reads the Flow again. the earlier change the earlier implementation: moved here from draftController.ts as it was (that file
 // keeps its size bound); the controller hands over its edit state, editors and stop.
-// flowgate.v02.0117 T#2: before the saved draft is checked or confirmed (also the run's confirm, FlowCenter
+// before the saved draft is checked or confirmed (also the run's confirm, FlowCenter
 // `prepareRun`), the controller takes out what can never be confirmed nor be seen on the Canvas (`tidy`: self edges).
 import type { FlowDraftError } from '../graph/flowGraphSource'
 import type { DraftAction, DraftEditState, DraftHost } from './draftController'
@@ -25,7 +25,7 @@ export interface DraftActionContext {
   editor(flowId: string): DraftEditor | undefined
   /** Stops editing the Flow (after a confirmation). */
   stop(flowId: string): void
-  /** flowgate.v02.0117 T#2: takes out of the Flow's draft what can never be confirmed nor be seen (a save). */
+  /** takes out of the Flow's draft what can never be confirmed nor be seen (a save). */
   tidy?(flowId: string): void
 }
 

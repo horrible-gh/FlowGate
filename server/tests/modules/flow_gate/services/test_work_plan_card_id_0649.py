@@ -1,4 +1,4 @@
-"""Work-plan card identity and mixed order — flowgate.default.0649 T#1 (NR0003 §5.1).
+"""Work-plan card identity and mixed order — the earlier change the earlier implementation.
 
 The plan body is now "cards in array order": a set card is its instruction immediately
 followed by its result, ordinals inside one type run 1..n in order, and every step carries a
@@ -137,7 +137,7 @@ def test_count_mismatch_keeps_its_old_code():
 
 
 def test_overtaking_cards_of_one_type_are_renumbered_but_keep_their_card_ids():
-    """B moves in front of A: keys follow position (T#1/T#2), card ids follow the card."""
+    """B moves in front of A: keys follow position, card ids follow the card."""
     wp = _wp()
     body = _body({"T": 2})
     a_instr, a_result, b_instr, b_result = copy.deepcopy(body["steps"])
@@ -232,7 +232,7 @@ def test_save_refuses_an_existing_card_that_lost_its_id():
 def test_save_refuses_a_card_id_the_previous_body_never_had():
     wp = _wp()
     previous = wp.validate(_body({"D": 1}))
-    sent = _body({"D": 2})  # D#2 arrives carrying the made-up id "D#2"
+    sent = _body({"D": 2})  # arrives carrying the made-up id "the earlier implementation"
     with pytest.raises(wp.WorkPlanValidationError) as exc:
         wp.assign_card_ids(sent, previous)
     assert _codes(exc) == ["card_id_unknown"]
@@ -351,7 +351,7 @@ def test_put_reorder_keeps_ids_and_delete_then_readd_gets_a_new_id(seed, storage
     body = created["body"]
     assert [s["card_id"] for s in body["steps"]] == ["D#1", "T#1", "T#1", "T#2", "T#2"]
 
-    # rev1: mixed order — T#2's card goes first, D in the middle.
+    # : mixed order — the earlier implementation's card goes first, D in the middle.
     moved = _renumbered(body, ["T#2", "D#1", "T#1"])
     saved = _put(client, doc_id, moved, 0)
     assert saved.status_code == 200, saved.text
@@ -362,7 +362,7 @@ def test_put_reorder_keeps_ids_and_delete_then_readd_gets_a_new_id(seed, storage
     reread = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()["body"]
     assert reread == rev1
 
-    # rev2: drop the last T card (card "T#1", now keyed T#2).
+    # : drop the last T card (card "the earlier implementation", now keyed the earlier implementation).
     shrunk = copy.deepcopy(rev1)
     shrunk["quantities"]["T"]["count"] = 1
     shrunk["steps"] = shrunk["steps"][:3]
@@ -406,13 +406,13 @@ def test_put_refuses_ordinal_inversion_and_missing_id(seed, storage_root):
     body = created["body"]
 
     inverted = copy.deepcopy(body)
-    inverted["steps"] = body["steps"][2:] + body["steps"][:2]  # T#2 before T#1, not renumbered
+    inverted["steps"] = body["steps"][2:] + body["steps"][:2]  # before the earlier implementation, not renumbered
     resp = _put(client, doc_id, inverted, 0)
     assert resp.status_code == 422
     assert "ordinal_order_invalid" in {e["code"] for e in resp.json()["errors"]}
 
     # Swapping two T cards and dropping every id renumbers back to the fixed order, which a
-    # pre-card-id client also sends for "nothing moved" — that body inherits by key (NR0003
+    # pre-card-id client also sends for "nothing moved" — that body inherits by key (the review
     # §5.1 exception) and cannot be told apart, so it is accepted.
     same_shape = _renumbered(body, ["T#2", "T#1"])
     for step in same_shape["steps"]:
@@ -451,7 +451,7 @@ def test_template_rules_describe_mixed_order_and_card_id(locale):
 
 
 def test_ai_inbox_edit_follows_the_same_card_id_contract(seed, storage_root, tmp_path):
-    """The AI path goes through the same save checks as the human PUT (NR0003 §5.1)."""
+    """The AI path goes through the same save checks as the human PUT."""
     from tests.modules.flow_gate.test_work_plan_0395 import _inbox_edit, _inbox_post
 
     wp = _wp()

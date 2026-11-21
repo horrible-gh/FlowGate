@@ -107,7 +107,7 @@ class ProjectCreate(BaseModel):
     project_id: str | None = None
     description: str | None = None
     color: str | None = None
-    # flowgate.v02.0020: the workspace the project belongs to (default workspace when omitted).
+    # the workspace the project belongs to (default workspace when omitted).
     workspace_id: str | None = None
 
 
@@ -269,7 +269,7 @@ def _doc_type_to_view(row: dict) -> dict:
         "is_system": row.get("is_system"),
         "is_active": row.get("is_active"),
         "sort_order": row.get("sort_order"),
-        # P0009 §4.1: "can this type be counted in a work plan, and in what unit".
+        # "can this type be counted in a work plan, and in what unit".
         # Additive — every key above keeps its meaning.
         "countable": annotated.get("countable"),
         "unit": annotated.get("unit"),
@@ -307,7 +307,7 @@ def list_doc_types(
     from modules.flow_gate.services import work_plan_service
 
     types = list_document_types(project_id, locale=locale)
-    # 0429 T0004 task 2: additive — the existing `data` shape/order (series, sort_order,
+    # task 2: additive — the existing `data` shape/order (series, sort_order,
     # type_code) stays exactly as settings screens expect it. This second array is the
     # sole work-plan-scope sort/dedup registry (list_countable_types), so the create
     # dialog / editor / proposal dialog never re-derive it by hand from `data`.
@@ -413,9 +413,9 @@ def delete_doc_type(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Project messages (R0001 group 0004; P0006 §3-5, L0007, DB0008).
+# Project messages (the earlier change; the plan, the earlier implementation, ).
 # Settings > Project management > Message management CRUD + mention-add dialog query.
-# Reuses the project.settings.* RBAC keys (P0006 §3.1); dedicated message keys
+# Reuses the project.settings.* RBAC keys; dedicated message keys
 # were DEFERRED by DB0008. [All] travels as doc_type="*" with no transform (§3.4).
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -510,7 +510,7 @@ def delete_message_endpoint(
 
 
 # -----------------------------------------------------------------------------
-# Project test commands (flowgate.default.0152; R0001->D0002->P0003->L0004->T0005).
+# Project test commands.
 # Settings > Project > "Test commands" CRUD. Reuses the project.settings.* RBAC keys
 # (P section auth). A user DELETE never physically deletes — the service flips the row to
 # status='suppressed' (a tombstone). Auto-reflection from passed remote runs and the TS-mention
@@ -582,7 +582,7 @@ def delete_test_command(
     return {"detail": "deleted"}
 
 
-# ── Template-body provision (group 0024 — P0012 G1/G2) ───────────────────────
+# ── Template-body provision ───────────────────────
 # Registered BEFORE the /templates/{template_id}/... management routes so the
 # reserved literal `active` is never mistaken for a numeric {template_id}.
 
@@ -634,7 +634,7 @@ def get_active_template_meta(
         raise HTTPException(status_code=404, detail=f"Unknown document type '{type_code}'")
 
 
-# ── Template-body management (group 0024 — P0011 E1~E7) ──────────────────────
+# ── Template-body management ──────────────────────
 
 @router.get("/projects/{project_id}/templates")
 def list_tpls(

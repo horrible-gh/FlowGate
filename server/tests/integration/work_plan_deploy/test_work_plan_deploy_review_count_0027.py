@@ -1,4 +1,4 @@
-"""flowgate.v02test.0027 (0007-T, A-server): the WP first deploy keeps a plan step's explicit review count, 0 included,
+"""(T, A-server): the WP first deploy keeps a plan step's explicit review count, 0 included,
 over the AI role group's default review count; a step with no count leaves the card to that default."""
 from test_work_plan_deploy_0074 import db_path, env, dep, _flow, FA  # noqa: F401 - fixtures
 from test_work_plan_deploy_roles_0113 import plan

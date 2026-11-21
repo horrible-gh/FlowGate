@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#7 — Q&A tab (D#1 §10.2 T#7 row): the questions of the selected Node's
+  <!-- Q&A tab (row): the questions of the selected Node's
        document — waiting for the user first — with who asked and who answered, and an answer form
        on each question without an answer: prose, one of the question's options, or both. A thin
        container: useQna reads and answers, qnaModel decides the order, the sides and availability.
@@ -14,29 +14,29 @@
        The window's title line keeps its badge and buttons in view: the title shrinks with an
        ellipsis, the badge does not. Answering is not editing the question, so there is no 편집
        badge; 읽기 전용 shows only when the Flow is read only (ownership conflict).
-       flowgate.v02.0053 T#6 (0053 CH §2) — the question line at the top: a person writes a question
+       (CH) — the question line at the top: a person writes a question
        and [+] (or Enter) registers it. The line is always there, and a document without questions
        shows only the line — no "no questions" sentence. Why [+] is closed is its tooltip. A refusal is a
        red ! icon on the line whose name says what failed and whose tooltip says why.
-       flowgate.v02.0056 F1 (0056 CH §3) — registering never asks an AI by itself. Every open question
+       (CH) — registering never asks an AI by itself. Every open question
        carries its own AI line under the answer form: an AI picker (the project's providers, the project
        default picked first) and [AI 답변 요청]; the button shows the request on its way, a running chip
        says the AI answer is awaited once the run started, and a refusal is an amber ! icon beside the
        button with the reason as its tooltip. A person still answers directly, as before.
-       flowgate.v02.0063 — no reason sentence under a closed form; a Flow whose answers stay closed shows
+       no reason sentence under a closed form; a Flow whose answers stay closed shows
        no question line, answer form or AI line (qnaAvailability `visible`).
-       flowgate.v02.0064 T-B5 (P0006 §5.2·§6.4) — who answered reads one of four classes (person by name /
+       T-B5 — who answered reads one of four classes (person by name /
        AI · provider / AI run not linked / AI no run information) plus unknown; the list shows the side only,
        the window's answer adds the answer time and the run id when there is one.
-       flowgate.v02.0070 T#4 (B4) — `history`: the questions of a document read as history (the document an R↔B
+       (B4) — `history`: the questions of a document read as history (the document an R↔B
        succession came from, in its exact document window): the same list and ↗ windows, read only — no question
        line, answer form or AI line, and the ↗ window says 읽기 전용.
-       flowgate.v02.0070 T#5 (B5) — the list is for looking over and opening: each line keeps the question (one line,
+       (B5) — the list is for looking over and opening: each line keeps the question (one line,
        ellipsis), its state, who asked and [열기] — no options, answer field, send or AI line. The ↗ window is where a
        question is answered: the document id (full), who asked and when, the full question, the answers, then the
        stored options, the answer field, send and the AI line. While the body cannot be checked (unreadable, not known,
        history) the window shows one line instead of them (history: the 읽기 전용 badge); reading stays.
-       flowgate.v02.0150 — the ↗ windows moved to QnaWindows (drawn by the Frame's QnaWindowHost): a window keeps its
+       the ↗ windows moved to QnaWindows (drawn by the Frame's QnaWindowHost): a window keeps its
        document whatever is selected and closes only by its own ×. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
     <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
@@ -113,7 +113,7 @@
       </ul>
     </template>
 
-    <!-- flowgate.v02.0150 — the ↗ windows are not drawn here: the Frame's window host (QnaWindowHost) draws them with the
+    <!-- the ↗ windows are not drawn here: the Frame's window host (QnaWindowHost) draws them with the
          target they were opened for, so a selection change, a tab change or a click elsewhere never closes them. A history
          Q&A (a document window's aside) draws its own, which live with that document window. -->
     <QnaWindows v-if="history" :key="historyKey" :target="target" :windows="historyWindows" history @close="closeHistoryWindow" />
@@ -137,7 +137,7 @@ import { nextQnaWindowPlace, openQnaWindow, qnaWindowKey, type QnaWindow } from 
 
 const props = defineProps<{
   target: InspectorTarget
-  /** flowgate.v02.0070 T#4: read only history — the questions and answers are read, nothing is asked or answered. */
+  /** read only history — the questions and answers are read, nothing is asked or answered. */
   history?: boolean
 }>()
 
@@ -158,7 +158,7 @@ const {
 } = useQna(() => props.target, { history: () => props.history === true })
 
 /**
- * History: only reading is offered. Answering and the AI line close in the model (0070 T#5 body context `history`);
+ * History: only reading is offered. Answering and the AI line close in the model (body context `history`);
  * the question line closes here (asking is not this rule's).
  */
 const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
@@ -166,7 +166,7 @@ const availability = computed<QnaAvailability>(() =>
   props.history ? { ...liveAvailability.value, ask: HISTORY_CLOSED } : liveAvailability.value,
 )
 
-// --- The question line (0053 T#6) ------------------------------------------------------------------
+// --- The question line ------------------------------------------------------------------
 
 /** The question being written; it belongs to the shown document and clears once it is stored. */
 const askBody = ref('')
@@ -212,7 +212,7 @@ watch(doneOpen, () => {
 
 // --- The ↗ windows ---------------------------------------------------------------------------------
 
-// flowgate.v02.0150: a question's window is opened with this target and drawn by the Frame's window host, which keeps
+// a question's window is opened with this target and drawn by the Frame's window host, which keeps
 // it whatever is selected. A history Q&A keeps its windows here: they belong to its document window.
 const historyWindows = ref<QnaWindow[]>([])
 const historyKey = computed(() => qnaWindowKey(props.target) ?? '')

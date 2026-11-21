@@ -1,6 +1,6 @@
-"""Card order on an existing sequence — flowgate.default.0649 T#2 (NR0003 O2-O5).
+"""Card order on an existing sequence — the earlier change the earlier implementation.
 
-T#1 gave every WP card a ``card_id`` and every row the card it serves
+gave every WP card a ``card_id`` and every row the card it serves
 (``source_wp_card_id``, classified for legacy rows by :mod:`work_plan_card_identity`).
 This module is the one place that reads a plan's card order against those rows:
 
@@ -19,7 +19,7 @@ This module is the one place that reads a plan's card order against those rows:
 
 A card's rows are the rows ``plan_to_rows`` makes for it: one instruction (or single) row,
 except a paired design card (``card_stage_model: "paired"``), whose design instruction
-step (``DS``) and result step (``L/P/DB``) are two rows of the same card (0112 NR0003).
+step (``DS``) and result step (``L/P/DB``) are two rows of the same card.
 
 Nothing here writes.
 """

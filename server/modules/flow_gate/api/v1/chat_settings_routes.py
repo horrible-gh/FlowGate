@@ -1,11 +1,11 @@
-"""GET/PATCH /api/v1/me/chat-settings — the logged-in user's chat settings (P0009 §0-1).
+"""GET/PATCH /api/v1/me/chat-settings — the logged-in user's chat settings.
 
 The address carries no user identifier.  The user comes from the token and only from
 the token, so there is no URL that could name somebody else's settings in the first
-place — safer than building one and then guarding it (D0008 §5).
+place — safer than building one and then guarding it.
 
 Both handlers are plain ``def``.  The store underneath is synchronous, and an ``async``
-handler reaching it would block the event loop for every other request (L0010 §5); the
+handler reaching it would block the event loop for every other request; the
 static guard in tests/test_event_loop_blocking_0279.py enforces this.
 """
 from __future__ import annotations
@@ -44,7 +44,7 @@ class ChatSettingsPatch(BaseModel):
 
 def _invalid_request(exc: chat_settings_service.ChatSettingsError) -> JSONResponse:
     # Same envelope as the neighbouring settings routes (project_settings._source_mode_error),
-    # plus the field name so the screen can mark the box that is wrong (P0009 scenario 7).
+    # plus the field name so the screen can mark the box that is wrong (scenario 7).
     return JSONResponse(
         status_code=422,
         content={

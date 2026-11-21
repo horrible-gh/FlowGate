@@ -1,4 +1,4 @@
-// flowgate.v02.0045 T0019 — which Edges the work has already gone through, from the actual state
+// which Edges the work has already gone through, from the actual state
 // of their two Nodes (the server's document review / node_run state, P0008 §2.3). Only an
 // execution Edge can be progressed: it is progressed when its source Node is done and its target
 // Node has been reached (it shows any state past `draft`). A reference Edge (document relation

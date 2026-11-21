@@ -1,4 +1,4 @@
-// flowgate.v02test.0035 — the marks a Flow tab keeps after something ended while the user looked at another tab: the
+// the marks a Flow tab keeps after something ended while the user looked at another tab: the
 // run's result (its run band tone, `runBandTone`) and the chat answer's end (done / failed). A tab activated clears its
 // marks; a closed tab drops them. Kept per Project in the browser's localStorage so a reload or a new browser session
 // still shows what was not looked at. Not tied to the notification bell or the run result card.

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0037 — right Tool Panel attached to the Designer Shell (0037-R §2 / §8). The
+ * right Tool Panel attached to the Designer Shell. The
  * right Dock is mounted with the real Palette part; the Conversation and Git parts are
  * replaced by prop-recording stand-ins so no server contract is exercised here (their own
  * specs cover them). Asserts the [팔레트] [대화] [Git] header row, the mount-on-first-show

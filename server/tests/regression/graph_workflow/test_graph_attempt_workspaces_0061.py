@@ -1,4 +1,4 @@
-"""0061 T#5: attempt workspaces and fail-closed source routing.
+"""attempt workspaces and fail-closed source routing.
 
 TR runs py_compile only. These SQLite/Git fixtures and mocked provider/lock
 boundaries are for the separate test WP/TSR; no AI or network is required.
@@ -53,7 +53,7 @@ def harness(tmp_path_factory, monkeypatch):
             canvas_state TEXT, actor_user_id TEXT, reason TEXT, payload_json TEXT, created_at TEXT,
             PRIMARY KEY(run_id, event_seq));
     """)
-    # 0110 T#2: execution_store.request and workspace.prepare read/write the T#8 result columns
+    # execution_store.request and workspace.prepare read/write the the earlier implementation result columns
     # (result_commit, integration_status, input_source, ...) added by 153a, which also alters
     # tr_commit_ledger (086d) — the same chain test_graph_attempt_results_0061 loads, on the
     # same parent stubs (086d references groups/documents and alters group_git_state).
@@ -70,7 +70,7 @@ def harness(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(run_store, "get_store", lambda: db)
     monkeypatch.setattr(port, "get_store", lambda: db)
     monkeypatch.setattr(execution, "get_store", lambda: db)
-    # 0110 T#2: T#10 inputs (definition_store.revision) and 0085 gate reservations (settle) read
+    # inputs (definition_store.revision) and 0085 gate reservations (settle) read
     # these stores; on this DB their tables are absent -> no definition edges, no reservations.
     from flowgate.gate_decisions import repository as gate_repository
     monkeypatch.setattr(workspace.definition_store, "get_store", lambda: db)
@@ -232,7 +232,7 @@ def test_creation_failure_invalidates_only_its_attempt(repo, monkeypatch, other_
     directory, _root, branch = workspace.location(row, PROJECT)
     assert not directory.exists()
     assert not workspace.git._ref_exists(repo.group, "refs/heads/" + branch)
-    # 0111 T#8: the ref a new attempt took before its failed worktree add goes with it.
+    # the ref a new attempt took before its failed worktree add goes with it.
     assert not workspace.git._ref_exists(repo.group, workspace.ATTEMPT_REF_PREFIX + directory.name)
     assert json.loads(run_store.events("run")[-1]["payload_json"])["reason"] == "worktree_add_failed"
 
@@ -369,7 +369,7 @@ def test_document_only_chat_refuses_before_chat_capability(harness, service):
     assert refused.value.code == "graph_git_required"
 
 
-# 0110 T#3 (contract change, NR0003 §3 T-B item 6): "self_check" left this list -- a bound token's Self-check now runs
+# (contract change, the review T-B item 6): "self_check" left this list -- a bound token's Self-check now runs
 # in its attempt root (test_mapped_token_self_check_runs_in_attempt_root below). The other group-only paths still refuse.
 @pytest.mark.parametrize("operation", ["test_run", "file_transfer", "attachment_copy", "api_group_source"])
 def test_group_only_source_paths_refuse_bound_tokens(repo, operation):
@@ -382,7 +382,7 @@ def test_group_only_source_paths_refuse_bound_tokens(repo, operation):
 
 
 def test_api_group_source_tool_still_refuses_bound_tokens(repo):
-    """0110 T#3 replaced the Self-check half of the former
+    """replaced the Self-check half of the former
     test_selfcheck_service_and_api_tool_do_not_reach_group_lookup; the API tool's group root keeps refusing.
     ``ToolError`` carries the code as ``reason`` (the former test read a ``code`` attribute it does not have)."""
     item = repo.new()
@@ -395,7 +395,7 @@ def test_api_group_source_tool_still_refuses_bound_tokens(repo):
 
 @pytest.fixture
 def selfcheck(repo, monkeypatch):
-    """0110 T#3: tr_self_check_service._start on these attempt fixtures, up to its worker thread. The run store and
+    """tr_self_check_service._start on these attempt fixtures, up to its worker thread. The run store and
     the worker are recorded instead of executed; the Group / attempt locks are the harness's recording fakes. The
     worker keeps ``_finish``'s spawn contract: it "spawns" (``before_spawn`` may hold it there, ``order`` records it),
     then sets ``spawned``. The real ``_finish`` and locks: test_tr_self_check_attempt_w_0110."""
@@ -451,9 +451,9 @@ def _draft_token(item, monkeypatch):
 @pytest.mark.parametrize("layout", [workspace.REF_LAYOUT, workspace.BRANCH_LAYOUT])
 @pytest.mark.parametrize("entry", ["edit", "draft"])
 def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypatch, entry, layout):
-    """0110 T#3 (NR0003 §3 T-B): a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
+    """a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
     with its attempt root as worktree and cwd, holds the Group's G and the attempt's W, and records attempt_id /
-    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved. 0111 T#8: the same
+    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved. the earlier implementation: the same
     in both layouts; a ref-layout tree's HEAD is detached (no branch), the W key is the attempt's either way."""
     sc = tr_self_check_service
     monkeypatch.setattr(workspace, "NEW_LAYOUT", layout)
@@ -498,7 +498,7 @@ def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypat
 @pytest.mark.parametrize("entry", ["edit", "draft"])
 def test_mapped_token_self_check_refuses_unready_or_inactive_attempt_with_409(
         repo, selfcheck, monkeypatch, entry, broken, code, reason):
-    """0110 T#3: an attempt that is not prepared, lost its tree, was invalidated or whose run is stopping is 409 --
+    """an attempt that is not prepared, lost its tree, was invalidated or whose run is stopping is 409 --
     no run row, no lock, no group worktree in its place."""
     sc = tr_self_check_service
     item = repo.new()
@@ -527,7 +527,7 @@ def test_mapped_token_self_check_refuses_unready_or_inactive_attempt_with_409(
 
 
 def test_attempt_tree_lost_after_admission_is_selfcheck_worktree_unavailable(repo, selfcheck):
-    """0110 T#3: ``_worktree(target)`` of an admitted attempt target re-resolves the attempt; a lost tree is
+    """``_worktree(target)`` of an admitted attempt target re-resolves the attempt; a lost tree is
     selfcheck_worktree_unavailable with its reason, never the group worktree. ``_start`` with that target judges the
     attempt again with its token (rework: no attempt target runs unjudged) and refuses it the same way."""
     sc = tr_self_check_service
@@ -554,7 +554,7 @@ def test_attempt_tree_lost_after_admission_is_selfcheck_worktree_unavailable(rep
 
 @pytest.fixture
 def fenced_selfcheck(selfcheck, monkeypatch):
-    """0110 T#3 rework: the real Stop gate judgement (``fencing.require_token``) in front of the Self-check start, on
+    """the real Stop gate judgement (``fencing.require_token``) in front of the Self-check start, on
     the harness's real graph rows; its refusal records are captured."""
     from flowgate.graph_run import fencing
     recorded = []
@@ -567,7 +567,7 @@ def fenced_selfcheck(selfcheck, monkeypatch):
 @pytest.mark.parametrize("commit", ["stop", "invalidation"])
 def test_a_stop_or_invalidation_committed_before_the_judgement_spawns_nothing(repo, fenced_selfcheck, monkeypatch,
                                                                              commit):
-    """0110 T#3 rework: the start is held at a barrier before its judgement (``_document``); meanwhile a Stop commits
+    """the start is held at a barrier before its judgement (``_document``); meanwhile a Stop commits
     ``stopping`` under the gate's exclusive hold, or the runtime's invalidation (``workspace._failed``, its exclusive
     hold) commits. Released, the start is refused 409 graph_attempt_inactive -- no G/W, no run row, no spawn."""
     sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
@@ -617,7 +617,7 @@ def test_a_stop_or_invalidation_committed_before_the_judgement_spawns_nothing(re
 
 
 def test_a_stop_waits_for_an_admitted_self_check_until_its_spawn(repo, fenced_selfcheck, monkeypatch):
-    """0110 T#3 rework: the start's worker is held at a barrier right before its spawn -- G, W and the run row taken.
+    """the start's worker is held at a barrier right before its spawn -- G, W and the run row taken.
     The request still holds the gate's shared hold, so a Stop cannot commit ``stopping`` in that window: it commits
     after the spawn. A start after the Stop is judged under the gate and refused; nothing more spawns."""
     sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
@@ -666,7 +666,7 @@ def test_a_stop_waits_for_an_admitted_self_check_until_its_spawn(repo, fenced_se
 
 
 def test_self_check_route_admits_attempt_token_and_passes_it_on(repo, monkeypatch):
-    """0110 T#3: the TR-bound route no longer answers 409 graph_attempt_source_unsupported for a mapped token; the
+    """the TR-bound route no longer answers 409 graph_attempt_source_unsupported for a mapped token; the
     token reaches the service, which picks the attempt root."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -686,7 +686,7 @@ def test_self_check_route_admits_attempt_token_and_passes_it_on(repo, monkeypatc
 
 
 def test_help_describes_attempt_execution_only_for_mapped_tokens(repo, monkeypatch):
-    """0110 T#3: help_catalog's tr_self_check item matches the service -- a mapped token is told its run executes in
+    """help_catalog's tr_self_check item matches the service -- a mapped token is told its run executes in
     its attempt tree (and the 409 codes it may get); an unmapped token's content is unchanged."""
     from modules.flow_gate.services import help_catalog
     item = repo.new()
@@ -717,12 +717,12 @@ def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
     monkeypatch.setattr(workspace.git, "effective_src_root_ex", lambda *_: (repo.group, "worktree"))
     assert port.source_root(token) is None
     assert port.reject_group_source(token, "self_check") is None
-    # 0110 T#3: an unmapped token's Self-check keeps the group worktree and adds no attempt fields.
+    # an unmapped token's Self-check keeps the group worktree and adds no attempt fields.
     assert tr_self_check_service._attempt_target(token, PROJECT, GROUP) == {}
     assert tr_self_check_service._worktree({"project_id": PROJECT, "group_id": GROUP}) == repo.group.resolve()
     assert remote._resolve_src_root(grant) == repo.group
     assert chat.worktree_root(PROJECT, GROUP, str(repo.group), token_id="ordinary") == repo.group
-    # 0110 T#2: the TR scope check keeps the group basis for an unmapped token.
+    # the TR scope check keeps the group basis for an unmapped token.
     from modules.flow_gate.services import tr_scope_service as trs
     assert port.attempt_scope(token) is None
     assert trs.resolve_attempt_scope(token, PROJECT, GROUP) is None
@@ -746,7 +746,7 @@ def _commit_in(root, *args):
 
 
 def test_mapped_token_tr_scope_measures_attempt_tree_from_input_commit(repo, monkeypatch):
-    """0110 T#2 (NR0003 §2 T-A): a mapped token's TR scope is measured on its attempt tree from its
+    """a mapped token's TR scope is measured on its attempt tree from its
     input_commit, so changes that have not reached the group branch are detected (no TRV-003)."""
     from modules.flow_gate.services import tr_scope_service as trs
     item = repo.new()

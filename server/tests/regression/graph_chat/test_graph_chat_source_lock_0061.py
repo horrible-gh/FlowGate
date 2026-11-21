@@ -1,4 +1,4 @@
-"""flowgate.v02.0061 T#14 (WP answer 2): a chat's edit / edit-once source access is refused while the Flow's Graph run
+"""(WP answer 2): a chat's edit / edit-once source access is refused while the Flow's Graph run
 is running, paused or stopping (409 ``graph_run_locked``); a read chat and an idle / absent run are not.
 
 The judgement is ``flowgate.graph_run.editing.chat_source_refusal`` (registered as the ``chat_source_refusal`` Graph

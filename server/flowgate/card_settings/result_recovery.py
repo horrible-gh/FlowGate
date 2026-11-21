@@ -1,4 +1,4 @@
-"""0145 T#2: provenance for an explicit review of a legacy result with a lost handoff.
+"""provenance for an explicit review of a legacy result with a lost handoff.
 
 Never reconstruct an ai_invoke_runs row or its outcome. The immutable attempt,
 writer execution and consumed token prove attribution; a new real review supplies

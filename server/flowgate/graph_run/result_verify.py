@@ -1,4 +1,4 @@
-"""v02gui.0015 T4 (0006-NR §6-4): the integration gate's syntax check of an attempt's result commit.
+"""v02gui.0015 T4 (NR): the integration gate's syntax check of an attempt's result commit.
 
 Before this, nothing between a card's approval and the merge into the group branch looked at the result itself: a
 result whose files no longer parse (the 0005 incident: masked ``***`` text written back into Python files) was merged

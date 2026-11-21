@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-2 — the three states of a card line and its row actions (O3 0009-TR §4-1 · §4-2 · §4-3), on
+ * the three states of a card line and its row actions, on
  * the real Frame and registry with the document windows mounted and `@shared/api` mocked:
  * - slotStateView / slotFill / slotLineCard decide once: no document → "문서 없음" + [작성]; a document without a body
  *   → "비어 있음" (no words since 0017-CH: a dashed line with a hollow document icon, "비어 있음" its hover text;
@@ -176,7 +176,7 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
     expect(slotLineCard({ id: 'd', empty: false }, undefined, changeable)).toEqual({ cardSlot: null, blank: false, historyCount: null, historyDetail: null, actions: [] })
   })
 
-  // flowgate.v02.0070 T#4: the blank wording is drawn now (before: text '').
+  // the blank wording is drawn now (before: text '').
   it('slotStateView: a blank line draws no badge, its words instead (also its hover text); an empty line still wins', () => {
     expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '본문 비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '본문 비어 있음', title: '본문 비어 있음', quiet: false })
     expect(slotStateView(null, true, '문서 없음', '비어 있음')).toMatchObject({ kind: 'empty', text: '문서 없음' })

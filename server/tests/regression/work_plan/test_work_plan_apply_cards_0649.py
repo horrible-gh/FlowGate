@@ -1,6 +1,6 @@
-"""Direct work-plan apply over card identity and protected rows — flowgate.default.0649 T#1.
+"""Direct work-plan apply over card identity and protected rows — the earlier change the earlier implementation.
 
-NR0003 §5.2 O0/O1 and §5.4 on the ``/work-plan/apply`` path, against a migrated sqlite file:
+O0/O1 and on the ``/work-plan/apply`` path, against a migrated sqlite file:
 
   * a started legacy row whose card cannot be proven blocks preview (blocker + warning +
     ``acknowledgement_required``) and refuses keep/change apply with 409
@@ -36,7 +36,7 @@ def store(migrated_sqlite_db, monkeypatch):
     real = _SqliteStore(migrated_sqlite_db("apply_cards_0649.db", seed_sql=_SEED_SQL))
     previous = db_connection.STORE
     db_connection.STORE = real
-    # 0649 T#2: a change-apply writes through edit_workflow_pending, which re-checks the
+    # a change-apply writes through edit_workflow_pending, which re-checks the
     # plan's revision against the documents table and archives AC documents.
     real._execute("UPDATE documents SET revision_no = 2 WHERE doc_id = ?", [_WP])
     monkeypatch.setattr(wds.db_documents, "list_documents", lambda **kwargs: [])
@@ -143,7 +143,7 @@ def test_apply_refuses_unacknowledged_unresolved_rows_and_writes_nothing(
 def test_acknowledged_keep_apply_is_refused_by_the_orphan_it_would_keep(
     unresolved_history, tmp_path,
 ):
-    """0649 T#2 (NR0003 O4): after the acknowledgement the unresolved pending T row serves
+    """after the acknowledgement the unresolved pending T row serves
     no card (an orphan), so keeping the workflow would keep it — keep is refused, and the
     refusal comes before anything (the marker included) is written. The apply refuses with
     the preview's own keep answer: no plan card has a row to keep, which outranks the
@@ -184,8 +184,8 @@ def test_acknowledged_apply_records_the_marker_once_in_place(unresolved_history,
         [rows[1]["id"], f"retired:unresolved:{rows[1]['id']}"],
     ]
 
-    # 0649 T#2 (NR0003 O3): the card the unresolved rows might have been is poured again
-    # behind them, and the unresolved pending T#2 row is replaced by the card's own row.
+    # the card the unresolved rows might have been is poured again
+    # behind them, and the unresolved pending the earlier implementation row is replaced by the card's own row.
     assert [(r["type"], r["source_wp_card_id"]) for r in rows[2:]] == [
         ("T", "T#1"), ("TR", "T#1"), ("T", "T#2"), ("TR", "T#2"),
     ]
@@ -231,7 +231,7 @@ def test_backfill_and_snapshot_share_one_transaction(unresolved_history, tmp_pat
         tracked(name)
     monkeypatch.setattr(wpa, "get_store", lambda: _Tracking())
 
-    # 0649 T#2: keep is refused here (orphan_plan_rows), so the reflection that writes is the
+    # keep is refused here (orphan_plan_rows), so the reflection that writes is the
     # change-apply — its card-id marker and its row rewrite share the one outer frame.
     _apply(plan, 2, tmp_path, change=True, ack=["legacy_card_unresolved"])
     names = {name for name, _frame in frames}

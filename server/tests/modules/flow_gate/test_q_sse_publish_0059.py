@@ -1,4 +1,4 @@
-"""0059 B0001 rev3 regression — does the worker-question SSE event 'actually get published'.
+"""regression — does the worker-question SSE event 'actually get published'.
 
 Symptom (same repro rev0~rev2): when the worker registers a question, it isn't visible on screen until F5.
 Real cause (rev3): q_service._notify_q_registered called asyncio.get_event_loop() from a sync FastAPI route

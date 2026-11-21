@@ -1,4 +1,4 @@
-"""0111 T#4 / NR §4: hide only owned documents and this view's live card lines.
+"""NR: hide only owned documents and this view's live card lines.
 
 All storage is an in-memory line table. Documents/definitions are dictionaries; body/review
 reads are stubbed. Real repository.rebind, CardView, supersede resolution, lines_for,
@@ -68,7 +68,7 @@ def scenario(monkeypatch):
     store = LineStore(connection)
     s = SimpleNamespace(store=store, documents=[], draft=[node()], revision=[node()], binding=None)
     monkeypatch.setattr(repository, "get_store", lambda: store)
-    # 0126 T#1: card lines also read the human-decision ledger; this in-memory fixture has no such tables
+    # card lines also read the human-decision ledger; this in-memory fixture has no such tables
     # (the ledger is covered by test_fg_document_decisions_0126), so the projection sees no decisions.
     monkeypatch.setattr(decision_repository, "available", lambda: False)
     monkeypatch.setattr(lines.legacy, "review_counts", lambda _ids: {})

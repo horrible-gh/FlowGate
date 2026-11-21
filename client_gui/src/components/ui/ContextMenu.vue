@@ -29,12 +29,12 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free right-click/keyboard menu (T0010 §8): opens at a pointer position rather
-// than relative to a trigger element (that's Dropdown's job, T0010 §8.1), and is invoked
+// Domain-free right-click/keyboard menu: opens at a pointer position rather
+// than relative to a trigger element (that's Dropdown's job, the earlier implementation), and is invoked
 // via the native `contextmenu` event on whatever the caller wraps in the default slot.
-// It only ever knows `key`/`label`/`disabled`/`danger` (T0010 §8.3) -- the caller maps a
+// It only ever knows `key`/`label`/`disabled`/`danger` -- the caller maps a
 // selected `key` to whatever Designer/Git/Project action it means via the `select` event;
-// this component never hardcodes an action name (T0010 §8.3, §16).
+// this component never hardcodes an action name.
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { allocateOverlayZIndex } from '../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../core/overlay/focusReturn'
@@ -92,7 +92,7 @@ function focusFirstItem(): void {
 function openAt(x: number, y: number): void {
   // Only capture on the *first* open: if the menu is already open and `openAt` is
   // invoked again (e.g. an imperative reposition from a different trigger while it is
-  // still showing, T0010 §8.3), `document.activeElement` is already a menu item that
+  // still showing, the earlier implementation), `document.activeElement` is already a menu item that
   // is about to be replaced -- capturing it here would overwrite the real pre-menu
   // focus target with a throwaway one, and `close()` could never return focus to
   // where the user actually was.
@@ -160,7 +160,7 @@ function onMenuKeydown(event: KeyboardEvent): void {
   }
 }
 
-// Document-level listeners mirror Dropdown.vue's pattern (T0004 §5.9): attached for the
+// Document-level listeners mirror Dropdown.vue's pattern: attached for the
 // component's lifetime and guarded by `isOpen` inside the handler, rather than added and
 // removed on every open/close.
 function onDocMousedown(event: MouseEvent): void {
@@ -182,7 +182,7 @@ function onDocKeydown(event: KeyboardEvent): void {
   // handler), for any event whose real target is a descendant -- which every keydown
   // is, since it originates at `document.activeElement`. Stopping propagation here
   // keeps the event from ever reaching that bubble-phase handler, so only the menu
-  // closes and no ancestor overlay also reacts to the same keypress (T0010 §10).
+  // closes and no ancestor overlay also reacts to the same keypress.
   event.stopPropagation()
   close()
 }

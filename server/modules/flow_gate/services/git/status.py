@@ -1,6 +1,6 @@
 """Git connectivity probes and project/base status aggregation.
 
-Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -72,11 +72,11 @@ def test_connection(project_id: str, override: Optional[dict] = None) -> dict:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     repo_url = (cfg.get("repo_url") or "").strip()
     t0 = time.monotonic()
-    # flowgate.default.0617 T0004 (NR0003 §5/§7): ls-remote needs no local checkout,
+    # ls-remote needs no local checkout,
     # so it must not inherit the server process's own cwd via _run_git(cwd=None).
     # That cwd is FlowGate's own deployment/session concern, not this probe's, and
     # its .git metadata can be transiently broken (a linked worktree's gitdir
-    # pointer copied over a plain directory by unrelated preview tooling, NR0003
+    # pointer copied over a plain directory by unrelated preview tooling, the review
     # §3) without the probe having any way to know. A throwaway temp directory has
     # no .git of its own, so git's repository discovery can only ever reach the
     # remote, never fail on unrelated local state first.
@@ -133,7 +133,7 @@ def test_connection(project_id: str, override: Optional[dict] = None) -> dict:
 
 def base_checkout_dirty_status(project_id: str) -> dict:
     """Lightweight base-checkout dirty status for the file-editor save response
-    (flowgate.default.0176 T0010 §a).
+.
 
     A src-content save writes straight into the base checkout by design (an admin
     edit), which leaves the base dirty and — via the E3 guard — blocks merge
@@ -142,7 +142,7 @@ def base_checkout_dirty_status(project_id: str) -> dict:
     a bare finalize 500. `dirty`/`files` scope matches the guard exactly:
     tracked-file changes only (`include_untracked=False`).
 
-    `untracked` is a SEPARATE field (0296 T0004 / NR0003 R1) and is NOT reflected
+    `untracked` is a SEPARATE field and is NOT reflected
     in `dirty`: a brand-new file blocks nothing, but it is invisible to every
     worker until committed (the group worktree is built from a commit — NR §C1),
     so the editor needs to name it without the guard treating it as contamination.
@@ -181,7 +181,7 @@ def _build_unpushed(
 ) -> dict:
     commits = _unpushed_commits(base_root, base_branch)
     if commits is None:
-        # 0297 B0001: an unmeasured result used to be indistinguishable from "in
+        # an unmeasured result used to be indistinguishable from "in
         # sync" downstream (commit_count 0), which hid the ONLY push entry point
         # while the remote was still empty. These two fields carry the bootstrap
         # case explicitly so the client decides instead of guessing.
@@ -242,7 +242,7 @@ def project_git_status(project_id: str) -> dict:
             "terminal_cleanup": db_terminal_cleanup.get(project_id),
         }}
 
-    # 0024 TR0006: the stored Base before the legacy "main" fallback. The fallback keeps
+    # the stored Base before the legacy "main" fallback. The fallback keeps
     # every server-side Base consumer working, but a reader that compares against "the
     # project Base" (Designer File Explorer 변경됨, 0024-D §12) must not mistake it for a
     # configured value — hence base_branch_configured in the response below.
@@ -252,13 +252,13 @@ def project_git_status(project_id: str) -> dict:
     project_name = _gs._project_name(project_id)
     base_root = _gs.src_root(project_name, base_branch) if project_name else None
 
-    # 0282 NR0003 finding 1: one ledger scan serves both the registered-slot
+    # one ledger scan serves both the registered-slot
     # aggregation and the provision-failure surface below (previously two
     # near-identical project scans), and the per-slot wf_done probe is batched
     # into a single IN query so the loop only does set membership.
     all_rows = _gs.db_git.list_states_of_project_any(project_id)
     rows = [r for r in all_rows if r.get("worktree_registered")]
-    # T0009: one batched root lookup serves both the existing lazy transition
+    # one batched root lookup serves both the existing lazy transition
     # and stale-pending recovery. A pending ledger row is displayable only while
     # its workflow root remains wf_done; interrupted/rework paths can otherwise
     # leave awaiting_choice/waiting visible after approval was withdrawn.
@@ -290,7 +290,7 @@ def project_git_status(project_id: str) -> dict:
                 )
         elif status in NOOP_CONVERGEABLE_STATUSES:
             try:
-                # 0548 T0004 §3: the root is still wf_done, but the slot may hold
+                # the root is still wf_done, but the slot may hold
                 # nothing to merge — converge it the same way the finalize panel
                 # does, so the header's pending badge and the document's Git card
                 # never disagree about whether this group has work.
@@ -303,7 +303,7 @@ def project_git_status(project_id: str) -> dict:
                 )
         elif status == "none" and group_id in wf_done_groups:
             try:
-                # 0199 B0001: proven no-work groups are discarded (torn down, no
+                # proven no-work groups are discarded (torn down, no
                 # merge/push) here; real groups still transition to awaiting_choice.
                 # A discarded group's slot is unregistered by the cleanup, so it
                 # drops out of every list below (SLOT/PENDING/CLEANUP filters).
@@ -317,16 +317,16 @@ def project_git_status(project_id: str) -> dict:
                     "lazy git transition failed for %s", group_id, exc_info=True
                 )
 
-    # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's
+    # `writable` tells the file explorer whether this slot's
     # worktree is really there, so a working group can offer create/upload instead
     # of the blanket read-only it applied to every selected group. `rows` is already
     # filtered to worktree_registered=1, so this only re-checks the on-disk side
     # (directory present, .git link intact) — a handful of stats per status call.
-    # 0552 T0013 (0005-NR Set D): `r` IS this group's group_git_state row, already
+    # (NR Set D): `r` IS this group's group_git_state row, already
     # read by the one project-wide ledger scan above, so it is handed to the
     # writable probe instead of letting it run `SELECT * FROM group_git_state
     # WHERE group_id = ?` once per slot — the last group_git_state read that still
-    # grew with slot count (8 slots = 8 queries in the R0001 screen-load log).
+    # grew with slot count (8 slots = 8 queries in the the requirement screen-load log).
     # Same row, same request: `list_states_of_project_any` and `db_git.get_state`
     # are both `SELECT *` on that one table, and the only fields the probe reads —
     # worktree_registered and branch — are never written by the transition loop
@@ -339,7 +339,7 @@ def project_git_status(project_id: str) -> dict:
          "writable": _gs.group_worktree_writable(project_id, r["group_id"], r)}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
-    # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot
+    # a group's commits are no longer one absorb commit, so each slot
     # row carries its TR commit ledger — counts always, the newest rows for the folded
     # list. One query for every slot (the N+1 this function paid off in 0282), and a
     # lazy import because tr_commit_service imports this module.
@@ -375,26 +375,26 @@ def project_git_status(project_id: str) -> dict:
                         pending_rows.append(ledger)
         except Exception:
             _log.warning('recovery status unavailable for %s', ledger['group_id'])
-    # 0282 NR0003 finding 1: the AC lookup was the next N+1 in line — batched
+    # the AC lookup was the next N+1 in line — batched
     # before pending grows with adoption.
     ac_doc_ids = _gs._group_ac_doc_ids([r["group_id"] for r in pending_rows])
     pending = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
          "status": r.get("status"), "default_action": default_action,
-         # 0165 T0004: merge_id lets the header panel resolve conflicts inline
+         # merge_id lets the header panel resolve conflicts inline
          # (no need to open the group's R document / GitFinalizePanel).
          "merge_id": r.get("merge_id"),
-         # 0182 NR0003 §4: pending implies the workflow root is wf_done, so the
+         # pending implies the workflow root is wf_done, so the
          # header [open] button targets the AC document (which hosts the git
          # finalize UI since §3) instead of detouring through the R root.
          "ac_doc_id": ac_doc_ids.get(r["group_id"])}
         for r in pending_rows
     ]
-    # 0205 P scenario 8: annotate conflict pending rows with how long they have
+    # P scenario 8: annotate conflict pending rows with how long they have
     # been unresolved (elapsed = now − conflict_since), so the panel can surface
     # the wait time and offer [resume resolution]/[hold]. Other rows carry no field.
     for row in pending:
-        # 0555 T0008 §10 / D0005 §3.11: the control surfaces read this to decide
+        # the control surfaces read this to decide
         # between "choose an action and run it" and "go finish the conflict" — a
         # coupled group's Git already belongs to a final approval that is waiting.
         row["final_approval_bound"] = False
@@ -403,7 +403,7 @@ def project_git_status(project_id: str) -> dict:
             try:
                 s = _gs.db_git.get_session(int(row["merge_id"]))
                 row["conflict_since"] = s.get("created_at") if s else None
-                # 0481 D0006 §6.4: the same badge slot doubles as the general-merge
+                # the same badge slot doubles as the general-merge
                 # review gate's entry point — None/absent means "still resolving"
                 # (the resolver dialog), any REVIEW_PENDING_STATES value means
                 # "승인 대기" (the review dialog instead).
@@ -424,7 +424,7 @@ def project_git_status(project_id: str) -> dict:
                 row["review_state"] = None
                 row["reconciliation_kind"] = None
                 row["final_approval_bound"] = False
-    # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
+    # P scenario 8: persisted worktree provisioning failures (unregistered
     # rows with a provision_error) so a slot-less group's "not tracked by git" warning
     # survives the one-shot SSE. Disposed groups are excluded. Newest first.
     provision_failures: list[dict] = []
@@ -444,16 +444,16 @@ def project_git_status(project_id: str) -> dict:
     except Exception:
         _log.warning("provision_failures aggregation failed for %s", project_id, exc_info=True)
         provision_failures = []
-    # 0182 NR0003 §5: registered slots already finalized (merged/pushed) are
+    # registered slots already finalized (merged/pushed) are
     # cleanup backlog — surfaced so the panel can offer the [clean up] action.
     cleanable_count = sum(1 for r in rows if r.get("status") in _gs.CLEANUP_STATUSES)
     ahead, behind = _gs._base_ahead_behind(base_root, base_branch)
     base_path_state = _gs._judge_base_slot(base_root, base_branch) if base_root else "occupied"
-    # 0177 L0002 §2.1: base-checkout dirty set (tracked files only) so the header
+    # base-checkout dirty set (tracked files only) so the header
     # panel can offer commit/revert BEFORE a merge bounces off the E3 guard.
     # Never-raise, matching base_checkout_dirty_status: a missing checkout or any
     # git failure reads as clean — the field is advisory display state.
-    # 0296 T0004 (NR0003 R1): the untracked set rides alongside in its OWN field.
+    # the untracked set rides alongside in its OWN field.
     # It must never fold into base_dirty — that would widen the E3 guard to build
     # artifacts, the exact regression 0165.0009 fixed. It exists so the panel can
     # say "N new files are not in any group worktree yet" and offer the commit.
@@ -465,7 +465,7 @@ def project_git_status(project_id: str) -> dict:
     except Exception:
         _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
         base_dirty_files = []
-    # 0481 T0010 #1: whose changes are these? While a merge is stopped on a conflict the
+    # #1: whose changes are these? While a merge is stopped on a conflict the
     # base checkout's dirty set IS the merge, and the panel must offer the resolver instead
     # of the commit / revert / AI-delegation cleanup it offers for stray edits.
     try:
@@ -473,7 +473,7 @@ def project_git_status(project_id: str) -> dict:
     except Exception:
         _log.warning("base merge-in-progress lookup failed for %s", project_id, exc_info=True)
         base_dirty_merge = None
-    # 0481 T0010 rev6 (rejection 2): whether a base-branch AI cleanup run owns this
+    # (rejection 2): whether a base-branch AI cleanup run owns this
     # project RIGHT NOW, straight from the durable admission lease the start route
     # takes. Before this the panel only had its own in-browser latch, so a 409
     # "already running" refusal disabled [AI에게 맡기기] for good in that tab: the

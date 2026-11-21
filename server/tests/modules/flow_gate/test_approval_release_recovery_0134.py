@@ -1,4 +1,4 @@
-"""0134 T#2: real SQLite job/claim/lease/locks; Git bodies are explicit stand-ins.
+"""real SQLite job/claim/lease/locks; Git bodies are explicit stand-ins.
 Real Git, pin deletion and concurrent HTTP requests are covered by the companion 0671 tests.
 """
 import json

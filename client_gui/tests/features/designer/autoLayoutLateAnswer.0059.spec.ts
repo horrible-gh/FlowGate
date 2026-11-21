@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0016-TR rev2) — a auto-layout whose extra read (the whole Flow, or a root document of a
+ * (TR) — a auto-layout whose extra read (the whole Flow, or a root document of a
  * v0.1 Flow) answers late moves nothing when, meanwhile, it was cancelled (the Shell's freeform), the session was
  * disposed, or a read replaced the Graph it was asked for (a retry, a change elsewhere, the re-read of an
  * ignored / failed save, a reset). No card moves, no layout save goes out and no undo entry is made; the next
@@ -171,8 +171,8 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(center.autoLayout(flowId, 'horizontal')).toBe(false)
   })
 
-  // The reviewer's case: R, CH (hidden), D 0003; the read meanwhile shows D 0004 in place of D 0003. The old
-  // whole Flow (with D 0003) laid over the new Graph would put D 0004 after it, at (780, 0) — the server has
+  // The reviewer's case: R, CH (hidden), the earlier implementation; the read meanwhile shows the earlier implementation in place of the earlier implementation. The old
+  // whole Flow (with the earlier implementation) laid over the new Graph would put the earlier implementation after it, at  — the server has
   // it at (520, 0).
   const REREADS = [
     ['retryGraph', async (center: Session, flowId: string) => center.retryGraph(flowId)],
@@ -196,7 +196,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     server.hold.whole = true
     const pending = center.autoLayout(flowId, 'horizontal')
     await flushPromises()
-    // The held read is the Flow as it was asked (R, CH, D 0003); the server has D 0004 since.
+    // The held read is the Flow as it was asked (R, CH, the earlier implementation); the server has the earlier implementation since.
     expect(server.heldCount()).toBe(1)
     server.flows[flowId] = documentsFlow(flowId, { replaced: true })
     const reads = server.collapsedReads()
@@ -216,7 +216,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     // The re-read reset the history; the late answer added nothing to it.
     expect(center.undoEdit(flowId)).toBe(false)
 
-    // The next auto-layout reads the new Flow whole: D 0004 back at (520, 0).
+    // The next auto-layout reads the new Flow whole: the earlier implementation back at.
     expect(scatter()).toBe(true)
     expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
     expect(positions()).toEqual(replaced)
@@ -243,7 +243,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(center.undoEdit(flowId)).toBe(false)
     expect(scatter()).toBe(true)
     expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
-    // flowgate.v02.0068 T#2: the chain R -> slot, then the shown document below it (its slot 0 is the hidden CH's).
+    // the chain R -> slot, then the shown document below it (its slot 0 is the hidden CH's).
     expect(positions()).toEqual({ [`doc:${flowId}.0001-R`]: [0, 0], slot_31: [260, 0], [`doc:${flowId}.0003-D`]: [520, 200] })
   })
 

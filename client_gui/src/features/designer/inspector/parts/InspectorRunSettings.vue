@@ -172,7 +172,7 @@ function placeholderOf(name: InspectorRunSettingsField): string | undefined {
   }
 }
 
-/* flowgate.v02.0052 T#2 — the block is the container (InspectorBlock): one column once it is narrow. */
+/* the block is the container (InspectorBlock): one column once it is narrow. */
 @container (max-width: 480px) {
   .inspector-run-settings-grid,
   .inspector-run-settings-advanced {

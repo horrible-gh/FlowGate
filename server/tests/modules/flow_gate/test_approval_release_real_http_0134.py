@@ -1,4 +1,4 @@
-"""0134 T#2: real bare origin, production SQLite, HTTP and Runner.
+"""real bare origin, production SQLite, HTTP and Runner.
 Only selected Git command failures and a deleted-ref no-op are injected. The concurrency
 case widens the real push window with Events and counts actual commit/merge/push calls.
 """

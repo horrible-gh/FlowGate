@@ -1,4 +1,4 @@
-"""0144 T0013/T0014 CSS layout fixtures in Chromium, without an application server.
+"""CSS layout fixtures in Chromium, without an application server.
 
 These test the actual component styles with representative markup. They do not claim
 to cover Vue mounting, drag events or memo editing (the existing Vitest suites do).
@@ -108,7 +108,7 @@ def test_memo_preview_limit_is_thirty_characters():
 
 @pytest.mark.parametrize('badge_text', [None, 'AI 참조', 'AI refers', 'AI 参照'])
 def test_long_memo_title_is_visible_with_its_ellipsis_at_every_width_and_actions_stay_inside_row(page, badge_text):
-    """TR0014 rev2: not only the DOM text but what is drawn - the title and its ellipsis must have room beside the
+    """not only the DOM text but what is drawn - the title and its ellipsis must have room beside the
     [AI ref] badge in the narrowest (236px list) Inspector, and nothing may overlap the badge or the icons."""
     css = (
         styles(DESIGNER / 'inspector/parts/InspectorSlotRow.vue')

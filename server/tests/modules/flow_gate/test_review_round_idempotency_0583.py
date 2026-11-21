@@ -1,6 +1,6 @@
-"""One durable verdict per AI review round (flowgate.default.0583 T0004).
+"""One durable verdict per AI review round.
 
-The incident this pins: `flowgate.default.0579.0005-TR` collected two AI verdicts for
+The incident this pins: `the earlier change` collected two AI verdicts for
 revision 1, 92 seconds apart, and the live `document_reviews` rows show why. Both carried
 `review_run_id = NULL`, both were submitted with review-scope tokens bound to the SAME run
 `aiv_20260917_000131`, and that run's document review loop stopped as

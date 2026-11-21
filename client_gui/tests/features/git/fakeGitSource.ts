@@ -12,7 +12,7 @@ import type {
   GitReview,
 } from '@/features/git/types'
 
-// flowgate.v02.0033 — in-memory GitSource. Every server state the Git part reacts to, including
+// in-memory GitSource. Every server state the Git part reacts to, including
 // the S1 / S2 stage-2 fields and a push_rejected answer, is replayed through it (0033-D §5.1).
 
 export const P = 'p'
@@ -62,7 +62,7 @@ export function conflicts(count = 5, resolved = 0): GitConflictSession {
     baseBranch: 'v0.2',
     targetBranch: 'main',
     trConflict: false,
-    // flowgate.v02gui.0004: the working file with one marker chunk (resolved files have none).
+    // the working file with one marker chunk (resolved files have none).
     files: Array.from({ length: count }, (_, i) => ({
       path: `src/f${i}.ts`,
       conflictCount: i < resolved ? 0 : 2,

@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import type { SettingsIconName } from './icons'
 
-// flowgate.v02.0076 T#1 (D §1.1/§1.2): the one list every settings menu is drawn from — the hub
+// (D): the one list every settings menu is drawn from — the hub
 // cards, the scope headings of the settings navigation (components/SettingsNav) and the 시스템
 // sub-navigation. A page is offered only when its route is registered in the app router (its view
 // exists) and, for 프로젝트/시스템, only once /auth/me has answered with a system administrator. A page whose view is not built yet

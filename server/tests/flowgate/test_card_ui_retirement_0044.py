@@ -1,4 +1,4 @@
-"""0044: retire new WP structure while retaining stored cards and documents."""
+"""retire new WP structure while retaining stored cards and documents."""
 import pytest
 from tests.flowgate.test_fg_card_documents import (db_path, env, FB, _sql, _h, node, put_draft, canvas, line_rows)
 

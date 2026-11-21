@@ -236,7 +236,7 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0040: opening the Dialog shows no pre-marked current Project and no default
+  // opening the Dialog shows no pre-marked current Project and no default
   // selection, even with a saved current Project -- only a row the person picks gets ✓.
   it('opens with no 현재 Badge, no ✓ and no is-selected row, even when a current Project is saved', async () => {
     localStorage.setItem('fg_current_project_id', 'a')
@@ -368,7 +368,7 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0040: the body no longer repeats the header guidance; the header title /
+  // the body no longer repeats the header guidance; the header title /
   // subtitle, search, list and the admin "+ 새 프로젝트" button stay, and no new text is added.
   it('has no duplicate body guidance, keeping the header guidance, search, list and + 새 프로젝트', async () => {
     currentUser.value = { username: 'admin', email: null, isAdmin: true }
@@ -563,7 +563,7 @@ describe('features/project/ProjectDialog', () => {
     store.openDialog()
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // The reopened session starts with nothing selected (flowgate.v02.0040: no default
+    // The reopened session starts with nothing selected (the earlier change: no default
     // selection), and nothing left over from the stale response that arrived while closed.
     expect(document.querySelectorAll('.project-row')).toHaveLength(2)
     const selected = Array.from(document.querySelectorAll('.project-row')).find((el) => el.querySelector('.project-row-main')?.getAttribute('aria-pressed') === 'true')
@@ -647,7 +647,7 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  // flowgate.v02.0088 F02/F05: the Dialog's words and accessible names follow the language; the created-Project toast
+  // the Dialog's words and accessible names follow the language; the created-Project toast
   // is built in the current language whenever it renders, the Project name only interpolated, and its close button is
   // named with gui.common.close.
   it('shows its words in ja and keeps a created toast in the language of the moment', async () => {

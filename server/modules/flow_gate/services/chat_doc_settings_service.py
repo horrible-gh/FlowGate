@@ -1,4 +1,4 @@
-"""Per-chat settings of one user: the chat's AI and its context checkpoint (flowgate.v02test.0025).
+"""Per-chat settings of one user: the chat's AI and its context checkpoint.
 
 * **The chat's AI.**  Each chat keeps the AI its user picked, so switching chats no longer carries
   one chat's pick into another. The screen sends the pick with every AI call (``provider_id`` of
@@ -11,7 +11,7 @@
   Both context paths (the API model window in ``ai_invoke.worker`` and the CLI/Agent mention in
   ``invoke_mention_service``) get their window from :func:`context_window`, so the two can never
   disagree. Earlier turns stay readable through the backward link. The AI is told only the range it
-  received, never the checkpoint itself (flowgate.v02test.0041).
+  received, never the checkpoint itself.
 
 Like the user-level chat settings, a broken row must never stop a chat: the context readers never
 raise, and a bad value arriving in a PATCH is a 422 naming its field.

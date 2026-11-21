@@ -1,4 +1,4 @@
-"""Durable, explicitly requested recovery of group merge approvals (0153 T#5).
+"""Durable, explicitly requested recovery of group merge approvals.
 
 The session context is the journal. Domain locks serialize writers across instances;
 the outer session claim fences Git and context writes. Receipts are checked before
@@ -371,7 +371,7 @@ def bind_attempt(session, context, attempt_id, fingerprint):
 
 
 def archive_attempt(context, status):
-    # T#2 history keeps the ref/SHA but omits parents. Retain independently proven
+    # history keeps the ref/SHA but omits parents. Retain independently proven
     # parent evidence before a handoff replaces base_head/merge_head for a new round.
     if context.get('preserve_ref') and context.get('preserve_parents'):
         context.setdefault('recovery_preserve_parents', {})[context['preserve_ref']] = list(context['preserve_parents'])
@@ -438,7 +438,7 @@ def recover_commit(session, context, target):
 
 
 def remote_outcome(observed, expected):
-    """T0013 4.4: claim "not published" only from a valid observation equal to a
+    """4.4: claim "not published" only from a valid observation equal to a
     recorded lease. A failed read (timeout/auth/ref_missing -> None) or an unrecorded
     lease is unknown, never "not published"."""
     s = gs()

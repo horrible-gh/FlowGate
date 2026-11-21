@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0026 — Designer Center session (0003-D §3.3.4 / §3.4 / §7.1). A fake Graph
+ * Designer Center session. A fake Graph
  * source hands out one pending promise per read so each test decides when (and in which
  * order) reads finish.
  */

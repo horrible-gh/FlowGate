@@ -1,13 +1,13 @@
-// flowgate.v02.0048 T#3 — skeleton of the check document API (D#1 §6.3). Owned by T#12 (check), which
+// skeleton of the check document API. Owned by the earlier implementation (check), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `check`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   final approval   POST /api/v1/documents/workflow/final-approval  { doc_id }
 //   approve (AC)     POST /api/v1/documents/review_transitions/approve  { doc_id, git_action, git_target_branch? }
 //   Git context      GET  /api/v1/groups/{gid}/git/finalize?context=approval
 //   reopen/restore   POST /api/v1/documents/workflow/reopen · /restore
 //
-// flowgate.v02.0048 T#12 — the check card's calls, all existing v0.1 endpoints (NR0003 §2.8, no new
+// the check card's calls, all existing v0.1 endpoints (the review, no new
 // server API):
 //   AC state         GET  /api/v1/documents/{doc_id} — the review status and `group_disposed`
 //   Git context      GET  /api/v1/groups/{gid}/git/finalize?context=approval -> { ok, state }

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02test.0013 — R↔B switch delay: one Canvas read for the switch's answer and its own Canvas event.
+ * R↔B switch delay: one Canvas read for the switch's answer and its own Canvas event.
  *
  * A switch that changes draft cards is followed by two signals of one commit: the switch's refresh after the answer
  * (Host intent `refresh-flow`) and the `graph_canvas_changed` (`draft`) event. Both used to start a whole Canvas read

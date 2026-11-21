@@ -1,10 +1,10 @@
 """Expand legacy ``ai_invoke_runs.register_errors`` into register_context_failures rows.
 
-flowgate.default.0492 T0018 item 4.
+
 
 Why this is Python and not DML inside migration 094: the source column is a JSON array in a
 TEXT column, and unrolling it in SQL needs ``jsonb_array_elements`` / ``JSON_TABLE`` /
-``json_each`` — three incompatible spellings, one per dialect. B0091 already paid for that
+``json_each`` — three incompatible spellings, one per dialect. the regression already paid for that
 lesson once (the SQLite-only ``037_rejection_id_backfill.sql`` blocked startup outright on
 MariaDB/PostgreSQL), so the transform lives here, beside
 :mod:`~modules.flow_gate.db.backfills.rejection_id_backfill`, and runs identically on every
@@ -12,7 +12,7 @@ backend after the schema migrations.
 
 Two rules the T is explicit about:
 
-* **Nothing is invented.** A pre-T0018 element recorded ``{"status", "reason", "turn"}`` and
+* **Nothing is invented.** A pre-the earlier implementation element recorded ``{"status", "reason", "turn"}`` and
   no axis. Those four fields are preserved and the row is labelled
   ``boundary='legacy_unclassified'`` with NULL axes — writing ``axis='action'`` because the
   incident happened to be an action mismatch would turn a guess into evidence.

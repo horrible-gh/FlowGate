@@ -1,4 +1,4 @@
-"""Post to POST /inbox the way a caller does (flowgate.default.0394 T0004, NR0003 §13-5).
+"""Post to POST /inbox the way a caller does.
 
 `inbox()` used to be a plain `async def` that awaited `_handle_new` / `_handle_review` /
 `_handle_edit` / `_handle_test_run` directly, so tests reached for the inner function and
@@ -37,7 +37,7 @@ def post_inbox(body: dict[str, Any], raw_token: str = "raw", headers: dict[str, 
 
     The token is whatever the test's `token_service.verify` patch expects to see; the
     default matches the "raw" placeholder those tests already used. `headers` (e.g.
-    {"x-locale": "en"}) are merged in alongside Authorization (T0004 locale regression
+    {"x-locale": "en"}) are merged in alongside Authorization (the earlier implementation locale regression
     tests).
     """
     with TestClient(inbox_app()) as client:

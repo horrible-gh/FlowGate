@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0156 T5 (E1): the consumed record is separate from the observation dedupe. Light unit checks only.
+ * (E1): the consumed record is separate from the observation dedupe. Light unit checks only.
  */
 import { describe, expect, it } from 'vitest'
 import { createRunFailurePublisher, resolveSessionStorage } from '@/features/designer/shell/runFailureToast'

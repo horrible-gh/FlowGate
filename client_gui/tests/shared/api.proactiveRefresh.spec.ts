@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// group 0028 / T0004: the access-token lifetime is deliberately short (operator .env, e.g.
+// the access-token lifetime is deliberately short (operator .env, e.g.
 // 1 minute). A purely reactive 401→refresh loop surfaces a 401 in the console on every expiry
 // and can leave the SSE stream pinned to a dead token. The client now rotates the token a few
 // seconds BEFORE it expires so requests never carry an expired token. These tests lock in the
@@ -94,7 +94,7 @@ describe('proactive token refresh (T0004)', () => {
     expect(postMock).not.toHaveBeenCalled()
   })
 
-  // 0616 T0004 rev3 finding 3: a plain window focus (jsdom's document.visibilityState stays
+  // a plain window focus (jsdom's document.visibilityState stays
   // 'visible' throughout, exactly like clicking the address bar on an already-visible tab)
   // must not record a token visibility_recovery entry — only an actual visibilitychange does.
   // Token rotation itself must still happen identically on both.

@@ -21,7 +21,7 @@ from . import request_cache as _request_cache
 
 _JST = timezone(timedelta(hours=9))
 
-# 0279 T0005: how long a SQLite connection waits for a competing writer's lock
+# how long a SQLite connection waits for a competing writer's lock
 # before raising "database is locked". Python's default is 5s; 15s absorbs the
 # document-write bursts an unmanned worker chain produces without masking a
 # genuine deadlock (there is none — every writer is a bounded transaction).
@@ -36,7 +36,7 @@ def now_iso() -> str:
 def to_now_iso_tz(value: str) -> str:
     """Normalize an ISO 8601 timestamp string to now_iso()'s tz/format (JST, seconds).
 
-    0545 T0019 (NR0017 Sec.2): classify()/db_receipts.claim() compare stored ISO
+    (Sec.2): classify/db_receipts.claim compare stored ISO
     strings against now_iso() lexicographically, so both sides must share the same
     offset and precision or the comparison silently drifts by the offset difference.
     A tz-naive value is treated as UTC -- the exact rule token_service.verify() and
@@ -55,7 +55,7 @@ def iso_days_ago(days: int) -> str:
 
     Used to compute date cutoffs in Python and bind them as parameters, instead
     of relying on the SQLite-only datetime('now', '-N days') / strftime() — which
-    are not portable to MariaDB/PostgreSQL (group 0088). The created_at/expires_at
+    are not portable to MariaDB/PostgreSQL (the earlier change). The created_at/expires_at
     columns store now_iso() strings, so a same-format JST string compares correctly
     everywhere.
     """
@@ -152,7 +152,7 @@ class FlowGateStore:
     @contextmanager
     def _transaction_frame(self) -> Iterator["FlowGateStore"]:
         with self._db.begin_transaction() as txn:
-            # L0007 §9: the live sqlite backend opens a fresh connection per call and
+            # the live sqlite backend opens a fresh connection per call and
             # does NOT default foreign_keys ON, so ON DELETE CASCADE (questions/answers
             # → documents, DB0006 §3.3) would not fire. The transaction connection is
             # the operational write locus, so guarantee the pragma here. SQLite-only:
@@ -163,7 +163,7 @@ class FlowGateStore:
                     txn.execute("PRAGMA foreign_keys = ON")
                 except Exception:
                     pass
-                # 0279 T0005 (NR0003 §4, 'SQLite lock contention'): busy_timeout is a
+                # ('SQLite lock contention'): busy_timeout is a
                 # per-connection setting and the sqlite backend opens a fresh
                 # connection per call, so it reverted to Python's 5s default on
                 # every transaction, with no retry anywhere in the codebase. A
@@ -174,7 +174,7 @@ class FlowGateStore:
                 # NOTE this is a partial fix. The production connection factory
                 # lives in the third-party sqloader package (config.get_db_instance),
                 # not in this tree, so read-only connections opened outside a
-                # transaction still get the 5s default. See the T0005 report.
+                # transaction still get the 5s default. See the the earlier implementation report.
                 try:
                     txn.execute(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}")
                 except Exception:
@@ -191,7 +191,7 @@ class FlowGateStore:
 
     def _execute(self, sql: str, params=None) -> None:
         sql = self._tr(sql)
-        # 0291 P3-1: something changed in this request — discard the whole request-scope cache.
+        # something changed in this request — discard the whole request-scope cache.
         # Which SELECT this statement affects cannot be known from the SQL string alone, so
         # there is no per-table tracking (request_cache rule 2). Invalidation goes **before**
         # execution because the cache must already be empty even if this raises: the worst
@@ -285,7 +285,7 @@ class FlowGateStore:
     def table_exists(self, name: str) -> bool:
         """Dialect-portable check for whether a table exists.
 
-        Replaces direct sqlite_master probes (group 0088). Uses information_schema
+        Replaces direct sqlite_master probes (the earlier change). Uses information_schema
         on MySQL/PostgreSQL, sqlite_master on SQLite.
         """
         if self.dialect == _dialect.SQLITE:
@@ -302,7 +302,7 @@ class FlowGateStore:
         return row is not None
 
     def column_exists(self, table: str, column: str) -> bool:
-        """Dialect-portable check for one column, like :meth:`table_exists` (flowgate.v02.0113 T#1, DB-1 §3.4).
+        """Dialect-portable check for one column, like:meth:`table_exists`.
 
         A write that binds a column a later migration added to an existing table checks it first: before that
         migration the INSERT would fail and, where the caller swallows the error, the whole row would be lost
@@ -318,7 +318,7 @@ class FlowGateStore:
         return row is not None
 
     def insert_isolated(self, sql: str, params, savepoint: str) -> bool:
-        """One INSERT that may hit a unique key, isolated by a savepoint (flowgate.v02.0113 T#1, DB-1 §4.3 CI).
+        """One INSERT that may hit a unique key, isolated by a savepoint (DB-1 CI).
 
         True = inserted (CI-1 ``SAVEPOINT`` → CI-2 INSERT → CI-3 ``RELEASE``). False = a unique violation
         (CI-4): only this INSERT is undone (``ROLLBACK TO`` + ``RELEASE``), every earlier write of the same
@@ -381,7 +381,7 @@ class FlowGateStore:
         """
         if not updates:
             return False
-        _request_cache.invalidate()  # 0291 P3-1: this is a write — same rule as _execute
+        _request_cache.invalidate()  # this is a write — same rule as _execute
         set_parts = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [expected_val, row_id]
         sql = self._tr(
@@ -425,7 +425,7 @@ def _error_chain(exc: BaseException):
 
 
 def is_unique_violation(exc: BaseException) -> bool:
-    """A duplicate key on any dialect (flowgate.v02.0113 T#1, DB-1 §4.3 CI-4).
+    """A duplicate key on any dialect.
 
     SQLite ``IntegrityError`` naming UNIQUE (a PRIMARY KEY clash reads "UNIQUE constraint failed" too),
     PostgreSQL SQLSTATE 23505, MySQL/MariaDB error 1062, also when a wrapper re-raised the driver error. The
@@ -531,7 +531,7 @@ def track_new_file(abs_path, still_ours=None, under=None) -> bool:
     """Remove a newly created file on rollback; never use for an overwritten existing file.
 
     The callback runs after this transaction's locks are gone, so another writer may already have moved the
-    file aside and created its own at the same path (0064 T#3). ``still_ours(path)`` keeps the removal to the
+    file aside and created its own at the same path. ``still_ours(path)`` keeps the removal to the
     file this transaction created; ``under(fn)`` runs check and removal under the durable lock that writer has
     to take. Without them the path is removed unchecked (the earlier behaviour).
     """

@@ -311,7 +311,7 @@ h3 { display: flex; gap: 14px; align-items: center; margin: 4px 0 0; font-size: 
 .legend i[data-state='running'] { background: var(--fg2-status-info-bg); border-color: var(--fg2-status-info-border); } .legend i[data-state='queued'] { border-style: dashed; }
 .gate { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
 .gate.stop { color: var(--fg2-status-danger-fg); } .gate.go { color: var(--fg2-status-success-fg); }
-/* flowgate.v02.0094: a stopping case id in the line's own type like every case id here (no monospace of its own), the danger colour kept. */
+/* a stopping case id in the line's own type like every case id here (no monospace of its own), the danger colour kept. */
 .gate-id { padding: 1px 6px; border: 1px solid var(--fg2-status-danger-border); border-radius: var(--fg2-control-radius-sm); background: var(--fg2-status-danger-bg); color: var(--fg2-status-danger-fg); font-family: inherit; font-size: inherit; font-weight: 400; cursor: pointer; }
 .note { margin: 0; color: var(--fg2-muted); font-size: 12px; }
 .split { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 10px; align-items: start; }
@@ -320,7 +320,7 @@ h3 { display: flex; gap: 14px; align-items: center; margin: 4px 0 0; font-size: 
 .row.on { background: var(--fg2-status-info-bg); box-shadow: inset 3px 0 0 var(--fg2-status-info-fg); } .row.pend .title { font-weight: 700; }
 .row:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: -2px; }
 .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-/* flowgate.v02.0094: a case id is written in the list's own type, muted; only code (the automation ref) is monospace. */
+/* a case id is written in the list's own type, muted; only code (the automation ref) is monospace. */
 .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; } .id { color: var(--fg2-muted); font-size: 12px; white-space: nowrap; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg2-yellow); }
 .label { font-size: 11px; font-weight: 700; color: var(--fg2-muted); } .label[data-cause='impl'], .label[data-cause='manualF'] { color: var(--fg2-status-danger-fg); }

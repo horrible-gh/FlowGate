@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#3 — the single document read of features/document (D#1 §6.3) and the common
+ * the single document read of features/document and the common
  * error reading (D#1 §6.2): the v0.1 `GET /api/v1/documents/{doc_id}` response (snake_case, row +
  * workflow / review extras) -> DocumentRecord, the request path, errors passed through as thrown,
  * and status / code / kind of a failed call (never the server message).

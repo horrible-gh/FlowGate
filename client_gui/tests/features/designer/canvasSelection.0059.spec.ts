@@ -5,7 +5,7 @@
  * session; 전체 선택 takes every card; a dropped group is clamped to the Canvas origin as a whole and
  * saved through the usual moveNode → layout save path. Real Vue Flow under jsdom (no d3 gestures):
  * its store APIs and pane pointer events stand in for the mouse.
- * Rework (TR0014 r2): a selected Edge and a Node Selection of any size exclude each other, and the
+ * Rework (r2): a selected Edge and a Node Selection of any size exclude each other, and the
  * Selection keeps only the cards a structure edit, its undo / redo or a `tmp_` key rename leaves.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'

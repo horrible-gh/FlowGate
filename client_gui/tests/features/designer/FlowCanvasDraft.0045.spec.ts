@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0013 (S3+S4) — Designer Center screen editing a Graph draft with the real Vue
+ * (S3+S4) — Designer Center screen editing a Graph draft with the real Vue
  * Flow: the draft bar (label, validate / confirm, issues), a Palette drop that becomes a draft
  * node, a connection between draft nodes (Vue Flow's connect event, as its handle drag would
  * emit it), Delete on the selected draft node, Ctrl+Z, and a v0.1 Flow that offers no editing.
@@ -7,7 +7,7 @@
  * confirmation); 검증 is the Toolbar's (the session's validateDraft), and 실행 confirms the draft first.
  * TR0020 rev3: no 편집 / Finish editing — a Graph Flow's run view is edited right on the Canvas and a
  * stored draft is shown without asking.
- * TR0020 rev4 (rejection item 1): nothing is laid over the Canvas at all — no saving note, no
+ * (rejection item 1): nothing is laid over the Canvas at all — no saving note, no
  * refused-save note, no 검증 result box; a problem only marks its card and names itself on hover.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -146,7 +146,7 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
 
   it('shows no draft name or draft buttons on the Canvas and marks draft nodes connectable', async () => {
     const w = await mountWith(draftGraph())
-    // TR0020 rev4: nothing is laid over the Canvas — the canvas area holds the Canvas and nothing else.
+    // nothing is laid over the Canvas — the canvas area holds the Canvas and nothing else.
     expect(w.find('[data-test="designer-draft-toolbar"]').exists()).toBe(false)
     expect([...w.get('.designer-center-canvas-area').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
     for (const gone of ['label', 'undo', 'validate', 'confirm', 'start', 'show-draft', 'show-revision']) {
@@ -316,7 +316,7 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     expect(confirms).toEqual([])
   })
 
-  // TR0020 rev3: the run view of a Graph Flow as the server sends it (Graph nodes not editable).
+  // the run view of a Graph Flow as the server sends it (Graph nodes not editable).
   const runView = (): FlowGraph => ({
     ...draftGraph(),
     ownership: 'graph',

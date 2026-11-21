@@ -1,4 +1,4 @@
-"""0052 card B: real target-side re-export move, HTTP resolve and merge approval."""
+"""card B: real target-side re-export move, HTTP resolve and merge approval."""
 import itertools
 import os
 import json

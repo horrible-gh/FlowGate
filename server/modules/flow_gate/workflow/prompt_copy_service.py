@@ -56,7 +56,7 @@ def _get_v_report_path(doc_id: str) -> str | None:
     registered_path = result.get("registered_path")
     if not registered_path:
         return None
-    # registered_path is persisted relative (L0054.0002); this function contracts
+    # registered_path is persisted relative; this function contracts
     # to return an absolute path that the worker can open, so resolve it.
     resolved = resolve_storage_path(registered_path, seq.get("project_id") or seq.get("project"))
     return str(resolved) if resolved is not None else registered_path
@@ -192,7 +192,7 @@ def build_prompt(
         lines.append(f"Apply the review comments from {v_report_path}.")
         lines.append(f"Reference V report: {v_report_path}")
 
-    # group 0022 §6 (R0001-7 / NR0003 risk 4): inject the document's query/answer data so
+    # (7 / the review risk 4): inject the document's query/answer data so
     # the user's decisions always ride along in the next AI context. Appended just before
     # finalize. Data provider = q_service.qa_bundle_by_doc (DB0006 §5.1).
     _append_qa_block(lines, doc_id)
@@ -235,7 +235,7 @@ def build_prompt(
 
 
 def _append_qa_block(lines: list[str], doc_id: str, *, include_context: bool = False) -> None:
-    """Append the User Q&A block (D0005 §3.5) for the document, if any.
+    """Append the User Q&A block for the document, if any.
 
     Answered items retain stored answers; missing answers are explicitly unanswered.
     Context mode includes relation/sequence ancestors and labels each source and item id.
@@ -246,7 +246,7 @@ def _append_qa_block(lines: list[str], doc_id: str, *, include_context: bool = F
     worker answering via the ai-request path can echo an id straight back in
     selected_option_ids. An answered one needs no such line — the pick is already in the
     answer body as its label. The machine-readable answer_selected_options stays out of the
-    ment entirely: the ment is a human-readable surface (L0008 §2.5).
+    ment entirely: the ment is a human-readable surface.
     """
     try:
         from modules.flow_gate.services import q_service

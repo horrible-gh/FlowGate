@@ -1,9 +1,9 @@
 """Conversation (CH) turn serialization and parsing.
 
 Single source of truth for the chat turn wire format shared by the serializer
-(accumulation side) and the parser (render side), per L0044.0008 §6. The body of
+(accumulation side) and the parser (render side), per the earlier implementation.0008. The body of
 a CH document IS the chat log: turns are appended in time order with the newest at
-the bottom (D0044.0006 §6 / NR0044.0003 §3), so a viewer renders the body top→down.
+the bottom, so a viewer renders the body top→down.
 
 Turn format (§6):
 
@@ -16,7 +16,7 @@ Turns are separated by exactly one blank line. Speaker tokens are fixed constant
 otherwise look like a turn header is escaped with a leading backslash so the parser
 does not mistake it for a boundary; the escape round-trips exactly.
 
-Byte-cap carry-over (former §7) is retired (group 0351 T5, D0002 §3-6): turns now
+Byte-cap carry-over (former) is retired: turns now
 accumulate in the shared append-only store (conversation_turn_service) instead of a
 wholesale-rewritten file body, so a conversation never approaches the old inbox
 content cap and no successor document is ever opened for it. serialize_conversation/
@@ -29,7 +29,7 @@ import re
 from typing import Optional, TypedDict
 
 # ── Speaker tokens (shared by serializer and parser) ───────────────────────────
-# 0306 NR0003 finding 1: the user label is LOCALIZED. The stored turn header is the CH
+# the user label is LOCALIZED. The stored turn header is the CH
 # document's own text — visible in the raw CH, on copy, and to external tooling — so a
 # ko/en/ja session records its user turn in that language instead of a hardcoded Korean
 # token. "lenient in, strict out" still holds: every locale variant PARSES back to the
@@ -53,20 +53,20 @@ _AI_NAMES = frozenset({"AI"})
 _SPEAKER_TOKENS: dict[str, str] = {"user": USER_SPEAKER, "ai": AI_SPEAKER}
 _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 
-# Speaker label alternation accepted on PARSE (R0127.0001): the leading emoji is
+# Speaker label alternation accepted on PARSE: the leading emoji is
 # OPTIONAL so a turn typed by hand or by an external tool — "## AI · …",
 # the legacy Korean speaker header — is still recognized as a chat turn. Serialization always emits
 # the canonical emoji form (USER_SPEAKER/AI_SPEAKER), so stored data stays uniform;
 # only recognition is relaxed (robustness principle: lenient in, strict out).
 #
-# 0293 R0001 / NR0004 finding 1: the AI label may carry a provider in parentheses —
+# the AI label may carry a provider in parentheses —
 # "## 🤖 AI(claude-opus-4-8) · …". The turn header is the only metadata slot the wire
 # format has, so the provider rides there. The suffix is OPTIONAL, so every turn
 # written before this change keeps parsing unchanged. speaker_key() strips it, which
 # is what keeps the parser/renderer downstream of it untouched — see the warning in
 # that docstring.
 #
-# 0306 NR0003 finding 1: the user label may now be Korean, English, or Japanese (emoji
+# the user label may now be Korean, English, or Japanese (emoji
 # still optional). All three normalize to "user" (speaker_key). Because _HEADERLIKE_RE
 # and the FE parser reuse this same alternation, every locale's header — and every
 # header-LIKE body line in any locale — is recognized and escaped in lockstep.
@@ -117,7 +117,7 @@ def speaker_key(label: str) -> str:
     AI turns before and after a run (ConversationView.pollRun). A label that leaks the
     parentheses through still RENDERS as an AI bubble (the renderer only tests for
     "user"), so the failure is silent: every successful chat invoke would report
-    "no reply" (0293 NR0004 finding 2)."""
+    "no reply"."""
     bare, _ = _strip_speaker_decorations(label)
     if bare in _USER_NAME_TO_LOCALE:
         return "user"
@@ -128,7 +128,7 @@ def speaker_key(label: str) -> str:
 
 def user_locale_of(label: str) -> Optional[str]:
     """The UI locale a user turn header was written in ("ko"/"en"/"ja"), or None when the
-    label is not a user turn (0306 NR0003 finding 1). Lets a turn be re-serialized in its
+    label is not a user turn. Lets a turn be re-serialized in its
     original language instead of collapsing every user turn to Korean."""
     bare, _ = _strip_speaker_decorations(label)
     return _USER_NAME_TO_LOCALE.get(bare)
@@ -152,11 +152,11 @@ class _TurnBase(TypedDict):
 
 
 class Turn(_TurnBase, total=False):
-    # 0293: provider recorded in the header's parentheses; absent/None = not recorded.
+    # provider recorded in the header's parentheses; absent/None = not recorded.
     # Optional so existing Turn(speaker=…, ts=…, body=…) construction stays valid, and
     # so re-serializing a turn never loses its provider.
     provider: Optional[str]
-    # 0306: the UI locale a user turn header was written in ("ko"/"en"/"ja"), so
+    # the UI locale a user turn header was written in ("ko"/"en"/"ja"), so
     # re-serialization keeps it in the same language. Absent on AI turns and on turns
     # constructed without one (which then serialize to the ko fallback).
     locale: Optional[str]

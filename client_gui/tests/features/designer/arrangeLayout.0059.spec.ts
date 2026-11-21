@@ -1,11 +1,11 @@
 /**
- * flowgate.v02.0059 T#2 (0011-CH contract D) — alignment / distribution and auto-layout, pure:
+ * (CH contract D) — alignment / distribution and auto-layout, pure:
  * - the client port of server/modules/flow_gate/graph_workflow/domain/auto_layout.py: the same input gives the
  *   same coordinates. SERVER_CASES were made by running the server's own `layout()` / `layered_depths()` on
  *   these inputs (Python, the server file unchanged) and are compared value for value.
  * - the input a shown Graph gives (projection, Graph nodes, free documents, the sequence chain, cards that
  *   cannot move kept as saved) and the resulting card positions; the spacing scale (1 = the server's).
- *   flowgate.v02.0059 0017-T: the density is not this scale any more (it is the drag step, moveDensity.0059).
+ *   the density is not this scale any more (it is the drag step, moveDensity.0059).
  * - (0016-TR rework) the sequence chain by the server's roles — the root node and the slot nodes, a lone root or
  *   a lone slot included, the root found through its document's supersede chain when only that tells — and the
  *   documents the Canvas read left out (collapse) keeping their place (FlowLayoutBasis).

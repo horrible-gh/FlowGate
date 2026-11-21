@@ -8,10 +8,10 @@ import { registerAppMessages } from '@/app/i18n'
 
 registerAppMessages(i18n)
 
-// flowgate.v02.0025 (0003-D §3.1/§7.1): the existing Designer entry points — Sidebar menu,
+// the existing Designer entry points — Sidebar menu,
 // Dashboard card, direct URL / refresh — now open the Designer Shell through the real
 // App.vue + real /app router, while the other placeholder screens stay "준비 중".
-// T0006 §1: the Designer is a full-screen workspace — App.vue renders no Topbar / Sidebar
+// the Designer is a full-screen workspace — App.vue renders no Topbar / Sidebar
 // on any /designer path, and every other screen keeps both.
 async function mountAt(url: string): Promise<{ wrapper: VueWrapper; router: Router }> {
   window.history.replaceState({}, '', `/app${url}`)
@@ -31,7 +31,7 @@ const hasSidebar = (wrapper: VueWrapper) => wrapper.find('aside.gui-sidebar').ex
 function expectShell(wrapper: VueWrapper) {
   expect(wrapper.find('.gui-route-content [data-test="designer-shell"]').exists()).toBe(true)
   expect(wrapper.find('.gui-coming-soon').exists()).toBe(false)
-  // Full-screen workspace: no App chrome around the Shell (T0006 §1).
+  // Full-screen workspace: no App chrome around the Shell.
   expect(hasTopbar(wrapper)).toBe(false)
   expect(hasSidebar(wrapper)).toBe(false)
   expect(wrapper.get('.gui-app-shell').classes()).toContain('is-fullscreen')

@@ -1,5 +1,5 @@
-// flowgate.v02.0053 T#3 — what the document window decides without a screen or a server call: the
-// title line's state dot, which body view a document gets (T#4: the special views), the frontmatter
+// what the document window decides without a screen or a server call: the
+// title line's state dot, which body view a document gets (the special views), the frontmatter
 // kept aside while the body is edited, and the short reason a failed read or save shows.
 import type { DocumentErrorKind, DocumentRecord } from '@/features/document'
 
@@ -32,7 +32,7 @@ export function documentDot(record: Pick<DocumentRecord, 'status' | 'docReviewSt
 }
 
 /**
- * The view the window body gives a document (T#4, the v0.1 DocumentBodyRouter's branches for the documents
+ * The view the window body gives a document (the earlier implementation, the v0.1 DocumentBodyRouter's branches for the documents
  * that have a view of their own): a work plan its plan table, a test scenario / test report its test view,
  * every other document the MD Viewer.
  */
@@ -79,7 +79,7 @@ export function documentReadErrorKey(kind: DocumentErrorKind): string {
 }
 
 /**
- * flowgate.v02.0070 T#3 (B3) — what the MD Viewer reports up to the window: the state of its body and whether
+ * (B3) — what the MD Viewer reports up to the window: the state of its body and whether
  * the body diagnosis offers [복구] for it. `loading` is the first read only (a reload keeps the shown state).
  */
 export interface DocumentBodyStatus {

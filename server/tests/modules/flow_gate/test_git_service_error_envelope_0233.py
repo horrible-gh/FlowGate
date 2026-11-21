@@ -1,4 +1,4 @@
-"""flowgate.default.0233 B0001 — unresolved git-conflict mention-copy/AI-invoke 500.
+"""unresolved git-conflict mention-copy/AI-invoke 500.
 
 The conflict [멘트복사]([token/issue]) and [AI호출]([ai-invoke/start]) buttons build
 their mention through git_service.list_conflicts. When the pending card's merge_id
@@ -8,7 +8,7 @@ GitServiceError(404). GitServiceError is a plain domain Exception, so — unlike
 git_routes handlers, which each wrap it in `_guard` — these two endpoints let it leak
 out as a bodyless HTTP 500 (empty toast, no guidance).
 
-NR0003 fix: a single global GitServiceError handler in routers.main converts it to the
+fix: a single global GitServiceError handler in routers.main converts it to the
 same {"ok": false, "error": {code, message}} envelope for every route. These tests pin
 that behavior at the route boundary:
   (a) non-open session ⇒ the git envelope with the real 4xx status, NEVER 500;
@@ -131,7 +131,7 @@ def _ai_client(monkeypatch, *, list_conflicts, captured_mentions: list[str] | No
     )
     monkeypatch.setattr(ai_invoke_routes.db_projects, "get_by_id", lambda pid: {"project_id": pid})
     monkeypatch.setattr(token_routes.git_service, "list_conflicts", list_conflicts)
-    # 0481 D0006 §3.2 / L0007 §2.2: record_auto_authority is a new DB touch-point this
+    # record_auto_authority is a new DB touch-point this
     # minimal, DB-free app does not provision — stubbed like every other edge here.
     monkeypatch.setattr(ai_invoke_routes.git_service, "record_auto_authority", lambda *a, **k: None)
 

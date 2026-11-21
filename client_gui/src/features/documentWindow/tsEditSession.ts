@@ -1,4 +1,4 @@
-// flowgate.v02.0127 T#5 (0009-L §2.15.3 / §3.1) — the TS card's v2 revisions: raw text, cases and the brief.
+// the TS card's v2 revisions: raw text, cases and the brief.
 // Every draft (the raw text, a case, the brief) pins its own base snapshot `{docId, revisionNo, ctx}` when its edit
 // starts; a save sends that base with a frozen request and never refreshes the revision just before sending. The
 // answer is judged by the shared session model (cardEditSession): only this request's confirmed SAVED / REPLAY
@@ -142,7 +142,7 @@ export async function reviseTs(owner: string, base: TsBase | null, payload: TsPa
   if (!documentIoTsBegin(docId, owner)) return { ok: false, kind: 'busy', failure: null, error: null }
   let session: EditSession
   let pending: PendingRequest
-  // flowgate.v02.0157: the shared session also edits standalone documents; a TS request is always a card's (its
+  // the shared session also edits standalone documents; a TS request is always a card's (its
   // coordinates come from the card's snapshot), so the card coordinates are carried as such.
   let ctx: CardDocumentContext
   const resent = !!holding

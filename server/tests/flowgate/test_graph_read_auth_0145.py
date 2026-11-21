@@ -1,4 +1,4 @@
-"""0145 T#3 boundary matrix: synthetic auth rows, real FastAPI routing and projections."""
+"""boundary matrix: synthetic auth rows, real FastAPI routing and projections."""
 import copy
 import json
 import threading

@@ -1,4 +1,4 @@
-"""TR-1 HTTP contract tests for /help/tools (group 0349)."""
+"""TR-1 HTTP contract tests for /help/tools (the earlier change)."""
 import json
 
 import pytest
@@ -47,7 +47,7 @@ def test_list_requires_bearer_and_reuses_error_envelope(monkeypatch):
 @pytest.mark.parametrize(
     "token_rec, expected_kind, expected_names",
     [
-        # 0482 T0011 x 0492 D0004 D-2: resolve_base_dirty is SCOPE-bound, not kind-wide.
+        # x the design D-2: resolve_base_dirty is SCOPE-bound, not kind-wide.
         # An edit/TR/TSR/TS token gets 403 from _exec_resolve_base_dirty, so the catalog
         # must not offer it the tenth tool; only its own scope sees it.
         ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "move", "remove"]),
@@ -133,7 +133,7 @@ def test_help_top_level_lists_tools_routes_after_help_question():
     paths = [endpoint["path"] for endpoint in body["endpoints"]]
     question = paths.index("/help/question")
     assert paths[question + 1:question + 3] == ["/help/tools", "/help/tools/{name}"]
-    # 0372 lists the /help/items routes right after them; /events/stream still closes.
+    # lists the /help/items routes right after them; /events/stream still closes.
     assert paths[question + 3:question + 5] == [
         "/help/items/{name}",
         "/help/items/{name}/{child}",

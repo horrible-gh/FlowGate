@@ -1,4 +1,4 @@
-/** D0104 §7.2: change dialog only. Real menu connector, dialog, Pinia store and API adapter. */
+/** change dialog only. Real menu connector, dialog, Pinia store and API adapter. */
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, reactive, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'

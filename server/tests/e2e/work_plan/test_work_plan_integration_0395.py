@@ -1,4 +1,4 @@
-"""End-to-end work-plan acceptance flow for flowgate.default.0395 T0017."""
+"""End-to-end work-plan acceptance flow for the earlier change the earlier implementation."""
 from __future__ import annotations
 
 import json
@@ -60,8 +60,8 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         assert read_response.status_code == 200, read_response.text
         read = read_response.json()
         body = read["body"]
-        # NR0005 §6.4 rehearsal: two D sheets, four T/TR sets and one TS/TSR set.
-        # flowgate.default.0423 T0005 item 15: the create request above omitted
+        # rehearsal: two D sheets, four T/TR sets and one TS/TSR set.
+        # the create request above omitted
         # quantities, so every count (including TS) now starts at 0 -- state all three
         # explicitly instead of relying on the old all-1 default for TS.
         body["quantities"]["D"]["count"] = 2
@@ -69,7 +69,7 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         body["quantities"]["TS"]["count"] = 1
         body["steps"] = wp.expand_steps(body["counted_types"], body["quantities"])
         for plan_step in body["steps"]:
-            # 0649 T#1 (NR0003 §5.1): every card here is new (the counts were 0), and a new
+            # every card here is new (the counts were 0), and a new
             # card is sent without card_id — the server assigns one (else card_id_unknown).
             plan_step.pop("card_id", None)
         for plan_step in body["steps"]:
@@ -290,7 +290,7 @@ def test_unavailable_snapshot_provider_is_readable_and_warned(seed, storage_root
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["T"],
             "provider_candidates": ["aip_opus"],
-            # flowgate.default.0423 T0005 item 15: this test needs a real T step to
+            # this test needs a real T step to
             # assign a provider to below; an omitted quantity now defaults to 0.
             "quantities": {"T": 1},
         }).json()

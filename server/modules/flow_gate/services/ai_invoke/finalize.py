@@ -1,4 +1,4 @@
-"""Run finalization (0501 NR0003 §12/§17 `finalize.py`).
+"""Run finalization (`finalize.py`).
 
 The last boundary of a run lifecycle, in one place: settle-and-judge, the timeout
 diagnostics that separate "made no progress" from "hit the absolute ceiling", the stop
@@ -72,7 +72,7 @@ from .runtime import (
 def _settle_and_judge(run: dict) -> None:
     """Judge, then finalize — the pre-0359 shape, kept for every caller that wants both.
 
-    0359 L0007 §2.1 split these two apart so the no-output retry has somewhere to stand:
+    split these two apart so the no-output retry has somewhere to stand:
     _worker now calls _judge_hop once per ATTEMPT and _finalize_run once per HOP.
     """
     _svc()._judge_hop(run)
@@ -80,7 +80,7 @@ def _settle_and_judge(run: dict) -> None:
 
 
 def _judge_hop(run: dict) -> None:
-    """Decide what this attempt produced (L0007 §2.2). Exactly once per attempt — never twice
+    """Decide what this attempt produced. Exactly once per attempt — never twice
     for one attempt, and never by merging two attempts' verdicts. docs_reached is always
     measured from the hop's baseline_seq, so a later attempt's document is simply the answer.
 
@@ -99,8 +99,8 @@ def _judge_hop(run: dict) -> None:
     if oracle is not None:
         # The run's product is not a document (a Q&A answer row, an in-place revision, a
         # review row), so the document-reach oracle would judge every such run 'none'. Ask
-        # the scoped judge instead — the scope default from `_SCOPE_PROBES` (0259 B0001) or
-        # the caller's `completion_oracle` override (0248 B0001).
+        # the scoped judge instead — the scope default from `_SCOPE_PROBES` or
+        # the caller's `completion_oracle` override.
         try:
             satisfied = bool(oracle())
         except Exception:
@@ -132,7 +132,7 @@ def _judge_hop(run: dict) -> None:
             sequence = db_wfseq.get_sequence_by_doc_id(run["doc_ref"])
             workflow_decided = sequence is not None
             if workflow_decided and run.get("target_to_end"):
-                # 0226 NR0003 §5-1: to-end scope = every worker item of the decided
+                # to-end scope = every worker item of the decided
                 # sequence (item_seq space), not a group doc seq subtraction.
                 resolved = admission._continuation_docs_target(
                     run["doc_ref"],
@@ -148,12 +148,12 @@ def _judge_hop(run: dict) -> None:
         except Exception:
             logger.warning("ai-invoke workflow oracle failed for %s", run["run_id"], exc_info=True)
 
-    # 0226 NR0003 §5-2: no min() clamp — an overrun (more docs than the target) stays
+    # no min clamp — an overrun (more docs than the target) stays
     # visible in docs_reached/docs_target instead of being normalized away at the end.
     docs_reached = len(new_docs)
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
-    # 0317 TR0011 (Q153 opt-1): under per-hop re-spawn each continuous hop delivers ONE
+    # (Q153 opt-1): under per-hop re-spawn each continuous hop delivers ONE
     # document and then hands the chain off (the self-chain withheld next_token and queued
     # the next hop). Judge such a hop against 1, not the whole remaining chain target, so an
     # intermediate hop settles "complete" (scratch cleaned) instead of a misleading "partial".
@@ -185,7 +185,7 @@ def _conflict_resolved(run: dict) -> bool:
     merge_id = run.get("merge_id")
     if merge_id is None:
         return False
-    # 0630 T0005: a branch merge's run carries only the synthetic project-scoped key, so
+    # a branch merge's run carries only the synthetic project-scoped key, so
     # its session is addressed by project instead of by group.
     owner_group, owner_project = git_service.merge_session_owner_args(merge_id, run["group_id"])
     try:
@@ -203,8 +203,8 @@ def _conflict_resolved(run: dict) -> bool:
     return sum(int(f.get("conflict_count") or 0) for f in files) == 0
 
 
-# ── 0446 T0016 §2/§3-1: the durable reading of a watchdog stop ───────────────
-# T0014's verdict lives in `run["watchdog_kill"]`, and every number in it is an offset
+# ── the earlier implementation: the durable reading of a watchdog stop ───────────────
+# 's verdict lives in `run["watchdog_kill"]`, and every number in it is an offset
 # from a monotonic clock that means nothing once this process is gone. These helpers
 # turn it into the pair that goes on the row: a fixed vocabulary the next step can
 # branch on, and one sentence a person can read.
@@ -234,7 +234,7 @@ def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str
     that contains it.
 
     A run with no watchdog mark — a plain `communicate()` expiry, an API-mode run, any row
-    written before T0014 — returns `(None, None)`. That NULL is the third state (§2-1):
+    written before the earlier implementation — returns `(None, None)`. That NULL is the third state:
     not "unknown kind of stall", but "nothing watched this one".
     """
     kill = run.get("watchdog_kill")
@@ -324,7 +324,7 @@ def _finalize_run(run: dict) -> None:
         ("messages", lambda: _finalize_messages(run)),
         ("stop", lambda: _finalize_stop(run, respawn_pending)),
         ("source", lambda: _finalize_source(run)),
-        # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.2): chat runs close their open command
+        # chat runs close their open command
         # requests, then record the run change. Chat-only. With no port handler registered
         # the 0670 in-module path (_finalize_chat_run) does the same.
         ("chat_run", lambda: (
@@ -344,9 +344,9 @@ def _finalize_run(run: dict) -> None:
     # DB-1 S-1~S-3: final prefix save BEFORE any Graph/Q&A successor can be admitted.
     from flowgate.ai_roles import invocations as role_invocations
     role_invocations.finalize(run)
-    # flowgate.v02.0061 T#2: the run-end port's mark, before the release (see ``run_ended`` below).
+    # the run-end port's mark, before the release (see ``run_ended`` below).
     from modules.flow_gate.services import graph_execution_hooks
-    # flowgate.v02.0061 T#7: a Graph execution's report reaches the Graph only while that execution is running with the
+    # a Graph execution's report reaches the Graph only while that execution is running with the
     # current lease token and its run / attempt may take it (not stopping, not invalidated); otherwise neither run-end
     # hook follows it (recorded by the Graph). Read before the release below ends the execution.
     if run.get("graph_exec_id") and not run.get("graph_lease_lost"):
@@ -360,7 +360,7 @@ def _finalize_run(run: dict) -> None:
             run["graph_report_refused"] = True
     if not run.get("graph_lease_lost"):
         ai_run_end_hooks.run_ending(run)
-    # flowgate.v02.0061 T#7: an owned end of a Graph execution is handed on to its run-end stage below (``run_ended``);
+    # an owned end of a Graph execution is handed on to its run-end stage below (``run_ended``);
     # until that stage is over the Graph keeps the run working (``graph_run_end_pending``, ``handoff_end``), so the run
     # never goes idle between the execution's ledger end and the stage that follows it.
     graph_exec = bool(run.get("graph_exec_id"))
@@ -372,30 +372,30 @@ def _finalize_run(run: dict) -> None:
     if run.get("_record_persisted") and terminal.check_owner(run):
         terminal.attempt(run, "prepare_scratch", lambda: _finalize_scratch(run))
         _svc()._persist_run_record(run)
-    # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
+    # an AI responder POSTs while it still owns this lease, so the answer-path
     # attempt necessarily defers. Retry after finalization/release; human answers and
     # restart recovery already use the same helper directly from register_answer.
     _auto_resume_answered_question_chain(run)
-    # 0549 T0008: a hop that handed a TS to the test gate parks test_run_pending above; if
+    # a hop that handed a TS to the test gate parks test_run_pending above; if
     # the gate already passed while this worker was still finalizing, the resume could not
     # happen then (the group lease and the live run were still this hop's) — do it now,
     # strictly after the release, the same ordering the question resume relies on.
     _auto_resume_test_gate_chain(run)
-    # 0661 T0004 F2/F3: a finished Q responder settles its own item (answered / failed /
+    # a finished Q responder settles its own item (answered / failed /
     # user_decision) and, only after a real answer, moves the parked chain's NEXT open
     # question forward -- one item, strictly after this run's own lease release above,
     # and only while the original chain is still parked on question_pending.
     _continue_question_responder_chain(run)
-    # NR0003 §11 proposal 1/2 (T#1): the responder dispatch below starts a brand-new run through
+    # proposal 1/2: the responder dispatch below starts a brand-new run through
     # the ordinary admission path, which refuses a second concurrent run for this group
     # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
     # strictly after the release directly above, never before it.
     if run.get("stop_code") == "question_pending":
         _dispatch_question_responder(run)
-    # flowgate.v02.0053 T#2: the run-end port (a Graph card's review stage starts here). Like
+    # the run-end port (a Graph card's review stage starts here). Like
     # the resumes above it may admit a new run for this group, so it too runs strictly after
     # the release. No handler registered: nothing happens.
-    # flowgate.v02.0061 T#7: a Graph execution is handed on, and settled after, only when its end was proven owned to
+    # a Graph execution is handed on, and settled after, only when its end was proven owned to
     # its close (``graph_end_owned``: the lease held to the end, the ledger took the end, not a Stop's or the
     # recovery's late end, not an invalidated attempt's, not a stopping run's). A lost lease (a launcher a Stop
     # cancelled, one refused at launch), a refused report or a failed terminal end hands nothing on and settles
@@ -412,7 +412,7 @@ def _finalize_run(run: dict) -> None:
 
 
 def _auto_resume_test_gate_chain(run: dict) -> None:
-    """Best-effort finalization hook for the test-gate continuation (0549 T0008).
+    """Best-effort finalization hook for the test-gate continuation.
 
     ``test_run_service.continue_chain_after_test_gate`` owns the decision (gate passed?
     target beyond the TSR?) and enters the ordinary resume_chain CAS path; the test-result
@@ -454,22 +454,22 @@ def _finalize_stop(run: dict, respawn_pending: bool) -> None:
         run.update(stop_code=code, resumable=is_resumable(code), stop_reason=reason)
 
 
-# ── flowgate.v02.0137 T0004 §2 (A-1): delete a run scratch only once its submission settled ──
+# ── the earlier change the earlier implementation (A-1): delete a run scratch only once its submission settled ──
 # `outcome == "complete"` says the run's judge was satisfied; it never said the LAST thing
-# the worker produced reached the server. NR0003 §0-1 reproduced the gap: a run whose final
+# the worker produced reached the server. the review reproduced the gap: a run whose final
 # rework hop failed with a 403 still read `complete` (a stale review-count judge), so its
 # unsubmitted draft was deleted with the run scratch. The delete branch now additionally
 # needs a settled submission, read from durable state, and everything else takes the
 # existing retained path (`scratch_retained` + the system scratch TTL sweep).
 #
-# TR0005 rev1: "settled" is decided by ORDER, not by presence. rev0 accepted any reached
+# "settled" is decided by ORDER, not by presence. accepted any reached
 # document (or a re-asked judge) as proof, so "submit OK -> revise -> last submit 403/422"
 # deleted the newest, unsubmitted draft. The run's submission ledger
 # (submission_ledger.py) keeps every attempt in order; the scratch goes only when the
 # current hop has no failure, or when a success that is still durable in the documents
 # table came AFTER the last failure.
 #
-# flowgate.v02.0157: "settled" no longer means "delete now". It only decides whether the
+# "settled" no longer means "delete now". It only decides whether the
 # run left unsubmitted drafts behind (`scratch_retained`, the carry-over source). The
 # directory of every run, settled or not, is removed only by the retained sweep once the
 # system scratch retention (scratch_ttl_value/unit) has passed.
@@ -593,7 +593,7 @@ def _submission_settlement(run: dict) -> tuple[bool, str, dict]:
 def _retained_manifest_reason(run: dict, scratch: Path) -> str:
     """Why `_mark_scratch_completed` refused, instead of the old `non_complete_outcome`.
 
-    NR0003 A-2/C4: a complete run whose manifest was missing was logged as if its outcome
+    A-2/C4: a complete run whose manifest was missing was logged as if its outcome
     had been the problem. Re-reading the validator is read-only and names the real cause.
     """
     try:
@@ -612,9 +612,9 @@ def _retained_manifest_reason(run: dict, scratch: Path) -> str:
 
 def _scratch_audit_log(run: dict, action: str, reason: str, evidence: dict,
                        manifest_updated: bool) -> None:
-    """One durable line per run scratch decision (T0004 §2-5).
+    """One durable line per run scratch decision.
 
-    `_safe_scratch_log` writes at INFO, which the server's file log does not keep (NR0003
+    `_safe_scratch_log` writes at INFO, which the server's file log does not keep (the review
     §0-5: zero `ai-invoke scratch` lines in a 22.7 MB day). This line is WARNING so the
     deletion or retention and its reason survive the process. Identifiers and counters
     only — no token, prompt, path outside the managed root or file content.
@@ -647,7 +647,7 @@ def _finalize_scratch(run: dict) -> None:
     )
     settled, settle_reason, evidence = _submission_settlement(run)
     evidence["submission"] = settle_reason
-    # flowgate.v02.0157: finalize never deletes the run scratch. Before this, a complete run
+    # finalize never deletes the run scratch. Before this, a complete run
     # with a settled submission was removed right here, so the system scratch retention
     # (scratch_ttl_value/unit) never applied to it and notes, drafts and logs that lived only
     # in the scratch were lost at once. Every outcome now keeps the directory; the retained
@@ -690,7 +690,7 @@ def _finalize_source(run: dict) -> None:
 
 
 def _finalize_chat_run(run: dict) -> None:
-    """0670 T0004: close the run's open command requests, then measure its changes.
+    """close the run's open command requests, then measure its changes.
 
     Commands first: nothing of a finished run may stay pending or running, and the end
     snapshot must not race a test still writing files. Both halves are chat-only.
@@ -749,9 +749,9 @@ def _auto_resume_answered_question_chain(run: dict) -> None:
         )
 
 
-# ── Automatic Q responder: dispatch · settle · continue (0551 T#1 → 0661 T0004) ────────
+# ── Automatic Q responder: dispatch · settle · continue ────────
 #
-# Safety boundaries (T0004 "automatic-execution safety boundaries", which outrank F1~F6):
+# Safety boundaries ("automatic-execution safety boundaries", which outrank F1~F6):
 #   1. a responder is dispatched only for an open item THIS parked chain's own hop
 #      registered (asker_kind='ai', asker_ai_run_id == the run that stopped on
 #      question_pending) — never for an older Q, a human's Q or another run's Q that
@@ -856,7 +856,7 @@ def _responder_context_from_paused_row(row: dict, responder_run: dict) -> dict:
         base_provider_id = requester.get("provider_id")
     return {
         "doc_ref": row.get("doc_ref") or responder_run.get("doc_ref"),
-        # 0688 T#1: the container the previous responder just answered in is searched
+        # the container the previous responder just answered in is searched
         # first. A hop parked at its hand-off already moved the spine's anchor onto the
         # document it submitted, while its remaining questions still sit beside Q1.
         "anchors": [responder_run.get("doc_ref")] if responder_run.get("doc_ref") else [],
@@ -879,7 +879,7 @@ def _responder_context_from_paused_row(row: dict, responder_run: dict) -> dict:
 def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
     """Start ONE responder for the earliest open item the chain in ``ctx`` registered.
 
-    Connects the pieces NR0003 (0551) found already built: the responder priority
+    Connects the pieces the review  found already built: the responder priority
     `review.resolve_question_responder_with_source` resolves (F1: runtime override →
     stored sequence reviewer → independent selected/default AI) and the same
     `q_answer_invoke_service.dispatch_answer_run` a human's [AI 답변 요청] click uses.
@@ -908,7 +908,7 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
     from modules.flow_gate.db import question_items as db_question_items
     from modules.flow_gate.services import q_service, q_answer_invoke_service
 
-    # 0688 T#1: explicit containers (``ctx["anchors"]``) first, then the spine's anchor. A
+    # explicit containers (``ctx["anchors"]``) first, then the spine's anchor. A
     # Q-only park has only the latter; a hop parked at its hand-off registered its question
     # before it submitted, so the spine's anchor has since moved onto that submission.
     anchors: list[str] = []
@@ -984,10 +984,10 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
 
 
 def _dispatch_question_responder(run: dict) -> None:
-    """Auto-dispatch the AI responder for a `question_pending` stop (0551 T#1, 0661 T0004).
+    """Auto-dispatch the AI responder for a `question_pending` stop.
 
     Only the earliest open item THIS hop registered is dispatched: one AI run answers
-    exactly one item (D0005 §3.2), the group lease permits one run per group, and the
+    exactly one item, the group lease permits one run per group, and the
     following items are reached one by one from each responder's own finalization
     (`_continue_question_responder_chain`). Every failure is swallowed and logged -- and,
     since 0661, left on the item as a 'failed' state a human can see and re-dispatch.
@@ -1005,9 +1005,9 @@ def _dispatch_question_responder(run: dict) -> None:
         )
 
 
-# ── 0688 T#1: a question left open by a hop that DID produce its document ───────────────
+# ── the earlier implementation: a question left open by a hop that DID produce its document ───────────────
 #
-# 0688 NR0003 §0: everything above starts from a hop that stopped WITHOUT its document
+# everything above starts from a hop that stopped WITHOUT its document
 # (`stop_code == "question_pending"`, set by worker._retry_eligible's `outcome != "complete"`
 # probe). A worker that followed the help text -- register the Q, state the assumption,
 # submit -- completed, handed off, and its question reached nobody but a person. The chain
@@ -1032,7 +1032,7 @@ def _asking_item_seq(requester: Optional[dict]) -> Optional[int]:
     if requester.get("mode") != "single" or not requester.get("doc_ref"):
         return None
     # A gate-owned review/rework hop (single-mode: no hop_item_seq) asked about the slot
-    # whose document it worked on (0688 TR0006 review).
+    # whose document it worked on (review).
     try:
         seq = db_wfseq.get_sequence_for_member_doc(requester["doc_ref"])
         items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
@@ -1118,7 +1118,7 @@ def dispatch_responder_for_open_questions(
 def responder_failure_of(run: dict) -> tuple[str, str]:
     """(error_code, message) for a responder run that ended without an answer (F3).
 
-    The codes keep technical outcomes apart the way T0004 asks: a timeout, a cancel, a
+    The codes keep technical outcomes apart the way the earlier implementation asks: a timeout, a cancel, a
     provider failure and a worker that simply registered nothing are different problems
     with different remedies, and none of them is 'the user must decide'.
     """
@@ -1159,7 +1159,7 @@ def _settle_question_responder_run(run: dict, items: list[dict]) -> Optional[str
     (`responder_failure_of`). The failure write is a CAS (answer_count = 0 and this run's
     'dispatched' claim): when it changes nothing, something committed after the read --
     typically a person's answer -- so the item is read again and settled by what it
-    really is now instead of being reported 'failed' (TR0005 rev2 review: reporting
+    really is now instead of being reported 'failed' (the earlier implementation review: reporting
     'failed' there stopped the sequence while Q3 stayed open and nothing resumed).
     Returns the dominant outcome -- anything that is not an answer stops the sequence
     (boundary 5).
@@ -1206,7 +1206,7 @@ def _settle_question_responder_run(run: dict, items: list[dict]) -> Optional[str
 
 def _continue_question_responder_chain(run: dict) -> None:
     """After a Q responder finishes: settle its item, then dispatch the parked chain's
-    next open question -- one item, only after a real answer (0661 T0004 F2/F3).
+    next open question -- one item, only after a real answer.
 
     Best-effort and fully guarded: it only acts for a responder-shaped run that durably
     owns an item, and only while the group's paused row is still the system
@@ -1248,11 +1248,11 @@ def _continue_question_responder_chain(run: dict) -> None:
         )
 
 
-# ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
+# ── Stop classification ─────────────────────────────
 
 
 def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
-    """Why did the chain stop here? (L0007 §4.1 — evaluated in this exact order.)
+    """Why did the chain stop here? (evaluated in this exact order.)
 
     1-4 outrank whatever the inbox tagged: a human cancel or a blown deadline is the truth no
     matter what the self-chain thought it was doing when the request arrived. A single-mode or
@@ -1267,10 +1267,10 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         return "user_paused"
     if run.get("end_reason") == "all_providers_failed":
         return "providers_exhausted"
-    # 0393 B0001 / T0005 §2-6: the group gate refused this run's OWN worker, so nothing the
+    # the group gate refused this run's OWN worker, so nothing the
     # worker submitted was ever registered. It outranks whatever the inbox tagged because
     # the inbox never saw the request — the middleware turned it away first. Deliberately
-    # mode-independent: B0001's three dead reviews were mode="single", the exact shape that
+    # mode-independent: the regression's three dead reviews were mode="single", the exact shape that
     # used to fall all the way through this function to `return None` (no code, no reason).
     # Only claimed when the run produced nothing; a run that did land its documents and then
     # tripped the gate on a stray call keeps its ordinary ending and the register_errors row.
@@ -1281,7 +1281,7 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
     if respawn_pending:
         return "hop_handoff"
     if run.get("retry_block_reason") == "question_pending":
-        # NR0003 follow-up proposal 1/3: this hop's own docs_target/docs_reached shape is
+        # follow-up proposal 1/3: this hop's own docs_target/docs_reached shape is
         # identical to no_output_exhausted's (target ≥1, reached 0) — the only thing that
         # tells them apart is WHY nothing landed. _has_pending_question already told
         # _retry_eligible this hop is waiting on a human answer, not silently dead; name it
@@ -1289,7 +1289,7 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         return "question_pending"
     if int(run.get("docs_reached") or 0) == 0 and run.get("outcome") == "none" and (
         (run.get("mode") == "continuous" and int(run.get("docs_target") or 0) >= 1)
-        # 0446 T0008 §3-7: the same fact told on the axis a scope-oracle rework run actually
+        # the same fact told on the axis a scope-oracle rework run actually
         # has — it exited on its own and its judge was not satisfied (the `oracle_mismatch`
         # shape). Its docs_target is 0 by construction, so the document-count clause above can
         # never speak for it, and all 15 measured clean failures ended with stop_code NULL.
@@ -1300,15 +1300,15 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         # and until now the system had no name for that, so it treated it as an ordinary end.
         return "no_output_exhausted"
     if provider_failure_of(run) is not None:
-        # 0674 T0004 §2-2: the provider/CLI itself said it failed (non-zero exit, a
+        # the provider/CLI itself said it failed (non-zero exit, a
         # `turn.failed`/`error` event) and the run did not complete. Every code above keeps
         # its precedence; only what used to end with no code at all is named here.
         return PROVIDER_FAILED_STOP_CODE
     return None
 
 
-# ── 0674 T0004 §2-2: provider/CLI failure, classified on the server ─────────────
-# 0668: a resolve_conflict run ended `finished/exited/outcome=none` with stop_code and
+# ── the earlier implementation: provider/CLI failure, classified on the server ─────────────
+# a resolve_conflict run ended `finished/exited/outcome=none` with stop_code and
 # stop_reason NULL while its stdout tail carried `"Selected model is at capacity"`
 # (`turn.failed`) and the CLI exited 1, so no screen could say why. The provider's own
 # words are read HERE, once, into the canonical stop_code/stop_reason pair; the UI never
@@ -1359,7 +1359,7 @@ def provider_failure_of(run: dict) -> Optional[dict]:
 
 
 def is_resumable(stop_code: Optional[str]) -> bool:
-    """L0007 §4.2 — one criterion: would re-running this hop have a chance?
+    """one criterion: would re-running this hop have a chance?
 
     Stops a human has to clean up (head mismatch, approval, blocked advance) and stops a human
     meant (cancel) are deliberately excluded. Resuming those would undo a person's decision.
@@ -1368,25 +1368,25 @@ def is_resumable(stop_code: Optional[str]) -> bool:
 
 
 def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
-    """L0007 §4.3 — English, because the same sentence is read by the worker, stored on the
+    """English, because the same sentence is read by the worker, stored on the
     record and shown on the card; one wording for all three."""
     if stop_code is None:
         return None
     if stop_code == "chain_completed":
         if run.get("continuation_target_seq") is None:
-            # 0504 F4: a review hop is single-mode and carries no target of its own.
+            # a review hop is single-mode and carries no target of its own.
             return "The chain reached its target step; the chain is complete."
         return (f"Target step {run.get('continuation_target_seq')} reached; "
                 "the chain is complete.")
     if stop_code == "hop_handoff":
         return "This hop produced its document; the next hop starts in a new worker."
     if stop_code == "hop_handoff_failed" and run.get("handoff_failure_detail"):
-        # 0504 F3: what stopped the next hop (chain._handoff_failure_detail), instead of a
+        # what stopped the next hop (chain._handoff_failure_detail), instead of a
         # bare code with a null reason.
         return f"The next hop could not be started: {run['handoff_failure_detail']}"
     if stop_code == "no_output_exhausted":
         provider_name = run.get("continuation_selected_provider_name") or run.get("continuation_selected_provider_id") or "Selected provider"
-        # 0446 T0008 §3-6: `retry_block_reason` has no column in `ai_invoke_runs` and is not
+        # `retry_block_reason` has no column in `ai_invoke_runs` and is not
         # in `finished_payload` either, so a run that never got to open its retry
         # ("token_unavailable", "providers_exhausted_for_retry", or a budget too far spent)
         # left no durable trace of WHY. `stop_reason` is persisted, so the reason rides here.
@@ -1399,7 +1399,7 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
                 f"{blocked_text}")
     if stop_code == "question_pending":
         if run.get("outcome") == "complete":
-            # 0688 T#1: parked at the hand-off (chain._park_on_own_open_question) -- the
+            # parked at the hand-off (chain._park_on_own_open_question) -- the
             # document is in; only the next step waits, and it waits on the responder.
             return ("This hop submitted its document but left a query of its own open. "
                     "The chain is held before the next step while the step's reviewer AI "
@@ -1430,14 +1430,14 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return ("The token issuer lacks document.approve; a human must approve before "
                 "continuing.")
     if stop_code in ("approve_failed", "advance_blocked"):
-        # 0458 T0007 §2.1: ONE detail lookup for both codes, and it reads BOTH keys the
+        # ONE detail lookup for both codes, and it reads BOTH keys the
         # two producers write. The inbox self-chain reaches this table through
         # stop_reason_text(..., detail=...) and lands on `inbox_stop_detail`; the engine's
         # review gate stores the very same sentence on `review_reject_detail`
         # (_settle_gate_pass, below) because it has a live run to hang it on instead of an
         # envelope. Reading only the second key turned every gate-side failure into
         # "unknown error" while the real exception sat one key away — the diagnostic loss
-        # 0003-NR §11-1 reported. Order is review-gate-first: when both are set the gate's
+        # The review reported. Order is review-gate-first: when both are set the gate's
         # is the one that describes THIS stop.
         detail = (run.get("review_reject_detail")
                   or run.get("inbox_stop_detail")
@@ -1447,15 +1447,15 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return f"Could not advance to the next step: {detail}"
     if stop_code == "review_hold":
         return "Review mode: waiting for the human go."
-    # 0414 L0008 §1.2 — one English sentence per code, read by the worker, stored on the
+    # one English sentence per code, read by the worker, stored on the
     # record and shown on the card alike.
     if stop_code == REVIEW_EXHAUSTED_STOP_CODE:
-        # Legacy (0414 M0020): only chains parked before that change carry this code.
+        # Legacy: only chains parked before that change carry this code.
         return ("Every review round this step was given has been used and the reviewer "
                 "still reported issues. The document is left rejected with those findings; "
                 "a human must take it from here.")
     if stop_code == REVIEW_CAP_REACHED_STOP_CODE:
-        # Legacy (0414 0022-TR rejection): "until it passes" has no round ceiling any
+        # Legacy: "until it passes" has no round ceiling any
         # more, so nothing emits this now; only chains parked earlier carry it. Resuming
         # it is a normal resume — see REVIEW_CAP_REACHED_STOP_CODE in RESUMABLE_STOP_CODES.
         return ("Review was set to run until it passes and was parked at the round "
@@ -1465,7 +1465,7 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return ("The reviewer returned 'hold' — it could not judge this document. "
                 "A human must decide; the chain does not resume on its own.")
     if stop_code == QUESTION_ANSWER_UNVERIFIED_STOP_CODE:
-        # 0688 T#2: review.resolve_review_gate's answer check found nothing that can compare.
+        # review.resolve_review_gate's answer check found nothing that can compare.
         return ("This step's document was submitted while a query of its own was open, and "
                 "the answer has landed since. No automatic review can check the document "
                 "against that answer (the step is not reviewed, or its answer-check round is "
@@ -1475,7 +1475,7 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return ("The review loop stopped making progress: the rework hop raised no new "
                 "revision, or the same findings came back twice. A human must triage.")
     if stop_code == REVIEW_NO_VERDICT_STOP_CODE:
-        # flowgate.default.0476 T0007 §3: same blocked_text pattern as no_output_exhausted
+        # same blocked_text pattern as no_output_exhausted
         # above — retry_block_reason has no column of its own, so this is the only durable
         # place a human can tell "both attempts ran and still left no verdict" apart from
         # "budget/provider/token exhaustion cut the second attempt before it ever opened".
@@ -1511,7 +1511,7 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return (f'"{provider_name}" exited{exit_text} before completing its work. '
                 "The run ended without completing its work.")
     if stop_code == "group_lease_denied":
-        # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
+        # the sentence a human reads on the card instead of a bare code.
         denied_op = run.get("lease_denied_operation") or "a group change"
         denied_code = run.get("lease_denied_code") or "GROUP_AI_RUN_OWNER_MISMATCH"
         return (
@@ -1539,7 +1539,7 @@ def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = No
 
 def mark_chain_stop(group_id: Optional[str], stop_code: str,
                     detail: Optional[str] = None, *, extra: Optional[dict] = None) -> bool:
-    """Let the inbox self-chain tag the live run with ITS stop reason (L0007 §4.1-5).
+    """Let the inbox self-chain tag the live run with ITS stop reason.
 
     Returns False when there is no engine run to tag — a copy-mention (semi-manned) chain,
     where the inbox is the only party that can tell a human anything at all.
@@ -1552,7 +1552,7 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
     run["inbox_stop_code"] = stop_code
     run["inbox_stop_detail"] = detail
     if extra:
-        # 0549 T0008: facts the run's own finalization needs later (the TS handed to the
+        # facts the run's own finalization needs later (the TS handed to the
         # test gate), carried on the live run like the stop code itself.
         run.update(extra)
     return True
@@ -1579,7 +1579,7 @@ def mark_group_lease_denied(
     lease left behind by a run that already finished) — the caller treats that as a no-op.
 
     Two things are written, because the incident report asked for both:
-      * `register_errors` — NR0003 §3 measured an empty error list on all three dead reviews.
+      * `register_errors` — the review measured an empty error list on all three dead reviews.
         The refusal belongs in the same list a failed inbox POST lands in.
       * `lease_denied_*` — read by `_resolve_stop_code` / `_stop_reason_text` so the run
         ends with the name `group_lease_denied` and a sentence, instead of exit code 0.
@@ -1590,7 +1590,7 @@ def mark_group_lease_denied(
     with _runs_lock:
         if not by_worker:
             # GROUP_AI_RUN_LOCKED — somebody ELSE was held off while this run worked. Worth
-            # having on the run (T0005 §2-6 names both codes), but it is not this run's
+            # having on the run (names both codes), but it is not this run's
             # error and must never end it.
             others = run.setdefault("lease_blocked_others", [])
             if len(others) < LEASE_DENIAL_RECORD_LIMIT:
@@ -1603,7 +1603,7 @@ def mark_group_lease_denied(
                 "reason": f"{code}: {operation}",
                 "turn": run.get("turn"),
             })
-        # flowgate.v02.0137 TR0005 rev1: the same refusal, in order, for the settlement rule.
+        # the same refusal, in order, for the settlement rule.
         from . import submission_ledger
         submission_ledger.record(run, ok=False, status=status_code, via="group_lease",
                                  action=operation, token_id=run.get("token_id"))
@@ -1625,12 +1625,12 @@ def stamp_chain_stop(
     item_seq: Optional[int] = None,
     detail: Optional[str] = None,
 ) -> dict:
-    """One continuation stop, told to everyone who needs it (L0007 §2.11 / §2.12).
+    """One continuation stop, told to everyone who needs it.
 
     Called by the self-chaining paths (the inbox `new` handler and the decide kickoff), which
     stop a chain while its worker is still holding the HTTP response open. Until now such a
     stop said WHY in that response body alone — and the only reader of that body is a worker
-    about to exit, which is how NR0003 §4's chains died with the explanation still in them.
+    about to exit, which is how the review's chains died with the explanation still in them.
 
     Three things happen here:
 
@@ -1667,7 +1667,7 @@ def stamp_chain_stop(
         # that IS the thing needing triage — the stray document, the one waiting on approval,
         # or the last one that did land before the advance failed.
         anchor = (db_docs.get_by_id(anchor_doc_id) or {}) if anchor_doc_id else {}
-        # Carry the run this stop belongs to, exactly as the engine's own signal does — NR0003
+        # Carry the run this stop belongs to, exactly as the engine's own signal does — the review
         # §4 found 1,346 continuous tokens with no bridge back to their execution, and a
         # notification that cannot name its run repeats the same dead end.
         stopped = _svc()._active_run_for_group(group_id) if group_id else None
@@ -1683,25 +1683,25 @@ def stamp_chain_stop(
             extra={"stop_code": stop_code, "token_id": token_id, "item_seq": item_seq},
         )
     except Exception:
-        # Same best-effort contract as continuous_work_ended (L0007 §5).
+        # Same best-effort contract as continuous_work_ended.
         logger.warning("chain stop signal failed for %s (ignored)", group_id, exc_info=True)
     return envelope
 
 
-# ── Stop row / record / human signal (0359 L0007 §2.8, §2.10.1, §2.11) ───────
+# ── Stop row / record / human signal ───────
 
 
 # Stops that are not a new chain: the paused row keeps the chain identity and lifetime
-# counters so the automatic resume continues the SAME chain (question answered, T#2; test gate
-# passed, 0549 T0008).
+# counters so the automatic resume continues the SAME chain (question answered, the earlier implementation; test gate
+# passed, the earlier implementation).
 _CHAIN_KEEPING_STOPS = ("question_pending", TEST_RUN_PENDING_STOP_CODE)
 
 
 def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
-    """Maintain the miniplayer's [resume] card (L0007 §2.8 / §4.5).
+    """Maintain the miniplayer's [resume] card.
 
     Before 0359 this deleted the row for EVERY end_reason other than "user_paused", which is
-    exactly why NR0003 §6's 24 dead chains could not be resumed: the system destroyed the only
+    exactly why the review's 24 dead chains could not be resumed: the system destroyed the only
     coordinate the resume path takes. A resumable stop now parks a *system* row instead, and
     resume_chain consumes it through the identical path a user pause uses.
     """
@@ -1710,10 +1710,10 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
     if respawn_pending:
         return                                       # the next hop is already queued
     if run.get("end_reason") == "user_paused":
-        # The user's own row stays (0252 L0009 §3) — but it is REFRESHED, not left as it
+        # The user's own row stays — but it is REFRESHED, not left as it
         # was: pause_run snapshots at request time, before the in-flight hop reaches its
         # boundary, so the document that completed while the pause was pending would
-        # otherwise be missing from what resume/bootstrap reads back (0357 T0004).
+        # otherwise be missing from what resume/bootstrap reads back.
         try:
             from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
 
@@ -1742,7 +1742,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
                     continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
-                    # flowgate.default.0596 T0004 (NR0003 rev3): pause_run already stores the
+                    # pause_run already stores the
                     # actual work-hop executor into this same row (chain.pause_run reads
                     # _actual_work_executor_provider_id) — this refresh upsert runs right
                     # after every user pause and overwrites every column, so omitting it here
@@ -1755,7 +1755,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_work_executor_provider_id=_actual_work_executor_provider_id(run),
                     continuation_default_note=run.get("continuation_default_note"),
                     continuation_note_overrides=run.get("continuation_note_overrides"),
-                    # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
+                    # the N/T authoring mode + its per-item_seq auto-approve
                     # selection are exactly as perishable as the provider/note selections above
                     # — this same "overwrites every column" upsert is what silently dropped the
                     # mode on every user-paused chain before this fix.
@@ -1763,7 +1763,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
                     continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
                     continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
-                    # 0414: this refresh runs immediately after pause_run and overwrites every
+                    # this refresh runs immediately after pause_run and overwrites every
                     # column — omitting the two maps here would erase what pause_run just wrote.
                     continuation_review_count_overrides=run.get(
                         "continuation_review_count_overrides"),
@@ -1794,7 +1794,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_target_seq=run.get("continuation_target_seq"),
             docs_target=run.get("docs_target"),
             docs_reached=int(run.get("docs_reached") or 0),
-            # T#2: a question stop is not a new chain. Keep the original chain identity
+            # a question stop is not a new chain. Keep the original chain identity
             # and lifetime counters on its durable row so answer-triggered resume can
             # reconstruct the exact continuation even after a process restart. Other
             # legacy system stops retain their existing re-derived-counter behaviour.
@@ -1815,7 +1815,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             stop_code=run.get("stop_code"),
             stop_run_id=run.get("run_id"),
             stop_last_message_excerpt=excerpt(run.get("last_message")),
-            # 0365 DB0004's provider/note preference columns are deliberately NOT written
+            # 's provider/note preference columns are deliberately NOT written
             # here unless 0435's explicit provider pin is active. This branch only creates
             # a row where none existed (a user row outranks it and returns above), so an
             # unpinned system stop must resume through normal doc-type/default resolution.
@@ -1831,14 +1831,14 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                 else None
             ),
             continuation_provider_pinned=run.get("continuation_provider_pinned"),
-            # 0352 T0004 §3.6 deliberately widens this: unlike the provider/note *preference*
+            # deliberately widens this: unlike the provider/note *preference*
             # columns above, instruction_mode is not a "nice-to-have default" — it is the
             # policy the chain is actually running under. A system stop (e.g.
             # no_output_exhausted) that drops it would resume an ai_direct chain back to
             # auto_approved, silently auto-approving N/T the user chose to author themselves
             # — exactly the mode-loss bug this TR fixes. So mode + its per-item_seq selection
             # ARE written on every system row, even though the other four selections are not.
-            # flowgate.default.0400 M0005: the per-hop budget pick is policy in the same sense
+            # the per-hop budget pick is policy in the same sense
             # — dropping it here would resume a chain the user picked 240 minutes for back at
             # HOP_TIMEOUT_SEC (60), silently reopening the exact "hop budget too short" report
             # this feature exists to fix. Written alongside instruction_mode for that reason.
@@ -1846,7 +1846,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
             continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
             continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
-            # 0414 DB0009 W4 / L0008 §4.3: policy, not preference — same treatment as
+            #  W4 / the earlier implementation: policy, not preference — same treatment as
             # instruction_mode and the budget above, and for the same reason. A system stop
             # that dropped the selection would resume the chain with the gate switched off,
             # which is the one failure invariant R1 exists to prevent.
@@ -1870,14 +1870,14 @@ def _remote_job_record(run: dict):
 
 
 def _persist_run_record(run: dict) -> bool:
-    """Write the one durable row for this hop (L0007 §2.10.1).
+    """Write the one durable row for this hop.
 
-    At finalize — while a run is alive, memory is the truth. NR0003 §4: before this, a run
+    At finalize — while a run is alive, memory is the truth. the review: before this, a run
     that ended while the browser happened to be looking at another project left nothing behind
     at all; the only copy of the worker's explanation was a scratch file the server deletes
     after seven days.
 
-    0458 T0007 §2.1: and once more from _resettle_stop_after_park when a post-finalize review
+    and once more from _resettle_stop_after_park when a post-finalize review
     gate overrules the stop this row was written with. The upsert is keyed on run_id, so the
     second write corrects the same row rather than adding one.
     """
@@ -1932,8 +1932,8 @@ def _persist_run_record(run: dict) -> bool:
             "duration_ms": run.get("duration_ms"),
             "timeout_sec": run.get("timeout_sec"),
             "deadline_at": run.get("deadline_at"),
-            # ── 0406 T0022 work items 3 and 5 ───────────────────────────────
-            # NR0021 §8: the session-scoped handoff note and the final prompt were kept
+            # ── the earlier implementation work items 3 and 5 ───────────────────────────────
+            # the session-scoped handoff note and the final prompt were kept
             # nowhere, so "did the user's text really go in?" could not be decided later.
             # This fills that gap, in one row addressable by run_id.
             "worker_document_type": run.get("worker_document_type"),
@@ -1953,7 +1953,7 @@ def _persist_run_record(run: dict) -> bool:
             "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
             "prompt_final_length": int(run.get("prompt_final_length") or 0),
             "prompt_final_sha256": run.get("prompt_final_sha256"),
-            # ── 0446 T0016 §3-2 (migration 086) ─────────────────────────────
+            # ── the earlier implementation (migration 086) ─────────────────────────────
             # The four exit diagnostics that were memory-only until now. Every one is read
             # with .get(): a spawn failure never opened a watchdog, an API-mode run has no
             # tails, and neither may turn a finished hop into an unsaved one.
@@ -1962,7 +1962,7 @@ def _persist_run_record(run: dict) -> bool:
             "stdout_tail": run.get("stdout_tail"),
             "stderr_tail": run.get("stderr_tail"),
             "source_dirty_files": list(run.get("source_dirty_files") or []),
-            # -- 0505 T0006 (DB0005 3.3) -- API provider server-mediated self-HTTP
+            # -- the earlier implementation ( 3.3) -- API provider server-mediated self-HTTP
             # diagnostics. Read with .get() like the exit diagnostics above: a CLI run,
             # a spawn failure, or a row from before migration 095 has none of this and
             # stores NULL, not zero.
@@ -1978,22 +1978,22 @@ def _persist_run_record(run: dict) -> bool:
             "tool_calls_received": run.get("tool_calls_received"),
             "tool_calls_executed": run.get("tool_calls_executed"),
             "api_turn_trace": list(run.get("api_turn_trace") or []),
-            # -- flowgate.default.0481 T0008 item 1 (migration 105) ---------
-            # The anchored write-plan engine's bound contract (L0007 §2.5-§2.6,
-            # Q&A on 0009-TR): read with .get() like every field above it, so a
+            # -- the earlier change the earlier implementation (migration 105) ---------
+            # The anchored write-plan engine's bound contract (the earlier implementation,
+            # Q&A on the earlier implementation): read with .get like every field above it, so a
             # run that was never a review-message write turn stores NULL on
             # all three, not False/{}.
             "write_requested_by_human": run.get("write_requested_by_human"),
             "allow_test_edits": run.get("allow_test_edits"),
             "write_plan": run.get("write_plan"),
-            # flowgate.v02.0129 T#2 (D0005 §3-3/§5): the remote Job this run used -- target
+            # the remote Job this run used -- target
             # and claiming Agent, job_id/attempt_id -- kept on success as well as failure.
             "remote_job": _remote_job_record(run),
             "created_at": stamp,
             "updated_at": stamp,
         })
         db_runs.maybe_purge()
-        # 0505 T0006 (DB0005 3.3 / NR0003 §18 P0-1): a structured snapshot of the same
+        # a structured snapshot of the same
         # diagnostic values just persisted, so a hop that leaves an unread run detail
         # behind still leaves this in the process log. `last_tool_error` goes through
         # `_redact_secrets` here -- a log line is a "shown elsewhere" surface exactly
@@ -2028,13 +2028,13 @@ def _persist_run_record(run: dict) -> bool:
         _persist_register_context_failures(run, stamp)
         return True
     except Exception:
-        # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
+        # a storage failure must never turn a finished hop into a crashed one.
         logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
         return False
 
 
 def _persist_register_context_failures(run: dict, stamp: str) -> None:
-    """Flush this run's axis-classified binding failures to their own table (T0018 item 3).
+    """Flush this run's axis-classified binding failures to their own table.
 
     Called from the finalize flow, after ai_invoke_runs.upsert() has put the row the FK
     points at in place. A LIVE run has no such row — which is exactly why the in-memory
@@ -2044,7 +2044,7 @@ def _persist_register_context_failures(run: dict, stamp: str) -> None:
     leaves one row per failure. Storage trouble is logged, never raised — telemetry must
     not be able to turn a finished hop into a crashed one.
 
-    flowgate.v02.0136 T0004 T#3 (§4-1/§7): the source is the run's WHOLE ledger, not only the
+    : the source is the run's WHOLE ledger, not only the
     last attempt's register_errors. worker._reset_attempt_state empties that list between
     attempts and on every review-loop stage switch, after moving its binding failures to
     run["register_failures_carried"]; register_binding.run_failures joins the two and keeps
@@ -2077,13 +2077,13 @@ def _notify_chain_failure_if_needed(
     notify_codes: frozenset = ENGINE_NOTIFY_STOP_CODES,
     error_text: Optional[str] = None,
 ) -> None:
-    """Put the stop somewhere a human will still find it tomorrow (L0007 §2.11).
+    """Put the stop somewhere a human will still find it tomorrow.
 
-    NR0003 §4: the worker's explanation existed and was even delivered — over SSE, to a browser
+    the worker's explanation existed and was even delivered — over SSE, to a browser
     that was looking at a different project in that second, with no way to look back. This
     writes the same fact to the notification feed, which survives not watching.
 
-    0458 T0007 §2.1: `notify_codes` names which stops this speaker owns. It stays
+    `notify_codes` names which stops this speaker owns. It stays
     ENGINE_NOTIFY_STOP_CODES for the finalize call — the §2.11 split (engine set vs inbox set,
     disjoint by construction) is what keeps a double notification impossible there. The one
     caller that widens it is _resettle_stop_after_park, and only because the stop it announces
@@ -2093,7 +2093,7 @@ def _notify_chain_failure_if_needed(
     however many speakers look at it. `error_text` replaces the attempts-and-last-message
     sentence for a stop whose real explanation is the §4.3 one in `stop_reason`.
     """
-    # 0446 T0008 §3-8: scope-oracle rework runs speak here too. `question_pending` is still
+    # scope-oracle rework runs speak here too. `question_pending` is still
     # absent from ENGINE_NOTIFY_STOP_CODES, so a hop waiting on a human answer stays silent.
     if run.get("mode") != "continuous" and not oracle_module._scope_oracle_retry_run(run):
         return
@@ -2117,14 +2117,14 @@ def _notify_chain_failure_if_needed(
             error=error_text or _failure_error_text(run),
             extra={
                 "stop_code": run.get("stop_code"),
-                # 0458 T0007 §2.1: the §4.3 sentence rides along, so the feed carries the same
+                # the sentence rides along, so the feed carries the same
                 # exception detail the card shows instead of a bare code.
                 "stop_reason": run.get("stop_reason"),
                 "token_id": run.get("token_id"),
                 "item_seq": run.get("hop_item_seq"),
                 "provider_id": run.get("provider_id"),
                 "attempts_used": int(run.get("attempts_used") or 0),
-                # 0446 T0008 §3-8: the event TYPE stays `continuous_work_failed` — it is the
+                # the event TYPE stays `continuous_work_failed` — it is the
                 # only one `dashboard_service._NOTIFICATION_EVENT_TYPES` carries to the 🔔
                 # feed, and `test_run_service` already fires it from a non-continuous context.
                 # These two fields are how a reader tells a dead continuous chain apart from a
@@ -2134,7 +2134,7 @@ def _notify_chain_failure_if_needed(
             },
         )
     except Exception:
-        # Same best-effort contract as continuous_work_ended (L0007 §5).
+        # Same best-effort contract as continuous_work_ended.
         logger.warning("ai-invoke failure signal failed for %s", run["run_id"], exc_info=True)
 
 
@@ -2144,11 +2144,11 @@ def _failure_error_text(run: dict) -> str:
 
 
 def _anchor_document(run: dict) -> tuple[Optional[int], Optional[str]]:
-    """Where the notification lands when a human clicks it (L0007 §2.11).
+    """Where the notification lands when a human clicks it.
 
     A dead hop has no document of its own to point at, so it points at the last place the chain
     actually reached — "this much got done" — and falls back to the chain's spine document. An
-    anchorless notification still beats a notification nobody gets (L0007 §5).
+    anchorless notification still beats a notification nobody gets.
     """
     candidates: list[str] = []
     reached = run.get("reached_doc_ids") or []
@@ -2185,7 +2185,7 @@ def finished_payload(run: dict) -> dict:
     payload = {
         "run_id": run["run_id"],
         "group_id": run["group_id"],
-        # 0481 T0010 #1 — see the ai_invoke_started payload: both identities travel together
+        # #1 — see the ai_invoke_started payload: both identities travel together
         # so a project-scoped run's card finishes where it started.
         "project_id": run.get("project_id"),
         "requested_ai_group_id": run.get("requested_ai_group_id"),
@@ -2215,7 +2215,7 @@ def finished_payload(run: dict) -> dict:
         "tool_call_misses": run.get("tool_call_misses", 0),
         "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(run.get("oracle_mismatch")),
-        # 0505 T0006 (DB0005 3.3): same names as the durable row above, same names
+        # ( 3.3): same names as the durable row above, same names
         # _run_detail_from_row uses to restore a finished run after a restart -- one
         # path renders both a live finish and a persisted one.
         "operator_api_base": run.get("operator_api_base"),
@@ -2230,31 +2230,31 @@ def finished_payload(run: dict) -> dict:
         "tool_calls_received": run.get("tool_calls_received"),
         "tool_calls_executed": run.get("tool_calls_executed"),
         "api_turn_trace": list(run.get("api_turn_trace") or []),
-        # -- flowgate.default.0481 T0008 item 1: same names as the durable row
+        # -- the earlier change the earlier implementation: same names as the durable row
         # above and `_run_detail_from_row` below, so a live finish and a
         # restart-restored one answer `GET /ai-invoke/{run_id}` identically.
         "write_requested_by_human": run.get("write_requested_by_human"),
         "allow_test_edits": run.get("allow_test_edits"),
         "write_plan": run.get("write_plan"),
         "source_dirty": run["source_dirty"],
-        # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
+        # the live half of the restart pair. `source_dirty_files` keeps its
         # existing conditional place at the bottom of this function.
         "timeout_kind": run.get("timeout_kind"),
         "timeout_diagnosis": run.get("timeout_diagnosis"),
         "stdout_tail": run.get("stdout_tail"),
         "stderr_tail": run.get("stderr_tail"),
         "duration_ms": run["duration_ms"],
-        # 0359 P0006 [stop confirmed]: why it stopped, whether it can be picked up again, how many
+        # [stop confirmed]: why it stopped, whether it can be picked up again, how many
         # attempts it cost and against what budget. All additive — no existing field moved.
         "stop_code": run.get("stop_code"),
         "stop_reason": run.get("stop_reason"),
         "resumable": bool(run.get("resumable")),
-        # 0393 T0005 §2-6: refusals this run's lease handed to OTHER actors. Live signal
+        # refusals this run's lease handed to OTHER actors. Live signal
         # only (there is no column for it), but it is what tells a reader that the lease was
         # actually in force while this run was going.
         "lease_blocked_others": list(run.get("lease_blocked_others") or []),
         "hop_item_seq": run.get("hop_item_seq"),
-        # 0414 L0008 §5: which KIND of hop this was. A review or rework hop registers no
+        # which KIND of hop this was. A review or rework hop registers no
         # document, so without this a card can only report "0 documents" for a hop that did
         # exactly what it was asked to do.
         "hop_kind": run.get("hop_kind"),
@@ -2267,7 +2267,7 @@ def finished_payload(run: dict) -> dict:
         "timeout_sec": run.get("timeout_sec"),
         "deadline_at": run.get("deadline_at"),
         "document_review_loop": _svc().document_review_loop_payload(run),
-        # 0406 T0022 items 3 and 5: values that let a finished hop's card tell "the N/T
+        # items 3 and 5: values that let a finished hop's card tell "the N/T
         # vanished" apart from "the TR worker ran fine". Same names on a live run.
         "worker_document_type": run.get("worker_document_type"),
         "continuation_instruction_mode": run.get("continuation_instruction_mode"),
@@ -2287,7 +2287,7 @@ def finished_payload(run: dict) -> dict:
         "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
         "prompt_final_length": run.get("prompt_final_length"),
         "prompt_final_sha256": run.get("prompt_final_sha256"),
-        # flowgate.v02test.0023: what the chat commit point did at the run end (None: no Git,
+        # what the chat commit point did at the run end (None: no Git,
         # or no message and nothing left uncommitted). Live finish only.
         "chat_commit": run.get("chat_commit"),
     }

@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#1 — the Inspector data path and Frame (D#1 §4 / §5).
+ * the Inspector data path and Frame.
  *
  * 1. A server Canvas read (P0008 §3 JSON) of a v0.1 Flow and of a Graph Flow goes through the
  *    real normalizer (toFlowCanvas), the server Graph source, the Center session and the Center
@@ -170,8 +170,8 @@ describe('Node selection shows the real document state in the header', () => {
     expect(center.activeSelection.value).toMatchObject({ projectId: 'flowgate', graph: { flowId: 'flowgate.v02.0048', ownership: 'v01' }, node: { id: 'slot_t1' } })
     expect(get(w, 'designer-inspector-kind').text()).toBe('작업')
     expect(get(w, 'designer-inspector-title').text()).toBe('T#1 결과')
-    // flowgate.v02.0052 batch A: one pill; the raw values sit in the tooltip and data attributes.
-    // flowgate.v02.0052 T#3: the Canvas `blocked` of a rejected document is named as the rejection
+    // batch A: one pill; the raw values sit in the tooltip and data attributes.
+    // the Canvas `blocked` of a rejected document is named as the rejection
     // (반려됨, v7 work.rej), not as the Canvas word 보류; the Canvas value stays in the state span.
     const pill = get(w, 'designer-inspector-pill')
     expect(get(w, 'designer-inspector-pill-label').text()).toBe('반려됨')
@@ -318,7 +318,7 @@ describe('DesignerInspector — registry layout', () => {
     expect(sections(w)).toEqual(['qna'])
   })
 
-  // flowgate.v02.0150: a feature's windows host lives with the Frame — no selection, another Node (one the registration does
+  // a feature's windows host lives with the Frame — no selection, another Node (one the registration does
   // not apply to) or an unselected Designer never unmounts it, so a modeless window closes only by its own close / save /
   // cancel. It hears the selection, null included.
   it('draws every windows host whatever is selected and gives it the selection or null', async () => {

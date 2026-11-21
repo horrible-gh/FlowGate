@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 0038-T T#3 — the next stage by the card's documents, the review a satisfied card still takes, the
+"""the next stage by the card's documents, the review a satisfied card still takes, the
 wait reinterpreted by the next command, and [전체 실행]'s graph progress (0030-M §3 / §3.1 / §3.2, 0002-D revised §3.5.1 /
 §3.6-0 / §3.7 / §3.12).
 
@@ -204,7 +204,7 @@ def test_a_person_s_report_written_before_the_instruction_never_completes_the_ca
     assert write_jobs(env) == [] and starts == []
 
 
-# ── 0045-TR rework: a report saved while the instruction waits is no report of after it (write order) ──────────
+# ── the earlier implementation rework: a report saved while the instruction waits is no report of after it (write order) ──────────
 
 EDITED_REPORT = "## 결과\n\n지시서 대기 중에 고친 레포트\n"
 
@@ -832,7 +832,7 @@ def _saved(doc_id, body):
 @pytest.mark.parametrize("wait", ["wait_setup", "wait_unavailable"])
 def test_a_wait_reinterpreted_with_its_instruction_written_takes_only_a_report_saved_after_the_instruction(
         env, decided, starts, wait, order):
-    """0045-TR rework: the instruction stage waits for its setup / an unavailable AI (no person's stage takes a save);
+    """the instruction stage waits for its setup / an unavailable AI (no person's stage takes a save);
     the person saves the report and the instruction meanwhile, then the role changes and the next command opens a new
     attempt that finds the instruction written. A report saved before the instruction is carried as the baseline (the
     card waits for a report of after it); a report saved after the instruction is the result."""

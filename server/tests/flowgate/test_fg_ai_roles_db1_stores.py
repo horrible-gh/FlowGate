@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#1 — DB-1 stores over a real SQLite DB (every migration, the live FlowGateStore).
+"""DB-1 stores over a real SQLite DB (every migration, the live FlowGateStore).
 
 - §4.3 CI (``FlowGateStore.insert_isolated``): T-1 lost first save keeps the earlier write and the first
   completion time, T-2 a CHECK violation is an error and not a conflict, T-3 the same record twice is one row;

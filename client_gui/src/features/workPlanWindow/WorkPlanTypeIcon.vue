@@ -7,7 +7,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0073 T#1 — the icon tile of a Step type in the work plan edit window (quantity boxes, card headers):
+// the icon tile of a Step type in the work plan edit window (quantity boxes, card headers):
 // the Designer Palette card's 26px icon box (PaletteCard `.palette-card-icon`) with the Palette's glyph and accent for
 // the type (workPlanTypeIcon over DEFAULT_PALETTE_ITEMS, paletteIconPath). No table or color of its own: a type with
 // no Palette accent is drawn in the theme's muted color. Decorative — the name next to it says the type.

@@ -1,4 +1,4 @@
-"""flowgate.v02test.0051: one encoding verdict for worker-written JSON text, and what reuse does with damaged rows."""
+"""one encoding verdict for worker-written JSON text, and what reuse does with damaged rows."""
 from modules.flow_gate.services import ai_text_guard as guard, encoding_probe, question_precheck as precheck
 
 TOKEN = {"token_id": "tok_guard_0051"}

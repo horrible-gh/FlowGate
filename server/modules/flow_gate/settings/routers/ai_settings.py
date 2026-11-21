@@ -1,4 +1,4 @@
-"""AI settings API router (flowgate.default.0164 P0003).
+"""AI settings API router.
 
 GET  /api/v1/system/ai-settings                       — global settings (+ catalog)
 PUT  /api/v1/system/ai-settings                       — global full save
@@ -12,13 +12,13 @@ PUT  /api/v1/me/ai-default                            — the caller's default A
 GET  /api/v1/me/ai-order                              — the caller's display order (system + own AI)
 PUT  /api/v1/me/ai-order                              — save it (administrator: linked to the fallback order)
 
-flowgate.v02.0017 TR0003 rev7: projects no longer own connection rows; a custom list save and the
-project command probe answer 409 project_owned_ai_retired. CH0006 (4) retired the project AI
+projects no longer own connection rows; a custom list save and the
+project command probe answer 409 project_owned_ai_retired. the discussion  retired the project AI
 policy as well: the project PUT accepts only "inherit" (409 project_ai_policy_retired otherwise).
 
 api_key is write-only: requests may carry it (omit/null = keep, "" = delete,
-value = replace); responses only ever carry api_key_set + api_key_hint (L0004 §2.3).
-Validation failures return 422 {code: "validation_failed", errors: [...]} (P0003).
+value = replace); responses only ever carry api_key_set + api_key_hint.
+Validation failures return 422 {code: "validation_failed", errors: [...]}.
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class ProviderProbeIn(BaseModel):
     kind: str = ""
     cli_command: str | None = None
     api_base_url: str | None = None
-    # flowgate.v02.0129 T#2: a remote CLI form is refused, never launched on this host.
+    # a remote CLI form is refused, never launched on this host.
     exec_location: str | None = None
     prompt: str | None = None
 

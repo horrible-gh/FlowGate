@@ -77,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0053 T#4 — the test report's view: the v0.1 TestReportPanel
+// the test report's view: the v0.1 TestReportPanel
 // (client/src/main/components/documents/TestReportPanel.vue) read only. Kept: the overall verdict and the
 // gate first, the count tiles, the required scope and one row per Case (verdict or "pending" while a run is
 // live, id, title, mode, required, expected, actual, evidence, defect), with a required Case that did not

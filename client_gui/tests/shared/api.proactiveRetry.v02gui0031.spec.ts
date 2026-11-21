@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02gui.0031 T0005 ④ — a proactive token rotation that failed without a verdict (network error, timeout, 5xx)
+// ④ — a proactive token rotation that failed without a verdict (network error, timeout, 5xx)
 // stopped the timer: only a focus / visibility return or the next request's 401 tried again, so a screen watched without
 // leaving it ran into an expired token. It is now retried with a doubling, capped wait and a bounded count, and the
 // browser going online again rotates at once. A rejected refresh (401/403) is not retried (the login path stays), and
@@ -76,7 +76,7 @@ describe('v02gui.0031 T0005 ④ proactive refresh retries after a failure', () =
     await vi.advanceTimersByTimeAsync(PROACTIVE_RETRY_BASE_MS * 2)
     expect(postMock).toHaveBeenCalledTimes(3)
     expect(sessionStorage.getItem('fg_refresh_token')).toBe('refresh-next')
-    // The SSE hub hears the rotation (T0005 ①).
+    // The SSE hub hears the rotation (①).
     expect(rotated).toHaveBeenCalledTimes(1)
     window.removeEventListener('fg:access_token_refreshed', rotated)
 

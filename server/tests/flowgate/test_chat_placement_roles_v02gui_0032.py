@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0032 decisions 6-8 — the chat chooses the AI roles of the cards it places.
+"""decisions 6-8 — the chat chooses the AI roles of the cards it places.
 
 On the card settings harness (real SQLite DB with every migration, real Graph draft saves, real role stores):
 

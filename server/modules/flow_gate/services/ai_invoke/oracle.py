@@ -1,7 +1,7 @@
-"""Completion oracles + pure helpers (0501 NR0003 §12/§16/§21 Phase 1 `oracle.py`).
+"""Completion oracles + pure helpers (Phase 1 `oracle.py`).
 
-"Did the work actually land?" -- never an exit code (L0006). Which question that is
-depends on what the run's token is allowed to write (0259 B0001): a `new` token
+"Did the work actually land?" -- never an exit code. Which question that is
+depends on what the run's token is allowed to write: a `new` token
 registers documents and is judged by document-reach, every other scope is judged by the
 row IT can write, which is what `_SCOPE_PROBES` enumerates -- conversation turn,
 document revision, document review, test run, workflow sequence item.
@@ -12,7 +12,7 @@ extracted as `ai_invoke_helpers.py`, plus the progress-watchdog primitives
 (`_work_landed` / `_observe_group_max_seq` / `_truncate_front`) and the provider-brief
 formatter (`_provider_brief`) T6 moved here to break the admission<->worker and
 admission<->chain cycles those left behind in their original modules. They live here for
-the reason NR0003 §21 gives for extracting the oracle first -- all of them are fully
+the reason the review gives for extracting the oracle first -- all of them are fully
 determined by their arguments (plus, for the watchdog probes, the DB row they read), and
 this module is the package's one home for computation that owns no run state.
 
@@ -43,7 +43,7 @@ from .runtime import (
 )
 
 
-# ── Source-spill check (L0006 §2.8) ──────────────────────────────────────────
+# ── Source-spill check ──────────────────────────────────────────
 
 def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
     """Path set from `git status --porcelain`; None = unknown (git absent/failed)."""
@@ -60,7 +60,7 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
         return None
 
 
-# ── Default completion oracle per token scope (0259 B0001) ───────────────────
+# ── Default completion oracle per token scope ───────────────────
 #
 # Only a `new`-scope token can register a document, so only a `new` run may be judged by
 # the document-reach oracle. The inbox rejects `action:'new'` from any other token
@@ -69,7 +69,7 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
 # single-mode scope — review/edit/rework/vr_correction/chat runs settled 'none' no matter
 # how well the worker did. Each scope is judged by the row its own token may write.
 #
-# 0248 added `completion_oracle` for the same defect but left it opt-in per call site, and
+# added `completion_oracle` for the same defect but left it opt-in per call site, and
 # the very call sites it cited were never migrated. The default now lives in the engine and
 # is keyed by the scope, so a scope that registers no judge cannot silently inherit the
 # document oracle; `completion_oracle` stays as the per-call override.
@@ -98,17 +98,17 @@ def _probe_failure_origin_reviews(doc_id: str) -> int:
 
 
 def _probe_test_runs(doc_id: str) -> int:
-    """Test-run rows on the bound document (0268 B0001).
+    """Test-run rows on the bound document.
 
     A `test_run` token may only POST /documents/test-run, which INSERTs one run row for the
     TS it is bound to — it can never register a document, so the document oracle would make
-    success unreachable here exactly as 0259 B0001 described for edit/review.
+    success unreachable here exactly as the regression described for edit/review.
     """
     return len(db_test_runs.list_by_doc(doc_id) or [])
 
 
 def _probe_sequence_max_item(doc_id: str) -> int:
-    """Highest item_seq in the bound document's workflow sequence (0268 B0001).
+    """Highest item_seq in the bound document's workflow sequence.
 
     A `workflow_sequence_edit` worker calls PATCH /workflow/sequence, which registers no
     document — so, like edit/review, the document oracle could never credit it. The probe
@@ -120,7 +120,7 @@ def _probe_sequence_max_item(doc_id: str) -> int:
     so that one edit settles 'none'. A false negative on a rare edit is the safer error here
     than the false POSITIVE the alternative gives — with no probe at all, docs_target 0 makes
     `docs_reached >= docs_target` trivially true and a worker that did NOTHING reports
-    'complete', which is the "verdict renamed instead of judged" failure 0259 B0001 fixed.
+    'complete', which is the "verdict renamed instead of judged" failure the regression fixed.
     """
     try:
         seq = db_wfseq.get_sequence_by_doc_id(doc_id)
@@ -216,7 +216,7 @@ def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> O
     return _oracle
 
 
-# flowgate.v02.0137 T0004 §2-4: a document review loop alternates review <-> rework hops
+# a document review loop alternates review <-> rework hops
 # inside ONE run, but the scope judge used to be built once, at admission, from the FIRST
 # hop's scope and baseline. A later hop was then judged by a stale question: after a review
 # hop had written its verdict, "review rows > admission baseline" stayed true for every
@@ -272,20 +272,20 @@ def _uses_scope_oracle(action_scope: str, mode: str, completion_oracle: Optional
 
 def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
                              scope_oracle_run: Optional[bool]) -> bool:
-    """0446 T0008 §3-2: may this SINGLE run use the no-output recovery machinery?
+    """may this SINGLE run use the no-output recovery machinery?
 
-    NR0003 measured 27 of 242 post-rejection rework runs ending with nothing registered,
+    The review measured 27 of 242 post-rejection rework runs ending with nothing registered,
     and found the cause structural rather than incidental: retry, stop code and failure
     notification all live inside `mode == "continuous"`, while rework is always `mode="single"`
     carrying an `edit` token.
 
     Two deliberate narrowings:
       * `scope_oracle_run` — the ENGINE planted this run's judge (`_scope_oracle`). A
-        caller-supplied `completion_oracle` override (0248 B0001, the legacy Q&A follow-up in
+        caller-supplied `completion_oracle` override (the regression, the legacy Q&A follow-up in
         `q_answer_invoke_service`) keeps the old block: its success criterion is defined
         outside the engine, so the engine must not re-ask or re-run it.
       * `edit` only — `_SCOPE_PROBES` also holds chat / review / test_run /
-        workflow_sequence_edit, but NR0003's measurement is the 264 edit/single runs. Opening
+        workflow_sequence_edit, but the review's measurement is the 264 edit/single runs. Opening
         the others would move the 0259/0268 judging contract with nothing behind it.
     """
     return bool(scope_oracle_run) and mode == "single" and action_scope == "edit"
@@ -294,11 +294,11 @@ def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
 def _review_hop_recovery_open(mode: Optional[str], action_scope: Optional[str],
                               scope_oracle_run: Optional[bool],
                               hop_kind: Optional[str]) -> bool:
-    """flowgate.default.0466 T0007 §3.1.1: may an ENGINE-spawned review hop with no verdict
+    """may an ENGINE-spawned review hop with no verdict
     reopen a second attempt in the SAME round?
 
     Deliberately a second, narrower predicate rather than a widening of
-    `_scope_oracle_retry_open`'s edit-only condition (T0007 explicitly forbids that).
+    `_scope_oracle_retry_open`'s edit-only condition (explicitly forbids that).
     `hop_kind == REVIEW_HOP_KIND` is the whole narrowing: `start_run`'s `hop_kind` parameter
     defaults to `WORK_HOP_KIND`, and `_spawn_review_hop` is the ONLY caller anywhere in the
     codebase that ever passes `REVIEW_HOP_KIND` — a person's plain single review call
@@ -336,7 +336,7 @@ def _rework_hop_no_output_recovery_open(mode: Optional[str], action_scope: Optio
 def _scope_oracle_retry_run(run: dict) -> bool:
     """The same question asked of a live run dict — `scope_oracle_run` rides on it (§3-1).
 
-    0466 T0007 §3.1.1: ORs in `_review_hop_recovery_open` above, so every no-output-retry
+    ORs in `_review_hop_recovery_open` above, so every no-output-retry
     consumer (`_retry_eligible`, `_recheck_no_output`, the docs_target=0 guard) treats an
     ENGINE-spawned review hop's no-verdict outcome exactly like a scope-oracle edit/rework
     run — same recheck-before-retry, same "output is output" guard — without duplicating any
@@ -351,7 +351,7 @@ def _scope_oracle_retry_run(run: dict) -> bool:
 
 
 def _review_hop_recovery_run(run: dict) -> bool:
-    """`_review_hop_recovery_open` asked of a live run dict, standalone (T0007 §2.3/§3.1.5) —
+    """`_review_hop_recovery_open` asked of a live run dict, standalone —
     used where the caller must tell a review-hop recovery apart from an edit/rework
     scope-oracle retry (they resolve their retry PROVIDER differently)."""
     return _review_hop_recovery_open(
@@ -371,7 +371,7 @@ def resolve_round_limit(count: int, no_limit: int) -> int:
     """How many review+rework rounds this step gets; ``no_limit`` = no ceiling.
 
     -1 is the user asking for "until it passes", and it is taken literally (0414
-    0022-TR rejection): there is no round number at which the chain gives up and calls
+    rejection): there is no round number at which the chain gives up and calls
     a human. Only a `pass`, a `hold`, or a loop breaker ends it.
     """
     return no_limit if count == -1 else int(count)
@@ -383,7 +383,7 @@ def review_rounds_remain(rounds_used: int, limit: int, no_limit: int) -> bool:
 
 
 def review_key(value) -> str:
-    """One comparable form for a `document_reviews.id` (T0005 2.1.2).
+    """One comparable form for a `document_reviews.id`.
 
     The column is a positive integer, but it round-trips through the rejection_history
     JSON and can come back as "244". Comparing normalized strings makes 244 and "244"
@@ -422,7 +422,7 @@ def normalize_ws(value) -> str:
 
 
 def review_finding_digest(review: Optional[dict]) -> str:
-    """A deterministic fingerprint of one review's findings (L0008 §2.3).
+    """A deterministic fingerprint of one review's findings.
 
     Whitespace-normalized so a reflowed line is not mistaken for a new complaint. Two
     consecutive `issues` verdicts with the SAME digest mean the rework changed nothing
@@ -452,7 +452,7 @@ def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
 def _work_landed(run: dict) -> bool:
     """Did this run already produce something? Fast-fail's "nothing was lost" check.
 
-    0259 B0001 §3: this used to be a raw group max-seq delta for every run. On a run whose
+    this used to be a raw group max-seq delta for every run. On a run whose
     product is not a document that is False however well the worker did, so a worker that
     finished its edit and then exited nonzero inside the fast-fail window was re-run on the
     next provider. Ask the run's own judge — the scope default or the caller's override —
@@ -503,7 +503,7 @@ def _observe_group_max_seq(run: dict) -> Optional[int]:
 
 def prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
     """Move the assigned provider to the front, keeping the rest as the fallback tail
-    (D0004 §3: assignment beats fallback, but a spawn failure falls through). Unlike an
+    (assignment beats fallback, but a spawn failure falls through). Unlike an
     explicit UI pin — which collapses the chain to one provider and disables fallback —
     a doc-type assignment only re-orders, so the existing _worker fallback loop still
     protects the run."""

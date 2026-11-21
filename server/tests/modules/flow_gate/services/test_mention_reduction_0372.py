@@ -119,9 +119,9 @@ def test_help_block_slot_holds_in_continuous_mode():
     assert headers[:3] == ["## Document information", "## Continuous work", "## 도움말"]
 
 
-# ── 1a. attachment discovery pointer (0523 T0004 §18) ────────────────────────
+# ── 1a. attachment discovery pointer ────────────────────────
 # The help index block is the one place every worker mention already tells the
-# worker to call GET /help; T0004 §18 requires a short pointer from there to the
+# worker to call GET /help; the earlier implementation requires a short pointer from there to the
 # document_attachments help item so a worker who only reads the mention (not the
 # full /help index) still learns attachments are not a /remote/* source tool but
 # are discoverable through help. Missing this line let a worker conclude "no

@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#2 — the project event hub (D#1 §7.1). One EventSource per project on the
+// the project event hub. One EventSource per project on the
 // existing screen push stream (`GET /api/v1/events/stream?project=…`, P0008 §8.1) shared by every
 // subscriber — the Canvas (flowCanvasEvents.ts, an adapter over this hub) and the Inspector. The
 // stream opens with the first subscription and closes with the last unsubscribe. Reconnects work as
 // the Canvas stream did before the hub: the browser retries an interrupted stream itself, a closed
 // one is opened again after PROJECT_STREAM_RETRY_MS with the current token, and every open after the
 // first tells each subscriber to resync (events may have been missed).
-// flowgate.v02gui.0031 T0005 ①: the stream also follows the session's connection signals. A token rotation
+// ①: the stream also follows the session's connection signals. A token rotation
 // (`fg:access_token_refreshed`, sent by shared/api.ts), the browser going online again and the tab being shown
 // again replace a stream that is not open — one the browser is retrying with the token pinned in its URL, a closed
 // one waiting for its reopen — with a new one carrying the current token at once, instead of leaving it to the
@@ -166,7 +166,7 @@ function healthy(hub: Hub): boolean {
 type Revive = 'token' | 'online' | 'visible' | 'focus'
 
 /**
- * T0005 ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
+ * ①: a connection signal. Every hub whose stream is not open gets a new one with the current token now; an
  * open stream is kept (see the header). A token signal that brings no new token leaves a connecting stream to the
  * browser (shared/api.ts may send one rotation twice: its own and a sibling tab's).
  */

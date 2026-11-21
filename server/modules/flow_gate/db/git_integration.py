@@ -1,4 +1,4 @@
-"""Git integration storage (flowgate.default.0115 DB0007, migration 056).
+"""Git integration storage (, migration 056).
 
 project_git_config / group_git_state / git_merge_session(+_file) CRUD. Follows the dominant inline-SQL pattern (get_store()._fetch_one/_fetch_all/
 _execute) used by db/remote_tool_grants.py.
@@ -23,7 +23,7 @@ ACTION_VALUES = ("merge", "merge_only", "push", "wait")
 STATE_VALUES = (
     "none", "awaiting_choice", "merging", "conflict", "merged", "pushed", "waiting",
 )
-# TR work-scope check enforcement stages (0299 D0004 §3.6, migration 071). The order IS the
+# TR work-scope check enforcement stages (migration 071). The order IS the
 # strength, and tr_scope_service uses it for the "observe < warn < enforce" comparison.
 TR_SCOPE_STAGE_VALUES = ("observe", "warn", "enforce")
 
@@ -37,7 +37,7 @@ def _get_config_db(project_id: str) -> Optional[dict]:
 
 
 def get_config(project_id: str) -> Optional[dict]:
-    """TTL-cached read (0282 NR0003 finding 2) — several layers each re-fetch the
+    """TTL-cached read — several layers each re-fetch the
     config on one screen load. Returns a copy so a caller mutating its row
     cannot poison the cache; upsert/delete below invalidate explicitly (they
     also read via _get_config_db so their existence checks are never stale)."""
@@ -95,7 +95,7 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
 
 
 def set_default_merge_target(project_id: str, branch: Optional[str]) -> None:
-    """Persist the project's suggested finalize target (T0016 §2.2) without
+    """Persist the project's suggested finalize target without
     disturbing any other git config field. A non-base integration branch that a
     finalize actually merged into becomes this project's suggested default for
     the NEXT group's finalize dialog, instead of resetting to base_branch every
@@ -162,8 +162,8 @@ def register_worktree(group_id: str, project_id: str, branch: str) -> dict:
 
 
 def unregister_worktree(group_id: str) -> None:
-    """Drop the worktree registration after slot cleanup (flowgate.default.0182
-    NR0003 §5). status / merge_commit remain untouched as group history; the row
+    """Drop the worktree registration after slot cleanup (the earlier change
+    ). status / merge_commit remain untouched as group history; the row
     simply stops counting as an active slot (list_states_of_project filters on
     worktree_registered = 1)."""
     get_store()._execute(
@@ -174,7 +174,7 @@ def unregister_worktree(group_id: str) -> None:
 
 
 def set_initial_source_sync(group_id: str, sha: Optional[str]) -> None:
-    """Persist the flowgate.default.0511 T0004 initial-source-sync marker.
+    """Persist the the earlier change the earlier implementation initial-source-sync marker.
 
     Called exactly once per group, inside the project git lock, right after the
     ONE forced reset+clean lands (or, for a legacy group with prior
@@ -190,7 +190,7 @@ def set_initial_source_sync(group_id: str, sha: Optional[str]) -> None:
     )
 
 
-# ── group work-base commit record (flowgate.default.0665 T0004, migration 129) ──
+# ── group work-base commit record (migration 129) ──
 
 WORK_BASE_VERIFIED = "verified"
 WORK_BASE_UNVERIFIED = "unverified"
@@ -489,7 +489,7 @@ def list_states_by_status(statuses: list[str]) -> list[dict]:
 
 
 def list_states_of_project(project_id: str) -> list[dict]:
-    """Registered worktree ledger rows for one project (flowgate.default.0162 L §2.2).
+    """Registered worktree ledger rows for one project.
 
     Scoped by project_id (``list_states_by_status`` spans every project and is
     unsuitable for per-project aggregation / pending_count). Covered by
@@ -505,19 +505,19 @@ def list_states_of_project(project_id: str) -> list[dict]:
 # ── git_merge_session (+ files) ───────────────────────────────────────────────
 
 # git_merge_session.kind (088). 'merge' is the finalize merge — the only kind that existed
-# before flowgate.default.0332 — and the two tr_* kinds are a rewind's cancel and a forward
+# before the earlier change — and the two tr_* kinds are a rewind's cancel and a forward
 # restore's reapply hitting a conflict. A NULL column reads as 'merge': rows written before
 # 088 landed are all finalize merges, and nothing should have to backfill to be correct.
 SESSION_KIND_MERGE = "merge"
 SESSION_KIND_TR_REVERT = "tr_revert"
 SESSION_KIND_TR_REAPPLY = "tr_reapply"
 SESSION_KIND_GROUP_UPDATE = "group_update"
-# flowgate.default.0630 T0005: an ordinary Branch Manager merge (local source → local target)
+# an ordinary Branch Manager merge (local source → local target)
 # that stopped on a conflict. Unlike every kind above it has no group: it is owned by the
 # project (owner_type='branch_merge', migration 123). It walks the same resolver and the same
 # merge review as a finalize `merge` — never the commit-on-resolve path of `group_update`.
 SESSION_KIND_BRANCH_MERGE = "branch_merge"
-# flowgate.v02.0061 T#9: an approved Graph attempt's result merged into its group's worktree stopped on a conflict.
+# an approved Graph attempt's result merged into its group's worktree stopped on a conflict.
 # It lives in the group worktree like a TR revert / reapply and walks the same screen, resolver, review and
 # commit / abort presses (a TR kind); its context names the attempt, and its commit is the merge commit.
 SESSION_KIND_GRAPH_ATTEMPT_MERGE = "graph_attempt_merge"
@@ -632,11 +632,11 @@ def create_branch_merge_session(
     finalize_action: str | None = None,
     context: Optional[dict] = None,
 ) -> int:
-    """Open a group-less ``branch_merge`` session owned by ``project_id`` (0630 T0005).
+    """Open a group-less ``branch_merge`` session owned by ``project_id``.
 
     Written BEFORE ``git merge`` runs (the attempt record), with no conflict files yet —
     ``add_session_files`` attaches them if the merge stops. ``group_id`` stays NULL: there is
-    no group, and inventing one is exactly what D0004 §2.1 forbids. Callers hold the project
+    no group, and inventing one is exactly what the design forbids. Callers hold the project
     Git lock, so the newest open branch_merge row of this project is the one just inserted.
     """
     if finalize_action is not None and finalize_action not in ACTION_VALUES:
@@ -663,7 +663,7 @@ def create_branch_merge_session(
 
 
 def list_branch_merge_sessions(project_id: str, *, open_only: bool = True) -> list[dict]:
-    """A project's branch_merge sessions, newest first (0630 T0005)."""
+    """A project's branch_merge sessions, newest first."""
     sql = (
         "SELECT * FROM git_merge_session WHERE project_id = ? AND owner_type = ?"
         + (" AND status = 'open'" if open_only else "")
@@ -673,7 +673,7 @@ def list_branch_merge_sessions(project_id: str, *, open_only: bool = True) -> li
 
 
 def add_session_files(merge_id: int, files: list[str]) -> None:
-    """Attach conflict files to an already-open session (flowgate.default.0594 T0012).
+    """Attach conflict files to an already-open session.
 
     A finalize attempt record is now written BEFORE the merge runs, so its conflict
     file set is only known afterwards. Same rows ``create_session`` writes."""
@@ -688,8 +688,8 @@ def add_session_files(merge_id: int, files: list[str]) -> None:
 
 
 def replace_session_files(merge_id: int, files: list[str], *, resolved: bool = False) -> None:
-    """Replace a session's whole conflict file set in one transaction (flowgate.v02.0153
-    T#3 §3.5): a reconcile handing a merge back to the resolver with NEW conflicts
+    """Replace a session's whole conflict file set in one transaction (the earlier change
+    ): a reconcile handing a merge back to the resolver with NEW conflicts
     against the advanced remote (unresolved rows), or back to review with a clean
     candidate (``resolved=True``: nothing is unmerged). Same rows ``create_session``
     writes; no schema change."""
@@ -861,7 +861,7 @@ def remaining_conflicts(merge_id: int) -> list[str]:
     return [r["path"] for r in rows]
 
 
-# flowgate.v02.0061 T#9: one notice for every session close (a commit, an abort, the TTL sweep, an orphan close,
+# one notice for every session close (a commit, an abort, the TTL sweep, an orphan close,
 # a finalize / branch merge / group update end), after the row is written. A listener never fails the close.
 _close_listeners: list = []
 
@@ -871,7 +871,7 @@ def on_session_closed(callback) -> None:
     _close_listeners.append(callback)
 
 
-# flowgate.v02.0153 T#4 (review rej_01M6ZWFPF1E6JE2M): guards run BEFORE each session-row
+# (review rej_01M6ZWFPF1E6JE2M): guards run BEFORE each session-row
 # write (context, context CAS, close). The merge session claim registers one: a session an
 # automatic pass processes under its claim is written only while that claim is still valid
 # in the DB; a guard that raises stops the write. No guard registered → no change.
@@ -912,7 +912,7 @@ def sessions_by_group(group_id: str) -> list[dict]:
 
     The open-session accessors above answer "what is this group doing now".  A
     deferred final approval also has to find the session it was parked on AFTER
-    that session closed (0555 D0005 §3.9 re-approval), so the closed rows have to
+    that session closed (re-approval), so the closed rows have to
     be reachable too.
     """
     return get_store()._fetch_all(
@@ -963,7 +963,7 @@ def touch_session(merge_id: int) -> None:
 
     Called on session creation (via create_session's touched_at), resolve submission
     and a review conversation turn. Reads (the conflict list, the review screen) never
-    call it (flowgate.v02test.0052 T0003 task 4(c)). A quiet session (no touch for the TTL window)
+    call it (the earlier change the earlier implementation task 4(c)). A quiet session (no touch for the TTL window)
     is what the auto-recovery sweep reclaims."""
     get_store()._execute(
         "UPDATE git_merge_session SET touched_at = ? WHERE merge_id = ?",

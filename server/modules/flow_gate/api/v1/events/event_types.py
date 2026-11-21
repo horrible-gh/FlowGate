@@ -8,7 +8,7 @@ class EventType(str, Enum):
     EDIT_MARKER_ADDED                     = "edit_marker_added"
     QNA_Q_REGISTERED                      = "qna_q_registered"   # D022 §3-3 Phase 3 added
     QNA_ANSWER_REGISTERED                 = "qna_answer_registered"
-    # flowgate.default.0661 T0004 (0003-NR F3/F5): the automatic Q responder changed state
+    # (NR F3/F5): the automatic Q responder changed state
     # without registering an answer — a technical failure ('failed', with an error code) or
     # an explicit hand-off to a human ('user_decision'). Refresh + toast signal; the Q&A
     # panel re-reads the item's `responder` block rather than trusting the payload.
@@ -19,24 +19,24 @@ class EventType(str, Enum):
     TEST_STAGE_FINISHED                   = "test_stage_finished"
     TEST_CASE_FINISHED                    = "test_case_finished"
     TEST_RUN_FINISHED                     = "test_run_finished"
-    AI_INVOKE_STARTED                     = "ai_invoke_started"            # 0187: AI run launched (first provider)
-    AI_INVOKE_PROVIDER_SWITCHED           = "ai_invoke_provider_switched"  # 0187: startup-failure fallback hop
-    AI_INVOKE_FINISHED                    = "ai_invoke_finished"           # 0187: document-reach verdict payload
-    # 0351 T2 / P0003 scenario 6: one appended conversation turn, carried in the payload.
+    AI_INVOKE_STARTED                     = "ai_invoke_started"            # AI run launched (first provider)
+    AI_INVOKE_PROVIDER_SWITCHED           = "ai_invoke_provider_switched"  # startup-failure fallback hop
+    AI_INVOKE_FINISHED                    = "ai_invoke_finished"           # document-reach verdict payload
+    # scenario 6: one appended conversation turn, carried in the payload.
     # Chat bodies no longer travel through DOCUMENT_EXPLORER_REFRESH — that event stays
     # an explorer signal, and a screen showing this conversation appends the single turn
     # instead of re-fetching the whole document.
     CONVERSATION_TURN_APPENDED            = "conversation_turn_appended"
-    # flowgate.v02.0045 P0008 §8.2: Canvas layout saved / node identity rematched (S2). Later
+    # Canvas layout saved / node identity rematched (S2). Later
     # stages add draft / revision reasons to the same event. Refresh signal only.
     GRAPH_CANVAS_CHANGED                  = "graph_canvas_changed"
-    # flowgate.v02.0045 P0008 §8.2 (S4): an unassigned Flow was assigned to the Graph engine
+    # (S4): an unassigned Flow was assigned to the Graph engine
     # (confirmation) or to v0.1 (a decide run inside the engine router). Refresh signal only.
     FLOW_OWNERSHIP_CHANGED                = "flow_ownership_changed"
-    # flowgate.v02.0045 P0008 §8.2 (S5): a Graph run started / stopped / resumed / completed, and a
+    # (S5): a Graph run started / stopped / resumed / completed, and a
     # node run changed state. Both carry the run's event_seq; refresh signal only.
     GRAPH_RUN_STATUS_CHANGED              = "graph_run_status_changed"
     GRAPH_NODE_STATE_CHANGED              = "graph_node_state_changed"
-    # flowgate.default.0517 T0012 §12: durable snapshot request lifecycle changed
+    # durable snapshot request lifecycle changed
     # (requested/approved/rejected). Refresh-only signal — the client re-reads the
     # durable pending list rather than trusting the payload as the list itself.

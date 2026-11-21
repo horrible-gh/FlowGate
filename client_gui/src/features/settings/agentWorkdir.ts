@@ -1,4 +1,4 @@
-// flowgate.v02test.0043 CH0004: the Agent's job folder location. The person types only the parent
+// the Agent's job folder location. The person types only the parent
 // folder; every Job gets its own folder under it, so the stored setting always carries
 // ${AGENT_JOB_ID} (the server replaces it with the Job id: provider_remote.job_workdir).
 export const AGENT_JOB_VAR = '${AGENT_JOB_ID}'

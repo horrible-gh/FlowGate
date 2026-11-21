@@ -37,9 +37,9 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — one folder of a section: fold / unfold, its matching file count, the rows up
+// one folder of a section: fold / unfold, its matching file count, the rows up
 // to the display limit and `N개 더 있음 · 더 보기` adding one page (0066 D#2 §3-6(2)).
-// flowgate.v02.0067 T#2 — plus the folder checkbox (0067-R §4-2): checked when every selectable
+// plus the folder checkbox: checked when every selectable
 // file of the folder is, mixed when some are; a press checks them all, or clears them when all
 // were. Managed / protected files are never among them (isSelectable). It only selects: Stage and
 // Stage "해제" stay the selection bar's, and each path still goes by its own `can*` flags.

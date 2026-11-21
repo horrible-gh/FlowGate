@@ -288,7 +288,7 @@ describe('V08 완료 카드 유지 시간', () => {
     expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
   })
 
-  // flowgate.v02.0088 F17: the errors kept on screen are kept as their key, so the language buttons right above change
+  // the errors kept on screen are kept as their key, so the language buttons right above change
   // them without a new request; the failed save still returns to the confirmed value, and the load error title is not
   // repeated as its own message.
   it('a save error and a load error on screen follow the language buttons', async () => {

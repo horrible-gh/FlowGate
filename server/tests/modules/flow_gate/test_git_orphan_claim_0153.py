@@ -1,6 +1,6 @@
-"""0153 T#4: the orphan guard and the multi-instance session claim.
+"""the orphan guard and the multi-instance session claim.
 
-``ORPHAN_VERDICTS`` is the verdict table of T0011 §3.1 as module data; the pure
+``ORPHAN_VERDICTS`` is the verdict table of the earlier implementation as module data; the pure
 ``orphan_guard`` functions are asserted row by row without Git (U1). The claim service is
 exercised against the real sqlite ``git_merge_session_claim`` table of migration 181 and
 real ``server_instance`` rows (130) for ``inst_A`` / ``inst_B`` / ``inst_C`` on another node
@@ -74,7 +74,7 @@ def _fresh_claim_thread_state():
     session_claim._reset_thread_state()
 
 
-# ── U1: the verdict table (T0011 §3.1) ───────────────────────────────────────
+# ── U1: the verdict table ───────────────────────────────────────
 
 INTENT_CTX = {approval_intent.INTENT_KEY: dict(INTENT)}
 RESUMABLE = dict(INTENT_CTX, merge_commit=M, expected_remote_head=B, review_state=None)
@@ -626,7 +626,7 @@ def to_conflict(t, mid):
 
 
 def legacy_incident_session(t):
-    """S2: the shape the incident left behind (pre-T#3 reconcile reset): pending, no
+    """S2: the shape the incident left behind (pre-the earlier implementation reconcile reset): pending, no
     MERGE_HEAD, merge_commit None, one reconcile attempt, the preserve ref on disk and in
     the history, HEAD = the remote tip, the intent kept."""
     r = t.r
@@ -942,7 +942,7 @@ def test_S8_ttl_of_a_hand_back_resolver_session_holds_without_merge_abort(t4):
     mid, m, b2, before = conflict_session(env)
     remote_commit(env, r.tmp, 'y.txt', 'y remote\n')
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    assert out['result']['status'] == 'returned_to_resolver'   # T#3 D1 hand-back
+    assert out['result']['status'] == 'returned_to_resolver'   # D1 hand-back
     to_conflict(t, mid)
     _only(env, mid)
     _age(mid)

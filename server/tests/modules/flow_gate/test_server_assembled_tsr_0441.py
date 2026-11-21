@@ -1,6 +1,6 @@
-"""flowgate.default.0441 T0004 item 3 + item 4 — the server refuses manual TSR authoring.
+"""+ item 4 — the server refuses manual TSR authoring.
 
-B0001 / NR0003 §2: while the workflow head is a still-empty TSR slot, the action bar on a
+while the workflow head is a still-empty TSR slot, the action bar on a
 non-TS tab offered [Create Empty Doc], which called ``/documents/next-empty`` with
 ``type_code=TSR``. The only type check there was ``head_type == requested_type`` — and in
 this state both are TSR — so the request succeeded: a number was reserved, a Markdown file
@@ -59,7 +59,7 @@ PREV_DOC = "flowgate.default.0441.0004-TS"
 def test_one_name_is_read_by_every_holder_of_the_policy():
     """The three places that used to spell "TSR" out separately now read one set.
 
-    NR0003 §2 traced the incident to the fact that ``SERVER_ASSEMBLED_REPORT_TYPES`` existed
+    The review traced the incident to the fact that ``SERVER_ASSEMBLED_REPORT_TYPES`` existed
     and was consulted when BUILDING a sequence row, while the creation gates each carried
     their own unrelated type list. Identity (``is``), not equality: a copy that happens to
     hold the same value today is exactly what drifted last time.
@@ -221,7 +221,7 @@ def _patch_inbox(monkeypatch, head_type: str):
         "token_id": "tok-0441",
         "project": "flowgate",
         "issued_to": "worker-0441",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # `group_id` is a real tokens column (migration 075a) and inbox
         # Step 3 now compares it as the `group` axis.
         "group_id": GROUP,
         "action_scope": "new",
@@ -346,7 +346,7 @@ def test_advance_refuses_a_server_assembled_head_instead_of_minting_a_new_token(
     """No approved TS behind the head → there is nothing to hand off and nothing to write.
 
     Before 0441 this fell through to ``token_service.issue(action_scope='new')``, which is
-    the managed [Copy mention] / [Invoke AI] path NR0003 §2 named as the second route to a
+    the managed [Copy mention] / [Invoke AI] path the review named as the second route to a
     hand-written TSR.
     """
     wds, root, issue = _patch_advance(monkeypatch, head_type="TSR", predecessor=None)
@@ -365,7 +365,7 @@ def test_advance_refuses_a_server_assembled_head_instead_of_minting_a_new_token(
 def test_advance_control_a_continuous_chain_with_an_approved_ts_still_gets_a_test_run_token(
     monkeypatch,
 ):
-    """Positive control — group 0150's hand-off must survive the new guard untouched."""
+    """Positive control — the earlier change's hand-off must survive the new guard untouched."""
     from modules.flow_gate.services import test_run_service
 
     ts_doc = {
@@ -423,7 +423,7 @@ def test_advance_route_maps_the_refusal_to_409_with_a_stable_code(monkeypatch):
         wdr._db_documents, "get_by_id",
         lambda _id: {"group_id": GROUP, "project_id": "flowgate"},
     )
-    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # S4: the route asks the Graph engine router first; this test has no DB
     # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
@@ -503,7 +503,7 @@ def test_token_issue_control_an_ordinary_head_is_untouched(monkeypatch):
 
 
 def test_token_issue_refuses_a_new_scope_even_with_a_continuation_target_seq(monkeypatch):
-    """0441 TR0005 rev10 — closing the direct-issue bypass NR0003-style review found.
+    """closing the direct-issue bypass the review-style review found.
 
     Setting `continuation_target_seq` flips `is_continuous=true`, which used to exempt the
     request from this guard entirely on the theory that a continuous chain reaching a TSR

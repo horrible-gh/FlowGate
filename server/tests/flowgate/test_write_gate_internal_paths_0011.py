@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0011 (0004-CH): internal housekeeping paths skip the document walk of the write gate.
+"""(CH): internal housekeeping paths skip the document walk of the write gate.
 
 A scratch delete (lock open/unlink, journal write/remove, the tree delete) passed the card document write gate
 5-6 times per tok_* folder, and every pass walked all document rows twice under the database-wide path mutex.

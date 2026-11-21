@@ -21,7 +21,7 @@ RUNS_KEY = "verify_max_runs"
 TIMEOUT_KEY = "verify_run_timeout_sec"
 DEFAULT_MAX_RUNS = 3
 DEFAULT_RUN_TIMEOUT_SEC = 180
-MAX_RUNS_MIN = 1                      # no upper bound: 0003-T 'a whole number of 1 or more'
+MAX_RUNS_MIN = 1                      # no upper bound: the earlier implementation 'a whole number of 1 or more'
 TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC, TIMEOUT_STEP_SEC = 60, 1800, 60
 KEYS = (RUNS_KEY, TIMEOUT_KEY)
 

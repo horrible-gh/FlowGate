@@ -1,4 +1,4 @@
-"""Final approval publish (flowgate.default.0669 unit 6b; 0666 0008-D §3.7, 0009-L §2.28,
+"""Final approval publish (the earlier change unit 6b; the design, the earlier implementation,
 §4.4, §4.5, 0011-P "최종 승인").
 
 A final approval with a ``git_action`` is a ``final_approval_publish`` job. The HTTP
@@ -35,10 +35,10 @@ Deviations from L, recorded as design changes (0669 chat):
 * L 4.4 rows of this kind are not evidence deciders: every publish phase decides
   NOT_APPLIED at its own phase and the evidence is judged by ``_resume`` at the next
   claim, under W/B and R — it may need ``merge --abort`` / ``reset --keep`` (the
-  0594 attempt recovery), which a lock-free decider must not run. The evidence is the
+  attempt recovery), which a lock-free decider must not run. The evidence is the
   same one 4.4 names (attempt merge inputs, remote ref via ``_settle_landed_merge``);
   an outcome that cannot be proven parks the job in recovery_required.
-* Stage/cause classify Git failures (0134 T#1): fetch/merge timeout, network and
+* Stage/cause classify Git failures: fetch/merge timeout, network and
   ref locks, push_rejected and git_busy retry with backoff. Divergence/auth get
   one recheck; unknown failures stop after three identical consecutive results.
   A durable deadline also bounds retry waiting. Every failure exits through the
@@ -99,14 +99,14 @@ _RETRY_EVIDENCE = "publish_retry"
 _LEASE_CLEARED = {"lease_owner": None, "lease_token": None, "lease_until": None}
 _HANDOFF_RESULT = "handed_off_to_conflict_review"
 
-# 0674 T0004 §2-6: what a terminal job's ``status`` alone cannot say. A conflict hand-off
+# what a terminal job's ``status`` alone cannot say. A conflict hand-off
 # and an approval committed through the approval-retry route both end ``succeeded`` (the
 # Runner's terminal contract), so the result's meaning rides beside it as ``outcome``.
 OUTCOME_EXECUTED = "executed"
 OUTCOME_HANDED_OFF = "handed_off"
 OUTCOME_APPROVED_ELSEWHERE = "approved_elsewhere"
 
-# 0674 T0004 §2-5: the non-terminal transitions the screen is told about (SSE
+# the non-terminal transitions the screen is told about (SSE
 # ``git_approval_job_changed``). Terminal ones keep their own events (git_finalize_done).
 NOTIFY_STATUSES = frozenset(("freeze_wait", "blocked", "retry_wait", "recovery_required"))
 APPROVAL_JOB_EVENT = "git_approval_job_changed"
@@ -140,7 +140,7 @@ def holder_of(job_id: str) -> str:
 # ── job view (P "Job query" shape, the fields the approval response carries) ──
 
 def job_outcome(job: Optional[dict]) -> Optional[str]:
-    """0674 T0004 §2-6: the meaning of a ``succeeded`` job — executed, handed off to the
+    """the meaning of a ``succeeded`` job — executed, handed off to the
     conflict review, or approved elsewhere (approval-retry route). failed/cancelled answer
     their status; a job that is not terminal has no outcome yet."""
     status = (job or {}).get("status")
@@ -162,7 +162,7 @@ def job_outcome(job: Optional[dict]) -> Optional[str]:
 
 
 def job_stage(job: Optional[dict]) -> Optional[str]:
-    """The screen's reading of a job status (0674 T0004 §2-4): every waiting/executing
+    """The screen's reading of a job status: every waiting/executing
     status as it is, every terminal one as ``terminal`` (``outcome`` tells which)."""
     status = (job or {}).get("status")
     if not status:
@@ -191,7 +191,7 @@ def job_view(job: Optional[dict]) -> Optional[dict]:
 
 
 def _retry_view(job: dict) -> dict:
-    """T#3: what the screen needs to explain a waiting retry / recovery — the last error's
+    """what the screen needs to explain a waiting retry / recovery — the last error's
     code and its stage/cause (never the diagnostic text or stderr), the attempt count with
     its ceiling, and when the next attempt is due. Empty for any other status."""
     if job.get("status") not in ("retry_wait", "recovery_required"):
@@ -220,7 +220,7 @@ def blocker_of(job: Optional[dict]) -> Optional[dict]:
 
 
 def approval_job_state(group_id: str) -> Optional[dict]:
-    """0674 T0004 §2-4: the Group's live final approval job for the finalize state — the
+    """the Group's live final approval job for the finalize state — the
     job view plus its blocker (the same ``blocker_of`` the approval response carries).
     None when no approval job of this Group is waiting or running."""
     job = active_job_of_group(group_id)
@@ -232,7 +232,7 @@ def approval_job_state(group_id: str) -> Optional[dict]:
 
 
 def notify_progress(job: Optional[dict]) -> None:
-    """0674 T0004 §2-5: tell the screen a final approval job moved into a waiting state
+    """tell the screen a final approval job moved into a waiting state
     (freeze_wait / blocked / retry_wait / recovery_required), from the request and from
     the Runner/Sweeper alike. Best effort: the screen re-reads the finalize state."""
     if not job or job.get("status") not in NOTIFY_STATUSES or not job.get("group_id"):
@@ -282,7 +282,7 @@ def start(*, doc: dict, group_id: str, git_action: str, target_branch: Optional[
            "group_id": group_id}
     payload = {"doc_id": doc["doc_id"], "git_action": git_action, "target_branch": target_branch,
                "commit_title": None, "requested_by": actor_user_id, "locale": locale,
-               # 0555 T0008 §2: one id per approval, handed to a conflict session if any
+               # one id per approval, handed to a conflict session if any
                "approval_intent_id": str(uuid.uuid4())}
     cr = store.create_or_get_job(KIND, project_id, req, group_id=group_id, payload=payload,
                                  requested_by=actor_user_id)

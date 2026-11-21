@@ -1,8 +1,8 @@
-"""0138: committed daily serials and immutable ownership, independent of run purge.
+"""committed daily serials and immutable ownership, independent of run purge.
 
 No request-time MAX or local fallback.
 
-flowgate.v02.0139: v0.2 issues its own run-ID namespace, ``aiv2_YYYYMMDD_NNNNNN``.
+v0.2 issues its own run-ID namespace, ``aiv2_YYYYMMDD_NNNNNN``.
 FlowGate v0.1 shares this DB and scratch root and keeps minting ``aiv_YYYYMMDD_NNNNNN``
 from an in-process counter that only reads ``aiv_<date>_%`` rows, so neither side can
 ever produce, read as its floor, or overwrite the other's IDs. Both versions run side
@@ -11,7 +11,7 @@ by side; no issuer has to be stopped.
 Every ``aiv2_`` issuer is a v0.2 server using the committed counter below, so the
 contract activates itself on the first allocation (version 0 or 1 -> 2) with the
 floors of every ``aiv2_`` ID already recorded. Version 2 also keeps refusing the
-0138-era binaries, which would otherwise mint ``aiv_`` IDs inside v0.1's namespace.
+era binaries, which would otherwise mint ``aiv_`` IDs inside v0.1's namespace.
 Both shapes stay readable (``RUN_ID``) for legacy rows and scratch entries.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ IDENTITY_FIELDS = ("execution_nonce", "project_id", "group_id", "started_at")
 
 
 def foreign_run_id(run_id) -> bool:
-    """0139: True for an ``aiv_YYYYMMDD_NNNNNN`` ID, i.e. one FlowGate v0.1 mints.
+    """True for an ``aiv_YYYYMMDD_NNNNNN`` ID, i.e. one FlowGate v0.1 mints.
 
     v0.1 shares the lease/run/question tables and keeps running beside v0.2, so v0.2's
     restart recovery must leave such rows alone: they may be live v0.1 runs. (v0.2 runs
@@ -149,7 +149,7 @@ def allocate(*, at: datetime | None = None) -> str:
 
 
 def _activate_if_needed(store) -> None:
-    """0139: first allocation on a never-activated (0) or 0138 (1) contract activates it.
+    """first allocation on a never-activated  or 0138  contract activates it.
 
     An unknown (e.g. newer) version is left untouched and refused.
     """

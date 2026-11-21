@@ -1,4 +1,4 @@
-"""HTTP adapter of the Conversation contract (D0006 §5.1). Mounted under ``/api/v1``.
+"""HTTP adapter of the Conversation contract. Mounted under ``/api/v1``.
 
 Worker side (Bearer = the live chat run's own current AI token, CLI providers)::
 
@@ -20,7 +20,7 @@ and RBAC errors keep their existing shapes. All handlers are plain ``def`` (the 
 is synchronous; see test_event_loop_blocking_0279).
 
 The decision route and the two conversation routes are exempt from the group AI-run lease in
-``GroupMutationPolicyMiddleware`` (D0006 §3.10.3); the handlers still check permission
+``GroupMutationPolicyMiddleware``; the handlers still check permission
 and group state themselves.
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ def read_chat_command(request_id: str, request: Request, wait: Optional[str] = Q
 @router.post("/chat-commands/{request_id}/decision")
 def decide_chat_command(request_id: str, body: Optional[dict[str, Any]] = Body(default=None),
                         user=Depends(get_current_user)):
-    # Only the decision value is accepted: no group/doc identifiers (D0006 §3.2).
+    # Only the decision value is accepted: no group/doc identifiers.
     payload = body if isinstance(body, dict) else {}
     decision = payload.get("decision") if set(payload) <= {"decision"} else None
     try:
@@ -106,7 +106,7 @@ def chat_activity(doc_id: str, user=Depends(get_current_user),
         body = activity.list_for_doc(doc_id, from_seq=from_seq, to_seq=to_seq, include_unplaced=unplaced)
     except c.ConversationError as exc:
         return _error(exc)
-    # flowgate.v02test.0024 B: the user's own recorded chat errors ride the same read; a
+    # B: the user's own recorded chat errors ride the same read; a
     # failure here never fails the activity read (the rest of the timeline still loads).
     try:
         body["errors"] = chat_errors.list_for(doc, user)
@@ -138,7 +138,7 @@ def chat_run_file_diff(doc_id: str, run_id: str, path: str = Query(...), user=De
 def create_conversation(body: Any = Body(default=None), user=Depends(get_current_user)):
     try:
         created = chats.create_chat(user, body)
-        # 0135 T#3: the chat an earlier try of the same intent made is answered, not made again.
+        # the chat an earlier try of the same intent made is answered, not made again.
         return JSONResponse(status_code=200, content=created) if created.get("replayed") else created
     except chats.ChatCreateForbidden:
         raise HTTPException(status_code=403, detail="Forbidden")

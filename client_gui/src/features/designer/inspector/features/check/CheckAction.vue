@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0048 T#12 — the check card's header action (D#1 §10.2 T#12 row): the v0.1 final
+  <!-- the check card's header action (row): the v0.1 final
        approval of an AC under review. Its dialog asks the Git choice the server offers (merge + push ·
        merge only · wait) and names the merge target; with none offered it is a plain final approval.
        A thin container: useCheck reads and calls, checkModel decides what is shown and usable. A

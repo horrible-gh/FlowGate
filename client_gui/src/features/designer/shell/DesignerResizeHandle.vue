@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0046 — the drag handle on a Dock boundary. A thin strip the Body /
+  <!-- the drag handle on a Dock boundary. A thin strip the Body /
        CenterColumn place over the line between a Dock and the Center; it reports where the
        pointer wants that Dock's size to be and owns no size itself. -->
   <div

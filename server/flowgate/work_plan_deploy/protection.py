@@ -1,4 +1,4 @@
-"""Which card documents the deploy may write or remove (flowgate.v02.0074 T#4, D0006 §3.5).
+"""Which card documents the deploy may write or remove.
 
 A document is the card's **untouched empty draft** only when all of these hold; anything else protects it:
 
@@ -80,7 +80,7 @@ def judge(flow_id: str, row: dict, docs_by_id: dict, *, started: bool,
                 or legacy.review_event_count(shown) > 0):
             return Verdict(PROTECTED, HAS_HISTORY, shown)
         return Verdict(UNTOUCHED, None, shown, path, identity, text)
-    except Exception as exc:  # noqa: BLE001 — D0006 §3.5-8: a fact that cannot be read protects the document
+    except Exception as exc:  # noqa: BLE001 — the design: a fact that cannot be read protects the document
         legacy.log_warning("work plan deploy: protection facts unreadable for %s: %s", row.get("doc_id"), exc)
         return Verdict(PROTECTED, UNKNOWN, docs_by_id.get(row.get("doc_id")))
 

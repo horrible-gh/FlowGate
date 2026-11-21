@@ -1,4 +1,4 @@
-"""flowgate.v02.0119 T#1 (T-0, NR §2.6 (c)) — the merge target lookup's one diagnostic line.
+"""(T-0, NR (c)) — the merge target lookup's one diagnostic line.
 
 ``check_target_view`` writes one WARNING line (``check target lookup <status> ...``) when the view ends ``failed`` /
 ``timeout`` / ``git_unavailable``: status / code / reason, the stage it ended in, the error (including the
@@ -59,7 +59,7 @@ def mt(monkeypatch):
     monkeypatch.setattr(module, "_raise_if_base_slot_unavailable", lambda *_a, **_k: None)
     module.reset_check_targets()
     yield module
-    assert module.settle_check_targets(10)   # flowgate.v02test.0020: no background computation outlives a test
+    assert module.settle_check_targets(10)   # no background computation outlives a test
     module.reset_check_targets()
 
 
@@ -72,7 +72,7 @@ def _lines(caplog, mt) -> list[str]:
 
 
 def _contract(view: dict) -> None:
-    """The response keys are the existing contract (D0004 §3.1 / §5): nothing of the trace leaks into them."""
+    """The response keys are the existing contract: nothing of the trace leaks into them."""
     assert set(view) == {"merge_target_options", "default_target_branch", "merge_target_state"}
     assert set(view["merge_target_state"]) == {"status", "code", "reason", "current", "default"}
 
@@ -92,7 +92,7 @@ def test_0119_a_listing_view_writes_no_line_and_keeps_no_trace(mt, caplog):
 
 def test_0119_a_shared_read_git_error_is_one_line_naming_the_read(mt, monkeypatch, caplog):
     """H2: the GitServiceError path (``_compute_snapshot`` :1267-1273) writes no other warning.
-    flowgate.v02test.0020 rev2: the list's shared reads are the slot ledger and the branch names (``refs``)."""
+    the list's shared reads are the slot ledger and the branch names (``refs``)."""
     from modules.flow_gate.services.git import group_work_base
     caplog.set_level(logging.WARNING, logger=mt.__name__)
 
@@ -172,7 +172,7 @@ def _background(caplog, mt) -> list[str]:
 
 def test_0119_a_spent_budget_says_where_it_went(mt, monkeypatch, caplog):
     """H1-b: the budget ran out while the names were judged. The view's line says where the computation was when the
-    view gave up. flowgate.v02test.0020: the computation goes on in the background; its own line, written when it
+    view gave up. the earlier change: the computation goes on in the background; its own line, written when it
     ends, counts every name and ``inspect_workspace`` call with the real total time (the diagnostic the view's budget
     used to cut off), and the next read gets its list."""
     caplog.set_level(logging.WARNING, logger=mt.__name__)
@@ -188,7 +188,7 @@ def test_0119_a_spent_budget_says_where_it_went(mt, monkeypatch, caplog):
     state = view["merge_target_state"]
     assert (state["status"], state["code"], state["reason"]) == ("timeout", "merge_target_options_timeout", None)
     assert view["merge_target_options"] == []
-    # 0148: the timeout is cached briefly; the diagnostic line below keeps the 0119 contract.
+    # the timeout is cached briefly; the diagnostic line below keeps the 0119 contract.
     assert mt._check_cache[("p1", "g1")]["status"] == "timeout"
     lines = _lines(caplog, mt)
     assert len(lines) == 1
@@ -243,7 +243,7 @@ def test_0119_the_single_judgement_is_not_traced(mt, monkeypatch):
     assert mt._inspect_traced("p1", "develop") == ("free", {}) and calls == ["develop"]
 
 
-# ── 0119 T#1 rev1: the judgement ``_entry_of`` adds for a name a cached / joined snapshot did not hold ──────────────
+# ── the earlier implementation: the judgement ``_entry_of`` adds for a name a cached / joined snapshot did not hold ──────────────
 # A cached snapshot (or another request's computation this view joined) holds the verdicts of its own computation; a
 # stored target outside them is judged by ``_entry_of`` under what is left of this view's budget. That judgement is
 # traced as ``entries`` (its name and ms), its error as ``failed_name`` / ``error``; the response and the cache stay as
@@ -272,7 +272,7 @@ def _slow_for(name: str, seconds: float, error=None):
 
 
 def _timed_out_view(selected: str) -> dict:
-    """The response a view whose ``_entry_of`` spent the budget returns (unchanged from before 0119 T#1)."""
+    """The response a view whose ``_entry_of`` spent the budget returns (unchanged from before the earlier implementation)."""
     return {
         "merge_target_options": [], "default_target_branch": "main",
         "merge_target_state": {
@@ -301,7 +301,7 @@ def test_0119_a_cached_snapshots_added_judgement_that_spends_the_budget_is_named
     view = _view(mt, NEW, refresh=False)
     _contract(view)
     assert view == _timed_out_view(NEW)
-    snap = next(iter(mt._check_cache.values()))                         # 0148: no partial verdicts kept
+    snap = next(iter(mt._check_cache.values()))                         # no partial verdicts kept
     assert snap["status"] == "timeout" and snap["verdicts"] == {}
     assert snap["options"] == [] and snap["basis"] is None
     lines = _lines(caplog, mt)
@@ -435,7 +435,7 @@ def test_0148_invalidation_during_timeout_prevents_late_cache_repopulation(mt, m
     assert _view(mt, refresh=False)["merge_target_state"]["status"] == "ok"
 
 
-# ── flowgate.v02test.0020: the computation outlives the view's budget ───────────────────────────────────────────────
+# ── the earlier change: the computation outlives the view's budget ───────────────────────────────────────────────
 def _blocked_refs(mt, monkeypatch, refs=None):
     """The branch name read (a shared read) waits for ``release``: the computation stays in flight as long as a test
     needs. It then answers ``refs`` (default: REFS)."""
@@ -457,7 +457,7 @@ def test_0020_a_late_result_replaces_the_negative_snapshot_and_is_served(mt, mon
     entered, release = _blocked_refs(mt, monkeypatch)
     first = _view(mt, refresh=False)
     assert first["merge_target_state"]["status"] == "timeout" and entered.is_set()
-    assert mt._check_cache[("p1", "g1")]["status"] == "timeout"      # 0148: the negative snapshot, for now
+    assert mt._check_cache[("p1", "g1")]["status"] == "timeout"      # the negative snapshot, for now
     joined = _view(mt, refresh=False)                                 # inside 5 s: the negative snapshot, no wait
     assert joined["merge_target_state"]["status"] == "timeout"
     release.set()
@@ -473,7 +473,7 @@ def test_0020_a_late_result_replaces_the_negative_snapshot_and_is_served(mt, mon
 
 
 def test_0020_a_refresh_joins_the_running_computation_instead_of_starting_over(mt, monkeypatch):
-    """flowgate.v02test.0020 rev2: pressing refresh while the list is being computed used to cancel that computation
+    """pressing refresh while the list is being computed used to cancel that computation
     and start again from nothing (on a slow host: never done). It now waits for the running one."""
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.2)
     entered, release = _blocked_refs(mt, monkeypatch)
@@ -569,7 +569,7 @@ def test_0148_failed_refresh_does_not_leave_an_old_timeout(mt, monkeypatch):
     assert _view(mt, refresh=False)["merge_target_state"]["status"] == "ok"
 
 
-# ── flowgate.v02test.0020 rev2: a light candidate list, served stale-while-revalidate ──────────────────────────────
+# ── the earlier change: a light candidate list, served stale-while-revalidate ──────────────────────────────
 def test_0020_rev2_the_list_reads_no_checkout_floor_or_tracked_changes_but_a_save_still_does(mt, monkeypatch):
     """The list reads the branch names and the slot ledger only. The base checkout's branch, its tracked changes and
     the work base history a target lacks (the scope floor) are left to the single judgement, which refuses them."""

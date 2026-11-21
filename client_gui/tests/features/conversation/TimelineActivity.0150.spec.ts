@@ -6,7 +6,7 @@ import { toCommand } from '@/features/conversation/api'
 import TimelineActivity from '@/features/conversation/TimelineActivity.vue'
 import type { CommandRequestActivity } from '@/features/conversation/types'
 
-// flowgate.v02.0150 — every command card has a detail button that opens, inside the card (one
+// every command card has a detail button that opens, inside the card (one
 // column), the full command, stdout / stderr, the exit code and the error, in any state.
 registerAppMessages(i18n)
 

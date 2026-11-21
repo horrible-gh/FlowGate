@@ -1,4 +1,4 @@
-"""T#2: real Git topology, copy isolation, publication, and mode contracts."""
+"""real Git topology, copy isolation, publication, and mode contracts."""
 import hashlib
 import stat
 

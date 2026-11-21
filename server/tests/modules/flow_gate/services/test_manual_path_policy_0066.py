@@ -1,4 +1,4 @@
-"""0066 D#1 manual path policy matrix and fail-closed ownership."""
+"""manual path policy matrix and fail-closed ownership."""
 import pytest
 
 from modules.flow_gate.services import tr2_file_policy

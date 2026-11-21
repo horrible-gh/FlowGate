@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#8 — the attachments tab rules as tables (D#1 §8.5, §10.3, §10.4): the target
+ * the attachments tab rules as tables: the target
  * document of every card kind (an instruction and its report are separate Nodes, each with its own
  * attachments; no document -> none), the rows (server order, one per stored name, the upload name only
  * when it differs, the size unit), the tab number, the operation classes, availability with the

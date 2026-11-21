@@ -1,13 +1,13 @@
-"""T0044.0009 — conversation (CH) inbox behaviour (HTTP integration).
+"""conversation (CH) inbox behaviour (HTTP integration).
 
 Exercises the real inbox new/edit handlers (TestClient + all-migrations sqlite) for:
-  - L0044.0008 §3.3 (L-AUTO): a standalone-opened CH is auto-approved (not NULL,
+  - the earlier implementation.0008 (L-AUTO): a standalone-opened CH is auto-approved (not NULL,
     not pending_review) even with no matching workflow head.
-  - L0044.0008 §8 (I-SSE): a CH edit by a non-owner subject still delivers a
+  - the earlier implementation.0008 (I-SSE): a CH edit by a non-owner subject still delivers a
     DOCUMENT_EXPLORER_REFRESH to the owner's audience.
 
 The former §7 byte-cap carry-over (successor CH opened at 80% of the content cap)
-was removed in group 0351 T5 (D0002 §3-6): turns now accumulate in the shared
+was removed in the earlier change T5: turns now accumulate in the shared
 append-only store instead of a wholesale-rewritten file body, so an inbox edit
 never rolls a conversation over anymore.
 
@@ -299,7 +299,7 @@ def test_ch_new_with_questions_is_rejected_atomically(seed_data, tmp_path):
 
 # ── §8 owner-targeted SSE on edit by a non-owner subject ───────────────────────
 def test_ch_edit_by_non_owner_broadcasts_to_owner(seed_data, tmp_path):
-    # Legacy (hyphenated) harness uses the {TYPE}{seq4} doc-id form, like NR0001.
+    # Legacy (hyphenated) harness uses the {TYPE}{seq4} doc-id form, like the review.
     doc_id = "testprj-__ALL__-0001-CH0003"
     _make_ch_doc(doc_id, tmp_path, "---\ntype: CH\n---\nturn 0", owner="usr_test_001", seq=3)
 
@@ -336,7 +336,7 @@ def test_ch_edit_by_non_owner_broadcasts_to_owner(seed_data, tmp_path):
 
 # ── retired §7: carry-over no longer triggers, even past the old threshold ─────
 def test_ch_edit_past_old_carryover_threshold_never_rolls_over(seed_data, tmp_path, monkeypatch):
-    """Group 0351 T5 (D0002 §3-6): the byte-cap carry-over is removed. An edit that
+    """Group 0351 T5: the byte-cap carry-over is removed. An edit that
     would have crossed the old 80% threshold now just saves normally — no successor
     CH is opened and the response never carries a carried_over_doc_id."""
     doc_id = "testprj-__ALL__-0001-CH0004"
@@ -370,5 +370,5 @@ def test_ch_edit_past_old_carryover_threshold_never_rolls_over(seed_data, tmp_pa
 
     assert resp.status_code == 200, resp.text
     assert "carried_over_doc_id" not in resp.json()
-    # No successor CH0005 was reserved/created for this edit.
+    # No successor the discussion was reserved/created for this edit.
     reserve_patch.assert_not_called()

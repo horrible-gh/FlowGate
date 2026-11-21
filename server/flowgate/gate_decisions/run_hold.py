@@ -1,4 +1,4 @@
-"""0132 T#3: gate reservation activity and command-intent wake, under the Flow guard.
+"""gate reservation activity and command-intent wake, under the Flow guard.
 
 A parked reservation still owns its confirm card, but does not hold the run's structure.
 Wake only the command that accepted it; idle_reason is presentation except for explicit Stop.

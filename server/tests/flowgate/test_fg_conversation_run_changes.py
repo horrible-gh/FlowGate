@@ -1,6 +1,6 @@
-"""Run changes: start/end snapshots, diff, file detail (flowgate.v02.0032 T#1).
+"""Run changes: start/end snapshots, diff, file detail.
 
-D0006 §3.8 (run changes vs Group changes, snapshot unavailable, finalize, file detail
+(run changes vs Group changes, snapshot unavailable, finalize, file detail
 from stored trees, before/after-run aggregation) and completion conditions 12-14.
 Uses a real throwaway Git worktree.
 """

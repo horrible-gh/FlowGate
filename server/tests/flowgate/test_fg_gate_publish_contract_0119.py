@@ -1,4 +1,4 @@
-"""0119 T-4: exact fast-forward evidence and job wire compatibility (no Git or DB writes)."""
+"""T-4: exact fast-forward evidence and job wire compatibility (no Git or DB writes)."""
 from pathlib import Path
 from types import SimpleNamespace
 

@@ -1,6 +1,6 @@
 // Stroke icons drawn in the approved 01-dashboard.html (24x24 viewBox, stroke=currentColor).
 // They name FlowGate screens (project/designer/git/AI/settings), so they are app-owned rather
-// than a domain-free components/ui asset (T0011 §6). Static markup only — never user input.
+// than a domain-free components/ui asset. Static markup only — never user input.
 export const NAV_GLYPHS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-7h6v7"/>',
   folder: '<path d="M3 7h6l2 2h10v10H3z"/><path d="M3 7V5h7l2 2"/>',

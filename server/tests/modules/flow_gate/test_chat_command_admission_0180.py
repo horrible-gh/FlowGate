@@ -1,4 +1,4 @@
-"""flowgate.default.0180 T0004 -- actual edit_once admission -> repeated CH commands.
+"""actual edit_once admission -> repeated CH commands.
 
 The real ``ai_invoke_service.start_run`` admission runs against a real SQLite store: the real
 ``token_service.issue`` (including the edit_once claim CAS), the real ``HandoffGate``

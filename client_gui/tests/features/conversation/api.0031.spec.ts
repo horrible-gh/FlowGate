@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0031 — the Conversation adapter calls only the existing conversation / AI-run /
-// chat-settings / document contracts (R0001 §9) and normalizes their snake_case answers.
+// the Conversation adapter calls only the existing conversation / AI-run /
+// chat-settings / document contracts and normalizes their snake_case answers.
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
 const patchRequest = vi.hoisted(() => vi.fn())
@@ -66,7 +66,7 @@ describe('chat list / title / new chat', () => {
     expect(saved.title).toBe('New name')
   })
 
-  // flowgate.v02.0032 (D0006 §3.10, §5.4): a standalone CH through POST /conversations — no
+  // a standalone CH through POST /conversations — no
   // member-document lookup, no prev_doc_id, no module, no next-empty.
   it('creates a standalone chat through POST /conversations with the scope and the title only', async () => {
     postRequest.mockResolvedValue({
@@ -151,7 +151,7 @@ describe('turns', () => {
   })
 })
 
-// The optional detail fields a bare answer leaves null (0147 verdict / stop code / API turns, flowgate.v02test.0024 D).
+// The optional detail fields a bare answer leaves null (verdict / stop code / API turns, the earlier change D).
 const NO_EXTRA_DETAIL = { succeeded: null, stopCode: null, apiTurnsUsed: null, providerId: null, providerName: null,
   sourceAccess: null, startedAt: null }
 
@@ -215,7 +215,7 @@ describe('AI run', () => {
     // Finished: `provider_id` / `provider_name`; an unknown access value is not guessed.
     getRequest.mockResolvedValueOnce({ data: { run_id: 'r3', status: 'finished', provider_id: 'aip_3', provider_name: 'Sonnet', source_access: 'edit' } })
     expect(await fetchRun('r3')).toMatchObject({ providerId: 'aip_3', providerName: 'Sonnet', sourceAccess: null })
-    // flowgate.v02gui.0026: an execute-mode run is a read token that may run commands — shown as "execute", not "read".
+    // an execute-mode run is a read token that may run commands — shown as "execute", not "read".
     getRequest.mockResolvedValueOnce({ data: { run_id: 'r4', status: 'running', source_access: 'read', command_access: 'execute' } })
     expect(await fetchRun('r4')).toMatchObject({ sourceAccess: 'execute' })
     getRequest.mockResolvedValueOnce({ data: { run_id: 'r5', status: 'running', source_access: 'read_write', command_access: 'execute' } })

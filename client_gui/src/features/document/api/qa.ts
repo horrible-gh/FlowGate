@@ -1,11 +1,11 @@
-// flowgate.v02.0048 T#3 — skeleton of the qa document API (D#1 §6.3). Owned by T#7 (qna), which
+// skeleton of the qa document API. Owned by the earlier implementation (qna), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `qa`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   list     GET  /api/v1/q/{doc_id}
 //   answer   POST /api/v1/q/{doc_id}/items/{item_id}/answers  { body, author_kind, selected_option_ids }
 //
-// flowgate.v02.0048 T#7 — the Inspector Q&A tab's calls, both existing v0.1 endpoints (no new server
+// the Inspector Q&A tab's calls, both existing v0.1 endpoints (no new server
 // API):
 //   list     GET  /api/v1/q/{doc_id} -> { ok, qa: { doc_id, status, items: [{ id, seq, title, body,
 //            asker_kind, answer_count, options: [{ id, label }], asker_provider, answers: [{ id, body,
@@ -16,12 +16,12 @@
 //            An answer picks one option, writes prose, or both; a pick alone is stored with the
 //            option's label as its body (server side).
 // The AI answer hand-off (`answers/ai-request`, `answers/ai-mention`) and adding a question are not
-// wrapped (D#1 §10.2 T#7 row).
+// wrapped (row).
 //
-// flowgate.v02.0064 T-B5 (P0006 §5.1·§6.4) — every answer carries `author_name`: the person author's
+// T-B5 — every answer carries `author_name`: the person author's
 // name (`users.username`), null for an AI answer or a person the server could not find.
 //
-// flowgate.v02.0053 T#6 (0053 CH §2) — a person asks on the Q&A tab and an AI answers, so two more
+// (CH) — a person asks on the Q&A tab and an AI answers, so two more
 // existing v0.1 endpoints are wrapped (still no new server API):
 //   ask      POST /api/v1/q/{doc_id}/questions { asker_kind: 'human', questions: [{ body }] }
 //            -> { ok, doc_id, added_item_ids: [id] }
@@ -29,7 +29,7 @@
 //            item_id, run_id, status, provider }; the AI run posts its answer on the same question
 //            (author_kind 'ai'), which arrives as `qna_answer_registered`. Its admission refusals keep
 //            the ai-invoke envelope: a flat `code` (409 run_in_progress, no_enabled_provider …).
-//            flowgate.v02.0056 F1 (0056 CH §3): the caller names the AI (`provider_id`, the route's
+//            (CH): the caller names the AI (`provider_id`, the route's
 //            AiAnswerRequest body); without one the project's provider chain picks.
 //   `answers/ai-mention` (copy a mention for one's own worker) stays unwrapped.
 //

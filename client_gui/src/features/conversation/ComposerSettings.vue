@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0047 — ⚙ and the chat settings popover above the composer (D0008 §6-2):
+  <!-- ⚙ and the chat settings popover above the composer:
        the send action and the context range, saved through the session. Opening never
        re-queries: it redraws the last confirmed settings. -->
   <div ref="rootEl" class="csx">
@@ -35,7 +35,7 @@
           <option v-for="n in settings.contextTurnsPresets" :key="n" :value="String(n)">{{ t('gui.conversation.settings.context_turns', { n }) }}</option>
           <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
           <option value="all">{{ t('gui.conversation.settings.context_all') }}</option>
-          <!-- flowgate.v02test.0025: each chat's checkpoint (message ⋯ menu) decides; the last 5 turns without one. -->
+          <!-- each chat's checkpoint (message ⋯ menu) decides; the last 5 turns without one. -->
           <option value="checkpoint">{{ t('gui.conversation.settings.context_checkpoint') }}</option>
           <option value="checkpoint_recent">{{ t('gui.conversation.settings.context_checkpoint_recent') }}</option>
         </select>

@@ -295,7 +295,7 @@ def test_api_contract_and_heartbeat_regression(setup, monkeypatch):
     assert heartbeat["accepted"] is True
 
 
-# ── v02.0089 T0004 (NR0003 §2-4/§5-E): no env field in any layer of the Job contract ──
+# ── v02.0089 the earlier implementation: no env field in any layer of the Job contract ──
 
 PAYLOAD_KEYS = {"execution_type", "command_line", "stdin_text", "cwd", "timeout_seconds",
                 "target_agent_id"}

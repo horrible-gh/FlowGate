@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0053 T#4 — a test state as a glyph and a color; the word is the tooltip (the v0.1
+  <!-- a test state as a glyph and a color; the word is the tooltip (the v0.1
        verdict / mode badges carried the word on screen). `text` is a number or a short value shown after it. -->
   <span
     class="test-mark"

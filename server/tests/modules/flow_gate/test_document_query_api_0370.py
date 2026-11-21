@@ -1,11 +1,11 @@
-"""Document-query endpoint tests (group 0370, P0002 scenarios 1–20).
+"""Document-query endpoint tests (the earlier change, the plan scenarios 1–20).
 
 Exercise /outline, /section, /meta, /relations, search match positions, and save-response
 change summaries through real HTTP. Read and write actual temporary document files:
 coordinate calculations depend on file reading and cannot be proved with simulated bodies.
 
 Frontmatter is essential: _NR_BODY has eight frontmatter lines and its search term is
-at file line 18, body line 10. Omitting the body-to-file conversion (L0003 §2-1)
+at file line 18, body line 10. Omitting the body-to-file conversion
 incorrectly returns 10, a bug that documents without frontmatter cannot expose.
 """
 from __future__ import annotations
@@ -71,10 +71,10 @@ _NR_BODY = (
     "마지막 줄.\n"                  # 26
 )
 
-# Prose without headings: an empty outline must still return 200 (P0002 scenario 2).
+# Prose without headings: an empty outline must still return 200 (scenario 2).
 _PLAIN_BODY = "짧은 산문 한 줄.\n또 한 줄 있다.\n"
 
-# Two headings with identical names (P0002 scenario 5).
+# Two headings with identical names (scenario 5).
 _T_BODY = (
     "## 변경 파일\n"      # 1  s1
     "\n"                 # 2
@@ -337,7 +337,7 @@ def test_section_by_name_returns_the_heading_line_and_its_body(tmp_path):
 
 
 def test_section_by_name_id_lines_and_chars_all_agree(tmp_path):
-    """Name, line, and character lookup return the same locator (P0002 scenarios 3–4)."""
+    """Name, line, and character lookup return the same locator (scenarios 3–4)."""
     raw = _bearer(tmp_path)
     client = _client()
     by_name = _get(f"/api/v1/document/{DOC_NR}/section?section=2.1 현재 구성", raw, client).json()
@@ -389,7 +389,7 @@ def test_section_truncation_resumes_exactly_where_it_stopped(tmp_path):
 
 
 def test_section_reads_the_first_of_two_same_named_headings_and_says_so(tmp_path):
-    """Ambiguity must not stall unattended work (P0002 scenario 5)."""
+    """Ambiguity must not stall unattended work (scenario 5)."""
     resp = _get(f"/api/v1/document/{DOC_T}/section?section=변경 파일", _bearer(tmp_path))
     assert resp.status_code == 200
     data = resp.json()
@@ -439,7 +439,7 @@ def test_line_start_out_of_range_is_422_but_end_overflow_clamps(tmp_path):
 
 
 def test_stale_revision_is_409_and_wins_over_a_missing_section(tmp_path):
-    """Pin L0003 §4-1 ordering: case 6 (409) precedes case 8 (404).
+    """Pin the earlier implementation ordering: case 6  precedes case 8.
 
     Report revision changes first, or workers may assume a heading was deleted
     and search elsewhere instead of refreshing the outline.
@@ -594,7 +594,7 @@ def test_search_context_lines_zero_empties_the_neighbours(tmp_path):
 
 
 def test_search_does_not_invent_a_place_for_a_title_only_match(tmp_path):
-    """A non-body match must not invent a first-line location (P0002 scenario 10)."""
+    """A non-body match must not invent a first-line location (scenario 10)."""
     resp = _get(
         f"/api/v1/search/documents/content?q={MARKER}&project={PROJECT}", _bearer(tmp_path)
     )
@@ -823,7 +823,7 @@ def test_inbox_new_tr_response_carries_worktree_untracked(tmp_path):
     assert resp.json()["worktree_untracked"] == expected
 
 def test_inbox_new_response_carries_the_change_summary(tmp_path, storage_root):
-    """Perform a real inbox creation and verify its summary (P0002 scenario 15).
+    """Perform a real inbox creation and verify its summary (scenario 15).
 
     With no prior revision, before is null and the entire document is added.
     Line numbers refer to the saved file and must match outline calculations.

@@ -92,7 +92,7 @@ def _entry_of_decision(row: dict) -> dict:
 
 
 def entry(row: dict) -> dict:
-    """The history entry of one stored decision (flowgate.v02.0085 T#2: the decision part of a gate decision answer)."""
+    """The history entry of one stored decision (the decision part of a gate decision answer)."""
     return _entry_of_decision(row)
 
 

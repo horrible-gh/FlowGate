@@ -1,4 +1,4 @@
-"""0080 T#1: restart recovery ends a Self-check run only on proof (NR0007 §5-0, §6 item 5).
+"""restart recovery ends a Self-check run only on proof.
 
 recover() may fail a run (interrupted_by_restart) and delete its Group's G only after the
 owning server is proved dead and then the run's whole process tree is proved empty. The
@@ -214,7 +214,7 @@ def test_a_spawn_that_fails_after_creating_processes_ends_nothing_unproved(world
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_ok.py"]})
     assert started.status_code == 202, started.text
     rid = started.json()["self_check_run_id"]
-    deadline = time.monotonic() + 30                                  # 0053 1-B: a queue worker claims it
+    deadline = time.monotonic() + 30                                  # a queue worker claims it
     while _row(store, rid)["recovery_state"] == "none" and time.monotonic() < deadline:
         time.sleep(0.05)
     for worker in [t for t in threading.enumerate() if t.name == f"selfcheck-{rid}"]:
@@ -225,7 +225,7 @@ def test_a_spawn_that_fails_after_creating_processes_ends_nothing_unproved(world
     assert row["status"] == "pending" and row["active_key"] is None, row
     assert row["error_code"] is None and row["finished_at"] is None, row
     assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", proof.TREE_UNPROVEN)
-    # 0053 1-B: a queue run holds no G -- only its own execution slot (reservation) stays taken.
+    # a queue run holds no G -- only its own execution slot (reservation) stays taken.
     assert _g(store) is None
     assert row["cpu_reservation"] >= 1
     assert db_runs.host_reservations(row["host_node_key"], 64)[1] >= row["cpu_reservation"]

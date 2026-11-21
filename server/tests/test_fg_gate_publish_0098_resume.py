@@ -1,7 +1,7 @@
-"""flowgate.v02.0098 T#2 (D0004 §3.4, §3.6 to §3.6.3; T0008): the recorded merge target of a gate decision,
+"""(to; the earlier implementation): the recorded merge target of a gate decision,
 its resume, unmerge limit, lock slot and ref movement on real local targets and a temporary bare origin.
 
-Moved unchanged from ``test_fg_gate_publish_0098`` (TR0009), whose ``_0098_target`` it imports, and uses the
+Moved unchanged from ``test_fg_gate_publish_0098``, whose ``_0098_target`` it imports, and uses the
 harness of ``test_fg_gate_publish_0085``. ``--dist loadfile`` gives one file to one worker, and the 20 cases of
 the one file took about as long as the 1800 s Self-check limit on a loaded host.
 """

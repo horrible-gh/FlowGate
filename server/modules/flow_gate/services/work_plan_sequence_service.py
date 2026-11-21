@@ -1,16 +1,16 @@
-"""Work-plan → workflow-sequence converter (flowgate.default.0399 D0010 §2 / L0011).
+"""Work-plan → workflow-sequence converter.
 
-D0010 §2 lists this as a component of its own: "plan-to-sequence converter (new) ... kept
+lists this as a component of its own: "plan-to-sequence converter (new) ... kept
 separate rather than bolted onto the screen". That separation is the whole reason the module exists — a later group
-is meant to drive the same conversion with no screen at all (D0010 [DEFERRED], last row), so
+is meant to drive the same conversion with no screen at all ([DEFERRED], last row), so
 nothing in here may reach for a request, a session, or a rendering concern.
 
 What it does: turn an approved work plan's step list into *candidate* sequence rows, merge
 them into the current sequence the way the chosen mode says, and report what the person
 should know before saving. It never writes. Pouring only produces the edit dialog's starting
-state; the sequence changes when a human presses [save] (D0010 §3.3).
+state; the sequence changes when a human presses [save].
 
-Everything numeric or set-valued here is L0011 §1; the algorithms are L0011 §2.
+Everything numeric or set-valued here is the earlier implementation; the algorithms are the earlier implementation
 """
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ from modules.flow_gate.services.workflow_decision_service import (
 )
 from modules.flow_gate.services.work_plan_service import PROVIDER_ID_PATTERN
 
-# ── L0011 §1.1 — numeric parameters ──────────────────────────────────────────
-# 0406 T0022 item 6: the value is read from the canonical one in documents.constants. The name
+# ── the earlier implementation — numeric parameters ──────────────────────────────────────────
+# the value is read from the canonical one in documents.constants. The name
 # is kept so existing callers (tests included) can still ask via wpseq.NOTE_MAX_CHARS.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 PROVIDER_NAME_MAX_CHARS = 191
@@ -44,9 +44,9 @@ POUR_ROWS_MAX = 100
 UNDO_DEPTH = 1
 PLACEABLE_MIN = 1
 
-# ── L0011 §1.2 — fixed sets ──────────────────────────────────────────────────
+# ── the earlier implementation — fixed sets ──────────────────────────────────────────────────
 PLACEABLE_TYPES = WORK_PLAN_STEP_TYPES
-# AUTO_ROW_MAP is not a second copy of the instruction→report pairing: L0011 §1.2 requires one
+# AUTO_ROW_MAP is not a second copy of the instruction→report pairing: the earlier implementation requires one
 # side to be the original and the other to read it, because a drift between the two would make
 # the rows we pour differ from the rows the save path writes.
 AUTO_ROW_MAP = dict(AUTO_REPORT_MAP)
@@ -59,9 +59,9 @@ MODES = ("append", "replace_after")
 _CONTROL_CHARS = {chr(code) for code in range(0x20)} | {chr(0x7F)}
 _log = logging.getLogger(__name__)
 
-# L0011 §2.10 / P0013 ① — one envelope per code; the order below is the order the dialog
+# ① — one envelope per code; the order below is the order the dialog
 # reads them in, so it is fixed here rather than left to the caller.
-# M0020: approval status is deliberately absent from this list. A plan still under review is
+# approval status is deliberately absent from this list. A plan still under review is
 # poured exactly like an approved one; whether that is acceptable is decided by whoever presses [save].
 _NOTIFICATION_ORDER = (
     "type_not_placeable",
@@ -72,10 +72,10 @@ _NOTIFICATION_ORDER = (
     "note_missing",
     "paired_note_dropped",
     "server_assembled_note",
-    # 0649 T#1 (NR0003 O0): legacy rows whose card is settled by the continuity check.
+    # legacy rows whose card is settled by the continuity check.
     "legacy_card_unresolved",
     "retired_plan_rows",
-    # 0649 T#2 (NR0003 O2/O5): started cards must lead the plan; an append may not keep
+    # started cards must lead the plan; an append may not keep
     # this plan's earlier pending rows; started cards are not poured again.
     "order_conflicts_started",
     "started_card_removed",
@@ -96,7 +96,7 @@ _SEVERITY = {
     # Blocks the save until acknowledged (acknowledged_codes) — never silently resolved.
     "legacy_card_unresolved": "blocker",
     "retired_plan_rows": "info",
-    # 0649 T#2: the first four block the save outright (the server answers 409 too).
+    # the first four block the save outright (the server answers 409 too).
     "order_conflicts_started": "blocker",
     "started_card_removed": "blocker",
     "card_identity_mismatch": "blocker",
@@ -105,7 +105,7 @@ _SEVERITY = {
     "foreign_rows_before": "info",
 }
 
-# 0649 T#2 (NR0003 O2/O5): blockers no acknowledgement can lift.
+# blockers no acknowledgement can lift.
 BLOCKING_CODES = frozenset({
     "order_conflicts_started", "started_card_removed", "card_identity_mismatch",
     "plan_rows_pending",
@@ -143,15 +143,15 @@ def label_of(code: str, locale: str = "ko") -> str:
     return get_type_name(code, locale) or code
 
 
-# ── L0011 §2.2 ───────────────────────────────────────────────────────────────
+# ── the earlier implementation ───────────────────────────────────────────────────────────────
 
 def normalize_note(raw: Any, *, strict: bool = False) -> str:
     """Trim a step note down to what a sequence row may carry.
 
-    "Absent" and "empty string" are not distinguished (L0011 §2.2): both come back as "". Keeping the
+    "Absent" and "empty string" are not distinguished: both come back as "". Keeping the
     distinction would flip the stored value on every save round-trip for no visible gain.
 
-    0406 T0022 item 6 — **no silent truncation.** The old implementation dropped characters past
+    **no silent truncation.** The old implementation dropped characters past
     the cap without a word and the save appeared to succeed. Nothing is truncated now:
 
     * ``strict=True`` (the save path) raises :class:`NoteTooLong` and rejects past the cap.
@@ -189,7 +189,7 @@ def normalize_provider(raw_id: Any, raw_name: Any) -> tuple[Optional[str], Optio
 
 
 def _provider_unavailable(provider_id: Optional[str], provider_view: Any) -> bool:
-    """Would the apply path refuse this id? (0444 NR0003 §4-4)
+    """Would the apply path refuse this id?
 
     Deliberately the same condition, word for word, as
     ``work_plan_apply_service._usable_provider``: an id the registry does not know, or a
@@ -232,7 +232,7 @@ def resolve_step_provider(
     return provider_id, provider_name
 
 
-# ── L0011 §2.1 — a row inside the edit dialog ────────────────────────────────
+# ── the earlier implementation — a row inside the edit dialog ────────────────────────────────
 
 def _new_row(
     uid: int,
@@ -284,7 +284,7 @@ def _new_row(
         "provider_display_name": provider_display_name,
         "pair_provider_id": pair_provider_id,
         "pair_provider_display_name": pair_provider_display_name,
-        # 0408 TR0021 rev1: the note the plan wrote on the RESULT step, held on the
+        # the note the plan wrote on the RESULT step, held on the
         # instruction row only until attach_auto_rows builds that result row (§2.4). It is
         # never this row's own note — the two steps carry two different sentences.
         "pair_note": pair_note,
@@ -301,14 +301,14 @@ def _new_row(
         "status": status,
         "locked": locked,
         "poured": False,
-        # 0649 T#1 (NR0003 O0/O1): the card the row serves and, for a stored row, its id.
+        # the card the row serves and, for a stored row, its id.
         "source_wp_card_id": source_wp_card_id,
         "item_id": item_id,
     }
 
 
 def origin_of_loaded_row(row: dict, previous: Optional[dict]) -> str:
-    """L0011 §2.1: how a row already in the sequence reports where it came from.
+    """how a row already in the sequence reports where it came from.
 
     A stored row with no source document is read as a row a person put there — which is
     what it is, and what migration 079 leaves every pre-existing row saying.
@@ -328,14 +328,14 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
 
     Locked rows are the ones a save may not touch — they already produced a document, so
     they are the structural reason "finished rows and the row currently running are never deleted
-    by any mode" holds without a single guard clause (L0011 §2.5).
+    by any mode" holds without a single guard clause.
     """
     locked: list[dict] = []
     pending: list[dict] = []
     uid = 0
     previous: Optional[dict] = None
     items = list(items or [])
-    # 0649 T#1 (NR0003 O1): "locked" = protected — started rows (is_started_row, the one
+    # "locked" = protected — started rows (is_started_row, the one
     # predicate) plus the pending report row right after a started instruction. That report
     # row therefore never shows up in replace_after's deleted rows or in a save payload as
     # an editable row.
@@ -378,12 +378,12 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
     return locked, pending
 
 
-# ── L0011 §2.3 — the conversion itself ───────────────────────────────────────
+# ── the earlier implementation — the conversion itself ───────────────────────────────────────
 
 def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]) -> None:
     """Hold the result step's note for the automatic row that will carry it (§2.4).
 
-    0408 M0019 re-rejection ("why is the TR/NR mention using T/N's?"): this used to move the
+    re-rejection ("why is the TR/NR mention using T/N's?"): this used to move the
     note onto the INSTRUCTION row — and, if that row already had one, throw it away
     (paired_note_dropped). Both outcomes made the row that actually runs under [auto approve]
     (NR/TR) show a sentence somebody wrote for a different step, or none at all. The note now
@@ -449,7 +449,7 @@ def plan_to_rows(
     *,
     provider_view: Optional[dict] = None,
 ) -> tuple[list[dict], list[dict], int]:
-    """Turn a plan body's steps into row candidates (L0011 §2.3).
+    """Turn a plan body's steps into row candidates.
 
     A plan stores an instruction step and its result step as a pair. The sequence dialog
     attaches the result row itself, so building a row from the plan's result step too would
@@ -505,7 +505,7 @@ def plan_to_rows(
             plan_key=step.get("key"),
             source_doc_id=plan_doc_id,
             source_revision_no=plan_revision_no,
-            # 0649 T#1 (NR0003 O0): the row remembers its card, not just its revision.
+            # the row remembers its card, not just its revision.
             source_wp_card_id=step.get("card_id"),
             provider_id=provider_id,
             provider_display_name=provider_name,
@@ -549,7 +549,7 @@ def plan_to_rows(
     return rows, dropped, uid
 
 
-# ── L0011 §2.4 ───────────────────────────────────────────────────────────────
+# ── the earlier implementation ───────────────────────────────────────────────────────────────
 
 def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) -> tuple[list[dict], int]:
     """Re-derive every automatic report row. Idempotent by construction.
@@ -597,10 +597,10 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             auto_uid = uid
             status, locked, item_seq_before = "pending", False, None
         # TSR is assembled by the server: no provider and no note may be written for it.
-        # 0444 T0007 (NR0003 §2-7): that rule is stated once now, as
+        # that rule is stated once now, as
         # SERVER_ASSEMBLED_REPORT_TYPES, and workflow_decision_service.expand_steps_with_reports()
         # reads the same name. It used to spell "TSR" out on its own and commit 178b21b2
-        # (0434 T0004 F1) moved only the provider half of it, so the note this function refuses
+        # moved only the provider half of it, so the note this function refuses
         # to write was being written on the decision/edit path.
         server_assembled = want in SERVER_ASSEMBLED_REPORT_TYPES
         stale_work_plan_default_pair_note = (
@@ -625,16 +625,16 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             auto_uid, want, locale,
             is_auto=True,
             auto_of_uid=row["uid"],
-            # 0408 TR0021 rev1: an automatic row carries its own note too. Under [auto approve]
+            # an automatic row carries its own note too. Under [auto approve]
             # this is the very row the AI worker runs on, so what the plan wrote for this step has nowhere else to ride.
             note=pair_note,
             note_source=pair_note_source,
             origin="auto",
-            # 0434 T0004 F1/F2: automatic reports belong to the same poured plan
+            # automatic reports belong to the same poured plan
             # revision as their instruction, so they participate in freshness checks too.
             source_doc_id=row.get("source_doc_id"),
             source_revision_no=row.get("source_revision_no"),
-            # 0649 T#1 (NR0003 O0): a report row belongs to its instruction's card.
+            # a report row belongs to its instruction's card.
             source_wp_card_id=row.get("source_wp_card_id"),
             provider_id=provider_id,
             provider_display_name=provider_name,
@@ -666,7 +666,7 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
     return out, max(uid, next_uid)
 
 
-# ── L0011 §2.5 · §2.6 — the two modes ────────────────────────────────────────
+# ── the earlier implementation · — the two modes ────────────────────────────────────────
 
 def cut_index(pending_before: list[dict], wp_item_seq: Optional[int]) -> int:
     """Where 'replace after this plan' starts cutting.
@@ -674,7 +674,7 @@ def cut_index(pending_before: list[dict], wp_item_seq: Optional[int]) -> int:
     A work plan document is the result of the row it sits on, and a row with a result is a
     locked row — so the plan's own row is almost never in the editable list and this returns
     0. That is the right answer, not a fallback: when the plan's row is above the editable
-    list, the whole editable list *is* "the rows after the plan" (L0011 §2.6).
+    list, the whole editable list *is* "the rows after the plan".
     """
     if wp_item_seq is None:
         return 0
@@ -695,14 +695,14 @@ def pour_replace_after(
     return list(pending_before[:cut]) + list(pour_rows), list(pending_before[cut:])
 
 
-# ── L0011 §2.9 ───────────────────────────────────────────────────────────────
+# ── the earlier implementation ───────────────────────────────────────────────────────────────
 
 def overlap_types(before_uids: set[int], poured_uids: set[int], rows: list[dict],
                   poured_type_of: dict[int, str]) -> list[str]:
     """Which types a surviving original row and a poured row now share.
 
     Only types, never positions: what a person sees is "there are two DS rows", not "DS#2
-    collides" (L0011 §2.9). Deleted rows cannot overlap with anything.
+    collides". Deleted rows cannot overlap with anything.
     """
     surviving = {
         row["type"] for row in rows
@@ -712,7 +712,7 @@ def overlap_types(before_uids: set[int], poured_uids: set[int], rows: list[dict]
     return sorted(surviving & incoming)
 
 
-# ── L0011 §4.3 ───────────────────────────────────────────────────────────────
+# ── the earlier implementation ───────────────────────────────────────────────────────────────
 
 def row_count_change(
     mode: str,
@@ -727,7 +727,7 @@ def row_count_change(
     return {"before": before, "after": before - deleted + added, "deleted": deleted, "added": added}
 
 
-# ── L0011 §2.10 ──────────────────────────────────────────────────────────────
+# ── the earlier implementation ──────────────────────────────────────────────────────────────
 
 def _envelope(code: str, count: int, **extra) -> dict:
     return {"code": code, "severity": _SEVERITY[code], "count": count, **extra}
@@ -748,11 +748,11 @@ def build_notifications(
 ) -> list[dict]:
     """Everything the person should know before saving.
 
-    0649 T#2: the codes in :data:`BLOCKING_CODES` (and ``legacy_card_unresolved`` until it
+    the codes in:data:`BLOCKING_CODES` (and ``legacy_card_unresolved`` until it
     is acknowledged) block the save; everything else is information.
 
     ``note_missing`` is recomputed here every time rather than carried along, because the
-    person may have filled a note in since the last time it was asked (L0011 §2.10).
+    person may have filled a note in since the last time it was asked.
     """
     found: dict[str, dict] = {}
 
@@ -810,7 +810,7 @@ def build_notifications(
             items=[{"plan_key": d.get("plan_key"), "type": d.get("type")} for d in assembled],
         )
 
-    # 0649 T#1 (NR0003 O0): started legacy rows whose card cannot be proven block the save
+    # started legacy rows whose card cannot be proven block the save
     # until the person acknowledges them; retired rows (a deleted card's history) are shown.
     unresolved = (card_classification or {}).get("unresolved_started") or []
     if unresolved:
@@ -822,7 +822,7 @@ def build_notifications(
     if retired:
         found["retired_plan_rows"] = _envelope("retired_plan_rows", len(retired), items=retired)
 
-    # 0649 T#2 (NR0003 O2): the started cards (current key and id) that the plan breaks.
+    # the started cards (current key and id) that the plan breaks.
     if order_blocker:
         cards = order_blocker.get("cards") or []
         found[order_blocker["code"]] = _envelope(
@@ -844,11 +844,11 @@ def build_notifications(
     return [found[code] for code in _NOTIFICATION_ORDER if code in found]
 
 
-# ── P0013 ① — the whole response ─────────────────────────────────────────────
+# ── the plan ① — the whole response ─────────────────────────────────────────────
 
 def _public_row(row: dict, provider_view: dict, plan_doc: dict) -> dict:
     """The row shape the dialog receives. ``item_seq`` is deliberately absent: the save
-    renumbers every row, and the note rides on the row itself (L0011 §2.11)."""
+    renumbers every row, and the note rides on the row itself."""
     return {
         "type": row["type"],
         "label": row["label"],
@@ -866,7 +866,7 @@ def _public_row(row: dict, provider_view: dict, plan_doc: dict) -> dict:
         "reviewer_provider_display_name": row.get("reviewer_provider_display_name"),
         "pre_instruction_text": row.get("pre_instruction_text"),
         "pre_instruction_attachment": row.get("pre_instruction_attachment"),
-        # 0649 T#1 (NR0003 O0/O1): what the save must send back — the card id, and for a
+        # what the save must send back — the card id, and for a
         # stored row its id (item_id) and whether it is protected (never moved or deleted).
         "source_wp_card_id": row.get("source_wp_card_id"),
         "item_id": row.get("item_id"),
@@ -884,7 +884,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     """Build the edit dialog's starting state for one work plan and one mode.
 
     Reads only. Nothing here changes the sequence, and nothing changes the plan — "applying
-    only reads the plan" (D0010 §4).
+    only reads the plan".
     """
     if mode not in MODES:
         raise InvalidMode(mode)
@@ -898,7 +898,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     next_uid = len(items)
 
     wp_revision_no = _int(doc.get("revision_no"), 0)
-    # 0444 NR0003 §4-4: read once, here, because the conversion below now needs it to
+    # read once, here, because the conversion below now needs it to
     # refuse an unregistered provider. _public_row further down reuses this same value —
     # the settings are not read twice for one response.
     provider_view = provider_view_of(doc.get("project_id"))
@@ -906,7 +906,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         plan, wp_doc_id, wp_revision_no, locale, start_uid=next_uid,
         provider_view=provider_view,
     )
-    # 0649 T#2 (NR0003 O2/O5): the cards that already started (S, by card id) are not
+    # the cards that already started (S, by card id) are not
     # poured again — their rows are protected and stay where they ran. Whether the plan
     # still starts with them, in that order, is checked here as well as on save.
     from modules.flow_gate.services import work_plan_card_order as _order
@@ -924,7 +924,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
 
     truncated_count = 0
     if len(pour_rows) > POUR_ROWS_MAX:
-        # Automatic rows are trimmed together with their parent so the pairing cannot break (L0011 §5).
+        # Automatic rows are trimmed together with their parent so the pairing cannot break.
         keep = pour_rows[:POUR_ROWS_MAX]
         while keep and keep[-1].get("type") in INSTRUCTION_TYPES:
             keep.pop()
@@ -941,7 +941,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     foreign_before = 0
     if mode == "append":
         next_rows, deleted_rows = pour_append(pending_before, pour_rows)
-        # 0649 T#2 (NR0003 O5, G7): rows of this plan still pending would run before the
+        # rows of this plan still pending would run before the
         # new card order and pour the same cards twice — append is refused until they are
         # replaced (replace_after) or rewritten (apply with workflow change).
         plan_rows_pending = [
@@ -962,7 +962,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
 
     return {
         "wp_doc_id": wp_doc_id,
-        # 0403 NR0004 F2 — the plan revision, previously only on the rows, now also rides the
+        # the plan revision, previously only on the rows, now also rides the
         # response header. Sending this value back on save is what lets the server decide
         # "did the plan change after the dialog opened". A row's source_revision_no keeps trailing along after a save and cannot serve that purpose.
         "wp_revision_no": wp_revision_no,
@@ -986,12 +986,12 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
             foreign_before=foreign_before,
         ),
         "workflow_tag": build_workflow_tag(sequence, items),
-        # 0649 T#1 (NR0003 O0): codes the save must carry in acknowledged_codes.
+        # codes the save must carry in acknowledged_codes.
         "acknowledgement_required": (
             ["legacy_card_unresolved"]
             if card_classification and card_classification["unresolved_started"] else []
         ),
-        # 0649 T#2 (NR0003 O2/O5): codes that refuse the save whatever is acknowledged.
+        # codes that refuse the save whatever is acknowledged.
         "blockers": [
             code for code in _NOTIFICATION_ORDER
             if code in BLOCKING_CODES and (
@@ -1018,7 +1018,7 @@ def _classify_for_candidates(doc: dict, plan: dict, items: list[dict]) -> Option
 
 
 def _deployed_by_graph(doc: dict) -> bool:
-    """flowgate.v02.0074 T#4 (D0006 §3.8): the plan of a Designer card (``meta.graph_card``, also on a Flow that only
+    """the plan of a Designer card (``meta.graph_card``, also on a Flow that only
     has a draft), or a plan of a Flow the Graph owns or both engines claim, is turned into cards by the v0.2 work
     plan deploy. Approving it never writes a v0.1 sequence (which would make the Flow a ``conflict``)."""
     import json
@@ -1070,7 +1070,7 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
     # With no tail the two modes produce the same rows. Reuse this exact snapshot so a
     # second read cannot race a newly-added tail; the workflow tag remains the save CAS.
     candidate = replace_candidate
-    # 0649 T#2 (NR0003 O2): a plan that moved or removed a started card is not saved by
+    # a plan that moved or removed a started card is not saved by
     # approval either — the pour dialog shows why.
     if candidate.get("blockers"):
         return {
@@ -1080,7 +1080,7 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
         }
     if not candidate.get("plan_step_count"):
         return {"status": "skipped", "reason": "no_placeable_steps", "revision_no": revision_no}
-    # 0649 T#1 (NR0003 O0): approval cannot ask a person to acknowledge unresolved legacy
+    # approval cannot ask a person to acknowledge unresolved legacy
     # rows, so it does not save — the pour dialog (P2) takes over.
     if candidate.get("acknowledgement_required"):
         return {
@@ -1088,7 +1088,7 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
             "reason": "legacy_card_unresolved",
             "revision_no": revision_no,
         }
-    # 0649 T#2 (NR0003 §3.6 check 2): approval runs inside a continuous chain whose current
+    # (check 2): approval runs inside a continuous chain whose current
     # hop is normally the WP row just approved (it has its document). If the group's live run
     # is instead working on a row that has no result document yet, rewriting the pending
     # rows would pull that row out from under it — leave the choice to the pour dialog.
@@ -1100,7 +1100,7 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
             "item_seq": busy_seq,
             "revision_no": revision_no,
         }
-    # 0649 T#1 (NR0003 O1): protected rows (started rows and the pending report right after a
+    # protected rows (started rows and the pending report right after a
     # started instruction) are not part of the replacement — they stay where they are.
     pending_rows = [{
         key: row.get(key)

@@ -1,4 +1,4 @@
-"""Remote credentials never leave a gate decision's Git work (flowgate.v02.0085 T#3, D0007 §7.3 last paragraph).
+"""Remote credentials never leave a gate decision's Git work (last paragraph).
 
 A remote URL may carry ``user:password@``, a token may sit in a query string or an ``Authorization`` header, and Git's
 standard error repeats all of them. Before anything of a gate decision's Git work is stored (decision, effects,

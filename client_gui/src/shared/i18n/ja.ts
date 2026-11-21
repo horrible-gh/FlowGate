@@ -236,16 +236,16 @@ export default {
     design_handoff_dialog: {
       mention_batch: 'ワーカーさん、次のステップは設計作業です。次のタイプを一括で作成してください: {types}\n対象: {docRef}',
     },
-    // flowgate.default.0405 P0004 — 次のアクションが作業計画のときの専用提案ダイアログ。
+    // 次のアクションが作業計画のときの専用提案ダイアログ。
     work_plan_create_dialog: {
       create_failed: '作業計画の作成中にエラーが発生しました。',
     },
     work_plan: {
-      // 0403 NR0004 F5·F7 — ロック理由はサーバーの判定をそのまま表示する。
+      // ·F7 — ロック理由はサーバーの判定をそのまま表示する。
       step_no: '段階{n}',
-      // D0007 §5.5 — 値が入ったステップが数量減少で消える前に確認する。
-      // 0649 T#3 (NR0003 §5.3 / O7) — カード単位の移動と開始済みカードのロック。
-      // T0007 §1.2 — サーバーが送る code+params から現在の UI locale で毎回再描画する。
+      // 値が入ったステップが数量減少で消える前に確認する。
+      // カード単位の移動と開始済みカードのロック。
+      // サーバーが送る code+params から現在の UI locale で毎回再描画する。
       // 文言は work_plan_service._ERROR_COPY と対にする(プレースホルダ構文は同じ)。
       errors: {
         json_parse_failed: '作業計画の本文が JSON オブジェクトではありません。',
@@ -305,7 +305,7 @@ export default {
         card_id_type_changed: 'card_id({value})のカードタイプは変更できません。',
         instruction_mode_started: '実行を開始したカード(card_id {value})は指示書省略の設定を変更できません。',
       },
-      // T0007 rev1 §1 — `empty_selection` の `what_key` param を現在の UI locale に写す表。
+      // `empty_selection` の `what_key` param を現在の UI locale に写す表。
       // キーは work_plan_service._EMPTY_SELECTION_WHAT と対にする。
       empty_selection_what: {
         counted_types: '数量を確認するタイプ',
@@ -330,9 +330,9 @@ export default {
         load_failed: '反映案の読み込みに失敗: {detail}',
       },
     },
-    // flowgate.default.0549 T0008: structured test specification (TS) and test report (TSR).
+    // structured test specification (TS) and test report (TSR).
     test_document: {
-      // 0684 T#3: one run entry point (action bar / Case row), its state, and the report body.
+      // one run entry point (action bar / Case row), its state, and the report body.
       field: {
         expected: '期待結果',
         actual: '実際の結果',
@@ -350,11 +350,11 @@ export default {
     },
     review_action_bar: {
 
-      // 0683 T0004 §3 — 対象ワークスペースを占有している試行を実際の所有者種別で示す。
-      // 0685 T0006 §1-2 — 短い案内 + 対象/動作を示すボタン。上の長い文言は[詳細]に残す。
-      // 0607 T0004 §3.6 — 承認の応答が失われたあと、サーバーの Git 結果を確認している間の案内。
-      // 0674 T0004 §2-3 — Git 後処理が待機/復旧状態に残った最終承認(ジョブが引き継いで処理する)。
-      // 0332 D0005 §6.5 — TR 承認の通知。二つとも承認は成功したという文で始まる。
+      // 対象ワークスペースを占有している試行を実際の所有者種別で示す。
+      // 短い案内 + 対象/動作を示すボタン。上の長い文言は[詳細]に残す。
+      // 承認の応答が失われたあと、サーバーの Git 結果を確認している間の案内。
+      // Git 後処理が待機/復旧状態に残った最終承認(ジョブが引き継いで処理する)。
+      // TR 承認の通知。二つとも承認は成功したという文で始まる。
       ai_running_hint: 'このグループでAI実行が進行中です。終了するまで操作はロックされます。',
       ai_lease_orphaned_hint: '前回の実行が異常終了し、ロックが残っています。[ロック解除]を押してください。',
     },
@@ -364,15 +364,15 @@ export default {
     next_action_modal: {
       mm_section_header: 'ユーザーメッセージ',
     },
-    // 0311 T0004: QaHistoryDialog は質疑専用の全体表示に戻した(TR0005 rev6 差し戻し
+    // QaHistoryDialog は質疑専用の全体表示に戻した(the earlier implementation 差し戻し
     // §3 「質疑は外せ」)。
     // ReviewHistoryDialog(差し戻し分)を統合した検収・差し戻し専用の全体表示ダイアログ。
-    // TR0005 rev6 差し戻し: ①タイトルが「質疑・差し戻し」だったのは誤り(「検収・差し戻し」が正しい)
+    // 差し戻し: ①タイトルが「質疑・差し戻し」だったのは誤り(「検収・差し戻し」が正しい)
     // ②AI検収も差し戻しと同じく折りたためる必要がある ③質疑はこのダイアログから外した(自分の
     // ダイアログ qa_history に移した)。
-    // 0399 D0010/L0011 — [作業計画を適用]。文言は T 段階で決めると両設計書が揃って
+    // [作業計画を適用]。文言は T 段階で決めると両設計書が揃って
     // 先送りした項目なので、画面に出る言葉はすべてここにまとめる。
-    // 0325 TR0007 rev1 — 最終承認サイドバーの[変更内容を開く]が開く変更閲覧画面。
+    // 最終承認サイドバーの[変更内容を開く]が開く変更閲覧画面。
     git_errors: {
       network: 'サーバーに接続できません。接続を確認してから再試行してください。',
       generic: 'Git 操作に失敗しました。もう一度お試しください。',
@@ -388,7 +388,7 @@ export default {
       invalid_state: '現在の状態ではこの Git 操作を実行できません。',
       invalid_request: 'Git リクエストが正しくありません。',
       workflow_revert_pending: 'Time Machine の巻き戻しで承認コミットの取り消しがまだ終わっていません。反映案(TR2)画面の[コミット取消を再試行]でコミット取り消しを先に完了してください。それまではこのグループを再び巻き戻したり次の段階へ進めたりできません。',
-      // 0685 T0006 §5 — マージ開始後にブランチが動き、レビュー結果を反映できない場合。
+      // マージ開始後にブランチが動き、レビュー結果を反映できない場合。
       stale_source: 'マージ開始後にソースブランチが変わったため、現在のレビュー結果をそのまま反映できません。このマージを中止して、もう一度開始してください。',
       stale_target: 'マージ開始後に対象ブランチが変わったため、現在のレビュー結果をそのまま反映できません。このマージを中止して、もう一度開始してください。',
     },
@@ -401,14 +401,14 @@ export default {
       ai_repeat_count_out_of_range: '繰り返し回数は{min}〜{max}の範囲で指定してください。',
     },
     git_finalize: {
-      // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
-      // flowgate.default.0594 T0016 §3.3/§5 — 最終承認ダイアログのマージ先選択:
+      // proposal 1 — temporary artifacts excluded from the finalize commit.
+      // 最終承認ダイアログのマージ先選択:
       // 「今回の承認が実際にどこへ入るか」だけを示す(ブランチ全体の管理は
       // git_branch_manager 側)。
-      // flowgate.default.0665 T0004 — グループの work base と異なる対象
-      // 0685 T0006 §4 — 作業基準と異なる対象を選んだ場合だけ表示する確認チェック。
-      // 0674 T0004 §2-1 — 競合解消 AI 実行が競合を解消できずに終わったとき。
-      // 0481 T0010 rev2 — 送信はサーバーに届いたが、この画面が結果の状態を認識できない場合。
+      // グループの work base と異なる対象
+      // 作業基準と異なる対象を選んだ場合だけ表示する確認チェック。
+      // 競合解消 AI 実行が競合を解消できずに終わったとき。
+      // 送信はサーバーに届いたが、この画面が結果の状態を認識できない場合。
       failed: 'Git反映処理に失敗しました',
     },
   },

@@ -1,10 +1,10 @@
-// flowgate.v02.0048 T#3 — skeleton of the kindSwitch document API (D#1 §6.3). Owned by T#10 (kindSwitch), which
+// skeleton of the kindSwitch document API. Owned by the earlier implementation (kindSwitch), which
 // fills this file only: request functions, their types and the snake_case -> camelCase
 // normalization, every export name starting with `kindSwitch`. index.ts already re-exports it. The
-// v0.1 endpoints it will wrap (NR0003 §2):
+// v0.1 endpoints it will wrap:
 //   switch   PATCH /api/v1/documents/{doc_id}/root-type  { new_type: 'R' | 'B' }
 //
-// flowgate.v02.0048 T#10 — the R↔B kind switch on the existing v0.1 endpoint above (no new API):
+// the R↔B kind switch on the existing v0.1 endpoint above (no new API):
 //   the answer is `{ data: <the document row> }`: the new identity (`…-R` ↔ `…-B`, a new doc_id,
 //   file name and inbound references), or the same row when it already had the asked type.
 // The server sends no event for it (D#2 §3.1); the caller reads the Canvas again itself.
@@ -19,7 +19,7 @@
 //     graph_revision_no }` 409 — `flow_owned_by_graph` (Graph Flow), `flow_ownership_conflict`
 // Only the status, the code and the leading words of a detail are read, never shown.
 //
-// flowgate.v02.0064 T#4 (P0006 §3.1 / §3.3 / §3.5 / §6.1): a root with child documents (or a member of a
+// a root with child documents (or a member of a
 // succession chain) is no longer refused — it is succeeded by a new document of the other kind. The
 // document read with `include=root_conversion` (kindSwitchPreviewRead) carries the server's judgement
 // (number swap / succession / refused, the new or expected number, the child count) and the

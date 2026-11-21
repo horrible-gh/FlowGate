@@ -1,16 +1,16 @@
-"""Design-document template body provision & management (group 0024).
+"""Design-document template body provision & management (the earlier change).
 
-Single source of truth for the L0013 algorithm contract: locale normalisation,
+Single source of truth for the the earlier implementation algorithm contract: locale normalisation,
 the 5-rank active-template resolution with ko fallback, type-default skeletons,
 the path-non-exposure predicate, and the provision meta (available_locales).
-Also holds the P0011 write-side validation helpers (content size / emptiness /
+Also holds the the plan write-side validation helpers (content size / emptiness /
 locale) shared by the management CRUD router.
 
 DB access goes through modules.flow_gate.db.templates (DB0014 §4 SQL); this module
 owns the language-agnostic algorithm and the application-only checks (usable() /
 contains_path()) that SQL cannot express.
 
-Design refs: D0010, P0011, P0012, L0013, DB0014.
+Design refs: the design, the plan, the plan, the earlier implementation,.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .db import templates as tdb
 
 logger = logging.getLogger(__name__)
 
-# ── Parameters (L0013 §1 — single source of truth) ───────────────────────────
+# ── Parameters (single source of truth) ───────────────────────────
 SUPPORTED_LOCALES: tuple[str, ...] = ("ko", "ja", "en")
 FALLBACK_LOCALE = "ko"
 MAX_CONTENT_BYTES = 512_000          # 500KB, mirrors settings _MAX_TEMPLATE_SIZE
@@ -65,7 +65,7 @@ class TemplateValidationError(ValueError):
     """Write-side validation failure (E4/E5) — maps to HTTP 422."""
 
 
-# ── type-default skeletons (L0013 §1-1) ──────────────────────────────────────
+# ── type-default skeletons ──────────────────────────────────────
 # Deterministic, locale-specific, NEVER contain a file path (AC-1 / invariant c).
 TYPE_DEFAULT_SKELETON: dict[str, dict[str, str]] = {
     "D": {
@@ -179,7 +179,7 @@ _PROVISION_COPY: dict[str, dict[str, str]] = {
     },
 }
 
-# ── path-non-exposure predicate (L0013 §5-5 / AC-1) ──────────────────────────
+# ── path-non-exposure predicate ──────────────────────────
 _DRIVE_PATH_RE = re.compile(r"(^|\s)[A-Za-z]:[\\/]")
 _TEMPLATE_LINE_RE = re.compile(r"^\s*Template:\s*\S", re.MULTILINE)
 
@@ -204,7 +204,7 @@ def contains_path(text: str) -> bool:
 
 
 def normalize_locale(x_locale: Optional[str]) -> str:
-    """L0013 §2-1 — x-locale is a weak preference: never reject, fold to ko.
+    """x-locale is a weak preference: never reject, fold to ko.
 
     None/blank → ko; ko/ja/en → itself; anything else (zh, …) → ko.
     """
@@ -215,10 +215,10 @@ def normalize_locale(x_locale: Optional[str]) -> str:
 
 
 def build_type_default(type_code: str, req_locale: str = FALLBACK_LOCALE) -> str:
-    """L0013 §2-3 — deterministic, DB-free type skeleton (writing never blocked).
+    """deterministic, DB-free type skeleton (writing never blocked).
 
     Falls back to a defensive skeleton (not a 500) if a design type lacks a
-    skeleton entry (coverage-invariant drift, L0013 §5-6).
+    skeleton entry (coverage-invariant drift, the earlier implementation).
     """
     locale = normalize_locale(req_locale)
     skeleton = TYPE_DEFAULT_SKELETON.get(type_code, {}).get(locale)
@@ -243,7 +243,7 @@ class Resolved(TypedDict):
 def _usable(content: Optional[str], *, template_id: int, locale: str) -> bool:
     """A body terminates resolution only if it exists and carries no path token.
 
-    Path-polluted bodies (E4/E5 writes are not path-validated — L0013 §5-5
+    Path-polluted bodies (E4/E5 writes are not path-validated — the earlier implementation
     forward-note) fall through like an active-empty row; a server warning is
     logged so an admin can fix it via E5. Writing is never aborted.
     """
@@ -261,7 +261,7 @@ def _usable(content: Optional[str], *, template_id: int, locale: str) -> bool:
 def resolve_active_template(
     project_id: str, type_code: str, req_locale: str
 ) -> Resolved:
-    """L0013 §2-2 / P0012 §3 — resolve exactly one body for (project, type, locale).
+    """resolve exactly one body for (project, type, locale).
 
     5-rank: project-exact → project-ko → global-exact → global-ko → type-default.
     Active-empty / path-polluted rows fall through (invariant b: never blocks).
@@ -314,7 +314,7 @@ def resolve_active_template(
 
 
 def resolve_active_meta(project_id: str, type_code: str, req_locale: str) -> dict:
-    """L0013 §2-7 / P0012 §4-6 — provision meta (no body): available_locales etc.
+    """provision meta (no body): available_locales etc.
 
     available_locales is enumerated against the row that TERMINATED resolution
     (project or global), or [] for type-default.
@@ -524,7 +524,7 @@ def validate_design_document_structure(
     }
 
 
-# ── write-side validation (P0011 §5 — E4/E5) ─────────────────────────────────
+# ── write-side validation ─────────────────────────────────
 def validate_locale(locale: str) -> None:
     if locale not in SUPPORTED_LOCALES:
         raise TemplateValidationError(
@@ -533,7 +533,7 @@ def validate_locale(locale: str) -> None:
 
 
 def validate_content(content: Optional[str]) -> str:
-    """P0011 §5 / §4-1 / §4-5 — non-empty (trim>0) and ≤500KB. Returns content."""
+    """/ — non-empty (trim>0) and ≤500KB. Returns content."""
     if content is None or content.strip() == "":
         raise TemplateValidationError("Template content must not be empty.")
     if bytelen(content) > MAX_CONTENT_BYTES:

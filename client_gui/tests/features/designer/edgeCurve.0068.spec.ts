@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#2 (0005-L §2.5a, T §7 DEFERRED) — the pierce check's curve against the line the Canvas draws.
+ * (L a, T DEFERRED) — the pierce check's curve against the line the Canvas draws.
  * FlowEdgePath: edgeAnchors over the two cards, the end moved ARROW_LENGTH (9) out of the target side, then Vue Flow's
  * getBezierPath (curvature 0.25). arrange/edgeCurve.ts writes the same formula out (Vue Flow stays inside
  * center/canvas/); here both are built for sample card pairs and compared: the four Bézier points parsed from the

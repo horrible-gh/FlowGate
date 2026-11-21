@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0067 T#1 — the one Git modeless of the Git tab (0067-R §3, v27 `gw-detail-window`):
+// the one Git modeless of the Git tab (R, v27 `gw-detail-window`):
 // the four entries open it on their tab and its top tabs switch between `파일 관리` / `Base 반영` /
 // `Diff` / `상태`. One width, height, header and padding for all four; only a long body scrolls.
 // It is the Designer ModelessShell (non-blocking, its open / close / minimize and core/overlay
@@ -81,7 +81,7 @@
 //
 // The tab bodies are the 0066 parts: `파일 관리` is the changed-files list and the commit line at
 // its bottom (T#2), `Base 반영` the v27 merge body (T#3), `Diff` the target comparison list and the
-// panel's Center Diff as its detail (T#4). Every value and action is the worktree session's or that
+// panel's Center Diff as its detail. Every value and action is the worktree session's or that
 // diff's; the window holds no Git state of its own.
 //
 // T#4 (0067-R §6): a file opens in the `Diff` tab — from its list, or from a `파일 관리` row, which

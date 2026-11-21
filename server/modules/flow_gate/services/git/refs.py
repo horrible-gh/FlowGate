@@ -1,7 +1,7 @@
 """Git ref/tree/blob reads: name-status parsing, dirty/untracked detection,
 ahead/behind + unpushed-commit accounting.
 
-Extracted from git_service.py (flowgate.default.0550 T0011, D0006 §3.2/Appendix A).
+Extracted from git_service.py (Appendix A).
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def _unpushed_local_merge_of(
 ) -> Optional[str]:
     """The local, not-yet-pushed merge commit that brought ``branch`` into base.
 
-    flowgate.default.0607 T0004 §3.3 (NR0003 §3/§9.5 F3): ``base..branch == 0`` has
+    ``base..branch == 0`` has
     two meanings. The branch may simply have nothing (no work — discard it), or its
     work may already sit in LOCAL base through a merge commit that never reached
     origin (a merge whose command result was lost, then a retry). Reading the second
@@ -135,7 +135,7 @@ def _normalize_git_status(code: str) -> str:
     """A raw ``git diff --name-status`` letter (possibly with a similarity suffix, e.g.
     ``R100``) → one of ``A``/``M``/``D``/``R``. Anything else git might emit (``T``
     type-change, ``U`` unmerged, ...) falls back to ``M``: the path did change and is
-    never dropped, it is just not classified more precisely (0493 T0005)."""
+    never dropped, it is just not classified more precisely."""
     letter = (code or "")[:1].upper()
     if letter in ("A", "M", "D"):
         return letter
@@ -146,7 +146,7 @@ def _normalize_git_status(code: str) -> str:
 
 def _parse_name_status_manifest(stdout: str) -> list[dict]:
     """Same ``-M -z`` stream as ``_parse_name_status_z``, but keeps status and the
-    rename's old path instead of collapsing to a bare path list (0493 T0005 —
+    rename's old path instead of collapsing to a bare path list (the earlier implementation —
     reviewers need per-file actual status, not just a path).
 
     Returns one entry per changed path: ``{"path", "status", "old_path"}``. ``old_path``
@@ -185,7 +185,7 @@ def _parse_name_status_manifest(stdout: str) -> list[dict]:
 
 
 def _validate_blob_path(path: str) -> None:
-    """Reject empty / absolute / drive-prefixed / '..' paths (P0005 §7)."""
+    """Reject empty / absolute / drive-prefixed / '..' paths."""
     if not path:
         raise GitServiceError(400, "invalid_path", "path parameter is required")
     normalized = path.replace("\\", "/")
@@ -260,7 +260,7 @@ def _dirty(repo: Path, include_untracked: bool = True) -> bool:
         # E3 guard scope: untracked build artifacts (e.g. __pycache__/*.pyc,
         # .pytest_cache) in the server's base checkout are NOT "local
         # modifications" — only changes to tracked files require operator
-        # intervention. See NR flowgate.default.0165.0009.
+        # intervention. See NR the earlier change.
         args.append("--untracked-files=no")
     from modules.flow_gate.services import git_service as _gs
     proc = _gs._run_git(args, cwd=repo)
@@ -272,7 +272,7 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
 
     Used to tell the operator *which* files leave the base checkout dirty so the
     E3 finalize block and the file-editor save warning name them instead of a bare
-    500 (flowgate.default.0176 T0010). Parses `git status --porcelain` v1: the
+    500. Parses `git status --porcelain` v1: the
     2-char status code occupies cols 0-1, the path starts at col 3; a rename is
     rendered `old -> new`, so keep the destination.
     """
@@ -342,7 +342,7 @@ def worktree_untracked_summary(project_id: str, group_id: str) -> Optional[dict]
 def probe_worktree_pending_changes(wt_path: Path) -> Optional[bool]:
     """Read-only, lock-free: does this worktree carry any change that is not tool
     debris, tracked or not — regardless of whether the project's git INTEGRATION is
-    on (flowgate.default.0548 T0004 §4/R6).
+    on.
 
     Unlike :func:`_stage_worker_edits` this never runs ``git add``: it exists only for
     the case where the real commit gate (config off, no registered group git state)
@@ -374,7 +374,7 @@ def probe_worktree_pending_changes(wt_path: Path) -> Optional[bool]:
 
 
 def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
-    """Is every target commit an ancestor of this worktree's HEAD? (L0007 §4.1 G11)
+    """Is every target commit an ancestor of this worktree's HEAD?
 
     Fail-closed on purpose: if the branch was re-provisioned from base HEAD, or moved
     by hand, the commits the ledger names are not in this tree and reverting "what is
@@ -407,7 +407,7 @@ def _unmerged_paths(wt_path: Path) -> list[str]:
 
 def _unmerged_paths_exact(wt_path: Path) -> list[str]:
     """The conflicted paths of an in-flight merge as the REAL worktree-relative path
-    strings, sorted (flowgate.v02.0153 T#3 review): NUL-separated output, so Git's
+    strings, sorted (review): NUL-separated output, so Git's
     ``core.quotePath`` C-quoting (non-ASCII bytes, double quote, backslash, control characters)
     never reaches a caller. ``_unmerged_paths`` keeps its line form for the callers
     that compare against session rows it wrote that way; a path list stored from this
@@ -434,8 +434,8 @@ def _untracked_files(repo: Path, limit: int = UNTRACKED_LIST_MAX) -> list[str]:
 
     Deliberately the COMPLEMENT of `_dirty_files(include_untracked=False)`, and
     deliberately carried in a SEPARATE field everywhere it surfaces. NR
-    flowgate.default.0296.0003 §C3: `include_untracked=False` was one flag doing
-    two jobs — bounding the E3 guard (correct, NR flowgate.default.0165.0009) and
+    §C3: `include_untracked=False` was one flag doing
+    two jobs — bounding the E3 guard (correct, NR the earlier change) and
     bounding what the operator is *able* to commit (wrong: it left untracked files
     with no in-app commit path, so they never reached a group worktree). Splitting
     the list splits the concerns; the guard scope below is untouched.
@@ -483,10 +483,10 @@ def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
 
 def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[str]:
     """Best-effort, network ``ls-remote`` read of the real current position of the
-    remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
+    remote base ref — ``None`` when the query itself
     fails (unreachable/timeout), which the caller must NOT treat as "not found".
 
-    flowgate.default.0361 NR0003 §7/§16: a stuck ``reconciling`` session can sit
+    a stuck ``reconciling`` session can sit
     long enough for the operator to repoint ``repo_url`` at a different remote
     before this reconciliation read runs — this must ask the CURRENTLY configured
     origin, not whatever ``origin`` happened to point at when the base checkout
@@ -497,13 +497,13 @@ def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[
 
 
 def _query_remote_ref_detail(base_root: Path, cfg: dict, base_branch: str) -> dict:
-    """flowgate.v02.0153 T#3 §2: the same ``ls-remote`` read as :func:`_query_remote_ref`,
+    """the same ``ls-remote`` read as:func:`_query_remote_ref`,
     but a failure says why: ``{"sha", "cause", "returncode", "detail", "stderr"}``.
 
     ``cause`` is the runner's conservative classification (``timeout``/``auth``/
     ``network``/``ref_lock``/``unknown``), ``origin_sync`` when the configured remote
     could not be applied, or ``ref_missing`` for an empty answer. ``detail`` follows the
-    T#1 rule (scrubbed, last useful line, 300 characters). ``stderr`` is the scrubbed
+    rule (scrubbed, last useful line, 300 characters). ``stderr`` is the scrubbed
     text for the caller's own permission classifier and is never persisted."""
     from modules.flow_gate.services import git_service as _gs
 
@@ -613,7 +613,7 @@ def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[l
 
 def _remote_base_missing(base_root: Optional[Path], base_branch: str) -> bool:
     """True only when the base checkout is healthy and refs/remotes/origin/{base}
-    is absent — the remote has no base branch yet (0297 B0001 bootstrap).
+    is absent — the remote has no base branch yet (bootstrap).
 
     Deliberately narrower than "unmeasured": git being unavailable or the checkout
     missing reads False, so a consumer can never mistake those for "the remote is
@@ -642,7 +642,7 @@ def _merge_in_progress(base_root: Path) -> bool:
     """True while a conflict session holds the base checkout mid-merge — commit
     and revert must not touch that intermediate state (resolve/abort only).
 
-    0594 T0012: a managed merge-target workspace is a LINKED worktree whose ``.git``
+    a managed merge-target workspace is a LINKED worktree whose ``.git``
     is a file pointing at ``<repo>/.git/worktrees/<name>`` — ask git there. The
     shared base checkout (a real ``.git`` directory) keeps the direct file check."""
     git_path = base_root / ".git"

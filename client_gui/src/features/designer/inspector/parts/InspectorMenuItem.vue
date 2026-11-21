@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0051 — one item of the header ⋯ menu (0035 insp.js `.menu-pop button`): a card
+  <!-- one item of the header ⋯ menu (insp.js `.menu-pop button`): a card
        feature puts its own items (실행 이력 · ■ 중단 · ↻ 재실행 · 위임 중단 …) after the common ID 복사.
        Display only: `disabled` with a `reason` (hover title) is how an item whose operation is not
        connected yet is shown (0051-R §2.3) — it is never left out and never looks as if it worked. -->

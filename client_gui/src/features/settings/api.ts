@@ -1,4 +1,4 @@
-// Environment Settings API adapter (flowgate.v02.0020). Reuses the `@shared/api` transport.
+// Environment Settings API adapter. Reuses the `@shared/api` transport.
 // The routes answer {"detail": {"code"}}; a known code is shown as gui.settings.errors.<code>.
 
 import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
@@ -125,7 +125,7 @@ export const revokeResource = (id: string, resourceType: ResourceType, resourceI
 export const listSystemUsers = () =>
   call(() => getRequest<SystemUsersResponse>(`${API}/system/users`), 'load_failed')
 
-/** Only the four fields the server reads; workspace_id is never sent (flowgate.v02.0076 T#3). */
+/** Only the four fields the server reads; workspace_id is never sent. */
 export const createSystemUser = (input: CreateUserInput) =>
   call(
     () => postRequest<UserCredentialResult>(`${API}/system/users`, {
@@ -191,7 +191,7 @@ export const saveVerifySetting = async (key: VerifySettingKey, value: string) =>
     'save_failed',
   )).updated
 
-// ── System › System Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+// ── System › System Agent ─────────────────────
 // Only the /system/agents management family of api/v1/agent_routes.py (the one the old
 // client/src/settings AgentsView used). The Agent runtime routes /agent/enrollments and
 // /agent/heartbeat are never called from here. Errors come as {"ok":false,"error":{"code"}} and go

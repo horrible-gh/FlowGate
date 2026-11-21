@@ -1,6 +1,6 @@
-"""flowgate.default.0551 T#1: auto-dispatch the Q responder for a `question_pending` stop.
+"""auto-dispatch the Q responder for a `question_pending` stop.
 
-NR0003 §11 proposal 1/2 found two missing connections and nothing else: a responder-priority
+proposal 1/2 found two missing connections and nothing else: a responder-priority
 resolver (reviewer -> independent header/default -> independent enabled provider;
 no eligible provider means human wait) and the wiring between a `question_pending` park and the existing
 `q_answer_invoke_service.dispatch_answer_run` — the same dispatch a human's own
@@ -60,7 +60,7 @@ CHAIN = [REVIEWER, HEADER]
 
 
 class TestResolveQuestionResponder:
-    """review.resolve_question_responder — pure priority logic (WP0004 T#1 note):
+    """review.resolve_question_responder — pure priority logic (note):
     1) the step's valid reviewer, 2) the run's header/default selected provider,
     3) the first independent enabled default; None means wait for a human.
     """
@@ -112,7 +112,7 @@ DOC = {
 
 def _run(**overrides):
     row = {
-        # 0661 T0004 safety boundary 1: the dispatcher answers only items THIS run raised,
+        # safety boundary 1: the dispatcher answers only items THIS run raised,
         # so every stubbed open item below names this run as its asker.
         "run_id": "aiv_requester",
         "provider_id": "aip_worker",
@@ -132,7 +132,7 @@ def _run(**overrides):
 
 
 class TestDispatchQuestionResponder:
-    """finalize._dispatch_question_responder — the wiring itself (NR0003 proposal 2), called
+    """finalize._dispatch_question_responder — the wiring itself (proposal 2), called
     directly with every function-local-imported collaborator monkeypatched at its own
     source module (exactly what a `from x import y` inside the function body re-reads on
     every call)."""
@@ -199,7 +199,7 @@ class TestDispatchQuestionResponder:
         assert self.calls == []
 
     def test_multiple_pending_questions_dispatch_only_the_earliest_seq(self, monkeypatch):
-        # T#1's multi-Q boundary: one AI run answers exactly one item, and the group lease
+        # 's multi-Q boundary: one AI run answers exactly one item, and the group lease
         # allows only one run per group at a time, so firing one per pending item would only
         # manufacture run_in_progress failures for every item after the first.
         monkeypatch.setattr(db_questions, "get_container_by_doc",
@@ -244,7 +244,7 @@ class TestDispatchQuestionResponder:
             continuation_base_provider_id="aip_header",
             continuation_review_count_overrides={"3": 1},
         ))
-        # 0661 T0004 F1: the spine doc_ref and the review-count map now reach the resolver
+        # the spine doc_ref and the review-count map now reach the resolver
         # too, so a reviewer that lives only on the stored sequence can be found.
         assert seen == {
             "reviewer_overrides": {"3": "aip_x"}, "item_seq": 3,
@@ -265,7 +265,7 @@ class TestDispatchQuestionResponder:
         assert self.failed == [(201, "no_independent_responder")]
 
     def test_a_dispatch_admission_failure_is_swallowed_not_raised(self, monkeypatch):
-        # Stand-in for "responder unavailable" (NR0003 §10): no_enabled_provider /
+        # Stand-in for "responder unavailable": no_enabled_provider /
         # provider_unavailable / run_in_progress all arrive as HTTPException from
         # dispatch_answer_run's own admission path -- a successful question_pending stop
         # must never become an unhandled exception because of it.
@@ -291,7 +291,7 @@ class TestDispatchQuestionResponder:
 
 
 class TestDispatchQuestionResponderRealExecution:
-    """T#1's boundary conditions provider "unavailable" and "timeout" (WP0004 T#1 note),
+    """'s boundary conditions provider "unavailable" and "timeout" (note),
     driven through the REAL `q_answer_invoke_service.dispatch_answer_run` ->
     `ai_invoke_service.start_run` admission/execution path — unlike
     `test_a_dispatch_admission_failure_is_swallowed_not_raised` above, neither
@@ -300,7 +300,7 @@ class TestDispatchQuestionResponderRealExecution:
     production code, with only the CLI subprocess itself faked (`base._scripted_worker`,
     exactly as every other real-engine test in this suite does).
 
-    Each test also proves the REQUIRED fallback/recovery policy (NR0003 §11 proposal 2's own
+    Each test also proves the REQUIRED fallback/recovery policy (the review proposal 2's own
     words): the question stays exactly as unanswered as it was before the failed/timed-out
     attempt (nothing here can mark it answered), and a subsequent dispatch on the same,
     unmodified code path is admitted and runs for real — the failure left no stuck
@@ -329,7 +329,7 @@ class TestDispatchQuestionResponderRealExecution:
                 "id": item_id, "seq": item_id, "title": "Q", "body": "b", "options": [],
             },
         )
-        # 0661 T0004: the durable responder-state writes dispatch_answer_run and the
+        # the durable responder-state writes dispatch_answer_run and the
         # responder's own finalization perform — no database behind this harness, so they
         # are in-memory no-ops here (test_q_responder_chain_0661 covers them for real).
         monkeypatch.setattr(db_question_items, "get_by_pk", lambda pk: None)
@@ -370,7 +370,7 @@ class TestDispatchQuestionResponderRealExecution:
 
         finalize._dispatch_question_responder(_run())  # must not raise
 
-        # T0013: automatic dispatch never delegates an unchecked default to admission.
+        # automatic dispatch never delegates an unchecked default to admission.
         assert seen_errors == []
         # ...and routing stopped before any worker was ever launched, so nothing here
         # touched the pending question — state preserved.
@@ -444,7 +444,7 @@ class TestFinalizeRunHookPlacement:
             base.svc.db_questions, "get_container_by_doc",
             base._container_lookup({base.ANCHOR: {"id": 9, "status": "pending"}}),
         )
-        # 0661 T0004 boundary 1: the open item must have been raised by THIS hop (the only
+        # boundary 1: the open item must have been raised by THIS hop (the only
         # live run in the patched registry) or the dispatcher leaves it alone.
         monkeypatch.setattr(db_question_items, "list_unanswered",
                              lambda qpk: [{"id": 501, "seq": 1, "asker_kind": "ai",
@@ -459,7 +459,7 @@ class TestFinalizeRunHookPlacement:
         calls: list[dict] = []
 
         def _dispatch(**kw):
-            # T#1: record whether THIS hop's own group lease is still held at the moment
+            # record whether THIS hop's own group lease is still held at the moment
             # the responder dispatch fires -- it must already be free (see the docstring).
             calls.append({**kw, "lease_active_at_dispatch": db_group_ai_leases.get_active(base.GROUP)})
             return {"run_id": "aiv_responder", "status": "running"}
@@ -476,7 +476,7 @@ class TestFinalizeRunHookPlacement:
         assert run["stop_code"] == "question_pending"
         assert calls[0]["item"]["id"] == 501
         assert calls[0]["lease_active_at_dispatch"] is None
-        # T0013: the header is the actual asker, so the next independent default answers.
+        # the header is the actual asker, so the next independent default answers.
         assert calls[0]["provider_id"] == "aip_2"
         assert calls[0]["provider_id"] != run["provider_id"]
 

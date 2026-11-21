@@ -1,4 +1,4 @@
-"""When a confirm gate's settings may change (flowgate.v02.0085 T#1, D0007 §7.2 last paragraph).
+"""When a confirm gate's settings may change (last paragraph).
 
 The card settings lock of every other card is the Graph's (``graph_run.editing.require_editable``): a running,
 paused or stopping run locks all cards and an open / done / review node stays protected. A gate is the exception,

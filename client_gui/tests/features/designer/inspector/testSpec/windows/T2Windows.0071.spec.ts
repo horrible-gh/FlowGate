@@ -19,7 +19,7 @@ vi.mock('@/features/document', async (original) => {
   const actual = await original<typeof import('@/features/document')>()
   return { ...actual, testSpecRead: mocks.read, settingsNodeRead: mocks.node, settingsChoicesRead: mocks.choices, settingsNodeWrite: mocks.setting,
     reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, documentHistoryRead: mocks.history,
-    // flowgate.v02.0127 T#5: the windows read and save through the card document v2 calls. The bridge below answers them from
+    // the windows read and save through the card document v2 calls. The bridge below answers them from
     // the spec's own mocks (stored text / revision / case list), so the assertions keep stating what was saved.
     documentContentRead: mocks.rawRead,
     cardDocumentStructuredRead: async (_ctx: unknown, kind: string) => snapshotOf(rawSource, kind === 'ts_brief' ? { text: (await mocks.briefRead()).text } : { title: server.title, cases: server.cases }),
@@ -375,7 +375,7 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     expect(w.get('[data-case="TC-2"]').text()).toContain('AI 확인')
     expect(w.get('h3 small').text()).toContain('AI 확인 1')
   })
-  // flowgate.v02.0094 #7: a new case starts on the leftmost choices; a stored case keeps what it has.
+  // #7: a new case starts on the leftmost choices; a stored case keeps what it has.
   it('starts a new case on 코드 실행 · 무시하고 진행 and saves those defaults', async () => {
     persist()
     const w = await render('case')
@@ -452,7 +452,7 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
   })
 })
 
-// flowgate.v02.0094 #4-#6 — the windows speak the function names, show ids in the identifier type and edit on the
+// #4-#6 — the windows speak the function names, show ids in the identifier type and edit on the
 // document editors' layout.
 describe('0094 test card windows follow the existing window rules', () => {
   const heading = (w: VueWrapper) => w.get('.ui-modeless-title')

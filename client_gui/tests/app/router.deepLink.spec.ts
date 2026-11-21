@@ -29,7 +29,7 @@ describe('/app router deep-link round trip', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/projects?tab=x')
     expect(window.location.pathname + window.location.search).toBe('/app/projects?tab=x')
-    // T0011: resolved to the /app/projects placeholder route (not the '/' Dashboard and
+    // resolved to the /app/projects placeholder route (not the '/' Dashboard and
     // not the not-found catch-all).
     expect(router.currentRoute.value.name).toBe('projects')
   })

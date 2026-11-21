@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0015 T3 (NR flowgate.v02gui.0015.0006 §6-3, B flowgate.v02gui.0015.0001 §3-4) — an answer is never the
+"""(NR the earlier change, B the earlier change) — an answer is never the
 action it asked for: the common guard of the three re-invocations after a card AI's questions are answered
 (``flowgate.card_settings.action_guard``).
 
@@ -7,7 +7,7 @@ card stage ports, the run-end port, the question wait and the run read are the r
 responder's start are its stand-ins). What the latest answers selected (``legacy.answered_requirements``) is a stand-in in
 the Graph tests and read from the real ``question_items`` / ``answers`` rows in its own tests.
 
-0005 incident form (Q2·Q3 "a person or the system makes a new attempt on the right base, then call again", nothing
+incident form (Q2·Q3 "a person or the system makes a new attempt on the right base, then call again", nothing
 made, the same attempt called again): with an option requiring ``new_attempt`` selected and the node's active attempt still
 the asker's, the instruction / work / no_result step takes nothing — no execution request, no AI start, no approval, no
 new attempt — the card is ``needs_intervention`` (``action_required:new_attempt``) with one ``action_required`` run event

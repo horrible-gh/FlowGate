@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0107 — the active Flow's work branch and effective Flow base; without a
+// the active Flow's work branch and effective Flow base; without a
 // Flow, the project base. Unknown values stay "—". Refresh and status feedback stay here.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

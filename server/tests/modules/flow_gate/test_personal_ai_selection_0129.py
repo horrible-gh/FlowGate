@@ -1,4 +1,4 @@
-"""flowgate.v02.0129 CH0012 -- a user's own remote-CLI AI is selectable and runnable by its owner.
+"""a user's own remote-CLI AI is selectable and runnable by its owner.
 
 Covers the server half of "AI 등록 -> Agent 지정 -> 채팅/작업에서 선택 -> 실행":
 - the selection list (chat composer, card settings, start dialogs read ai-invoke/providers ->

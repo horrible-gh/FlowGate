@@ -89,7 +89,7 @@ def resolve_storage_root(project_id: Optional[str] = None) -> tuple[Path, str]:
 
 
 def describe_storage_root(project_id: Optional[str] = None) -> dict:
-    """Stored vs effective storage root for settings screens (flowgate.default.0623 T0004 §3).
+    """Stored vs effective storage root for settings screens.
 
     ``configured_value`` is the stored system_settings.storage_root and
     ``project_override`` the stored project storage_root_override; both are
@@ -216,11 +216,11 @@ def _group_worktree_on_disk(
 ) -> Optional[Path]:
     """The group's branch worktree path when it physically exists, else None.
 
-    0284 T0005 (structural fix for B0001): recovery used by
+    (structural fix for the regression): recovery used by
     resolve_project_src_root / classify_src_root when the git ledger's
     worktree_registered flag has been cleared — merge/push cleanup resets it to
     0 (git_integration.unregister_worktree), which is what silently dropped every
-    post-merge / in-flight re-run to the base(main) tree (NR0003 §4). The flag gates
+    post-merge / in-flight re-run to the base(main) tree. The flag gates
     slot *accounting*, not which tree the runner must read: while the group's branch
     worktree is still on disk it stays authoritative, so a fix-verification suite is
     checked against the tree that actually holds the fix. Mirrors the gates of
@@ -228,7 +228,7 @@ def _group_worktree_on_disk(
     name, directory present) EXCEPT the registration flag. Pure lookup — never
     raises; a genuinely pruned directory returns None so the caller still falls back.
 
-    0287 NR0004 §5: "present" additionally requires the worktree's `.git` link. A
+    "present" additionally requires the worktree's `.git` link. A
     teardown interrupted mid-delete leaves the directory standing with its link and
     most of its files gone, and that corpse must not be recovered as authoritative.
     """
@@ -250,7 +250,7 @@ def _group_worktree_on_disk(
         if not project_name:
             return None
         wt = src_root(project_name, branch)
-        # 0287 NR0004 §5: "still on disk" has to mean a real tree, not a directory
+        # "still on disk" has to mean a real tree, not a directory
         # that happens to exist. An interrupted `worktree remove` leaves the path
         # in place minus its `.git` link and most of its content, and recovering
         # ONTO that corpse is worse than the fallback this guard was written to
@@ -278,8 +278,8 @@ def resolve_project_src_root(
     whenever project_id != project_name (the 0152 test-runner outage).
     Returns None when the project row or its name is missing.
 
-    0115: when *group_id* is given and the project is git-integrated with a
-    registered worktree for that group, the group worktree path wins (L0006
+    when *group_id* is given and the project is git-integrated with a
+    registered worktree for that group, the group worktree path wins (the earlier implementation
     §2.2). Every other case — no group, no config, disabled, missing worktree —
     falls back to the ordinary project-branch folder below (fallback first).
     """
@@ -293,7 +293,7 @@ def resolve_project_src_root(
             if wt is not None:
                 return wt
         except Exception:
-            # 0280 NR0003 §4-B: worktree resolution must never break the fallback
+            # B: worktree resolution must never break the fallback
             # path — but swallowing it silently made a git-integrated group run in
             # base(main) with no trace anywhere. Fall back loudly.
             _log.warning(
@@ -303,13 +303,13 @@ def resolve_project_src_root(
                 project_id,
                 exc_info=True,
             )
-        # 0284 T0005 (structural fix for B0001 / NR0003 §6-1): effective_src_root()
+        # (structural fix for the regression / the review): effective_src_root
         # returns None once the ledger's worktree_registered flag is cleared (merge/
         # push cleanup), which used to drop the run to the base(main) tree even while
         # the group's branch worktree was still on disk — so a fix-verification suite
         # ran against a tree lacking the very fix it verifies. Recover the on-disk
         # branch worktree before falling back; a pruned directory — or one left
-        # broken by an interrupted teardown (0287 NR0004) — falls through.
+        # broken by an interrupted teardown — falls through.
         recovered = _group_worktree_on_disk(project_id, group_id)
         if recovered is not None:
             _log.info(
@@ -349,7 +349,7 @@ def classify_src_root(
 ) -> str:
     """Classify an *already resolved* src root into a ``SRC_ROOT_*`` kind.
 
-    0280 NR0003 §6-2: callers persist and display the root they actually used, so
+    callers persist and display the root they actually used, so
     a "the tests ran in main" report becomes checkable instead of arguable. Kind is
     ``git_service.SRC_ROOT_WORKTREE`` when *root* is the group's worktree, else the
     ``SRC_ROOT_*`` reason the worktree was skipped.
@@ -367,7 +367,7 @@ def classify_src_root(
         wt, reason = git_service.effective_src_root_ex(project_id, group_id)
         if wt is not None:
             return reason if Path(root).resolve(strict=False) == wt else "unknown"
-        # 0284 T0005: effective_src_root_ex still reports the ledger fallback reason
+        # effective_src_root_ex still reports the ledger fallback reason
         # (e.g. worktree_unregistered after merge/cleanup) even though the run may have
         # executed in the group's on-disk branch worktree via the recovery above.
         # Classify by the root ACTUALLY used so the TSR reads "worktree", not the
@@ -476,10 +476,10 @@ def document_path(
     return base / f"{doc_code}_{filename}"
 
 
-# ── Storage-relative path persistence (B0054.0001 / L0054.0002) ──────────────
+# ── Storage-relative path persistence ──────────────
 # Single source of truth: writers persist storage-root-relative POSIX paths,
 # readers resolve them back through resolve_storage_path(). This makes path
-# columns invariant across host/OS migration (the B0001 root cause: Windows
+# columns invariant across host/OS migration (the the regression root cause: Windows
 # absolute paths like ``E:\...`` were stored verbatim and broke on Linux).
 # These two functions absorb the three legacy resolve variants
 # (documents._document_file_path, process_service._resolve_storage_path,
@@ -531,8 +531,8 @@ def _within_allowed_roots(path: Path, project_id: Optional[str] = None) -> bool:
 def within_allowed_roots(path: Path, project_id: Optional[str] = None) -> bool:
     """Public wrapper over ``_within_allowed_roots`` — the storage filesystem jail.
 
-    flowgate.default.0060 NR0015 §7 settled directive 5: the predicate itself is private, and the
-    document-attachment paths (L0012 §2-1, §2-6 J4) need exactly this judgement. Importing a
+    settled directive 5: the predicate itself is private, and the
+    document-attachment paths need exactly this judgement. Importing a
     private name across modules would make the reuse boundary invisible, so the boundary is
     named here instead. Same behaviour, no second copy of the rule.
     """
@@ -634,7 +634,7 @@ def _resolve_path(path: Path) -> Path:
 def storage_candidate_paths(stored: str, root: Path, branch: str = "main", resolve=_resolve_path):
     """The resolved paths ``storage_path_candidates`` yields, against an already resolved storage ``root``.
 
-    flowgate.v02.0135 T#3/T#4: a caller that walks every document row (the card document write gate) resolves
+    a caller that walks every document row (the card document write gate) resolves
     each project's root once for the walk instead of reading the storage settings per row, and asks the jail
     only about a row it matched. Same paths, same order, same laziness as ``storage_path_candidates``.
     ``resolve`` (default ``Path.resolve(strict=False)``) lets such a walk share work between rows
@@ -658,7 +658,7 @@ def storage_candidate_paths(stored: str, root: Path, branch: str = "main", resol
 def memo_resolver():
     """A ``Path.resolve(strict=False)`` for one walk over many paths that share their directories.
 
-    flowgate.v02.0135 T#3/T#4 (measured on a 9,106-row store on Windows): resolving every candidate of every
+    (measured on a 9,106-row store on Windows): resolving every candidate of every
     document row was ~75 % of a write gate walk (18k realpath calls, several filesystem calls each), and a walk
     runs several times per document creation, so a chat create took ~17 s and a placed card's draft save ~34 s
     — beyond the GUI's 30 s. Each distinct parent directory is now resolved once per walk and the file name is

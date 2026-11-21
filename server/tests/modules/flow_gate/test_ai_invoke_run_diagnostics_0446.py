@@ -1,6 +1,6 @@
-"""flowgate.default.0446 T0016 — durable AI-run exit diagnostics and the rework handoff.
+"""durable AI-run exit diagnostics and the rework handoff.
 
-T0014 could already tell a stalled worker from a busy one, but only in this process:
+could already tell a stalled worker from a busy one, but only in this process:
 its verdict lived in ``run["watchdog_kill"]``, and the two output tails and the list of
 files it left half-written lived on the in-memory run as well. Restart the server and the
 next session could not answer "did the run before this one die on the clock, and what did
@@ -67,7 +67,7 @@ class TestMigration086:
         assert missing == [], f"086 missing from: {missing}"
 
     def test_the_ordinal_is_not_shared_with_any_other_file(self):
-        # T0016 §2 asked for the number to be re-checked at implementation time against a
+        # The review asked for the number to be re-checked at implementation time against a
         # parallel group taking it first. This keeps that check running afterwards.
         for dialect in DIALECTS:
             same = sorted(p.name for p in (MIGRATIONS / dialect).glob("086*.sql"))
@@ -123,7 +123,7 @@ class TestMigration086:
 
 # ── A real database, the real CRUD module on top of it ───────────────────────
 
-# 0146: use FlowGateStore below; a three-method double omitted transactions and SQL lookup.
+# use FlowGateStore below; a three-method double omitted transactions and SQL lookup.
 
 
 def _seed_parents(conn):
@@ -331,7 +331,7 @@ class TestRunRowRoundTrip:
 # ── §5-3. The watchdog verdict becomes a stable kind + sentence ──────────────
 
 def _kill(kind, *, stalled_sec, progress_observations=0, absolute_cap_sec=14400):
-    """Exactly the shape T0014's `_claim_watchdog_kill` leaves on the run."""
+    """Exactly the shape the earlier implementation's `_claim_watchdog_kill` leaves on the run."""
     return {
         "kind": kind, "stalled_sec": stalled_sec, "elapsed_sec": stalled_sec,
         "threshold_sec": 1800, "absolute_cap_sec": absolute_cap_sec,
@@ -368,7 +368,7 @@ class TestTimeoutDiagnosis:
         assert "during the last" not in line
 
     def test_an_unmarked_timeout_stores_neither_kind_nor_sentence(self):
-        # (c) control group: a plain communicate() expiry, an API-mode run, any pre-T0014
+        # (c) control group: a plain communicate expiry, an API-mode run, any pre-the earlier implementation
         # row. NULL here is the third state — "nothing watched this one" — and it is what
         # lets a later step select only the runs that really stalled.
         for run in ({"duration_ms": 3600_000, "watchdog_kill": None},
@@ -941,10 +941,10 @@ class TestOtherScopesAreUntouched:
         assert source.count("build_rework_mention(") == 2     # definition + the rework call
 
     def test_the_continuous_mention_path_never_calls_it(self):
-        # 0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12). "Defined
+        # moved the engine into the ai_invoke/ package. "Defined
         # there, never invoked by orchestration logic there" is a property of the whole
         # engine, so read every module of the package -- globbed, not listed, so a future
-        # module cannot be added outside this guard's view (NR0003 §9).
+        # module cannot be added outside this guard's view.
         _pkg = _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke"
         source = "".join(
             path.read_text(encoding="utf-8") for path in sorted(_pkg.glob("*.py"))
@@ -963,7 +963,7 @@ class TestOtherScopesAreUntouched:
         assert "build_previous_run_section" not in source
 
 
-# ── The contracts T0014 and T0016 each promised not to move ──────────────────
+# ── The contracts the earlier implementation and the earlier implementation each promised not to move ──────────────────
 
 class TestUnchangedContracts:
 
@@ -987,9 +987,9 @@ class TestUnchangedContracts:
         assert svc._TIMEOUT_KINDS == ("no_progress", "absolute_cap")
 
 
-# ── flowgate.default.0505 T0006 (DB0005): API provider transport diagnostics ─
+# ── the earlier change the earlier implementation : API provider transport diagnostics ─
 #
-# NR0003 §13 found nine of these values at zero occurrences in the whole repository, and
+# The review found nine of these values at zero occurrences in the whole repository, and
 # DB0005 approved the schema/masking/compatibility design that this T implements. The
 # suite below mirrors TestMigration086's shape exactly (same file, same real-database
 # style) for the new migration 095, then covers the write helper, the sanitize helper,
@@ -1100,15 +1100,15 @@ class TestTransportDiagnosticsRoundTrip:
         assert stored["last_tool_error"] == "x" * 500
 
 
-# ── flowgate.default.0496 T0006 §3.2 (migration 101): WHY that base, not just which ─
+# ── the earlier change the earlier implementation (migration 101): WHY that base, not just which ─
 #
 # 095 above stores WHICH internal base a hop dialed. It cannot say whether that value
 # was the computed answer or a fallback, nor -- when it was a fallback -- which of the
 # two, since they are not equally safe: "the configured override was unusable so it was
 # ignored and the safe loopback used" versus "nothing safe could be computed so the
-# operator base rode through unchanged", the branch NR0003 traced the original 401 to.
-# 0496 T0006 §3.2 added `transport_fallback_kind` (migration 101) for exactly that, and
-# 0496 T0008's self-review found the new column had arrived with no storage test of its
+# operator base rode through unchanged", the branch the review traced the original 401 to.
+# added `transport_fallback_kind` (migration 101) for exactly that, and
+# 's self-review found the new column had arrived with no storage test of its
 # own: nothing proved the migration file applies, and nothing proved the value survives
 # `_BOUND_COLUMNS`/upsert/get. This mirrors TestMigration095 and
 # TestTransportDiagnosticsRoundTrip above, one for one.
@@ -1116,7 +1116,7 @@ class TestTransportDiagnosticsRoundTrip:
 MIGRATION_NAME_0496_T0006 = "101_ai_invoke_run_transport_fallback_diagnostics.sql"
 FALLBACK_KIND_COLUMN = "transport_fallback_kind"
 # The exact vocabulary provider_api._resolve_transport_api_base can produce -- one
-# string per branch, never a boolean (T0006 §3.2).
+# string per branch, never a boolean.
 FALLBACK_KINDS = ("none", "override_ignored", "operator_base_unsafe")
 
 
@@ -1254,7 +1254,7 @@ class TestSanitizeDiagnosticBase:
 
 
 class TestConversationContextTransportContract:
-    """0505 T0006 (DB0005 3.3): _conversation_context returns (status, body); a failure
+    """( 3.3): _conversation_context returns (status, body); a failure
     there -- the FIRST self-HTTP a chat hop may open -- still leaves transport_api_base,
     last_tool_status and last_tool_error behind instead of NULL."""
 
@@ -1326,7 +1326,7 @@ class TestResetAttemptStateClearsTransportDiagnostics:
 
 
 class TestGetStatusExposesWatchdogProgress:
-    """0538 T0004: the watchdog (provider_cli._progress_watchdog_loop) already writes
+    """the watchdog (provider_cli._progress_watchdog_loop) already writes
     last_progress_at / last_progress_signal / progress_observations onto the live `run`
     dict on every 15s poll. `get_status` must pass those straight through for a
     still-running run, without disturbing the finished-branch contract or any of the
@@ -1383,7 +1383,7 @@ class TestGetStatusExposesWatchdogProgress:
 
     def test_the_finished_payload_contract_does_not_grow_the_new_keys(self, live_db,
                                                                        finalize_env):
-        # T0004 acceptance criterion: preserve the existing finished-response contract.
+        # acceptance criterion: preserve the existing finished-response contract.
         # -- `finished_payload` is a different shape from the live branch above, and these
         # fields must not leak onto it.
         run = _live_run(finalize_env, run_id="aiv_20260907_000104",

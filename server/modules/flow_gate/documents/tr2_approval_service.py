@@ -296,7 +296,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             request_key: str | None = None, locale: str = "ko",
             expected_command_admission_fingerprint: str | None = None, completion_hook=None,
             decision_check=None, finalize_guard=None) -> dict:
-    """``completion_hook`` (flowgate.v02.0119 T#2, T-1 — the v0.2 card completion's TR2 effect,
+    """``completion_hook`` (the earlier change the earlier implementation, T-1 — the v0.2 card completion's TR2 effect,
     ``flowgate.card_completion.own_effects``): called with the approved document inside the finalize transaction, after
     the ledger and the review CAS; it writes the v0.2 completion (its record and its own document event, the system as
     the actor), so no person's state change is logged for it (``log_state_changed`` is skipped). It may raise to roll
@@ -337,7 +337,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             replay = db_attempts.by_request_key(request_key)
             if replay and replay["state"] != "in_progress":
                 return _replay(replay)
-        # 0660 T0004 §3 (RC3): a reopen whose commit cancel was blocked leaves this TR2's
+        # (RC3): a reopen whose commit cancel was blocked leaves this TR2's
         # previous approval commit live. Approving on top of it would commit again over the
         # already-applied source; only a successful cancel retry clears the state.
         if tr2.revert_pending(doc):

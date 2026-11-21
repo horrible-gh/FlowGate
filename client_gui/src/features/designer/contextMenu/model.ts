@@ -1,7 +1,7 @@
-// flowgate.v02.0060 — item display rules shared by the five parts (0006-D rev2 §3.2, §3.3, §7.3), separators
+// item display rules shared by the five parts, separators
 // survive only between visible items (in a submenu too). The target is frozen at build time, so later changes
 // to the caller's state (selection, tabs, card definitions) never reach the snapshot a request carries.
-// flowgate.v02.0060 T#1 (Q item 459, replacing §3.2-1 "Hide commands that are not wired up"): a mockup item whose command
+// (Q item 459, replacing "Hide commands that are not wired up"): a mockup item whose command
 // the area has not connected stays where the mockup puts it, disabled with its reason — 'planned' (awaiting integration, the 2-B
 // commands) or 'unimplemented' (unimplemented). Only an item outside the mockup's 40 (the card's run menu) is hidden when not
 // connected. A submenu parent is disabled when its connected children are all disabled by their own condition; a

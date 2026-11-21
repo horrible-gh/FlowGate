@@ -1,4 +1,4 @@
-"""0474: provider-aware CLI review file-first prompt contract."""
+"""provider-aware CLI review file-first prompt contract."""
 from __future__ import annotations
 
 import re
@@ -59,7 +59,7 @@ def test_en_and_ja_contract_copy_has_no_hangul():
     assert hangul.search(worker._CLI_REVIEW_FILE_FIRST["ko"])
 
 
-# 0108: admission scope stays fixed while the review loop changes its live hop.
+# admission scope stays fixed while the review loop changes its live hop.
 @pytest.mark.parametrize("scope,hop,review", [
     ("review", "rework", False),
     ("edit", "review", True),

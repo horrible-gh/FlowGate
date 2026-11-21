@@ -1,11 +1,11 @@
-"""Work plan (WP) countable-type registry — flowgate.default.0429 T0004.
+"""Work plan (WP) countable-type registry — the earlier change the earlier implementation.
 
-NR0003 confirmed cause: the client read document_types in its original
+The review confirmed cause: the client read document_types in its original
 `series, sort_order, type_code` order (design before instruction:
 D · P · L · DB · DS · N · T · TS), while the server's
 `work_plan_service.list_countable_types()` used a separate ranking that moved DS
 before design (DS · D · P · L · DB · N · T · TS). Pin the single canonical source
-introduced by T0004: the server's `work_plan_countable_types` API field,
+introduced by the earlier implementation: the server's `work_plan_countable_types` API field,
 `list_countable_types(project_id)`, and `expand_steps()`/`type_order()` always produce
 one entry per code in deterministic order, even with project overrides (new
 non-countable codes, duplicates, inactive entries, and reordered existing codes).
@@ -41,7 +41,7 @@ ROOT_DOC2 = "wpprj2-__ALL__-0429-R0001"
 # ── Part 1: the global default seed — raw order vs the work-plan registry ────
 
 def test_raw_document_types_order_differs_from_the_work_plan_registry(seed):
-    """The bug's exact shape (NR0003): the two orders are NOT the same list."""
+    """The bug's exact shape: the two orders are NOT the same list."""
     from modules.flow_gate.db import templates as db_templates
     from modules.flow_gate.services import work_plan_service as wp
 
@@ -77,7 +77,7 @@ def test_expand_steps_through_the_registry_matches_canonical_order(seed):
 
 
 def test_document_types_api_exposes_both_orders(seed):
-    """0429 T0004 task 2: `data` keeps the settings-screen order; the additive
+    """task 2: `data` keeps the settings-screen order; the additive
     `work_plan_countable_types` array is the sole work-plan sort/dedup registry."""
     from modules.flow_gate.settings.routers import project_settings as ps_router
 
@@ -114,7 +114,7 @@ def _insert_project_doctype(store, now, *, project_id, code, name, series, is_ac
 @pytest.fixture(scope="module", autouse=True)
 def project2_overrides(tmp_db, patch_store, seed):
     """A second project whose own document_types rows exercise every override shape
-    T0004 task 5 lists: a project-only non-countable code, a duplicate active override
+    task 5 lists: a project-only non-countable code, a duplicate active override
     of an existing countable code with a different sort_order (reordered, no duplicate
     entry), and an inactive override that turns an active global type off."""
     from modules.flow_gate.db import documents as db_docs
@@ -187,7 +187,7 @@ def test_inactive_project_override_removes_the_code_but_not_globally():
 
 
 def test_type_order_falls_back_deterministically_for_a_deactivated_code():
-    """0429 T0004 task 1: a plan can still name a code the active registry dropped
+    """task 1: a plan can still name a code the active registry dropped
     (DB, inactive for PROJECT2). type_order() must place it by the same
     WORK_PLAN_COUNTABLE_ORDER rank list_countable_types uses on a DB outage — not
     alphabetically, and not wobbling between calls."""
@@ -275,7 +275,7 @@ def test_get_suggest_and_sequence_candidates_pass_the_document_project_id(seed, 
 
 
 def test_apply_preview_and_apply_pass_the_document_project_id(seed, storage_root):
-    """0429 T0004 task 4: _preview_sync / _apply_sync also forward project_id — mock
+    """task 4: _preview_sync / _apply_sync also forward project_id — mock
     the apply-service calls themselves (their own contract is out of this task's scope)
     and only observe what load_body() received."""
     from modules.flow_gate.documents.routers import work_plan as wp_router

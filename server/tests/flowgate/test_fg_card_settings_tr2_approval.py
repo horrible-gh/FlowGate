@@ -1,4 +1,4 @@
-"""flowgate.v02.0053 T#2 — after review follow approves a TR2 through the TR2 approval itself.
+"""after review follow approves a TR2 through the TR2 approval itself.
 
 Both follow paths of the card's review stage (no review, and a passed review) approve with
 ``flowgate.card_settings.legacy_adapter.approve``. On the TR2 connected harness of
@@ -9,15 +9,15 @@ stops it), the document revision and a TR2 attempt key. Without the approve perm
 attempted and the TR2 waits for a person; a refused approval (validation failure, rolled back, retried
 once with a new key) leaves it waiting too.
 
-flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3): the issuer path (no ``authority``) is kept as the
+(NR the earlier change, Q #511 o3): the issuer path (no ``authority``) is kept as the
 path of a person's work plan result; an AI card's approval passes ``authority="automation"`` — the server's automatic
 approval authority — so the same non-admin issuer's TR2 is approved through its own approval, and a refused TR2 is still
 retried once and left to a person.
 
 The harness's ``store`` is taken over only to apply the migrations as ``test_fg_card_settings`` applies
 them: a statement an earlier migration already made (``idx_chat_cmd_run`` of 136, again in 137) must not
-stop the setup. Its token issue is taken over too (flowgate.v02.0056 T#1, ``token_scratch_in_storage``): the
-harness puts the token scratch outside the storage root, which the token scratch policy refuses. flowgate.v02.0119 T#4
+stop the setup. Its token issue is taken over too (``token_scratch_in_storage``): the
+harness puts the token scratch outside the storage root, which the token scratch policy refuses. the earlier change the earlier implementation
 (T-3): that fixture moved here from ``test_fg_card_approval_tr2_0056``, removed with the card approval.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary
 
 @pytest.fixture
 def card_document_write_gate(monkeypatch):
-    """flowgate.v02.0146 T#2: the document write ports the server startup registers
+    """the document write ports the server startup registers
     (``card_document_edit.integration.register``: write gate, author evidence, dedicated writes such as the TR2
     registration, write-released flush), wired here for this test only so the file does not rely on an earlier test
     module having left them in the process-wide port table (alone, ``make_group``'s document creation was refused with

@@ -1,6 +1,6 @@
-"""Tests for TR Self-check database schema, repository, and project settings (flowgate.default.0650 T0002).
+"""Tests for TR Self-check database schema, repository, and project settings.
 
-Covers all 23 items from flowgate.default.0650.0001-R §11:
+Covers all 23 items from the earlier change:
 1. existing Project migration -> tr_self_check_enabled=false
 2. fresh schema default false
 3. Self-check run insert

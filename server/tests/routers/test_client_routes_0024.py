@@ -1,10 +1,10 @@
-"""flowgate.v02gui.0024 (R0001 §4.2, §4.3): v0.1 (client/) is gone and client_gui is the
+"""v0.1 (client) is gone and client_gui is the
 only client.
 
 - `/` and `/login` (with `?invite=` / `?next=`) return client_gui's login.html — the v0.2
   sign-in page — and any other unknown non-API path does too, as v0.1's index.html did.
 - v0.1's `/main` and `/settings` addresses (and everything below them) redirect into /app
-  following the R0001 §4.3 table, whether or not a client build exists.
+  following the the requirement table, whether or not a client build exists.
 - API prefixes still 404 as JSON and /app keeps serving the SPA shell.
 """
 from __future__ import annotations
@@ -113,7 +113,7 @@ def test_api_prefixes_still_404_as_json(dist, client, url):
     assert resp.json() == {"detail": "Not Found"}
 
 
-# ── v0.1 address redirects (R0001 §4.3) ────────────────────────────────────────
+# ── v0.1 address redirects ────────────────────────────────────────
 
 REDIRECTS = [
     ("/main", "/app"),

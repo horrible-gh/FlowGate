@@ -169,7 +169,7 @@ def render_result(doc, run, cases, locale):
     from modules.flow_gate.services.test_run_service import _tsr_title, _tsr_basis_section, _tsr_content, test_spec_service
     title = _tsr_title(doc, locale)
     if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
-        # 0549 T0008: a test report — every TS Case ID with its verdict, expected/actual,
+        # a test report — every TS Case ID with its verdict, expected/actual,
         # evidence and source identity, whatever the overall verdict is.
         meta = test_spec_service.load_result_meta(run.get("result_meta"))
         content = test_spec_service.render_report_markdown(

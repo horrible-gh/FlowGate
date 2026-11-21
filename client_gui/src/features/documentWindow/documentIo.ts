@@ -1,4 +1,4 @@
-// flowgate.v02.0068 T#1 — the document upload / download coordinator (0068 D §2.1 / §3.1, L §2.12, §2.14,
+// the document upload / download coordinator (0068 D /, L,,
 // §2.15, §4.2 ~ §4.4, §4.6): the one entry the Inspector's document lines and the document window's header
 // call. No new server API: the upload is the content save (the whole stored body), the download the canonical
 // Markdown download, the buttons' judgement the document read.
@@ -13,7 +13,7 @@
 // - The buttons' state per document (info): the document read's answer, kept per document; READY is reused
 //   when a line or a window draws the document again, every other state is read again.
 // Notices are a queue of this tab, shown by DocumentWindows (one toast host for both screens).
-// flowgate.v02.0074 T#2 (D#1 §6.3 / §7.5, R §1.4) — a work plan (WP) is told apart here, by its type, for every place
+// a work plan (WP) is told apart here, by its type, for every place
 // that draws the group (an Inspector line, the document window's header): its download is the server's stored plan body
 // as `<docId>.json` (GET …/work-plan, `body` only, the plan window's export format), never the Markdown file; its upload
 // is the plan window's [JSON 가져오기] (opened, nothing saved here), never the content save.
@@ -197,7 +197,7 @@ export function documentIoForget(): void {
 }
 
 /**
- * flowgate.v02.0074 T#2 — the document is a work plan: its read type when READY, else (being read, refused, gone, failed)
+ * the document is a work plan: its read type when READY, else (being read, refused, gone, failed)
  * its id `<project>.<module>.<group>.<nnnn>-WP` (case-insensitive), so a press before or without the read never takes
  * the generic path.
  */
@@ -299,11 +299,11 @@ export interface DocumentIoUploadOptions {
   readonly pick?: (accept: string) => Promise<File | null>
   /** The file reader (documentIoReadFile). */
   readonly read?: (file: File) => Promise<string>
-  /** flowgate.v02.0074 T#2: the drawing group's project and Flow, for a work plan window it opens (else the read's). */
+  /** the drawing group's project and Flow, for a work plan window it opens (else the read's). */
   readonly context?: { readonly projectId: string | null; readonly groupId: string | null }
   /**
-   * flowgate.v02.0127 T#5 (§2.11 / §2.14): the card coordinates of the button's line, handed by the caller that draws
-   * the group (no v1 save fallback). flowgate.v02.0157: without them the upload targets the document by its doc_id; its
+   * : the card coordinates of the button's line, handed by the caller that draws
+   * the group (no v1 save fallback). the earlier change: without them the upload targets the document by its doc_id; its
    * base read must say edit_path=non_card, else nothing is picked or saved (a card-held document needs its card).
    */
   readonly card?: DocumentEditTarget | null
@@ -322,7 +322,7 @@ interface HeldUpload {
 
 const heldUploads = new Map<string, HeldUpload>()
 
-/** flowgate.v02.0157: the target's own read / revision route (card coordinates or the standalone doc_id). */
+/** the target's own read / revision route (card coordinates or the standalone doc_id). */
 const readTarget = (card: DocumentEditTarget) => (cardDocumentIsStandalone(card) ? cardDocumentStandaloneRead(card) : cardDocumentRead(card))
 
 async function sendUpload(card: DocumentEditTarget, request: CardRevisionRequest): Promise<void> {
@@ -338,7 +338,7 @@ function cardUploadNotice(error: unknown): { readonly key: string; readonly unce
   if (failure.kind === 'uncertain') return { key: 'uncertain', uncertain: true }
   const key = saveFailureKey(read)
   if (key.startsWith('not_editable')) return { key: 'locked', uncertain: false }
-  // flowgate.v02gui.0003: the file carries another document's front matter (a file without one is saved under the
+  // the file carries another document's front matter (a file without one is saved under the
   // document's own, by the server) — told apart from a body that is not valid.
   if (key === 'invalid_content') {
     const first = Array.isArray(read.params.errors) ? (read.params.errors[0] as { reason?: unknown } | null | undefined) : null
@@ -384,7 +384,7 @@ function orphanSettled(token: DocumentIoToken, outcome: SaveOutcome): void {
 }
 
 /**
- * flowgate.v02.0074 T#2 (D#1 §6.3) — a work plan's upload: its window opens (an open one is reused) asking for [JSON
+ * a work plan's upload: its window opens (an open one is reused) asking for [JSON
  * "가져오기"]. No file pick, no guard, no save here — the plan is saved by the window's [저장] (one PUT with
  * base_revision_no) only. Blocked (the button's reason), nothing happens.
  */
@@ -431,7 +431,7 @@ export async function documentIoUpload(docId: string, options: DocumentIoUploadO
     }
     if (!documentIoAlive(token)) return // C0
     if (cardDocumentIsStandalone(card) && base.editPath !== 'non_card') {
-      // flowgate.v02.0157: the server says a card holds the document (or cannot tell): it is uploaded from its card.
+      // the server says a card holds the document (or cannot tell): it is uploaded from its card.
       notify('save.binding_required', 'warning')
       return
     }
@@ -598,7 +598,7 @@ function workPlanDownloadNotice(error: unknown): DocumentIoDownloadNotice {
 }
 
 /**
- * flowgate.v02.0074 T#2 (R §1.4) — a work plan's download: the server's stored plan (GET …/work-plan), its `body` only
+ * (R) — a work plan's download: the server's stored plan (GET …/work-plan), its `body` only
  * (not the read view around it), as the plan window's export writes it (workPlanBodyJsonText), `<docId>.json`,
  * application/json. Unsaved edits of its window or Step windows are not in it and are told. A failure saves no file and
  * falls back to nothing (no Markdown file, no raw text); it never ends with a rejected promise.

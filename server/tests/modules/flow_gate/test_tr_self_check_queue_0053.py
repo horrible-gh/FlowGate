@@ -1,4 +1,4 @@
-"""flowgate.v02test.0053 1-B (T0005): the Self-check queue -- queued requests, snapshot runs, no G.
+"""1-B: the Self-check queue -- queued requests, snapshot runs, no G.
 
 Real pieces: a fully migrated SQLite store (migration 201), a throwaway git repository standing
 in for the managed worktree (committed, modified, untracked and ignored files), the real
@@ -576,7 +576,7 @@ def test_migration_201_exists_for_every_dialect(dialect):
     assert "'queued', 'pending', 'running', 'completed', 'failed', 'cancelled'" in text
 
 
-# 0053 1-C: quotas apply at spawn, not admission/claim, and survive reconnects.
+# quotas apply at spawn, not admission/claim, and survive reconnects.
 def test_quota_three_starts_then_refusal_and_timeout_clamp(env):
     from modules.flow_gate.services import tr_self_check_quota as quota
     for remaining in (2, 1, 0):

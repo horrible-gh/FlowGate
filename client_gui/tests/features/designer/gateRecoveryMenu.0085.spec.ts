@@ -1,4 +1,4 @@
-/** D0007 §8-10: recovery returns through the existing card menu, with no new UI entry. */
+/** recovery returns through the existing card menu, with no new UI entry. */
 import { describe, expect, it } from 'vitest'
 import { flowCardMenu, type FlowCardMenuInput } from '@/features/designer/center/run/flowCardMenu'
 import { toFlowRun } from '@/features/project/flowRunApi'

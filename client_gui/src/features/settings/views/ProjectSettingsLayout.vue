@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-// project selection area (flowgate.v02.0076 T#5, D §1.2 / §2.3): the parent of /settings/project and
+// project selection area: the parent of /settings/project and
 // /settings/project/:projectId/{general,paths,git}, shown to system administrators only (the access
 // guard and SettingsLayout decide that before this mounts). It reads the project list with the
 // existing GET /projects?status=all once per entry (../components/useProjectList) and keeps it

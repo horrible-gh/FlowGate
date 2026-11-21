@@ -1,24 +1,24 @@
-"""Graph projection: draft / revision nodes on the Canvas (D0004 §3.2 Graph row, P0008 S1-3~S1-5).
+"""Graph projection: draft / revision nodes on the Canvas (Graph row, the plan S1-3~S1-5).
 
 - ``project_graph`` (ownership graph / conflict): the viewed definition's nodes and execution
   edges, every live document not bound to a Graph node as a free document node, and reference
   edges. The root-bound start node shows the bound root document (the live end of its supersede
   chain) as its result; that document's own node is absorbed, so reference edges touching it
-  end at the Graph node (D0004 §3.6 / §3.7, P0008 S1-3). With a run (revision view) a node
+  end at the Graph node. With a run (revision view) a node
   carries its ``node_run`` and run state, and its live result document is absorbed the same way.
 - ``add_draft`` (unassigned): the documents projection plus the draft's nodes and edges.
-- flowgate.v02.0053 T#1: every Graph / draft node carries its card lines (``card_documents``); a node
+- the earlier change the earlier implementation: every Graph / draft node carries its card lines (``card_documents``); a node
   showing no document otherwise shows its first line's document (title and state stay the node's).
   The canvas service hands each view the lines of the kind that view gives the node (a retyped draft
   node and its confirmed revision each show their own; ``card_document_ports.card_view``).
   The documents a card made and the live documents of this view's card lines are never free document nodes
-  (``hidden_doc_ids``, 0111 T#4 / NR §4). Reference edges use the card that shows each such line.
-- flowgate.v02.0053 T#8: a Custom card (``custom`` node) is titled with the name a person gave it (its
+  (``hidden_doc_ids``, the earlier implementation / NR). Reference edges use the card that shows each such line.
+- the earlier change the earlier implementation: a Custom card (``custom`` node) is titled with the name a person gave it (its
   label), also once a run bound a result document to it — that name is all that tells one apart.
-- flowgate.v02.0064 T-B4b (0062 D0005 §3.1, P0006 §4.2.1): every Graph / draft node carries its card's title
+- the earlier change T-B4b: every Graph / draft node carries its card's title
   state (``title_state``: title, source, version; version 0 without a row) and shows that title first; with
   none it keeps the rules above. The canvas service hands each view the Flow's states read in one statement.
-- flowgate.v02.0064 T-B4d (0062 L0006 2.5): the card's document (``card_document``) and the title it shows before its
+- the earlier change T-B4d: the card's document (``card_document``) and the title it shows before its
   title state (``card_title_source``) are pure functions the AI naming judgement shares, so it reads a card exactly
   as it is drawn.
 Pure over its inputs; positions are placed by the canvas service.
@@ -36,7 +36,7 @@ from .legacy_projector import Projection, doc_node, doc_order, document_block, r
 VIEW_ORIGIN = {"draft": "draft_node", "revision": "graph_node"}
 EDGE_ORIGIN = {"draft": "draft", "revision": "graph"}
 # The card line authors (card_documents ``author``) a node without a document shows first: a person's line,
-# and an instruction its instruction AI or a person writes (flowgate.v02.0056 T#2).
+# and an instruction its instruction AI or a person writes.
 _WRITTEN_AUTHORS = ("human", "instruction_ai_or_human")
 _TITLE_SOURCES = ("ai", "human")
 
@@ -48,7 +48,7 @@ class GraphView:
     edges: list[dict] = field(default_factory=list)
     bound_node_key: Optional[str] = None              # root-bound start node, if any
     bound_doc_id: Optional[str] = None                # the bound root document (live end)
-    node_runs: dict = field(default_factory=dict)     # node_key -> P0008 §2.6 ``node_run`` block
+    node_runs: dict = field(default_factory=dict)     # node_key -> the plan ``node_run`` block
     card_docs: dict = field(default_factory=dict)     # node_key -> card lines of the node's kind in this view
     hidden_doc_ids: frozenset = frozenset()            # owned documents plus this view's live line documents
     title_states: dict = field(default_factory=dict)  # node_key -> stored title state (0064 T-B4b)
@@ -71,7 +71,7 @@ def to_graph_node(row: dict) -> GraphNode:
 
 
 def title_state_block(state: Optional[dict]) -> dict:
-    """P0006 §4.2.1 ``title_state`` of a card: no row is version 0 with no title; the source ``none`` is null."""
+    """``title_state`` of a card: no row is version 0 with no title; the source ``none`` is null."""
     state = state or {}
     source = state.get("title_source")
     return {"title": state.get("title") or None, "title_source": source if source in _TITLE_SOURCES else None,
@@ -79,7 +79,7 @@ def title_state_block(state: Optional[dict]) -> dict:
 
 
 def card_document(view: GraphView, row: dict, by_id: dict) -> Optional[dict]:
-    """0062 L0006 2.5 ``card_document``: the document a card shows — the bound root (live end) of the root-bound node,
+    """2.5 ``card_document``: the document a card shows — the bound root (live end) of the root-bound node,
     else the node run's result while it is alive; None for neither."""
     bound = row["node_key"] == view.bound_node_key
     doc = by_id.get(view.bound_doc_id) if bound and view.bound_doc_id else None
@@ -91,7 +91,7 @@ def card_document(view: GraphView, row: dict, by_id: dict) -> Optional[dict]:
 
 
 def card_title_source(row: dict, document: Optional[dict]) -> tuple[str, Optional[str], Optional[str]]:
-    """0062 L0006 2.5 ``card_title_source``, the title before the card's title state: a Custom card's label, else its
+    """2.5 ``card_title_source``, the title before the card's title state: a Custom card's label, else its
     document's title, else its label -> ``(kind, text, doc_id)``, kind "label" or "document"."""
     if row.get("node_type") == "custom":
         return "label", row.get("label"), None
@@ -101,7 +101,7 @@ def card_title_source(row: dict, document: Optional[dict]) -> tuple[str, Optiona
 
 
 def reported_document(lines: Optional[list], by_id: dict) -> Optional[dict]:
-    """flowgate.v02.0118 T#2 (0003-NR §3.1): the written result a card's report line still shows — the live document of
+    """(NR): the written result a card's report line still shows — the live document of
     its first report line a run fills (author ``run``) whose body is written (``has_body``). A card a Time Machine rewind
     (or a Stop) put back to pending has no node run result any more, yet its report line keeps the earlier result: the
     card keeps that title instead of falling back to its palette label. The untouched empty draft a card makes on
@@ -147,7 +147,7 @@ def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict],
 
 def first_line_document(lines: list, by_id: dict) -> Optional[dict]:
     """The document a node without one shows: its first line a person (or, for an instruction, the card's
-    instruction AI or a person — flowgate.v02.0056 T#2) writes, else its first line."""
+    instruction AI or a person — the earlier change the earlier implementation) writes, else its first line."""
     filled = [line for line in lines or [] if line.get("doc_id") in by_id]
     human = [line for line in filled if line.get("author") in _WRITTEN_AUTHORS]
     pick = (human or filled or [None])[0]
@@ -203,7 +203,7 @@ def project_graph(flow_id: str, ownership: str, documents: list[dict], view: Gra
     drawn: dict[str, str] = {}
     drawn_docs: list[dict] = []
     if view.bound_doc_id and not cm.is_alive(by_id.get(view.bound_doc_id) or {}, flow_id):
-        view.bound_doc_id = None                       # L0009 E-19: deleted root -> document null
+        view.bound_doc_id = None                       # E-19: deleted root -> document null
     _graph_nodes(out, view, ownership, by_id, supersedes, drawn, drawn_docs)
     _execution_edges(out, view, cm.editable_for(ownership, VIEW_ORIGIN[view.mode])["structure"])
     for doc in sorted((d for d in documents if cm.is_alive(d, flow_id)), key=doc_order):
@@ -220,7 +220,7 @@ def project_graph(flow_id: str, ownership: str, documents: list[dict], view: Gra
 
 def add_draft(proj: Projection, ownership: str, documents: list[dict], view: GraphView,
               lookup: Callable[[list[str]], dict[str, dict]] = lambda _ids: {}, *, flow_id: str = "") -> Projection:
-    """Unassigned Flow: draft nodes and edges next to the document nodes (P0008 S1-4)."""
+    """Unassigned Flow: draft nodes and edges next to the document nodes."""
     supersedes = supersedes_map(documents)
     by_id = {d["doc_id"]: d for d in documents if d.get("doc_id") and cm.is_alive(d, d.get("group_id"))}
     drawn = {n["document"]["doc_id"]: n["node_key"] for n in proj.nodes if n.get("document")}

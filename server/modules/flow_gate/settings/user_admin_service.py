@@ -268,8 +268,8 @@ def assign_project_role(
     role_id: str,
     granted_by: str | None = None,
 ) -> dict:
-    """flowgate.v02.0020: a project role always goes through the workspace (membership/exception
-    and the role row in one transaction, R0001 §3.1). The caller holds a system-level grant."""
+    """a project role always goes through the workspace (membership/exception
+    and the role row in one transaction, the requirement). The caller holds a system-level grant."""
     return _workspace_service().assign_direct_project_role(
         user_id, project_id, role_id, _actor(granted_by), system_grant=True)
 

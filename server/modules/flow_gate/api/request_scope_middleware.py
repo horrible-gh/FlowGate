@@ -1,4 +1,4 @@
-"""Per-request DB scope: read memoization + query accounting (0291 NR0003 P3-1 / 4-8).
+"""Per-request DB scope: read memoization + query accounting.
 
 ``db/request_cache.py`` sets the policy; this file sets the boundary. The boundary is one HTTP request.
 
@@ -11,7 +11,7 @@ of failure with no symptom at all, only lost benefit, so the guarantee was chose
 
 It propagates into sync ``def`` endpoints too: FastAPI copies the current context when handing
 off to the AnyIO thread pool, and what the scope holds is a **mutable object**, so changes made
-inside the thread are visible. As NR0003 finding 3 noted, most endpoints in this codebase are
+inside the thread are visible. As the review noted, most endpoints in this codebase are
 sync ``def``, so without this property the cache would run nowhere.
 
 **SSE is excluded.** The ``/api/v1/events`` stream's lifetime is a session, not a request.
@@ -32,7 +32,7 @@ _EXCLUDED_PATH_MARKERS = ("/api/v1/events",)
 
 
 def _query_log_enabled() -> bool:
-    """Per-request query-count logging (NR0003 4-8).
+    """Per-request query-count logging.
 
     Off by default. One line accumulates per request, so leaving it on permanently would be as
     noisy as the SQL log it set out to reduce. Turn it on with ``FLOWGATE_QUERY_LOG=1`` only while measuring.

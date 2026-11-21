@@ -19,7 +19,7 @@ export function cardRoleRows(roles: CardAiRoles | null | undefined, instruction:
   })
 }
 
-/** flowgate.v02gui.0032: whether the card's instruction line has a written body (the Canvas line's `has_body`). */
+/** whether the card's instruction line has a written body (the Canvas line's `has_body`). */
 export function instructionWritten(lines: readonly { readonly slot: string; readonly docId: string | null; readonly hasBody?: boolean }[] | null | undefined): boolean {
   return !!lines?.some(line => line.slot === 'instruction' && line.docId !== null && line.hasBody === true)
 }
@@ -28,7 +28,7 @@ export const AI_FIELDS = { run: ['review_count', 'review_basis', 'after_review_e
 /** flowgate.v02.0113 T#4: the AI tab's [고급 ▾] — 실행 설정 (재시작 · 실행 제한 시간 · 검수 기준), then instruction review. */
 export const AI_ADVANCED_FIELDS = { run: ['restart', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'], instructionReview: ['instruction_review_ai', 'instruction_review_count'] } as const
 /**
- * flowgate.v02gui.0029 (0003-CH Coff): the AI tab's ⚙ of each AI row opens that AI's own advanced settings —
+ * (CH Coff): the AI tab's ⚙ of each AI row opens that AI's own advanced settings —
  * 지시 AI: instruction review AI · instruction review count, 실행 AI: 재시작 · 실행 제한 시간 · 검증 최대 횟수 · 검증 1per-run time limit (flowgate.v02test.0053
  * 0003-T: the two 검증 options, a work card only), 검수 AI: 검수 기준 · when the review limit is exhausted.
  */

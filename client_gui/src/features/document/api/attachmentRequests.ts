@@ -1,4 +1,4 @@
-// flowgate.chat.0017 CH0002 — AI attachment upload requests: the user side (server
+// AI attachment upload requests: the user side (server
 // `api/v1/attachment_request_routes.py`). An AI run hands a file over; it waits here, staged, until a person
 // previews / downloads it and approves (it is then registered as an attachment of the card's live document) or
 // rejects it. Requests outlive their AI run, so every screen reads them from the server, never from a run.

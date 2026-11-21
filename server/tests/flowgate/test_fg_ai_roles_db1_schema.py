@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#1 — DB-1 migrations 163~165: shape in three dialects, constraints, rollback, statement lists.
+"""DB-1 migrations 163~165: shape in three dialects, constraints, rollback, statement lists.
 
 Runs on SQLite only (raw sqlite3 over every migration in name order). PostgreSQL / MySQL files are checked as text
 against the SQLite file (same tables, columns, indexes, CHECK count, rollback blocks); their execution, the

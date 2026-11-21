@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#2 — the project event hub (D#1 §7.1): one EventSource per project shared by
+ * the project event hub: one EventSource per project shared by
  * every subscriber (the Canvas adapter and any other), closed with the last unsubscribe, the same
  * reconnect as the Canvas stream had (resync after a drop, a fresh stream with the current token
  * after a closed one), and frames passed on as signals (name, payload, group_id, doc_id) only.

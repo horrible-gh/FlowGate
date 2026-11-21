@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — remote apply failure details (0033-D §6.2): only what the server really
+// remote apply failure details: only what the server really
 // gives — the error code — plus the record's target and time. The server keeps the git stderr
 // in its log only, so diagnostics read "not provided" (G2); its `message` is not UI text.
 // There is no retry here: `다시 반영` stays on the card.

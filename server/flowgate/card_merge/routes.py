@@ -1,4 +1,4 @@
-"""HTTP adapter of the card merge (flowgate.v02test.0042). Mounted like the card memos routes (same envelope, user JWT
+"""HTTP adapter of the card merge. Mounted like the card memos routes (same envelope, user JWT
 only — a worker token is refused, so no AI presses ``merge`` / ``discard_rerun``).
 
     GET  /api/v1/flows/{flow_id}/nodes/{node_key}/merge           the card's merge state (``service.view``)

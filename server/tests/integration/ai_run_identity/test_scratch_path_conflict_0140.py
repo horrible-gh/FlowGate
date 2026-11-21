@@ -1,8 +1,8 @@
-"""flowgate.v02.0140 T0004: an existing scratch path is an explicit, safe start failure.
+"""an existing scratch path is an explicit, safe start failure.
 
 Isolated only: a migrated SQLite identity DB, pytest basetemp scratch roots, stubbed
 lease/token stores. No live server, shared DB, operator scratch or token is touched.
-Covers T#3 items 1-6 at source level (real Windows mkdir, real SQLite ownership); T#3-6 runs the
+Covers the earlier implementation items 1-6 at source level (real Windows mkdir, real SQLite ownership); the earlier implementation runs the
 real admission, worker thread, judge, finalize and terminal cleanup with only the provider call stubbed.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _snapshot(path: Path):
     return tree_hash(path), storage_fs.path_identity(path), sorted(p.name for p in path.iterdir())
 
 
-# -- T#1 / T#3-1: existing folder -> structured conflict, nothing touched ---------------
+# -- the earlier implementation / the earlier implementation: existing folder -> structured conflict, nothing touched ---------------
 
 def test_existing_legacy_folder_is_a_structured_conflict_and_preserved(scratch_case):
     b = owner()
@@ -106,7 +106,7 @@ def test_pending_delete_journal_is_not_reported_as_a_path_conflict(scratch_case,
     assert _snapshot(scratch) == before
 
 
-# -- T#3-2: concurrent creators, threads and independent OS processes -------------------
+# -- the earlier implementation: concurrent creators, threads and independent OS processes -------------------
 
 def test_two_threads_one_creator_and_the_loser_cleans_nothing(scratch_case):
     b = owner()
@@ -201,7 +201,7 @@ def test_two_os_processes_one_creator_and_the_loser_cleans_nothing(scratch_case,
     print("0140 processes:", [(r["pid"], r["result"], r.get("winerror")) for r in results])
 
 
-# -- T#1-3 / T#2: service boundary, rollback of only what this admission acquired -------
+# -- the earlier implementation / the earlier implementation: service boundary, rollback of only what this admission acquired -------
 
 def _service_stubs(monkeypatch, *, revoke_fails=False, release_fails=False):
     leases = {OTHER_GROUP: {"group_id": OTHER_GROUP, "run_id": "aiv_20261103_003418", "state": "active",
@@ -372,7 +372,7 @@ def test_graph_start_failure_keeps_the_conflict_code_and_cancels_the_request(mon
     assert cancelled == [("exe_0140", None, "requested")]
 
 
-# -- T#2-5 / T#3-6: a new whole admission (new id/nonce) starts; the old folder stays ---
+# -- the earlier implementation / the earlier implementation: a new whole admission (new id/nonce) starts; the old folder stays ---
 
 def test_new_request_with_new_identity_succeeds_and_old_folder_stays(scratch_case):
     b = owner()
@@ -412,7 +412,7 @@ def test_evaluation_bounded_retry_still_moves_to_a_new_id(identity_db, monkeypat
     assert (run_id, path) == ("aiv_20261106_000202", Path("/scratch/aiv_20261106_000202")) and nonce
 
 
-# -- T#3-6: real admission 409, then a new request through admission, worker and finalize --
+# -- the earlier implementation: real admission 409, then a new request through admission, worker and finalize --
 
 RETRY_TIMEOUT_SEC = 60
 
@@ -550,11 +550,11 @@ def test_real_admission_conflict_then_a_new_request_runs_the_worker_and_ends(scr
     assert "raw-1" not in json.dumps(durable, default=str)
     assert issued == ["tok_conflict", "tok_retry"]
     assert {token for token, _ in revokes} == {"tok_conflict"}           # nobody revoked the retry's token for it
-    # 0137: the retry's own scratch, judged by its own ordered submissions
+    # the retry's own scratch, judged by its own ordered submissions
     fresh = legacy.parent / retry_id
     cleanup = run["scratch_cleanup"]
     if submission == "submitted":
-        # 0157: settled -> no carry-over source, but the folder waits for the system TTL.
+        # settled -> no carry-over source, but the folder waits for the system TTL.
         assert cleanup["action"] == "retained" and cleanup["reason"] == "settled_retention_active"
         assert run["scratch_retained"] is None
         assert (fresh / "tmp" / "work.txt").read_text(encoding="utf-8") == "retry output"

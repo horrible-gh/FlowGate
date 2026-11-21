@@ -39,7 +39,7 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
 
     # 0086 "워크플로 결정부터": an ordinary (non-continuous) decision request passes the
     # continuation params as None/False — the token stays a plain workflow_decide token.
-    # group 0230 T0005: request_workflow_decision now also threads continuation_instruction_mode
+    # request_workflow_decision now also threads continuation_instruction_mode
     # (None for a non-continuous request → legacy auto_approved handling downstream).
     # group 0393 T0005 §2-2: …and ai_run_id, so a workflow_decide worker driven by [AI 호출]
     # owns the lease its own run took. None here because this request is not run-backed.
@@ -57,8 +57,8 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
     assert result["action_scope"] == "workflow_decide"
     assert result["raw_token"] == "worker-token"
     assert "POST http://localhost/flowgate/api/v1/workflow/decide" in result["mention"]
-    # 0394 T0004 (NR0003 §4.2 S5): this used to look for the literal
-    # `"doc_id": "flowgate.default.0002.0001-R"` — a fragment of the sample JSON body the
+    # this used to look for the literal
+    # `"doc_id": "the earlier change"` — a fragment of the sample JSON body the
     # mention used to print. The 0372 mention-reduction chain replaced that sample with a
     # link to the `submit` help item, so the assertion went red over a formatting change
     # while the thing it protects (a decision worker knows WHICH document it is deciding,
@@ -221,7 +221,7 @@ def test_workflow_decide_broadcasts_status_and_group_refresh(monkeypatch):
             "status": "open",
             "doc_review_status": None,
         },
-        # flowgate.v02.0064 T#4 rework: the row is read again where the decision runs (L0005 2.10 P10).
+        # the row is read again where the decision runs.
         {
             "doc_id": doc_id,
             "project_id": "flowgate",
@@ -238,7 +238,7 @@ def test_workflow_decide_broadcasts_status_and_group_refresh(monkeypatch):
         },
     ]
     monkeypatch.setattr(routes._db_documents, "get_by_id", lambda _doc_id: docs.pop(0))
-    # flowgate.v02.0045 S4: no DB behind this test, so the Graph contact is the unassigned-Flow
+    # S4: no DB behind this test, so the Graph contact is the unassigned-Flow
     # pass-through (its own regression tests run the real one: test_graph_v01_contact_0045.py).
     monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 

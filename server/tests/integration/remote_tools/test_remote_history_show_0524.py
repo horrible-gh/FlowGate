@@ -1,8 +1,8 @@
-"""HEAD-side history (`log(side=...)`) and commit inspection (`show`) — group 0524 T0004.
+"""HEAD-side history (`log(side=...)`) and commit inspection (`show`) — the earlier implementation.
 
-Covers NR0003 §11/§16 and T0004 §2.1: `log` gains a `side` selector symmetric with the
+Covers the review and the earlier implementation: `log` gains a `side` selector symmetric with the
 existing target-side behaviour, and `show` is a new bounded, read-only commit-inspection
-op. Both stay inside the existing read-only git-inspection boundary (T0004 §1): fixed
+op. Both stay inside the existing read-only git-inspection boundary: fixed
 argv only, no arbitrary git/shell execution, no HEAD/index/working-tree mutation.
 
 Git-level tests use a local subprocess fixture (mirrors test_remote_diff_log_0478.py's
@@ -87,7 +87,7 @@ def test_log_invalid_side_is_422_invalid_side():
 
 
 def test_log_side_is_not_accepted_by_diff():
-    """T0004 §2.1(a): `side` is log-only — diff keeps its existing field set."""
+    """(a): `side` is log-only — diff keeps its existing field set."""
     assert "side" not in svc._ALLOWED_FIELDS["diff"]
     with pytest.raises(svc._OpError) as exc:
         svc._validate_allowed_fields("diff", {"side": "head"})
@@ -154,7 +154,7 @@ def test_show_malformed_sha_is_422_invalid_sha(bad_sha):
 
 def test_show_malformed_sha_never_reaches_git(env, monkeypatch):
     """Pipeline-level proof that an option-shaped sha never becomes a git argv
-    element (T0004 §2.4 injection check) -- ④ rejects it before ⑤ executes."""
+    element (injection check) -- ④ rejects it before ⑤ executes."""
     env.make_grant(["read"])
     from modules.flow_gate.services import git_service
 
@@ -236,7 +236,7 @@ def test_http_show_200_is_logged_and_never_gets_a_continuation(diverged_repo, mo
     assert response.status_code == 200
     payload = response.json()
     assert payload["sha"] == head_commit
-    assert "continuation" not in payload  # show is not a mutating op (L0006 §6.1)
+    assert "continuation" not in payload  # show is not a mutating op
     assert len(recorded) == 1
     assert recorded[0]["op"] == "show" and recorded[0]["result"] == "success"
 

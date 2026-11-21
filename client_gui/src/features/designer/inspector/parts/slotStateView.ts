@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F1 — what a slot line shows for its state, decided in one place for every card (0056 CH
+// what a slot line shows for its state, decided in one place for every card (0056 CH
 // §1 / §5). The 0053 line drew every state as a coloured dot whose meaning lived in its tooltip; since most
 // lines sit in a state that asks nothing of the operator ('작성 중', '완료'), the colour carried no
 // information. Now a line carries a short text badge only when the state says something: a decision waits
@@ -8,7 +8,7 @@
 // Pure: no Vue, no i18n — the caller hands the worded label, this decides whether and how it is drawn.
 
 /**
- * flowgate.v02.0064 T#2: only these known body states warn (the server's `body_state`); an older server sends none and
+ * only these known body states warn (the server's `body_state`); an older server sends none and
  * a documentless line never warns. The same rule as features/document `lineWarns` and the Designer Center's
  * (`center/graph/flowGraph.ts`): Inspector parts import no feature, so they keep their own copy.
  */
@@ -32,7 +32,7 @@ export interface SlotStateInput {
 
 export interface SlotStateView {
   /**
-   * badge: a text badge; empty: why the line has no document; blank (flowgate.v02.0056 F2-2): the line's document
+   * badge: a text badge; empty: why the line has no document; blank: the line's document
    * has no body yet (flowgate.v02.0070 T#4: "본문 비어 있음" in the same muted words as 문서 없음, so the two are told
    * apart in the line); none: nothing is drawn.
    */
@@ -63,9 +63,9 @@ export function slotStateTitle(state: SlotStateInput): string {
  * and no state draw nothing.
  * flowgate.v02.0056 F2-2: a line whose document has no body (`blankText` given: "비어 있음") draws no badge, whatever
  * its state — an empty document asks to be written before anything else.
- * flowgate.v02.0056 (0017-CH) — and no words either: the row shows it by its shape (dashed frame, dim name, hollow
+ * (CH) — and no words either: the row shows it by its shape (dashed frame, dim name, hollow
  * document icon); "비어 있음" is only the hover text.
- * flowgate.v02.0070 T#4 (B4): a dashed line without words could not be told from a line without a document, so the
+ * (B4): a dashed line without words could not be told from a line without a document, so the
  * blank line now says "본문 비어 있음" where the badge would be (muted words, like 문서 없음); unreadable stays the ⚠.
  */
 export function slotStateView(
@@ -84,7 +84,7 @@ export function slotStateView(
 }
 
 /**
- * flowgate.v02.0056 F2-1 (O2 0007-TR §4-3) — who writes a card line, when it is worth saying. Answers the message
+ * who writes a card line, when it is worth saying. Answers the message
  * key (under `gui.designer.inspector.slot.author.`) or null.
  * flowgate.v02.0056 (0017-CH) — no author is drawn: "지시 AI 또는 사람" was words the line does not need.
  */
@@ -94,7 +94,7 @@ export function slotAuthorKey(author: string | null | undefined): string | null 
   return author && SLOT_AUTHORS_SHOWN.includes(author) ? `gui.designer.inspector.slot.author.${author}` : null
 }
 
-// --- flowgate.v02.0056 F2-2 — the three states of a card line and its row actions (O3 0009-TR §4-1 · §4-2 · §4-3) --
+// --- the earlier change F2-2 — the three states of a card line and its row actions --
 
 /**
  * A card line as the server sends it (the Canvas `card_documents` line; FlowGraphCardDocument): what decides its

@@ -1,5 +1,5 @@
 """ai_invoke_runs.write_requested_by_human / allow_test_edits: PostgreSQL repair +
-real round-trip regression (flowgate.default.0546 T0004, NR0003).
+real round-trip regression.
 
 Migration 105 declared these two columns BOOLEAN on PostgreSQL only (sqlite got
 INTEGER, mysql got TINYINT(1)), while the writer (db/ai_invoke_runs.py upsert())
@@ -111,7 +111,7 @@ def test_the_repair_adds_a_nullable_0_1_check_for_both_columns():
 
 def test_105_itself_is_left_untouched():
     """105 is already applied on the live database; rewriting it would not change the
-    column type sqloader already created there (NR0003 Sec.12). The fix must be a new,
+    column type sqloader already created there (Sec.12). The fix must be a new,
     forward-only file."""
     body = (_POSTGRES_DIR / "105_ai_invoke_run_write_plan.sql").read_text(encoding="utf-8")
     assert "ADD COLUMN IF NOT EXISTS write_requested_by_human BOOLEAN" in body
@@ -285,7 +285,7 @@ class TestLivePostgresRepairAndRoundTrip:
 
     def test_a_run_that_never_touched_either_column_stays_null(self, schema_case):
         """The overwhelming majority of runs (every non-resolve_conflict action_scope,
-        NR0003 Sec.6): both columns NULL before the repair, both still NULL after."""
+        Sec.6): both columns NULL before the repair, both still NULL after."""
         cur, schema = schema_case
         cur.execute(
             "CREATE TABLE ai_invoke_runs (run_id TEXT PRIMARY KEY, "

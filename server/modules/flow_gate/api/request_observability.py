@@ -1,6 +1,6 @@
-"""Request id for every HTTP request + token redaction in the access log (flowgate.v02gui.0017).
+"""Request id for every HTTP request + token redaction in the access log.
 
-NR 0003 B-R8 found that a failed ``/auth/refresh`` left no application log line and no request
+B-R8 found that a failed ``/auth/refresh`` left no application log line and no request
 identifier, and that the default uvicorn access log prints the query string verbatim -- which for
 the SSE stream (``/api/v1/events/stream?token=<access JWT>``) means the access token itself.
 
@@ -34,7 +34,7 @@ def current_request_id() -> str | None:
 
 # The id of the request an exception escaped from. The contextvar is reset when the request ends, but the server
 # (uvicorn's "Exception in ASGI application") logs the escaped exception only after that; the tag lets the
-# server_logs row of that very record point at its request (flowgate.v02test.0050 T0005 criterion (c)).
+# server_logs row of that very record point at its request (the earlier change the earlier implementation criterion (c)).
 _EXC_REQUEST_ID_ATTR = "__flowgate_request_id__"
 
 

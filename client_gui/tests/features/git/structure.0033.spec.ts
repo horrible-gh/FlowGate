@@ -4,12 +4,12 @@ import { describe, expect, it } from 'vitest'
 import * as GitFeature from '@/features/git'
 import { APP_MESSAGES } from '@/app/i18n'
 
-// flowgate.v02.0033 — source-level guards for the Designer Git part (0033-D §2, §7, §8.1).
-// flowgate.v02.0066 T#6 — the Group worktree area and the Center Diff join the part (0066 D#2
+// source-level guards for the Designer Git part.
+// the Group worktree area and the Center Diff join the part (the earlier implementation
 // §2-2, §2-3): their files, the Center Diff's public entry points, the Center Diff's own read
 // through the project store, `diffLines` from the Conversation surface, and the Designer Shell /
 // Center column / Workspace that assemble the Center Diff through the public surface.
-// flowgate.v02.0067 T#4 — the Center Diff is the Git modeless `Diff` tab detail inside the part: it is
+// the Center Diff is the Git modeless `Diff` tab detail inside the part: it is
 // off the public surface, reads through the GitSource (gitSource.ts only touches the project store at
 // runtime) and only the right Dock assembles the part.
 const ROOT = resolve(__dirname, '../../..')
@@ -65,7 +65,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitPushErrorWindow.vue',
         'GitPushFailureCard.vue',
         'GitReviewCard.vue',
-        // flowgate.v02gui.0004 — the §B re-approval block and the direct resolver's chunk split.
+        // the §B re-approval block and the direct resolver's chunk split.
         'GitReapproveBlock.vue',
         'conflictChunks.ts',
         // flowgate.v02test.0052 0008 — the shared [병합 중단] / [강제 정리] confirm and the administrator's "정리 실패" list.
@@ -98,7 +98,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       }
     }
     // Runtime use of the project store (its loaders) is the HTTP source's only — the group file diff
-    // too since 0067 T#4 (`worktree.loadFileDiff`, 0066 D#2 §5-1); the rest import types.
+    // too since the earlier implementation (`worktree.loadFileDiff`, the earlier implementation); the rest import types.
     const runtimeProjectImports = FILES.filter((file) =>
       /^\s*import\s+\{[^}]*\}\s+from\s+'@\/features\/project'/m.test(read(file)),
     ).map(rel)
@@ -112,12 +112,12 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       /^\.\/[A-Za-z]+(\.vue|\.css)?$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^@\/features\/project$/,
-      // D0007 §6: the gate operation adapter uses the document wire API and the shared event subscription.
+      // the gate operation adapter uses the document wire API and the shared event subscription.
       /^@\/features\/document$/,
       /^\.\.\/designer\/inspector\/useInspectorResource$/,
-      // flowgate.v02.0066 T#6 — the Center Diff reuses the Conversation's pure line diff.
+      // the Center Diff reuses the Conversation's pure line diff.
       /^@\/features\/conversation$/,
-      // flowgate.v02test.0052 0008 — who the person is (administrator or not), for the forced cleanup only they may see.
+      // who the person is (administrator or not), for the forced cleanup only they may see.
       /^@\/core\/auth\/currentUser$/,
       /^@shared\/api$/,
       /^@shared\/gitErrors$/,
@@ -160,10 +160,10 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     for (const file of FILES) expect(read(file), rel(file)).not.toMatch(/non_ff|push_failure_kind|'(auth|permission|protected)'|diagnostic:/)
   })
 
-  // flowgate.v02.0037 — the Designer right Tool Panel assembles the part through the public
+  // the Designer right Tool Panel assembles the part through the public
   // surface, and only there.
-  // flowgate.v02.0066 T#6 — the Shell owned the Center Diff and handed it through the Center column
-  // to the Workspace. flowgate.v02.0067 T#4 — the diff lives in the Git modeless, so the right Tool
+  // the Shell owned the Center Diff and handed it through the Center column
+  // to the Workspace. the earlier change the earlier implementation — the diff lives in the Git modeless, so the right Tool
   // Panel is again the only Designer file that knows the part (through the public surface).
   it('is assembled into the Designer by the right Tool Panel only, through the public surface', () => {
     const users = filesUnder(join(SRC, 'features/designer'))
@@ -201,8 +201,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     for (const code of codes) expect(notices[code], code).toBeTruthy()
   })
 
-  // flowgate.v02.0066 T#6 — every worktree notice and disabled reason code has its text.
-  // T#7 — also the merge / push / Fetch notices (APPLY_NOTICE_CODES and `code: a ? 'x' : 'y'`).
+  // every worktree notice and disabled reason code has its text.
+  // also the merge / push / Fetch notices (APPLY_NOTICE_CODES and `code: a ? 'x': 'y'`).
   it('has a text for every worktree notice and every disabled reason code', () => {
     const session = read(join(GIT, 'gitWorktreeSession.ts'))
     const codes = new Set<string>()
@@ -221,8 +221,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     for (const code of [...reasonCodes, 'unknown']) expect(ko.reason[code], code).toBeTruthy()
   })
 
-  // flowgate.v02.0066 T#6 — none of the v19 mock-up's demo data, fixed branches or "(mockup)" success texts.
-  // T#7 (C15) — the Base apply parts too: no `v0.2` / `main` literal, no demo counters or gate.
+  // none of the v19 mock-up's demo data, fixed branches or "(mockup)" success texts.
+  // (C15) — the Base apply parts too: no `v0.2` / `main` literal, no demo counters or gate.
   it('carries no mock-up demo data, fixed branch name or fake success text in the worktree area', () => {
     const files = FILES.filter((f) => /worktree|Worktree|GitChange|GitCommitBar|CenterDiff|GitApply|GitMergeResult/.test(rel(f)))
     expect(files.map(rel)).toEqual(expect.arrayContaining(['GitApplyAccordion.vue', 'GitApplyInfo.vue', 'GitMergeResultPush.vue']))
@@ -233,8 +233,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     }
   })
 
-  // flowgate.v02.0066 T#7 — the Base apply area has no approval or commit button and never calls
-  // the Base checkout push / fetch or finalize (0066 D#2 §6-4, §8 T#7 "Out of scope").
+  // the Base apply area has no approval or commit button and never calls
+  // the Base checkout push / fetch or finalize (the earlier implementation "Out of scope").
   it('the Base apply parts add no approval / commit action and no /git/push, /git/fetch or finalize call', () => {
     for (const name of ['GitApplyAccordion.vue', 'GitApplyInfo.vue', 'GitMergeResultPush.vue']) {
       const src = read(join(GIT, name))

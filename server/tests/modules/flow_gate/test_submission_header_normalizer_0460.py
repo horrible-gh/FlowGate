@@ -1,7 +1,7 @@
-"""Group 0460 T0004 — submission-header normalizer + frontmatter ambiguity guard.
+"""Group the earlier implementation — submission-header normalizer + frontmatter ambiguity guard.
 
-R0001 cited a group 0458 document whose "next_type ... target_id" header block
-renders as one run-together line in MdViewer. NR0003 found the stored body is
+cited a the earlier change document whose "next_type ... target_id" header block
+renders as one run-together line in MdViewer. the review found the stored body is
 actually fine (LF-separated already) — the display layer is the direct cause —
 but also found a real, separate server risk: when a submission genuinely
 arrives with these seven fields collapsed onto one line, the HTTP inbox
@@ -40,7 +40,7 @@ from modules.flow_gate.linter import (  # noqa: E402
 # trap for the next reader.
 BOM = "\ufeff"
 
-# The exact string R0001 quoted (flowgate.default.0458.0005-T's collapsed form).
+# The exact string the requirement quoted ('s collapsed form).
 _R0001_COLLAPSED_LINE = (
     "next_type: T next_type_detail: 작업지시 project: flowgate module: default "
     "group: 0458 title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀 "
@@ -99,7 +99,7 @@ class TestNormalizeSubmissionHeader:
         ]
 
     def test_already_correct_crlf_block_is_byte_identical_and_unflagged(self):
-        """T0004 2.1 / completion criterion 3 — "already-correct multi-line input
+        """2.1 / completion criterion 3 — "already-correct multi-line input
         is left byte-for-byte alone" has to hold for CRLF too. Rebuilding a valid
         CRLF block with LF would rewrite bytes nobody asked to change and report a
         normalization that never happened."""
@@ -117,7 +117,7 @@ class TestNormalizeSubmissionHeader:
         assert norms_twice == []
 
     def test_collapsed_sequence_inside_leading_frontmatter_is_recovered(self):
-        """T0004 2.3 — the collapsed form arrives inside a real ``---`` block just
+        """2.3 — the collapsed form arrives inside a real ``---`` block just
         as often as at the bare document start, and there it is still the
         high-confidence complete pattern. It must be repaired *first*, so the
         identity comparison can run (match -> continue, conflict -> 409); it must
@@ -134,7 +134,7 @@ class TestNormalizeSubmissionHeader:
         assert frontmatter_parse_is_ambiguous(out) is False
 
     def test_title_carrying_a_valid_target_id_uses_the_last_one_as_boundary(self):
-        """T0004 2.1, verbatim: "a title may contain the string project: or
+        """2.1, verbatim: "a title may contain the string project: or
         target_id:, so take the LAST valid target ID as the boundary and do not
         damage the title". The earlier, equally well-formed-looking 'target_id:
         R999' is title text and has to survive inside the title line."""
@@ -156,7 +156,7 @@ class TestNormalizeSubmissionHeader:
     def test_repeated_target_id_is_resolved_by_the_boundary_not_left_half_repaired(self):
         """Same rule, and the reason it is a rule: the two shapes are textually
         identical, so 'title text' and 'a second target_id' cannot be told apart.
-        T0004 2.1 settles it with the last valid id, which is also what keeps a
+        2.1 settles it with the last valid id, which is also what keeps a
         duplicate label from being left dangling *outside* the repaired block —
         every byte up to the boundary is consumed, nothing is clipped off and
         saved beside it."""
@@ -310,10 +310,10 @@ class TestNormalizeSubmissionHeader:
         assert out == text
         assert norms == []
 
-    # T0004 2.1: "repair only when every key appears exactly once". Every one of
+    # 2.1: "repair only when every key appears exactly once". Every one of
     # the seven labels gets its own case — a duplicate must abort the repair, not
     # be folded into a neighbouring value. (target_id has its own pair of cases
-    # above: there the boundary rule, not an abort, is what T0004 prescribes.)
+    # above: there the boundary rule, not an abort, is what the earlier implementation prescribes.)
     @pytest.mark.parametrize(
         "label,collapsed",
         [
@@ -499,7 +499,7 @@ class TestFrontmatterParseIsAmbiguous:
         """Raw, this parse *is* ambiguous — but it is also the high-confidence
         complete pattern, so callers normalize before they judge. After the repair
         the verdict flips to "not ambiguous" and the identity comparison runs
-        (T0004 2.3). The submission path is asserted end to end in
+. The submission path is asserted end to end in
         tests/test_inbox.py::test_new_recovers_collapsed_frontmatter_then_compares_identity."""
         text = "---\n" + _R0001_COLLAPSED_LINE + "\n---\nbody\n"
         assert frontmatter_parse_is_ambiguous(text) is True
@@ -510,7 +510,7 @@ class TestFrontmatterParseIsAmbiguous:
         assert frontmatter_parse_is_ambiguous(repaired) is False
 
     def test_title_naming_another_key_is_not_ambiguous(self):
-        """T0004 2.3: do not judge a colon in a title/URL/body on the key name
+        """2.3: do not judge a colon in a title/URL/body on the key name
         alone. A title that names a field is ordinary authored text, and this
         frontmatter is completely well-formed — it must not 422."""
         text = (
@@ -536,7 +536,7 @@ class TestFrontmatterParseIsAmbiguous:
         assert frontmatter_parse_is_ambiguous(text) is False
 
     def test_list_and_nested_dict_values_naming_keys_are_not_ambiguous(self):
-        """Normal list / nested-dict parsing is a preserved contract (T0004 2.3);
+        """Normal list / nested-dict parsing is a preserved contract;
         a list item that happens to read "target_id: 예시" is authored content, not
         evidence that a line collapsed."""
         text = (
@@ -561,7 +561,7 @@ class TestFrontmatterParseIsAmbiguous:
         assert frontmatter_parse_is_ambiguous(text) is False
 
     def test_collapsed_line_first_key_project_is_ambiguous(self):
-        """NR0003's exact table case: first key 'project' swallows the rest,
+        """'s exact table case: first key 'project' swallows the rest,
         so a naive identity check sees a garbled-but-present project value
         instead of the real missing-fields signal."""
         text = (
@@ -585,7 +585,7 @@ class TestFrontmatterParseIsAmbiguous:
         ],
     )
     def test_a_partial_known_key_chain_of_any_length_is_ambiguous(self, collapsed_line):
-        """T0004 2.3: "one line still carrying several known key traces" is a
+        """2.3: "one line still carrying several known key traces" is a
         partial parse and must be rejected, whatever its length. A two-pair line
         is the smallest such chain and used to slip through as "one embedded key,
         below threshold" — it now trips the same test as a six-pair one."""
@@ -614,7 +614,7 @@ class TestFrontmatterParseIsAmbiguous:
         """U+FEFF is not whitespace, so `text.lstrip().startswith("---")` says
         "not frontmatter" for a BOM-prefixed body and every guard behind that test
         is skipped — while the normalizer recognizes the very same block. All the
-        entry points have to agree (T0004 2.3)."""
+        entry points have to agree."""
         well_formed = BOM + self._WELL_FORMED
         assert looks_like_frontmatter(well_formed) is True
         assert frontmatter_parse_is_ambiguous(well_formed) is False

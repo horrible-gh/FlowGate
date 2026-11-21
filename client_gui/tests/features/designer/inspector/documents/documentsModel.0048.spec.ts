@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#5 — documentsModel as tables (D#1 §8.5, §10.2): what the documents tab shows
+ * documentsModel as tables: what the documents tab shows
  * for the v01 / graph / unassigned / conflict fixtures before and after the read, slot / run rows,
  * rejections and superseded documents newest first, review tones, error keys, and the availability
  * of ↗ 열기 — a query, enabled on every card kind × ownership, read only included.

@@ -1,9 +1,9 @@
-"""T0044.0009 — conversation (CH) type: serializer/parser, registration.
+"""conversation (CH) type: serializer/parser, registration.
 
-Covers L0044.0008 §2 (type registration) and §6 (turn serialization/parsing/escaping).
+Covers the earlier implementation.0008 (type registration) and (turn serialization/parsing/escaping).
 Pure-unit + migration-row checks (no HTTP). The former §7 byte-cap carry-over
-(should_carry_over/tail_turns/build_carryover_intro) was removed in group 0351 T5
-(D0002 §3-6) — turns now accumulate in the shared append-only store instead of a
+(should_carry_over/tail_turns/build_carryover_intro) was removed in the earlier change T5
+— turns now accumulate in the shared append-only store instead of a
 wholesale-rewritten file body, so no conversation ever approaches the old cap.
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ def test_escape_roundtrips_already_escaped_line():
     assert parsed["turns"][0]["body"] == body
 
 
-# ── R0127.0001: emoji-less / hand-typed headers are recognized as turns ────────
+# ── the requirement.0001: emoji-less / hand-typed headers are recognized as turns ────────
 def test_parse_recognizes_emoji_less_headers():
     # A user (or external tool) types turn headers WITHOUT the speaker emoji.
     text = (
@@ -107,7 +107,7 @@ def test_parse_recognizes_emoji_less_headers():
 
 
 def test_parse_tolerates_extra_space_after_hashes():
-    # R0127.0001 reproduces the actual mis-recognized line: "##  AI · …" (two spaces,
+    # reproduces the actual mis-recognized line: "## AI · …" (two spaces,
     # no emoji) must still be read as a turn boundary.
     text = "##  AI · 2026-06-24T22:01:48+09:00\nhello\n"
     parsed = conv.parse_conversation(text)
@@ -142,9 +142,9 @@ def test_serialize_still_emits_canonical_emoji_form():
     assert block.splitlines()[0] == "## 🤖 AI · 2026-06-14T10:00:00+09:00"
 
 
-# ── 0293 R0001: provider slot in the AI label ─────────────────────────────────
+# ── the requirement: provider slot in the AI label ─────────────────────────────────
 def test_ai_label_with_provider_still_keys_to_ai():
-    # THE regression this feature can cause (NR0004 finding 2): a provider-bearing label that
+    # THE regression this feature can cause: a provider-bearing label that
     # does not normalize to "ai" still renders as an AI bubble but stops being COUNTED as
     # one, and the chat surface then reports every successful reply as "no reply".
     parsed = conv.parse_conversation(
@@ -193,7 +193,7 @@ def test_provider_bearing_header_in_a_body_is_escaped():
     assert conv.parse_conversation(text)["turns"][0]["body"] == sneaky
 
 
-# ── 0306 NR0003 finding 1: localized user header (multi-read, locale write) ───────
+# ── the review: localized user header (multi-read, locale write) ───────
 def test_localized_user_headers_all_key_to_user():
     # Every ko/en/ja user label — emoji or emoji-less — normalizes to the logical role.
     for label in ("🧑 사용자", "사용자", "🧑 User", "User", "🧑 ユーザー", "ユーザー"):
@@ -259,7 +259,7 @@ def test_serialize_preserves_user_locale_variant():
 
 
 def test_carryover_helpers_are_retired():
-    # Group 0351 T5 (D0002 §3-6): the byte-cap carry-over is removed — turns
+    # Group 0351 T5: the byte-cap carry-over is removed — turns
     # accumulate in the shared append-only store instead of a wholesale-rewritten
     # file body, so this rollover machinery no longer exists on the module.
     for name in ("should_carry_over", "tail_turns", "build_carryover_intro",
@@ -288,7 +288,7 @@ def test_ch_in_type_sets():
 def test_ch_inbox_process_tuple_in_db_documents(monkeypatch):
     """CH documents must actually be included in the inbox-processing query.
 
-    0394 T0016 item 4 (NR0003 §6.2-d): previously inspect.getsource(...) checked
+    (d): previously inspect.getsource(...) checked
     only whether the function contained the text '"CH"'. A comment or dead branch
     could satisfy that check, while extracting the tuple into a shared constant
     could cause a false failure. Inspecting the actual query parameters verifies

@@ -1,11 +1,11 @@
-// flowgate.v02.0056 F2-2 — the card's memos in the documents tab (O3 0009-TR §4-5): v0.2 memos of a card, not the
+// the card's memos in the documents tab: v0.2 memos of a card, not the
 // v0.1 M document of the header ✎ 메모 (features/memo). Every stored Graph card (a draft card too — a draft card and
 // the confirmed card share their memos); a Node without a definition or a card not saved yet draws nothing. After
 // the card's document lines, before the card approval bar. Only Flows with Graph cards (`unassigned` drafts,
 // `graph`, and `conflict` — listed read only): a v0.1 Flow's Node keeps its documents tab as it was.
 // flowgate.v02.0056 (0017-CH) — the header ✎ 메모 of these cards opens a new card memo (CardMemoButton) and draws the
 // memo windows; the v0.1 M document memo (features/memo) stays with v0.1 Flows.
-// flowgate.v02.0150 — the memo windows are the Frame's windows host (CardMemoWindows): drawn whatever is selected, so a
+// the memo windows are the Frame's windows host (CardMemoWindows): drawn whatever is selected, so a
 // selection change never closes them; the header ✎ 메모 only opens one.
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import GateMemoPanel from './GateMemoPanel.vue'

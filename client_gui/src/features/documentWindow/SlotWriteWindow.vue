@@ -91,7 +91,7 @@ const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 
 const { request, contentless, text, saving, failure, existing, problemKey, save } = useSlotWrite(() => props.win)
 
-// flowgate.v02.0088 F14: the line's kind in the current language (its key), or the name it came with.
+// the line's kind in the current language (its key), or the name it came with.
 const kindName = computed(() => lineKindName(request.value, t, te))
 
 /** The code's words, then the server's message when it says more. */

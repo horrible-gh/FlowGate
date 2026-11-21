@@ -32,7 +32,7 @@ def test_q_legacy_matches_existing_candidates(routing, stored, asker, pid, sourc
     assert qa.choose("f", NODE, asker) == result
 
 
-# flowgate.v02test.0051 T0005 (A1, R 0051.0001): a new role card asks its review AI first; with no review AI, a disabled
+# a new role card asks its review AI first; with no review AI, a disabled
 # one or the asker's own provider, an independent enabled default AI answers (the same bounded chain as a legacy card,
 # default_tail True). Unknown asker provenance still picks nothing. (Before: the review/instruction ROLE only, never a
 # default — ``designated_is_asker`` / ``designated_not_enabled`` / ``responder_not_designated`` left it to a person.)

@@ -1,4 +1,4 @@
-"""0061 T#12 regression specifications: pure scope, persisted ownership and v0.1 gates.
+"""regression specifications: pure scope, persisted ownership and v0.1 gates.
 
 TR Self-check only; formal PASS/gate belongs to TS/TSR. SQLite is in-memory and
 external workflow/Git mutation paths are mocks. No provider or Git process starts.
@@ -204,7 +204,7 @@ def history_db(monkeypatch, snapshot):
     """)
     def all_rows(sql, params):
         return [dict(r) for r in connection.execute(sql, params).fetchall()]
-    # 0085 T#4 adds the gate-job read. This pre-gate fixture has no operation_job
+    # adds the gate-job read. This pre-gate fixture has no operation_job
     # table; use its own SQLite catalog rather than the uninitialized global DB.
     from flowgate.gate_decisions import rounds
     monkeypatch.setattr(rounds, "get_store", lambda: SimpleNamespace(
@@ -291,7 +291,7 @@ def test_partial_failure_survives_other_operations_until_its_own_recovery(histor
 def test_require_safe_returns_same_contract_or_409_with_all_reasons(snapshot, monkeypatch):
     monkeypatch.setattr(service, "read_snapshot", lambda _flow: snapshot)
     monkeypatch.setattr(service, "in_transaction", lambda: True)
-    # 0132 T#3: the deciding entry reads the current run and gate activity before its impact.
+    # the deciding entry reads the current run and gate activity before its impact.
     from flowgate.gate_decisions import run_hold
     monkeypatch.setattr(run_store, "current_run", lambda flow: dict(snapshot.run))
     monkeypatch.setattr(run_hold, "gate_live", lambda rid: False)

@@ -33,22 +33,22 @@ from modules.flow_gate.settings import ai_execution_policy_service
 # Single source of truth for "every instruction step carries its report step" on the
 # decision path. Both callers of /workflow/decide funnel through decide_workflow():
 #   - the client WorkflowDecisionModal (already expands via its own AUTO_MAP), and
-#   - an AI worker that POSTs a bare sequence directly (NR0006: previously omitted the
+#   - an AI worker that POSTs a bare sequence directly (the review: previously omitted the
 #     reports entirely because the expansion only existed in the client).
 # Mirrors the client AUTO_MAP (N→NR, T→TR, TS→TSR). V→VR is intentionally excluded: VR
 # is not a registered document_type, so attaching it would create an unprocessable step.
 AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "T2": "TR2", "TS": "TSR"}
 
-# 0444 T0007 (NR0003 §4-2 / §2-7): report types the SERVER assembles by itself. A TSR is built
+# report types the SERVER assembles by itself. A TSR is built
 # from a test run's result, not from an instruction a person handed down the chain, so neither
 # the instruction's note nor its provider may be written onto it. work_plan_sequence_service's
 # attach_auto_rows() has enforced exactly that since commit 0009e926 and imports this same
 # constant. The type used to be spelled out as a bare "TSR" literal on two separate lines of
-# expand_steps_with_reports() below, and commit 178b21b2 (0434 T0004 F1) changed only one of
+# expand_steps_with_reports below, and commit 178b21b2 changed only one of
 # them — which is how the two sibling functions came to disagree about the same row. One name,
 # read in both places, is the fix that keeps the next edit from splitting them again.
 #
-# 0441 T0004 item 3: that one name now lives in documents.constants, because the same fact
+# that one name now lives in documents.constants, because the same fact
 # also decides whether a person may CREATE the document (next-empty / inbox action:new /
 # the ordinary 'new' token). Kept exported under this name — work_plan_sequence_service
 # imports it from here.
@@ -141,7 +141,7 @@ def provider_view_of(project_id: Optional[str]) -> dict:
             for row in (effective.get("providers") or [])
             if row.get("id")
         }
-        # flowgate.v02.0129 CH0012: a step may name a user's own runnable AI; it is registered
+        # a step may name a user's own runnable AI; it is registered
         # (name shown, reviewer accepted) and the hop's start_run checks the requester owns it.
         try:
             personal = ai_settings_service.personal_runnable_names()
@@ -179,16 +179,16 @@ def resolve_row_provider(
         "provider_registered": registered,
     }
 
-# ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
+# ── Continuous-chain instruction auto-completion ────────
 # Instruction-series steps ("do this": N/T) are fillable from a fixed server template
 # and carry no AI deliverable — only their paired report (NR/TR) does. In the unmanned
 # continuous chain we therefore auto-create + auto-approve any instruction head server-side
 # (reusing documents.create_next_approved_core, the exact managed auto-approved-document mechanics)
 # instead of spending an AI worker cycle minting + processing a mention for it. The worker
 # mention is then issued only at the following report head. This removes the redundant
-# instruction cycles per R→…→TR lap that caused B0001's "token двойной/two-fold" symptom.
+# instruction cycles per R→…→TR lap that caused the regression's "token двойной/two-fold" symptom.
 #
-# TS (test-scenario instruction) is INTENTIONALLY EXCLUDED here (group 0121 R0001): unlike N/T, a
+# TS (test-scenario instruction) is INTENTIONALLY EXCLUDED here: unlike N/T, a
 # test-scenario directive carries meaningful, deliverable content that the AI must author
 # itself, so TS must be token-issued — when the head reaches TS the auto-complete loop stops
 # and advance_workflow mints a worker token+mention for it (the AI writes TS, it is then
@@ -213,23 +213,23 @@ def normalize_continuation_instruction_mode(mode: Optional[str]) -> str:
 
 def instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
     """Did normalisation actually fire because the request omitted the mode or sent an
-    unknown value (0406 T0022 work items 2 and 3).
+    unknown value (work items 2 and 3).
 
     Backward compatibility stays: external and legacy requests still fold to ``auto_approved``.
     What is no longer silent is **the fact that the fold happened**. When a report like 0406's
-    T0013/T0017 arrives — "the N/T got no note" — it must be possible to tell afterwards whether
+    arrives — "the N/T got no note" — it must be possible to tell afterwards whether
     the user chose auto_approved or some entry point omitted the mode and the server chose.
     """
     return mode not in CONTINUATION_INSTRUCTION_MODES
 
 
-# ── Per-item_seq N/T auto-approve selection (group 0352 T0004 §2) ──────────────────
+# ── Per-item_seq N/T auto-approve selection ──────────────────
 # ai_direct normally hands EVERY N/T instruction head to the AI worker to author itself.
 # This lets the user pick individual N/T STEP INSTANCES (item_seq, not type) that the
 # server should still auto-generate + auto-approve, exactly like auto_approved does for
 # that one step — the rest of the ai_direct chain is unaffected. TS is never eligible
 # (it is excluded from INSTRUCTION_AUTO_TYPES entirely — its content is the AI's own
-# deliverable, group 0121 R0001).
+# deliverable, the requirement).
 
 def normalize_continuation_auto_approve_item_seqs(raw: Optional[list]) -> list[int]:
     """Positive ints only, de-duplicated, ascending (§2). Empty/None -> [] ("no selection").
@@ -325,17 +325,17 @@ def is_auto_handled_step(
     eligible = (head_type or "").upper() in INSTRUCTION_AUTO_TYPES
     if not eligible:
         return False
-    # 0611 T0011: a WorkPlan-backed N/T whose step carries its instruction document is
+    # a WorkPlan-backed N/T whose step carries its instruction document is
     # server-materialized from that document exactly like the manual [승인 문서 생성]
     # path, so the next worker receives the real T/N.  Legacy/non-WorkPlan rows keep their
     # contract below.
-    # 0611 TR0012 rev2 (historical final contract, rej_01M3AVQVHD6PSTBE): a WorkPlan N/T
+    # (historical final contract, rej_01M3AVQVHD6PSTBE): a WorkPlan N/T
     # with NO instruction document used to stay a real authoring hop under auto_approved
     # too, because copying steps[].note into the canonical body produced a self-referential
-    # document (0611 B0001: "a work order that says: write a work order"). That was a
+    # document ("a work order that says: write a work order"). That was a
     # deliberate, human-approved contract, not a bug.
-    # 0614 T0004 (explicit human override, NOT a regression fix): the user re-confirmed the
-    # B0001 risk and asked steps[].note to become a real fallback body source, so under
+    # (explicit human override, NOT a regression fix): the user re-confirmed the
+    # risk and asked steps.note to become a real fallback body source, so under
     # auto_approved a WorkPlan N/T is ALWAYS server-materialized regardless of whether it
     # carries an instruction document -- documents.py's source resolution (instruction
     # file/pre_instruction_text > steps[].note > legacy generated instruction) decides what
@@ -360,16 +360,16 @@ def is_auto_handled_step(
 # continuation_provider_overrides / continuation_note_overrides — the MODE-AWARE worker
 # item_seq (_hop_worker_item_seq's slot), so an auto_approved N/T folds to its paired NR/TR.
 #
-# Values are NOT narrowed in the pydantic model (P0007): a narrowed dict[str, int] would
+# Values are NOT narrowed in the pydantic model: a narrowed dict[str, int] would
 # split the error envelope in two (FastAPI's default vs validation_failed) and force every
 # unmanned caller to parse both. One envelope, produced here.
 
 REVIEW_COUNT_DEFAULT = 0
 def _server_opened_tsr_head(seq_id, head: dict) -> bool:
-    """0684 T#1: a TSR head whose report the server opened when its TS was approved.
+    """a TSR head whose report the server opened when its TS was approved.
 
     Approving a specification TS (contract 2) queues its test run and opens the TSR "test
-    running" at once (D#1 §3-1). That report is the server's, not a worker's draft in
+    running" at once. That report is the server's, not a worker's draft in
     progress, so an unmanned chain still takes the test hand-off below and rides the run.
     """
     if (head.get("type") or "").upper() != "TSR":
@@ -416,7 +416,7 @@ def _review_item_seq_key(key) -> int:
 
 
 def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
-    """P0007 normalization rules 1·2·4 for the per-step review COUNT map.
+    """normalization rules 1·2·4 for the per-step review COUNT map.
 
     Keys unify to strings and explicit 0 is preserved. Absence means "use the durable
     sequence baseline"; 0 means "disable review for this run", so collapsing them would
@@ -452,7 +452,7 @@ REVIEWER_DEFAULT_KEY = "*"
 def normalize_continuation_reviewer_overrides(
     raw, review_count_overrides: Optional[dict] = None, *, allow_default: bool = False
 ) -> Optional[dict]:
-    """P0007 normalization rules 1·3·4 for the per-step REVIEWER map.
+    """normalization rules 1·3·4 for the per-step REVIEWER map.
 
     Values are validated independently of the runtime count map. A reviewer-only override
     is meaningful when the sequence baseline enables review, so it must survive even when the
@@ -482,7 +482,7 @@ def validate_continuation_review_item_seqs(
     auto_approve_item_seqs: Optional[list] = None,
     reject_already_done: bool = True,
 ) -> None:
-    """422-worthy semantic validation against doc_id's decided sequence (P0007 failure scenarios).
+    """422-worthy semantic validation against doc_id's decided sequence (failure scenarios).
 
     Rejects, in ascending item_seq order, stopping at the FIRST violation:
       - a step that has no worker output to review — absent from the sequence, a server
@@ -493,7 +493,7 @@ def validate_continuation_review_item_seqs(
 
     Eligibility reads the REQUEST's ``instruction_mode`` + ``auto_approve_item_seqs``
     through is_auto_handled_step, so the same map is valid under ai_direct and invalid
-    under auto_approved — that difference is the point, not a bug (P0007).
+    under auto_approved — that difference is the point, not a bug.
 
     ``reject_already_done=False`` mirrors validate_continuation_auto_approve_item_seqs: an
     ONGOING chain re-reading its own selection must not be invalidated by the steps it has
@@ -532,12 +532,12 @@ def validate_continuation_review_item_seqs(
 def unavailable_reviewer_provider_ids(
     project_id: Optional[str], reviewer_overrides: Optional[dict]
 ) -> list[str]:
-    """Reviewer ids the project's effective chain does not contain (P0007 reviewer_unavailable).
+    """Reviewer ids the project's effective chain does not contain (reviewer_unavailable).
 
     A NEW request fails visibly on these instead of silently switching reviewer: the user
     picked a reviewer to get their output read by SOMEONE ELSE, and a quiet substitution can
     land on self-review — a result nobody ordered. Resume is deliberately the opposite
-    (L0008 §2.2 resolve_reviewer drops the dead pick and keeps reviewing); a chain a person
+    (resolve_reviewer drops the dead pick and keeps reviewing); a chain a person
     parked must never become an un-resumable card.
 
     An unreadable provider view yields [] — a transient settings failure must not turn a
@@ -556,7 +556,7 @@ def unavailable_reviewer_provider_ids(
     return missing
 
 
-# ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
+# ── Continuous-work "run to the end" sentinel ────────────────────
 # A continuous run started BEFORE the workflow is decided ("starting from the workflow decision") cannot name
 # a concrete target item_seq — the sequence does not exist yet. The workflow_decide token
 # carries this sentinel as its continuation_target_seq; once the decision is saved the
@@ -566,8 +566,8 @@ def unavailable_reviewer_provider_ids(
 CONTINUATION_TO_END = -1
 
 
-# ── Corrupted-label guard (group 0114 B0001 / NR0003) ──────────────────────────────
-# NR0003 root cause: instruction-step labels (N/T/TS) are user/AI submitted verbatim and
+# ── Corrupted-label guard ──────────────────────────────
+# root cause: instruction-step labels (N/T/TS) are user/AI submitted verbatim and
 # can arrive already mangled by a lossy submission environment — Korean encoded through an
 # ascii-replace path (Windows cp932 console / encode('ascii', errors='replace')), so each
 # Hangul glyph becomes a single ASCII '?' (0x3F). The server/DB store the value faithfully,
@@ -582,13 +582,13 @@ CONTINUATION_TO_END = -1
 _CORRUPT_MIN_MARKS = 2
 _CORRUPT_RATIO = 0.5
 
-# 0474 T0007 §1.2 (NR0006 §5.1/§5.2): a run of 4+ consecutive '?' is corruption on its
+# a run of 4+ consecutive '?' is corruption on its
 # own, independent of the isascii()/ratio checks below. Those checks alone miss two
 # real cases: (a) a line that still carries live non-ASCII text (Hangul/Japanese/
 # emoji) alongside a corrupted run -- isascii() is False so the whole line was exempt;
 # (b) a pure-ASCII line where the corrupted run is diluted by enough surrounding text
 # that the run/visible-char ratio never reaches 0.5. "왜 실패했지???" (3 marks) stays
-# clean; the T0007 corpus's corrupted examples all carry 4+ consecutive marks.
+# clean; the the earlier implementation corpus's corrupted examples all carry 4+ consecutive marks.
 _CORRUPT_RUN_LENGTH = 4
 _CORRUPT_RUN_RE = re.compile(r"\?{" + str(_CORRUPT_RUN_LENGTH) + r",}")
 
@@ -613,13 +613,13 @@ def _label_is_corrupted(label: Optional[str]) -> bool:
 def _text_is_corrupted(text: Optional[str]) -> bool:
     """True when any line of ``text`` looks like ascii-replace mojibake.
 
-    0391 B0001/NR0004: `_label_is_corrupted` was tuned for short step labels — the
+    `_label_is_corrupted` was tuned for short step labels — the
     ASCII + '?' ratio drowns in a long body that mixes frontmatter, code blocks and
     English identifiers with the corrupted Hangul (measured 0.404 on the reporting
     document's own body, below the 0.5 threshold). Applying the same rule per line
     instead catches it: a single corrupted line trips regardless of how long the
     surrounding clean text is. Reuses `_label_is_corrupted` line-by-line so the
-    threshold constants stay defined exactly once (NR0004 §8 / this group's
+    threshold constants stay defined exactly once (the review / this group's
     test_conversation_dry_run_0360.py:196-204 constraint).
     """
     if not text:
@@ -627,7 +627,7 @@ def _text_is_corrupted(text: Optional[str]) -> bool:
     return any(_label_is_corrupted(line) for line in text.splitlines())
 
 
-# 0391 T0005 §5-6: one escape hatch shared by all five real-registration paths — a
+# one escape hatch shared by all five real-registration paths — a
 # non-trivial reason (>=10 non-whitespace characters) lets a genuinely-flagged payload
 # through. A mere flag would be checked off reflexively; writing a sentence is not.
 _FORCE_ENCODING_MIN_CHARS = 10
@@ -658,7 +658,7 @@ _CORRUPTED_LABEL_MESSAGES = {
 
 
 def corrupted_label_message(label: Optional[str], locale: str = "ko") -> str:
-    """Why the label was rejected AND how to get it through (T0005 §5-6)."""
+    """Why the label was rejected AND how to get it through."""
     template = _CORRUPTED_LABEL_MESSAGES.get(locale) or _CORRUPTED_LABEL_MESSAGES["ko"]
     return template.format(label=label)
 
@@ -668,7 +668,7 @@ def _reject_corrupted_labels(
 ) -> None:
     """Raise on the first corrupted step label unless the escape hatch is filled in.
 
-    0391 T0005 §5-5: replaces the old silent `_safe_label` swap on the WRITE paths. The
+    replaces the old silent `_safe_label` swap on the WRITE paths. The
     swap told the sender nothing and threw away what they meant to write, which is the
     opposite of proposal 3's "reject on the spot". The READ paths keep the swap — rows that
     are already corrupted in the DB must stay readable.
@@ -683,7 +683,7 @@ def _reject_corrupted_labels(
 
 
 def _log_force_encoding_reason(doc_id: str, doc: Optional[dict], reason: str) -> None:
-    """Best-effort audit trail for a bypass (T0005 §5-6).
+    """Best-effort audit trail for a bypass.
 
     The workflow sequence tables have no meta column, so — like the chat path — the
     reason goes to db_events. Never blocks the write it guards.
@@ -742,7 +742,7 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
             continue
         nxt = items[idx + 1] if idx + 1 < len(items) else None
         if nxt is not None and (nxt.get("type") or "").upper() == report_type:
-            # Report already attached (e.g. client modal) — don't duplicate. 0649 T#1 (O0):
+            # Report already attached (e.g. client modal) — don't duplicate. the earlier implementation (O0):
             # an automatic report row belongs to its instruction's card, so a new one (no
             # ``item_id``) always takes that card id — whether the payload left it out or
             # named a different one. The report is ``nxt`` — ``expanded[-1]`` is still the
@@ -757,16 +757,16 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
         expanded.append({
             "type": report_type,
             "label": get_type_name(report_type, locale),
-            # 0434 T0004 F1: a worker omits automatic report rows from PATCH items.
+            # a worker omits automatic report rows from PATCH items.
             # Rebuilding that row must not erase the instruction handoff the report runs with.
-            # 0444 T0007 (NR0003 §4-2): a server-assembled row has no handoff to inherit —
+            # a server-assembled row has no handoff to inherit —
             # nobody instructed it, the server builds it from the test result. Same constant as
             # the provider line below, so the two can never drift apart again.
             "note": (
                 "" if report_type in SERVER_ASSEMBLED_REPORT_TYPES
                 else _normalized_sequence_note(item.get("note"))
             ),
-            # 0434 T0004 F1/F2: the source pair is NOT withheld from a server-assembled row.
+            # the source pair is NOT withheld from a server-assembled row.
             # An automatic report belongs to the same poured plan revision as its instruction,
             # so plan_revision_freshness() has to be able to see it too.
             "source_doc_id": item.get("source_doc_id"),
@@ -794,7 +794,7 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
             # Never fold pre-instruction onto a result row.
             "pre_instruction_text": None,
             "pre_instruction_attachment": None,
-            # 0649 T#1 (NR0003 O0): the report row belongs to the same card.
+            # the report row belongs to the same card.
             "source_wp_card_id": item.get("source_wp_card_id"),
         })
     for new_id, item in enumerate(expanded, start=1):
@@ -863,7 +863,7 @@ def decide_workflow(
     # Attach report steps (NR/TR/TSR) so the AI decision path matches the client modal.
     sequence = expand_steps_with_reports(sequence)
 
-    # 0391 T0005 §5-5: reject a corrupted step label outright instead of the previous
+    # reject a corrupted step label outright instead of the previous
     # silent _safe_label swap, which discarded what the sender meant to write without
     # telling them (against proposal 3's "reject on the spot" intent). Runs before
     # insert_sequence below — a rejection here leaves no partial sequence behind.
@@ -881,8 +881,8 @@ def decide_workflow(
                 sequence_id=seq_id,
                 item_seq=item["id"],
                 type_=item["type"],
-                # 0391 T0005 §5-5: already validated above — not corrupted, so no
-                # fallback swap is needed (label=_safe_label removed, NR0003 §7-2 mode).
+                # already validated above — not corrupted, so no
+                # fallback swap is needed (label=_safe_label removed, the review mode).
                 label=item["label"] or "",
                 doc_class=doc_class,
                 sort_order=idx,
@@ -896,7 +896,7 @@ def decide_workflow(
         },
     )
 
-    # R0001 group 0125 / NR0003 recommendation 1: record an explicit "start" signal now that the document
+    # record an explicit "start" signal now that the document
     # entered wf_in_progress. This feeds the dashboard state board only (get_work_state_summary);
     # it is intentionally NOT a notification-feed event. Never let an event-log failure break the
     # decision itself — the workflow is already persisted above. Inside a caller's transaction (the
@@ -916,8 +916,8 @@ def decide_workflow(
     except Exception:  # noqa: BLE001 — state-board signal is best-effort, never fatal
         _log.warning("work_started signal failed for %s", doc_id, exc_info=True)
 
-    # 0115 H1: a git-integrated project gets its group branch + worktree provisioned
-    # right after the decision is recorded (L0006 §2.4). Runs on a background thread
+    # H1: a git-integrated project gets its group branch + worktree provisioned
+    # right after the decision is recorded. Runs on a background thread
     # (a first-time clone is network-bound) and reports via git_worktree_ready/failed
     # SSE; H2 (worker-token grant creation) re-guarantees it before any source access.
     # Non-integrated projects: ensure_worktree is a strict no-op.
@@ -950,7 +950,7 @@ def decide_workflow(
     }
 
 
-# ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
+# ── Continuous-chain instruction auto-completion ────────
 
 def _auto_complete_instruction_heads(
     *,
@@ -959,7 +959,7 @@ def _auto_complete_instruction_heads(
     actor_user_id: str,
     locale: str,
     target_seq: Optional[int],
-    # 0352 T0004 §2: per-head auto-handling now follows is_auto_handled_step's formula
+    # per-head auto-handling now follows is_auto_handled_step's formula
     # instead of gating the whole loop on instruction_mode alone. Defaults preserve every
     # existing direct caller (this file's own unit tests call this helper positionally with
     # just the five original kwargs) — auto_approved i.e. "auto everything", matching the
@@ -976,7 +976,7 @@ def _auto_complete_instruction_heads(
     either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
     selection — which the caller (advance_workflow) then mints the worker token + mention for.
 
-    0406 T0022 item 3 — **returns the item_seq list of the slots the server handled itself.**
+    **returns the item_seq list of the slots the server handled itself.**
     The old implementation returned only a count, and callers discarded even that. So there
     was nowhere to tell "the N/T step just vanished" from "the server auto-wrote and approved
     that slot and the AI worker only attached to the following NR/TR".
@@ -985,7 +985,7 @@ def _auto_complete_instruction_heads(
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
     returns ∅ on the live system with unpopulated RBAC tables — the bug fixed in 0086). If
     the actor genuinely lacks document.approve, the materializer/core raises (403) and
-    we re-raise as ValueError so the chain pauses honestly (P0005 §4 — approve never bypassed).
+    we re-raise as ValueError so the chain pauses honestly (approve never bypassed).
     """
     from modules.flow_gate.documents.routers.documents import (
         materialize_work_plan_instruction,
@@ -1083,21 +1083,21 @@ def advance_workflow(
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
-    # 0359 L0007 §2.9: the AI run this hop belongs to, stamped onto the issued token. Default
+    # the AI run this hop belongs to, stamped onto the issued token. Default
     # None keeps every existing caller (managed advance, tests) working unchanged.
     ai_run_id: Optional[str] = None,
-    # 0352 T0004 §2/§3.3: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # the ai_direct chain's per-item_seq N/T auto-approve selection.
     # Normalized + (lightly) validated here; the caller decides how strict — see
     # validate_continuation_auto_approve_item_seqs's reject_already_done docstring.
     continuation_auto_approve_item_seqs: Optional[list] = None,
-    # 0405 P0004: the work-plan proposal scope chosen on screen. Handed to the mention
+    # the work-plan proposal scope chosen on screen. Handed to the mention
     # builder untouched; it renders the work-plan-scope section only when the head
     # type is WP, so every other advance is byte-identical with or without this argument.
     work_plan_scope: Optional[dict] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
-    Continuous (unmanned) work (group 0051 R0001 / NR0003 option B): when ``continuous`` is set,
+    Continuous (unmanned) work (option B): when ``continuous`` is set,
     the issued token carries the chain stop point (``continuation_target_seq`` = target
     item_seq) and the AI-review-mode flag, and the generated mention swaps its Q-guard for
     the unmanned/delegation/no-stop/autonomous block. The inbox self-chain
@@ -1134,7 +1134,7 @@ def advance_workflow(
     if doc is None:
         raise LookupError(f"doc_not_found:{doc_id}")
 
-    # 0084 TR0005 (B, defensive): a non-R member doc (a slot's produced child such as an
+    # (B, defensive): a non-R member doc (a slot's produced child such as an
     # approved CH/N) belongs to the same sequence but is not its root, so the root-only
     # get_sequence_by_doc_id returned None → sequence_not_decided (400). The FE now advances
     # via the parent R (A fix); resolving members here keeps advance working if a child
@@ -1145,11 +1145,11 @@ def advance_workflow(
 
     # Continuous (unmanned) chains: auto-create + auto-approve any instruction-series head
     # (N/T/TS) server-side so the worker mention below is only ever issued for a report step
-    # (group 0092 B0001 / NR0003 option B). This advances the head past the instruction(s) to its
+    # (option B). This advances the head past the instruction(s) to its
     # paired report before head/token/mention resolution proceeds as normal. Managed advance
     # (continuous=False) is untouched — the FE still drives auto-approved documents explicitly there.
     instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
-    # 0406 T0022 items 2 and 3: keep what the request actually sent apart from what the server
+    # items 2 and 3: keep what the request actually sent apart from what the server
     # read it as. When they differ (normalisation fired) the response and the record say so.
     mode_requested = continuation_instruction_mode
     mode_fallback_applied = instruction_mode_fallback_applied(continuation_instruction_mode)
@@ -1201,7 +1201,7 @@ def advance_workflow(
     # Previously this raised head_in_progress (-> 409). Because the token TTL is 24h
     # (token_service.TOKEN_TTL_HOURS), a prior advance whose token was never consumed
     # (e.g. the worker run was abandoned/cancelled) would lock out every re-advance on
-    # the same document for up to 24 hours -> the "persistent 409" reported in R0001.
+    # the same document for up to 24 hours -> the "persistent 409" reported in the requirement.
     # Since advance is an explicit PM re-initiation, supersede the stale token instead:
     # revoke it, then issue a fresh one below. This preserves Q149's "at most one active
     # token per doc_ref" invariant (the old token is revoked before the new one issues)
@@ -1225,15 +1225,15 @@ def advance_workflow(
     doc_class = _resolve_doc_class(doc)
     project_id: str = doc.get("project_id") or ""
 
-    # ── Unmanned chain × TSR head → server-run test hand-off (group 0150) ──────────────
+    # ── Unmanned chain × TSR head → server-run test hand-off (the earlier change) ──────────────
     # In a continuous chain the TSR is not hand-written: after its TS is approved, the
     # worker's next step is to REQUEST the run (inbox action:test_run) and FlowGate
-    # executes the TS and auto-assembles the TSR on all-green (0138 P0005 §3 / 0139 P0002).
-    # So the token minted for the chain here must inherit the test_run scope (R0001 group
-    # 0150: "the link that passes that scope down to tokens issued along the chain") instead of a 'new' token that
+    # executes the TS and auto-assembles the TSR on all-green.
+    # So the token minted for the chain here must inherit the test_run scope (the requirement group
+    # "the link that passes that scope down to tokens issued along the chain") instead of a 'new' token that
     # would ask the worker to write the TSR by hand. Managed advance (continuous=False) is
     # untouched — the FE drives runs via POST /documents/test-run(-request) explicitly.
-    # 0684 T#3 (D#1 §3-9): for a specification TS the engine no longer reaches this branch while
+    # for a specification TS the engine no longer reaches this branch while
     # the approval's server run is in progress or has passed -- the hop boundary binds the chain
     # to the run and parks it (ai_invoke.chain.park_for_server_test_run). What still lands here
     # is a hop that has something to enter: the token is a manual/external result-entry token
@@ -1262,7 +1262,7 @@ def advance_workflow(
                 continuation_instruction_mode=instruction_mode,
                 locale=locale,
                 continuous=True,
-                # 0393 NR0003 §6: this early return threw away the ai_run_id the ordinary
+                # this early return threw away the ai_run_id the ordinary
                 # token_service.issue call further down already forwards, so an unmanned
                 # chain that reached a TSR head minted a run-less token and died the same
                 # self-lock way the review path did.
@@ -1283,7 +1283,7 @@ def advance_workflow(
                 "continuation_target_seq": continuation_target_seq,
                 "continuation_review_mode": bool(continuation_review_mode),
                 "continuation_instruction_mode": instruction_mode,
-                # 0406 T0022 item 3: the response itself states what this hop's worker actually
+                # the response itself states what this hop's worker actually
                 # was, and which N/T the server handled so that it vanished from the screen.
                 "continuation_instruction_mode_requested": mode_requested,
                 "continuation_instruction_mode_fallback_applied": mode_fallback_applied,
@@ -1297,11 +1297,11 @@ def advance_workflow(
         # No approved TS predecessor behind this TSR head → there is nothing to hand off,
         # and the guard below refuses rather than falling through to a 'new' token.
 
-    # ── Server-assembled head → no manual authoring token (0441 T0004 item 3) ─────────
+    # ── Server-assembled head → no manual authoring token ─────────
     # Everything past this point mints an ordinary action_scope='new' token whose entire
     # meaning is "go and write the head document by hand". For a TSR that is an invitation
     # to do the one thing the policy forbids: the TSR is assembled by test_run_service out
-    # of a finished run (SERVER_ASSEMBLED_DOC_TYPES). NR0003 §2 traced the reported manual
+    # of a finished run (SERVER_ASSEMBLED_DOC_TYPES). the review traced the reported manual
     # TSR to exactly this fall-through — the managed [copy mention] / [invoke AI] path never
     # reached the test-run hand-off above, so it dropped here and handed out the token.
     # Refuse before the token exists; the caller is told to run the test on its TS instead.
@@ -1320,10 +1320,10 @@ def advance_workflow(
         continuation_target_seq=continuation_target_seq if continuous else None,
         continuation_review_mode=bool(continuous and continuation_review_mode),
         # Persist the chosen locale on the continuation token so the unmanned self-chain
-        # honors it on every hop (group 0099 B0001). Ordinary tokens leave it NULL.
+        # honors it on every hop. Ordinary tokens leave it NULL.
         continuation_locale=locale if continuous else None,
         continuation_instruction_mode=instruction_mode if continuous else None,
-        # 0359 L0007 §2.9 / NR0003 §4: without this the token cannot name the run that used
+        # without this the token cannot name the run that used
         # it, and 1,346 continuous tokens proved that a chain which dies here leaves no bridge
         # back to its own execution record.
         ai_run_id=ai_run_id,
@@ -1353,7 +1353,7 @@ def advance_workflow(
     # The owning root still drives target_id / prev_doc_id / token doc_ref via parent_doc.
     pred_doc_id = db_wfseq.get_predecessor_result_doc_id(seq["id"], head.get("id"))
     head_context_doc = db_documents.get_by_id(pred_doc_id) if pred_doc_id else doc
-    # R0001 #1 / T0004: Section 3 'Reference documents' should carry the two most recent
+    # #1 / the earlier implementation: Section 3 'Reference documents' should carry the two most recent
     # predecessor documents (the previous step's result + the one before it) so the worker
     # gets "previous + previous-previous + R" = 3 docs. The live client (NextActionModal)
     # already passes the spine R and the step's own instruction in ref_doc_ids; appending
@@ -1404,7 +1404,7 @@ def advance_workflow(
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
         "continuation_instruction_mode": instruction_mode if continuous else None,
-        # 0406 T0022 item 3 — three things that must stay answerable after the fact.
+        # three things that must stay answerable after the fact.
         #   1) the raw value the request sent vs what the server read (did normalisation fire),
         #   2) the item_seq of N/T the server auto-wrote and approved with no worker at all,
         #   3) the slot this hop's worker actually filled and its document type.
@@ -1431,10 +1431,10 @@ def _log_auto_handled_heads(
     mode_requested: Optional[str],
     mode_fallback_applied: bool,
 ) -> None:
-    """Record the N/T the server handled itself into the event log (0406 T0022 item 3).
+    """Record the N/T the server handled itself into the event log.
 
     Only the caller sees the response. In an unmanned chain that caller is a worker about to
-    exit, so a fact carried only in the response is kept nowhere — 0406's T0013 and T0017
+    exit, so a fact carried only in the response is kept nowhere — 0406's the earlier implementation and the earlier implementation
     passed exactly that traceless way. So the same fact is also written as an event.
 
     When normalisation fired (the request had no mode, or an unknown one) it is recorded even
@@ -1468,7 +1468,7 @@ def request_review(
     api_base_url: str,
     ref_doc_ids: Optional[list] = None,
     locale: str = "ko",
-    # 0393 B0001: the AI run this review token belongs to. Without it the minted token
+    # the AI run this review token belongs to. Without it the minted token
     # cannot name its own run, and the group lease that run holds refuses every mutation
     # the reviewing worker attempts — including the verdict submission itself.
     ai_run_id: Optional[str] = None,
@@ -1498,7 +1498,7 @@ def request_review(
     # Review tokens are scoped "review" (not "edit"): the mention only authorises
     # an action:review submission, so the token must not double as an edit grant.
     # _handle_review enforces this scope, and _handle_edit/_handle_new reject it
-    # (B0057.0001 / NR0057.0003). This matches the advertised action_scope below.
+    #. This matches the advertised action_scope below.
     issue_result = token_service.issue(
         project=project_id,
         group_id=group_id,
@@ -1545,12 +1545,12 @@ def request_workflow_decision(
     continuous: bool = False,
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
-    # 0393 NR0003 §6 — same reason as request_review's parameter.
+    # same reason as request_review's parameter.
     ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a document-bound token and prompt for AI workflow decision.
 
-    Continuous (unmanned) work (group 0086 R0001): when ``continuous`` is set, the
+    Continuous (unmanned) work: when ``continuous`` is set, the
     continuous run is started *before* the workflow is decided ("starting from the workflow decision").
     The minted workflow_decide token carries the CONTINUATION_TO_END sentinel as its
     continuation_target_seq (the concrete last item_seq is unknown until the sequence is
@@ -1624,13 +1624,13 @@ def request_sequence_edit(
     issued_to: str,
     api_base_url: str,
     locale: str = "ko",
-    # 0393 NR0003 §6 — same reason as request_review's parameter.
+    # same reason as request_review's parameter.
     ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a document-bound token + prompt for an AI worker to EDIT the pending sequence.
 
     Parallel of request_workflow_decision, for the post-decision sequence-edit path
-    (R0001 group 0208). The workflow is ALREADY decided, so instead of a decide token this
+    (the earlier change). The workflow is ALREADY decided, so instead of a decide token this
     mints a ``workflow_sequence_edit``-scoped token bound to the root doc plus a mention that
     hands the worker the current sequence (locked vs pending) and the edit contract. The
     worker applies the change autonomously via PATCH /workflow/sequence — the same endpoint
@@ -1668,7 +1668,7 @@ def request_sequence_edit(
     )
 
     items = db_wfseq.get_sequence_items(seq["id"])
-    # 0649 T#1 (NR0003 O1): the worker gets each row's id and whether it is protected, so a
+    # the worker gets each row's id and whether it is protected, so a
     # row it sends back can be recognised by id — never by position or type.
     protected_ids = protected_row_ids(items)
     sequence_items = [
@@ -1683,7 +1683,7 @@ def request_sequence_edit(
             "note": _normalized_sequence_note(it.get("note")),
             "source_doc_id": it.get("source_doc_id"),
             "source_revision_no": it.get("source_revision_no"),
-            # 0444 T0007 (NR0003 §4-6): the provider is part of what the worker is asked to
+            # the provider is part of what the worker is asked to
             # hand back. edit_workflow_pending() re-inserts the pending rows from the payload,
             # so a value this list never carries is a value the PATCH cannot preserve.
             "provider_id": it.get("provider_id"),
@@ -1723,7 +1723,7 @@ def request_sequence_edit(
     }
 
 
-# ── Continuous-work decide kickoff (group 0086 R0001) ───────────────────────────────
+# ── Continuous-work decide kickoff ───────────────────────────────
 
 def continuation_kickoff_after_decide(
     doc_id: str,
@@ -1734,7 +1734,7 @@ def continuation_kickoff_after_decide(
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
     ai_run_id: Optional[str] = None,
-    # 0352 T0004 §3.3: currently always empty in practice — request_workflow_decision (the
+    # currently always empty in practice — request_workflow_decision (the
     # only issuer of a workflow_decide token) never accepts a per-item selection, since no
     # item_seq exists before the decision. Accepted + threaded here anyway so this function's
     # contract matches advance_workflow's and stays correct if a future caller supplies one.
@@ -1743,7 +1743,7 @@ def continuation_kickoff_after_decide(
     """Mint the first real step after an unmanned-chain workflow decision is saved.
 
     Called by the decide endpoint once a workflow_decide token that carried continuation
-    metadata (group 0086: a continuous run started before the workflow was decided) has
+    metadata (a continuous run started before the workflow was decided) has
     been consumed. Resolves the CONTINUATION_TO_END sentinel to the concrete last item_seq
     of the freshly-decided sequence, then advances to the head and returns a continuation
     envelope (next_token / next_mention / continuation_remaining) so the worker proceeds —
@@ -1769,7 +1769,7 @@ def continuation_kickoff_after_decide(
     }
 
     def _stop(stop_code: str, *, detail: Optional[str] = None) -> dict:
-        """0359 L0007 §2.11/§2.12: the decide→first-step handoff is a step boundary too, so a
+        """the decide→first-step handoff is a step boundary too, so a
         stop here has to be named, tagged and (when a human must act) announced exactly like
         one in the inbox self-chain. Same stamper, so both paths cannot drift apart."""
         from modules.flow_gate.services import ai_invoke_service as _ai_invoke
@@ -1810,7 +1810,7 @@ def continuation_kickoff_after_decide(
 
     envelope["continuation_target_seq"] = target_seq
 
-    # Boundary pause check (group 0252 L0009 §2.2): the decide→first-step handoff is a
+    # Boundary pause check: the decide→first-step handoff is a
     # step boundary too — a pause accepted during the decision hop must withhold the
     # first real token here, exactly like the inbox self-chain does between steps.
     try:
@@ -1951,7 +1951,7 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
     items = db_wfseq.get_sequence_items(seq["id"])
     provider_view = provider_view_of(doc.get("project_id"))
-    # 0649 T#1 (NR0003 O1): an edit screen fixes rows by ``protected`` (not by status — a
+    # an edit screen fixes rows by ``protected`` (not by status — a
     # protected report row is still pending) and sends every stored row back with its
     # ``item_id``.
     protected_ids = protected_row_ids(items)
@@ -1964,14 +1964,14 @@ def get_workflow_sequence(doc_id: str) -> dict:
             "source_wp_card_id": it.get("source_wp_card_id"),
             "item_seq": it["item_seq"],
             "type": it["type"],
-            # NR0003 §7-3: rows already corrupted before this fix shipped still live in
+            # rows already corrupted before this fix shipped still live in
             # workflow_sequence_items; degrade their display to the type name so the dialog
             # never shows "?????". No DB migration needed — the read path heals the view.
             "label": _safe_label(it["label"], it["type"]),
             "doc_class": it["doc_class"],
             "sort_order": it["sort_order"],
             "status": it["status"],
-            # 0399 L0011 §2.1: the note and its origin come back for EVERY row, not
+            # the note and its origin come back for EVERY row, not
             # just the ones a plan poured. The save replaces the whole pending block,
             # so a note this read left behind is a note the next save deletes.
             "note": it.get("note") or "",
@@ -1999,7 +1999,7 @@ def get_workflow_sequence(doc_id: str) -> dict:
         "doc_class": _resolve_doc_class(doc),
         "decided": True,
         "sequence_id": seq["id"],
-        # 0406 T0022 item 6: the server owns the one-line note cap. The screen takes this value
+        # the server owns the one-line note cap. The screen takes this value
         # to draw the remaining character count and warn on overflow — keeping three copies of
         # the constant is why a silent 200-character truncation set in independently in three places.
         "note_max_chars": STEP_NOTE_MAX_CHARS,
@@ -2012,13 +2012,13 @@ def get_workflow_sequence(doc_id: str) -> dict:
 # ── Edit workflow PENDING items ────────────────────────────────────────────────
 
 def _normalized_sequence_note(value, *, strict: bool = False) -> str:
-    """0399 L0011 §2.2 via P0013 ②: the server re-trims every note it is handed.
+    """via the plan ②: the server re-trims every note it is handed.
 
     The dialog already trims, so this changes nothing on the normal path — that is the
     point. It means an AI worker PATCHing straight to the API cannot store a note the
     dialog could not have produced.
 
-    0406 T0022 item 6 — ``strict`` is for the save path only. A note past the cap is not
+    ``strict`` is for the save path only. A note past the cap is not
     truncated but rejected with
     :class:`~modules.flow_gate.services.work_plan_sequence_service.NoteTooLong`. Read paths must show legacy data as-is, so they keep the default (False).
     """
@@ -2028,7 +2028,7 @@ def _normalized_sequence_note(value, *, strict: bool = False) -> str:
 
 
 def assert_sequence_notes_fit(new_items: list[dict]) -> None:
-    """Check every row's note length in one pass before saving (0406 T0022 item 6).
+    """Check every row's note length in one pass before saving.
 
     It runs outside the transaction first. Failing partway through the insert loop would leave
     the preceding rows already deleted, so a rejection would end with a half-emptied sequence.
@@ -2092,7 +2092,7 @@ def assert_sequence_item_providers(new_items: list[dict]) -> None:
 
 
 def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
-    """Verify the poured plan is still at the revision it was (0403 NR0004 F2).
+    """Verify the poured plan is still at the revision it was.
 
     ``expected_plan`` rides only on a save that pours a plan. An ordinary sequence edit that
     pours nothing has no snapshot to compare, so its absence is normal and this checks nothing.
@@ -2166,7 +2166,7 @@ def _record_plan_application(
     items: list[dict],
     sequence_created: bool,
 ) -> bool:
-    """Record a pour-into-workflow save in that plan's application history (0403 NR0004 F3).
+    """Record a pour-into-workflow save in that plan's application history.
 
     Until now this record was only created inside the old ``/work-plan/apply``, which the
     screen's real apply path never calls. So even after a person poured a plan into a workflow,
@@ -2250,7 +2250,7 @@ def _restore_omitted_execution_metadata(
     """Preserve stored execution metadata for true partial sequence edits.
 
     An explicitly supplied null/0 still clears or disables a field.  Only an absent key is
-    restored. 0649 T#1 (NR0003 O1): an item that names its row (``item_id``) is restored
+    restored. the earlier implementation: an item that names its row (``item_id``) is restored
     from exactly that row. Only an item without one falls back to the old heuristic — type
     +label identifying one unique, unprotected pending row — so reorder survives while a
     retyped/ambiguous row never inherits another step's policy.
@@ -2291,12 +2291,12 @@ def _restore_omitted_execution_metadata(
                 )
             else:
                 item[field] = stored.get(field)
-        # 0649 T#1 (NR0003 O0): a PATCH that leaves the card id out must not erase it.
+        # a PATCH that leaves the card id out must not erase it.
         if "source_wp_card_id" not in item and stored.get("source_wp_card_id") is not None:
             item["source_wp_card_id"] = stored.get("source_wp_card_id")
 
 
-# 0649 T#1 (NR0003 O1): what an echo of a protected row may not change, and what a protected
+# what an echo of a protected row may not change, and what a protected
 # (not yet started) report row may still change in place.
 _PROTECTED_IDENTITY_FIELDS = ("type", "source_doc_id", "source_revision_no", "source_wp_card_id")
 _PROTECTED_ECHO_SETTING_FIELDS = (
@@ -2324,7 +2324,7 @@ def split_protected_echoes(
 ) -> tuple[list[dict], list[tuple[dict, dict]]]:
     """Split a PATCH payload into (rows to write, echoes of protected rows) — by row id only.
 
-    NR0003 O1 / §3.9 (G10): an item is an echo iff its ``item_id`` names a protected row.
+    O1 / : an item is an echo iff its ``item_id`` names a protected row.
     Position and type are never used to guess: with two protected report rows, items for
     both are recognised wherever they sit, and a payload that leaves them out entirely ends
     in the same state (protected rows stay regardless). An ``item_id`` the sequence does not
@@ -2367,7 +2367,7 @@ def assert_no_ambiguous_report_items(
 ) -> None:
     """Fail closed on a lone report item while a protected report row of its type exists.
 
-    NR0003 O1: an item without ``item_id`` is always a new row — but a report item with no
+    O1: an item without ``item_id`` is always a new row — but a report item with no
     instruction right before it is something no current screen produces (reports are born
     with their instruction), so an old caller echoing a protected report row looks exactly
     like it. With a protected pending report of the same type in the sequence that is
@@ -2440,7 +2440,7 @@ def edit_workflow_pending(
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
-    0649 T#1 (NR0003 O1): "preserved" now means the *protected* rows — every started row
+    "preserved" now means the *protected* rows — every started row
     plus the pending report row right after a started instruction. They are never deleted,
     re-inserted or renumbered; an item naming one by ``item_id`` is an echo (identity must
     match, a pending report's settings are updated in place), and new rows are placed after
@@ -2448,7 +2448,7 @@ def edit_workflow_pending(
     of that plan get their ``source_wp_card_id`` backfilled in the same transaction (O0);
     an unresolved started row needs ``legacy_card_unresolved`` in ``acknowledged_codes``.
 
-    0649 T#2 (NR0003 O2/O5): on that same path the plan's started cards must still lead
+    on that same path the plan's started cards must still lead
     the plan in the order they ran (``order_conflicts_started`` / ``started_card_removed`` /
     ``card_identity_mismatch``), an ``append`` is refused while this plan's earlier rows
     are still pending (``plan_rows_pending``), and the rows written must follow the card
@@ -2485,7 +2485,7 @@ def edit_workflow_pending(
     existing = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
     tag_before = build_workflow_tag(seq, existing)
 
-    # 0399 P0013 ② / L0011 §2.11 can_save: a caller that poured a work plan sends back the
+    # ② / the earlier implementation can_save: a caller that poured a work plan sends back the
     # fingerprint it was given, and the save only lands if the sequence still looks that way.
     # Callers that never poured send nothing and keep today's behaviour — this is not a
     # concurrency policy for every edit, it is the guard for the one path that computed its
@@ -2493,10 +2493,10 @@ def edit_workflow_pending(
     if expected_workflow_tag and tag_before != expected_workflow_tag:
         raise SequenceChanged(doc_id, expected_workflow_tag, tag_before)
 
-    # 0403 NR0004 F2 — the fingerprint only watches the sequence. Whether the plan moved is checked here.
+    # the fingerprint only watches the sequence. Whether the plan moved is checked here.
     plan_doc = _verify_expected_plan(expected_plan)
 
-    # 0403 NR0004 F4 — build the first sequence from a plan even with no workflow yet.
+    # build the first sequence from a plan even with no workflow yet.
     # The candidate generator produces plan rows without a sequence, but the save side rejected
     # them outright with sequence_not_decided. The "plan first, then build the workflow from it"
     # way of working was blocked at the last step, though the old apply service could already do it.
@@ -2508,7 +2508,7 @@ def edit_workflow_pending(
         if not new_items:
             raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
-    # 0649 T#1 (NR0003 O1): the protected rows, and the payload split by row id. Echoes of
+    # the protected rows, and the payload split by row id. Echoes of
     # protected rows leave the payload here — before metadata restore, before the report
     # expansion — so nothing downstream can mistake one for a new row.
     protected_ids = protected_row_ids(existing)
@@ -2521,12 +2521,12 @@ def edit_workflow_pending(
             assert_sequence_item_providers([_echo])
     echo_updates = _echo_setting_updates(echoes)
 
-    # 0649 T#1 (NR0003 O0): on a plan-reflecting write, classify this plan's legacy rows now
+    # on a plan-reflecting write, classify this plan's legacy rows now
     # (read-only) so an unresolved started row is refused before anything is written.
     plan_body = _load_plan_body(plan_doc) if plan_doc is not None else None
     wp_doc_id = str((plan_doc or {}).get("doc_id") or "")
     if plan_doc is not None and plan_body is None:
-        # 0649 T#2 (NR0003 O5): a reflecting save is checked against the plan's card order;
+        # a reflecting save is checked against the plan's card order;
         # a plan nobody can read cannot be checked, so it is not poured blind.
         raise ValueError(f"plan_unreadable:{wp_doc_id}")
     card_classification = None
@@ -2540,7 +2540,7 @@ def edit_workflow_pending(
                     wp_doc_id, card_classification["unresolved_started"],
                 )
 
-    # 0649 T#2 (NR0003 O2/O5): the started cards (S) by identity, the refusals that come
+    # the started cards (S) by identity, the refusals that come
     # before any write, and a card id for pour rows a pre-card client sent without one --
     # given before the metadata restore so a type+label guess can never hand such a row
     # the card of some older row.
@@ -2573,7 +2573,7 @@ def edit_workflow_pending(
             provider_view=_seq.provider_view_of(plan_doc.get("project_id")),
         )
 
-    # 0444 T0007 (NR0003 §4-6): give back the providers this payload never mentioned, before
+    # give back the providers this payload never mentioned, before
     # anything else reads the items. The position is load-bearing: ahead of
     # assert_sequence_item_providers() so a restored value is validated exactly like a sent
     # one, and ahead of expand_steps_with_reports() so it also rides onto the automatic
@@ -2581,8 +2581,8 @@ def edit_workflow_pending(
     _restore_omitted_execution_metadata(new_items, existing, protected_ids)
 
     assert_sequence_item_sources(new_items)
-    # 0406 T0022 item 6: overflow is rejected here. The old save path silently cut everything
-    # past 200 characters and answered "saved" — the exact loss reported by the user in M0019.
+    # overflow is rejected here. The old save path silently cut everything
+    # past 200 characters and answered "saved" — the exact loss reported by the user in the earlier implementation.
     assert_sequence_notes_fit(new_items)
     assert_sequence_item_providers(new_items)
 
@@ -2592,7 +2592,7 @@ def edit_workflow_pending(
     )
     locked_count = len(locked)
 
-    # 0119 B0001 (NR0003 §6-A): refuse an edit that would empty a decided workflow.
+    # refuse an edit that would empty a decided workflow.
     # When nothing is locked (no done/in_progress step — i.e. the workflow was just
     # decided and not yet run) and the new pending list is empty, the sequence would
     # drop to ZERO items: a decided-but-empty "zombie" sequence. That state is
@@ -2604,7 +2604,7 @@ def edit_workflow_pending(
     if not new_items and locked_count == 0:
         raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
-    # R0001 group 0208 (NR0003 §3-3): make the edit path symmetric with decide_workflow —
+    # make the edit path symmetric with decide_workflow —
     # attach each instruction step's report (N→NR, T→TR, TS→TSR) here on the server, exactly
     # as decide_workflow does. expand_steps_with_reports is idempotent: the human edit modal already
     # interleaves the reports (they pass through untouched), while an AI worker that PATCHes a
@@ -2612,7 +2612,7 @@ def edit_workflow_pending(
     # so an AI edit can never drop them and desync the sequence.
     new_items = expand_steps_with_reports(new_items)
 
-    # 0391 T0005 §5-5: same reject-not-swap treatment as decide_workflow, before any
+    # same reject-not-swap treatment as decide_workflow, before any
     # pending item is deleted/replaced below.
     _reject_corrupted_labels(new_items, force_encoding_reason, locale)
     if force_encoding_reason_accepted(force_encoding_reason):
@@ -2696,7 +2696,7 @@ def edit_workflow_pending(
                 wp_doc_id=str(plan_doc.get("doc_id") or ""),
                 acknowledged_codes=acknowledged_codes,
             )
-        # 0649 T#1 (NR0003 O1): protected rows stay where they are — only unprotected
+        # protected rows stay where they are — only unprotected
         # pending rows are deleted, and a protected report row's changed settings are
         # written in place. New rows start after the last protected row, so they cannot
         # collide with one even when the protected rows are not a sort_order prefix.
@@ -2718,7 +2718,7 @@ def edit_workflow_pending(
                 sequence_id=seq["id"],
                 item_seq=max_seq + idx + 1,
                 type_=item["type"],
-                label=item["label"] or "",  # NR0003 §7-2 / 0391 T0005 §5-5 (edit path)
+                label=item["label"] or "",  # (edit path)
                 doc_class=doc_class,
                 sort_order=sort_base + idx,
                 note=_normalized_sequence_note(item.get("note"), strict=True),
@@ -2736,7 +2736,7 @@ def edit_workflow_pending(
 
         all_items = db_wfseq.get_sequence_items(seq["id"])
         if plan_body is not None:
-            # 0649 T#2 (NR0003 O5): the last line of defence for every reflecting path --
+            # the last line of defence for every reflecting path --
             # the candidate checks can be bypassed by a direct API call, this cannot.
             # Raising here rolls the whole save back.
             _order.assert_plan_order(all_items, plan_body, wp_doc_id, started_cards, history_ids)

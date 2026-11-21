@@ -102,7 +102,7 @@ def connected(monkeypatch, tmp_path):
 
 
 def _run_all_and_wait():
-    """flowgate.v02.0090 T0015: run_all() only starts the scratch sweeps; wait for that thread."""
+    """run_all only starts the scratch sweeps; wait for that thread."""
     startup.run_all()
     for thread in threading.enumerate():
         if thread.name == "startup-scratch-sweep":
@@ -207,7 +207,7 @@ def test_failed_filesystem_delete_keeps_expired_token_row(connected, monkeypatch
     system_settings_service.set_values({"scratch_ttl_value": "1", "scratch_ttl_unit": "minute"})
     token_id, path, row = _token(root, 401, OLD, expired=True)
     tokens[token_id] = row
-    # flowgate.v02.0090 T#1: the delete now runs through storage_fs.remove_managed_tree.
+    # the delete now runs through storage_fs.remove_managed_tree.
     original = storage_fs.shutil.rmtree
 
     def fail_for_token(candidate, *args, **kwargs):

@@ -1,4 +1,4 @@
-// flowgate.v02.0127 T#5 — the card document transport of the Designer (0009-L §2.11~§2.15; P#1 /api/v2).
+// the card document transport of the Designer (L ~; P#1 /api/v2).
 // A card's document is read and revised only through the card's own coordinates (flow / node / owner slot);
 // there is no v1 fallback anywhere in the client (a v1 `card_document_edit_required` is shown, never retried).
 //   read      GET  /api/v2/flows/{flow}/nodes/{node}/slots/{slot}/document
@@ -8,7 +8,7 @@
 //   brief     GET  …/document/test-brief    POST …/document/test-brief/revisions  { …, text }
 // A success is never judged by HTTP status alone: `cardDocumentConfirmRevision` checks ok / doc_id / N+1 / updated_at /
 // line / replayed against the request's own pending target, and anything else is an uncertain result.
-// flowgate.v02.0157 — a standalone document (no card line holds it) is edited by its doc_id only:
+// a standalone document (no card line holds it) is edited by its doc_id only:
 //   read      GET  /api/v2/documents/{doc_id}             -> the same snapshot + edit_path (card / non_card / unavailable)
 //   revise    POST /api/v2/documents/{doc_id}/revisions   { expected_revision, content, idempotency_key }
 // The server alone classifies the document; the client starts a standalone session only for edit_path=non_card, and
@@ -28,7 +28,7 @@ export interface CardDocumentContext {
   readonly openedDocId: string
 }
 
-/** flowgate.v02.0157 — a standalone document's edit target: the document id alone (the server keeps the rest). */
+/** a standalone document's edit target: the document id alone (the server keeps the rest). */
 export interface StandaloneDocumentTarget {
   readonly kind: 'document'
   readonly docId: string
@@ -61,7 +61,7 @@ export interface CardDocumentSnapshot {
   readonly line: unknown
   /** TS structured projection of the same snapshot, when the structured read asked for it. */
   readonly projection?: unknown
-  /** flowgate.v02.0157: the server's classification on a doc_id read (`card` / `non_card` / `unavailable`). */
+  /** the server's classification on a doc_id read (`card` / `non_card` / `unavailable`). */
   readonly editPath?: string
 }
 
@@ -169,7 +169,7 @@ export function cardDocumentConfirmRevision(raw: unknown, expectedDocId: string,
   return { docId: raw.doc_id, revisionNo: raw.revision_no, updatedAt: raw.updated_at, replayed: raw.replayed, line: raw.line }
 }
 
-// --- Standalone documents (flowgate.v02.0157) --------------------------------------------------------
+// --- Standalone documents --------------------------------------------------------
 
 export function cardDocumentStandalonePath(docId: string): string {
   return `${API}/documents/${encodeURIComponent(docId)}`

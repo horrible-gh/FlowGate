@@ -1,4 +1,4 @@
-"""AI Group routes (flowgate.v02.0017 T0002 §4-§5).
+"""AI Group routes.
 
 Group = name/description + members + custom roles + member-role mapping + optional
 Supervisor. Runtime slots are a separate sub-resource (`runtime-binding`); team ON/OFF and
@@ -7,9 +7,9 @@ the default team are `state`.
 Groups belong to no project (CH0006 (4)): one list for every signed-in user on the AI 관리
 screen and in the Start dialog of any project.
 
-Who may edit follows the owner of the member AI (CH0006 #48): a group of system AI is an
+Who may edit follows the owner of the member AI: a group of system AI is an
 administrator's group (system.settings.manage) that everyone reads and starts with, and every write
-route below is administrator-only. flowgate.v02.0129 CH0012: a user's own remote-CLI AI (runs on
+route below is administrator-only. the earlier change the discussion: a user's own remote-CLI AI (runs on
 its owner's Agent) can be a member, a runtime slot or a role-profile assignment, chosen by its
 owner; every route reads the group for the signed-in user (ai_group_service.viewer), so another
 user sees that AI as unavailable and a run started by them refuses it.

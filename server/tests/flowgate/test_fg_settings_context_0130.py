@@ -1,6 +1,6 @@
-"""flowgate.v02.0130: a waiting (ToD) card's AI settings change from the screen's own context.
+"""a waiting (ToD) card's AI settings change from the screen's own context.
 
-0126 locked the card whenever the context the screen built from the Canvas (its run, its view: revision or draft)
+locked the card whenever the context the screen built from the Canvas (its run, its view: revision or draft)
 differed from the server's ``context.current`` - and its tests only ever sent the server's own context back. These
 tests build the context exactly as ``inspectorTarget.ts`` does, from the actual ``GET /canvas`` answer, then GET /
 PATCH / re-GET the card settings through the real routes.

@@ -1,19 +1,19 @@
 <template>
-  <!-- flowgate.v02.0036 — Inspector header row (0035 v7, fixed 40px): kind icon box, kind
+  <!-- Inspector header row (v7, fixed 40px): kind icon box, kind
        badge and the Node title on the left; the meta part, the state chip and the actions on the
        right.
        flowgate.v02.0045 TR0020 rev2: a 설계 Node shows the same glyph and name as its Canvas card
        (기본 설계 / 프로토콜 / 로직 / DB설계).
-       flowgate.v02.0048 T#1 (D#1 §8.3 rule 7): the target's real states next to the Canvas state
+       (rule 7): the target's real states next to the Canvas state
        chip — the bound document's review status and, on a Graph Node, its run status — each as
        the display text of the server value (an unknown value shows as sent). The meta / actions
        slots take the parts the Frame lays out from the registry.
-       flowgate.v02.0051 — the rest of the v7 header line, on every card (0035 insp.js render):
+       the rest of the v7 header line, on every card (insp.js render):
        the 읽기 전용 tag from the target, the ✎ 메모 button (no memo API yet: shown disabled, 0051-R
        §2.3), the ● dot on the state pill, and the ⋯ menu at the end with its one common item,
        ID 복사 (the document id, v7 took it out of the header line). Card-specific menu items come
        through the `menu` slot.
-       flowgate.v02.0051 stage 2 — the `kind` slot: a card feature may replace the static kind badge
+       stage 2 — the `kind` slot: a card feature may replace the static kind badge
        (the R/B 종류 배지 ▾ of kindSwitch); the three state texts (document review status · run
        status · ● Canvas state) sit in one pill group, the v7 single status pill; and the line never
        spills: it clips at its own edge, the actions scroll sideways when the Inspector is at its
@@ -26,20 +26,20 @@
        (the server's own Canvas mapping decides "the same"). Internal values (wf_*, run status) never
        show as text: a value without a display name is left to the tooltip (unless it is all there
        is); the raw values sit in the tooltip, in data attributes and in hidden spans.
-       flowgate.v02.0052 T#3 — a Canvas `blocked` is the server's translation of a rejection
+       a Canvas `blocked` is the server's translation of a rejection
        (canvas_mapping.py: rejected → blocked). The pill names what happened — the rejection's own
        display name (반려됨, v7 work.rej `st:['반려됨','danger']`) — instead of the Canvas word (보류);
        the Canvas value stays in data-state, the hidden state span and the Canvas card.
-       flowgate.v02.0052 T#4 — at the 264px Inspector the line keeps its ⋯ and its pill label: the title
+       at the 264px Inspector the line keeps its ⋯ and its pill label: the title
        gives way first, then the meta part (작성 사람) and the actions shrink and clip instead of pushing
        the ⋯ menu out of the line.
-       flowgate.v02.0052 T#4 rev1 (R §2.2: title, state and the real actions stay visible on a narrow
+       (R: title, state and the real actions stay visible on a narrow
        Inspector) — one line cannot hold them below about 560px (measured: the title went to 0 and the
        pill / actions were cut up to a 504px Inspector), so there the header becomes two lines: the
        title line (icon, kind, title, meta, ✎, ⋯) and the state line (읽기 전용, ● pill, actions), the
        actions wrapping instead of scrolling. The frame around the header is the size container the
        header itself is laid out by. Wider Inspectors keep the v7 single 40px line unchanged.
-       flowgate.v02.0070 T#1 (B1, moved here from the Canvas card): the card's own title is edited in its title area. A
+       (B1, moved here from the Canvas card): the card's own title is edited in its title area. A
        title that may be edited now (`target.canEditTitle`, with the host's `saveTitle`) turns into an input in place on a
        click, or on Enter / F2 when focused; a title that only repeats the kind name (so not shown) keeps a small ✎ entry.
        Enter saves, Esc or a press outside cancels; Enter / Esc while an IME composes only end the composition. Right of
@@ -330,7 +330,7 @@ const pill = computed<HeaderPill | null>(() => {
   // The sub: a server state with a display name that says something else than the label.
   const subs: (string | null)[] = []
   if (card) {
-    // flowgate.v02.0105 T#2 (B-5): the card state alone — a document's review state is no second state beside it
+    // (B-5): the card state alone — a document's review state is no second state beside it
     // (pending_review / revised / approved stay in the tooltip, the documents tab and data-doc-status); 반려됨 stays.
     if (doc === REJECTED) subs.push(docText)
   } else if (canvas) {
@@ -344,8 +344,8 @@ const pill = computed<HeaderPill | null>(() => {
     .filter((text, index, all) => all.indexOf(text) === index)
     .join(' · ')
   const tip = t('gui.designer.inspector.header.state_tip', { doc: tipOf(docText, doc), run: tipOf(runText, run) })
-  // flowgate.v02.0105 T#2 (B-5): why the result waits, in the tooltip only.
-  // flowgate.v02.0121 T#4: a failed AI call's short cause worded as the Canvas card words it (cardStateReasonText);
+  // (B-5): why the result waits, in the tooltip only.
+  // a failed AI call's short cause worded as the Canvas card words it (cardStateReasonText);
   // any other reason as sent.
   const reason = cardStateReasonText(card, t)
   const title = reason ? `${tip}\n${label} (${reason})` : tip
@@ -374,7 +374,7 @@ async function copyId() {
   }, 1500)
 }
 
-// ── flowgate.v02.0070 T#1 (B1): the card title edit (see the head of this file) ──────────────────────────────────
+// ── the earlier change the earlier implementation (B1): the card title edit (see the head of this file) ──────────────────────────────────
 
 const host = inject(INSPECTOR_HOST, null)
 
@@ -532,7 +532,7 @@ onScopeDispose(() => {
 .inspector-header-state-icon { display: inline-flex; width: 16px; height: 16px; }
 .inspector-header-state-icon svg { width: 100%; height: 100%; }
 .inspector-header-pill.is-intervention::before { display: none; }
-/* The size container of the header line (T#4 rev1): a container query cannot change the layout of the
+/* The size container of the header line: a container query cannot change the layout of the
    container itself, so the narrow two-line rule below queries this frame. */
 .inspector-header-frame {
   flex: 0 0 auto;
@@ -588,8 +588,8 @@ onScopeDispose(() => {
 }
 
 /* A long title shrinks first; the kind badge and the right side keep their place. The large shrink
-   weight lets the title give way before the pill, the meta part and the actions (T#4: 264px).
-   flowgate.v02.0070 T#1 rev1: that item is the title area — the title (or its input) with the note right of it —
+   weight lets the title give way before the pill, the meta part and the actions (264px).
+   that item is the title area — the title (or its input) with the note right of it —
    so the input and the note take only the title's room and never push the ✎ 메모 and ⋯ onto another line. */
 .inspector-header-title-area {
   display: flex;
@@ -610,7 +610,7 @@ onScopeDispose(() => {
   white-space: nowrap;
 }
 
-/* flowgate.v02.0070 T#1: the title edit — in place of the title, within the header line (same font). */
+/* the title edit — in place of the title, within the header line (same font). */
 .inspector-header-title.is-editable {
   border-radius: 4px;
   cursor: text;
@@ -863,12 +863,12 @@ onScopeDispose(() => {
   }
 }
 
-/* Narrow Inspector (264px up to 560px), T#4 rev1: two lines. The title line keeps the icon, kind,
+/* Narrow Inspector (264px up to 560px), the earlier implementation: two lines. The title line keeps the icon, kind,
    title, meta, ✎ and ⋯ (DOM order); the line break (::after) and the state line (읽기 전용, the
    pill, the actions) follow by `order`. The title takes the free room of its line (so the ✎ and ⋯
    stay at its end) and never goes below a few letters; the meta part shares what is left. The pill
    shows its whole label; the actions keep every button whole and wrap.
-   flowgate.v02.0070 T#1 rev1: the title area does that, the same while editing — it asks the line for no more
+   the title area does that, the same while editing — it asks the line for no more
    than the title did (a 0 basis, 48px at least), so the input and its note fit in the title's room and the
    line never breaks again. */
 @container inspector-header-frame (max-width: 560px) {

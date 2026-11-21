@@ -1,15 +1,15 @@
-"""Node title service — a person's card title (0062 D0005 §3.2 / set 1, L0006 2.7 / 4.3, 0064 P0006 §4.2.2~§4.2.4).
+"""Node title service — a person's card title (set 1, the earlier implementation 2.7 / 4.3, the plan~).
 
 ``PUT /flows/{flow_id}/graph/nodes/{node_key}/title``. The title lives in the card's title state only: no draft,
 revision, label, document title, draft version or Undo history changes. The client's state version is never
 asked for: an allowed person save always wins and is never refused by version (the version only orders what a
-screen shows). Order (P0006 §4.2.3): the disposal pre-check and the text before the guard, then inside the Flow
+screen shows). Order: the disposal pre-check and the text before the guard, then inside the Flow
 guard the final disposal judgement (the DC discard row, read without failing open), ownership, the card,
 its kind, the editable judgement and the running lock the card settings use (``card_settings_ports.node_running``),
 then one write and, after the commit, ``graph_canvas_changed`` (``title``) for that one card. A refusal writes
 nothing and sends nothing. Every Graph / draft node may take a title (Custom included); a free document or a
 v0.1 slot cannot (``node_title_not_supported``). A Graph node in neither the draft nor the latest revision is not
-found, even while a run's pinned (older) revision still draws it (L0006 2.7 step 2, P0006 §4.2.3).
+found, even while a run's pinned (older) revision still draws it (2.7 step 2, the plan).
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ EDITABLE_OWNERSHIP = ("graph", "unassigned")
 
 
 def flow_disposed_strict(flow_id: str) -> bool:
-    """0062 L0006 2.7: the source of ``is_group_disposed`` (a DC row of the Flow) read in the caller's guard
+    """2.7: the source of ``is_group_disposed`` (a DC row of the Flow) read in the caller's guard
     transaction. A failing read is not swallowed: it rolls the save back."""
     row = get_store()._fetch_one(
         "SELECT doc_id FROM documents WHERE group_id = ? AND type_code = ? LIMIT 1", [flow_id, DISPOSAL_TYPE])

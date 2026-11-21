@@ -1,6 +1,6 @@
-"""The shared credential redaction rule (flowgate.v02test.0050 T0005 decision 6).
+"""The shared credential redaction rule (decision 6).
 
-Moved here unchanged from ``flowgate/conversation/chat_errors.py`` (flowgate.v02test.0024) so the server log table
+Moved here unchanged from ``flowgate/conversation/chat_errors.py`` so the server log table
 (``modules.flow_gate.services.server_logs``) masks exactly what a chat error masks. ``chat_errors.redact`` keeps its
 own name and behaviour on top of this: same patterns, same ``***`` mask, same 4000-character cut there.
 

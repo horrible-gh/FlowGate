@@ -1,4 +1,4 @@
-"""0126 T#2: consume human decisions before dispatch and through normal Graph completion.
+"""consume human decisions before dispatch and through normal Graph completion.
 
 No pending node is completed here: only the frontier opens it. Reads can repair a lost
 post-commit job for open/review nodes. Decisions, reviews and assignments stay immutable;
@@ -22,7 +22,7 @@ def _document(flow_id, node, slot):
     if not doc or doc.get('group_id') != flow_id or not lines.legacy.is_alive(doc, flow_id):
         return None
     # A document an ended attempt left behind is history, unless a person approved
-    # this exact revision/body afterwards (flowgate.v02gui.0023): that human decision
+    # this exact revision/body afterwards: that human decision
     # is the evidence, the same as outputs.card_lines_of treats an approved line.
     if doc['doc_id'] in legacy.stale_documents(flow_id, node['node_key']) \
             and not decision_repository.valid_approval(flow_id, node['node_key'], slot, doc):
@@ -97,7 +97,7 @@ def record_valid(rec):
         "SELECT * FROM graph_document_decisions WHERE decision_id = ?", [rec['decision_id']])
     latest = decision_repository.latest(rec['group_id'], rec['node_key'], original['slot']) if original else None
     # Reaffirming unchanged output with a new request keeps the original completion.
-    # A changed body/event or T#3's revoked completion cannot inherit that evidence.
+    # A changed body/event or the earlier implementation's revoked completion cannot inherit that evidence.
     return bool(original and latest and original['document_mark_json'] == latest['document_mark_json']
                 and original['action'] == 'approve' and original['doc_id'] == rec['result_doc_id'])
 

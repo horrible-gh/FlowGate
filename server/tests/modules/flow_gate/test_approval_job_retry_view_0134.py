@@ -1,4 +1,4 @@
-"""T#3 (0134): job_view carries retry/recovery detail for the screen without stderr."""
+""": job_view carries retry/recovery detail for the screen without stderr."""
 from __future__ import annotations
 
 import json

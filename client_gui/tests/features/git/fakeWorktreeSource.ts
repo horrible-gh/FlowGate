@@ -14,8 +14,8 @@ import type {
 } from '@/features/git/types'
 import { G, P, gitError } from './fakeGitSource'
 
-// flowgate.v02.0066 — in-memory GitWorktreeSource (0066 D#2 §5-1). It hands the worktree
-// session (T#6 / T#7) any E1–E12 state through the models only; the HTTP conversions are
+// in-memory GitWorktreeSource. It hands the worktree
+// session any E1–E12 state through the models only; the HTTP conversions are
 // covered by api.0066.spec.ts. Pair it with createFakeGitSource({}, { worktree: fake.source }).
 
 /** Detail values of an error with nothing set. */
@@ -158,13 +158,13 @@ export interface FakeWorktreeState {
   merge: ManualMergeView
   results: MergeResultsView
   targetChanges: Record<string, FlowChangeSet>
-  // flowgate.v02.0067 T#4 — group file diffs by path (the `Diff` tab detail); others get fileDiff().
+  // group file diffs by path (the `Diff` tab detail); others get fileDiff.
   fileDiffs: Record<string, FlowFileDiff>
-  // flowgate.v02.0107 — what GET /groups/{gid}/work-base answers over flowWorkBase() (display read).
+  // what GET /groups/{gid}/work-base answers over flowWorkBase (display read).
   workBase: Partial<FlowWorkBase>
 }
 
-/** flowgate.v02.0107 — a work-base answer of the asked Flow in project P (effective `v0.2`). */
+/** a work-base answer of the asked Flow in project P (effective `v0.2`). */
 export function flowWorkBase(groupId: string = G, overrides: Partial<FlowWorkBase> = {}): FlowWorkBase {
   return {
     groupId,

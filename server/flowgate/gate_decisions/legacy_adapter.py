@@ -1,4 +1,4 @@
-"""Reuse boundary of the gate decision intake (flowgate.v02.0085 T#2, D0006 §2.2 / §4.1).
+"""Reuse boundary of the gate decision intake.
 
 Everything ``flowgate.gate_decisions`` takes from ``modules.flow_gate`` goes through here, called only - never changed:
 the Graph API envelope (user JWT, RBAC, error shape, locale), the Flow load, the run guard and its checks as the gate
@@ -131,7 +131,7 @@ def cancel_unstarted_job(job_id: str) -> bool:
     return job_store.cancel_unstarted_gate_publish(job_id, job_store.GATE_CANCEL_NO_EFFECT)
 
 
-# ── the local Git facts of a confirm's checks (D0007 §7.1) ───────────────────
+# ── the local Git facts of a confirm's checks ───────────────────
 
 def _rev(root: Path, ref: str) -> Optional[str]:
     from modules.flow_gate.services import git_service as gs

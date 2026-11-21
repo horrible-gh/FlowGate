@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Badge from '@/components/ui/Badge.vue'
 
-// T0004 §5.7/§9: label/tone render, no domain-state dependency.
+// label/tone render, no domain-state dependency.
 describe('components/ui/Badge (T0004)', () => {
   it('renders the slot label with the default neutral/md tone', () => {
     const wrapper = mount(Badge, { slots: { default: '준비 중' } })

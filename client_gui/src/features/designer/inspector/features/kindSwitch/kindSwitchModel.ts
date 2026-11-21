@@ -1,4 +1,4 @@
-// flowgate.v02.0048 T#10 — the R↔B kind switch's availability rules (D#1 §8, §10.2 kind switch row as
+// the R↔B kind switch's availability rules (the earlier implementation, kind switch row as
 // D#2 §3.5 rewrote it, D#2 §3.4). Pure functions: card kind × document type × ownership / read only
 // × AI running × group disposed × a switch in flight -> visible / enabled / reason, the kind a root
 // switches to, and a refused switch -> the reason shown and whether the Canvas is read again.
@@ -12,7 +12,7 @@
 //            a Graph revision view (D#2 §3.5: kind switch leaves D#1 §8.3 rule 5's "shown disabled" list).
 // Whether child documents already reference the root is not known here for sure; the server
 // refuses it (409) and the refusal is shown (D#2 §3.4). Permissions are the server's (403).
-// flowgate.v02.0064 T#4 (P0006 §6.1): a root with children is succeeded instead of refused, and the
+// a root with children is succeeded instead of refused, and the
 // server's judgement (`refusal`, read with the document) disables the switch with its reason. A judgement
 // not read yet blocks nothing: the server decides when the switch runs.
 import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'

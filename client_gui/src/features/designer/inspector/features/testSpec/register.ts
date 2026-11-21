@@ -20,7 +20,7 @@ const registration: InspectorRegistration = {
   tab: { key: 'documents', component: TestSpecTab },
   headerState: TestCardHeaderState,
   headerMenu: TestCardMenu,
-  // flowgate.v02.0150: the windows of every test card with one open, drawn whatever is selected.
+  // the windows of every test card with one open, drawn whatever is selected.
   windows: TestCardWindowHost,
   messages,
 }

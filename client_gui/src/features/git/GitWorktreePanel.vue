@@ -51,10 +51,10 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — the worktree area of the Git tab (0066 D#2 §6-1). The work branch, Base and
+// the worktree area of the Git tab. The work branch, Base and
 // refresh stay the GitHeader's.
 //
-// flowgate.v02.0067 T#1 — the tab keeps only a summary and four entries (0067-R §2, v27): the
+// the tab keeps only a summary and four entries (R, v27): the
 // `변경 / Stage / 미반영` counts and `파일 관리` / `Base 반영` / `Diff` / `상태`, four equal rows.
 // The changed-files list, the commit line, the merge target and the panes moved into one Git
 // modeless (GitWorktreeWindow) every entry opens on its own tab. Without a workspace (W2) the

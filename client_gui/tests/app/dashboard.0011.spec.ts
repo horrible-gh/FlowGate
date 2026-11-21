@@ -21,7 +21,7 @@ async function mountDashboard() {
   })
   await router.push('/')
   // DashboardView owns the Project Feature's public open interface for its Project card
-  // (T0010/T#3 §1, D0004 §4.1), so it needs an active Pinia instance the same way App.vue's
+  // , so it needs an active Pinia instance the same way App.vue's
   // real mount gets one from main.ts -- this is not the Project feature's own test surface.
   const wrapper = mount(DashboardView, { global: { plugins: [i18n, router, createPinia()] } })
   await router.isReady()
@@ -32,7 +32,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'ko'
 })
 
-// T0011 §4/§7/§15: the Dashboard reproduces 01-dashboard.html's hero, six action cards,
+// the Dashboard reproduces 01-dashboard.html's hero, six action cards,
 // tip and four right-hand panels — linking to screens without faking any feature.
 describe('v0.2 Dashboard (T0011)', () => {
   it('renders the mockup hero copy', async () => {

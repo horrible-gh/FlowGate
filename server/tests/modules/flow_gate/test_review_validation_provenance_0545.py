@@ -1,6 +1,6 @@
-"""0545 T0014: successful dry-run validation provenance is a real server contract.
+"""successful dry-run validation provenance is a real server contract.
 
-NR0013 finding 1: the worker read ``response["validated_at"]`` and
+the worker read ``response["validated_at"]`` and
 ``response["validation"][...]`` from a shape only the worker test's own mock ever
 produced -- the real ``POST /inbox action=review dry_run=true`` route never put those
 keys in its response, so production diagnostics stayed all-``None``. This suite proves
@@ -236,10 +236,10 @@ def test_ac3_missing_fingerprint_is_consistently_false(env):
     assert audit["fingerprint_matched"] is False
 
 
-# ── AC-4: corruption + valid force is now fail-closed (0474 T0007 §1.1/§1.3) ─────────
+# ── AC-4: corruption + valid force is now fail-closed ─────────
 # force_encoding_reason used to let a corrupted review dry-run through and report
 # corruption_detected=True/force_used=True as if that were a safe, audited bypass --
-# that reported-but-allowed shape was exactly the hole NR0006 found. Review now rejects
+# that reported-but-allowed shape was exactly the hole the review found. Review now rejects
 # it outright at Step 5.9 (allow_force_bypass=False) and never reaches the point where
 # a receipt could be minted.
 
@@ -265,7 +265,7 @@ def test_ac5_clean_payload_without_force_reports_both_false(env):
 
 
 def test_ac5b_force_reason_present_but_unneeded_does_not_mark_force_used(env):
-    """T0014 §7: a force reason on a CLEAN payload must not read as force_used=True --
+    """a force reason on a CLEAN payload must not read as force_used=True --
     force_used means the bypass was actually needed, not merely that the field was
     filled in."""
     response = post_inbox(_dry_run_body(
@@ -313,7 +313,7 @@ def test_ac7_worker_diagnostic_reads_real_provenance_from_the_real_response(env)
     assert submission["force_used"] is False
 
 
-# ── T0019 (NR0017 §2): receipt expiry timezone normalization ────────────────────────
+# ── the earlier implementation: receipt expiry timezone normalization ────────────────────────
 
 def _real_submit_body(**overrides) -> dict:
     body = {
@@ -327,7 +327,7 @@ def _real_submit_body(**overrides) -> dict:
 def test_t0019_token_with_two_hours_left_utc_format_dry_run_then_real_submit_is_201(
     monkeypatch, tmp_path,
 ):
-    """NR0017 §2 reproduction: a token with two real hours left, stored the way
+    """reproduction: a token with two real hours left, stored the way
     token_service.issue() actually writes it (UTC, +00:00), must let its dry-run
     receipt carry through to a real submit -- not be judged already expired just
     because classify() compares it against now_iso()'s JST string."""
@@ -344,7 +344,7 @@ def test_t0019_token_with_two_hours_left_utc_format_dry_run_then_real_submit_is_
 
 def test_t0019_actually_expired_receipt_is_still_rejected(env):
     """The fix normalizes tz/format only -- an actually expired receipt must still be
-    rejected. Exercises classify() directly (0545 T0019 §4): a token that is itself
+    rejected. Exercises classify directly: a token that is itself
     already expired is turned away by token_service.verify() (401) before classify()
     ever runs, so the "issued while valid, receipt now expired" path is fixed here at
     the receipt row instead."""
@@ -368,7 +368,7 @@ def test_t0019_actually_expired_receipt_is_still_rejected(env):
     assert reason == "receipt_expired"
 
 
-# ── T0019: to_now_iso_tz unit tests ──────────────────────────────────────────────────
+# ── the earlier implementation: to_now_iso_tz unit tests ──────────────────────────────────────────────────
 
 def test_to_now_iso_tz_treats_tz_naive_input_as_utc():
     naive = "2026-09-12T00:00:00"

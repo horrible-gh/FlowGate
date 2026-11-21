@@ -1,4 +1,4 @@
-// Shared modal instance id + open stack (T0006 §5/§9).
+// Shared modal instance id + open stack.
 //
 // Same reasoning as scrollLock.ts: a `let uidCounter` inside ModalShell's
 // `<script setup>` re-runs per component instance, so it cannot mint ids that stay
@@ -7,7 +7,7 @@
 //
 // The stack also lets nested ModalShells agree on which one is topmost, so only that
 // one traps focus / handles Escape while the others stay open (but inert) underneath
-// it (T0006 §5 nested modal lifecycle).
+// it (nested modal lifecycle).
 let idCounter = 0
 
 export function nextModalInstanceId(): string {

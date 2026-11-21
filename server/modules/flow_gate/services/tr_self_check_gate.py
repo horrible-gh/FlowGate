@@ -1,5 +1,5 @@
-"""The gate in front of the stale reclaim of a Self-check-owned G (flowgate.v02.0080 T#2,
-NR0007 §5-0 ⑤, §5 item 9).
+"""The gate in front of the stale reclaim of a Self-check-owned G (the earlier change the earlier implementation,
+⑤, item 9).
 
 Both stale-reclaim callers -- the sweeper (``job_sweeper.step_stale_locks``) and any other
 holder's G acquire (``lock_manager._try_acquire_once``) -- delete through
@@ -28,7 +28,7 @@ takes no lock: it reads, and writes only by CAS (run ``claim_recovering``, G epo
 signals a process -- a tree that still has members is left to the reaper / re-verification.
 Rows of every other holder kind never reach it.
 
-A KEEP after a failure must not leave the fence behind (0080 T#2 rework): a pass whose CAS
+A KEEP after a failure must not leave the fence behind: a pass whose CAS
 landed but that failed before writing an outcome undoes its own CAS (``abandon_recovering``:
 recovering -> none, only if nothing wrote the row since), so the next pass proves the row
 from the start. When even the undo fails, or the CAS landed but its caller never learned

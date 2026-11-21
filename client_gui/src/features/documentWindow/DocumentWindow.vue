@@ -54,7 +54,7 @@
     >
       <div v-if="gone" class="document-window-note" data-test="document-window-gone">{{ t(k('error.gone')) }}</div>
 
-      <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
+      <!-- The body view depends on the document's type: it is chosen once the title line read answered. -->
       <div v-else-if="!editing && !recordSettled" class="document-window-note" data-test="document-window-loading">{{ t(k('viewer.loading')) }}</div>
       <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" :can-reenter="canReenter" />
 
@@ -78,7 +78,7 @@
           @keydown.ctrl.s.prevent="save"
           @keydown.meta.s.prevent="save"
         />
-        <!-- flowgate.v02.0127 T#5 (§2.12): a conflict keeps the draft and base; the latest document is shown apart and
+        <!-- : a conflict keeps the draft and base; the latest document is shown apart and
              adopted only by the user's explicit [병합본으로 채택] of the text merged by hand. -->
         <div v-if="conflicted" class="document-window-conflict" data-test="document-window-conflict">
           <span class="document-window-conflict-title">{{ t(k('conflict.latest')) }}</span>
@@ -127,11 +127,11 @@
           <Button size="sm" variant="secondary" :disabled="saving" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
         </div>
       </div>
-      <!-- flowgate.v02.0070 T#4 (B4): an exact window's part from its opener (the old document's Q&A history). -->
+      <!-- (B4): an exact window's part from its opener (the old document's Q&A history). -->
       <div v-if="win.aside && !editing && recordSettled && !gone" class="document-window-aside" data-test="document-window-aside">
         <component :is="win.aside.component" v-bind="win.aside.props ?? {}" />
       </div>
-      <!-- flowgate.v02.0070 T#3 (B3): the view's one action group, by the body's state (documentViewerActions) —
+      <!-- (B3): the view's one action group, by the body's state (documentViewerActions) —
            unreadable: [복구]? [본문 다시 입력] [닫기]; readable or empty: [편집] [닫기]; not editable: [닫기].
            flowgate.v02.0068 T#1: while an upload guards the document, [복구] · [본문 다시 입력] · [편집] are disabled. -->
       <div v-if="!editing" class="document-window-viewer-bar" data-test="document-window-viewer-bar">
@@ -180,15 +180,15 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0053 T#3 — one document's modeless window (ModelessShell, the Q&A window's look): the
+// one document's modeless window (ModelessShell, the Q&A window's look): the
 // title line is name · state dot · copy · minimize · close, the body is the document's view
-// (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). The viewer
+// (DocumentWindowBody → MD Viewer; the earlier implementation: a work plan / test scenario / test report its own view). The viewer
 // footer's edit button turns the same window to a text editor of the body (the
 // frontmatter is kept aside and put back, as the v0.1 editor does); "저장" writes it with the v0.1
 // content save and goes back to the view, "취소" drops it. Unsaved text is asked about once — on "취소",
 // on close and on Esc. flowgate.v02.0056 F1: the editor bar also has [닫기] (0056 CH §5), the window's
 // close by button — the same path as × and Esc, so the same question about unsaved text. A document whose file is not written yet opens empty and edits the same way.
-// The window follows the server (T#3 rework): its document's events on the v0.2 project event hub
+// The window follows the server: its document's events on the v0.2 project event hub
 // (useDocumentWindowEvents) read the body and the title line again, a reconnect reads both, and a second
 // open request (↗ / ✎ again) reads both as well; while open it also reads both on a bounded period, for
 // writes that send no event (the v0.1 content save from another tab). Unsaved text in the editor is never
@@ -323,7 +323,7 @@ const dot = computed(() => documentDot(record.value))
 // --- Editing ---------------------------------------------------------------------------------------
 
 const editing = computed(() => props.win.mode === 'edit')
-// flowgate.v02.0127 T#5 (0009-L §2.12 / §3.1): one card edit session holds base / pending / latest / state. The
+// one card edit session holds base / pending / latest / state. The
 // textarea's `draft` ref is the typed text; the session never lets a read, an event or a conflict answer replace
 // its base (only the ACK of its own pending SAVED/REPLAY advances it).
 const session = shallowRef<EditSession>(newSession())
@@ -335,7 +335,7 @@ const editDocId = ref(props.win.shown)
 const needReloadFlag = ref(false)
 let latestSequence = 0
 
-/** flowgate.v02.0157: the session target's own read / revision route (card coordinates or the standalone doc_id). */
+/** the session target's own read / revision route (card coordinates or the standalone doc_id). */
 const readTarget = (target: DocumentEditTarget) => (cardDocumentIsStandalone(target) ? cardDocumentStandaloneRead(target) : cardDocumentRead(target))
 const reviseTarget = (target: DocumentEditTarget, request: CardRevisionRequest) =>
   cardDocumentIsStandalone(target) ? cardDocumentStandaloneRevise(target, request) : cardDocumentRevise(target, request)
@@ -416,7 +416,7 @@ async function loadEditor(): Promise<void> {
 /**
  * The editor read itself: the card's v2 GET with the frozen opener coordinates. Only a read that starts a session
  * (`adopt`) may fill the editor's base; any other read fills `latest` only (no automatic rebase).
- * flowgate.v02.0157: without the opener's card coordinates the session targets the document itself (its doc_id
+ * without the opener's card coordinates the session targets the document itself (its doc_id
  * read / revision). The server's read decides: edit_path=non_card edits it, a card-held document stays BLOCKED
  * (binding_required — it is edited from its card).
  */
@@ -586,7 +586,7 @@ watch(
   },
 )
 
-// --- Upload guard and reflect (flowgate.v02.0068 T#1) -------------------------------------------------
+// --- Upload guard and reflect -------------------------------------------------
 
 function editorState(): DocumentEditorState {
   if (!editing.value) return 'none'
@@ -716,7 +716,7 @@ defineExpose({ dirty })
   margin: -12px -14px;
 }
 
-/* flowgate.v02.0070 T#4: the exact window's part under the body (its own scroll, at most half the window). */
+/* the exact window's part under the body (its own scroll, at most half the window). */
 .document-window-aside {
   flex: none;
   max-height: 45%;

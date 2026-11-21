@@ -1,4 +1,4 @@
-"""The result of one step / full command (flowgate.v02.0113 T#5, 0030-M §5, 0002-D revision §3.14 / §6.5).
+"""The result of one step / full command.
 
 ``GET /api/v1/runs/{run_id}/command-result[?command_seq=N]`` (``payload``): what one [다음 단계] / [전체 실행] command did,
 read from what the run already records — every existing trace stays.
@@ -41,7 +41,7 @@ read from what the run already records — every existing trace stays.
   store) only the AI run's last launch shows the run's final output (``"run"``), any other launch says its output was not
   preserved (``"not_preserved"``) and never shows another launch's output or error. Each node event and each failure is
   a short event message. Nothing is cut.
-- Its blocking (flowgate.v02.0124 T#2, 0003-NR §5.3-1): only the run's latest command that ended idle waiting for a
+- Its blocking: only the run's latest command that ended idle waiting for a
   person (``PERSON_WAIT_REASONS``) and was not cut lists the cards that wait on a person's intervention — the current
   node runs whose ``engine.intervention`` is a dict (a gate, a manual write wait and a Hold are none) — each with the
   intervention's own ``reason`` (never translated) and a ``release`` code the server judges from the stage assignment
@@ -71,14 +71,14 @@ ROOT_BOUND_CAUSE = "root_bound_start"
 TIME_MACHINE_CAUSE = "graph_time_machine"
 WORK_RESUMED = "work_resumed"
 WAITING_APPROVAL, STOPPED_REASON, COMPLETED_REASON = "waiting_approval", "stopped", "completed"
-# flowgate.v02.0119 T#3 (T-2): a person's wait is a confirm (``waiting_confirm``) or a card's intervention
+# (T-2): a person's wait is a confirm (``waiting_confirm``) or a card's intervention
 # (``needs_intervention``); ``waiting_approval`` is the value stored before T-2, read the same way.
 PERSON_WAIT_REASONS = ("waiting_confirm", "needs_intervention", WAITING_APPROVAL)
 HOLD_CAUSES = ("hold_set", "hold_released")             # a person's Hold setting: a refresh signal, no work
 STAGE_ASSIGNED, STAGE_FAILED, APPROVAL_SKIPPED = "stage_assigned", "stage_failed", "auto_approval_skipped"
 ISSUER_LACKS_APPROVE = "issuer_lacks_approve"
 PERSON_APPROVAL_WAITS = (ISSUER_LACKS_APPROVE,)         # a person's work plan result waits for its person (0083 WP-4)
-# flowgate.v02.0124 T#2 (0003-NR §5.3-1): how a blocking card is released (``blocking[].release``; None: no line).
+# (NR): how a blocking card is released (``blocking[].release``; None: no line).
 RELEASE_NEW_SUBMISSION, RELEASE_ISSUER, RELEASE_MEMO = "new_submission", "issuer_permission", "memo_rereview"
 ROLE_OF_STAGE = {"instruction": "instruction", "result": "execution", "result_review": "review",
                  "instruction_review": "review"}
@@ -86,7 +86,7 @@ ROLE_OF_INVOCATION = {"instruction": "instruction", "execution": "execution", "r
                       "instruction_review": "review", "rework": "execution"}
 WAIT_OF_ACTOR = {"person": "manual_write_wait", "wait_setup": "ai_setup_required", "wait_unavailable": "ai_unavailable"}
 BODY_LAUNCH, BODY_RUN, BODY_NOT_PRESERVED, BODY_NONE = "launch", "run", "not_preserved", "none"
-# flowgate.v02.0143 T#1 (W6): an automatic Q&A responder's launch (``ai_roles.qa_adapter``) and the states of its item
+# (W6): an automatic Q&A responder's launch (``ai_roles.qa_adapter``) and the states of its item
 # once its question went to a person (``failed`` / ``user_decision``) or was answered since (by that person).
 QA_RESPONSE = "qa_response"
 QA_HANDED_TO_PERSON = ("failed", "user_decision", "answered")
@@ -117,9 +117,9 @@ def _payload_of(event: dict) -> dict:
 
 
 def _stage_failed_detail(data: dict, event: dict) -> Optional[str]:
-    """A ``stage_failed`` failure's detail: its ``fail_cause`` and, when its safe ``fail_detail`` (flowgate.v02.0140)
+    """A ``stage_failed`` failure's detail: its ``fail_cause`` and, when its safe ``fail_detail``
     names a code the cause does not already carry, that code too -- ``review_not_started: document_not_submitted``
-    (flowgate.v02test.0015: the bare ``review_not_started`` told no one why)."""
+    (the bare ``review_not_started`` told no one why)."""
     cause = data.get("fail_cause") or event.get("reason")
     extra = data.get("fail_detail") if isinstance(data.get("fail_detail"), dict) else {}
     code = extra.get("code")
@@ -241,7 +241,7 @@ def _invocation_failure(record: dict) -> bool:
 
 
 def _handed_to_person(record: dict) -> bool:
-    """flowgate.v02.0143 T#1 (W6, NR flowgate.v02.0143.0003 §4.2): a failed automatic Q&A responder launch
+    """(W6, NR the earlier change): a failed automatic Q&A responder launch
     (``purpose=qa_response``; it carries the asker's target, so it is the asker's command's) whose question item, as read
     now, went to a person — ``responder_state`` ``failed`` / ``user_decision``, or ``answered`` since. The card waits for
     that person: no failure of the command (its message stays). Any other responder state, a record without its item and
@@ -256,7 +256,7 @@ def _handed_to_person(record: dict) -> bool:
 
 
 def duplicate_starts(records: list[dict]) -> set[str]:
-    """flowgate.v02test.0004 T#3: the records, among ``records``, of a harmless duplicate start stored before T#1 stopped
+    """the records, among ``records``, of a harmless duplicate start stored before the earlier implementation stopped
     recording them — a start refused ``admission_refused`` / ``run_in_progress`` of a Graph execution while a launch of
     that same execution (``graph_exec_id``) was running: made at or after that launch's start and not after its end (a
     launch still running has no end). Told by the execution and the launch's own times, never by the message. Such a
@@ -432,11 +432,11 @@ def _intervention_of(flow_id: str, row: dict, node_type) -> Optional[dict]:
 
 
 def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
-    """flowgate.v02.0124 T#2 (D4): how the blocking card ``found`` is released, judged from the stage assignment rows,
+    """(D4): how the blocking card ``found`` is released, judged from the stage assignment rows,
     never from the reason text. A system error: None (the automatic retry takes it). ``issuer_lacks_approve``:
     ``issuer_permission`` (before the author, 0083). A person's document (the latest result review's ``author`` is the
     person, an assigned attempt): ``new_submission``. A spent budget of an AI's document with its reviewer and rework AI:
-    None (the next command requests it again, 0124 T#1). Any other: ``memo_rereview``. A failed read: None. A read only."""
+    None (the next command requests it again, the earlier implementation). Any other: ``memo_rereview``. A failed read: None. A read only."""
     from flowgate.card_intervention import reasons  # noqa: PLC0415
     from flowgate.card_settings import legacy_adapter as settings  # noqa: PLC0415
     from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
@@ -452,7 +452,7 @@ def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
         if cur is not None and cur.get("author") == sa.PERSON:
             return RELEASE_NEW_SUBMISSION
         if reasons.command_reentry_due(reason) and not sa.is_legacy_attempt(attempt_id):
-            return None                          # 0126: explicit reentry judges the current settings
+            return None                          # explicit reentry judges the current settings
         return RELEASE_MEMO
     except Exception:  # noqa: BLE001 — not told: no release line
         log.warning("command result release read failed run=%s node=%s", run_id, key, exc_info=True)
@@ -460,7 +460,7 @@ def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
 
 
 def _attachment_requests(run_id: str, flow_id: Optional[str]) -> Optional[dict]:
-    """flowgate.chat.0017 CH0002: AI attachment upload requests still waiting for a person —
+    """AI attachment upload requests still waiting for a person —
     those this run's card workers made, and the Flow's total. Read live (not from the run's
     events): a request outlives its run and is decided whenever a person gets to it. None when
     it cannot be read, so the completion window simply shows nothing for it."""
@@ -582,7 +582,7 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
     # The §3.10 role invocation records of the command: attributed by the run event their request was made at.
     all_records = record_store.for_graph_run(run_id) if record_store.available() else []
     owner = _attribute(run_id, all_records, events, windows)
-    duplicates = duplicate_starts(all_records)          # flowgate.v02test.0004 T#3: stored before T#1, no work of it
+    duplicates = duplicate_starts(all_records)          # stored before the earlier implementation, no work of it
     records = [r for r in all_records if owner.get(r["inv_id"], (None,))[0] == chosen and r["inv_id"] not in duplicates]
     last_launch: dict[str, int] = {}
     for record in all_records:
@@ -626,7 +626,7 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                          "body": body, "body_source": source, "attribution": owner[record["inv_id"]][1],
                          "error_text": error, "error": error is not None})
         if (_invocation_failure(record) and succeeded_after.get((key, role), -1) < i
-                and not _handed_to_person(record)):                                       # flowgate.v02.0143 T#1 (W6)
+                and not _handed_to_person(record)):                                       # (W6)
             fail(key, record["result"], record.get("result_detail"), at, role, message=False)
 
     # The run's idle reason as the command left it. The latest command still holding the run reads it now (a read may
@@ -705,7 +705,7 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                          "detail": None, "at": events[last].get("created_at"), "role": None}
     continues = (state == STATE_WAITING and latest and not win.cut and run.get("status") == engine.IDLE
                  and run.get("idle_reason") != STOPPED_REASON)
-    # flowgate.v02.0124 T#2 (D1, D2, D6): the cards waiting on a person's intervention, only for the latest command that
+    # (D1, D2, D6): the cards waiting on a person's intervention, only for the latest command that
     # ended waiting for a person and was not cut — the cards it touched first, then the others in node order.
     blocking: list[dict] = []
     if latest and end is not None and not win.cut and idle_reason in PERSON_WAIT_REASONS:

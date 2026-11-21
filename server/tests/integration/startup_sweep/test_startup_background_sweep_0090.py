@@ -1,4 +1,4 @@
-"""flowgate.v02.0090 T0015 — the bootstrap never waits for a scratch delete backlog (NR0014).
+"""the bootstrap never waits for a scratch delete backlog.
 
 1. ``import routers.main`` binds the lifespan to ``startup.run_all``.
 2. Lifespan + API: with eligible AI-run scratch (ReadOnly Git objects included) whose
@@ -10,7 +10,7 @@
    ``snapshot-cleanup-sweep`` thread; a failed first pass keeps the periodic sweep.
 5. Concurrency: a second delete of the target the background sweep holds returns at
    once on the non-blocking journal lock and never deletes it twice.
-6. Graph recovery (NR0014 §2.6): the real ``execution.recover()`` replays a requested
+6. Graph recovery: the real ``execution.recover()`` replays a requested
    write through ``node_dispatch.start_ai`` -> ``start_ai_invoke`` -> the real
    ``start_run``; with several eligible scratch held mid-delete, the lifespan and the API
    are ready and no delete runs on the thread that replayed the start.

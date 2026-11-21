@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0023 T0006 — pure derivation of the Designer Project Explorer tree.
+ * pure derivation of the Designer Project Explorer tree.
  *
  * The flat group tree (project / module / group / orphan / document) is re-read as v0.2
  * Project > Group > Flow; documents (v0.2 Nodes) and orphan buckets never appear, and the

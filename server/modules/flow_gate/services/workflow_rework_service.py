@@ -1,6 +1,6 @@
 """Workflow rewind domain service shared by HTTP and automatic test rework.
 
-0449 T0004 item 5 (NR0003 E5): this module is the SINGLE definition of the return-point
+this module is the SINGLE definition of the return-point
 lifecycle — recording a snapshot, reading its payload, resolving a group's workflow root, and
 deleting a ledger the workflow has walked out of. ``documents/routers/documents.py`` used to
 carry byte-for-byte copies of ``_record_return_point`` / ``_return_point_payload`` /
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 WORKFLOW_ROOT_TYPES = {"R", "B"}
 # Types a return point must never snapshot, reopen, or let decide that a rewind is over.
 #
-# 0449 TR0005 rev1: this used to be spelled out here as ``{"Q", "AC"} | AUTO_COMPLETE_TYPES``,
+# this used to be spelled out here as ``{"Q", "AC"} | AUTO_COMPLETE_TYPES``,
 # which silently omitted **A**. A (the answer to a Q) is as much outside
 # ``workflow_sequence_items`` as Q itself — ``documents.constants.NON_SLOT_WORKFLOW_TYPES``
 # has said so all along — but in the legacy fallback where a group has no decided sequence
@@ -150,7 +150,7 @@ def record_return_point(
     a genuinely-done workflow is re-declared wf_done, a mid-flight one returns to
     wf_in_progress. A pre-existing ledger with no pending snapshot document left is discarded
     first (this rewind starts a clean capture); a still-pending one is a nested rewind and is
-    preserved untouched, baseline and root_prev_status included (0142 T0013 invariant).
+    preserved untouched, baseline and root_prev_status included (invariant).
     """
     from modules.flow_gate.db import workflow_return_points as db_rp
 
@@ -197,9 +197,9 @@ _ABSENT_RETURN_POINT = {
 def return_point_payload(group_id: str) -> dict:
     """The group's return point as the API exposes it.
 
-    0291 T2 folded what used to be four queries into ``summary()``.
+    folded what used to be four queries into ``summary()``.
 
-    0449 T0004 item 5.4 — this is a READ and it NEVER edits the ledger. Cleanup belongs to the
+    this is a READ and it NEVER edits the ledger. Cleanup belongs to the
     write boundaries (``pipeline_service`` when a forward re-approval exhausts the ledger,
     ``record_return_point`` when the next rewind finds a spent one), so a reader must not
     delete anything here: a GET that mutates would rewrite history behind an operator who is
@@ -207,7 +207,7 @@ def return_point_payload(group_id: str) -> dict:
 
     What it does owe the caller is a COHERENT answer. A ledger whose snapshot documents are
     all out of ``pending_review`` (``current_min_seq is None`` with a non-empty snapshot) no
-    longer describes a rewound state anyone can return to — the exact shape NR0003 measured on
+    longer describes a rewound state anyone can return to — the exact shape the review measured on
     the incident group (``exists=true / current_min_seq=null``), where the screen kept offering
     a "return" that had nothing to return to. The write-boundary cleanup stops NEW ones from
     forming, but it cannot reach a ledger that was already exhausted before it shipped: that
@@ -241,7 +241,7 @@ def clear_return_point_if_complete(
 ) -> bool:
     """Drop the return point once the workflow has walked home the FORWARD way.
 
-    0449 T0004 item 5.2 (NR0003 E4). A rewind snapshots the approved baseline and every
+    A rewind snapshots the approved baseline and every
     snapshot document goes back to ``pending_review``. When the worker redoes that work
     forward — re-approving each snapshot document through the normal pipeline instead of
     pressing restore — the ledger stops describing anything: there is no rewound state left
@@ -325,7 +325,7 @@ def _reopen_in_transaction(
     )
 
     reopened: list[str] = []
-    # 0660 T0004 §4 (S2): every document this rewind removes, so a client can close its tab
+    # (S2): every document this rewind removes, so a client can close its tab
     # whichever entry point (strip cell or AC tab) started the rewind.
     deleted: list[str] = []
     for candidate in group_docs:
@@ -345,7 +345,7 @@ def _reopen_in_transaction(
             continue
         if is_rewindable_step(candidate):
             update_fields: dict[str, Any] = {"doc_review_status": "pending_review"}
-            # NR0003 §10-12: the reopened TS itself (not sibling steps swept up by the same
+            # the reopened TS itself (not sibling steps swept up by the same
             # rewind) carries the classification-specific rework handoff, delivered the same
             # way a human [반려] carries its reason — rejection_reason/history, read by the
             # worker off this same document. Written in the same transaction as the status
@@ -398,7 +398,7 @@ def _reopen_in_transaction(
             "return_point": return_point_payload(group_id)}
 
 
-# 0332 D0005 §4 — the rewind's audit trail also carries what happened to the source
+# the rewind's audit trail also carries what happened to the source
 # commits. It is a SEPARATE event, not an item added to the `workflow_reopen` row that
 # §4 names: that row is written inside the rewind transaction, before the cancel has
 # run, and rewriting a committed audit row to backfill it is exactly the "edit the
@@ -445,7 +445,7 @@ def _rearm_git(
     actor_user_id: Optional[str] = None,
     terminal_session: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Cancel the rewound TR commits, then re-arm the slot (0332 L0007 §2.1).
+    """Cancel the rewound TR commits, then re-arm the slot.
 
     The order of the two halves is not cosmetic. ``reopen_group_git`` rebuilds a
     terminal slot's worktree from base HEAD, and that new tree contains none of the TR
@@ -453,10 +453,10 @@ def _rearm_git(
     releases the project git lock before returning, because the re-arm takes the same
     lock and it is not re-entrant.
 
-    Returns the ``tr_commit_cancel`` payload (P0006 §3), or None when the cancel could
+    Returns the ``tr_commit_cancel`` payload, or None when the cancel could
     not produce one — the caller then omits the key entirely rather than shipping a
     half-filled object. Either way the re-arm runs and the rewind stands: git does not
-    get to fail a rewind (D0005 K8).
+    get to fail a rewind.
     """
     cancel_result: Optional[dict] = None
     try:
@@ -471,7 +471,7 @@ def _rearm_git(
     except Exception as exc:
         if terminal_session is not None:
             raise
-        # L0007 §5 — the key is dropped, not half-filled, and the rewind still returns 200.
+        # the key is dropped, not half-filled, and the rewind still returns 200.
         logger.warning(
             "[workflow reopen] tr commit cancel failed for %s: %s", group_id, exc,
             exc_info=True,
@@ -501,7 +501,7 @@ REVERT_PENDING_CODE = "workflow_revert_pending"
 def assert_no_revert_pending(group_id: str) -> None:
     """Refuse a group workflow mutation while a Time Machine commit cancel is pending.
 
-    0660 T0004 §3 (RC3, approach B): after a blocked cancel the reopened TR2's approval
+    (RC3, approach B): after a blocked cancel the reopened TR2's approval
     commit is still live. Guarding only that TR2 is not enough — a second rewind to an
     earlier step moves the return point (so the cancel retry no longer walks that TR2),
     and the new, earlier head could then be approved and the workflow advanced with the
@@ -567,7 +567,7 @@ def reopen_to_target(
     )
     assert_group_mutation_allowed(group_id, principal, "workflow reopen")
     assert_no_revert_pending(group_id)
-    # NR0003 R2 (flowgate.default.0477): conflict/merging hold a live git session — refuse
+    # R2: conflict/merging hold a live git session — refuse
     # the reopen itself (409) BEFORE the rewind transaction below, instead of letting the
     # workflow layer roll back while _rearm_git silently leaves the session untouched.
     terminal_session = git_service.raise_if_git_session_blocks_reopen(project_id, group_id)
@@ -604,13 +604,13 @@ def reopen_to_target(
         if cancel_result is not None:
             result["tr_commit_cancel"] = cancel_result
         if terminal_session is not None:
-            # 0669 unit 7d: the C1 re-provision runs as a job after the commit; the
+            # unit 7d: the C1 re-provision runs as a job after the commit; the
             # session's G is handed over to it here (the finally below is then a no-op).
             reprovision = git_service.finish_terminal_reopen(terminal_session)
             if reprovision is not None:
                 result["terminal_reprovision"] = reprovision
-        # 0660 T0004 §3 (RC3, approach B): the rewind stands even when git blocked the
-        # commit cancel (D0005 K8), but a reopened TR2 whose approval commit is still live
+        # (RC3, approach B): the rewind stands even when git blocked the
+        # commit cancel, but a reopened TR2 whose approval commit is still live
         # is NOT reopened for editing yet — tr2_service.revert_pending keeps it immutable
         # and unapprovable until a cancel retry succeeds. Name those documents so the
         # client can say so instead of presenting an editable proposal.

@@ -1,4 +1,4 @@
-"""flowgate.v02.0124 T#2 (0003-NR §5.3, §6.7~9 server side) — the command result tells which cards block a run that waits
+"""(NR, ~9 server side) — the command result tells which cards block a run that waits
 for a person's intervention: ``command_result.blocking`` (``node_key``, ``title``, ``doc_type``, ``kind``, ``reason`` as the
 card's intervention tells it, ``release`` judged from the stage assignment rows).
 
@@ -58,7 +58,7 @@ def test_s1_a_no_op_command_lists_the_blocking_card_with_its_reason_and_release(
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
     EXCLUDED[case](env, a, result, first)
     if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
-        # 0126: these cases now have a real execution target and an outstanding review request.
+        # these cases now have a real execution target and an outstanding review request.
         command(env,"step")
         r=_latest(env)
         assert r["state"]=="running" and [n["node_key"] for n in r["nodes"]]==[a]
@@ -99,7 +99,7 @@ def test_s3_a_re_requested_review_spent_again_is_listed_and_the_next_command_is_
     r = _latest(env)
     print("S3 state =", r["state"], "nodes =", [(n["node_key"], n["outcome"], n["reason"]) for n in r["nodes"]])  # measured
     # The existing failure rule counts the re-requested loop's B-1 (``auto_approval_skipped``) as this command's failure,
-    # so the command reads ``failed`` (the 1st window, D12) while ``blocking`` still names the card; T#2 keeps that rule (D7).
+    # so the command reads ``failed`` (the 1st window, D12) while ``blocking`` still names the card; the earlier implementation keeps that rule (D7).
     assert (r["idle_reason"], r["state"]) == ("needs_intervention", "failed")
     assert [n["node_key"] for n in r["nodes"]] == [a]
     [b] = r["blocking"]
@@ -165,7 +165,7 @@ def _shape(r, a, m):
 @pytest.mark.parametrize("excluded", ["review_verdict_hold", "completion_missing"])
 def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_keeps_nodes_and_counts(
         env, decided, monkeypatch, starts, fork_join, excluded):
-    """T#2 §5.1 S5 on the real run path (the Flow R -> a, R -> m): the result of the first full command, read after
+    """S5 on the real run path (the Flow R -> a, R -> m): the result of the first full command, read after
     ``a`` was excluded. ``review_verdict_hold`` records a B-1 mark after the command (the existing rule counts it as the
     command's failure, D7); ``completion_missing`` leaves no such mark, so ``a`` is a waiting card of the command."""
     from flowgate.graph_run import legacy_adapter as engine
@@ -200,7 +200,7 @@ def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_k
         assert by[a]["reason"] == "review_hold"
         assert by[a]["detail"] == "review_not_passed:review_verdict_hold"
         assert r["failure"] is None
-    # ... and nothing but ``blocking`` differs from the result before T#2 (the same read with the intervention read failing)
+    # ... and nothing but ``blocking`` differs from the result before the earlier implementation (the same read with the intervention read failing)
     with monkeypatch.context() as patched:
         def broken(*_a, **_k):
             raise RuntimeError("a read failed")
@@ -231,7 +231,7 @@ def test_s5_the_next_no_op_commands_block_the_same_card_alone_and_the_first_comm
 
 def test_s6_a_gate_waiting_beside_an_intervention_card_blocks_only_the_card(
         env, decided, monkeypatch, starts, fork_join):
-    """T#2 §5.1 S6 with both in one real run: R -> a (an AI card spent through its review and excluded) and R -> g (a
+    """S6 with both in one real run: R -> a (an AI card spent through its review and excluded) and R -> g (a
     gate waiting for a person's confirmation). The gate is no blocking card; the card is."""
     from modules.flow_gate.graph_workflow.domain import policies
 

@@ -86,7 +86,7 @@ def current_pending_min_seq(return_point_id: int) -> Optional[int]:
     """Lowest seq still pending among THIS return point's snapshot docs (= the current
     workflow head within the rewound range). Scoped to the return point's own docs so
     unrelated pending documents in the group (phantoms / other work) can't skew it —
-    0142 rework."""
+    """
     row = get_store()._fetch_one(
         "SELECT MIN(d.seq) AS min_seq FROM workflow_return_point_docs s "
         "JOIN documents d ON d.doc_id = s.doc_id "
@@ -118,7 +118,7 @@ def get_front_doc(group_id: str, front_seq: int) -> Optional[dict]:
 
 
 def summary(group_id: str) -> Optional[dict]:
-    """A group's whole return-point payload in one statement (0291 T2, CH0016).
+    """A group's whole return-point payload in one statement.
 
     Building one document response used to run all four of these::
 
@@ -127,7 +127,7 @@ def summary(group_id: str) -> Optional[dict]:
         SELECT MIN(d.seq) ... WHERE s.return_point_id = ?              -- current_pending_min_seq
         SELECT COUNT(*) ... WHERE return_point_id = ?                  -- count_docs
 
-    The CH0016 dump repeats this set of four four times (4 responses x 4). The last three are
+    The the discussion dump repeats this set of four four times (4 responses x 4). The last three are
     all derived lookups needing only the ``id`` / ``front_seq`` the first query fetched, so
     referencing them via correlated subqueries in one statement collapses it to a single round trip: 4 → 1 per document response.
 
@@ -171,7 +171,7 @@ def delete(return_point_id: int) -> None:
 
     The snapshot table declares ``ON DELETE CASCADE``, but SQLite only honours it while
     ``PRAGMA foreign_keys`` is on — which connection.transaction() sets and a bare
-    ``_execute`` does not. 0449 T0004 item 5.2 deletes return points from the approval path,
+    ``_execute`` does not. the earlier implementation deletes return points from the approval path,
     which is not always inside that transaction, so the child rows are removed explicitly.
     Doing it in both places is harmless (the cascade then finds nothing left to do) and it
     keeps an orphaned snapshot from outliving its ledger on either dialect.

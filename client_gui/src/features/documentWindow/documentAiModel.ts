@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — what the AI call window decides without a screen or a server call (O3 0009-TR §4-3):
+// what the AI call window decides without a screen or a server call:
 // whether [실행] may be pressed, what the run line says and how a refused start is shown. Pure.
 //
 // A refused start keeps the v0.1 envelope: 409 run_in_progress (another AI run holds the group) shows the

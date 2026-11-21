@@ -60,7 +60,7 @@ describe('fetchActiveProjects', () => {
     expect(projects.map((p) => p.id)).toEqual(['a'])
   })
 
-  // flowgate.v02.0088 F10: the adapter keeps only the server's own diagnostic; the screen owns the localized
+  // the adapter keeps only the server's own diagnostic; the screen owns the localized
   // general text, so no English default is put in its place.
   it('propagates the server diagnostic as it was sent', async () => {
     getRequest.mockRejectedValue({ isAxiosError: true, response: { status: 500, data: { detail: '서버 점검 중입니다.' } } })
@@ -121,7 +121,7 @@ describe('createProject', () => {
     await expect(createProject({ name: 'Demo', id: 'demo' })).rejects.toThrow('Failed to create project.')
   })
 
-  // flowgate.v02.0152: a name/id taken by an archived (unlisted) project comes back as a typed conflict.
+  // a name/id taken by an archived (unlisted) project comes back as a typed conflict.
   it('turns a name / id conflict into ProjectCreateConflictError with the holder', async () => {
     postRequest.mockRejectedValueOnce({
       isAxiosError: true,

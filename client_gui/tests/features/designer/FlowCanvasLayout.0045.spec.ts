@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0045 T0011 (S1+S2) — Designer Center screen with a server-like Graph source and
+ * (S1+S2) — Designer Center screen with a server-like Graph source and
  * the real Vue Flow: ownership badge instead of the sample badge, a dropped movable Node becomes
  * a saved move, a user pan / zoom end becomes a saved Viewport, a programmatic Viewport change
  * saves nothing. jsdom replays no d3 gestures, so the library events are emitted through the

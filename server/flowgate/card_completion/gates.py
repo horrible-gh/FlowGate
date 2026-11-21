@@ -1,11 +1,11 @@
-"""The read-only gates of a v0.2 completion (flowgate.v02.0119 T#4, T-3; 0004-CH seq 9 T-3, seq 11 replacement 3).
+"""The read-only gates of a v0.2 completion (T-3; the discussion seq 9 T-3, seq 11 replacement 3).
 
 Before a node's result is completed (``card_settings.legacy_adapter.approve``) or a card's instruction is approved
 (``instruction.approve``), the document passes the gates the v0.1 approval asked — never the v0.1 approval itself:
 
     require_body       a readable, non-blank body after the front matter
     require_test_gate  a TSR's test gate, a TS's specification contract (a contract v2 TS validates) — the v0.1
-                       ``_require_test_gate_for_approval``; a card's TS instruction asks it too (flowgate.v02.0119 T#4
+                       ``_require_test_gate_for_approval``; a card's TS instruction asks it too (the earlier change the earlier implementation
                        rework, rej_01M6DQW6YF0SCQ5D P1: ``instruction.approve``)
     require_gates      the body, then the test gate (a node's result)
     body_complete    the body judgement as a yes / no (``card_documents.lines.has_body``: whether a card line is written)

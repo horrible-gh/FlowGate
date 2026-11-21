@@ -1,4 +1,4 @@
-"""Stand-in for the Group lock (G) in suites that mock the git layer (flowgate.default.0669).
+"""Stand-in for the Group lock (G) in suites that mock the git layer.
 
 Units 2~4 moved write/patch, Bundle, TR2, TR commit, Time Machine and TR conflict from the
 project mutex (``db_git.try_acquire_lock``) to G through ``lock_manager.acquire_group``.

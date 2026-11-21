@@ -1,4 +1,4 @@
-"""flowgate.v02test.0002 T-b (0006-T §4, R0001 requirement 3): a merge target changed **before** the confirmation,
+"""T-b (T, the requirement requirement 3): a merge target changed **before** the confirmation,
 while the candidate lookup times out, is the branch the decision records, merges into and pushes.
 
 The client keeps the last confirmed candidate list (``useGateContext``) and sends a kept name with the exact body
@@ -40,7 +40,7 @@ def _lookup_times_out(monkeypatch):
         return real(project_id, name)
 
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.3)
-    # flowgate.v02test.0020: the background computation's own budget runs out too, so the lookup keeps timing out
+    # the background computation's own budget runs out too, so the lookup keeps timing out
     monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.3)
     monkeypatch.setattr(mt, "inspect_workspace", slow)
     mt.reset_check_targets()        # no list from before is served (an invalidation would keep it, stale)
@@ -58,7 +58,7 @@ def test_0002_tb_a_target_changed_before_the_confirmation_during_a_lookup_timeou
     frozen = _work(r, "tb-0002.txt")
 
     # 1. The lookup works: the Designer reads the candidates and saves the first choice (versioned, as the client).
-    # On a loaded Self-check host the real 3 s budget alone was spent in the shared reads (TR0013 rev 1, the R0001 #3
+    # On a loaded Self-check host the real 3 s budget alone was spent in the shared reads (the earlier implementation, the the requirement #3
     # condition itself); this phase needs one confirmed list, so only here the test gives the lookup more time.
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
     mt.reset_check_targets()

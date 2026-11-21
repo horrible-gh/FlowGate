@@ -1,4 +1,4 @@
-"""flowgate.v02.0014 HOLD 2.2 - the reworker chosen at Start is fail-closed.
+"""HOLD 2.2 - the reworker chosen at Start is fail-closed.
 
 A concrete reworker Provider captured at Start (`reworker_provider_id`) used to be dropped
 silently when it was deleted/disabled by the time a review rejection needed the rework hop: the

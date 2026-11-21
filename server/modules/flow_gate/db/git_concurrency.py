@@ -1,9 +1,9 @@
-"""Git/source concurrency storage (flowgate.default.0669 unit 1a; 0666 0010-DB, migrations 130~133).
+"""Git/source concurrency storage (unit 1a; 0666 0010-DB, migrations 130~133).
 
 server_instance / resource_lock CRUD and CAS writes. Every query
 is the one 0010-DB §4 fixes, letter for letter where it has one — (a)~(f), (m)~(p).
 operation_job / resource_reservation exist in the schema (resource_lock.job_id FK) but
-0669 does not run jobs, so nothing here reads or writes them.
+does not run jobs, so nothing here reads or writes them.
 
 Contract shared by every CAS write below (DB §2.0, invariant 5): the WHERE carries the
 previous value (epoch / status / holder) and success is the affected-row count from
@@ -236,7 +236,7 @@ def list_unprotected_locks_of_non_alive(limit: int) -> list[dict]:
 
 def list_protected_locks_of_kind(holder_kind: str, limit: int,
                                  after: Optional[tuple[str, str]] = None) -> list[dict]:
-    """Protected rows of one holder kind (0080 T#3: the Self-check reaper's candidates).
+    """Protected rows of one holder kind (the Self-check reaper's candidates).
 
     Keyset pages on (acquired_at, lock_key): ``after`` is the previous page's last pair,
     so a caller can visit every row, not only the oldest ``limit``."""

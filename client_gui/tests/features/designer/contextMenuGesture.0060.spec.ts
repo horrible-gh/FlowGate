@@ -66,7 +66,7 @@ describe('independent right-button canvas guard (0060)', () => {
       expect(popupMouse).toHaveBeenCalledTimes(1)
       expect(isRelayedPress(popupPointer.mock.calls[0][0])).toBe(true)
       const menuEvent = send(inside, 'contextmenu', 2, 0)
-      // flowgate.v02.0060 T#1 (Q item 459): a multi-selected card opens its menu too (consumed), state unchanged.
+      // (Q item 459): a multi-selected card opens its menu too (consumed), state unchanged.
       expect(menuEvent.defaultPrevented).toBe(true)
       expect(!!host.current.value).toBe(true)
       host.close()

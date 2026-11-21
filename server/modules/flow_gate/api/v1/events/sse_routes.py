@@ -3,7 +3,7 @@
 GET /api/v1/events/stream
 Authentication: JWT via query param ?token=<jwt> or Authorization Bearer header
 
-Authentication model (0371 T0012, from NR0007 §4)
+Authentication model
 -------------------------------------------------
 Connect time runs the same checks the ordinary API runs before a handler starts
 (auth/middleware.verify_token + get_current_user): decode, ``type == access``,
@@ -16,18 +16,18 @@ An open stream is re-checked too, because this loop lives for hours: revoking a
 session has to stop the push, not just the next API call. The check runs before
 every event frame and at every heartbeat, so the heartbeat cadence bounds the
 worst case (~30 s by default). Cutting it finer means wiring a cancel signal
-from the revoke path into every subscriber, which NR0007 §4 deliberately left
+from the revoke path into every subscriber, which the review deliberately left
 out of this step.
 
 The re-check does NOT re-decode the JWT. An access token expiring mid-stream is
 not a revocation, and ending every stream once per token lifetime would produce
 a reconnect + full-resync storm — the client rotates its token on its own
 schedule and deliberately keeps healthy streams open across rotations
-(client/src/main/composables/useFlowGateSse.ts, group 0028 T0004).
+(client/src/main/composables/useFlowGateSse.ts, the earlier implementation).
 
 All of these lookups are synchronous DB reads, so they go through
 ``anyio.to_thread.run_sync``: an ``async def`` handler may not block the event
-loop (0279 T0005 guard).
+loop (guard).
 """
 from __future__ import annotations
 
@@ -238,7 +238,7 @@ async def sse_stream(
         )
 
     # The blocking DB reads sit inside _authenticate, so it runs in a worker
-    # thread: an `async def` handler must not block the event loop (0279 T0005).
+    # thread: an `async def` handler must not block the event loop.
     from fastapi import HTTPException
     try:
         ctx = await anyio.to_thread.run_sync(_authenticate, jwt_token)
@@ -297,7 +297,7 @@ async def sse_stream(
                         # graceful shutdown can complete instead of hanging.
                         break
                     # Re-check before *delivering*: a session revoked while this
-                    # event sat in the queue must not receive it (0371 T0012).
+                    # event sat in the queue must not receive it.
                     reason = await checked_reason()
                     if reason is not None:
                         logger.debug(
@@ -328,11 +328,11 @@ async def sse_stream(
                     # connection (proxy idle-timeout / sleep-resume / network switch
                     # leave a zombie stream that never emits `error`). Emitting a real
                     # named `ping` event lets the client run a liveness watchdog and
-                    # force-reconnect such streams. (R0001 / group 0025 TR)
+                    # force-reconnect such streams. (TR)
                     # The heartbeat is also the revocation deadline: an idle
                     # stream is re-checked once per cadence, so a revoked login
                     # stops receiving pushes within ~_SSE_HEARTBEAT_TIMEOUT
-                    # seconds (NR0007 §4 recommendation 2).
+                    # seconds.
                     reason = await checked_reason()
                     if reason is not None:
                         logger.debug(

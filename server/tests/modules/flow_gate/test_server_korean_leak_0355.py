@@ -1,4 +1,4 @@
-"""Server-wide Hangul leak guard for non-Korean output (0355 T0023).
+"""Server-wide Hangul leak guard for non-Korean output.
 
 The suite combines three independent boundaries:
 * AST discovery of every locale-aware server module and all en/ja literals;
@@ -36,7 +36,7 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 _SERVER_DIR = Path(__file__).resolve().parents[3]
 _MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
-# flowgate.v02.0032 T#1 (D0006 §2.4 rule 4): the server-wide error-sink scans cover the
+# (rule 4): the server-wide error-sink scans cover the
 # v0.2 application package too.
 _FLOWGATE_ROOT = _SERVER_DIR / "flowgate"
 sys.path.insert(0, str(_SERVER_DIR))
@@ -56,7 +56,7 @@ _REQUIRED_DISCOVERY = {
     "db/tokens.py",
     "documents/routers/documents.py",
     "process_service.py",
-    # 0501 T6 (NR0003 §12): the engine's locale branches moved into the ai_invoke/
+    # the engine's locale branches moved into the ai_invoke/
     # package -- admission (worktree/provider copy), chain and review (hop mentions)
     # and worker (tool prose). ai_invoke_service.py is now a re-export shim with no
     # branch of its own, so it can no longer be the thing this scan must discover.
@@ -65,7 +65,7 @@ _REQUIRED_DISCOVERY = {
     "services/ai_invoke/review.py",
     "services/ai_invoke/worker.py",
     "services/engine_recipe_service.py",
-    # 0578 T0006 §3 task 7-1: the merge-review turn renderer is a locale map by
+    # task 7-1: the merge-review turn renderer is a locale map by
     # construction -- the AI-history surface's ko/en/ja copy for the nine stored
     # `message_code`s. Its en/ja branches must be discovered and scanned, or a Korean
     # sentence could reach a worker running in en/ja with nothing failing.
@@ -237,7 +237,7 @@ def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monk
     ]
 
     monkeypatch.setattr(invoke_mention_service, "_chat_lookup_sections", lambda **_kwargs: [])
-    # 0362 T0012: the builder now sizes the recent-turn window from the head of the
+    # the builder now sizes the recent-turn window from the head of the
     # conversation, and this check runs without a database. A head of 0 is the short
     # conversation that folds nothing — the plain mention this guard is here to read.
     monkeypatch.setattr(
@@ -274,8 +274,8 @@ def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monk
         parser_failures.append(exc_info.value.detail)
     outputs.extend(parser_failures)
 
-    # flowgate.default.0578 T0012 work item 4: the merge-review write-plan channel's
-    # procedure copy (_WRITE_PLAN_COPY, T0012 §2.1) and its two callers, each fed through
+    # work item 4: the merge-review write-plan channel's
+    # procedure copy (_WRITE_PLAN_COPY, the earlier implementation) and its two callers, each fed through
     # write_requested_by_human=True so the write-plan section is actually rendered. The DB
     # session lookup is monkeypatched away exactly like
     # test_review_conversation_and_base_dirty_admission_0481.py's
@@ -433,11 +433,11 @@ def test_guard_rejects_one_korean_syllable():
         assert_no_korean_leak({"message": "English text 끝"})
 
 
-# ── Generalized local error-helper sink discovery (T0004 item 9 / NR0003 recommendation 6) ──
+# ── Generalized local error-helper sink discovery ──
 # The scan above (_localized_literals) only ever looks INSIDE recognized locale-branch
 # shapes (an en/ja-keyed dict, or an if/elif on locale). It has no opinion about a file's
 # OTHER functions, so a locally-defined error-response helper with no locale parameter at
-# all (NR0003 finding 6: ai_invoke_service.py's _http_error) is invisible to it — nothing about
+# all (ai_invoke_service.py's _http_error) is invisible to it — nothing about
 # that call is a "locale branch" to find. This second scanner starts the other end: find
 # every function that structurally assembles a user-facing error response (whatever it is
 # named), then check ALL of its call sites for a raw, unbranched Korean literal — one that
@@ -558,9 +558,9 @@ def _unbranched_korean_call_args(tree, helper_names: set[str], source: str):
 
 
 def test_static_error_sinks_reject_unbranched_korean_regardless_of_helper_name():
-    """0355 T0023's original scanner only ever recognized locale-branch SHAPES (an
+    """'s original scanner only ever recognized locale-branch SHAPES (an
     en/ja dict, or an if/elif on locale) — it never asked "does this file have its own
-    error-response helper, and is every call site of THAT helper locale-safe?". NR0003
+    error-response helper, and is every call site of THAT helper locale-safe?". the review
     Finding 6 slipped through exactly that gap: ai_invoke_service._http_error has no locale
     parameter and no en/ja dict nearby, so nothing about it looked like a locale branch
     to find. This walks every discovered locale-aware file, finds its own local
@@ -579,21 +579,21 @@ def test_static_error_sinks_reject_unbranched_korean_regardless_of_helper_name()
     )
 
 
-# ── Guard globalization (T0009 item 3 / NR0008 §3.1, §5 Q8-1) ───────────────────
+# ── Guard globalization ───────────────────
 # _discover_locale_files() above only ever scans files that ALREADY look like a locale
 # source (a locale marker, or an en+ja dict literal — _is_locale_source()). A file with
 # no locale awareness at all is invisible to it end to end, even though the very same
 # _unbranched_korean_call_args mechanism would happily catch an unbranched Korean literal
-# reaching an HTTPException/JSONResponse sink there too. NR0008 §3.1 found 9 such D-point
+# reaching an HTTPException/JSONResponse sink there too. the review found 9 such D-point
 # coordinates hiding in exactly that blind spot. This sibling test drops the locale-source
 # prerequisite and runs the identical sink-scan over every file under server/modules/**,
 # excluding the protected (B) and locale-dictionary (A) coordinates in _korean_allowlist.
 
 
 def test_static_error_sinks_reject_unbranched_korean_across_all_modules():
-    """T0009 item 3: same mechanism as the test above, but with no _is_locale_source()
+    """same mechanism as the test above, but with no _is_locale_source
     gate — every *.py under server/modules/** is scanned, regardless of whether it looks
-    locale-aware yet. This is what actually would have caught NR0008's D-point coordinates
+    locale-aware yet. This is what actually would have caught the review's D-point coordinates
     (conversation_turn_service._encoding_violation and friends) if their message ever
     reached a locally-defined HTTPException/JSONResponse-response helper as an inline
     Korean literal — most of them route through a bare custom exception class instead (no
@@ -615,14 +615,14 @@ def test_static_error_sinks_reject_unbranched_korean_across_all_modules():
     )
 
 
-# ── Second widening: payloads that reach a raise one hop away (T0009 item 3) ───
-# The scan above only sees Korean written INLINE at a sink call site. Every NR0008 §3.1
+# ── Second widening: payloads that reach a raise one hop away ───
+# The scan above only sees Korean written INLINE at a sink call site. Every the review
 # D coordinate is shaped differently: the literal lives in a module-level constant or in
 # a small message-builder function, and it reaches the user through
 # `raise SomeError(<that name>)` — a custom exception the route layer turns into a 4xx
-# body further up. Measured against the pre-T0009 tree (d146fec) in an isolated worktree
+# body further up. Measured against the pre-the earlier implementation tree (d146fec) in an isolated worktree
 # (widened guard + unfixed D-point source): the inline-only scan above finds 0 offenders
-# while this one finds 15 offender lines across 3 of the T0009 §3 item 4 D coordinates —
+# while this one finds 15 offender lines across 3 of the the earlier implementation D coordinates —
 # conversation_turn_service._encoding_violation (3 lines), workflow_decision_service.
 # corrupted_label_message (2 lines), and pipeline_service's two approval-message constants
 # (10 lines across their 6 raise sites). tr_scope_service, work_plan_service,
@@ -693,7 +693,7 @@ def _korean_error_payloads(tree, helper_names: set[str], source: str) -> list[tu
     through a local variable holding either of those.
 
     That last hop is not academic: `message = _build(...)` / `raise Error(message)` is
-    the exact shape conversation_turn_service._encoding_violation had (NR0008 §3.1),
+    the exact shape conversation_turn_service._encoding_violation had,
     and without following it the scan walks straight past the single most common D
     coordinate in this repository."""
     sinks = helper_names | {"HTTPException"}
@@ -771,10 +771,10 @@ def _scan_error_payloads(module_root: Path, base_dir: Path) -> list[str]:
 
 
 def test_error_payloads_reaching_a_raise_have_no_unbranched_korean():
-    """T0009 item 3: the widening that actually goes RED on the pre-T0009 tree. A message
+    """the widening that actually goes RED on the pre-the earlier implementation tree. A message
     does not have to be written at the sink to reach the user — a module constant or a
     one-line builder handed to `raise` gets there just as well, and that is the shape all
-    of NR0008 §3.1's D coordinates had."""
+    of the review's D coordinates had."""
     offenders = _scan_error_payloads(_MODULE_ROOT, _SERVER_DIR) + _scan_error_payloads(
         _FLOWGATE_ROOT, _SERVER_DIR)
     assert not offenders, (
@@ -808,7 +808,7 @@ def test_error_payload_scan_catches_constants_and_builders_but_not_locale_dicts(
         "def go():\n    raise Boom(_message())\n",
         encoding="utf-8",
     )
-    # The shape NR0008 §3.1's D coordinates actually had: builder result parked in a
+    # The shape the review's D coordinates actually had: builder result parked in a
     # local, raised one line later (conversation_turn_service._encoding_violation).
     (module_root / "leaky_local.py").write_text(
         "class Boom(Exception):\n    pass\n\n\n"
@@ -828,7 +828,7 @@ def test_error_payload_scan_catches_constants_and_builders_but_not_locale_dicts(
 
 
 def test_local_error_helper_detection_generalizes_beyond_fail_and_http_error():
-    """AST fixture (T0004 item 9): a helper named neither _fail nor _http_error must
+    """AST fixture: a helper named neither _fail nor _http_error must
     still be found structurally, and an unbranched Korean literal reaching it must
     fail the scan — while the same wording routed through a locale map must pass."""
     bad_source = (
@@ -861,8 +861,8 @@ def test_local_error_helper_detection_generalizes_beyond_fail_and_http_error():
 
 
 def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
-    """False-positive fixture (T0004 item 9): the generalized scan must stay quiet on the
-    two legitimate shapes NR0003 recommendation 6 calls out — a message chosen by an explicit ko
+    """False-positive fixture: the generalized scan must stay quiet on the
+    two legitimate shapes the review calls out — a message chosen by an explicit ko
     branch, and Korean prose that never reaches the sink (a docstring or comment sitting
     in the same function). Only literals that actually flow into the error response
     unbranched may fail the scan."""
@@ -886,14 +886,14 @@ def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
 
 
 def test_ai_invoke_service_worktree_unavailable_is_localized():
-    """Regression pin for NR0003 finding 6 (T0004 item 6): _http_error's
+    """Regression pin for the review: _http_error's
     worktree_unavailable 409 used to be a fixed Korean f-string that the old narrowed
-    0355 scanner never saw (it matched none of the four fixed sink spellings). The
+    scanner never saw (it matched none of the four fixed sink spellings). The
     structural helper-detector must find _http_error on its own, and every call site's
-    message argument must carry zero raw Korean now that T0004 routes it through
+    message argument must carry zero raw Korean now that the earlier implementation routes it through
     _WORKTREE_UNAVAILABLE_COPY.
 
-    0501 T6 (NR0003 §12) split the engine into the ai_invoke/ package: `_http_error` is
+    split the engine into the ai_invoke/ package: `_http_error` is
     DEFINED in runtime.py and CALLED from admission/chain/review/diagnostics, so the
     helper is detected where it is defined and every module of the package is then
     scanned for an unbranched Korean argument to it."""

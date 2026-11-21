@@ -8,7 +8,7 @@ const TABS = [
   { key: 'c', label: 'C', disabled: true },
 ]
 
-// T0004 §5.6/§9: active state, change event, disabled tab, no feature-state dependency.
+// active state, change event, disabled tab, no feature-state dependency.
 describe('components/ui/Tabs (T0004)', () => {
   it('marks the active tab via aria-selected and a class, purely from the injected modelValue', () => {
     const wrapper = mount(Tabs, { props: { tabs: TABS, modelValue: 'b' } })

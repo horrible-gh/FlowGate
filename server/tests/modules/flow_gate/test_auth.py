@@ -36,7 +36,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 @pytest.fixture(scope="session")
 def test_db_path(migrated_sqlite_db):
-    """The auth schema, built from every migration (0394 T0004, NR0003 §13-6).
+    """The auth schema, built from every migration.
 
     This used to run migrations 001, 002 and 005 and stop — a hand-picked subset from
     when those were the only ones that touched auth. It went stale silently: 067a added
@@ -158,7 +158,7 @@ class TestJWT:
         assert payload["sub"] == "usr_001"
 
     def test_access_token_lifetime_follows_config_settings(self, monkeypatch):
-        """group 0021 / NR0003 item 3: the access-token lifetime must come from
+        """the access-token lifetime must come from
         config.settings.ACCESS_TOKEN_EXPIRE_MINUTES, not a hardcoded constant — the
         regression was that the operator's .env override was silently ignored."""
         import types
@@ -433,7 +433,7 @@ def api_client(test_db_path):
 
     # Replace FlowGateStore with a SQLite-file-backed store.
     #
-    # 0394 T0004 (NR0003 §13-6): this double reproduces FlowGateStore's interface, and
+    # this double reproduces FlowGateStore's interface, and
     # like the frozen migration list above it fell behind the original. Session handling
     # (067a) writes through `store.transaction()`, which was never here, so logout /
     # refresh-rotation / reuse-detection / password-change all died on AttributeError as

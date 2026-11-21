@@ -4,7 +4,7 @@ import ProjectList from '@/features/project/ProjectList.vue'
 import type { Project } from '@/features/project/types'
 import { setTestLocale } from './projectI18n'
 
-// WP0005 T#2 §2.1/§3.1/§4: loading/error/empty(none)/empty(search) are distinct, and
+// loading/error/empty(none)/empty(search) are distinct, and
 // selecting vs opening a row is delegated straight through to the caller.
 function project(id: string): Project {
   return { id, name: id, description: '', color: null, isActive: true, createdAt: null, updatedAt: null, modules: [] }
@@ -69,7 +69,7 @@ describe('features/project/ProjectList', () => {
     expect(wrapper.emitted('open')?.[0]).toEqual([project('a')])
   })
 
-  // flowgate.v02.0088 F03/F10: the list's own words follow the language; the server's diagnostic stays as sent and the
+  // the list's own words follow the language; the server's diagnostic stays as sent and the
   // localized title stands alone when there is none.
   it.each([
     ['ja', 'プロジェクトを読み込めませんでした。', '再試行', 'プロジェクトがありません。', 'プロジェクト一覧'],

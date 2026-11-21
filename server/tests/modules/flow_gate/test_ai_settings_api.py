@@ -1,4 +1,4 @@
-"""flowgate.default.0164 T0006: AI provider settings (D0002/P0003/L0004/DB0005).
+"""AI provider settings.
 
 Covers the service layer (validation, key merge, tri-state resolution, default
 fallback) and the router contract (shapes, 404, 422 error format).
@@ -23,7 +23,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 @pytest.fixture(scope="module")
 def test_db_path(migrated_sqlite_db):
-    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): shared conftest.py factory,
+    """shared conftest.py factory,
     mirroring test_settings_api.py."""
     return migrated_sqlite_db(
         "test_ai_settings.db",
@@ -106,7 +106,7 @@ def _cli(name="claude cli", command="claude -p", **kw):
     return p
 
 
-# The command verbatim from 0241 B0001 (524 chars): a sandboxed `claude` run whose inline
+# The command verbatim from the regression (524 chars): a sandboxed `claude` run whose inline
 # settings JSON pushed it past the old 500-char cli_command cap.
 _B0001_CLI_COMMAND = (
     'D="$(mktemp -d /tmp/claude-XXXXXX)"; F="$D/settings.json"; printf \'%s\' '
@@ -255,7 +255,7 @@ class TestValidation:
         assert any(e["reason"] == "bad_default" for e in errors)
 
     def test_cli_command_length_boundary(self):
-        # 0241 B0001: the cap was 500, which a real `claude` one-liner carrying sandbox
+        # the cap was 500, which a real `claude` one-liner carrying sandbox
         # settings already exceeded. Pin both sides of the raised limit.
         from modules.flow_gate.settings.ai_settings_service import (
             CLI_COMMAND_MAX,
@@ -343,11 +343,11 @@ class TestProjectTriState:
         assert disabled["mode"] == "disabled"
         assert disabled["effective"] == {
             "source": "disabled", "providers": [], "default_provider_id": None,
-            # 0292 T0003: disabled reports 0 registered because nothing is in play —
+            # disabled reports 0 registered because nothing is in play —
             # admission excludes this source from the "nothing registered" message.
             "registered_count": 0,
         }
-        # The preserved list is still exposed for a later custom return (L0004 §3).
+        # The preserved list is still exposed for a later custom return.
         assert disabled["providers"] is not None
         assert disabled["providers"][0]["id"] == custom_id
 
@@ -441,7 +441,7 @@ class TestRouterContract:
         assert body["providers"][1]["api_key_hint"] == "J3zQ"
 
     def test_b0001_sandboxed_claude_command_saves(self):
-        # 0241 B0001 end to end: this exact PUT answered 422; it must now round-trip and
+        # end to end: this exact PUT answered 422; it must now round-trip and
         # come back with the command stored whole (no silent truncation).
         client = self._make_client()
         command = _B0001_CLI_COMMAND

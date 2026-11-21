@@ -1,4 +1,4 @@
-"""Reuse boundary of the card memos (flowgate.v02.0056 T#3, D0006 §2.2 / §4.1).
+"""Reuse boundary of the card memos.
 
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never changed: the
 Graph API envelope (user JWT, error shape), the RBAC permission check the envelope uses, the Flow load /
@@ -15,7 +15,7 @@ from modules.flow_gate.rbac.permission_service import has_permission
 __all__ = ["GraphApiError", "with_flow_guard", "authenticate", "authorize", "invalid", "run", "load_flow",
            "require_writable", "PERMISSIONS"]
 
-# A memo follows the document permissions (0002-CH turn 10 O3: the existing document authoring rights).
+# A memo follows the document permissions (CH O3: the existing document authoring rights).
 PERMISSIONS = {"read": "perm_document_read", "create": "perm_document_create",
                "update": "perm_document_update", "delete": "perm_document_delete"}
 

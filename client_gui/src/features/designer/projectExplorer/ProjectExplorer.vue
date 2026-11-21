@@ -1,14 +1,14 @@
 <template>
-  <!-- flowgate.v02.0023 — Designer Project Explorer (R0001 / D0002 §3).
+  <!-- Designer Project Explorer.
        Shows the current Project as Project > Group > Flow and reports selection /
        activation upward. It never opens tabs, touches the Canvas, or owns the left dock's
        tab switch / collapse / resize — those belong to the Designer around it.
-       flowgate.v02.0060 T#2: inside the Designer a right click on a row goes to the Designer context menu with that
+       inside the Designer a right click on a row goes to the Designer context menu with that
        row's real ids (Project / Group / Flow) and a check of that row against the latest tree (a re-read that removed
        it closes the menu); the selection, expansion and active Flow stay as they are. -->
   <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
     <!-- No visible title row: the surrounding Dock tab already names this view
-         (0025 T0006 §2/§6). Search and refresh share one compact row. -->
+         . Search and refresh share one compact row. -->
     <div class="project-explorer-search" :class="{ 'is-unavailable': !projectId }">
       <div class="project-explorer-search-field">
         <Input
@@ -73,7 +73,7 @@
         </template>
       </ErrorState>
       <template v-else-if="projectId && loaded">
-        <!-- Same contract as the Dashboard explorer (0449 T0004 item 1): a failed refresh
+        <!-- Same contract as the Dashboard explorer: a failed refresh
              rides ABOVE the tree it could not replace; the last good tree stays usable. -->
         <Alert
           v-if="shownRefreshError !== null"
@@ -150,19 +150,19 @@ const props = withDefaults(
     /** Show final-approved / discarded Flows too (the Dashboard's "show" variant). */
     includeTerminal?: boolean
     /**
-     * Makes the refresh button unavailable while the tree stays usable (0039 T#3: the Designer's
+     * Makes the refresh button unavailable while the tree stays usable (the earlier implementation: the Designer's
      * initial state with no work target). The search stays available whenever a Project is open
      * (0044). Set by the Designer, not by this part.
      */
     toolsDisabled?: boolean
     /**
-     * flowgate.v02.0043 — the Designer's File menu asks this part to select a row and open /
+     * the Designer's File menu asks this part to select a row and open /
      * close rows (Group / Flow Open, Group Close). Applied once per request (`seq`); the
      * selection it sets is reported upward like a click.
      */
     request?: ExplorerStateRequest | null
     /**
-     * flowgate.v02.0105 T#1 — the Designer's own read of this Project's tree failed (the F5 restore's complete
+     * the Designer's own read of this Project's tree failed (the F5 restore's complete
      * tree; '' = no server message). Shown like a failed refresh over the usable tree, and its retry is the refresh,
      * whose new tree is the Designer's cue to read again. Set by the Designer, not by this part.
      */
@@ -185,14 +185,14 @@ const emit = defineEmits<{
   'activate-flow': [payload: ProjectExplorerFlowEvent]
   /** Every change of the user's selection, including the reset on a Project change. */
   'update:selection': [selection: ExplorerSelection]
-  /** flowgate.v02.0105 T#1: every change of the open Groups (their ids), including the reset on a Project change. */
+  /** every change of the open Groups (their ids), including the reset on a Project change. */
   'update:expanded': [groupIds: string[]]
 }>()
 
 const { t } = useI18n()
 const projectStore = useProjectStore()
 
-// The Designer has no Project concept of its own (R0001 §2.1): by default this is the app's
+// The Designer has no Project concept of its own: by default this is the app's
 // current Project from features/project.
 const projectId = computed<string | null>(() =>
   props.projectId === undefined ? projectStore.currentProjectId : props.projectId,
@@ -219,12 +219,12 @@ const isSearching = computed(() => query.value.trim().length > 0)
 // click / key on a row sets this, and a Project change clears it again.
 // flowgate.v02.0040: the one exception is the user's own "열기" in the Project Dialog — that
 // is an explicit choice, handed over once through the store (see the Project watch below).
-// flowgate.v02.0043: the Designer's File menu (Group / Flow Open, recent items, a new Group / Flow,
+// the Designer's File menu (Group / Flow Open, recent items, a new Group / Flow,
 // Group Close) sets it too, through the `request` prop — also the user's own choice.
 const selection = ref<ExplorerSelection>(null)
 
 // Reported upward so the Designer can tell "nothing chosen yet" from a chosen target
-// (0039 T#3). Only changes are reported: entering the Designer emits nothing.
+//. Only changes are reported: entering the Designer emits nothing.
 watch(selection, (next) => emit('update:selection', next))
 
 const rootNodeId = computed(() => (projectId.value ? projectNodeId(projectId.value) : null))
@@ -247,7 +247,7 @@ const expanded = ref<Record<string, boolean>>({})
 // exactly the tree the user had before searching.
 const searchOverrides = ref<Record<string, boolean>>({})
 
-// flowgate.v02.0105 T#1: reported upward like the selection (only changes), so the Designer keeps the open Groups
+// The review reported upward like the selection (only changes), so the Designer keeps the open Groups
 // for an F5. The Project root and a search's per-query overrides are not part of it.
 watch(expanded, (rows) => emit('update:expanded', Object.keys(rows).filter((id) => rows[id] && id !== rootNodeId.value)))
 
@@ -307,7 +307,7 @@ function isShownUnderSearch(target: NonNullable<ExplorerSelection>): boolean {
   return project.groups.some((group) => group.flows.some((flow) => flow.id === target.id))
 }
 
-// flowgate.v02.0043: an explicit open from the Designer's File menu (Project Open / Recent Project of
+// an explicit open from the Designer's File menu (Project Open / Recent Project of
 // the shown Project, Group / Flow Open, Recent Group / Flow, a new Group / Flow) must be seen in this
 // tree. A search that hides the opened row is cleared — the same reset a Project change makes —
 // and the tree returns to what it was before the search; a search that still shows the row stays.
@@ -337,7 +337,7 @@ function onSelectFlow(flow: ExplorerFlow) {
   if (payload) emit('select-flow', payload)
 }
 
-// flowgate.v02.0060 T#2: the Designer context menu's project tree side, provided by the Designer Shell; null elsewhere.
+// the Designer context menu's project tree side, provided by the Designer Shell; null elsewhere.
 type ContextRowRef =
   | { kind: 'project'; projectId: string }
   | { kind: 'group'; projectId: string; groupId: string; archived?: boolean; flowTotal?: number }
@@ -396,7 +396,7 @@ let requestSeq = 0
 // with a Project change is left for the Project watch, whichever of the two runs first.
 let shownProjectId: string | null = null
 
-// flowgate.v02.0088 F10: the localized general text is the ErrorState / Alert title, rendered in
+// the localized general text is the ErrorState / Alert title, rendered in
 // the current locale; only the server's own diagnostic ('' when it sent none) is kept here, so the
 // same failure is never shown twice and an English fallback never stands in for it.
 function messageOf(err: unknown): string {
@@ -456,7 +456,7 @@ watch(
       includeArchived.value = false
       // The Dialog's one-shot explicit-open signal: taken (and so cleared) here, and only a
       // signal for this very Project becomes the initial selection, which the selection watch
-      // reports upward like a click. Without it the tree starts unselected (0039 T#3).
+      // reports upward like a click. Without it the tree starts unselected.
       const opened = projectStore.takeExplicitOpen()
       if (pid && opened === pid) selection.value = { kind: 'project', id: projectNodeId(pid) }
     }
@@ -488,13 +488,13 @@ watch(
   },
 )
 
-// flowgate.v02.0043: the Designer's request — rows to open / close (expansion is this part's
+// the Designer's request — rows to open / close (expansion is this part's
 // own view state, so it is changed here by id) and the selection to set or clear. Applied as
 // given even before the rows are on screen: a tree read that is still in flight (a Group /
 // Flow created a moment ago) shows them selected / open when it lands. The selected row's
 // ancestors are opened with it, and a search hiding it is cleared (clearSearchHiding); when
 // the search stays, its per-query overrides of the requested rows are set the same way.
-// flowgate.v02.0105 T#1: a request with `reveal: false` (the F5 restore) opens only the rows it names.
+// a request with `reveal: false` (the F5 restore) opens only the rows it names.
 watch(
   () => props.request,
   (request) => {

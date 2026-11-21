@@ -191,7 +191,7 @@ def build_review_package(project_id: str, group_id: str, target_doc_id: Optional
     if not actual.get("available"):
         work_base_error = actual.get("work_base_error")
         if work_base_error:
-            # 0665 T0004: an unverified/diverged floor is reported as itself.
+            # an unverified/diverged floor is reported as itself.
             raise GitServiceError(409, work_base_error["code"],
                                   "the group's work-base commit is not usable",
                                   details=work_base_error.get("details"))
@@ -199,7 +199,7 @@ def build_review_package(project_id: str, group_id: str, target_doc_id: Optional
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = (state.get("branch") or "").strip()
-    # flowgate.default.0665 T0004 (W4): the patch base is the SAME recorded floor
+    # (W4): the patch base is the SAME recorded floor
     # collect_scope_changes measured, so the manifest and diff.patch never disagree.
     base_sha = actual.get("scope_base_sha") or ""
     if not base_sha:

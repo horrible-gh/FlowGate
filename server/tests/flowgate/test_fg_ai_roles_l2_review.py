@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 — L-2 §2.8 the review stages of an assigned attempt: who reviews, how many rounds, who reworks,
+"""L-2 the review stages of an assigned attempt: who reviews, how many rounds, who reworks,
 and how a verdict is consumed once (passed / issues / not passed, a newer submission taken over).
 
 The harness of ``test_fg_ai_roles_l2_assignment``. A review loop's run is a recorder; its end is the loop row and the

@@ -1,4 +1,4 @@
-/** flowgate.v02gui.0023: the flow tab strip keeps its height when tabs overflow — no scrollbar, a wheel that scrolls
+/** the flow tab strip keeps its height when tabs overflow — no scrollbar, a wheel that scrolls
  *  sideways and, only while the tabs overflow, a list button that opens every open Flow (ui/Dropdown). */
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'

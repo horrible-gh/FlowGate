@@ -1,6 +1,6 @@
 """Block full-body replacement of migrated CH conversations through session save routes (0432).
 
-Follow-up to 0344 TR0008: conversation_turns is canonical (0432.0003-NR §3), and
+Follow-up to the earlier implementation: conversation_turns is canonical (0432.0003-NR), and
 GET document content projects those turns. PATCH lacked the conversation guard, so it
 saved an unread shell file and reported success while the visible conversation stayed
 unchanged (NR §5/§7-1). The rejected 0344.0008-TR attempt had no subsequent fix (NR §4).

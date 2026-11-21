@@ -38,7 +38,7 @@ class ConversationTurnAppend(BaseModel):
     # Accepted only for backward wire compatibility.  The session boundary always
     # resolves the actor to a user and never forwards this claim to the service.
     speaker: Literal["user", "ai"] = "user"
-    # 0391 T0005 §7-5: escape hatch for a human whose message is falsely flagged by
+    # escape hatch for a human whose message is falsely flagged by
     # the corrupted-body guard (§5-4). Fingerprints are not exposed here — a browser
     # cannot reliably compute a UTF-8 byte hash of its own textarea the way a file-based
     # worker submission can (§6-4), so only the bypass, not the fingerprint fields.
@@ -47,7 +47,7 @@ class ConversationTurnAppend(BaseModel):
 
 class ConversationReadMark(BaseModel):
     last_read_seq: int
-    # P0003 scenario 5 carries both values on the wire; a session screen only ever
+    # scenario 5 carries both values on the wire; a session screen only ever
     # reports what it actually showed, so "viewed" is the default.
     reason: Literal["viewed", "delivered"] = "viewed"
 

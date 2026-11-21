@@ -1,4 +1,4 @@
-"""flowgate.default.0329 R0001/NR0003: prevent duplicate top-level definitions.
+"""prevent duplicate top-level definitions.
 
 The Open Changes crash came from two read_group_file_diff definitions in
 git_service.py. Python silently replaces the first definition with the second:
@@ -19,7 +19,7 @@ import pytest
 
 SERVER_DIR = Path(__file__).resolve().parents[2]
 
-# 0394 T0016 item 4 (NR0003 5.3): the same-scope unique-name rule applies
+# the same-scope unique-name rule applies
 # throughout the server, but the guard previously scanned only modules/ and
 # tests/. It never inspected root app.py/startup.py/config.py or routers/,
 # util/, and tools/. Expand to the entire server tree (403 -> 433 files).
@@ -116,7 +116,7 @@ def test_scan_actually_covers_git_service(parsed_sources):
 
 
 def test_scan_reaches_outside_modules_and_tests(parsed_sources):
-    """0394 T0016 item 4: keep the expanded scope expanded.
+    """keep the expanded scope expanded.
 
     The old modules/tests-only scope omitted root app.py/startup.py and all
     routers/util files. Pin collection of files outside those two roots so a

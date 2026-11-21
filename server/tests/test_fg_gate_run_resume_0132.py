@@ -1,4 +1,4 @@
-"""0132 T#3 / NR §5.3-9(a-i): real bare origin, Runner/Sweeper and mixed human waits.
+"""NR (a-i): real bare origin, Runner/Sweeper and mixed human waits.
 
 Each resume checks writer locks/wire, successful successor opening within full command, and untouched G2/W waits.
 """

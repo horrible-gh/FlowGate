@@ -19,8 +19,8 @@ import {
 } from '@/features/conversation/timeline'
 import type { ActivityAnchor, ConversationActivity, ConversationTurn } from '@/features/conversation/types'
 
-// flowgate.v02.0031 — pure timeline rules: one flow (R0001 §3, §9-5). flowgate.v02.0032 —
-// command requests and run changes are placed by their server anchor (D0006 §3.9.1).
+// pure timeline rules: one flow. the earlier change —
+// command requests and run changes are placed by their server anchor.
 const turn = (seq: number, at: string | null, speaker = 'user'): ConversationTurn => ({ seq, speaker, body: `t${seq}`, createdAt: at })
 const at = (seq: number, position: 'before' | 'after'): ActivityAnchor => ({ seq, position, state: 'reply' })
 const UNPLACED: ActivityAnchor = { seq: null, position: null, state: 'unresolved' }
@@ -120,7 +120,7 @@ describe('buildTimeline', () => {
     expect(b.kind === 'message' && !b.pending && b.failed).toBe(true)
   })
 
-  // flowgate.v02gui.0007 A: a failed message stays where it was sent (by seq, never by time).
+  // A: a failed message stays where it was sent (by seq, never by time).
   const unsent = (localId: string, basedOnSeq: number, createdAt: string, failed: boolean): PendingTurn =>
     ({ localId, idempotencyKey: localId, body: localId, basedOnSeq, createdAt, failed, providerId: '', failure: failed ? sendFailureOf(422) : null })
 

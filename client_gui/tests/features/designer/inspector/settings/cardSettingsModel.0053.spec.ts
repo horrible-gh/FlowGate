@@ -1,8 +1,8 @@
 /**
- * flowgate.v02.0053 T#7 — cardSettingsModel as tables: a Graph card's run / test settings (T#2) — the fields
+ * cardSettingsModel as tables: a Graph card's run / test settings — the fields
  * of each kind in v7 order, the value shown (pending over read), the value a choice stands for, the options of
  * each field (AI, repeat counts, minutes, choices), why nothing can change, and the refusal keys.
- * flowgate.v02.0056 F2-1: the progress-after-review field is gone (O1 0005-TR §4-3) and the RUN card has the
+ * the progress-after-review field is gone and the RUN card has the
  * 지시 AI (`instruction_ai`, O2 0007-TR §4-1): its place, its options (none = the run AI), when it is shown
  * (a run card whose instruction is used) and the reasons a refused value names.
  */

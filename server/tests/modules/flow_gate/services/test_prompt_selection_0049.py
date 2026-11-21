@@ -1,4 +1,4 @@
-"""Situation matrix and stage regressions for v02test.0049 T0011."""
+"""Situation matrix and stage regressions for v02test.0049 the earlier implementation."""
 import pytest
 
 from modules.flow_gate.services import chat_run_hooks, invoke_mention_service, mention_service

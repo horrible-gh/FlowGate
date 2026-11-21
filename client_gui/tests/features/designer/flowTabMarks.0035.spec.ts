@@ -1,4 +1,4 @@
-/** flowgate.v02test.0035: the marks a Flow tab keeps for a run / chat that ended while another tab was active. */
+/** the marks a Flow tab keeps for a run / chat that ended while another tab was active. */
 import { nextTick, reactive } from 'vue'
 import { describe, expect, it } from 'vitest'
 import {

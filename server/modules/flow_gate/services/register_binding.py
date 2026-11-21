@@ -1,6 +1,6 @@
 """The four server-owned register axes, compared once and recorded once.
 
-flowgate.default.0492 T0018 — implements L0010 §2.2-§2.4 (R5/R6) and DB0011 §2.1.
+implements the earlier implementation (R5/R6) and.
 
 Two boundaries ask the same question and must answer it identically:
 
@@ -15,7 +15,7 @@ and a test can pin the axis instead of the message.
 
 Nothing here reads model input. The expected side comes from the run, the actual side
 from the verified token, and the group axis from the document's DB row — never from a
-group substring guessed out of a document id (L0010 §2.3).
+group substring guessed out of a document id.
 
 Fail-closed by construction: an axis whose value cannot be resolved gets a per-call unique
 sentinel, so an unresolvable value never compares equal to anything, including another
@@ -35,13 +35,13 @@ from modules.flow_gate.db import documents as db_docs
 
 logger = logging.getLogger(__name__)
 
-# L0010 §1 binding_axis_order — the single source of truth for "which axis is the
+# binding_axis_order — the single source of truth for "which axis is the
 # representative one" and for the order of the axes array.
 AXIS_ORDER = ("action", "project", "group", "doc")
 
 BOUNDARY_DISPATCH = "register_dispatch"
 BOUNDARY_INBOX = "inbox"
-# Not a live boundary: the label a backfilled pre-T0018 register_errors element carries,
+# Not a live boundary: the label a backfilled pre-the earlier implementation register_errors element carries,
 # because it never recorded an axis and inventing one would fabricate evidence.
 BOUNDARY_LEGACY = "legacy_unclassified"
 BOUNDARIES = (BOUNDARY_DISPATCH, BOUNDARY_INBOX, BOUNDARY_LEGACY)
@@ -51,7 +51,7 @@ REASON_BINDING = "context_binding_mismatch"
 REASON_PERMISSION = "permission_denied"
 BINDING_MESSAGE = "Context binding mismatch. Use the correct token."
 
-# The only token kind whose empty doc_ref may relax the doc axis (L0010 §2.3). An
+# The only token kind whose empty doc_ref may relax the doc axis. An
 # API-provider run token is never this kind.
 TOKEN_KIND_HUMAN_LEGACY = "human_legacy"
 TOKEN_KIND_API_RUN = "api_run_bound"
@@ -147,7 +147,7 @@ def log_relaxation(
     unjudged_axes: Optional[list] = None,
 ) -> None:
     """Audit line for a review that passed only because a human legacy token's doc_ref was
-    empty (L0010 §2.3). Not a failure row: nothing was rejected, so nothing is stored in
+    empty. Not a failure row: nothing was rejected, so nothing is stored in
     register_context_failures — but the waiver itself must be findable.
 
     `relaxed_axis` stays `doc`, the axis whose KNOWN mismatch was waived. `unjudged_axes`
@@ -214,7 +214,7 @@ def failure_record(
 ) -> dict:
     """One rejection, in the exact shape the memory diagnostics and the DB row share.
 
-    The eight keys L0010 §2.5 names (``status``/``code``/``reason``/``turn``/``boundary``/
+    The eight keys the earlier implementation names (``status``/``code``/``reason``/``turn``/``boundary``/
     ``axis``/``axes``/``correlation_id``) sit at the top level so ``register_errors``
     readers see them without unwrapping; ``telemetry`` carries the column payload that only
     :mod:`modules.flow_gate.db.register_context_failures` needs.
@@ -271,7 +271,7 @@ def _resolved(value: Any) -> Optional[str]:
 
 
 def log_failure(record: dict) -> None:
-    """Structured log carrying only what L0010 §2.4 allows: never an expected/actual value,
+    """Structured log carrying only what the earlier implementation allows: never an expected/actual value,
     a raw token, a token id or a filesystem path."""
     telemetry = record.get("telemetry") or {}
     logger.warning(
@@ -299,7 +299,7 @@ def forbidden_details(record: dict) -> dict:
     """The 403 ``error`` object. Deliberately omits expected/actual, raw token, token id and
     any absolute path — a correlation id is what ties a report back to the server row.
 
-    ``boundary`` (flowgate.v02.0136 T0004 T#3) tells the two stages apart for the caller:
+    ``boundary`` tells the two stages apart for the caller:
     ``inbox`` = the request's action/project/group/doc vs the token, ``register_dispatch`` =
     the token vs the run's server-owned hop context (worker._bind_register_context)."""
     return {
@@ -335,7 +335,7 @@ def inbox_mismatches(
     token_kind: Optional[str] = None,
     api_run_bound: bool = False,
 ) -> tuple[list[str], dict, dict, bool, Optional[str], Optional[str]]:
-    """L0010 §2.3 — the inbox's own four-axis re-check.
+    """the inbox's own four-axis re-check.
 
     Returns ``(axes, expected, actual, binding_relaxed, group_token_db, group_token_resolved)``.
     ``group`` is the caller's DB-resolved group for the request, never a string guess.
@@ -387,7 +387,7 @@ def record_for_run(run_id: Optional[str], record: dict) -> None:
     run.setdefault("register_errors", []).append(record)
 
 
-# flowgate.v02.0136 T0004 T#3 (§4-1/§7): the run-lifetime ledger of axis-classified binding
+# : the run-lifetime ledger of axis-classified binding
 # rejections. run["register_errors"] is reset per attempt (worker._reset_attempt_state), and a
 # document review loop resets it on every stage switch and same-stage retry -- yet
 # register_context_failures is written only once, when the run is finalized. Records move

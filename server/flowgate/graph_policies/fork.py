@@ -1,14 +1,14 @@
-"""Fork (branch) execution policies — flowgate.v02.0061 (R §2.4 fork, 0002-CH turns 3 / 7 / 9 / 11).
+"""Fork (branch) execution policies — the earlier change (R fork, the discussion turns 3 / 7 / 9 / 11).
 
-Two of the nine slots (L0009 §2.6.1) get a decided implementation here, both for the structure the
+Two of the nine slots get a decided implementation here, both for the structure the
 validator reports as ``branch`` (several outgoing edges from one node):
 
 - ``edge_condition`` = ``fork_all``: every live outgoing edge of an approved node is followed. There is
-  no IF branch (0002-CH turn 3, Q5), so an edge ``condition`` is never interpreted; a conditioned edge
+  no IF branch (CH, Q5), so an edge ``condition`` is never interpreted; a conditioned edge
   keeps ``rule_undecided/edge_condition`` at confirmation.
 - ``parallelism`` = ``unbounded``: every target the branch reaches is admitted at once; nothing is held
   back by the number of nodes already open. This is logical opening only. The actual concurrent AI
-  execution limit (default 4 per Flow, configurable) is applied in T#6, not by this policy.
+  execution limit (default 4 per Flow, configurable) is applied in the earlier implementation, not by this policy.
 
 What the resolver (``frontier.propagate``) already does is relied on, not repeated: the targets are
 collected as a set (one node reached by two edges opens once), ``openable_only`` opens only a ``pending``
@@ -30,7 +30,7 @@ UNBOUNDED = "unbounded"
 IMPL_VERSION = "1"
 
 CONDITIONED_EDGE = "edge_condition"          # the validator's structure name of an edge with a condition
-RULE_REF = "Q-2"                             # D0004 §8: the question a conditioned edge still waits on
+RULE_REF = "Q-2"                             # the question a conditioned edge still waits on
 
 
 class ForkAllEdges:

@@ -1,4 +1,4 @@
-// flowgate.v02.0088 (D0004 §2.1-2 / §3.1): a UI message kept as its meaning — an i18n key and
+// a UI message kept as its meaning — an i18n key and
 // its interpolation params — and translated only when it is rendered, so a toast, an error line
 // or an open window that outlives a language switch shows the new language. The server's own
 // words (a diagnostic it sent in the x-locale of that request), document titles and user input

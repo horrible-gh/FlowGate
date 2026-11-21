@@ -6,7 +6,7 @@ import TimelineMessage from '@/features/conversation/TimelineMessage.vue'
 import { runBodyState } from '@/features/conversation/runAssessment'
 import type { ConversationTurn } from '@/features/conversation/types'
 
-// flowgate.v02test.0023 — the chat commit result arrives as a FlowGate turn (speaker `system`) of the conversation:
+// the chat commit result arrives as a FlowGate turn (speaker `system`) of the conversation:
 // shown as Markdown under a FlowGate label, never as the AI's reply.
 registerAppMessages(i18n)
 

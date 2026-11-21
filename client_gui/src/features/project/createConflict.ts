@@ -1,10 +1,10 @@
-// flowgate.v02.0152: the typed refusal of POST /api/v1/projects when the name or id is already
+// the typed refusal of POST /api/v1/projects when the name or id is already
 // taken. Kept out of api.ts so screens can test for it with `instanceof` even where api.ts itself
 // is mocked.
 import { normalizeApiError } from '@shared/apiErrors'
 
 /**
- * flowgate.v02.0152: a create refused because the name or id is already taken. The Designer's
+ * a create refused because the name or id is already taken. The Designer's
  * list holds active projects only, so an archived holder is invisible there; the dialog needs the
  * code and the holder's id/name to say which project it is (and that it can be restored) in the
  * person's own language, instead of the generic failure line.

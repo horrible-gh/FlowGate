@@ -1,4 +1,4 @@
-// flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — the Designer screen of this browser
+// (NR the earlier change, Q #510 E-1) — the Designer screen of this browser
 // tab, kept so an F5 brings it back: the current Project, its Explorer Group context (the selected row and
 // the open Groups), the Flow tabs in order, the active Flow and the left / right panel tabs. Same boundary rule
 // as currentProjectStorage.ts / recentStorage.ts: no other module reads or writes this key.
@@ -42,7 +42,7 @@ export interface DesignerSessionSnapshot {
    */
   pending?: DesignerSessionPending
   /**
-   * flowgate.v02.0143 T#1: the run result watches of the open Flows (runResultWatch `persisted`) and the results already
+   * the run result watches of the open Flows (runResultWatch `persisted`) and the results already
    * shown in each, so an F5 watches the same command again and never shows a shown result again. Absent when none; an
    * entry that does not read is left out alone (the rest of the snapshot stays).
    */
@@ -50,7 +50,7 @@ export interface DesignerSessionSnapshot {
   runSeen?: DesignerSessionRunSeen[]
 }
 
-/** flowgate.v02.0143 T#1: one watched command — its Flow, run, start sequence once known and the run's event before it. */
+/** one watched command — its Flow, run, start sequence once known and the run's event before it. */
 export interface DesignerSessionRunWatch {
   flowId: string
   runId: string | null
@@ -58,7 +58,7 @@ export interface DesignerSessionRunWatch {
   afterSeq: number
 }
 
-/** flowgate.v02.0143 T#1: the results shown in a Flow (`runId`, `commandSeq`, `endSeq` keys), the latest few. */
+/** the results shown in a Flow (`runId`, `commandSeq`, `endSeq` keys), the latest few. */
 export interface DesignerSessionRunSeen {
   flowId: string
   keys: string[]
@@ -141,7 +141,7 @@ export function parseDesignerSession(raw: string | null): DesignerSessionSnapsho
 const isWholeOrNull = (value: unknown): value is number | null =>
   value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0)
 
-/** flowgate.v02.0143 T#1: the watches that read; one that does not is left out alone. */
+/** the watches that read; one that does not is left out alone. */
 function toRunWatches(value: unknown): DesignerSessionRunWatch[] {
   if (!Array.isArray(value)) return []
   const watches: DesignerSessionRunWatch[] = []
@@ -154,7 +154,7 @@ function toRunWatches(value: unknown): DesignerSessionRunWatch[] {
   return watches
 }
 
-/** flowgate.v02.0143 T#1: the shown results that read; one that does not is left out alone. */
+/** the shown results that read; one that does not is left out alone. */
 function toRunSeen(value: unknown): DesignerSessionRunSeen[] {
   if (!Array.isArray(value)) return []
   const seen: DesignerSessionRunSeen[] = []

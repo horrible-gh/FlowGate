@@ -1,8 +1,8 @@
 // flowgate.v02.0051 stage 2 — the 조사 card's own lines (0035 v7 research.*: instruction + report). Pure functions over
 // the target: which lines the card shows, what each shows and whether it opens. Nothing here reads the
 // server. The run / stop / history operations of the card have no Inspector API yet (D#1 §8.4).
-// flowgate.v02.0053 T#5 (0053 CH) — the lines are the documents the server made when the card was placed
-// (T#1 card lines: instruction N, report NR), so a placed card opens both at once. A Node without card
+// (CH) — the lines are the documents the server made when the card was placed
+// (card lines: instruction N, report NR), so a placed card opens both at once. A Node without card
 // lines (a document Node, a v0.1 sequence Node) shows its own document on its line and a Graph run's result
 // on the report line; the other line has no document (a hollow dot saying why — no "not yet" text). The
 // instruction line is hidden when the card's settings omit the instruction (v7).
@@ -50,7 +50,7 @@ export function researchDocumentState(reviewStatus: string | null, docStatus: st
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  // a document being written asks nothing of the operator — a neutral state draws no badge.
   return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 

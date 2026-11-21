@@ -1,4 +1,4 @@
-"""flowgate.v02gui.0032 (0002-CH seq 15-17) — a chat reads and changes the review count, restarts and time limit of the
+"""(CH seq 15-17) — a chat reads and changes the review count, restarts and time limit of the
 cards it placed (``flowgate.chat_control.run_settings``), with the roles or alone, and chooses them when it places.
 
 On the card settings harness (real SQLite DB with every migration, real Graph draft saves, real role stores):
@@ -61,7 +61,7 @@ def test_the_read_answers_the_run_settings_with_their_choices(env, decided, guar
 # ── change ───────────────────────────────────────────────────────────────────
 
 def test_the_two_verify_options_are_changed_audited_and_cleared_like_the_other_settings(env, decided, guard):
-    """flowgate.v02test.0053 0003-T (1-A): ``verify_max_runs`` / ``verify_run_minutes`` — any whole number in range (not
+    """(1-A): ``verify_max_runs`` / ``verify_run_minutes`` — any whole number in range (not
     only the presets), one audit row each, null = the system default (no stored row); a TS card has neither."""
     from flowgate.card_settings import repository
     from flowgate.card_settings import verify_limits

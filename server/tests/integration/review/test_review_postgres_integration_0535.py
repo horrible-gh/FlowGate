@@ -1,6 +1,6 @@
 """POST /inbox action=review against a REAL PostgreSQL server (opt-in).
 
-flowgate.default.0535 T0007 §4.1 last bullet. The offline suite proves the contract
+last bullet. The offline suite proves the contract
 against dialect-shaped fakes (test_document_reviews_dialect_0535.py) and against a real
 SQLite database (test_review_atomicity_0535.py). Neither can prove that PostgreSQL
 itself accepts the ``fallback_used`` bind and hands the three states back — the bug this
@@ -18,7 +18,7 @@ Run it against a database that has migration 104 applied::
 
 Everything it writes — the project, user and document it needs for the foreign keys, the
 token, the reviews — happens inside ONE transaction that is rolled back in teardown, so
-a run against the staging database leaves no row behind (the convention TR0006 used for
+a run against the staging database leaves no row behind (the convention the earlier implementation used for
 its live reproduction). The route's own ``store.transaction()`` runs as a SAVEPOINT
 inside it, so a rollback under test really is PostgreSQL rolling the statement back.
 """

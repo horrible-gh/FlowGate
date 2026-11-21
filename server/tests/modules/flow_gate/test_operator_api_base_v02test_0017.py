@@ -1,6 +1,6 @@
-"""flowgate.v02test.0017 CH0002: a Graph AI start hands a remote Agent a reachable operator base, not loopback.
+"""a Graph AI start hands a remote Agent a reachable operator base, not loopback.
 
-The run of ``flowgate.v02test.0019.0004-N`` ended ``remote_api_base_unreachable: api_base_loopback`` before any Job:
+The run of ``the earlier change`` ended ``remote_api_base_unreachable: api_base_loopback`` before any Job:
 ``ai_node_starter.api_base_url()`` was always ``http://127.0.0.1:<port>``, which ``provider_remote.api_base_failure``
 refuses, while chat on the same Agent passed the person's request origin. ``operator_base.resolve`` now answers the
 configured ``FLOWGATE_OPERATOR_API_BASE``, else the run user's own latest non-loopback request origin, else loopback.

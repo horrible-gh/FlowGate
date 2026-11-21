@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0031 — one user / AI message of the timeline (R0001 §4). -->
+  <!-- one user / AI message of the timeline. -->
   <div
     ref="rootEl"
     class="tl-msg"
@@ -14,21 +14,21 @@
           <span class="tl-avatar" aria-hidden="true">{{ isUser ? '●' : isSystem ? '■' : '◆' }}</span>
           {{ isUser ? t('gui.conversation.message.user') : isSystem ? t('gui.conversation.message.system') : t('gui.conversation.message.ai') }}
         </span>
-        <!-- 0293 R0001: the model name is a badge only; identity is participant_key. -->
-        <!-- flowgate.v02gui.0031 B: the bubble widens to show the whole name; only a line with no more room ends it in an ellipsis. -->
+        <!-- the model name is a badge only; identity is participant_key. -->
+        <!-- B: the bubble widens to show the whole name; only a line with no more room ends it in an ellipsis. -->
         <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider-slot">
           <span class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
         </span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
-        <!-- flowgate.v02test.0029: sent while the AI answered; answered right after the current answer. -->
+        <!-- sent while the AI answered; answered right after the current answer. -->
         <span
           v-if="waiting && !pending"
           class="tl-waiting"
           data-test="tl-waiting"
           :title="t('gui.conversation.message.waiting_title')"
         >{{ t('gui.conversation.message.waiting') }}</span>
-        <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
+        <!-- the message as written (Markdown source, not the rendered page), on both sides. -->
         <button
           v-if="turn.body && !turn.deletedAt"
           type="button"
@@ -67,12 +67,12 @@
       </div>
       <div v-else-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
-      <!-- flowgate.v02test.0029: the message's images (thumbnails; one opens the original). -->
+      <!-- the message's images (thumbnails; one opens the original). -->
       <p v-if="mutationError" role="alert">{{ mutationError }}</p>
       <TimelineImages v-if="!turn.deletedAt && turn.images?.length" :images="turn.images" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
-        <!-- flowgate.v02gui.0007 A: the failure's short reason (class of the HTTP status, and the status). -->
+        <!-- A: the failure's short reason (class of the HTTP status, and the status). -->
         <span v-if="failureText" class="tl-failure" data-test="tl-failure" :data-reason="failure?.reason">{{ failureText }}</span>
         <button v-if="!readOnly" type="button" class="tl-retry" data-test="tl-retry" @click="emit('retry')">{{ t('gui.conversation.retry') }}</button>
       </p>
@@ -95,9 +95,9 @@ const props = defineProps<{
   turn: ConversationTurn
   pending: boolean
   failed: boolean
-  /** flowgate.v02gui.0007 A: why the send failed (a failed message only). */
+  /** A: why the send failed (a failed message only). */
   failure?: SendFailure | null
-  /** flowgate.v02test.0029: sent while the AI answered; the AI answers it once the current answer ends. */
+  /** sent while the AI answered; the AI answers it once the current answer ends. */
   waiting?: boolean
   readOnly?: boolean
   /** flowgate.v02test.0025: the ⋯ checkpoint menu is offered (context setting 체크포인트 사용). */
@@ -137,12 +137,12 @@ const failureText = computed(() => {
   const reason = t(`gui.conversation.message.failure.${failure.reason}`)
   return failure.status == null ? reason : `${reason} (HTTP ${failure.status})`
 })
-// flowgate.v02test.0023: FlowGate's own turn (the chat commit result) -- shown as Markdown like an AI message, but
+// FlowGate's own turn (the chat commit result) -- shown as Markdown like an AI message, but
 // labelled FlowGate so it is never taken for the AI's reply.
 const isSystem = computed(() => props.turn.speaker === 'system')
 const rootEl = ref<HTMLElement | null>(null)
 
-// flowgate.v02.0157 — the run result window's renderer (GFM tables, a copy button per code block), made once per
+// the run result window's renderer (GFM tables, a copy button per code block), made once per
 // message as in that window. The computed caches the parse: it runs again only when the body or the language (the
 // code copy label) changes.
 const renderMarkdown = createMarkdownRenderer({ copyLabel: () => t('gui.document_window.viewer.copy_code'), safe: true })
@@ -327,7 +327,7 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   color: var(--fg2-muted);
 }
 
-/* flowgate.v02gui.0031 B: no fixed cap -- the name is shown in full and the bubble widens to fit it (up to its own
+/* B: no fixed cap -- the name is shown in full and the bubble widens to fit it (up to its own
    max-width, 92% of the panel), so a short reply such as "ok" still shows the whole name. Only when the line has no
    more room (narrow panel, zoom) does the slot shrink (flex-shrink 1, min-width 0) and the badge end in an ellipsis;
    the speaker / time / copy / menu never shrink. The title keeps the full name. */
@@ -419,7 +419,7 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   word-break: break-word;
 }
 
-/* flowgate.v02.0157 — the rendered AI message. HTML carries its own line breaks, so pre-wrap is not kept here (the
+/* the rendered AI message. HTML carries its own line breaks, so pre-wrap is not kept here (the
    user's plain text keeps it). Wide tables and long code lines scroll inside the bubble and never widen the panel. */
 .tl-md {
   min-width: 0;

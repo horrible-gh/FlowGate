@@ -1,5 +1,5 @@
-"""The common guard of a card step that goes on after its AI's questions are answered (flowgate.v02gui.0015 T3, NR
-flowgate.v02gui.0015.0006 §6-3, B flowgate.v02gui.0015.0001 §3-4).
+"""The common guard of a card step that goes on after its AI's questions are answered (the earlier change T3, NR
+B the earlier change).
 
 An answer alone never counts as the action it asked for. A question's option may say what has to happen before the card
 goes on (``requires``, ``q_service``: today only ``new_attempt`` — the card's work cannot go on in the attempt that asked,
@@ -13,7 +13,7 @@ around it:
   the result stage's start),
 - ``work`` (``review_stage._after_work``: the result's review start or its automatic approval),
 - ``no_result`` (``question_wait._retry_result``: the result writer run again),
-- ``loop_wait`` (flowgate.v02test.0051 T0005, ``question_loop_wait.resume``: a review loop parked at its hop boundary for
+- ``loop_wait`` (the earlier change the earlier implementation, ``question_loop_wait.resume``: a review loop parked at its hop boundary for
   its own questions goes on with its next hop).
 
 The run-end step of a run whose questions were answered before it ended (``_after_instruction`` / ``_after_work``) and the

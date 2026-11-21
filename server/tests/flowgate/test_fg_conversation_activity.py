@@ -1,6 +1,6 @@
-"""Chat activity and conversation anchors (flowgate.v02.0032 T#1).
+"""Chat activity and conversation anchors.
 
-D0006 §3.9 (anchor states, reply re-anchor, reconcile on read, created_at never used),
+(anchor states, reply re-anchor, reconcile on read, created_at never used),
 §5.3 activity errors and completion conditions 9, 15 and 16.
 """
 from __future__ import annotations

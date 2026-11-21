@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0064 T#4 (0064 P0006 §4.2.1 / §4.2.2 / §4.2.3 / §6.5) — the card title transport in features/project:
+ * the card title transport in features/project:
  *
  * - the Canvas read's `title_state` becomes `titleState: { title, titleSource, version }` — `null` as sent (a v0.1 free
  *   document / slot node) or malformed, absent when an older server sent none (no edit, no version compare);

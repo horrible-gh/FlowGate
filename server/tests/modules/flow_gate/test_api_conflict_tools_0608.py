@@ -1,6 +1,6 @@
-"""0608 T0007 — the API provider's tool-driven conflict resolver.
+"""the API provider's tool-driven conflict resolver.
 
-T0005 took large conflicts' chunk text out of the resolver mention; a CLI worker reads it
+took large conflicts' chunk text out of the resolver mention; a CLI worker reads it
 back over `/remote/read`, but an API provider only had `resolve_git_conflict`, 4 turns and
 one 8,192-token reply for whole files. This file pins what connects it:
 

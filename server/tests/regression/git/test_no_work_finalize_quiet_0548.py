@@ -1,6 +1,6 @@
-"""A group with nothing to merge opens no Git UI (flowgate.default.0548 T0004).
+"""A group with nothing to merge opens no Git UI.
 
-The human rejection of TR0005 rev4 identified four surfaces at once:
+The human rejection of the earlier implementation identified four surfaces at once:
 
     Nothing to merge, yet the warning toast and Git dialog still appear;
     the merge dialog still appears and the document still shows a merge section.
@@ -276,7 +276,7 @@ def test_the_approval_ride_along_still_warns_for_a_stale_unregistered_slot_with_
 
 @needs_git
 def test_a_real_finalize_failure_on_a_working_group_still_warns(slot, monkeypatch):
-    """T0004 §4: failures for groups with real work remain actionable warnings."""
+    """failures for groups with real work remain actionable warnings."""
     (slot.work / "real.py").write_text("y = 2\n", encoding="utf-8")
     monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: slot.cfg)
     monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: slot.state())
@@ -326,7 +326,7 @@ def test_the_ac_approval_preview_offers_no_merge_choice_when_there_is_nothing_to
 def test_the_ac_approval_preview_still_offers_the_choice_when_the_group_did_work(
     finalize_state_deps, monkeypatch,
 ):
-    """Preserve the original 0197 T0004 §B contract: offer choices when work exists."""
+    """Preserve the original the earlier implementation §B contract: offer choices when work exists."""
     (finalize_state_deps.work / "real.py").write_text("y = 2\n", encoding="utf-8")
     monkeypatch.setattr(
         svc.db_git, "get_state", lambda group_id: finalize_state_deps.state(),

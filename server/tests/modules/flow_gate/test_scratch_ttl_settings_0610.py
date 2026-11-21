@@ -1,4 +1,4 @@
-"""0610 scratch TTL settings: API round trip, validation, and GC conversion."""
+"""scratch TTL settings: API round trip, validation, and GC conversion."""
 from __future__ import annotations
 
 from contextlib import contextmanager

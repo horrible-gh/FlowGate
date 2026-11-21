@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Header (0001-R §2): brand, notification entry on the
+  <!-- Designer Header: brand, notification entry on the
        left, the search assist in the middle, language / settings / user on the right.
        The side groups never shrink below their content; the search takes what is left
        (up to 680px), and narrow windows switch the side groups to a compact form.

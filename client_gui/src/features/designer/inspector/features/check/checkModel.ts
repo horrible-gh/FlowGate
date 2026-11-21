@@ -267,7 +267,7 @@ export function checkGitErrorKey(kind: string): string {
   return kind === 'forbidden' ? 'git.read_forbidden' : 'git.read_failed'
 }
 
-// --- flowgate.v02.0051 stage 2 — the v7 check result result line (0035 cmid.* / cend.*) -------------------------
+// --- the earlier change stage 2 — the v7 check result result line (cmid.* / cend.*) -------------------------
 
 export type CheckSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 

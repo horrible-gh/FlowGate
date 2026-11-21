@@ -1,8 +1,8 @@
-"""Per-user, non-chat UI settings — today just the finished-card retention (0452, L0003).
+"""Per-user, non-chat UI settings — today just the finished-card retention.
 
 Three things live here and nowhere else:
 
-* **The numbers.**  L0003 §1-1 is the single source of truth for the nine values a user
+* **The numbers.** the earlier implementation is the single source of truth for the nine values a user
   may pick and for the default.  No screen and no schema (DB0004 §0-2) restates them;
   the GET/PATCH envelope ships the domain so the settings screen draws the server's list
   instead of holding a copy that eventually disagrees.
@@ -16,9 +16,9 @@ Two traps are worth naming because both are easy to reintroduce:
 
 ``-1`` is a full member of the domain ("never expires"), not a lower bound.  The
 normalizer is therefore a **membership test**, never a range clamp — a clamp would
-quietly turn the choice somebody made into 30 minutes (L0003 §2-1, §5).
+quietly turn the choice somebody made into 30 minutes.
 
-And the direction of forgiveness is asymmetric on purpose (L0003 §2-8): a value
+And the direction of forgiveness is asymmetric on purpose: a value
 *arriving* in a PATCH is refused with a 422, but a value already *sitting* in storage
 is quietly replaced by the default on the way out and the call proceeds.  A setting must
 never be able to stop finished cards from working.
@@ -33,7 +33,7 @@ from modules.flow_gate.db.connection import now_iso
 
 _log = logging.getLogger(__name__)
 
-# ── L0003 §1-1 numeric parameters ───────────────────────────────────────────
+# ── the earlier implementation numeric parameters ───────────────────────────────────────────
 # The closed list, in the order the screen draws it.  -1 = never expires,
 # 0 = no finished card at all; the rest are minutes.
 RETENTION_DOMAIN_MINUTES = (-1, 0, 30, 60, 120, 180, 360, 720, 1440)
@@ -41,7 +41,7 @@ RETENTION_DEFAULT_MINUTES = -1
 RETENTION_NEVER = -1
 RETENTION_IMMEDIATE = 0
 
-# ── L0003 §1-2 identifiers ──────────────────────────────────────────────────
+# ── the earlier implementation identifiers ──────────────────────────────────────────────────
 # The stored column name, the response field name and the client type's key are all this
 # one string.  A translation table between layers is the accident, not the safeguard.
 RETENTION_FIELD = "ai_finished_card_retention_minutes"
@@ -62,7 +62,7 @@ class UiSettingsError(ValueError):
 
 
 def defaults() -> dict:
-    """The settings of somebody who has never saved (L0003 §4-4, branch 4).
+    """The settings of somebody who has never saved (branch 4).
 
     ``updated_at`` is None here and NOT NULL in the table on purpose: the null is the
     shape of "there is no row", not the value of a column (DB0004 §2-6).
@@ -74,12 +74,12 @@ def defaults() -> dict:
 
 
 def domain() -> dict:
-    """The choices the response carries so no screen holds its own copy (L0003 §2-8)."""
+    """The choices the response carries so no screen holds its own copy."""
     return {RETENTION_FIELD: list(RETENTION_DOMAIN_MINUTES)}
 
 
 def normalize_retention_minutes(value: Any) -> int:
-    """Repair a stored retention on the way out (L0003 §2-1).
+    """Repair a stored retention on the way out.
 
     Membership, not range.  ``-1`` is a legitimate choice and ``bool`` is not an integer
     here: Python would happily let ``True`` through ``isinstance(value, int)`` and then
@@ -94,7 +94,7 @@ def normalize_retention_minutes(value: Any) -> int:
 
 
 def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
-    """Return (settings, is_default) for a user (L0003 §4-4).
+    """Return (settings, is_default) for a user.
 
     The repair stays in memory: if reading wrote its correction back, the value that
     caused the trouble would already be gone by the time anybody looked at the table
@@ -103,7 +103,7 @@ def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     """
     if not user_id:
         # Nobody to look up.  Same treatment as somebody who has never saved, rather
-        # than a second definition of the default living somewhere else (L0003 §5).
+        # than a second definition of the default living somewhere else.
         return defaults(), True
 
     row = ui_settings_store.get(user_id)
@@ -117,7 +117,7 @@ def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
 
 
 def resolve_ui_settings_safe(user_id: Optional[str]) -> dict:
-    """Settings for callers that must never fail because of a setting (L0003 §5).
+    """Settings for callers that must never fail because of a setting.
 
     A failed lookup here would surface as "the finished cards stopped working", with
     nothing pointing at this table as the cause.  One warning line per call — a stack
@@ -132,7 +132,7 @@ def resolve_ui_settings_safe(user_id: Optional[str]) -> dict:
 
 
 def validate_patch(patch: dict) -> None:
-    """Raise UiSettingsError on the first bad field, in PATCH_FIELDS order (L0003 §2-8).
+    """Raise UiSettingsError on the first bad field, in PATCH_FIELDS order.
 
     Unknown keys are refused rather than ignored.  Silently dropping one is how "I saved
     it and nothing changed" happens, and that leaves no trace to follow afterwards.
@@ -161,7 +161,7 @@ def validate_patch(patch: dict) -> None:
 
 
 def save_ui_settings(user_id: Optional[str], patch: dict) -> dict:
-    """Validate, write the sent columns only, and answer with a fresh read (L0003 §2-8).
+    """Validate, write the sent columns only, and answer with a fresh read.
 
     An empty patch writes nothing and creates nothing: a defaults row would flip
     ``is_default`` to false for somebody who never chose anything (DB0004 §3-4).
@@ -192,7 +192,7 @@ def settings_response(user_id: Optional[str]) -> dict:
 
 
 def settings_response_safe(user_id: Optional[str]) -> dict:
-    """``settings_response`` that survives an unreachable store (L0003 §2-8 last line).
+    """``settings_response`` that survives an unreachable store (last line).
 
     A 500 here would take the finished-card feature down with the settings table.  The
     fallback answers the defaults envelope and says so, so the screen still renders the

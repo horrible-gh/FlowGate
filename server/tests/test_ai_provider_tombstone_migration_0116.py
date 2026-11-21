@@ -1,4 +1,4 @@
-"""0116 migration application, data preservation, name reuse and restart ledger."""
+"""migration application, data preservation, name reuse and restart ledger."""
 from pathlib import Path
 import os
 import shutil

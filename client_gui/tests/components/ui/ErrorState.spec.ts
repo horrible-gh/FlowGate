@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ErrorState from '@/components/ui/ErrorState.vue'
 
-// T0008 §9/§14: title/message, details/action(retry) slots owned by the caller, tone/
+// title/message, details/action(retry) slots owned by the caller, tone/
 // severity, no axios/HTTP/router/store logic of its own.
 describe('components/ui/ErrorState (T0008)', () => {
   it('renders the caller-supplied title and message with the default danger tone', () => {

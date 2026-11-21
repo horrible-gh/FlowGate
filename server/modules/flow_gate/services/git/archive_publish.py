@@ -1,5 +1,5 @@
-"""Archive jobs: preserve, restore, purge (flowgate.default.0669 unit 8b; 0666 0008-D §3.6.1,
-§7, 0009-L §2.28, §4.4).
+"""Archive jobs: preserve, restore, purge (the earlier change unit 8b; the design,
+, the earlier implementation).
 
 None of the three takes the old project mutex any more. The request registers an
 ``archive_preserve`` / ``archive_restore`` / ``archive_purge`` job and runs it once right away

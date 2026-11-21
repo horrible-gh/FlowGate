@@ -1,4 +1,4 @@
-// flowgate.v02.0056 F2-2 — the AI call windows of documents (O3 0009-TR §4-3) and the runs they started. One window
+// the AI call windows of documents and the runs they started. One window
 // per document, kept like the document windows (module state of this tab, opening it again brings it back). The
 // window calls the AI only when [실행] is pressed (DocumentAiWindow.vue → documentAiStart).
 //
@@ -24,7 +24,7 @@ export interface DocumentAiRequest {
   readonly projectId: string
   /** The line's name (instruction · report …) and the document's title, for the window's title line. */
   readonly name: string
-  /** flowgate.v02.0088 F15: the i18n key of `name` (UI only, as SlotWriteRequest.nameKey; windows stay keyed by docId). */
+  /** the i18n key of `name` (UI only, as SlotWriteRequest.nameKey; windows stay keyed by docId). */
   readonly nameKey?: string | null
   readonly title: string
   /** Told when a run started here ends (the opener reads the Canvas again). */

@@ -1,12 +1,12 @@
-"""0279 T0009 — regression guard for the four unbounded/blocking resources (NR0003 P3-9…P3-12).
+"""regression guard for the four unbounded/blocking resources.
 
 Why this test exists
 --------------------
-0006-TR and 0008-TR removed every *direct* event-loop block from the request path.
+and the earlier implementation removed every *direct* event-loop block from the request path.
 What remained were four places where a resource had no ceiling: a queue that blocked
 when full, a query with no LIMIT, a cache with no eviction, and a cache that pinned a
 failure forever. None of them misbehave on a small, fresh instance — all of them
-degrade as the instance accumulates history, which is why R0001 reported a stall that
+degrade as the instance accumulates history, which is why the requirement reported a stall that
 appeared *gradually* ("much faster than before, but still occasionally stalls") rather than
 from day one.
 
@@ -145,7 +145,7 @@ def test_normal_delivery_is_unchanged():
     asyncio.run(scenario())
 
 
-# 0394 T0016 item 4 (NR0003 section 5.3): never await put on a full asyncio.Queue.
+# never await put on a full asyncio.Queue.
 # This is not specific to publisher.py; any module creating a queue can
 # deadlock the same way. Expand the former single-file check to every module
 # in flow_gate that actually uses asyncio.Queue.

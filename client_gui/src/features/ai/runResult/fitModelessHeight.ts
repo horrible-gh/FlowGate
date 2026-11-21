@@ -1,4 +1,4 @@
-// flowgate.v02gui.0001 — fits a run result window's height to its content: the window opens at the caller's height (the
+// fits a run result window's height to its content: the window opens at the caller's height (the
 // screen less a margin), then — once its body is laid out — takes the content's own height plus the shell's titlebar,
 // body padding and borders, capped at the screen less `margin`, and is centred vertically again. A longer content than
 // the cap scrolls in the shell's body as before. The content is followed (a late line, fonts, cards laid out) until the

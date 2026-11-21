@@ -1,4 +1,4 @@
-"""Chat command execution and run change summaries (flowgate.default.0670 T0004).
+"""Chat command execution and run change summaries.
 
 Worker side (Bearer = the live chat run's own AI token, CLI providers):
 
@@ -9,12 +9,12 @@ User side (session):
 
     POST /api/v1/chat-commands/{request_id}/decision   {"decision": "approve"|"reject"|"cancel"}
     GET  /api/v1/chat-activity/{doc_id}                commands + change summaries of one CH
-         ?from_seq=&to_seq=&unplaced=              (0675 T0004) only rows anchored in that
+         ?from_seq=&to_seq=&unplaced= only rows anchored in that
                                                    turn range, plus rows with no anchor seq
     GET  /api/v1/chat-activity/{doc_id}/runs/{run_id}/diff?path=   one file of one run
 
 API providers never come through here -- their ``run_command`` tool calls the same
-``chat_command_service`` in-process. One executor, two transports (NR0003 §4.3).
+``chat_command_service`` in-process. One executor, two transports.
 
 None of these paths name a group, so the group-mutation lease guard does not stand
 between the human approving a command and the very AI run that is holding the lease

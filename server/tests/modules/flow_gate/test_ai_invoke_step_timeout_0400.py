@@ -3,7 +3,7 @@
 a user pick from a small fixed list (30/45/60/90/120/180/240 minutes), forwarded as
 continuation_step_timeout_sec.
 
-0446 T0010 (NR0003 R5) REWRITES that contract, and this file's docstring with it. The pick is
+REWRITES that contract, and this file's docstring with it. The pick is
 no longer continuous-only. A rejection rework was pinned to exactly 3600 seconds by the
 single-run formula min(RUN_TIMEOUT_BASE_SEC × max(1, docs_target), RUN_TIMEOUT_CAP_SEC) — a
 single run's docs_target is 1 and the max(1, …) floor holds it there — so 264 of 264 measured
@@ -27,10 +27,10 @@ Covers:
     (real subprocess, same shape as test_ai_invoke_continuation_note_0346.py).
   * _retry_eligible names its budget gate: a run with less than RETRY_MIN_REMAINING_SEC left
     blocks with retry_block_reason='budget_exhausted' and that reason reaches the persisted
-    stop_reason sentence — the hole T0008 §3-6 / TR0009 §7-4 explicitly left to R5.
+    stop_reason sentence — the hole the earlier implementation / the earlier implementation explicitly left to R5.
   * _maybe_auto_resume_hop / _spawn_auto_resume: the pick rides the run forward across a hop
     re-spawn — the "first hop only" shape is the easiest way to get a session-scoped field
-    wrong (0317 T0013 regression prevention shape, mirrored from the provider-override/note coverage).
+    wrong (regression prevention shape, mirrored from the provider-override/note coverage).
 
 Pause/resume persistence (the paused-chain row round trip) is covered in
 test_ai_invoke_pause_resume_0252.py, which already owns that fixture and pattern.
@@ -78,7 +78,7 @@ class TestResolveTimeoutSec:
         assert svc._resolve_timeout_sec("continuous", 1, False, 60) == svc.HOP_TIMEOUT_SEC
         assert svc._resolve_timeout_sec("continuous", 1, False, 999999) == svc.HOP_TIMEOUT_SEC
 
-    # ── 0446 T0010 §4-1: the one deliberate flip ─────────────────────────────
+    # ── the earlier implementation: the one deliberate flip ─────────────────────────────
     # This slot used to hold ONE test, `test_single_mode_ignores_the_pick`, asserting that "a
     # stray continuous-only field on a single request must not perturb it". R5 makes that
     # false on purpose: a single rejection rework is exactly the run that needs to be given
@@ -110,7 +110,7 @@ class TestResolveTimeoutSec:
         assert svc._resolve_timeout_sec("single", 1, False, pick) == pick
 
     def test_pick_outranks_target_to_end(self):
-        # T0010 §4-2 #2 — ORDER. The explicit-pick check sits ABOVE the mode branch, so it also
+        # #2 — ORDER. The explicit-pick check sits ABOVE the mode branch, so it also
         # sits above the `target_to_end ⇒ RUN_TIMEOUT_CAP_SEC` line.
         #
         # In production a single run can never actually have target_to_end=True: start_run
@@ -123,7 +123,7 @@ class TestResolveTimeoutSec:
 
     def test_target_to_end_still_honours_a_continuous_pick(self):
         # target_to_end only matters for the single-run formula below — a continuous run is
-        # always ONE hop (0317 TR0011), pre-decision or not, so its budget is still the
+        # always ONE hop, pre-decision or not, so its budget is still the
         # per-hop pick, never RUN_TIMEOUT_CAP_SEC.
         assert svc._resolve_timeout_sec("continuous", 0, True, 1800) == 1800
         assert svc._resolve_timeout_sec("continuous", 0, True, None) == svc.HOP_TIMEOUT_SEC
@@ -213,7 +213,7 @@ class TestStartRouteValidation:
 
 
 class TestStartRouteRework:
-    """0446 T0010 §4-2 #3: the same four route behaviours, on the entry point R5 is about.
+    """#3: the same four route behaviours, on the entry point R5 is about.
 
     The route's range check never looked at `mode` or `action_scope` — ai_invoke_routes has a
     bare `if body.continuation_step_timeout_sec is not None and not (MIN <= … <= MAX)` — and
@@ -240,8 +240,8 @@ class TestStartRouteRework:
         assert resp.status_code == 200
         # The route TRANSLATES the UI scope before calling the engine: _TOKEN_SCOPE maps
         # "rework" -> "edit" (the inbox only honours new/edit/review/workflow_decide; what
-        # differs per scope is the mention). That is why T0010 §4-2 #4 asks for the
-        # end-to-end case to be started with action_scope='edit', and why T0008's
+        # differs per scope is the mention). That is why the earlier implementation #4 asks for the
+        # end-to-end case to be started with action_scope='edit', and why the earlier implementation's
         # `_scope_oracle_retry_open` narrows on 'edit'. Asserted, not assumed.
         assert captured["action_scope"] == "edit"
         assert captured["mode"] == "single"
@@ -385,7 +385,7 @@ def _start(env, *, step_timeout_sec=None, target_seq=2):
 
 
 def _start_single(env, *, action_scope="rework", step_timeout_sec=None):
-    """0446 T0010: the SINGLE-run shape — the rejection rework R5 is actually about.
+    """the SINGLE-run shape — the rejection rework R5 is actually about.
 
     Same fixture and same real subprocess as `_start` above; only mode/action_scope differ,
     and no continuation_* chain arguments are supplied because a single run has none. Note
@@ -420,14 +420,14 @@ class TestStartRunEndToEnd:
         run = _wait_finished(res["run_id"])
         assert run["continuation_step_timeout_sec"] is None
 
-    # ── 0446 T0010 §4-1: the second deliberate flip ──────────────────────────
+    # ── the earlier implementation: the second deliberate flip ──────────────────────────
     # This slot used to hold `test_pick_is_ignored_on_a_single_run`, whose two assertions
     # (`res["timeout_sec"] != 14400` and `run["continuation_step_timeout_sec"] is None`) were
     # the end-to-end twin of the unit assertion split above. Both are now false BY DESIGN
     # (§3-2 and §3-3), so the test is split the same way rather than deleted.
 
     def test_single_run_honours_an_in_range_pick_end_to_end(self, run_env):
-        # T0010 §4-2 #4. action_scope='edit' — the scope AiInvokeDialog's sibling entry points
+        # #4. action_scope='edit' — the scope AiInvokeDialog's sibling entry points
         # use, and one whose token cannot register a document (docs_target is pinned to 0), so
         # the pick is doing all the work here.
         res = _start_single(run_env, action_scope="edit", step_timeout_sec=14400)
@@ -441,7 +441,7 @@ class TestStartRunEndToEnd:
         assert run["continuation_step_timeout_sec"] == 14400
 
     def test_single_run_pick_is_written_to_the_ai_invoke_runs_row(self, run_env, monkeypatch):
-        # T0010 §4-2 #4, second half: "saved" is the claim, so assert the SAVE. `timeout_sec`
+        # #4, second half: "saved" is the claim, so assert the SAVE. `timeout_sec`
         # is one of db/ai_invoke_runs.py's bound columns and _persist_run_record binds
         # run["timeout_sec"] into it at finalize. The start response alone would not prove it.
         from modules.flow_gate.db import ai_invoke_runs as db_runs
@@ -457,9 +457,9 @@ class TestStartRunEndToEnd:
         assert rows[0]["timeout_sec"] == 10800
 
     def test_single_rework_without_a_pick_is_still_exactly_3600(self, run_env, monkeypatch):
-        # T0010 §4-2 #5 — the positive control. Proving the picker works means nothing unless
+        # #5 — the positive control. Proving the picker works means nothing unless
         # the un-picked path is pinned too: min(3600 × max(1, docs_target=1), 14400) = 3600,
-        # which is the number NR0003 measured on 264 of 264 rework runs.
+        # which is the number the review measured on 264 of 264 rework runs.
         from modules.flow_gate.db import ai_invoke_runs as db_runs
 
         rows: list[dict] = []
@@ -481,7 +481,7 @@ class TestStartRunEndToEnd:
         assert _wait_finished(res["run_id"])["continuation_step_timeout_sec"] == pick
 
     def test_single_run_writes_no_paused_chain_row(self, run_env, monkeypatch):
-        # T0010 §4-2 #7 / §3-3: carrying the pick on a single run must NOT open any
+        # #7 /: carrying the pick on a single run must NOT open any
         # continuous-chain path. _apply_stop_row returns on `mode != "continuous"` at its first
         # line, so nothing reaches ai_invoke_paused_chains — re-pinned here because §3-3 is
         # exactly the kind of change that could have leaked one.
@@ -565,7 +565,7 @@ def test_migration_079_adds_step_timeout_column(test_db):
     assert cols["continuation_step_timeout_sec"]["notnull"] == 0
 
 
-# ── 0446 T0010 §3-4: the budget gate finally has a name ───────────────────────
+# ── the earlier implementation: the budget gate finally has a name ───────────────────────
 
 def _budget_run(*, timeout_sec: int, elapsed_sec: float) -> dict:
     """A run that has already spent `elapsed_sec` of a `timeout_sec` budget.
@@ -589,7 +589,7 @@ def _budget_run(*, timeout_sec: int, elapsed_sec: float) -> dict:
 
 @pytest.fixture
 def no_pending_question(monkeypatch):
-    # The question_pending probe sits ABOVE the budget line on purpose (T0008's "a Q stop is
+    # The question_pending probe sits ABOVE the budget line on purpose (the earlier implementation's "a Q stop is
     # not a failure" contract). Silence it so these cases reach the gate under test; the
     # ordering itself is owned by test_ai_invoke_no_output_retry_0359.py.
     monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref, asker_run_id=None: False)
@@ -598,7 +598,7 @@ def no_pending_question(monkeypatch):
 
 class TestBudgetExhaustedReason:
     def test_a_spent_budget_blocks_the_retry_and_says_so(self, no_pending_question):
-        # T0010 §4-2 #6. 3600-second budget, 3400 spent ⇒ 200 left, under
+        # #6. 3600-second budget, 3400 spent ⇒ 200 left, under
         # RETRY_MIN_REMAINING_SEC (300). Before this change the gate returned False silently.
         run = _budget_run(timeout_sec=3600, elapsed_sec=3400)
         assert svc._retry_eligible(run) is False
@@ -606,7 +606,7 @@ class TestBudgetExhaustedReason:
 
     def test_the_reason_reaches_the_persisted_stop_reason_sentence(self, no_pending_question):
         # `retry_block_reason` has no column of its own; `stop_reason` does, so the reason
-        # rides the existing no_output_exhausted tail (T0008 §3-6 wrote that comment, this
+        # rides the existing no_output_exhausted tail (the earlier implementation wrote that comment, this
         # makes it true). One line, exactly as it will appear on the record and the card.
         run = _budget_run(timeout_sec=3600, elapsed_sec=3400)
         svc._retry_eligible(run)
@@ -622,7 +622,7 @@ class TestBudgetExhaustedReason:
         assert "budget_exhausted" not in svc.ENGINE_NOTIFY_STOP_CODES
 
     def test_the_59_6_minute_run_now_gets_its_retry(self, no_pending_question):
-        # NR0003 §2's third casualty: a run that used 3576 seconds (59.6 min) and stopped
+        # 's third casualty: a run that used 3576 seconds (59.6 min) and stopped
         # because that was the whole hour it had. On the 14400-second budget this T makes
         # choosable, the same elapsed time leaves 10824 seconds and the gate does NOT block.
         run = _budget_run(timeout_sec=14400, elapsed_sec=3576)

@@ -1,6 +1,6 @@
-// flowgate.v02.0031 — Conversation API adapter. The conversation calls are the contracts the
-// v0.1 ConversationView / MainPanel already use (R0001 §9: no Designer-only conversation API);
-// flowgate.v02.0032 adds the Conversation production contract (D0006 §5.1): standalone chat
+// Conversation API adapter. The conversation calls are the contracts the
+// v0.1 ConversationView / MainPanel already use (no Designer-only conversation API);
+// adds the Conversation production contract: standalone chat
 // creation, command / run change activity and command decisions. This file only adds the
 // request shapes and the snake_case-to-frontend-model boundary.
 //
@@ -90,7 +90,7 @@ function bodyCarries(value: unknown, text: string, depth = 0): boolean {
 }
 
 /**
- * flowgate.v02.0088 F12: the server's own diagnostic of a failed request — '' without an answer (network /
+ * the server's own diagnostic of a failed request — '' without an answer (network /
  * timeout), with an empty body, or when the transport only repeats its own English line. It is told apart
  * by where it came from: a text the response body carries is kept even when the Error repeats it.
  */
@@ -103,7 +103,7 @@ function serverDetailOf(error: unknown, answered: boolean, data: Record<string, 
 }
 
 /**
- * flowgate.v02.0088 F12: a check this app makes itself (an answer without its required field, an id that
+ * a check this app makes itself (an answer without its required field, an id that
  * is not a document id) is no server diagnostic, so it carries no words — the session shows its localized
  * notice only. Status and code stay null as before.
  */
@@ -111,7 +111,7 @@ function clientCheckFailure(): ConversationRequestError {
   return new ConversationRequestError('', null, null)
 }
 
-// flowgate.v02.0088 F12: the message is only the server's own diagnostic ('' when it sent none).
+// the message is only the server's own diagnostic ('' when it sent none).
 // The session reports a failure as a gui.conversation.notice.* code and passes this message on as
 // the notice detail, so a localized notice is never followed by an English general line meaning
 // the same thing.
@@ -119,7 +119,7 @@ function toRequestError(error: unknown): ConversationRequestError {
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
   const data = (response?.data ?? null) as Record<string, unknown> | null
   // Flat `code` (ai-invoke), the `{ ok: false, error: { code } }` envelope (Conversation
-  // contract, D0006 §5.1) or a `detail` object.
+  // contract, the design) or a `detail` object.
   const code = codeOf(data) ?? codeOf(data?.error) ?? codeOf(data?.detail)
   const runId = typeof data?.run_id === 'string' ? data.run_id : null
   return new ConversationRequestError(serverDetailOf(error, response != null, data, code), response?.status ?? null, code, runId)
@@ -190,15 +190,15 @@ export async function renameChat(chatId: string, title: string): Promise<ChatSum
 }
 
 /**
- * A standalone CH (D0006 §3.10): POST /conversations. The server numbers it in the Flow's
+ * A standalone CH: POST /conversations. The server numbers it in the Flow's
  * group and owns every other decision — no workflow head, sequence slot, `prev_doc_id` or
  * module is computed here, so it works in any workflow state and during an AI run.
  */
 export interface CreateChatOptions {
-  /** flowgate.v02.0047: the chat owes its one AI title on the title it is created with. */
+  /** the chat owes its one AI title on the title it is created with. */
   autoTitle?: boolean
   /**
-   * flowgate.v02.0135 T#3: the create intent (`client_request_id`). Every try of one draft sends the same id, so a
+   * the create intent (`client_request_id`). Every try of one draft sends the same id, so a
    * try whose answer was lost — the server still made the chat — gets that chat back instead of a second one.
    */
   clientRequestId?: string
@@ -220,7 +220,7 @@ export async function createChat(scope: ConversationScope, title: string, option
 }
 
 /**
- * flowgate.v02.0047: the one AI title of a chat created with `autoTitle`, on the project's AI
+ * the one AI title of a chat created with `autoTitle`, on the project's AI
  * settings and the provider picked in the composer. The server keeps the debt itself: it is
  * paid once, and a title the user set ends it (409 conversation_auto_title_not_owed /
  * conversation_title_changed).
@@ -233,7 +233,7 @@ export async function autoTitleChat(chatId: string, providerId: string): Promise
   return toChatSummary(data)
 }
 
-// ── Command requests / run changes (D0006 §5.1, §5.5) ─────────────────────────────────
+// ── Command requests / run changes ─────────────────────────────────
 interface RawAnchor {
   anchor_seq?: number | null
   anchor_position?: string | null
@@ -344,7 +344,7 @@ export function toRunChange(raw: RawRunChange): WorkChangeActivity {
   }
 }
 
-// ── flowgate.chat.0017 CH0002: AI attachment upload requests in the chat ──────────────
+// ── the earlier change the discussion: AI attachment upload requests in the chat ──────────────
 type RawRecord = Record<string, unknown>
 const rec = (value: unknown): RawRecord => (value && typeof value === 'object' && !Array.isArray(value) ? (value as RawRecord) : {})
 const txt = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
@@ -417,7 +417,7 @@ export function toAttachmentGroups(value: unknown): ConversationAttachmentGroup[
   })
 }
 
-/** flowgate.chat.0017 CH0002: one run's attachment upload requests -> one timeline block. */
+/** one run's attachment upload requests -> one timeline block. */
 export function toAttachmentActivity(group: ConversationAttachmentGroup): AttachmentRequestActivity {
   return {
     kind: 'attachments',
@@ -445,7 +445,7 @@ export async function fetchActivities(chatId: string): Promise<ConversationActiv
   return [...commands, ...changes, ...attachments, ...errors]
 }
 
-/** flowgate.v02test.0024 B: the user's recorded chat errors of the activity read (an older server sends none). */
+/** B: the user's recorded chat errors of the activity read (an older server sends none). */
 export function toChatErrorRecords(value: unknown): ChatErrorRecord[] {
   if (!Array.isArray(value)) return []
   const out: ChatErrorRecord[] = []
@@ -459,14 +459,14 @@ export function toChatErrorRecords(value: unknown): ChatErrorRecord[] {
   return out
 }
 
-/** flowgate.v02test.0024 B: stores one refused request of this chat in its history (idempotent on the record id). */
+/** B: stores one refused request of this chat in its history (idempotent on the record id). */
 export async function recordChatError(chatId: string, record: ChatErrorRecord): Promise<void> {
   await call(() => postRequest<unknown>(`${API}/chat-activity/${encodeURIComponent(chatId)}/errors`, {
     id: record.id, code: record.code, message: record.message, occurred_at: record.occurredAt,
   }))
 }
 
-/** The decision body carries the decision only — no group / doc id (D0006 §3.2). */
+/** The decision body carries the decision only — no group / doc id. */
 export async function decideCommand(_chatId: string, commandId: string, decision: CommandDecision): Promise<CommandRequestActivity> {
   const data = await call(
     () => postRequest<{ request?: RawCommand | null }>(`${API}/chat-commands/${encodeURIComponent(commandId)}/decision`, { decision }),
@@ -539,7 +539,7 @@ interface RawTurnsPage {
   prev_before_seq?: number | null
 }
 
-/** flowgate.v02test.0029: an image entry without an id or a content address cannot be shown, so it is left out. */
+/** an image entry without an id or a content address cannot be shown, so it is left out. */
 export function toTurnImages(raw: readonly RawTurnImage[] | null | undefined): TurnImage[] {
   if (!Array.isArray(raw)) return []
   return raw.flatMap((image) => image && typeof image.image_id === 'string' && typeof image.url === 'string'
@@ -609,7 +609,7 @@ export interface PostTurnInput {
   idempotencyKey: string
   basedOnSeq: number
   traceId?: string
-  /** flowgate.v02test.0029: ids of uploaded message images (at most 5) the turn carries; never image bytes. */
+  /** ids of uploaded message images (at most 5) the turn carries; never image bytes. */
   images?: string[]
 }
 
@@ -624,7 +624,7 @@ export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ 
   return { turn: data?.turn ? toTurn(data.turn) : null, headSeq: Number(data?.head_seq) || 0 }
 }
 
-// ── Message images (flowgate.v02test.0029) ───────────────────────────────────────────
+// ── Message images ───────────────────────────────────────────
 //   upload   POST   /api/v1/flows/{flow_id}/message-images                 multipart `file` → { image } (state temp)
 //   content  GET    /api/v1/flows/{flow_id}/message-images/{id}/content     the bytes (authenticated; never a bare <img src>)
 //   remove   DELETE /api/v1/flows/{flow_id}/message-images/{id}            the uploader's own temp image
@@ -710,7 +710,7 @@ export async function startChatRun(chatId: string, providerId: string | null, cl
       mode: 'single',
       provider_id: providerId || undefined,
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
-      // flowgate.v02test.0030: how the AI was chosen (user_pick / stored / last_answered / default_fallback).
+      // how the AI was chosen (user_pick / stored / last_answered / default_fallback).
       ...(providerOrigin ? { client_provider_origin: providerOrigin } : {}),
     }),
   )
@@ -726,7 +726,7 @@ interface RawFallbackEntry {
 
 const textOrNull = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null)
 
-/** flowgate.v02.0135 CH0006: the last failed connection of a run that started none. */
+/** the last failed connection of a run that started none. */
 function runFailure(history: unknown): AiRunFailure | null {
   if (!Array.isArray(history) || !history.length) return null
   // Older runs may have image diagnostics after the actual startup failure.
@@ -761,10 +761,10 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
-  // flowgate.v02test.0024 D: a live detail names its AI in `provider` (null until it spawned one — then the pinned
+  // D: a live detail names its AI in `provider` (null until it spawned one — then the pinned
   // `requested_provider_id`), a finished one in `provider_id` / `provider_name`.
   const live = data?.provider && typeof data.provider === 'object' ? data.provider : null
-  // flowgate.v02gui.0026: an execute-mode run keeps `source_access=read` and says `command_access=execute`.
+  // an execute-mode run keeps `source_access=read` and says `command_access=execute`.
   const sourceAccess = data?.source_access === 'read' && data?.command_access === 'execute' ? 'execute'
     : data?.source_access === 'read' || data?.source_access === 'read_write' ? data.source_access : null
   return {
@@ -804,7 +804,7 @@ export async function cancelRun(runId: string): Promise<void> {
 }
 
 /**
- * flowgate.v02gui.0011 B: what a stop of a starting AI call found. `cancelled` = nothing was started and nothing will
+ * B: what a stop of a starting AI call found. `cancelled` = nothing was started and nothing will
  * be; `cancel_pending` = the run is being admitted and is stopped as soon as it exists; `cancelling` / `finished` = the
  * run (`runId`) existed and was stopped (or had already ended).
  */
@@ -857,7 +857,7 @@ interface RawChatSettings {
 }
 
 const SEND_ACTIONS: readonly SendAction[] = ['copy_mention', 'invoke_ai', 'none']
-// Button order is fixed here (flowgate.v02test.0026 §7): read -> execute -> edit once -> edit.
+// Button order is fixed here: read -> execute -> edit once -> edit.
 const SOURCE_MODES: readonly SourceAccessMode[] = ['read_only', 'execute', 'edit_once', 'edit']
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
@@ -909,7 +909,7 @@ export async function saveChatSettings(patch: ChatSettingsPatch, scope?: Convers
   return toChatSettings(await call(() => patchRequest<RawChatSettings>(chatSettingsUrl(scope), patch)))
 }
 
-// ── Per-chat settings (flowgate.v02test.0025) ───────────────────────────────────────────
+// ── Per-chat settings ───────────────────────────────────────────
 interface RawChatDocSettings {
   settings?: { timeout_minutes?: number | null; provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
 }

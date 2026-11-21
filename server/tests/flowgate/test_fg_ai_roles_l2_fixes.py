@@ -1,4 +1,4 @@
-"""flowgate.v02.0113 T#3 (TR rework) — regressions of the review findings on the assigned path.
+"""(TR rework) — regressions of the review findings on the assigned path.
 
 The harness of ``test_fg_ai_roles_l2_assignment`` (real SQLite DB and routes, the feature on, recorders for every AI
 start; nothing calls a real AI). One block per finding:
@@ -169,7 +169,7 @@ def test_t45_reopen_waits_out_the_old_attempt_s_side_effect_and_its_late_contact
     replacement the old attempt's late contact is refused and changes nothing of the new attempt."""
     from flowgate.card_settings import legacy_adapter, manual_stage
 
-    # 0126 T#5: an unavailable review wait is resolved as the next review seq of its attempt, not a replacement; the
+    # an unavailable review wait is resolved as the next review seq of its attempt, not a replacement; the
     # replacement this test fences is a failed stage's (here the person's instruction stage, its token not issued).
     key = flow(env)
     roles(key, "not_used", "not_used", "not_used")
@@ -231,7 +231,7 @@ def test_t45_the_fence_is_taken_only_for_a_due_replacement_and_an_unfenced_one_i
         assert fenced is False and not fencing.exclusive_held(FA)
     stored(key, "instruction_review_count", 1)
     stored(key, "instruction_review_ai", "aip_gone")
-    # 0126 T#5: a waiting review is no replacement (the command asks the next seq of the same attempt); a failed
+    # a waiting review is no replacement (the command asks the next seq of the same attempt); a failed
     # write stage is (the person's instruction stage, marked failed as a refused token does)
     [attempt] = [a["attempt_id"] for a in _attempts(env, key)]
     _sql(env["db"], "UPDATE graph_stage_assignments SET stage_state = 'failed', fail_cause = 'token_issue_failed' "
@@ -391,7 +391,7 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
     _write_written(doc_id, "## 본문\n\n내용\n")
     raced = []
     if path == "result":
-        # flowgate.v02.0119 T#2 (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
+        # (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
         # record and the document's status display) is the span the edit lands in. The node takes the document as its
         # result in review (``completion.target_of``) for this check alone.
         run = run_store.active_run(FA)
@@ -406,7 +406,7 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
             _set_revision(doc_id, 1)                                   # an edit inside the completion's span
             return out
     else:
-        # 0119 T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
+        # T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
         # transition is never called, and wrapping the whole write would race after its commit.
         from flowgate.card_completion import legacy_adapter as completion_records
 
@@ -672,7 +672,7 @@ LIMIT = 3          # ``flowgate.card_intervention.reasons.SYSTEM_ERROR_RETRY_LIM
 
 
 def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_ai(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): the refused start is a system error. Each run read tries the review again with
+    """(T-2 rework): the refused start is a system error. Each run read tries the review again with
     the same AI (a new review assignment, the next seq) until ``SYSTEM_ERROR_RETRY_LIMIT`` tries, then no more; its
     B-1 is recorded once (the tries are the assignments), no other AI is asked and nothing is approved."""
     from flowgate.card_intervention import reasons
@@ -703,7 +703,7 @@ def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_a
 
 def test_e13_a_result_review_whose_start_failed_for_a_moment_starts_on_the_next_read_and_completes(
         env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): once the admission takes it again, the next run read starts the review (the
+    """(T-2 rework): once the admission takes it again, the next run read starts the review (the
     next assignment, the same AI and submission), and its pass completes the card automatically."""
     from flowgate.card_settings import legacy_adapter
 
@@ -740,7 +740,7 @@ def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env,
     assert node_run(env, key)["dispatch_error_code"] == "review_not_started:start_refused:provider_inactive"
     assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "review_not_started")]
     assert _wire(env, key)["wait_reason"]["detail"] == "start_refused:provider_inactive"
-    # flowgate.v02.0119 T#3 (T-2 rework): a system error of the instruction stage — shown so (the node run's
+    # (T-2 rework): a system error of the instruction stage — shown so (the node run's
     # intervention, the run's error family) and tried again by the reads, with the same AI, up to the limit
     for _ in range(LIMIT + 1):
         wire = _wire(env, key)
@@ -755,7 +755,7 @@ def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env,
 
 
 def test_e13_an_instruction_review_whose_start_failed_for_a_moment_starts_on_the_next_read(env, decided, monkeypatch):
-    """flowgate.v02.0119 T#3 (T-2 rework): the retry that starts the instruction review clears the node's start error
+    """(T-2 rework): the retry that starts the instruction review clears the node's start error
     (no error family any more) and its pass approves the instruction and starts the result stage."""
     from flowgate.card_settings import legacy_adapter
 

@@ -244,7 +244,7 @@ class TestModuleRoutes:
         assert r_doc is not None
         # Current canonical format: {module}/{group_code}/{seq}/{doc_code}.
         # group_id is dash-style (t358-server-0001) so group_code is the full id,
-        # and the doc_code is seq-type style ({seq:04d}-{type}) -> 0001-R.
+        # and the doc_code is seq-type style ({seq:04d}-{type}) -> the earlier implementation.
         assert r_doc["doc_identifier"] == "server/t358-server-0001/1/0001-R"
 
     def test_group_not_found(self, t358_client):

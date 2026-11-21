@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0068 T#1 — the document edit state registry (0068 L §2.11): entries of open windows, the per
+ * the document edit state registry: entries of open windows, the per
  * document upload (running), guard and the previous Designer's save (inflight), epochs and tokens, the release of
  * one's own token only, the reflect request with its wait (answers, a closed window, the time limit, leaving the
  * Designer) and leaving the Designer.

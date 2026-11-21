@@ -1,9 +1,9 @@
-"""flowgate.default.0682 T#1 / 0684 T#2 — Test Basis exact source identity, run copy, stale.
+"""Test Basis exact source identity, run copy, stale.
 
 Regression set over real git repositories and the production fingerprint, copy, manifest
 and verdict code (see basis_support).
 
-0684 T#2 (D#1 §3-3, §3-5, §3-6, §3-7): there is no Source Bundle and no Basis on the TS.
+there is no Source Bundle and no Basis on the TS.
 A run's preparing phase copies the Group worktree into its disposable root and
 fingerprints the bytes it copied; that is the run's Basis. Uncommitted and untracked work
 is part of it, other Groups never reach it, a change during the copy refuses the run, a
@@ -93,7 +93,7 @@ def test_run_copy_holds_uncommitted_and_untracked_work_and_its_basis_is_the_copi
 
 
 def test_run_copy_keeps_each_file_s_permission_bits(env, monkeypatch):
-    """0684 T#2 rework: the copy is given every source file's own mode bits."""
+    """the copy is given every source file's own mode bits."""
     (env.roots["g1"] / "tests" / "helper.sh").write_text("#!/bin/sh\necho helper-ran\n")
     kept = {}
     real = fingerprint._keep_mode
@@ -112,7 +112,7 @@ def test_run_copy_keeps_each_file_s_permission_bits(env, monkeypatch):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX execute bit")
 def test_an_executable_helper_still_runs_from_the_run_copy(env):
-    """0684 T#2 rework: a 0755 helper a Case invokes stays executable in the copy."""
+    """a 0755 helper a Case invokes stays executable in the copy."""
     root = env.roots["g1"]
     helper = root / "tests" / "helper.sh"
     helper.write_text("#!/bin/sh\necho helper-ran\n")
@@ -127,7 +127,7 @@ def test_an_executable_helper_still_runs_from_the_run_copy(env):
     assert out.returncode == 0 and out.stdout.strip() == "helper-ran"
 
 
-# ── execute bits are part of the source identity (0684 T#2 rework 2) ─────────
+# ── execute bits are part of the source identity ─────────
 
 def test_execute_bits_enter_the_unchanged_check_the_fingerprint_and_the_memo(monkeypatch):
     """A chmod changes neither bytes, size nor mtime; on POSIX it is still a change."""
@@ -165,7 +165,7 @@ def _execute_bit_switch(monkeypatch, helper):
 
 
 def test_a_helper_s_execute_bit_alone_changes_the_basis_and_the_gate(env, monkeypatch):
-    """0684 T#2 rework 2: a PASS recorded with an executable helper; chmod 0644 (same
+    """2: a PASS recorded with an executable helper; chmod 0644 (same
     bytes) makes it stale for the TSR gate and unchecked on display; chmod 0755 again
     makes the same PASS valid."""
     from modules.flow_gate.services import test_spec_service as spec
@@ -206,7 +206,7 @@ def test_a_helper_s_execute_bit_alone_changes_the_basis_and_the_gate(env, monkey
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX execute bit")
 def test_a_chmod_during_the_copy_or_the_measure_is_a_source_change(env, monkeypatch):
-    """0684 T#2 rework 2: a chmod of the helper while the run copies it refuses the run;
+    """2: a chmod of the helper while the run copies it refuses the run;
     a chmod after the Live Probe hashed it is caught by the closing scan."""
     root = env.roots["g1"]
     helper = root / "tests" / "helper.sh"
@@ -339,7 +339,7 @@ def test_unmeasurable_source_is_unverifiable_not_stale(env):
     assert basis.verdict(env.doc(doc["doc_id"]), None)["state"] == basis.VALID
 
 
-# ── display paths: the memo never hashes (D#1 §3-6) ───────────────────────────
+# ── display paths: the memo never hashes ───────────────────────────
 
 def test_display_memo_never_hashes_and_unchecked_is_not_stale(env, monkeypatch):
     doc = env.ts()
@@ -643,7 +643,7 @@ def test_approval_refuses_while_a_run_is_in_progress(env, monkeypatch):
     assert env.admitted == [] and env.store.events == []
 
 
-# ── v1/v2 Basis (D#1 §7) ──────────────────────────────────────────────────────
+# ── v1/v2 Basis ──────────────────────────────────────────────────────
 
 def _v1_basis(doc_id):
     return {"basis_id": "1" * 64, "basis_version": 1, "ts_document_id": doc_id,
@@ -681,7 +681,7 @@ def test_old_basis_is_stale_without_measuring_and_an_approved_tsr_stands(env, mo
 
 def test_a_newer_failure_on_another_source_blocks_the_result_when_the_source_returns(
         env, monkeypatch):
-    """D#1 §3-5, 0684 T#2 rework: PASS on A, execution failure on B, source back to A.
+    """PASS on A, execution failure on B, source back to A.
 
     The PASS is the valid result for A again, but the newer failed execution (whatever
     source it ran on, or none for a prepare refusal) still blocks the gate."""
@@ -721,7 +721,7 @@ def test_a_newer_failure_on_another_source_blocks_the_result_when_the_source_ret
     assert gate["passed"] is True and gate["run_id"] == "r-pass"
 
 
-# ── test asset edit: bytes only, results stale by identity (D#1 §3-7) ─────────
+# ── test asset edit: bytes only, results stale by identity ─────────
 
 def _asset_edit_env(env, monkeypatch):
     monkeypatch.setattr(assets, "_load", lambda ts_id: (env.doc(ts_id), {"cases": env.cases}))

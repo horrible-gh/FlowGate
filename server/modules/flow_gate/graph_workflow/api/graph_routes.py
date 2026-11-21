@@ -1,4 +1,4 @@
-"""Graph definition routes (P0008 §5 S3, §6 S4) and the card title save (0064 P0006 §4.2.2).
+"""Graph definition routes and the card title save.
 Thin: no judgement lives here."""
 from __future__ import annotations
 

@@ -65,7 +65,7 @@ def test_three_classification_branches(monkeypatch):
         ("trun_1", "test_run_product_defect_rework"),
         ("trun_1", "test_run_test_defect_rework"),
     ]
-    # NR0003 §10-12: each branch's rework instruction carries its own constraint text.
+    # each branch's rework instruction carries its own constraint text.
     assert "product source" in reopened[0][2] and "not weaken" in reopened[0][2]
     assert "prohibited" in reopened[1][2] and "TS definition" in reopened[1][2]
 

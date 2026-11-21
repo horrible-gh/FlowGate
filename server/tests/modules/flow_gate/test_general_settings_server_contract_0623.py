@@ -1,4 +1,4 @@
-"""flowgate.default.0623 T0004: server contracts for the v0.2 general settings screens.
+"""server contracts for the v0.2 general settings screens.
 
 1. GET /rbac/system/my-permissions — current user's system-scope permissions.
    Admins hold everything; non-admins get only roles granted on the system scope,

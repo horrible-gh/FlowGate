@@ -1,11 +1,11 @@
-"""The Git step of a Graph Time Machine operation (0061 T#13; L0007 §4.3: Git first, the DB after it).
+"""The Git step of a Graph Time Machine operation (Git first, the DB after it).
 
 The group branch HEAD never moves back. Each integration commit of the targets (the attempt's ``--no-ff`` merge into
-the group branch, T#9) is reverted on its own in the group worktree, newest first along the branch's first-parent
+the group branch, the earlier implementation) is reverted on its own in the group worktree, newest first along the branch's first-parent
 line, against its first parent (``-m 1``): exactly what that merge brought, nothing of another branch's merge. An
 attempt with no merge of its own (no source change, a document-only attempt) has no Git step; the plan leaves it out.
 
-The whole step runs in the existing cancel session (``open_cancel_session``: the group's G, the gates of L0007 §4.1 —
+The whole step runs in the existing cancel session (``open_cancel_session``: the group's G, the gates of the earlier implementation —
 Git active, a registered and clean worktree, no merge in flight, the commits present). A slot released by gate end
 cleanup is first provisioned at its recorded real end HEAD (its own G/M, outside the Flow guard), then all session
 gates are checked again under G;

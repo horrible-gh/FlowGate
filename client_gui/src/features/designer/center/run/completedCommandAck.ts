@@ -1,5 +1,5 @@
 // flowgate.v02.0156 T#4 (D7): a 다음 단계 / 전체 실행 command on a completed run that has no new definition to adopt is only
-// acknowledged by the server (0085 T#4: no reconcile, no dispatch). The run stays idle `completed`; the person is told why
+// acknowledged by the server (no reconcile, no dispatch). The run stays idle `completed`; the person is told why
 // nothing happened, once per command (the Shell tells it in the command's own answer, never from a run observation, so a
 // closed notice does not come back by itself).
 

@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Toggle from '@/components/ui/Toggle.vue'
 
-// T0004 §5.5/§9: value binding, change/update, disabled, keyboard interaction.
+// value binding, change/update, disabled, keyboard interaction.
 describe('components/ui/Toggle (T0004)', () => {
   it('renders as an accessible switch reflecting its value', () => {
     const wrapper = mount(Toggle, { props: { modelValue: true, ariaLabel: 'Enabled' } })

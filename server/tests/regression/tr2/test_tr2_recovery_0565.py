@@ -1,4 +1,4 @@
-"""TR2 lifecycle, proposal recovery, DB CAS and readiness (0565 T0030), connected.
+"""TR2 lifecycle, proposal recovery, DB CAS and readiness, connected.
 
 Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration and a
 connection per statement, a real Git worktree in scratch, the real HTTP routes. The
@@ -105,7 +105,7 @@ def test_human_next_empty_creates_the_canonical_proposal(env):
 
 
 def test_legacy_markdown_tr2_is_reported_then_converted_explicitly(env):
-    """A TR2 registered as a Markdown skeleton (pre-T0030 next-empty) is not guessed at."""
+    """A TR2 registered as a Markdown skeleton (pre-the earlier implementation next-empty) is not guessed at."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db.connection import now_iso
     from modules.flow_gate.storage import paths as storage_paths
@@ -371,7 +371,7 @@ def test_readiness_after_a_reopen_requires_a_new_revision(env):
     t2 = auto_approved_t2(group)
     doc_id = submit_tr2(group, t2)
     assert approve(client, doc_id, 1, request_key="reopen:0110").status_code == 200
-    # 0660 T0004 §3: a real reopen (status AND commit cancel). Flipping only the status
+    # a real reopen (status AND commit cancel). Flipping only the status
     # is the RC3 state, which test_tr2_lifecycle_0660 covers as revert_pending.
     user = {"user_id": USER, "is_admin": 1, "username": "tr2reviewer"}
     workflow_rework_service.reopen_to_target(
@@ -385,7 +385,7 @@ def test_readiness_after_a_reopen_requires_a_new_revision(env):
 
 def test_time_machine_reopen_reaches_open_tr2_screens(env, monkeypatch):
     """A rewind changes a 반영안's approval and source history outside the TR2 routes; open
-    screens must hear about it (T0030 §11-6) and must not call it ready afterwards."""
+    screens must hear about it and must not call it ready afterwards."""
     import modules.flow_gate.api.v1.events.publisher as publisher
     from modules.flow_gate.api.v1.events.event_types import EventType
     from modules.flow_gate.db import tr_commit_ledger as db_ledger

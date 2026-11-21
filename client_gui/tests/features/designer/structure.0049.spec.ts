@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
 
-// flowgate.v02.0049 — source-level guards for the bottom MiniMap (0001-R §3 / 0002-T §2): its own
+// source-level guards for the bottom MiniMap: its own
 // part, drawing the Center session's Graph and Viewport — no Graph state, Vue Flow, API or store.
 const SRC = resolve(__dirname, '../../../src')
 const MINIMAP = join(SRC, 'features/designer/minimap')
@@ -26,7 +26,7 @@ describe('features/designer/minimap structure (flowgate.v02.0049)', () => {
       /^\.\.\/center\/canvas\/flowNodeKinds$/,
       /^\.\.\/center\/canvas\/vueFlowMapping$/,
       /^\.\.\/center\/graph\/flowGraph$/,
-      // flowgate.v02.0068 T#2 (0004-D §0.1 consistent minimap attachment sides, 0005-L §2.9): the lines join the sides the Canvas
+      // (D consistent minimap attachment sides, the earlier implementation): the lines join the sides the Canvas
       // joins — the Canvas's own edgeAnchors (pure; edgeGeometry itself is unchanged). Nothing else is opened.
       /^\.\.\/center\/canvas\/edgeGeometry$/,
     ]

@@ -1,10 +1,10 @@
-"""Remote source CRUD guidance in copied worker mentions (group 0136).
+"""Remote source CRUD guidance in copied worker mentions (the earlier change).
 
-0349 TR-2 (D0004 D-4/D-8 phase 2) moved the request formats and JSON examples out of the
+TR-2 (D-4/D-8 phase 2) moved the request formats and JSON examples out of the
 mention and behind GET /help/tools. What the mention still owes the worker is unchanged in
 kind — which tools this step may use, and the token to use them with — so these tests keep
 asserting that, against the shrunk text. The example-shape guarantee this file has carried
-since B0001 moved with the examples, and is asserted at its new home below.
+since the regression moved with the examples, and is asserted at its new home below.
 """
 from __future__ import annotations
 
@@ -69,9 +69,9 @@ def test_investigation_report_mention_keeps_remote_source_read_only():
 def test_investigation_report_mention_read_only_note_follows_locale():
     """The read-only step advertises the read tools, and says so in the worker's locale.
 
-    0349 moved the "do not call write/remove" prose behind GET /help/tools (NOTES.read_only),
+    moved the "do not call write/remove" prose behind GET /help/tools (NOTES.read_only),
     so what the mention itself must still get right per locale is the tool line and the help
-    pointer around it — assert those instead of the retired sentence (B0001 rev2 intent).
+    pointer around it — assert those instead of the retired sentence (intent).
     """
     section_en = _tool_section(
         _mention(parent_type="N", parent_doc_number="N0002", head_type="NR", locale="en")
@@ -109,7 +109,7 @@ def test_task_report_mention_crud_prose_follows_locale():
 
 
 def test_mention_no_longer_carries_request_formats():
-    """The shrink itself (R0001): one block per tool is what made the mention unreadable.
+    """The shrink itself: one block per tool is what made the mention unreadable.
 
     Endpoint paths, request bodies and field descriptions now come from /help/tools, so a
     new tool must not be able to grow this section again.
@@ -124,7 +124,7 @@ def test_mention_no_longer_carries_request_formats():
 
 def test_help_tool_examples_omit_path_field():
     """grep/glob path is optional-when-omitted (project root default); a copied example
-    with `path: ""` fails the API's own safety check (B0001 / NR0003), so the examples
+    with `path: ""` fails the API's own safety check, so the examples
     must omit the key rather than send an empty string. The examples now ship in the tool
     registry (0349 TR-1) instead of the mention, so the guarantee is asserted there."""
     grep_body = tool_registry.EXAMPLE_BODIES["grep"]

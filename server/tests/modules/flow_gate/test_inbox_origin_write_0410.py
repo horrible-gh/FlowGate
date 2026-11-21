@@ -1,7 +1,7 @@
-"""flowgate.default.0410 TR0009 rework — the write-side half of the origin snapshot.
+"""the write-side half of the origin snapshot.
 
 081_document_origin_snapshot.sql added `documents.origin_provider_name` /
-`origin_ai_run_id`, and T0008's read paths (list/tree/detail) were wired to pass
+`origin_ai_run_id`, and the earlier implementation's read paths (list/tree/detail) were wired to pass
 them through. But no caller of `db_docs.create()` ever populated them, so every
 document — past AND future — kept both columns NULL forever; the "AI · {provider}"
 badge could never render for any real document (only ever "미상"). That is the
@@ -242,7 +242,7 @@ def _post_new(raw_token, tmp_path, *, seq_label: str, content: str):
 
 class TestInboxOriginSnapshotWrite:
     def test_live_run_snapshots_provider_and_run_id(self, seed_data, tmp_path):
-        """TS0010 TC-1: a live run's actual provider is frozen onto the new document."""
+        """TC-1: a live run's actual provider is frozen onto the new document."""
         from modules.flow_gate.db import documents as db_docs
         from modules.flow_gate.services import ai_invoke_service
 
@@ -296,7 +296,7 @@ class TestInboxOriginSnapshotWrite:
         assert doc["origin_provider_name"] == "Codex GPT-5.6"
 
     def test_no_ai_run_id_leaves_origin_fields_null(self, seed_data, tmp_path):
-        """TS0010 TC-7: a token without ai_run_id must not be guessed into an origin."""
+        """TC-7: a token without ai_run_id must not be guessed into an origin."""
         from modules.flow_gate.db import documents as db_docs
 
         raw = _issue_token(tmp_path, ai_run_id=None)

@@ -1,4 +1,4 @@
-"""flowgate.v02.0056 T#1 — the card approval flow (0002-CH turn 5~10) on the Graph run.
+"""the card approval flow (CH ~10) on the Graph run.
 
 On the same real SQLite DB, routes and fixtures as ``test_fg_card_settings`` (card documents and card settings
 registered as ``startup`` does):
@@ -13,18 +13,18 @@ registered as ``startup`` does):
 - [다음 단계] stop is not "awaiting approval": the card's automatic approval while the run is stopped makes the node
   done at once and only its propagation waits.
 
-0083 WP-3 (0061 T#2 revised): a person's approval on an idle run propagates at once again (``frontier.defers``,
-``test_fg_idle_approval_0083``), and a run's states are 0061 T#2's (migration 151): a done run is ``idle`` with the
+WP-3 (revised): a person's approval on an idle run propagates at once again (``frontier.defers``,
+``test_fg_idle_approval_0083``), and a run's states are the earlier implementation's (migration 151): a done run is ``idle`` with the
 idle reason ``completed`` and keeps its Flow.
 
 The v0.1 AI invoke admission is replaced by a recorder; the Flow's group AI lease is stubbed where a test says
 an AI run holds it. Auth, RBAC and SSE delivery are stubbed as in the card settings tests.
 
-flowgate.v02.0119 T#3 (T-2): no person approves a card any more. A card in review that nothing completes is
+(T-2): no person approves a card any more. A card in review that nothing completes is
 ``needs_intervention`` (or a ``system_error``, ``node_approval.intervention``) and ``awaiting_approval`` is always false.
 The T-2 contract itself is ``test_fg_card_intervention_0119`` / ``test_fg_auto_approval_0105``.
 
-flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 · seq 11 replacement 3): the card approval is removed — its package
+(T-3, the discussion seq 9 T-3 · seq 11 replacement 3): the card approval is removed — its package
 (``flowgate.card_approval``), its Graph port (``card_approval_ports``) and its route (``POST /runs/{run}/nodes/{node}/approval``,
 now 404). What was not a person's approval moved to the v0.2 completion (``flowgate.card_completion``):
 
@@ -33,7 +33,7 @@ now 404). What was not a person's approval moved to the v0.2 completion (``flowg
   instruction line of a card that omits its instruction, written or submitted by a person — never holds the node;
 - the instruction's automatic approval is the completion's own (``card_completion.instruction``): written by the system,
   no v0.1 review transition, no TR approval hook, no Graph contact, no node event;
-- the card's lines and the stale lines of an ended attempt (0061 T#7) are read there (``outputs.card_lines_of``).
+- the card's lines and the stale lines of an ended attempt are read there (``outputs.card_lines_of``).
 
 The cases whose premise was a person's card approval (its route, its refusal codes, its document targets and order) were
 removed or rewritten to the new contract; the cases on what still holds were kept.
@@ -53,7 +53,7 @@ from test_fg_card_settings_review import (
     REVIEW_RUN, WORK_RUN, _admin_and_reviewer, _in_review, _loop_row, _node, _recorded_start_run, _result,
     _review_status, _work_run_ended,
 )
-# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# (T): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
@@ -65,7 +65,7 @@ LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 
 @pytest.fixture(autouse=True)
 def card_outputs_port():
-    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    """(T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
     registered as ``startup`` registers it (``card_completion.integration``) — alone, so the engine suites' completion
     stand-in (``tests/conftest.py``) keeps answering ``completion_of``. It replaced the removed card approval port."""
     from flowgate.card_completion import outputs
@@ -94,7 +94,7 @@ def _node_run(env, key):
 
 
 def _approval_route_gone(env, key, run_id=None):
-    """flowgate.v02.0119 T#4 (T-3): the card approval route is unmounted — no person approves a card (404)."""
+    """(T-3): the card approval route is unmounted — no person approves a card ."""
     res = env["client"].post(f"/api/v1/runs/{run_id or _run_id(env)}/nodes/{key}/approval", json=None,
                              headers={**_h(), "Authorization": "Bearer user:u_kim"})
     assert res.status_code == 404, res.text
@@ -165,7 +165,7 @@ def _causes_after(env, key, seq):
 
 
 def _human_result(env, key, seq=81, typ="T", state="review"):
-    """A person's card (``LEE``) registers its result with the node's token. flowgate.v02.0119 T#4 rework
+    """A person's card (``LEE``) registers its result with the node's token. the earlier change the earlier implementation rework
     (rej_01M6DQW6YF0SCQ5D P1): a pre-feature person card follows its card's review setting — with review 'none' its result
     completes at once (``state`` done), with a review set it stays in review while its review works."""
     from modules.flow_gate.graph_workflow.api import v01_contact
@@ -229,7 +229,7 @@ def no_v01_path(monkeypatch):
 
 
 def test_an_ai_result_is_in_intervention_only_when_no_ai_works_on_it(env, decided, monkeypatch):
-    """0119 T-2 (was ``..._awaits_approval_only_when_...``): the same judgement now tells the card's intervention."""
+    """T-2 (was ``..._awaits_approval_only_when_...``): the same judgement now tells the card's intervention."""
     key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review"), ("after_review_exhausted", "stop")))
     _lease(monkeypatch, WORK_RUN)                                       # the node's own AI run has not ended
     assert (_node_run(env, key)["awaiting_approval"], _node_run(env, key)["intervention"]) == (False, None)
@@ -240,14 +240,14 @@ def test_an_ai_result_is_in_intervention_only_when_no_ai_works_on_it(env, decide
                     "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
     shown = _node_run(env, key)                                          # count spent: it needs intervention
     assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
-    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval at all
+    _approval_route_gone(env, key)                                       # T-3: no person's approval at all
 
 
 def test_the_node_approval_judgement_by_state():
     from modules.flow_gate.graph_workflow.services import node_approval as na
 
     review = {"node_key": "gn_x", "status": "review", "result_doc_id": "d"}
-    # 0119 T-2: a card in review nothing completes is in intervention, never awaiting a person's approval
+    # T-2: a card in review nothing completes is in intervention, never awaiting a person's approval
     assert na.refusal("f", review) == "needs_intervention" and not na.awaiting_approval("f", review)
     assert na.intervention("f", review) == {"kind": "needs_intervention", "reason": None}
     assert [na.refusal("f", {"node_key": "gn_x", "status": s, "result_doc_id": None})
@@ -261,7 +261,7 @@ def test_the_node_approval_judgement_by_state():
 
 
 def test_an_instruction_approval_is_the_systems_and_makes_no_node_event(env, decided, monkeypatch, no_v01_path):
-    """0119 T-3: ``card_completion.instruction.approve`` writes the instruction's approved display by the system — no
+    """T-3: ``card_completion.instruction.approve`` writes the instruction's approved display by the system — no
     v0.1 review transition, no TR approval hook, no Graph contact — and binds nothing (no node event)."""
     from flowgate.card_completion import instruction as card_instruction
 
@@ -295,7 +295,7 @@ def test_an_instruction_approval_refuses_an_empty_body_and_a_moved_revision(env,
 
 
 def test_a_complete_result_waits_for_the_instruction_its_card_uses_and_follows_it_once(env, decided, monkeypatch):
-    """0119 T-3 (required artifacts): with its instruction used, a complete result (here the engine suites' stand-in reads the
+    """T-3 (required artifacts): with its instruction used, a complete result (here the engine suites' stand-in reads the
     approved result as complete) waits in review while the instruction is not approved; once the instruction is
     approved — by the completion's own approval, which tells the Graph nothing — the next read's reconciliation makes
     the node done once (no contact is needed)."""
@@ -318,7 +318,7 @@ def test_a_complete_result_waits_for_the_instruction_its_card_uses_and_follows_i
 
 def test_a_written_instruction_line_of_a_card_that_omits_its_instruction_never_holds_its_result(
         env, decided, monkeypatch):
-    """0119 T-3: a line document beside the required outputs (a person wrote and submitted the instruction line of a
+    """T-3: a line document beside the required outputs (a person wrote and submitted the instruction line of a
     card that omits its instruction) is history, not an output: the result's automatic completion moves the node on and
     the line document is left as it is."""
     key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
@@ -345,7 +345,7 @@ def test_a_complete_result_revised_while_it_waits_for_its_instruction_is_followe
     run = _current(env)                                                  # the read reconciles: the revision first
     node_run = next(n for n in run["node_runs"] if n["node_key"] == key)
     assert (node_run["status"], node_run["result_doc_id"], node_run["intervention"]["kind"]) == (
-        "review", new, "needs_intervention")                             # 0119 T-2: no person's approval follows
+        "review", new, "needs_intervention")                             # T-2: no person's approval follows
     assert _causes_after(env, key, seq) == ["revised"]
 
 
@@ -435,15 +435,15 @@ def test_the_output_lines_moved_from_the_card_approval_read_written_and_stale_do
     assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": False})
     assert is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": None, "written": True})
     assert not is_target({"slot": "instruction", "doc_id": "t", "doc_review_status": "pending_review",
-                          "stale": True})                                # 0061 T#7: an ended attempt's document
+                          "stale": True})                                # an ended attempt's document
     assert not is_target({"slot": "instruction", "doc_id": None, "doc_review_status": "approved"})
 
 
 # ── 0119 T-3: the route is gone; a person's result completes its card (rework: rej_01M6DQW6YF0SCQ5D P1) ──
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person card's dispatch token registers its result directly; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
+# (T) pre-feature contract: a person card's dispatch token registers its result directly; an assigned person RUN card writes its instruction first (L-2) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 def test_the_card_approval_route_is_gone_and_a_person_s_result_completes_its_card(pre_feature_attempts, env, decided):
-    """0119 T-3 rework (rej_01M6DQW6YF0SCQ5D P1, was ``..._is_the_card_s_intervention``): no route takes a person's
+    """T-3 rework (rej_01M6DQW6YF0SCQ5D P1, was ``..._is_the_card_s_intervention``): no route takes a person's
     approval, and a pre-feature person card whose card reviews nothing completes its result as ``human_submitted``."""
     _admin_and_reviewer(env)
     t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
@@ -455,7 +455,7 @@ def test_the_card_approval_route_is_gone_and_a_person_s_result_completes_its_car
     _approval_route_gone(env, t1)
     shown = _node_run(env, t1)
     assert (shown["status"], shown["awaiting_approval"], shown["intervention"]) == ("done", False, None)
-    assert "viewer" not in _current(env)                                 # 0119 T-3: no viewer.can_approve
+    assert "viewer" not in _current(env)                                 # T-3: no viewer.can_approve
     assert _review_status(result) == "approved" and _node(env, t2)[0] == "open"
     [done] = _sql(env["db"], "SELECT cause, actor_kind FROM graph_card_completions WHERE node_key = ?", (t1,))
     assert (done["cause"], done["actor_kind"]) == ("human_submitted", "user")
@@ -498,12 +498,12 @@ def gate_decided(monkeypatch):
         policies.set_system_default(key, value, version)
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
+# (T) pre-feature contract: same person-card scene (no instruction stage before the result)
 def test_a_gate_card_keeps_its_own_confirm(pre_feature_attempts, env, gate_decided, monkeypatch):
     _admin_and_reviewer(env)
     t1, gate = _chain(env, [("T", LEE), ("gate", None)])
     _start(env)
-    # 0119 T-2 / T-3 rework: t1 completes automatically as submitted (review 'none'), no person's card approval
+    # T-2 / T-3 rework: t1 completes automatically as submitted (review 'none'), no person's card approval
     _human_result(env, t1, state="done")
     assert _node(env, gate)[0] == "open"
     _approval_route_gone(env, gate)
@@ -515,7 +515,7 @@ def test_a_gate_card_keeps_its_own_confirm(pre_feature_attempts, env, gate_decid
 
 # ── a rejection is no node event ─────────────────────────────────────────────
 
-# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene; an assigned person result is judged and approved by the system (G-2)
+# (T) pre-feature contract: same person-card scene; an assigned person result is judged and approved by the system (G-2)
 def test_a_person_s_rejection_is_no_node_event(pre_feature_attempts, env, decided, monkeypatch):
     from modules.flow_gate.graph_workflow.api import v01_contact
     from modules.flow_gate.workflow.pipeline_service import transition_document_review
@@ -556,12 +556,12 @@ def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, deci
     assert _node(env, key) == ("review", result)
     assert _node_run(env, key)["intervention"] == {"kind": "needs_intervention",
                                                    "reason": "review_not_passed:review_count_exhausted"}
-    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
+    _approval_route_gone(env, key)                                       # T-3: no person's approval
     assert (_node(env, key)[0], _review_status(result)) == ("review", "rejected")
 
 
 def test_0056_T1_개정_rejected_root_is_input_and_its_card_is_done(env, decided):
-    """0056 T#1 revised: Run accepts rejected root input; its document stays rejected."""
+    """revised: Run accepts rejected root input; its document stays rejected."""
     from modules.flow_gate.db import documents as db_documents
 
     _admin_and_reviewer(env)
@@ -601,7 +601,7 @@ def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_in_intervent
     _work_run_ended(end_reason=end_reason, stop_code=stop_code)
     assert calls == []                                                   # no review loop
     assert (_node(env, key), _review_status(result)) == (("review", result), "pending_review")   # no approval
-    shown = _node_run(env, key)                                          # 0119 T-2: the AI's abnormal end
+    shown = _node_run(env, key)                                          # T-2: the AI's abnormal end
     assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
     assert shown["intervention"]["reason"].startswith("run_not_clean:")
     _approval_route_gone(env, key)
@@ -653,7 +653,7 @@ def _imports(path: Path) -> set[str]:
 
 
 def test_the_card_approval_package_port_and_route_are_removed():
-    """0119 T-3 ③ / ④: nothing imports ``flowgate.card_approval`` or ``card_approval_ports`` (the server's sources and
+    """T-3 ③ / ④: nothing imports ``flowgate.card_approval`` or ``card_approval_ports`` (the server's sources and
     its tests); the package, the port and the route mount are gone, and ``startup`` no longer registers it."""
     removed = ("flowgate.card_approval", "modules.flow_gate.graph_workflow.services.card_approval_ports")
     offenders = []
@@ -838,7 +838,7 @@ def test_the_required_instruction_judgement_names_a_missing_empty_or_stale_instr
     from flowgate.card_completion import legacy_adapter, outputs
     from flowgate.card_documents import decision_repository
 
-    # 0126 T#2: the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
+    # the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
     # projection sees no decisions and the document's own review status decides (the ledger: test_fg_human_*_0126).
     monkeypatch.setattr(decision_repository, "available", lambda: False)
     lines, used, row, result_type = [], {"type": "T"}, {"stage": "result"}, {"type": "TR"}

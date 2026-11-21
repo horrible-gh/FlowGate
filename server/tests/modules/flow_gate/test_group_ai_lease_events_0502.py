@@ -1,13 +1,13 @@
-"""Append-only group AI lease/admission forensic history (flowgate.default.0502 T0004).
+"""Append-only group AI lease/admission forensic history.
 
-NR0003 v4's confirmed gap: `group_ai_leases` is a current-state table with no ownership
+v4's confirmed gap: `group_ai_leases` is a current-state table with no ownership
 history, and a 409 `run_in_progress` admission reject happens before any
 `ai_invoke_runs` row exists -- so the exact requested/blocking identity behind a past
-incident like 0502's own B0001 could not be reconstructed after the fact. This file
+incident like 0502's own the regression could not be reconstructed after the fact. This file
 pins the fix: `group_ai_lease_events` records one immutable row per lifecycle
 transition (acquire / transfer / activate / handoff-begin / release / expiry-reclaim /
 startup-reclaim / admission-reject), and a write failure there must never change an
-admission or release decision (T0004 SS10).
+admission or release decision.
 
 Runs entirely through group_ai_leases' and group_ai_lease_events' own `_memory`
 fallbacks (PYTEST_CURRENT_TEST forces `_using_memory()` True for both, same convention
@@ -170,10 +170,10 @@ def test_acquire_logs_lease_expired_reclaimed_when_it_reclaims_stale_lease_itsel
     assert reclaimed["reason"] == "ttl_expired"
 
 
-# ── T0004 rev2: acquire() hands back the blocker's own snapshot on conflict ─────────
+# ── the earlier implementation: acquire hands back the blocker's own snapshot on conflict ─────────
 
 def test_acquire_returns_the_blocking_snapshot_instead_of_none_when_blocked():
-    """0502 T0004 rev2: a conflicting acquire() must not discard the row it already
+    """a conflicting acquire must not discard the row it already
     read -- the caller needs it to attribute a 409 without a second, racy query."""
     first = _acquire(run_id="R1", chain_id="C1", worker="w1")
     blocked = db_leases.acquire(
@@ -250,8 +250,8 @@ def test_expired_and_startup_reclaim_use_different_event_types():
 # ── SS17.1 / SS18: the 0502 incident shape -- admission reject snapshot ──────────────
 
 def test_lease_admission_rejected_captures_requested_and_blocking_identity():
-    """T0004 SS18's own regression shape: an existing lease (RUN-A/TOKEN-A/WORKER-A)
-    blocks a new invoke (WORKER-B) against B0001. After the fact, the requested and
+    """SS18's own regression shape: an existing lease (RUN-A/TOKEN-A/WORKER-A)
+    blocks a new invoke (WORKER-B) against the regression. After the fact, the requested and
     blocking identities must both be recoverable from durable history alone."""
     active = {
         "run_id": "RUN-A", "token_id": "TOKEN-A", "chain_id": "RUN-A",
@@ -283,7 +283,7 @@ def test_lease_admission_rejected_captures_requested_and_blocking_identity():
 
 
 def test_lease_admission_rejected_snapshot_resolves_provider_identity(monkeypatch):
-    """T0004 SS5/SS23(2) rev5 finding: requested_token_id must be present (NULL, since
+    """SS5/SS23 finding: requested_token_id must be present (NULL, since
     no token is ever minted before a lease is acquired), and both sides' provider
     identity must be reconstructible -- the requesting side from its own resolved
     provider_id, the blocking side one hop further via the blocking token's stored
@@ -318,7 +318,7 @@ def test_lease_admission_rejected_snapshot_resolves_provider_identity(monkeypatc
 
 def test_lease_admission_rejected_snapshot_leaves_provider_name_null_when_unresolvable():
     """No provider_id / no blocking token -> both provider_name fields stay NULL
-    rather than guessing (T0004 SS6)."""
+    rather than guessing."""
     active = {
         "run_id": "RUN-A", "token_id": None, "chain_id": "RUN-A",
         "action_scope": "new", "worker_identity": "WORKER-A", "state": "acquiring",
@@ -339,7 +339,7 @@ def test_lease_admission_rejected_snapshot_leaves_provider_name_null_when_unreso
 
 
 def test_lease_admission_rejected_acquire_race_captures_the_requested_run_id():
-    """T0004 SS5/SS23(1)-(2): unlike pre_acquire, the acquire_race stage fires AFTER
+    """SS5/SS23-: unlike pre_acquire, the acquire_race stage fires AFTER
     start_run already minted a run_id for the losing candidate (db_group_ai_leases
     .acquire()'s own RunIdCollision-retry counterpart) -- that identity must survive
     into the durable event, both in the requested snapshot and the top-level
@@ -420,7 +420,7 @@ def test_acquire_and_release_succeed_even_if_forensic_append_fails(monkeypatch):
 # same connection. Under PostgreSQL a failed statement aborts the WHOLE transaction --
 # every later statement and the COMMIT itself then fail -- so merely catching the
 # append's exception would still roll the lease acquisition back and surface a 500 on
-# an admission that had already succeeded (T0004 SS10 / SS23(6)). These tests run the real
+# an admission that had already succeeded (the earlier implementation SS10 / SS23). These tests run the real
 # FlowGateStore.transaction() against a backend that reproduces that abort semantics.
 
 
@@ -589,7 +589,7 @@ def test_after_commit_queue_is_dropped_when_the_transaction_rolls_back(pg_like):
             raise RuntimeError("boom")
 
     # The write the callback described was rolled back with the transaction, so
-    # recording it would fabricate history (T0004 SS7).
+    # recording it would fabricate history.
     assert ran == []
     assert db_connection.in_transaction() is False
     assert db_connection.after_commit(lambda: ran.append("y")) is False

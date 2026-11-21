@@ -1,7 +1,7 @@
 <template>
-  <!-- flowgate.v02.0030 — one compact Palette card (03-designer-shell `.pal-card`): a top accent
+  <!-- one compact Palette card (03-designer-shell `.pal-card`): a top accent
        bar, the kind-colored icon box and a one-line name. A button so it is reachable by
-       keyboard; draggable as the Node drag source (R0001 §2.3). -->
+       keyboard; draggable as the Node drag source. -->
   <button
     type="button"
     class="palette-card"

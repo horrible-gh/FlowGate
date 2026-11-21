@@ -1,4 +1,4 @@
-"""0408 T0012: workflow sequence provider persistence and unattended inheritance."""
+"""workflow sequence provider persistence and unattended inheritance."""
 from __future__ import annotations
 
 import json
@@ -494,7 +494,7 @@ def inject_hop_note(*, mode="auto_approved", overrides=None, default=None, fold=
     [("auto_approved", "NR step note|MENTION"), ("ai_direct", "N step note|MENTION")],
 )
 def test_each_mode_delivers_the_note_of_the_row_it_actually_runs(monkeypatch, mode, expected):
-    """0408 M0019 repeated rejection 2: each hop carries its own row's message.
+    """repeated rejection 2: each hop carries its own row's message.
 
     [자동 승인] executes the NR row, while [지시서 작성 후 진행] executes the N row.
     The plan assigns different sentences to those two rows.
@@ -564,8 +564,8 @@ def test_tsr_is_not_a_note_candidate_for_ts(monkeypatch):
     assert inject_hop_note() == "MENTION"
 
 
-# 0408 M0019 repeated rejection 3: why are document message/provider edits not reflected in the dialog?
-# The dialog reads the plan's projection onto the live sequence. L0010 §2.5 counted "the Nth
+# repeated rejection 3: why are document message/provider edits not reflected in the dialog?
+# The dialog reads the plan's projection onto the live sequence. the earlier implementation counted "the Nth
 # row of type X" over the whole sequence, so a finished N/NR pair from an earlier round stole
 # the mapping from the pair this plan actually poured.
 PLAN_STEPS_PAIR = [
@@ -601,11 +601,11 @@ def test_plan_maps_onto_the_rows_it_poured_not_an_older_finished_pair():
 
 def test_a_plan_that_never_poured_here_skips_rows_it_may_not_fill():
     """Rewritten from test_a_plan_that_never_poured_here_keeps_the_positional_rule
-    (0444 NR0003 §2-3).
+.
 
     The old expectation was that with no poured block of its own a plan fell back to the
     positional rule over the WHOLE sequence — so this plan's N#1/NR#1 mapped onto the
-    finished pair another plan had left behind. That fallback is the row theft NR0003
+    finished pair another plan had left behind. That fallback is the row theft the review
     named the top root cause. A finished row is not a slot now: nothing matches, and the
     rows that were passed over are reported so the caller can say so on screen.
     """

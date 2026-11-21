@@ -1,9 +1,9 @@
 import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanEditModel'
 /**
- * flowgate.v02.0072 T#1 — the v0.2 work plan edit window (features/workPlanWindow), mounted by DocumentWindows with
+ * the v0.2 work plan edit window (features/workPlanWindow), mounted by DocumentWindows with
  * `@shared/api` mocked (no server):
  * - opening reads `GET …/work-plan` once and the Flow's live AI run; the window is a ModelessShell (minimize,
- *   bring back, close) — nothing opens it from the WP card yet (T#3);
+ *   bring back, close) — nothing opens it from the WP card yet;
  * - edits (quantities, card order, per-Step AI / note, defaults and [모두 적용]) change only the window's draft;
  *   [저장] sends one `PUT …/work-plan` with base_revision_no and the whole body (fields without a control kept);
  * - the save's answers: 409 conflict (banner, read again asks first), 422 field errors on their rows, 422 capability
@@ -16,13 +16,13 @@ import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanE
  * - a quantity decrease that removes Steps with values and closing with unsaved edits ask first;
  * - external changes: a clean window takes the new plan, a dirty one keeps its edits and says a newer revision exists;
  * - ✎ opens nothing inside the window: without a Step window it is disabled; with one it gets the row and a session.
- * flowgate.v02.0073 T#1:
+ * 
  * - DS / T2 are not drawn (no box, card, key or type name; the summary counts what is drawn), yet a save after editing
  *   and moving the shown cards sends their Steps, quantities and counted_types as read (scenario A); a capability
  *   finding or a field error of a hidden Step does not name it;
  * - each card is a section folded by default: a header click folds / unfolds it (also while locked), ▲▼ and the grip
  *   do not; its header has the card name and the Palette icon; a save's field errors open their card.
- * flowgate.v02.0073 T#2:
+ * 
  * - a row's review button shows its value and opens the window's review popover (teleported to <body>, above the
  *   window): the review count Select (the server's review_count_choices), the reviewer Select (off at 0) and [완료];
  *   a change is that row's in the draft only, kept when the popover closes and reopens, sent with [저장]; [완료], a
@@ -155,7 +155,7 @@ describe('opening (modeless, read once)', () => {
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: FLOW })
     expect(q('wp-edit-window')?.dataset.doc).toBe(DOC)
     expect(text(q('wp-edit-heading'))).toContain('작업계획')
-    // flowgate.v02.0074 T#1 (R §2.2): no totals and no r{n} in the title bar; revision 2 is the save's base (below).
+    // (R): no totals and no r{n} in the title bar; revision 2 is the save's base (below).
     expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-title-totals')).toBeNull()
     expect(box('T')?.dataset.count).toBe('2')
@@ -241,7 +241,7 @@ describe('editing and the one save', () => {
     expected.steps[4] = { ...expected.steps[4], note: '보고서 메모', origin: 'human' }
     expect(payload.body).toEqual(pairedDesignBody(expected as any))
     expect(q('wp-edit-dirty')).toBeNull()
-    // flowgate.v02.0074 T#1: no r{n} shown; the saved revision 3 reaches the opener and is the next save's base.
+    // no r{n} shown; the saved revision 3 reaches the opener and is the next save's base.
     expect(q('wp-edit-revision')).toBeNull()
     expect(saved).toHaveBeenCalledWith(3)
     expect(q('wp-edit-notice')?.dataset.key).toBe('saved_unassigned')
@@ -326,7 +326,7 @@ describe('what a save may answer', () => {
     await click(q('wp-edit-conflict-reload'))
     expect(text(document.body.querySelector('.ui-confirm-title'))).toBe('저장하지 않은 변경을 버리고 다시 읽을까요?')
     await click(confirmButtons()[1])
-    // flowgate.v02.0074 T#1: no r{n} shown; the read revision 5 is the next save's base.
+    // no r{n} shown; the read revision 5 is the next save's base.
     expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     expect(q('wp-edit-conflict')).toBeNull()
@@ -493,7 +493,7 @@ describe('locks that change while the window is open', () => {
     gate = null
     await flushPromises()
     expect(q('wp-edit-reloading')).toBeNull()
-    // flowgate.v02.0074 T#1: no r{n} shown; revision 5 is the base of the save below.
+    // no r{n} shown; revision 5 is the base of the save below.
     expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     expect(note('c_d1|main').value).toBe('')
@@ -640,7 +640,7 @@ describe('closing and external changes', () => {
     answer = readAnswer({ revision_no: 3, body: { ...planBody(), defaults: { provider_id: null, note: '바뀜' } } })
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: DOC } }))
     await flushPromises()
-    // flowgate.v02.0074 T#1: no r{n} shown; revision 3 is the base of the save below.
+    // no r{n} shown; revision 3 is the base of the save below.
     expect(q('wp-edit-revision')).toBeNull()
     expect((q('wp-edit-default-note') as HTMLInputElement).value).toBe('바뀜')
 
@@ -664,7 +664,7 @@ describe('closing and external changes', () => {
 })
 
 describe('empty, unreadable, missing', () => {
-  // flowgate.v02.0074 T#1 (R §2.1): no sentence for every quantity 0 — the task order section is its header only.
+  // (R): no sentence for every quantity 0 — the task order section is its header only.
   it('a plan with every quantity 0 shows no text; raising a quantity adds Steps', async () => {
     const empty = planBody() as Record<string, any>
     for (const box of Object.values(empty.quantities) as Array<{ count: number }>) box.count = 0
@@ -713,7 +713,7 @@ describe('the Step window boundary (✎, T#2)', () => {
     expect(opened).toHaveLength(1)
     const { target, session } = opened[0]
     expect(target).toEqual({ docId: DOC, rowId: 'c_t1|main', stepKey: 'T#1', stepNo: 3, type: 'T', pairRole: 'instruction', cardType: 'T', cardUnit: 'set', cardOrdinal: 1 })
-    // 0073 T#2: the session carries no review — the review is the main window's popover's
+    // the session carries no review — the review is the main window's popover's
     expect(session.snapshot()).toEqual({ preInstructionText: '사전 지시', preInstructionAttachment: (planBody().steps as any[])[1].pre_instruction_attachment })
     expect('reviewCountChoices' in session).toBe(false)
     expect('reviewerOptions' in session).toBe(false)

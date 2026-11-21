@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0011-CH contract C) — card moves in the Flow's one undo / redo history:
+ * (CH contract C) — card moves in the Flow's one undo / redo history:
  * - the draft editor: a move entry (`record`) next to the structure entries, stepped through `onMove`
  *   (never a draft save), in the order the actions were made; `tmp_` key remap and revived keys rename it;
  *   a new action empties redo, a fresh read / reset empties both, a refused (conflict) save stops it; an

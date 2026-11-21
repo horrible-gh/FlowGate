@@ -1,4 +1,4 @@
-"""Regression matrix for flowgate.default.0554 WorkPlan v2 execution settings."""
+"""Regression matrix for the earlier change WorkPlan v2 execution settings."""
 from __future__ import annotations
 
 import copy

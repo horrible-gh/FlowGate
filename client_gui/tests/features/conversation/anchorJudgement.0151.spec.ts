@@ -10,7 +10,7 @@ import {
   type StoredAnchor,
 } from './anchorJudgement'
 
-// flowgate.v02.0151 T-A2 (NR Rev.4 §2.5 expected-anchor and anchor_state tables, §2.7, §2.8 V6d5 / V6e / V6f): the
+// T-A2 (NR Rev.4 expected-anchor and anchor_state tables,, V6d5 / V6e / V6f): the
 // read-only check procedure, synthetic inputs only. The server rule itself (compute / should_replace / needs_resolve)
 // stays fixed by server/tests/.../test_chat_activity_anchor_0675.py, which this group runs unchanged.
 const CH = 'p.m.0001.0002-CH'

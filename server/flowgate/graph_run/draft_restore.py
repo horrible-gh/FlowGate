@@ -1,9 +1,9 @@
-"""flowgate.v02gui.0019 (0004-CH): a card the run opened is never missing from the Flow's draft.
+"""(CH): a card the run opened is never missing from the Flow's draft.
 
 A draft saved while a card was still pending may leave that card out, or change it or its input edges. Once the run
 opens it, finishes it or has it in review (``editing.PROTECTED``, and a confirm gate still unresolved), the protection
 rule (``editing.protect_definition``) refuses every later save and confirmation built on that draft, so the Flow could
-never be edited again and every card a person placed vanished (0019-B bug 1, flowgate.v02gui.0011).
+never be edited again and every card a person placed vanished (B bug 1, the earlier change).
 
 Instead the server puts those cards back into the draft the moment their run state changes: each protected card as
 the execution revision has it, its input edges and, when one is missing, the card such an edge comes from — all under
@@ -30,7 +30,7 @@ from flowgate.graph_run.editing import PROTECTED, _unresolved_gates
 
 log = logging.getLogger(__name__)
 
-# The node run states after which a card may be protected (a rejected confirm gate stays protected, 0085 T#2).
+# The node run states after which a card may be protected (a rejected confirm gate stays protected, the earlier implementation).
 TRIGGER_STATES = frozenset(PROTECTED | {"rejected"})
 
 
@@ -129,7 +129,7 @@ def on_node_state(ctx, node_key: str, to_status: str) -> None:
 
 def restore_all() -> list[str]:
     """Startup: every Flow with a draft and a current run, its draft repaired in its own Flow guard (a Flow blocked
-    before this rule, e.g. flowgate.v02gui.0011, edits again). The Flows whose draft changed."""
+    before this rule, e.g. the earlier change, edits again). The Flows whose draft changed."""
     if not definition_store.available():
         return []
     from modules.flow_gate.db import groups as db_groups

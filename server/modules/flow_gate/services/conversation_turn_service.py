@@ -107,13 +107,13 @@ def _validate_input(body_raw: str, idempotency_key: str) -> tuple[str, str, str,
     return body, key, _sha256(body), _sha256(key)
 
 
-# ── Corrupted-body guard + body-fingerprint match (0391 B0001 proposals 3+4, T0005 §5-4/§6) ──
+# ── Corrupted-body guard + body-fingerprint match (proposals 3+4, the earlier implementation) ──
 # Shared by append_turn (raises) and dry_run_append (reports) so both give the exact
-# same verdict for the same input — the T0005 §5-4 common rule ("a dry run and a real
+# same verdict for the same input — the the earlier implementation common rule ("a dry run and a real
 # registration must always reach the same verdict"). Fingerprints are checked against body_raw, i.e.
 # BEFORE normalize_body() — normalize_body's NFC/newline/trailing-space changes are not
 # something the sender can reliably reproduce client-side, so pinning the contract to
-# the original text is the only version of it that holds (T0005 §6-3).
+# the original text is the only version of it that holds.
 _ENCODING_VIOLATION_STRINGS = {
     "ko": {
         "sha256_mismatch": "sha256 기대={expected} 실제={actual}",
@@ -130,7 +130,7 @@ _ENCODING_VIOLATION_STRINGS = {
             "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 이상)를 "
             "적어 다시 보내세요."
         ),
-        # flowgate.v02gui.0009: language-neutral verdicts (encoding_probe).
+        # language-neutral verdicts (encoding_probe).
         "probe_broken": (
             "본문 마지막 줄의 인코딩 탐침이 이 요청의 값과 다릅니다(받은 값: {received}). "
             "전송 경로(셸 파이프·리다이렉트·명령줄 인자 등)에서 유니코드 문자가 손실됐다는 "
@@ -249,7 +249,7 @@ def _encoding_violation(
 ) -> Optional[str]:
     """Encoding verdict for one turn body (None = accept).
 
-    flowgate.v02gui.0009: ``probe_status`` comes from ``encoding_probe.split_probe``.
+    ``probe_status`` comes from ``encoding_probe.split_probe``.
     A broken probe is proof the path lost Unicode, so it rejects even with a force
     reason. A matched probe proves the body file travelled intact, so no corruption
     heuristic runs at all -- '?' is just punctuation then. ``trusted_transport``
@@ -334,7 +334,7 @@ def _log_encoding_verdict(
 
 
 def _log_force_encoding_reason(doc_id: str, actor: dict[str, Any], reason: str) -> None:
-    """Best-effort audit trail (T0005 §5-6): conversation_turns has no meta column, so
+    """Best-effort audit trail: conversation_turns has no meta column, so
     the bypass reason goes to db_events instead — never blocks the append it guards."""
     try:
         import json as _json
@@ -369,7 +369,7 @@ def _provider_row(project_id: Optional[str], provider_id: str) -> Optional[dict]
     row = row or ai_providers.get_row(None, provider_id)
     # A personal AI (owner_scope='user') is in neither scope above; without this the
     # turn and the participant row were stored under the bare provider id
-    # (flowgate.v02.0135 CH0006). Name-only lookup, no secret columns.
+    #. Name-only lookup, no secret columns.
     return row or ai_providers.get_public_row(provider_id)
 
 
@@ -405,7 +405,7 @@ def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None
             "source_run_id": token.get("ai_run_id"),
         }
     if kind == "system":
-        # flowgate.v02test.0023: FlowGate itself speaks in a chat (the chat commit point's
+        # FlowGate itself speaks in a chat (the chat commit point's
         # outcome). Its own speaker, so a screen never takes it for the AI's reply.
         return {
             "speaker": "system",
@@ -440,9 +440,9 @@ def _turn_wire(row: dict, *, images=None) -> dict:
 
 
 def turn_wire(row: dict, *, images=None) -> dict:
-    """Public alias — the turn object of P0003 §0-2, built in exactly one place.
+    """Public alias — the turn object of the plan, built in exactly one place.
 
-    Both HTTP families and the SSE payload must serialize a turn identically (P0003
+    Both HTTP families and the SSE payload must serialize a turn identically (the plan
     §0-1); the query adapter and the event publisher call this rather than each
     growing their own copy.
     """
@@ -450,10 +450,10 @@ def turn_wire(row: dict, *, images=None) -> dict:
 
 
 def participant_wire(row: dict) -> dict:
-    """The participant object of P0003 §0-4, built from a stored row alone.
+    """The participant object of the plan, built from a stored row alone.
 
-    `last_viewed_seq` stays out of the wire on purpose: L0004 §2-8 splits the cursor
-    into two columns but keeps the schema P0003 defined.
+    `last_viewed_seq` stays out of the wire on purpose: the earlier implementation splits the cursor
+    into two columns but keeps the schema the plan defined.
     """
     return {
         "participant_key": row["participant_key"],
@@ -697,16 +697,16 @@ def append_turn(
     images: Optional[list[str]] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
-    # flowgate.v02gui.0009: a worker's body ends with its token's encoding probe; it is
+    # a worker's body ends with its token's encoding probe; it is
     # verified and removed here, so the stored turn (and its idempotency hash) never
     # carries it.
     checked_body, probe_status, probe_received = encoding_probe.split_probe(
         body_raw, _expected_probe(actor)
     )
     body, key, body_hash, idempotency_hash = _validate_input(checked_body, idempotency_key)
-    # 0391 T0005 §5-4: reject a corrupted/fingerprint-mismatched body here — before any
+    # reject a corrupted/fingerprint-mismatched body here — before any
     # side effect, including _validate_document_for_append's possible migration write.
-    # flowgate.v02gui.0009: only a worker's transport can be lossy. A browser session
+    # only a worker's transport can be lossy. A browser session
     # posts UTF-8 JSON whatever the language, and a system turn is FlowGate's own text.
     _violation = _encoding_violation(
         body_raw=body_raw,
@@ -806,11 +806,11 @@ def append_turn(
                     token_service.consume(token["token_id"], token["project"], doc_id)
                 except Exception:
                     _log.exception("conversation worker token consumption failed after commit")
-            # Live delivery of this one turn (T2 / L0004 §2-11).  Both adapters go
+            # Live delivery of this one turn. Both adapters go
             # through here, so a screen sees a worker's reply and a human's message
             # by the same route.  A replay never reaches this line — re-broadcasting
             # an already-delivered turn is itself the side effect idempotency forbids.
-            # flowgate.v02.0032 T#1 (D0006 §2.3, §3.9.1) / 0675 T0004 §2-3: an AI reply of a
+            # an AI reply of a
             # chat run moves that run's activity anchors BEFORE the turn is broadcast, so a
             # screen that re-reads activity on this turn already gets the reply anchor. The
             # port's handler does it when registered, else the in-module anchor service.
@@ -854,7 +854,7 @@ _DRY_RUN_MAX_DEFAULT = 5
 
 
 def _dry_run_limit() -> int:
-    """Per-token dry-run attempt limit, shared with inbox (NR0003 4-6: no new chat-only env var)."""
+    """Per-token dry-run attempt limit, shared with inbox (4-6: no new chat-only env var)."""
     try:
         return int(os.environ.get("FLOWGATE_INBOX_DRYRUN_MAX", _DRY_RUN_MAX_DEFAULT))
     except (ValueError, TypeError):
@@ -873,12 +873,12 @@ def dry_run_append(
     force_encoding_reason: Optional[str] = None,
     locale: str = "ko",
 ) -> dict:
-    """Validate-only counterpart to append_turn (T0004 / NR0003 3-3).
+    """Validate-only counterpart to append_turn.
 
     Runs the same side-effect-free validation steps append_turn does -- input shape and
     document eligibility -- but never inserts a turn, consumes the token, or broadcasts.
     Mirrors inbox_routes._maybe_dry_run: the only side effect allowed is the per-token
-    dry-run counter. 0391 T0005 §5-4: the encoding/fingerprint verdict is computed with
+    dry-run counter. the earlier implementation: the encoding/fingerprint verdict is computed with
     the exact same _encoding_violation() append_turn uses, so a dry-run preview and the
     real submission never disagree.
     """

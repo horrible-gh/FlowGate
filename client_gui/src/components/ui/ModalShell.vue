@@ -33,11 +33,11 @@
 </template>
 
 <script setup lang="ts">
-// Domain-free blocking overlay shell (T0006 §5). Owns the overlay lifecycle only —
+// Domain-free blocking overlay shell. Owns the overlay lifecycle only —
 // backdrop, ESC, focus trap/return, scroll lock, z-index — and never any Git/AI/
-// Project/Approval meaning. Feature dialogs compose this via slots (T0006 §4); this T
+// Project/Approval meaning. Feature dialogs compose this via slots; this T
 // also builds ConfirmDialog/AlertDialog on top of it, and does not build Feature
-// content itself (T0006 §14).
+// content itself.
 //
 // This never closes itself: ESC and a qualifying backdrop click only emit `close`, and
 // the caller decides whether to actually flip `open`. That keeps "how does this modal
@@ -59,7 +59,7 @@ const props = withDefaults(
     surfaceClass?: string
     closeOnEscape?: boolean
     closeOnBackdrop?: boolean
-    /** `alertdialog` for AlertDialog (T0006 §8); every other caller keeps `dialog`. */
+    /** `alertdialog` for AlertDialog; every other caller keeps `dialog`. */
     role?: 'dialog' | 'alertdialog'
     ariaLabel?: string
     ariaLabelledby?: string
@@ -88,7 +88,7 @@ const surfaceRef = ref<HTMLElement | null>(null)
 const overlayZIndex = ref(0)
 // A real second counter tick, not `overlayZIndex + 1`: the latter only reserves a value
 // one-above without ever telling the shared counter it was used, so the very next
-// unrelated allocation (e.g. a ContextMenu opened from inside this modal, T0010 §10)
+// unrelated allocation (e.g. a ContextMenu opened from inside this modal, the earlier implementation)
 // could land on that same "+1" value and tie with this surface instead of clearing it.
 const surfaceZIndex = ref(0)
 
@@ -217,7 +217,7 @@ function onOverlayMouseUp(event: MouseEvent): void {
 
 /* ──────────────────────────── open / close lifecycle ────────────────────── */
 // Scroll lock is refcounted in core/overlay/scrollLock.ts (real module scope, see the
-// import above): more than one ModalShell can be open at once (T0006 §5 "Support
+// import above): more than one ModalShell can be open at once (the earlier implementation "Support
 // nesting"), and the lock must only lift once the last one closes, regardless of which
 // one opened or closed first.
 

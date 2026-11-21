@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#7 — the Q&A tab with `@/features/document` mocked as a small server (D#1
+ * the Q&A tab with `@/features/document` mocked as a small server (the earlier implementation
  * §12.1): the questions of the target document in display order with who asked and who answered,
  * answering with prose / an option / both and the questions read again after it, the refusals
  * (423 AI running, 409 disposed, 403, 404, network) shown as a reason with the questions read again,
@@ -7,7 +7,7 @@
  * real hub (only for the target document), a failed read with retry, and a Node change. Last, the
  * real registry: the Q&A tab with its number in the Frame (the number follows the events and the
  * answers), and no tab on a Node without a document.
- * flowgate.v02.0052 batch A — the v7 shape: one line per question with the last answer in its small
+ * batch A — the v7 shape: one line per question with the last answer in its small
  * line, the inline answer line (field + Send) under every question without an answer, the folded
  * 완료 group (open when nothing is pending), and the ↗ modeless window with the full form.
  * flowgate.v02.0070 T#5 (B5) — the list only shows and opens (question, state, who asked, 열기): every answer is
@@ -74,7 +74,7 @@ interface ServerItem {
   created_at?: string
 }
 
-/** flowgate.v02.0070 T#5: when question 10 was registered. */
+/** when question 10 was registered. */
 const ASKED_AT = '2026-10-18T09:00:00+09:00'
 
 const threads = new Map<string, ServerItem[]>()
@@ -190,14 +190,14 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-// flowgate.v02.0150: the tab with the Frame's window host, which draws its ↗ windows.
+// the tab with the Frame's window host, which draws its ↗ windows.
 async function mountTab(target: InspectorTarget) {
   wrapper = mount(QnaTabWithWindows, { props: { target }, global: { plugins: [i18n, pinia] } })
   await flushPromises()
   return wrapper
 }
 
-/** flowgate.v02.0070 T#5: the card line of a document whose body is there (answering needs one); `fields` change it. */
+/** the card line of a document whose body is there (answering needs one); `fields` change it. */
 const bodyLine = (docId: string, fields: Partial<InspectorCardDocument> = {}): InspectorCardDocument => ({
   slot: 'report',
   docType: 'TR',
@@ -222,7 +222,7 @@ const itemEl = (w: VueWrapper<any>, id: number) => w.find(`[data-test="qna-item"
 const order = (w: VueWrapper<any>) => w.findAll('[data-test="qna-item"]').map((el) => [Number(el.attributes('data-item')), el.attributes('data-state')])
 const isDisabled = (el: { attributes(name: string): string | undefined }) => el.attributes('disabled') !== undefined
 
-// flowgate.v02.0070 T#5: a question is answered in its ↗ window (teleported to the body).
+// a question is answered in its ↗ window (teleported to the body).
 const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
 const windowText = (id: number, test: string) => windowOf(id)?.querySelector(`[data-test="${test}"]`)?.textContent ?? null
 const inWindow = (id: number, selector: string) => new DOMWrapper(windowOf(id)!).find(selector)
@@ -264,7 +264,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       [12, 'open'],
       [11, 'answered'],
     ])
-    // 0052 T#1: the response proves only answered or not — every unanswered question is Unanswered
+    // the response proves only answered or not — every unanswered question is Unanswered
     // (neutral) whoever asked it; the asker kind is never shown as a team review or a hand-off.
     for (const id of [10, 13, 12]) {
       expect(itemEl(w, id).find('[data-test="qna-item-state"]').text(), String(id)).toBe('미답변')
@@ -287,7 +287,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(itemEl(w, 11).attributes('style') ?? '').not.toContain('display: none')
   })
 
-  // flowgate.v02.0070 T#5: who answered is read in the ↗ window; the list line keeps who asked only.
+  // who answered is read in the ↗ window; the list line keeps who asked only.
   it('shows who asked and who answered — never a guessed provider', async () => {
     const w = await mountTab(v01Target())
     expect(itemEl(w, 11).find('[data-test="qna-answer"]').exists()).toBe(false)
@@ -299,7 +299,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(windowOf(11)!.querySelector('[data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('ok')
   })
 
-  // flowgate.v02.0070 T#5 (B5): the list is for looking over and opening; the form is the ↗ window's.
+  // (B5): the list is for looking over and opening; the form is the ↗ window's.
   it('the list has no options, answer field, send or AI line; an unanswered question’s window has the form, an answered one’s none', async () => {
     const w = await mountTab(v01Target())
     for (const id of [10, 11, 12, 13]) {
@@ -319,10 +319,10 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(qaAnswerCall).not.toHaveBeenCalled()
   })
 
-  // flowgate.v02.0052 batch A — v7 ↗ (0035 insp.js openQA): the question in a modeless window.
+  // batch A — v7 ↗ (insp.js openQA): the question in a modeless window.
   describe('the ↗ window', () => {
 
-    // flowgate.v02.0053 T#5 (0053 CH): the button that opens a question's window is the same document icon as
+    // (CH): the button that opens a question's window is the same document icon as
     // the document lines (tooltip 열기), not ↗.
     it('the open button of a question is the document icon with the tooltip 열기', async () => {
       const w = await mountTab(v01Target())
@@ -336,7 +336,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       await open(w, 10)
       expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
       expect(windowText(10, 'qna-window-asker')).toBe('질문: AI · Claude Opus 5.5')
-      // flowgate.v02.0070 T#5: the context above the form — the full document id and when it was asked.
+      // the context above the form — the full document id and when it was asked.
       expect(windowText(10, 'qna-window-doc')).toBe(`문서: ${V01_DOC}`)
       expect(windowText(10, 'qna-window-asked-at')).toBe(`질문 시각: ${new Date(ASKED_AT).toLocaleString('ko')}`)
       expect(windowOf(10)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
@@ -390,7 +390,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(mode.parentElement).toBe(sub.parentElement)
       expect(mode.textContent).toBe('읽기 전용')
       expect(mode.getAttribute('title')).toBe('플로우 소유가 충돌해 읽기 전용입니다.')
-      // flowgate.v02.0063: a Flow whose answers stay closed shows no answer form in the window.
+      // a Flow whose answers stay closed shows no answer form in the window.
       expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
     })
 
@@ -402,7 +402,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(win.querySelector('[data-test="qna-window-ai"]')).not.toBeNull()
     })
 
-    // flowgate.v02.0150: only the window's own × closes it — a Node change and Esc do not; it stays on its document.
+    // only the window's own × closes it — a Node change and Esc do not; it stays on its document.
     it('a read-only Flow opens the window read only with the reason; closing removes it; a Node change and Esc keep it on its document', async () => {
       const w = await mountTab(v01Target({ readOnly: 'conflict' }))
       const win = await open(w, 13)
@@ -428,7 +428,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(0)
     })
 
-    // flowgate.v02.0070 T#5 (B5): answering needs a body that can be checked.
+    // (B5): answering needs a body that can be checked.
     describe('the body of the document (flowgate.v02.0070 T#5)', () => {
       const UNREADABLE = '본문을 읽을 수 없어 답변할 수 없습니다.'
       const UNCONFIRMED = '본문을 확인할 수 없어 답변할 수 없습니다.'
@@ -699,7 +699,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     expect(threads.get(V01_DOC)!.find((entry) => entry.id === 13)!.answers).toHaveLength(1)
   })
 
-  // flowgate.v02.0150: the window it was sent from stays on its document and shows it there.
+  // the window it was sent from stays on its document and shows it there.
   it('a late refusal of the previous Node is not shown on the new one', async () => {
     let reject: (error: unknown) => void = () => {}
     qaAnswerCall.mockImplementationOnce(() => new Promise((_resolve, fail) => (reject = fail)))
@@ -730,7 +730,7 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
     await open(w, 10)
     expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
     expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).toBeNull()
-    // 0063: no reason sentence either (0070 T#5's line is the body's only).
+    // no reason sentence either ('s line is the body's only).
     expect(windowOf(13)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
     expect(qaAnswerCall).not.toHaveBeenCalled()
   })
@@ -787,7 +787,7 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
   })
 })
 
-// flowgate.v02.0070 T#5: the send functions themselves wait for the document read — not only the window's form.
+// the send functions themselves wait for the document read — not only the window's form.
 describe('Q&A sending — the document read first (flowgate.v02.0070 T#5)', () => {
   const superseded = async (docId: string) => toReviewDocument({ ...rowOf(docId), superseded_by: 'flowgate.v02.0048.0015-TR' })
 
@@ -953,7 +953,7 @@ describe('Q&A tab — Node change (flowgate.v02.0048 T#7)', () => {
     expect(order(w)).toEqual([[20, 'waiting']])
   })
 
-  // flowgate.v02.0150: the window and its unsent draft stay whatever is selected; closing the window drops the draft.
+  // the window and its unsent draft stay whatever is selected; closing the window drops the draft.
   it('an unsent draft stays with its open window across Node changes, is sent to its own document, and goes with the window', async () => {
     const w = await mountTab(v01Target())
     await write(w, 13, '초안')
@@ -1004,7 +1004,7 @@ describe('Q&A tab in the Frame (real registry)', () => {
 
   it('answering in the tab lowers the number; a qna event raises it again', async () => {
     vi.useFakeTimers()
-    // flowgate.v02.0070 T#5: the Node's card line says its document has a body.
+    // the Node's card line says its document has a body.
     const w = await mountFrame({ ...SELECTIONS.v01, node: { ...SELECTIONS.v01.node, cardDocuments: [bodyLine(V01_DOC)] } })
     stream.open()
     await openTab(w, 'Q&A')

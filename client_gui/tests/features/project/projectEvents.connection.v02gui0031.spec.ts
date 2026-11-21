@@ -1,5 +1,5 @@
 /**
- * flowgate.v02gui.0031 T0005 ① — the project event hub follows the session's connection signals. The stream's URL pins
+ * ① — the project event hub follows the session's connection signals. The stream's URL pins
  * the token it was opened with, and the hub heard no `fg:access_token_refreshed`, online or visibility signal (the
  * comment in shared/api.ts said it did). Now a token rotation, online and a return to the tab replace a stream that is
  * not open (the browser retrying the old URL, a closed one waiting for its reopen) with one carrying the current token,

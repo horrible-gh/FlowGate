@@ -1,8 +1,8 @@
-"""0153 T#2: preservation refs for human-approved resolution merge commits.
+"""preservation refs for human-approved resolution merge commits.
 
 Every scenario runs real Git on local-path repositories (a bare ``origin`` plus a work
 checkout; no file:// capability gate) and re-reads the real sqlite session row from the
-0115 migrations. The shared runner is wrapped only to record the command order and, in
+migrations. The shared runner is wrapped only to record the command order and, in
 the named fault scenarios, to replace one specific command's result.
 """
 from __future__ import annotations
@@ -143,7 +143,7 @@ def env(monkeypatch, project, repo):
                         lambda mid, context, *, pushed: complete(None, mid, PROJECT, context, pushed=pushed))
 
     def remote(observed):
-        # 0153 T#3: reconcile reads the remote through the detailed variant; only the
+        # reconcile reads the remote through the detailed variant; only the
         # patch target changed (None still means "the query failed", here as network).
         def query(*a):
             probes.append(a)
@@ -460,7 +460,7 @@ def test_helper_exception_is_preserve_failed_not_push_exception(env):
 # ── reconcile gate ───────────────────────────────────────────────────────────
 
 def unknown_session(env):
-    """preserve → push timeout: the T#1 reconciling/push_remote_unknown state."""
+    """preserve → push timeout: the the earlier implementation reconciling/push_remote_unknown state."""
     r = env.repo
     m = merge_commit(r)
     mid = open_session(env, approved(r, m))
@@ -482,7 +482,7 @@ def test_reconcile_gate_recreates_a_deleted_ref_then_keeps_the_existing_branch(e
     git(['update-ref', '-d', ref, m], r.work)
     env.remote(r.B)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    # 0153 T#3: an unchanged remote now gets the same preserved commit re-pushed.
+    # an unchanged remote now gets the same preserved commit re-pushed.
     assert out['result']['status'] == 'merged'
     assert ref_value(r.work, ref) == m
     seq = names(env)
@@ -505,7 +505,7 @@ def test_reconcile_gate_failure_never_queries_or_resets(env, damage):
         git(['update-ref', ref, r.B, m], r.work)
         observed, reason = r.B, 'ref_conflict'
     elif damage == 'commit_missing':
-        # A session from before T#2 (no preserve_* yet) whose commit object is gone.
+        # A session from before the earlier implementation (no preserve_* yet) whose commit object is gone.
         for key in ('preserve_ref', 'preserve_sha', 'preserve_parents', 'preserved_at',
                     'preserve_retain_until'):
             ctx.pop(key, None)
@@ -528,7 +528,7 @@ def test_reconcile_gate_failure_never_queries_or_resets(env, damage):
     assert (e['code'], e['stage'], e['reason']) == ('preserve_failed', 'reconcile_gate', reason)
     assert e['expected_sha'] == expected and e['observed_sha'] == observed
     assert e['at'] == LATER and e['instance_id'] == 'inst_B'
-    # T#1 evidence survives verbatim.
+    # evidence survives verbatim.
     assert e['prior_push_error'] == before['last_error']
     assert e['prior_push_error']['instance_id'] == 'inst_A' and e['prior_push_error']['local_sha'] == m
     assert after['reconciliation_kind'] == 'preserve_failed' and after['reconcile_next_at'] is None
@@ -664,7 +664,7 @@ def test_rejected_reset_keeps_existing_flow_and_the_ref(env, branch):
 
 
 def _remote_breaks_json(env):
-    """0153 T#3: another group's commit on origin that makes the integration fail its
+    """another group's commit on origin that makes the integration fail its
     syntax verification, so reconcile hands the merge back through the verified reset."""
     r = env.repo
     other = r.tmp / 'other_json'
@@ -679,7 +679,7 @@ def _remote_breaks_json(env):
 
 
 def test_remote_unchanged_reset_gate(env):
-    # 0153 T#3: the remote-unchanged reset is gone; the reset gate now guards the
+    # the remote-unchanged reset is gone; the reset gate now guards the
     # hand-off reset (preserve.verify_round right before it).
     r = env.repo
     mid, m, before = unknown_session(env)
@@ -702,7 +702,7 @@ def test_remote_unchanged_reset_gate(env):
 
 
 def test_remote_unchanged_reset_keeps_the_ref_and_history(env):
-    # 0153 T#3: the hand-off reset (the only reconcile reset) keeps the ref and closes
+    # the hand-off reset (the only reconcile reset) keeps the ref and closes
     # the round into the history.
     r = env.repo
     mid, m, before = unknown_session(env)
@@ -823,7 +823,7 @@ def test_push_timeout_then_restart_on_another_instance_reuses_the_ref(env):
     gs.startup_recovery()
     after = saved(mid)
     assert len(env.probes) == 1
-    # 0153 T#3: the unchanged remote gets the same preserved commit re-pushed.
+    # the unchanged remote gets the same preserved commit re-pushed.
     assert after['review_state'] == gs.REVIEW_STATE_COMPLETED
     assert names(env).count('reset') == 0 and names(env).count('push') == 1
     assert 'update-ref' not in names(env)
@@ -903,7 +903,7 @@ def test_release_is_explicit_and_guarded(env):
 
 @pytest.mark.parametrize('outcome', ['released', 'delete_failed'])
 def test_release_delete_is_audited_on_the_session(env, outcome):
-    """T#1 §5.3 / §3.1-4: the explicit delete is a session ref move. It runs through the
+    """: the explicit delete is a session ref move. It runs through the
     session audit runner with the CAS kept, and the re-read sqlite row records it —
     success or a real nonzero failure — without disturbing the earlier push evidence.
     The caller's live context carries the same entry, so its later write keeps it."""
@@ -978,7 +978,7 @@ def _exists(repo, sha):
 def test_preserve_ref_alone_keeps_commit_and_parents_through_external_gc(env):
     r = env.repo
     mid, m, before = unknown_session(env)
-    # 0153 T#3: reconcile no longer rewinds the branch; the same rewind is made directly.
+    # reconcile no longer rewinds the branch; the same rewind is made directly.
     git(['reset', '-q', '--hard', r.B], r.work)
     assert git(['rev-parse', 'HEAD'], r.work) == r.B
     git(['update-ref', '-d', 'ORIG_HEAD'], r.work)
@@ -1063,7 +1063,7 @@ def test_push_exception_contract_is_unchanged_after_preservation(env):
     ('third', 'retry_scheduled'), (None, 'retry_scheduled'),
 ])
 def test_reconcile_four_branches_are_unchanged_behind_the_gate(env, observed, status):
-    # 0153 T#3: expected → the same commit is re-pushed and completed; a fake third SHA
+    # expected → the same commit is re-pushed and completed; a fake third SHA
     # that the real fetch does not confirm is "the remote is moving" (transient).
     r = env.repo
     mid, m, before = unknown_session(env)

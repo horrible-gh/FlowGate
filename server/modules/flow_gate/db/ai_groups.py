@@ -1,4 +1,4 @@
-"""AI Group persistence (flowgate.v02.0017 T0002 §4).
+"""AI Group persistence.
 
 A group is a team: members (AI connections), user-defined roles and a many-to-many
 member/role mapping, plus an optional Supervisor member. The concrete runtime slots
@@ -6,7 +6,7 @@ member/role mapping, plus an optional Supervisor member. The concrete runtime sl
 Provider ids are logical ids without FKs so a removed connection stays visible as broken.
 The legacy ai_groups.*_provider_id columns (migration 124) are kept but never written.
 Migration 130 adds team ON/OFF (`enabled`), the default team (`default_key`, UNIQUE) and
-per-role evaluation criteria (`criteria`, JSON). Migration 135 (flowgate.v02.0017 CH0006 (4))
+per-role evaluation criteria (`criteria`, JSON). Migration 135 (the earlier change the discussion )
 takes groups out of the project: one list for the whole system, one default team
 (`default_key` = DEFAULT_KEY).
 """

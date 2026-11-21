@@ -1,4 +1,4 @@
-"""Conversation position of chat activity rows (flowgate.default.0675 T0004 §2-3/§2-5).
+"""Conversation position of chat activity rows.
 
 Command requests (``chat_command_requests``) and run change summaries
 (``ai_run_source_changes``) are stored apart from the conversation turns. Their place
@@ -18,7 +18,7 @@ guess it from whatever page of turns it happens to hold:
 This module is the one rule both tables use. It never looks a store up itself (the
 caller passes its own), so the writers (row insert, reply-turn append, startup backfill) all compute the same answer
 from the same facts, and a retried or duplicated event recomputes, never re-guesses.
-``created_at`` is never used to infer a position (NR0003 §7.2).
+``created_at`` is never used to infer a position.
 
 Monotonicity: a reply turn is append-only, so once a row is ``reply`` it can never
 legitimately fall back to ``run_start``. ``should_replace`` refuses such downgrades so
@@ -152,7 +152,7 @@ def summarize_counts(rows: Iterable[dict]) -> dict:
 
 
 def summarize(states: Iterable[Optional[str]]) -> dict:
-    """Counts by state, for the backfill report (T0004 §2-5 item 5)."""
+    """Counts by state, for the backfill report."""
     counts = {"total": 0, "reply": 0, "run_start": 0, "ambiguous": 0, "unresolved": 0, "pending": 0}
     for state in states:
         counts["total"] += 1

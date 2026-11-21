@@ -1,4 +1,4 @@
-"""0113 T#2 W/B: S-1..20, P-1 §4/5, preservation, validation order and feature off."""
+"""W/B: S-1..20, P-1, preservation, validation order and feature off."""
 import pytest
 from test_fg_card_settings import db_path,env,FA,FB,_sql,node,placed,setting,patch,get_settings,put_draft
 
@@ -27,7 +27,7 @@ def test_save_decision_table_s1_through_s20(env,case):
     from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
     human={"kind":"human","user_id":"u_kim"} if case in ("S2","S3") else None
     if case in ("S15","S16","S19"):
-        # flowgate.v02test.0027: a new card stores its creation review count explicitly (no role group: 0).
+        # a new card stores its creation review count explicitly (no role group: 0).
         key=placed(env,FA); preserved={"review_count":0}
     else:
         key,preserved=setup_legacy(env,assignee=human)
@@ -241,7 +241,7 @@ def test_optional_registry_read_failure_does_not_undo_a_successful_role_write(en
     assert "ROLLBACK TO SAVEPOINT fg_role_avail_read" in statements
     assert "ROLLBACK TO SAVEPOINT fg_role_name_read" in statements
 
-# flowgate.v02.0113 T#1: a card's settings no longer take the run / protected-node lock; the running lock and an
+# a card's settings no longer take the run / protected-node lock; the running lock and an
 # unfinished Time Machine operation (``editing.require_settings_editable``) remain.
 @pytest.mark.parametrize("code",["graph_time_machine_in_progress","node_settings_locked"])
 def test_role_writes_keep_existing_locks_before_value_validation(env,monkeypatch,code):

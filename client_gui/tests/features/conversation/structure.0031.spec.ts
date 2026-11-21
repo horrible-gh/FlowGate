@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import * as ConversationFeature from '@/features/conversation'
 import { APP_MESSAGES } from '@/app/i18n'
 
-// flowgate.v02.0031 — source-level guards for the Conversation part that a DOM test cannot see.
+// source-level guards for the Conversation part that a DOM test cannot see.
 const ROOT = resolve(__dirname, '../../..')
 const SRC = join(ROOT, 'src')
 const CONV = join(SRC, 'features/conversation')
@@ -30,7 +30,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   it('holds the Conversation part files', () => {
     expect(FILES.map(rel).sort()).toEqual(
       [
-        // flowgate.v02test.0029: message images — the composer's thumbnails, the message's thumbnails with the original view,
+        // message images — the composer's thumbnails, the message's thumbnails with the original view,
         // the composer's image state, the browser-side shrink and the limits / refusal wording.
         'ComposerImageStrip.vue',
         'ComposerModelPicker.vue',
@@ -45,15 +45,15 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'RunChangeDiff.vue',
         'RunChangeWindow.vue',
         'TimelineActivity.vue',
-        // flowgate.chat.0017 CH0002: the AI attachment request block of a run (rows drawn by the container's component).
+        // the AI attachment request block of a run (rows drawn by the container's component).
         'TimelineAttachments.vue',
         'TimelineImages.vue',
         'TimelineMessage.vue',
-        // flowgate.v02test.0025: a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
+        // a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
         'TimelineMessageMenu.vue',
         'api.ts',
         'changeDiff.ts',
-        // flowgate.v02test.0024 B: the chat's own request failures kept in its history.
+        // B: the chat's own request failures kept in its history.
         'chatErrors.ts',
         'chatStart.ts',
         'composerImages.ts',
@@ -74,7 +74,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     )
   })
 
-  // flowgate.v02.0066 T#5: plus the pure line comparison the Git tab's Center Diff reuses.
+  // plus the pure line comparison the Git tab's Center Diff reuses.
   it('exposes only the panel and the pure line comparison at runtime', () => {
     expect(Object.keys(ConversationFeature).sort()).toEqual(['ConversationPanel', 'diffLines'])
   })
@@ -88,7 +88,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     }
   })
 
-  // flowgate.v02.0157: plus the shared Markdown renderer the AI messages are drawn with.
+  // plus the shared Markdown renderer the AI messages are drawn with.
   it('imports only vue / vue-i18n, its own files, ui primitives, the clipboard helper, the Markdown renderer and (api.ts) the shared transport', () => {
     const allowed = [
       /^vue$/,
@@ -118,7 +118,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     }
   })
 
-  // flowgate.v02.0037 — the Designer right Tool Panel assembles the part through the public
+  // the Designer right Tool Panel assembles the part through the public
   // surface, and only there.
   it('is assembled into the Designer only by the right Tool Panel, through the public surface', () => {
     const users = filesUnder(join(SRC, 'features/designer'))

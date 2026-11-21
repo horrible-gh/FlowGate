@@ -1,8 +1,8 @@
 <template>
   <!-- v0.2 Group = v0.1 module. Single click selects the Group (reported upward) and opens
-       or closes its Flow list (flowgate.v02test.0002 R0001 #5; a double click toggles once);
+       or closes its Flow list (#5; a double click toggles once);
        Enter / the caret / Left-Right open or close it too.
-       flowgate.v02gui.0027: the trailing ⋯ opens the same Group menu as a right click (shown on hover, selection
+       the trailing ⋯ opens the same Group menu as a right click (shown on hover, selection
        or focus). Its click stops at the button, so it never selects or toggles the row. An archived Group (only in
        an "아카이브 포함" tree) is drawn dimmed, like an archived Flow. -->
   <ExplorerRowFrame

@@ -4,7 +4,7 @@
       <div>
         <div class="page-title">{{ t('gui.ai.groups.title') }}</div>
       </div>
-      <!-- A group of system AI is an administrator's; everyone reads and starts with it (CH0006 #48). -->
+      <!-- A group of system AI is an administrator's; everyone reads and starts with it. -->
       <div v-if="canEdit" class="detail-actions">
         <Button variant="primary" :disabled="busy" @click="openCreate()">＋ {{ t('gui.ai.groups.add_title') }}</Button>
       </div>

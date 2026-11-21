@@ -1,4 +1,4 @@
-"""flowgate.default.0350 TS gate for the git integration suite.
+"""TS gate for the git integration suite.
 
 Run from ``server/`` as::
 
@@ -14,7 +14,7 @@ clone a local ``file://`` origin.  When that probe says no, every 0350 test
 *skips* and pytest still exits 0 — a GREEN verdict for a suite that proved
 nothing.  Since a TS verdict is the exit code and nothing else, this runner
 fails the run when anything is skipped, and additionally requires the eight
-0350 cases to have reported ``passed`` by name.
+cases to have reported ``passed`` by name.
 
 Environment: ``config.Settings`` declares ALLOWED_ORIGIN / SECRET_KEY / CONTEXT
 / DB_TYPE as required and the repo ships no ``.env``, so importing anything
@@ -89,7 +89,7 @@ def _check_capability() -> int:
     print("0350 capability check: OK")
     return 0
 
-# T0004 §2.4 / NR0003 §7 items 1-6. Named individually so a rename, a silent
+# items 1-6. Named individually so a rename, a silent
 # deselect, or an environment-driven skip cannot pass as coverage.
 _REQUIRED = [
     "TestBaseUntrackedConflictEndToEnd0350::test_merge_and_merge_only_both_hit_the_same_409",

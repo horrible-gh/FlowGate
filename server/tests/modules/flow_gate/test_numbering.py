@@ -33,7 +33,7 @@ def get_all_migrations() -> list[Path]:
 def keep_storage_dir_env():
     """Undo this module's FLOWGATE_STORAGE_DIR edits, restoring the prior value.
 
-    0394 T0004. Seven tests below point the storage root at their own tmp_path and
+    Seven tests below point the storage root at their own tmp_path and
     then `del os.environ["FLOWGATE_STORAGE_DIR"]` in a finally block. Deleting is not
     undoing: other suites publish a storage root of their own when they are imported,
     and pytest imports every module before running anything, so the `del` removed

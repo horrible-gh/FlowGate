@@ -1,8 +1,8 @@
-"""flowgate.v02.0045 T0011 (S1+S2) — pure Graph Workflow domain rules.
+"""(S1+S2) — pure Graph Workflow domain rules.
 
-Kind / state / editable tables (P0008 §2.2·§2.3·§2.6), ownership (D0004 §3.1), auto layout
-(L0009 §2.7), rematch stages and tie rules (L0009 §2.3.4~§2.3.6), supersede handoff
-(L0009 §2.3.7) and the layout request shape (P0008 S2-3).
+Kind / state / editable tables, ownership, auto layout
+, rematch stages and tie rules, supersede handoff
+and the layout request shape.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from modules.flow_gate.graph_workflow.domain.supersede import chain_reaches, liv
 FLOW = "flowgate.v02.0051"
 
 
-# ── P0008 §2.2 / §2.3 / §2.5 / §2.6 ─────────────────────────────────────────
+# ── the plan / / / ─────────────────────────────────────────
 
 @pytest.mark.parametrize("type_code,kind", [
     ("R", "requirement"), ("b", "requirement"), ("DB", "design"), ("NR", "research"), ("WP", "plan"),
@@ -74,7 +74,7 @@ def test_ownership_truth_table():
     assert judge_ownership(True, True) == "conflict"
 
 
-# ── L0009 §2.7 auto layout ──────────────────────────────────────────────────
+# ── the earlier implementation auto layout ──────────────────────────────────────────────────
 
 def test_documents_layout_matches_p0008_s1_1():
     keys = ["R", "N", "M", "Q", "D"]
@@ -99,7 +99,7 @@ def test_collision_pushes_auto_node_down():
     assert placed["B"] == {"x": 260, "y": 120, "source": "auto"}
 
 
-# ── L0009 §2.3.4~§2.3.6 rematch ─────────────────────────────────────────────
+# ── the earlier implementation~ rematch ─────────────────────────────────────────────
 
 def _prev(key, item_id, item_seq, typ, label, order, source="sequence_slot", card=None, result=None):
     return {"node_key": key, "identity_source": source, "item_id": item_id, "item_seq": item_seq,
@@ -192,7 +192,7 @@ def test_lcs_and_linear_fallback_agree_on_simple_input():
         assert [(p["label"], c["label"]) for p, c in pairs] == expected
 
 
-# ── L0009 §2.3.7 supersede handoff ──────────────────────────────────────────
+# ── the earlier implementation supersede handoff ──────────────────────────────────────────
 
 def _doc(doc_id, superseded_by=None, status="open", group=FLOW):
     return {"doc_id": doc_id, "superseded_by": superseded_by, "status": status, "group_id": group}
@@ -216,7 +216,7 @@ def test_handoff_skips_cancelled_foreign_and_cyclic_chains():
     assert pending_handoffs(FLOW, docs, {"doc:a", "doc:x", "doc:p"}, set()) == []
 
 
-# ── P0008 S2-3 layout request ───────────────────────────────────────────────
+# ── the plan S2-3 layout request ───────────────────────────────────────────────
 
 def test_layout_request_rules():
     assert parse_layout({"positions": [], "viewport": None}).only_empty
@@ -234,7 +234,7 @@ def test_layout_request_rules():
 
 
 def test_node_key_limit_is_the_p0008_contract_120():
-    # P0008 §1.6 / L0009 §1.4 E-15: 120 characters pass, 121 (and the 200 column width) do not.
+    # E-15: 120 characters pass, 121 (and the 200 column width) do not.
     assert NODE_KEY_MAX_LEN == 120
     assert parse_layout({"positions": [{"node_key": "k" * 120, "x": 1, "y": 1}]}).errors == []
     for length in (121, 200):

@@ -1,8 +1,8 @@
-"""0120: persisted common/per-document role cells, independent of runtime bindings.
+"""persisted common/per-document role cells, independent of runtime bindings.
 
 Providers deliberately have no FK: deletion retains the id and last assigned name.
 Callers own the transaction; locking the parent serializes edits and row positions.
-flowgate.v02test.0027 (migration 191): ``review_count`` is the row's default review count (NULL: a type row inherits
+(migration 191): ``review_count`` is the row's default review count (NULL: a type row inherits
 the common row, the common row means the existing card default 0). It is copied into a card only when the card is
 created; nothing reads it at run time.
 """

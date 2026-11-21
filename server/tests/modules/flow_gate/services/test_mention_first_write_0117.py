@@ -1,4 +1,4 @@
-"""flowgate.v02.0117 — a Graph card's instruction stage writes into its line's EMPTY document.
+"""a Graph card's instruction stage writes into its line's EMPTY document.
 
 Its start is an edit (``node_dispatch._instruction_job``: ``action_scope`` edit on the line's document), but the
 document has no body: it is a first write. The edit mention used to tell the worker to revise it after reading
@@ -76,7 +76,7 @@ def test_first_write_is_ignored_by_a_new_mention():
 
 
 def test_token_rec_builder_forwards_first_write(monkeypatch):
-    # Pure prompt forwarding: provide the already-read document through the T#2 snapshot port.
+    # Pure prompt forwarding: provide the already-read document through the the earlier implementation snapshot port.
     # Real snapshot/body/revision consistency is covered in test_card_document_edit_agent_0127.
     from modules.flow_gate.graph_workflow.services import card_document_ports
     monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))

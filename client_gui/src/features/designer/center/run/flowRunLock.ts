@@ -1,9 +1,9 @@
-// flowgate.v02.0061 T#14 — what a Flow's run means for editing and for the Canvas lines, by the server's rules
-// (flowgate.graph_run.editing, T#3). Pure: no Vue, no transport.
+// what a Flow's run means for editing and for the Canvas lines, by the server's rules
+// (flowgate.graph_run.editing, the earlier implementation). Pure: no Vue, no transport.
 //
 // - Run lock: a run that is running, paused or stopping locks every structure edit of its Flow (Canvas: nodes and
 //   lines added / removed / changed; Inspector: card settings). Viewing, panning, zooming and moving cards stay.
-//   flowgate.v02.0113 and after (0132 NR §4.4.3): an idle run waiting for people never locks by itself — and neither
+//   and after (NR): an idle run waiting for people never locks by itself — and neither
 //   does a confirm gate whose decision is parked for a recovery (`gate.parked`, no Git work going on). What locks
 //   besides the status is the server's `gate.git_active`: a gate decision whose Git work (the automatic sync) is going
 //   on now locks the structure like a running run (`run`), idle or not (server `graph_run_locked`, reason
@@ -15,12 +15,12 @@
 //   the Canvas node runs and from the run read, so a draft view (no node runs on its nodes) is protected the same.
 // - Running lines: a line into a node the work is going through now — open or review, or one with a running /
 //   requested AI execution or a pending / integrating result integration — is drawn as running (FlowEdgePath).
-//   flowgate.v02.0113 T#1 (0002-D revision §3.13): when the server tells `node_running`, it replaces "open or review": a node
+//   when the server tells `node_running`, it replaces "open or review": a node
 //   a person or a setup waits on is reached (the green progress line) but not running.
-// - Run status not confirmed (TR0031 rev1): until a read tells the Flow's run status (the run read, or the Canvas read's
+// - Run status not confirmed: until a read tells the Flow's run status (the run read, or the Canvas read's
 //   `run` block) the structure waits too (`unknown`) — a run being read or whose read failed is never taken as idle. A
 //   run already known to be locked stays locked whatever its Graph's load does (no Graph: no protected / running nodes).
-// - Card marks (TR0031 rev1): a card shows its attempt's result integration and Hold from the run read's node runs as
+// - Card marks: a card shows its attempt's result integration and Hold from the run read's node runs as
 //   well (`nodeRuns`, the latest), so a draft view — whose nodes carry no node run — keeps them. A node is the run's
 //   node only by its node key: a node added to the draft has a key of its own (the server never reuses a known or
 //   retired key; an unsaved one is a `tmp_` client key), so it gets nothing.
@@ -50,7 +50,7 @@ export function isRunLocked(run: Pick<FlowRunInfo, 'status'> | null | undefined)
 }
 
 /**
- * flowgate.v02.0132 T#4: a gate of the run whose decision has Git work going on now (the node run's `gate.git_active`).
+ * a gate of the run whose decision has Git work going on now (the node run's `gate.git_active`).
  * A parked gate (`gate.parked`) is not active: its run is idle and editable.
  */
 export function isGateGitActive(run: Pick<FlowRunInfo, 'nodeRuns'> | null | undefined): boolean {
@@ -128,7 +128,7 @@ export function activeNodeIds(graph: FlowGraph, run?: FlowRunInfo | null): Set<s
   for (const [id, nodeRun] of nodeRunsOf(graph, run)) {
     const executing = (nodeRun.runningExecutionCount ?? 0) > 0 || (nodeRun.requestedExecutionCount ?? 0) > 0
     const integrating = ACTIVE_INTEGRATIONS.includes(nodeRun.integrationStatus ?? '')
-    // flowgate.v02.0113 T#1: the server's `node_running` (actual running) when sent — a waiting open node is no running line
+    // the server's `node_running` (actual running) when sent — a waiting open node is no running line
     const working = typeof nodeRun.nodeRunning === 'boolean' ? nodeRun.nodeRunning : ACTIVE_NODE_STATES.includes(nodeRun.status)
     if (working || executing || integrating) out.add(id)
   }

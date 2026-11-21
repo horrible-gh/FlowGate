@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import ToastHost from '@/components/ui/ToastHost.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 
-// T0008 §12: caller-owned toast list, stacked in a shared teleported region without
+// caller-owned toast list, stacked in a shared teleported region without
 // overlap, and no global queue/store/event-bus invented on top.
 describe('components/ui/ToastHost (T0008 §12)', () => {
   afterEach(() => {
@@ -28,7 +28,7 @@ describe('components/ui/ToastHost (T0008 §12)', () => {
     const host = document.querySelector('.ui-toast-host') as HTMLElement
     expect(host).not.toBeNull()
     // vitest's jsdom environment does not inject scoped-CSS <style> tags, so the "no
-    // overlap" guarantee (T0008 §5.3, layout defined in ToastHost.vue's flex-column CSS)
+    // overlap" guarantee (layout defined in ToastHost.vue's flex-column CSS)
     // can only be checked structurally here: both toasts must be direct children of one
     // shared host, not two independently teleported/positioned regions.
     expect(host.children).toHaveLength(2)
@@ -57,7 +57,7 @@ describe('components/ui/ToastHost (T0008 §12)', () => {
   // Regression for the rework rejection: a dependency-free `computed` only allocated a
   // z-index once, so a Modal opened after the host was already showing would render
   // above it forever, and a later toast never recovered the top spot. Host -> Modal ->
-  // new Toast must land the host above the Modal again (T0008 §6/§10 shared "Later windows
+  // new Toast must land the host above the Modal again (the earlier implementation shared "Later windows
   // appear on top" counter, core/overlay/zIndex.ts).
   it('reallocates its z-index above a later-opened ModalShell once a new toast is added', async () => {
     const hostWrapper = mount(ToastHost, { props: { toasts: [{ id: 1, message: 'First', duration: 0 }] } })

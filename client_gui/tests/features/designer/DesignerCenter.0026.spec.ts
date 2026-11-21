@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0026 — Designer Center screen (0003-D §7.1): a real Center session with a fake
+ * Designer Center screen: a real Center session with a fake
  * Graph source, mounted with the real Vue Flow. jsdom measures nothing, so Vue Flow cannot
  * place Edges or replay d3 gestures here — those are checked in the browser (0003-D §7.2).
  * This file alone gives the Canvas a size and a ResizeObserver stand-in (no global setup).
@@ -109,7 +109,7 @@ afterEach(() => {
 })
 
 describe('DesignerCenter — empty / loading / error', () => {
-  // flowgate.v02.0042: no open Flow leaves the Canvas area empty — no guidance text.
+  // no open Flow leaves the Canvas area empty — no guidance text.
   it('without tabs leaves the Canvas area empty: no guidance text, no state and no Canvas', () => {
     const w = mountCenter()
     expect(get(w, 'designer-center').exists()).toBe(true)
@@ -301,7 +301,7 @@ describe('DesignerCenter — Canvas', () => {
     expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
   })
 
-  // flowgate.v02.0045 T0019: no empty-Graph text (and no replacement for it).
+  // no empty-Graph text (and no replacement for it).
   it('a Graph without Nodes keeps the Canvas and shows no empty-Graph text', async () => {
     const w = mountCenter()
     await openReady('a', 'Alpha', { flowId: 'a', nodes: [], edges: [] })

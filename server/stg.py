@@ -14,7 +14,7 @@ sys.path.insert(0, BASE_DIR)
 def _listen_port() -> int:
     """Port from FLOWGATE_PORT, falling back to 8089.
 
-    0273 NR0003 P1-2: this was hardcoded, and deploy/flowgate.service runs this
+    this was hardcoded, and deploy/flowgate.service runs this
     file — so a Linux box with 8089 already taken could not be installed without
     editing the source, while setup.ps1 has had a -Port parameter all along.
     A blank or non-numeric value falls back rather than crashing the service.
@@ -49,14 +49,14 @@ def _env_int(name: str, default: int) -> int:
 
 if __name__ == "__main__":
     import uvicorn
-    # 0275 T0007 (NR0003 cause 5): reload=True ran the dev file-watcher in
+    # reload=True ran the dev file-watcher in
     # production — deploy/flowgate.service runs this file. Reload is now opt-in
     # (FLOWGATE_RELOAD=true for dev; import-string form kept so it still works)
     # and the worker count is configurable via FLOWGATE_WORKERS. Keep workers=1
     # while SSE matters: the publisher is in-process, so events from one worker
     # never reach subscribers on another. uvicorn ignores workers under reload.
     # timeout_graceful_shutdown: backstop so any stuck in-flight request (e.g. a
-    # long-lived SSE stream) cannot block shutdown indefinitely (group 0102 R0001).
+    # long-lived SSE stream) cannot block shutdown indefinitely.
     uvicorn.run(
         "routers.main:app",
         host=(os.environ.get("FLOWGATE_BIND_HOST") or "0.0.0.0").strip(),

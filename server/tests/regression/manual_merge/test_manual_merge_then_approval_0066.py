@@ -1,10 +1,10 @@
-"""0066 T#3 — final approval after a manual merge (D#1 §3-6(8), Q1/Q2, Q451).
+"""final approval after a manual merge (the earlier implementation, Q1/Q2, Q451).
 
 The Group stays Git-active after a manual merge, so the AC final approval takes its usual
 ``git_action`` path: it merges only what is left (never the earlier merge again), and with
 nothing left it completes through the existing no-work path and tears the slot down.
 
-Q451 (2026-10-15): the AC approval route gets no unreported-change check in T#3. The check
+Q451 : the AC approval route gets no unreported-change check in the earlier implementation. The check
 keeps living where it is, ``POST /documents/workflow/finalize``, and is verified there
 end to end: after a manual merge an unreported path still blocks (the measure starts at the
 recorded scope floor, a manual merge does not stand in for reporting) and the same path

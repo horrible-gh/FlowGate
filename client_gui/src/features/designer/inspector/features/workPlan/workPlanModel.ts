@@ -1,13 +1,13 @@
-// flowgate.v02.0048 T#13 — the WP summary's rules (D#1 §8, §10.1 WP summary column, §10.2 T#13 row). Pure
+// the WP summary's rules (WP summary column, the earlier implementation row). Pure
 // functions over the target and the WP read view of its document (`GET /documents/{doc_id}/work-plan`,
 // normalized by `@/features/document`): the cards of the plan (an instruction / result pair is one card)
 // and the progress tally (cards the workflow already started).
-// flowgate.v02.0056 F1 (0056 CH §5) — the "where the plan is edited" line is gone with the tab's details.
+// (CH) — the "where the plan is edited" line is gone with the tab's details.
 //
 // Operations (D#1 §8.3 rule 0): this section only reads — reading and ↗ 열기 are queries, possible in every
 // ownership and view, read-only ones included. Editing the plan is the work plan edit window's (↗ 열기); the
 // section has no change operation, so no reason ever disables anything here.
-// flowgate.v02.0074 T#5: the header's deploy buttons are the card's one change operation (workPlanDeployActions
+// the header's deploy buttons are the card's one change operation (workPlanDeployActions
 // below; whether a plan is deployed is told by the status read's counts only, the card keeps no state of its own).
 // Not offered: Step editing here, a re-plan, the AI-written plan and its origin badge.
 import type { InspectorReadOnly, InspectorTarget } from '../../inspectorTarget'
@@ -36,7 +36,7 @@ export interface WorkPlanViewFacts {
 /** One card of the plan: a single Step, or an instruction Step with its result Step. */
 export interface WorkPlanCardRow {
   readonly cardId: string
-  /** The Step keys of the card in plan order, e.g. `['T#1', 'TR#1']`. */
+  /** The Step keys of the card in plan order, e.g. `['the earlier implementation', 'TR#1']`. */
   readonly keys: readonly string[]
   /** Type of the card's first Step. */
   readonly type: string | null
@@ -317,7 +317,7 @@ export function workPlanSlotState(reviewStatus: string | null, docStatus: string
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  // a document being written asks nothing of the operator — a neutral state draws no badge.
   return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 

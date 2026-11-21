@@ -199,7 +199,7 @@ beforeEach(async () => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
-  // D §2.3 / §2.4 / §2.8, T#5 instruction 7 (V25 GUI part): GETs of the three existing contracts only — no
+  // D / /, the earlier implementation instruction 7 (V25 GUI part): GETs of the three existing contracts only — no
   // settings / paths GET, no /system/settings/storage-root, no legacy list, and no write at all.
   // flowgate.v02.0077: the administrator overview's 확인 필요 read is not a project request.
   for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/agents')) {

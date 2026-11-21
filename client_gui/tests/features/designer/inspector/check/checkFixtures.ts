@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0048 T#12 — the check card's local test helpers (D#1 §12.3: a feature keeps its own
+ * the check card's local test helpers (the earlier implementation: a feature keeps its own
  * helpers in its own folder). An AC Node of a v0.1 Flow (as the Canvas projects it: a free document
  * node once the AC exists), its target in other ownerships / views, and the server shapes the mock
  * server answers with (get_finalize_state, approval_publish.response_payload, the document row).

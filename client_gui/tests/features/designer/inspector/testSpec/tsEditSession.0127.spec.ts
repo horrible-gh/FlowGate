@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0127 T#5 — the TS card's v2 revisions (0009-L §2.15.3 / §3.1): a draft's pinned base, the own-ACK base,
+ * the TS card's v2 revisions: a draft's pinned base, the own-ACK base,
  * 401 / 403 / key-reuse handling, the one unresolved request per document (shared with uploads and windows through the
  * real registry), owner-only release, the original-context resend and the submitted bytes carried by an ACK.
  */

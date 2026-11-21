@@ -130,23 +130,23 @@ def scratch_dir_path(project_id: str, token_id: str) -> str:
     return str(_scratch_dir(project_id, token_id))
 
 
-# flowgate.v02test.0026: the execute capability of a chat token (tokens.command_access).
+# the execute capability of a chat token (tokens.command_access).
 CHAT_EXECUTE = "execute"
 
 
 def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional[str]) -> tuple[Optional[str], bool]:
-    """Decide a chat (CH) token's capability (D0006 §2.3, L0007 §2.3, DB0008 §4.6).
+    """Decide a chat (CH) token's capability.
 
     Returns ``(source_access, claim_deferred)``. ``source_access`` is ``"read"``,
-    ``"read_write"``, or ``"execute"`` (flowgate.v02test.0026: the execute mode -- the caller
+    ``"read_write"``, or ``"execute"`` (the earlier change: the execute mode -- the caller
     stores it as ``source_access="read"`` + ``command_access="execute"``, never as write
     access). ``claim_deferred`` is True only for
     ``edit_once``: the actual CAS claim has to run inside the same transaction as the
-    token INSERT (T0009 §6), so this function only runs the pre-claim stale-recovery
-    sweep (T0009 §5.1) and resolves the *stored* mode — the caller performs the claim
+    token INSERT, so this function only runs the pre-claim stale-recovery
+    sweep and resolves the *stored* mode — the caller performs the claim
     itself once inside that transaction.
 
-    0515 T0009 §7 "never do this": the caller never supplies capability — only this
+    "never do this": the caller never supplies capability — only this
     function, reading the user's own stored setting, decides it.
     """
     from modules.flow_gate.db import user_chat_source_access as db_source_access
@@ -155,7 +155,7 @@ def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional
     if not group_id:
         return "read", False
 
-    # T0009 §5.1: run stale-claim recovery before judging eligibility so a
+    # run stale-claim recovery before judging eligibility so a
     # crashed/abandoned edit_once claim never blocks a fresh one.
     chat_settings_service.recover_stale_claim(issued_to, project, group_id)
     mode = db_source_access.resolve_source_access_mode(issued_to, project, group_id)
@@ -181,7 +181,7 @@ def issue(
     continuation_instruction_mode: Optional[str] = None,
     provider_id: Optional[str] = None,
     ai_run_id: Optional[str] = None,
-    # 0352 T0004 §2: per-item_seq N/T auto-approve selection for an ai_direct continuation
+    # per-item_seq N/T auto-approve selection for an ai_direct continuation
     # chain. NULL/[] for every non-continuous or selection-less token (db/tokens.py
     # normalizes and JSON-round-trips this — see _dump_auto_approve_item_seqs).
     continuation_auto_approve_item_seqs: Optional[list] = None,
@@ -197,17 +197,17 @@ def issue(
     5. Create scratch directory
     6. Record workflow_events.token_issued
 
-    Continuous work (group 0051 R0001 / NR0003 option B): when continuation_target_seq is
+    Continuous work (option B): when continuation_target_seq is
     given, the token carries the unmanned-chain stop point (target item_seq) and the
-    AI-review-mode flag (T0004/CH0006). Both persist on the token so the inbox self-chain
+    AI-review-mode flag. Both persist on the token so the inbox self-chain
     (inbox_routes._handle_new) can read them off the just-consumed token and mint the
     next step's token without a human re-issuing it. NULL/False ⇒ ordinary token.
 
-    0515 T0009 §6: for ``action_scope == "chat"`` the token's ``source_access``
+    for ``action_scope == "chat"`` the token's ``source_access``
     capability (``read``/``read_write``) is decided here from the issuing user's own
     stored setting — never accepted from a caller. When that setting is ``edit_once``,
     the claim CAS + the token INSERT + the ``token_issued`` event are one atomic
-    ``store.transaction()`` (T0009 §6): a claim that "won" must never be visible unless
+    ``store.transaction()``: a claim that "won" must never be visible unless
     its token row also landed, and vice versa.
     """
     if action_scope == "chat" and group_id:
@@ -257,13 +257,13 @@ def issue(
         "issued_to": issued_to,
         "created_at": created_at_str,
         "expires_at": expires_at_str,
-        # Persist relative (L0054.0002): scratch_dir lives under storage_root/work,
+        # Persist relative: scratch_dir lives under storage_root/work,
         # so it stays host/OS-invariant. verify() resolves it back to absolute.
         "scratch_dir": stored_scratch,
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
         # Chosen locale persisted so the unmanned self-chain honors it on every hop
-        # without depending on a per-request x-locale header (group 0099 B0001).
+        # without depending on a per-request x-locale header.
         "continuation_locale": continuation_locale,
         "merge_id": merge_id,
         "continuation_instruction_mode": continuation_instruction_mode,
@@ -272,9 +272,9 @@ def issue(
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
         "failure_origin_target_run_id": failure_origin_target_run_id,
         "failure_origin_before_marker": failure_origin_before_marker,
-        # 0515 T0009 §6 / DB0008 §2.2: fixed at issue time, never changed afterwards.
+        # : fixed at issue time, never changed afterwards.
         "source_access": source_access,
-        # flowgate.v02test.0026: "execute" for a chat token issued in execute mode, else NULL.
+        # "execute" for a chat token issued in execute mode, else NULL.
         # Fixed at issue time like source_access.
         "command_access": None,
     }
@@ -302,15 +302,15 @@ def issue(
                 issued_to, project, group_id
             )
             if source_access == CHAT_EXECUTE:
-                # flowgate.v02test.0026: execute is its own capability, never write access.
+                # execute is its own capability, never write access.
                 # Source/document tools keep judging source_access ("read"); only the
                 # command gate reads command_access.
                 source_access, command_access = "read", CHAT_EXECUTE
                 data["command_access"] = command_access
             if source_access == "read_write" or claim_deferred or command_access:
-                # flowgate.v02.0061 T#14 (WP answer 2): an edit / edit-once chat of a Flow whose Graph run is
+                # (WP answer 2): an edit / edit-once chat of a Flow whose Graph run is
                 # running / paused / stopping is refused (409 graph_run_locked) before anything is written or
-                # claimed; a read chat is not. An execute chat is (flowgate.v02test.0026): its commands run in
+                # claimed; a read chat is not. An execute chat is: its commands run in
                 # the same worktree the Graph run uses. The judgement is flowgate.graph_run's (graph_execution_hooks).
                 from modules.flow_gate.services import graph_execution_hooks
                 graph_execution_hooks.call("chat_source_refusal", group_id, continuation_locale)
@@ -359,7 +359,7 @@ def issue(
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
         "failure_origin_target_run_id": failure_origin_target_run_id,
         "failure_origin_before_marker": failure_origin_before_marker,
-        # 0515 T0009 §6: None for every non-chat token (unchanged wire shape otherwise).
+        # None for every non-chat token (unchanged wire shape otherwise).
         "source_access": source_access,
         "command_access": command_access,
         "one_shot_claimed": one_shot_claimed,
@@ -367,7 +367,7 @@ def issue(
 
 
 def _record_self_check_anchor(data: dict) -> None:
-    """flowgate.v02.0114 T#3 (D 3.3): the Self-check work unit's pre-change basis, written once
+    """(D 3.3): the Self-check work unit's pre-change basis, written once
     when the unit's first token is issued, before the token is handed back.
 
     This is the one point every issue path passes (manual issue, AI run admission, the
@@ -423,7 +423,7 @@ def verify(raw_token: str) -> dict:
             detail="Token has expired. Please inform the user of the copied message result.",
         )
 
-    # scratch_dir is persisted relative (L0054.0002). Every consumer of the verified
+    # scratch_dir is persisted relative. Every consumer of the verified
     # record (the inbox doc_path security jail, worker scratch staging, mention
     # bodies) needs a usable absolute OS path, so resolve it here at the single
     # gateway. Legacy absolute values pass through unchanged.
@@ -496,7 +496,7 @@ def consume(
     Returns True when the token is consumed by this call. With ``require_claim=True``
     the consume is a compare-and-swap: a token some other request already consumed
     returns False and writes NO token_consumed event, so the caller can abort instead
-    of adding a second artifact for one token (0535 T0007 §3). The default stays the
+    of adding a second artifact for one token. The default stays the
     historical unconditional behaviour for every other inbox action, which returns
     True and is still safe to call twice.
 
@@ -535,7 +535,7 @@ def consume(
 
 
 def _link_self_check_drafts(token_rec: dict, doc_id: Optional[str]) -> None:
-    """0638 T#1: a TR(new) token's pre-registration Self-check runs join the TR it registered.
+    """a TR(new) token's pre-registration Self-check runs join the TR it registered.
 
     Consumption is the one point every registration path passes with the created doc id.
     Linking is evidence bookkeeping and never fails the registration it follows.
@@ -549,7 +549,7 @@ def _link_self_check_drafts(token_rec: dict, doc_id: Optional[str]) -> None:
     except Exception:
         _log.warning("self-check draft link failed for token %s -> %s",
                      token_rec.get("token_id"), doc_id, exc_info=True)
-    # 0114 T#3 (D 3.3-3): the draft's pre-change anchor joins the TR at the same point.
+    # (D 3.3-3): the draft's pre-change anchor joins the TR at the same point.
     try:
         from modules.flow_gate.services import tr_self_check_anchor  # lazy -- import cycle
 
@@ -560,11 +560,11 @@ def _link_self_check_drafts(token_rec: dict, doc_id: Optional[str]) -> None:
 
 
 def increment_dry_run(token_id: str) -> None:
-    """Bump the per-token dry-run attempt counter (R0001 dry-run, group 0050).
+    """Bump the per-token dry-run attempt counter (dry-run, the earlier change).
 
     Thin wrapper that preserves inbox_routes' dependency boundary: the endpoint goes
     through token_service (like verify/consume) and never imports db.tokens directly
-    (L0007 §6.2). The actual UPDATE lives in db_tokens.increment_dry_run (DB0008 §3).
+. The actual UPDATE lives in db_tokens.increment_dry_run.
     """
     db_tokens.increment_dry_run(token_id)
 
@@ -572,7 +572,7 @@ def increment_dry_run(token_id: str) -> None:
 def revoke(token_id: str, reason: str = "user_cancel") -> None:
     """revoked_at = now() + workflow_events.token_revoked (D020 §2-5).
 
-    Idempotent (0447 T0007) and race-safe across process boundaries (0447 T0007
+    Idempotent and race-safe across process boundaries (the earlier implementation
     review rev1): revoking a token that is already revoked is a successful
     no-op -- it does not raise and does not write a second token_revoked event,
     even when the caller racing to revoke it runs in a different OS process
@@ -593,7 +593,7 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
     re-read row and returns silently. A missing token_id still raises 404,
     inside or outside a race.
 
-    0447 T0007 review rev2: the same race can land between this function's own
+    review: the same race can land between this function's own
     query (the ``db_tokens.get_by_id`` read above) and the guarded UPDATE if a
     concurrent caller *consumes* the token in that window instead of revoking
     it. The query alone cannot see that consume -- only the UPDATE's own WHERE
@@ -603,7 +603,7 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
     this function returns silently, and no token_revoked event is written for
     what is actually a consumed token.
 
-    0515 T0009 §4.4: once this call's claim actually wins the revoke CAS, an
+    once this call's claim actually wins the revoke CAS, an
     edit_once rollback is attempted for ``token_id`` regardless of the
     ``token_revoked`` event's own outcome (``try`` the event, ``finally``
     attempt the rollback) -- and regardless of token kind: for a non-chat
@@ -635,7 +635,7 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
             from modules.flow_gate.db import user_chat_source_access as db_source_access
             db_source_access.rollback(token_id, now_iso())
         except Exception:
-            # T0009 §4.4: a rollback failure must not mask the token_revoked outcome
+            # a rollback failure must not mask the token_revoked outcome
             # above (which has already happened, or whose own exception is already
             # propagating past this finally block) -- log and move on.
             _log.warning(

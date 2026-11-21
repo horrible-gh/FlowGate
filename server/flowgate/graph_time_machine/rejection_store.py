@@ -1,4 +1,4 @@
-"""0126 T#3: append-only invalidation/carry evidence, linked to the durable Git/DB journal."""
+"""append-only invalidation/carry evidence, linked to the durable Git/DB journal."""
 import json
 
 from modules.flow_gate.db.connection import get_store, now_iso

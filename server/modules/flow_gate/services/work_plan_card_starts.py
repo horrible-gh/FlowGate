@@ -1,4 +1,4 @@
-"""Graph card start port (flowgate.v02.0074 T0017).
+"""Graph card start port.
 
 Whether a work plan card already ran in the v0.2 Graph is a rule of ``flowgate.work_plan_deploy``: the node whose
 hidden ``wp_source`` card setting names the plan card, and that node's run facts (``node_started``). The WP read and

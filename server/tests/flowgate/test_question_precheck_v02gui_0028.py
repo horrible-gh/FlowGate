@@ -1,7 +1,7 @@
-"""flowgate.v02gui.0028: card AIs check the user's question policy and the past Q&A before they register a Q, and the
+"""card AIs check the user's question policy and the past Q&A before they register a Q, and the
 chat sees why an automatic answer failed.
 
-Q624 / Q625 (0003-NR): the asking card raised questions the policy says the AI decides itself, and asked again for
+Q624 / Q625 (NR): the asking card raised questions the policy says the AI decides itself, and asked again for
 something already refused, because the policy reached it only through the ``notices`` help item and the past Q&A
 search only reached the answering AI. Every Q-registration guide (clarification, continuous, review phase) and the
 ``question`` help item now carry the same check-before-asking steps with the past Q&A search address; the chat

@@ -1,4 +1,4 @@
-"""0061 TR0005 — predecessor endpoint parity (NextActionModal visible auto-check).
+"""predecessor endpoint parity (NextActionModal visible auto-check).
 
 The review rejection was that the [Proceed to next step] dialog did not *show* the
 2-previous action checked. The fix gives the modal a server endpoint

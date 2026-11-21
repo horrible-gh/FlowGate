@@ -1,4 +1,4 @@
-"""Test for 0505 T0009: _no_output_detail CLI/API branching."""
+"""Test for the earlier implementation: _no_output_detail CLI/API branching."""
 import pytest
 
 

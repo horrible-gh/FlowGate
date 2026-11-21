@@ -168,7 +168,7 @@ h3 { display: flex; gap: 14px; align-items: center; font-size: 13px; } h3 small 
 .table-scroll { overflow: auto; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th { text-align: left; color: var(--fg2-muted); font-weight: normal; }
 th, td { padding: 9px 8px; border-bottom: 1px solid var(--fg2-line); vertical-align: middle; } td:nth-child(3) { min-width: 170px; } td:nth-child(4) { min-width: 130px; }
 .warning { color: var(--fg2-yellow); } .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-/* flowgate.v02.0094: a case id is written in the list's own type (no monospace of its own), muted, on one line. */
+/* a case id is written in the list's own type (no monospace of its own), muted, on one line. */
 .case-id { color: var(--fg2-muted); white-space: nowrap; } .errors { color: var(--fg2-status-danger-fg); }
 .confirm, footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px; } .confirm { border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius); }
 .raw { position: absolute; inset: 0; min-height: 480px; background: var(--fg2-panel); border: 1px solid var(--fg2-line-strong); padding: 14px; box-sizing: border-box; z-index: 1; }

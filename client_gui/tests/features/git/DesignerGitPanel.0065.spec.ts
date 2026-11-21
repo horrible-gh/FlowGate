@@ -5,7 +5,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { DesignerGitPanel } from '@/features/git'
 import { G, P, createFakeGitSource, gitError, networkError, row, status } from './fakeGitSource'
 
-// flowgate.v02.0065 — the Git tab with Git off (Disconnected), with a failed status read and with Git
+// the Git tab with Git off (Disconnected), with a failed status read and with Git
 // on: exactly one of them shows; `Git 연결` opens the connect modeless next to the 0033 parts.
 registerAppMessages(i18n)
 
@@ -201,7 +201,7 @@ describe('DesignerGitPanel — Git 연결 modeless', () => {
     expect(q('git-connect-window')).toBeNull()
   })
 
-  // T#2 wired the requests (GitConnectFlow.0065.spec.ts covers them): test / connect go to the
+  // wired the requests (GitConnectFlow.0065.spec.ts covers them): test / connect go to the
   // Git settings contracts only and show nothing before the server answers.
   it('test / connect use the Git settings contracts only, never a 0033 action', async () => {
     const fake = createFakeGitSource({ status: off() })

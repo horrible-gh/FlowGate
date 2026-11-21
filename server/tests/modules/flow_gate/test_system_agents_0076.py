@@ -310,7 +310,7 @@ def test_v16_patch_changed_fields_only_location_immutable_and_enabled_toggle(env
 
 
 def test_remote_workdir_is_saved_read_back_and_cleared_0135(env):
-    # flowgate.v02.0135 CH0006: per-Agent remote working directory, set / re-read / cleared.
+    # per-Agent remote working directory, set / re-read / cleared.
     a = env.h("A")
     created = _create(env, REMOTE_BODY)
     aid = created["agent_id"]
@@ -448,7 +448,7 @@ def _history(env, aid):
 
 
 def test_v17_delete_with_registration_history_removes_it_from_the_list_and_keeps_history_0019(env):
-    # flowgate.v02test.0019: registration history no longer blocks deleting (was 409
+    # registration history no longer blocks deleting (was 409
     # agent_has_registration_history). The row, its ID and the history stay; deleted_at is set.
     a = env.h("A")
     unregistered = _create(env, REMOTE_BODY)["agent_id"]
@@ -525,7 +525,7 @@ def test_v17_finished_jobs_do_not_block_delete_0019(env, status):
     assert _rows(env.db_path, "SELECT status FROM agent_jobs WHERE job_id='job_done'") == [(status,)]
 
 
-# ── flowgate.v02test.0019: workspace cleanup policy ──────────────────────────
+# ── the earlier change: workspace cleanup policy ──────────────────────────
 
 def test_workspace_cleanup_defaults_saved_read_back_and_changed_0019(env):
     a = env.h("A")

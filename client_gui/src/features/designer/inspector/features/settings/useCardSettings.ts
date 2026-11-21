@@ -1,4 +1,4 @@
-// flowgate.v02.0053 T#7 — a Graph card's run / test settings (T#2 card settings): read when the card is
+// a Graph card's run / test settings (card settings): read when the card is
 // selected, every change sent at once as one value (no save button) and its answer shown; the AI choices are
 // the project's. A card just placed (`tmp_` key) has nothing stored yet: its form is drawn, off, until the
 // draft save answers its key. No server event announces a settings change; a run starting or ending a node
@@ -47,7 +47,7 @@ export interface CardSettingsState {
   readonly errorKind: ComputedRef<CardSettingsFailureKind | null>
   /**
    * The last refused change: its field, why, (a refused value) the server's reason, and the server's own message
-   * as it sent it (x-locale; flowgate.v02.0056 F2-1), or null.
+   * as it sent it (x-locale; the earlier change F2-1), or null.
    */
   readonly failure: ComputedRef<{
     readonly field: string
@@ -68,7 +68,7 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     const nodeKey = inspectorCardNodeKey(current)
     return current && nodeKey ? { projectId: current.projectId, flowId: current.flowId, docId: cardKeyOf(current.flowId, nodeKey) + '\n' + JSON.stringify(current.settingsContext ?? null) } : null
   }
-  // flowgate.v02test.0048: the card alone, without its context — writes belong to the card, so a context moved by
+  // the card alone, without its context — writes belong to the card, so a context moved by
   // another tab (a card placed, the draft version up) neither drops a value sent nor refuses the next one.
   const cardScope = (): InspectorEventScope | null => {
     const current = scope()
@@ -87,7 +87,7 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     },
     events: CARD_SETTINGS_EVENTS,
     matches: cardSettingsEventMatches,
-    // flowgate.v02test.0048: the same card under a moved context is read again with its AI rows kept (a card placed
+    // the same card under a moved context is read again with its AI rows kept (a card placed
     // in another tab moved the draft version; dropping the answer emptied the AI tab until the read came back).
     identity: cardOfSettingsKey,
   })
@@ -112,7 +112,7 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
       if (key === null || cardOfSettingsKey(key) !== card) throw new Error('gate_context_changed')
       const [flowId, tail] = splitKey(key)
       const [nodeKey, context] = tail.split('\n')
-      // flowgate.v02.0130: the context sent back is the one the server answered for this card (its own run / revision /
+      // the context sent back is the one the server answered for this card (its own run / revision /
       // draft choice), never the one the screen built from its view — those differ and 0126 refused every write then.
       const answered = resource.data.value?.context
       return settingsNodeWrite(flowId, nodeKey, field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value,

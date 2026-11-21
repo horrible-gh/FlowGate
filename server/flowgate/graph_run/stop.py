@@ -1,10 +1,10 @@
-"""0061 T#7 Stop: end a run's work and leave it idle (stopped) — ``POST /runs/{run_id}/stop``.
+"""Stop: end a run's work and leave it idle (stopped) — ``POST /runs/{run_id}/stop``.
 
-0085 T#4 (D0007 §7.3.2): idle(blocked_recovery) also accepts Stop via the same stopping path; an
+idle(blocked_recovery) also accepts Stop via the same stopping path; an
 unfinished Time Machine refuses it with 409 ``graph_time_machine_in_progress``. Stop preserves the
 ``recovery_reset_required`` round-split marker.
 
-Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends it, in this order:
+Pause (``POST /runs/{run_id}/pause``, the earlier implementation) keeps the run's work going; Stop ends it, in this order:
 
 (a) one Flow guard transaction, under the exclusive hold of the Flow's Stop gate (``fencing.exclusive``: every
     attempt token side effect in flight - a source write, a document registration or verdict, a chat command's
@@ -28,13 +28,13 @@ Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends
 
 A process whose end is not confirmed within the wait keeps the run ``stopping`` (a ``stop_pending`` run event names
 the reason) and nothing of (c)~(e) happens; the fence goes on refusing. Worktree disposal failures instead
-record ``cleanup_preserved`` and keep the source for startup cleanup; they no longer block Stop. T#9: the run's merge sessions (``graph_attempt_merge``) are aborted before (c) (the abort under the
+record ``cleanup_preserved`` and keep the source for startup cleanup; they no longer block Stop. the earlier implementation: the run's merge sessions (``graph_attempt_merge``) are aborted before (c) (the abort under the
 group's G, ``result_merge.abort_for_stop``); while one of them is still open (G busy, the Git abort failed) nothing of
 (c)~(e) happens — no attempt is invalidated, no token revoked, no worktree removed, no node reset — and the run stays
 stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
 attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
 stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
-flowgate.v02.0085 T#2/T#3 (D0007 §7.3): in (c) a confirm gate held by a decision whose ``gate_publish`` job did nothing
+in (c) a confirm gate held by a decision whose ``gate_publish`` job did nothing
 outside (no effect evidence) and is not being run has its decision canceled and the job cancelled
 (``no_effect_canceled``); the gate then goes back to pending like any open node and its attempt is closed. A gate whose
 job is running gets its cancel request (the job cancels itself at its next phase boundary when it did nothing outside,
@@ -67,7 +67,7 @@ CAUSE_STOP, CAUSE_PENDING = "user_stop", "stop_pending"
 INVALIDATED_REASON = "user_stop"
 PENDING_REASON = "process_exit_unconfirmed"
 CLEANUP_PENDING_REASON = "worktree_cleanup_pending"
-SESSION_PENDING_REASON = "merge_session_abort_pending"      # T#9: a graph_attempt_merge session is still open
+SESSION_PENDING_REASON = "merge_session_abort_pending"      # a graph_attempt_merge session is still open
 # The existing kill path's own waits: the process tree kill (taskkill, 10 s) and the reap after it (5 s).
 KILL_WAIT_SEC = 15
 POLL_SEC = 0.2
@@ -85,7 +85,7 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str, *,
     idle(blocked_recovery) with an unfinished Time Machine is 409 ``graph_time_machine_in_progress``;
     any other entry state is 409 ``run_not_running``. Stop never clears ``recovery_reset_required``. Answers the run as it is: idle (stopped), or still stopping with the
     executions whose end was not confirmed (``unconfirmed_exec_ids``), the stopped attempts whose worktree is not
-    removed yet (``cleanup_pending_attempt_ids``) or, T#9, the attempts whose merge session is not aborted yet
+    removed yet (``cleanup_pending_attempt_ids``) or, the earlier implementation, the attempts whose merge session is not aborted yet
     (``merge_session_pending_attempt_ids``)."""
     flow_id = group["group_id"]
     launchers: list[str] = []
@@ -156,7 +156,7 @@ def _kill(run_id: str, launchers=()) -> None:
 
 def _process_ended(row: dict) -> bool:
     """The execution's AI process is confirmed ended: its run finished, or its own Graph end (after the provider
-    stopped) was taken; with no live run in this process, its durable end record (the T#4 recovery's rule)."""
+    stopped) was taken; with no live run in this process, its durable end record (the the earlier implementation recovery's rule)."""
     from modules.flow_gate.services import ai_invoke_service
     ai_run_id = row.get("ai_run_id")
     if not ai_run_id:
@@ -165,7 +165,7 @@ def _process_ended(row: dict) -> bool:
     if live is None:
         if ai_invoke_runs.get(ai_run_id) is None:
             return False
-        # flowgate.v02.0129 T#2 (D0005 §3-4): a restart-held run whose remote Job is not
+        # a restart-held run whose remote Job is not
         # settled (or whose held recovery has not resumed) has not ended.
         from modules.flow_gate.services.ai_invoke import remote_supervisor
         return not remote_supervisor.remote_alive(ai_run_id)
@@ -231,10 +231,10 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     run_id, stamp = run["run_id"], ledger.now()
     run_store._affected("UPDATE graph_attempt_runs SET status = 'cancelled', ended_at = ? "
                         "WHERE run_id = ? AND status IN ('requested', 'running')", [stamp, run_id])
-    # T#9: a merge in progress goes on to its end (``result_merge``); its attempt and node are left to it, and the
+    # a merge in progress goes on to its end (``result_merge``); its attempt and node are left to it, and the
     # Stop's idle (stopped) waits for it (``finish_stop``: an active attempt).
     merging = {r["node_key"] for r in result_merge.integrating(run_id)}
-    # 0085 T#2: a gate whose accepted job may have acted keeps its attempt and its open state (resolved, not reset).
+    # a gate whose accepted job may have acted keeps its attempt and its open state (resolved, not reset).
     gates_held, gate_notes = _settle_gate_decisions(run_id)
     keep = sorted(gates_held)
     keep_sql = f" AND node_key NOT IN ({', '.join('?' for _ in keep)})" if keep else ""
@@ -248,20 +248,20 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
         if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0) or row["node_key"] in merging:
             continue
         if row["node_key"] in gates_held:
-            continue                            # 0085 T#2: its job may have acted; it is resolved, not reset
+            continue                            # its job may have acted; it is resolved, not reset
         reset_node(ctx, row, CAUSE_STOP, note=gate_notes.get(row["node_key"]))
     return stopped_attempts(run_id)
 
 
 def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
-    """0085 T#2/T#3 (D0007 §7.3 Stop), inside (c)'s guard: the run's gates held by a decision (accepted, failed,
+    """(Stop), inside (c)'s guard: the run's gates held by a decision (accepted, failed,
     recovery_required). One with no effect outside and no writer is canceled (decision ``canceled``, job ``cancelled`` /
     ``no_effect_canceled``): the gate then goes back to pending and its attempt ends with the other open nodes. The others
-    stay held; only LIVE jobs keep the run stopping (0132 T#3). A running job is asked to cancel (it cancels itself at its next phase boundary
+    stay held; only LIVE jobs keep the run stopping. A running job is asked to cancel (it cancels itself at its next phase boundary
     when it did nothing outside, else it parks for recovery), a waiting job that already acted is parked for a person's
     retry / resolve (``recovery_required``), a conflict handed to the merge review waits for that review. Returns (the
     gates still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision).
-    0132 T#2: the effects (``publish.effects_now``) count the push phase's ``remote_sync`` row, and the open review is
+    the effects (``publish.effects_now``) count the push phase's ``remote_sync`` row, and the open review is
     the decision's active conflict (``recovery._conflict_open`` -> ``publish._conflict_merge_id``: a remote sync's
     review first, else the merge's)."""
     from flowgate.gate_decisions import history, publish, recovery as gate_recovery, repository as gate_decisions
@@ -271,7 +271,7 @@ def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
     for node_key, decision in gate_decisions.reservations_of_run(run_id).items():
         job_id = decision.get("job_id")
         job = job_store.get_job(job_id) if job_id else None
-        # T#3 rework: the phases' evidence checked against the decision's own refs (an archive cut off after its ref
+        # the phases' evidence checked against the decision's own refs (an archive cut off after its ref
         # is an unknown effect, never none) - a local ref read, no lock and no network.
         effects = publish.effects_now(decision)
         writer = job_store.gate_writer_active(job)
@@ -317,11 +317,11 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
     held: dict = {}
     run = run_store.run_by_id(run_id)
     if run is not None and run["status"] == STOPPING:
-        # 0156 T#2 (D2): an integrating attempt no integration holds any more (its end raised) is recovered first —
+        # (D2): an integrating attempt no integration holds any more (its end raised) is recovered first —
         # done stays done, a merge not made yet goes pending and is invalidated below — else the Stop waits for it
         # forever (``finish_stop``: an active attempt). Never while a drain of the Flow runs (it hands over to the Stop).
         result_merge.reclaim_integrating(flow_id)
-        # T#9: the run's merge sessions, before its attempts; one still open holds the whole of (c)~(e).
+        # the run's merge sessions, before its attempts; one still open holds the whole of (c)~(e).
         left = result_merge.abort_for_stop(flow_id, run_id)
         if left:
             log.warning("Graph stop waits for merge session aborts run=%s attempts=%s", run_id, left)
@@ -339,7 +339,7 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
         if run is None or run["status"] != STOPPING:
             return
         if result_merge.session_pending(run_id):
-            held["sessions"] = True             # T#9: a merge session opened or kept since: nothing settles yet
+            held["sessions"] = True             # a merge session opened or kept since: nothing settles yet
             return
         pending = unconfirmed(run_id)
         if pending:

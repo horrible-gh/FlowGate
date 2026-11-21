@@ -1,5 +1,5 @@
 <template>
-  <!-- flowgate.v02.0053 T#7 — a settings form whose read failed, in its place: the red ! icon (InspectorFailureIcon,
+  <!-- a settings form whose read failed, in its place: the red ! icon (InspectorFailureIcon,
        the common '불러오지 못했습니다.' its name, `reason` its tooltip) and a ↻ retry button whose name and
        tooltip are the common '다시 시도'; no text on screen (0053 CH: the state is an icon, the explanation a
        tooltip). Display only: the caller owns what a retry does (the `retry` event). -->

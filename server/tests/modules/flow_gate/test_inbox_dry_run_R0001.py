@@ -1,15 +1,15 @@
-"""Inbox POST dry-run — T0009 (R0001, group 0050).
+"""Inbox POST dry-run — the earlier implementation (the earlier change).
 
-Implements the design set D0005/P0006/L0007/DB0008. The contract under test:
+Implements the design set the design/the plan/the earlier implementation/. The contract under test:
 
   * A dry-run (`"dry_run": true`) runs the SAME Step 1~5 validation as a real submit,
     then short-circuits at HTTP 200 with a `would_register` preview — creating no
     document/file/number/DB row/SSE and NOT consuming the token. Its only side effect
-    is bumping the per-token `dry_run_count` by exactly 1 (L0007 §7 invariant I).
+    is bumping the per-token `dry_run_count` by exactly 1 (invariant I).
   * Validation *failures* never reach the dry-run branch, so a failed dry-run returns
-    the exact same status/message as a real submit and is NOT counted (L0007 §5.1).
+    the exact same status/message as a real submit and is NOT counted.
   * Per-token limit `FLOWGATE_INBOX_DRYRUN_MAX` (default 5); the (N+1)th attempt is 429
-    with no counter bump (P0006 §3.5).
+    with no counter bump.
   * Omitting the flag leaves the real path byte-for-byte unchanged (backward compat).
 
 The handler dependencies are monkeypatched, but requests enter through POST /api/v1/inbox so
@@ -39,7 +39,7 @@ def _body(content: dict) -> dict:
 
 @pytest.fixture(autouse=True)
 def _edit_port_composition(monkeypatch):
-    # 0127 T#2: requests exercise the same registered edit service as startup.
+    # requests exercise the same registered edit service as startup.
     from modules.flow_gate.graph_workflow.services import card_document_ports
     from flowgate.card_document_edit import integration
     monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
@@ -52,7 +52,7 @@ def _token_rec(scope: str, doc_ref: str, dry_run_count: int = 0) -> dict:
     return {
         "token_id": "tok-1",
         "project": "flowgate",
-        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and Step 3 now
+        # `group_id` is a real tokens column (migration 075a) and Step 3 now
         # compares it as the `group` axis. Leaving it out of the fixture described a token
         # row that cannot exist, and a fail-closed group check is right to refuse it.
         "group_id": "flowgate.default.0050",
@@ -116,10 +116,10 @@ def test_new_dry_run_success(monkeypatch):
     assert resp.status_code == 200
     assert data["dry_run"] is True and data["ok"] is True
     assert data["would_register"]["action"] == "new"
-    assert data["would_register"]["doc_id"] is None        # not numbered yet (P0006 §3.1)
+    assert data["would_register"]["doc_id"] is None        # not numbered yet
     assert data["would_register"]["group_name"] == "flowgate.default.0050"
     assert data["dry_run_count"] == 1 and data["dry_run_remaining"] == 4
-    # L0007 §1.1: _handle_new has no body-size check → content_size must NOT appear.
+    # _handle_new has no body-size check → content_size must NOT appear.
     assert "content_size" not in data["would_register"]["checks_passed"]
     # Side-effect-zero invariant: only the counter moved.
     inc.assert_called_once_with("tok-1")
@@ -197,7 +197,7 @@ def test_new_dry_run_validation_failure_not_counted(monkeypatch):
 
 
 def test_new_dry_run_message_follows_x_locale_header_without_continuation_locale(monkeypatch):
-    """T0004 §4.1/§5: a token with no continuation_locale still gets the request's
+    """a token with no continuation_locale still gets the request's
     X-Locale in the dry-run message, not the ko fallback _maybe_dry_run used before it
     received the caller-resolved locale as an argument."""
     from modules.flow_gate.api import inbox_routes
@@ -278,7 +278,7 @@ def test_new_dry_run_limit_exceeded(monkeypatch):
     data = resp.json()
     assert resp.status_code == 429
     assert data["dry_run_count"] == 5 and data["dry_run_remaining"] == 0
-    inc.assert_not_called()       # 429 itself is not counted (L0007 §5.3)
+    inc.assert_not_called()       # 429 itself is not counted
     reserve.assert_not_called()
 
 
@@ -322,7 +322,7 @@ def _patch_edit_validation(monkeypatch, token_rec):
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
         "doc_id": _id, "status": "open", "revision_no": 1, "file_path": "x.md",
         "project_id": "flowgate", "module": "default", "type_code": "NR", "owner_id": "user-1",
-        # 0492 T0018: register_binding's group axis resolves the run side straight from
+        # register_binding's group axis resolves the run side straight from
         # this row's group_id (never parsed out of the doc id) -- omitting it here reads
         # as "no group", so it mismatches a token that does carry one.
         "group_id": "flowgate.default.0050",
@@ -362,7 +362,7 @@ def test_edit_dry_run_success(monkeypatch):
 
 
 def test_edit_dry_run_message_follows_x_locale_header_without_continuation_locale(monkeypatch):
-    """T0004 §4.1/§6.2: same caller-resolved-locale contract as new, through edit."""
+    """same caller-resolved-locale contract as new, through edit."""
     from modules.flow_gate.api import inbox_routes
     _patch_edit_validation(monkeypatch, _token_rec("edit", "flowgate.default.0050.0003-NR"))
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())

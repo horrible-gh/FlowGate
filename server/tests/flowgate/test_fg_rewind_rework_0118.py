@@ -1,12 +1,12 @@
-"""flowgate.v02.0118 T#1 / T#2 (0003-NR §2.5 / §3.1): a Time Machine rewind and its rework stay inside the card.
+"""(NR): a Time Machine rewind and its rework stay inside the card.
 
-T#1 — ``lines.adopt_result``: the report line a run result already holds (``owned=0``) is taken by the rework's new
+``lines.adopt_result``: the report line a run result already holds (``owned=0``) is taken by the rework's new
 result; the earlier result, registered by an attempt the rewind invalidated, is superseded by it (only the supersede
 link is written — body, review status and history stay), so the Canvas draws no free document card. A person's own
 non-owned document and a root are only rebound, as before. ``settle_displaced`` supersedes an earlier result that such
 a rework already left on no line (the existing damaged data) by what the line shows now.
 
-T#2 — ``graph_projector``: a card the rewind put back to pending (no node run result) keeps the title of the written
+``graph_projector``: a card the rewind put back to pending (no node run result) keeps the title of the written
 result its report line still shows; a title state, a Custom label and an unrun card's label are unchanged, and the AI
 naming judgement (``card_title_source`` over ``card_document``) still reads the label.
 
@@ -60,7 +60,7 @@ def history(d):
 
 def task_card(s, instruction_owned=True):
     """``작업`` card KEY: its instruction T (card draft, edited) and its report line holding TR₁ — the first run's result,
-    rebound there with ``owned=0`` (the 0003-NR §2.2 step 1 state). TR₁ was approved, then reopened by the rewind."""
+    rebound there with ``owned=0`` (the the earlier implementation step 1 state). TR₁ was approved, then reopened by the rewind."""
     t1, tr1 = doc(2, "T"), doc(3, "TR", doc_review_status="pending_review", title="상태 필터 작업 보고",
                                review_history=["approved", "reopened"], rejection_history=[{"reason": "r1"}])
     s.documents = [t1, tr1]
@@ -69,7 +69,7 @@ def task_card(s, instruction_owned=True):
     return t1, tr1
 
 
-# ── T#1: the rework's result supersedes the result it displaces ──────────────
+# ── the earlier implementation: the rework's result supersedes the result it displaces ──────────────
 
 @pytest.mark.parametrize("state,mode", ROUTES)
 def test_t1_rework_result_supersedes_the_invalidated_attempts_result(bound, state, mode):
@@ -153,10 +153,10 @@ def test_t1_no_invalidated_attempt_reads_nothing_more(bound, monkeypatch):
     assert [r["doc_id"] for r in repository.rows(FLOW, [KEY]) if r["slot"] == "report"] == [tr2["doc_id"]]
 
 
-# ── T#1: existing damaged data (an earlier result already on no line) ────────
+# ── the earlier implementation: existing damaged data (an earlier result already on no line) ────────
 
 def damaged(s):
-    """The 0118-B state before this fix: the rework's TR₂ took the report line, TR₁ (invalidated attempt) stayed
+    """The the earlier implementation state before this fix: the rework's TR₂ took the report line, TR₁ (invalidated attempt) stayed
     alive on no line and the Canvas drew it as a free 「검토 중」 card."""
     t1, tr1 = doc(2, "T"), doc(3, "TR", doc_review_status="pending_review")
     tr2 = doc(5, "TR")
@@ -211,7 +211,7 @@ def test_t1_settle_displaced_leaves_everything_else(bound):
     assert set(out.free_docs) == {f"doc:{person['doc_id']}", f"doc:{memo['doc_id']}"}
 
 
-# ── T#2: the rewound card keeps its report line's title ──────────────────────
+# ── the earlier implementation: the rewound card keeps its report line's title ──────────────────────
 
 def report_lines(tr, written=True):
     return [{"slot": "instruction", "author": "instruction_ai_or_human", "doc_id": None},

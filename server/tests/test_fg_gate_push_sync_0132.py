@@ -1,4 +1,4 @@
-"""0132 T#2 (NR §4.2 / §4.3; §5.3-1, 2, 3, 6, 7, 10): the push phase's remote sync on a real repository and a
+"""(NR /;, 2, 3, 6, 7, 10): the push phase's remote sync on a real repository and a
 temporary bare origin.
 
 Uses the harness of ``test_fg_gate_publish_0085`` (real SQLite DB, routes, a bare ``origin``, the provisioned group
@@ -467,7 +467,7 @@ def test_commit_mode_parks_a_remote_ahead_push_without_a_sync(git_env, pushes):
     assert _rev(r["bare"], "refs/heads/" + branch) == remote and len(pushes) == 1
 
 
-# ── 0132 T#2 rework (TR0008 review rej_01M6MARNVBXBMCNB) ─────────────────────
+# ── the earlier implementation rework (review rej_01M6MARNVBXBMCNB) ─────────────────────
 
 def _on_push(monkeypatch, moves):
     """Before the ``n``-th product push (1-based, counted from now) run ``moves[n]()`` (the remote moves ahead).

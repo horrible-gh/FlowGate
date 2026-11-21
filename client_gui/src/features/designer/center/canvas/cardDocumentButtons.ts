@@ -8,7 +8,7 @@ export interface CardDocumentButton {
   report: boolean
   /** The test card's 시나리오 button: it opens the same TS document as the instruction button (the scenario lives inside it). */
   scenario?: boolean
-  /** flowgate.v02test.0044: the server says the document has no body yet (`has_body` false; never M / WP). The button
+  /** the server says the document has no body yet (`has_body` false; never M / WP). The button
    * looks disabled but still opens the document, so a person can start writing it from the card. */
   empty?: boolean
 }

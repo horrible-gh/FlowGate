@@ -1,4 +1,4 @@
-// flowgate.v02.0060 — right-button gesture guard for the Canvas root (0006-D rev2 §2.1, §3.1 (a)):
+// right-button gesture guard for the Canvas root (the design, (a)):
 // the mouse right-button press and its held move / release never reach Vue Flow (no pan, card or
 // group move, area / click selection, connect or placement). Left / middle buttons, wheel, touch,
 // pen and keyboard pass untouched. The guarded press is relayed once to document-level listeners

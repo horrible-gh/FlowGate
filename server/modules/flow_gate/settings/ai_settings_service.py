@@ -1,4 +1,4 @@
-"""AI settings service (flowgate.default.0164 D0002 / P0003 / L0004).
+"""AI settings service.
 
 Owns the ordered AI-provider list ("routing chain": array order = fallback order) in two
 scopes — global and per-project tri-state (inherit / disabled / custom) — plus the
@@ -6,17 +6,17 @@ effective-settings resolution the follow-up execution module (0116 line) will co
 Actual invocation (fallback firing, invoke) is a later group; this module only registers,
 stores and interprets settings.
 
-Secret handling (L0004 §2.3): api_key is write-only. Requests may carry it
+Secret handling: api_key is write-only. Requests may carry it
 (absent/null = keep, "" = delete, value = replace); serialized responses only ever carry
 api_key_set + api_key_hint. The raw value is reachable solely via get_provider_secret(),
 which must never be called from an HTTP serialization path.
 
-This layer works in PLAINTEXT throughout: at-rest encryption (0371 NR0007 §3) is the db
+This layer works in PLAINTEXT throughout: at-rest encryption is the db
 layer's job, which encrypts on write and decrypts on read, so the keep/replace/delete
 merge and the last-4 hint keep operating on the real value.
 
-Ownership (flowgate.v02.0017 TR0003 rev7, Q 361~363): AI is owned by the system (administrator)
-or by one user. A project owns no connection rows and, since CH0006 (4), keeps no AI policy
+Ownership: AI is owned by the system (administrator)
+or by one user. A project owns no connection rows and, since the discussion , keeps no AI policy
 either: every enabled system AI is usable everywhere, so the effective chain is the same for
 every project. A user's own AI is visible and editable only through that user's routes and never
 enters the effective chain here: it runs on its owner's Agent, which the execution layer adds later.
@@ -34,19 +34,19 @@ from modules.flow_gate.db import projects as _projects_db
 from modules.flow_gate.db import user_ai_defaults as _user_default_db
 from modules.flow_gate.services import test_command_service as _tcs
 
-# ── Parameters (L0004 §1) ────────────────────────────────────────────────────
+# ── Parameters ────────────────────────────────────────────────────
 NAME_MAX = 100
-# Raised 500 -> 4000 (0241 CH0004): real commands (a `claude` one-liner carrying sandbox
+# Raised 500 -> 4000: real commands (a `claude` one-liner carrying sandbox
 # settings) run past 500. The DB column is TEXT, so this cap is policy only — it exists to
 # keep the value renderable in the UI/logs, not because storage or the shell needs it.
 CLI_COMMAND_MAX = 4000
 API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000
-# Owned AI per scope (the system list, or one user's own list). Raised 20 -> 300 (flowgate.v02.0017
-# T0004 §2); client_gui features/ai/limits.ts mirrors it so the screen blocks the 301st entry too.
+# Owned AI per scope (the system list, or one user's own list). Raised 20 -> 300 (the earlier change
+# ); client_gui features/ai/limits.ts mirrors it so the screen blocks the 301st entry too.
 PROVIDERS_MAX = 300
-# Per-document-type provider assignment (flowgate.default.0317 D0004 implementation). A project's
+# Per-document-type provider assignment (implementation). A project's
 # workflow has a handful of worker doc types (NR/TR/TSR/TS, ...); cap generously so the map
 # stays renderable without constraining any real sequence.
 DOCTYPE_ASSIGN_MAX = 50
@@ -70,15 +70,15 @@ _DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
 }
 
-# Per-kind canonical preset (flowgate.default.0519 T0005): the ONE place that knows what a
+# Per-kind canonical preset: the ONE place that knows what a
 # claude/codex/copilot command line looks like. The per-OS example catalog below, the
 # settings screen's suggestion, and the model-name-driven "magic tool" command a client can
 # ask for are all derived from this dict — never a second hand-written copy.
 #
 # `safe_template`/`skip_template` are the two ends of "preset + permission state → safe /
-# unattended command" (T0005 §0/§2); the model name is the only blank left to fill in.
+# unattended command"; the model name is the only blank left to fill in.
 # `custom` is deliberately absent — it is the escape hatch for an arbitrary command, so
-# there is no canonical shape to hand out (T0005 §1).
+# there is no canonical shape to hand out.
 #
 # Codex's skip_template is not "the safe template with one flag flipped": an unattended run
 # has nobody to answer an approval prompt, so the sandbox itself has to widen from
@@ -87,7 +87,7 @@ _DEFAULT_BASE_URLS = {
 # apply to that sandbox. That is more than the generic marker toggle
 # (_PERMISSION_SKIP_RULES / set_permission_skip below) is meant to do to an arbitrary
 # hand-typed command, so it is modeled here instead of being forced through that helper
-# (T0005 §2 "Codex").
+# ("Codex").
 _CLI_PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "default_model": "claude-opus-4-8",
@@ -109,8 +109,8 @@ _CLI_PRESETS: dict[str, dict[str, str]] = {
     "copilot": {
         # --no-ask-user is FlowGate's own non-interactive contract for a CLI it drives over
         # a pipe, not part of the permission-skip toggle — so it belongs in both forms
-        # rather than living behind the skip flag (T0005 §2 "Copilot"). {model} leads every
-        # template (0519 TR0010 rev1): the human rejection said the model name has to be the
+        # rather than living behind the skip flag ("Copilot"). {model} leads every
+        # template: the human rejection said the model name has to be the
         # first thing visible on the line, not buried after the CLI's own flags.
         "default_model": "claude-sonnet-5",
         "safe_template": "copilot --model {model} --no-ask-user --output-format=json",
@@ -123,7 +123,7 @@ _CLI_PRESETS: dict[str, dict[str, str]] = {
 
 # A model name stops being free text the moment it lands in a preset: the string built
 # below becomes a provider's cli_command, which FlowGate eventually spawns with
-# shell=True — and the follow-up magic-tool UI fills the name in from a text box (T0005
+# shell=True — and the follow-up magic-tool UI fills the name in from a text box (the earlier implementation
 # §4). Quoting it is not a usable defence here, because one catalog serves both POSIX
 # shells and cmd.exe and their quoting rules disagree (shlex.quote's single quotes are
 # literal characters to cmd.exe). So the identifier itself is constrained instead: an
@@ -153,7 +153,7 @@ def build_preset_command(
 ) -> Optional[str]:
     """The canonical command for *kind* + *model_name* + permission state — what the
     model_name-driven "magic tool" hands a client instead of it owning any CLI's flags
-    (T0005 §2/§4). None for a kind with no preset (`custom`, or anything unrecognized).
+. None for a kind with no preset (`custom`, or anything unrecognized).
 
     A blank/whitespace model name falls back to the preset's own default_model rather than
     baking an empty `--model` into the command.
@@ -179,7 +179,7 @@ def build_preset_command(
     return template.format(model=model)
 
 
-# Per-kind × host-OS example CLI commands (flowgate.default.0281 T0005, NR0003 §4 F2 / R2).
+# Per-kind × host-OS example CLI commands.
 # Before this, the only guidance the product offered was the static claude-shaped
 # placeholder `claude -p` (client i18n `placeholder_cli_command`), which stayed put even
 # after picking Codex/Copilot — so operators pasted the CLIs' Linux-written docs verbatim
@@ -187,15 +187,15 @@ def build_preset_command(
 # host OS ("nt"/"posix"), so the UI can surface the example that matches THIS host.
 #
 # These are seeds, not verified truth: the codex/copilot strings are the POSIX-documented
-# forms from R0001, reused for "nt" until an operator confirms a Windows form via the
+# forms from the requirement, reused for "nt" until an operator confirms a Windows form via the
 # provider connection test (test-provider endpoint). "custom" gets no example by design —
 # it is the escape hatch for arbitrary commands.
 #
-# 0295 NR0003 §5-1: the claude row was the old i18n placeholder promoted verbatim, so it
+# the claude row was the old i18n placeholder promoted verbatim, so it
 # carried no model, and the codex row was missing `--skip-git-repo-check`, which
 # `codex exec` requires whenever cwd is not a git repo; see CODEX_SKIP_GIT_FLAG below.
 #
-# 0371 NR0007 §5: that same fix also parked `--dangerously-skip-permissions` (claude) and
+# that same fix also parked `--dangerously-skip-permissions` (claude) and
 # `--ask-for-approval never` (codex) in here, and this dict is what the installer seeds and
 # what the settings screen offers — so every provider created the easy way ran with
 # permission confirmation switched OFF, a decision nobody consciously made because it was
@@ -203,7 +203,7 @@ def build_preset_command(
 # The permissive form still exists and is one checkbox (editor) or one flag (seed) away —
 # see _PERMISSION_SKIP_RULES / set_permission_skip below — it just has to be asked for.
 #
-# 0519 T0005: derived from _CLI_PRESETS' safe_template + default_model instead of a second
+# derived from _CLI_PRESETS' safe_template + default_model instead of a second
 # hand-written copy, so fixing a command in the preset reaches this catalog too.
 _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
     kind: {"posix": build_preset_command(kind, None), "nt": build_preset_command(kind, None)}
@@ -212,7 +212,7 @@ _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
 _CLI_COMMAND_EXAMPLES["custom"] = {"posix": "", "nt": ""}
 
 
-# ── Permission confirmation (0371 NR0007 §5) ───────────────────────────────────
+# ── Permission confirmation ───────────────────────────────────
 #
 # Neither CLI is configured through a FlowGate setting here: "ask before you act" is a flag
 # inside the free-text cli_command. "Default off" therefore has to mean two concrete things
@@ -247,7 +247,7 @@ _PERMISSION_SKIP_RULES: dict[str, dict] = {
             "--yolo",
         ),
     },
-    # 0519 T0005: copilot joins the same abstraction. Its flag is a plain on/off switch (no
+    # copilot joins the same abstraction. Its flag is a plain on/off switch (no
     # codex-style "name the policy that still asks"), so safe is simply "absent".
     "copilot": {
         "skip": "--allow-all",
@@ -284,7 +284,7 @@ def _insert_after_program(cmd: str, token: str) -> str:
     and a working command usually ends in a bare `-` meaning "prompt on stdin" — appending
     there would hand the flag to the wrong parsing stage.
 
-    Every 0519 preset now leads with `--model` (TR0010 rev1: the human rejection wanted the
+    Every 0519 preset now leads with `--model` (the earlier implementation: the human rejection wanted the
     model name to be the first thing visible on the line), so "right after the program name"
     has to mean "right after that pair too" — otherwise toggling permission-skip on a
     preset-shaped command would silently knock the model name out of the leftmost slot, and
@@ -299,7 +299,7 @@ def _insert_after_program(cmd: str, token: str) -> str:
 
 def permission_skip_rule(kind: Optional[str]) -> Optional[dict]:
     """The rule for *kind*, or None for a kind with no known flag (`custom`, or anything
-    unrecognized; copilot joined the abstraction in 0519 T0005).
+    unrecognized; copilot joined the abstraction in the earlier implementation).
 
     None means "this screen has nothing to offer here" — not "this CLI always asks".
     """
@@ -357,7 +357,7 @@ def _unattended_cli_examples() -> dict[str, dict[str, str]]:
     Derived, never a second copy: a fix to a preset reaches both forms, and the editor's
     checkbox and this catalog can never disagree about what "off" looks like.
 
-    0519 T0005: derived from the preset's OWN skip form (`skip_template`), not from running
+    derived from the preset's OWN skip form (`skip_template`), not from running
     the generic marker toggle over the safe example. For copilot the two agree exactly and
     for claude they differ only in where the flag lands, but codex's unattended form also
     widens the sandbox to
@@ -386,8 +386,8 @@ def _unattended_cli_examples() -> dict[str, dict[str, str]]:
 
 # Fixing the example above only helps providers registered AFTER the fix — rows already in
 # `ai_providers.cli_command` keep the broken string, which is exactly the provider that
-# produced 0295 B0001. So the flag is also injected at spawn time, by both the invoke path
-# and the connection probe, through normalize_cli_command() (0295 NR0003 §5-2 / §5-3).
+# produced the regression. So the flag is also injected at spawn time, by both the invoke path
+# and the connection probe, through normalize_cli_command.
 CODEX_SKIP_GIT_FLAG = "--skip-git-repo-check"
 
 
@@ -400,7 +400,7 @@ def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
         Not inside a trusted directory and --skip-git-repo-check was not specified.
 
     on stderr with exit 1, in well under a second — which the invoke path then classifies as
-    `fast_fail` ("exit immediately") and burns as a provider failure (0295 NR0003 §2). FlowGate has
+    `fast_fail` ("exit immediately") and burns as a provider failure. FlowGate has
     three ways to end up outside a repo: the scratch-dir fallback when the source mirror is
     missing (ai_invoke_service._cli_execute), a project whose mirror exists but is not a git
     checkout, and the probe's tempfile.mkdtemp() cwd — the last of which made the 0281
@@ -408,7 +408,7 @@ def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
 
     The flag only suppresses a precondition check, so appending it is harmless when cwd IS a
     repo. It is appended at the end rather than spliced after `exec`: verified equivalent on
-    codex (0295 NR0003 §4-4), and appending needs no parsing of an operator-authored string.
+    codex, and appending needs no parsing of an operator-authored string.
     Callers that already carry the flag are left untouched.
     """
     cmd = (cli_command or "").strip()
@@ -436,18 +436,18 @@ class AiSettingsConflict(Exception):
 
 
 def get_catalog() -> dict:
-    """Enum lists the editor renders from, plus (0281 T0005) host-OS context and per-kind
+    """Enum lists the editor renders from, plus host-OS context and per-kind
     example CLI commands so the UI can offer an OS-appropriate starting point instead of the
     static `claude -p` placeholder. `host_os`/`host_shell` describe the machine that will
     actually run cli_command via shell=True — the same values the connection test injects as
     FLOWGATE_OS / FLOWGATE_SHELL.
 
-    `cli_permission_skip` (0371 NR0007 §5) is how the editor renders the permission-skip
+    `cli_permission_skip` is how the editor renders the permission-skip
     opt-in without owning a second copy of the flags: `default_enabled` is the answer to
     "what does a new provider start as" (false), `rules` drives detect/apply on the command
     string, and `examples` is `cli_examples` with the skip already applied.
 
-    `cli_presets` (0519 T0005) is what a model_name-driven "magic tool" needs to build a
+    `cli_presets` is what a model_name-driven "magic tool" needs to build a
     canonical command without knowing any CLI's flags itself: default_model to prefill, and
     whether this kind has a permission-skip form at all. `custom` never appears here — it is
     the escape hatch for an arbitrary command, so it has no canonical shape to advertise.
@@ -480,7 +480,7 @@ def get_catalog() -> dict:
     }
 
 
-# ── Validation (L0004 §2.1) ──────────────────────────────────────────────────
+# ── Validation ──────────────────────────────────────────────────
 
 def validate_settings(
     providers: Optional[list[dict]],
@@ -586,7 +586,7 @@ def _resolve_base_url(p: dict) -> Optional[str]:
 
 
 def _merge_api_key(old_row: Optional[dict], incoming: Optional[str]):
-    """absent/null = keep, "" = delete, value = replace (L0004 §2.3).
+    """absent/null = keep, "" = delete, value = replace.
 
     "Keep" on a row whose stored key no longer decrypts (0371) has no plaintext to
     carry over, so it returns the db layer's keep-stored sentinel instead of None —
@@ -605,7 +605,7 @@ def _merge_api_key(old_row: Optional[dict], incoming: Optional[str]):
 
 def _to_view(row: dict) -> dict:
     api_key = row.get("api_key")
-    # 0371: rows arrive decrypted, so the hint is still the real last 4 characters.
+    # rows arrive decrypted, so the hint is still the real last 4 characters.
     # `unreadable` is the one case where a key IS stored but its plaintext is gone
     # (master key changed/lost) — reporting api_key_set=False there would read as
     # "no key configured" and hide the loss behind an ordinary-looking screen.
@@ -636,7 +636,7 @@ def _resolve_default(
     saved_rows: list[dict],
     id_map: dict[str, str],
 ) -> Optional[str]:
-    """Settle the default at save time (L0004 §4.1). id_map translates a payload id
+    """Settle the default at save time. id_map translates a payload id
     that was re-issued (unknown/foreign id treated as new row, L §5) to its saved id."""
     saved_ids = [r["provider_id"] for r in saved_rows]
     if default_provider_id is not None:
@@ -654,7 +654,7 @@ def _resolve_default(
 
 
 def _pick_default(default_id: Optional[str], chain: list[dict]) -> Optional[str]:
-    """Settle the default at read time (L0004 §4.2): a stale/disabled selection falls
+    """Settle the default at read time: a stale/disabled selection falls
     back to the chain head without rewriting the stored value."""
     if not chain:
         return None
@@ -750,7 +750,7 @@ def _save_scope(
     mode: Optional[str],
     updated_by: Optional[str],
 ) -> tuple[list[dict], Optional[str]]:
-    """Full-replace + key-preserving merge (L0004 §2.2). Returns (saved rows, default id)."""
+    """Full-replace + key-preserving merge. Returns (saved rows, default id)."""
     existing = {r["provider_id"]: r for r in _ai_db.list_scope(project_id)}
     rows, id_map = _merge_rows(existing, providers, with_access=project_id is None)
     default_id = _resolve_default(default_provider_id, default_provider_index, rows, id_map)
@@ -775,7 +775,7 @@ def _require_project(project_id: str) -> None:
         raise LookupError(f"Project not found: {project_id}")
 
 
-# ── Global scope (P0003 system endpoints) ────────────────────────────────────
+# ── Global scope (system endpoints) ────────────────────────────────────
 
 def get_system_settings(include_catalog: bool = True) -> dict:
     rows = _ai_db.list_scope(None)
@@ -809,7 +809,7 @@ def save_system_settings(
 
 def get_visible_system_ai() -> dict:
     """The system AI every signed-in user sees read-only on the AI 관리 screen (flowgate.v02.0017
-    CH0006 (2)): one list with the user's own AI. Name, kind and execution mode only — the
+    ): one list with the user's own AI. Name, kind and execution mode only — the
     command line, URL and key hint stay on the administrator's route."""
     hidden = ("cli_command", "api_base_url", "api_key_hint")
     return {
@@ -832,7 +832,7 @@ def get_user_settings(owner_user_id: str, include_catalog: bool = True) -> dict:
         "ok": True,
         "providers": [_to_view(r) for r in rows],
         # The caller's default AI (None = follow the system default) and the system default it
-        # falls back to (flowgate.v02.0017 CH0006 (3)).
+        # falls back to (the earlier change the discussion ).
         "default_provider_id": _user_default_db.get(owner_user_id),
         "system_default_provider_id": _ai_db.get_system_default_provider_id(),
         "updated_at": max(stamps) if stamps else None,
@@ -869,13 +869,13 @@ def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> d
     return get_user_settings(owner_user_id, include_catalog=False)
 
 
-# ── Display order over system AI and my AI (flowgate.v02test.0025) ────────────
+# ── Display order over system AI and my AI ────────────
 #
 # One list per user over every system AI and the user's own AI (local or remote, enabled or not),
 # so the AI 관리 screen can drag any card above any other. Every selection list reads it
 # (admission.list_runtime_providers). For an ordinary user it is display only: the fallback
 # chain keeps the system order. For an administrator the two are linked (decision of
-# flowgate.v02test.0025.0002-CH): when a save changes the order of the system AI among
+# ): when a save changes the order of the system AI among
 # themselves, the system order (= fallback order) is saved in the same transaction.
 
 def _order_candidates(owner_user_id: str) -> tuple[list[str], list[str]]:
@@ -1003,7 +1003,7 @@ def save_project_settings(
     updated_by: Optional[str] = None,
 ) -> dict:
     """Pre-rev7 write. Only "inherit" is accepted, and it changes nothing: a project can neither
-    own AI nor switch AI off (the project AI policy is retired, CH0006 (4))."""
+    own AI nor switch AI off (the project AI policy is retired, the discussion )."""
     _require_project(project_id)
     if mode not in MODES:
         raise AiSettingsValidationError([{"field": "mode", "reason": "unknown_mode"}])
@@ -1020,16 +1020,16 @@ def build_preset_command_for_project(
     skip_permissions: bool = False,
 ) -> Optional[str]:
     """build_preset_command(), gated behind the same project-exists contract every other
-    project route enforces (flowgate.default.0519 T0007 §1). Raises LookupError for an
+    project route enforces. Raises LookupError for an
     unknown project so the router can answer 404 the same way it already does elsewhere."""
     _require_project(project_id)
     return build_preset_command(kind, model_name, skip_permissions=skip_permissions)
 
 
-# ── Effective resolution (L0004 §2.4) ────────────────────────────────────────
+# ── Effective resolution ────────────────────────────────────────
 
 def is_personal_runnable(row: Optional[dict]) -> bool:
-    """A user's own AI that a run can execute (flowgate.v02.0129 CH0012): enabled, CLI, run on
+    """A user's own AI that a run can execute: enabled, CLI, run on
     a remote Agent and assigned to one. A local CLI / API personal AI would run on this server,
     so it stays out exactly as before (it never appears in a selection list or a run)."""
     return bool(
@@ -1049,7 +1049,7 @@ def _chain_entry(row: dict) -> dict:
 
 
 def personal_selectable(user_id: Optional[str]) -> list[dict]:
-    """The caller's own runnable AI as chain entries, in their order (flowgate.v02.0129 CH0012).
+    """The caller's own runnable AI as chain entries, in their order.
 
     Selection lists and explicit choices append these after the effective (system) chain. They
     are never part of resolve_effective / resolve_global, so every fallback chain, default and
@@ -1068,11 +1068,11 @@ def personal_default_id(user_id: Optional[str], personal: list[dict]) -> Optiona
 
 
 def _effective_view(user_id: Optional[str] = None) -> dict:
-    """Every enabled system AI, in system order. No project narrows it (CH0006 (4))."""
+    """Every enabled system AI, in system order. No project narrows it (the discussion )."""
     rows = _ai_db.list_scope(None)
 
     chain = [_chain_entry(r) for r in rows if r["enabled"]]
-    # Default (flowgate.v02.0017 CH0006 (3)): the user's pick when the chain has it, otherwise
+    # Default (the earlier change the discussion ): the user's pick when the chain has it, otherwise
     # the system default, otherwise the chain head (_pick_default).
     default_id = _user_default_db.get(user_id) if user_id else None
     if default_id not in {p["id"] for p in chain}:
@@ -1081,7 +1081,7 @@ def _effective_view(user_id: Optional[str] = None) -> dict:
         "source": "system",
         "providers": chain,
         "default_provider_id": _pick_default(default_id, chain),
-        # 0292 T0003: rows BEFORE the enabled filter. An empty chain has two very
+        # rows BEFORE the enabled filter. An empty chain has two very
         # different causes — "nothing was ever registered" (a fresh install that
         # skipped the provider seed) and "everything registered is switched off" —
         # and the caller cannot tell them apart from `providers` alone. Callers that
@@ -1100,7 +1100,7 @@ def resolve_global(user_id: Optional[str] = None) -> dict:
 def selectable_provider(project_id: Optional[str], provider_id: Optional[str],
                         requester_user_id: Optional[str]) -> Optional[dict]:
     """The chain entry an EXPLICIT choice of requester_user_id names, or None
-    (flowgate.v02.0129 CH0012). A system AI must be in the project's effective chain; a user's
+. A system AI must be in the project's effective chain; a user's
     own AI must be runnable and owned by the requester (no requester = never a user's AI)."""
     if not provider_id:
         return None
@@ -1143,7 +1143,7 @@ def resolve_effective(project_id: str, user_id: Optional[str] = None) -> dict:
     flowgate.v02.0020 (워크스페이스 › 공용 정책 › 사용할 수 있는 AI): when the project's workspace
     allows only selected AI, the chain keeps just the approved ones. Every run start, provider
     pin and runtime provider list reads this chain, so a revoked AI cannot start a new run in
-    that workspace; a run already started is not stopped (R0001 §4.6)."""
+    that workspace; a run already started is not stopped."""
     _require_project(project_id)
     result = resolve_global(user_id)
     from modules.flow_gate.settings import workspace_service
@@ -1163,20 +1163,20 @@ def resolve_effective(project_id: str, user_id: Optional[str] = None) -> dict:
 
 def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     """Raw api_key for internal execution use. NEVER route this into an HTTP response,
-    and never log the value (length-only logging allowed; L0004 §2.3).
+    and never log the value (length-only logging allowed; the earlier implementation).
 
     Raises api_key_crypto.ApiKeyCryptoError when the stored value is encrypted but the
-    master key cannot read it — fail-closed, never "no key configured" (0371 NR0007 §3).
+    master key cannot read it — fail-closed, never "no key configured".
     """
     return _ai_db.get_secret(project_id, provider_id)
 
 
-# ── Per-document-type provider assignment (flowgate.default.0317 D0004) ─────────
+# ── Per-document-type provider assignment ─────────
 #
 # The continuous chain's hop-provider resolver: a project-scoped "document type -> provider"
 # map the chain consults at each step boundary. An empty map reproduces today's
 # single-provider behavior (every doc type resolves to the effective default), so the
-# feature is additive and fully backward-compatible (D0004 §1, backward compatibility).
+# feature is additive and fully backward-compatible (backward compatibility).
 
 def _norm_doctype(code: Optional[str]) -> str:
     return (code or "").strip().upper()
@@ -1263,12 +1263,12 @@ def save_doctype_providers(
 
 
 def resolve_doctype_provider(project_id: str, doc_type: str) -> Optional[str]:
-    """The hop provider decider (D0004 §2): the provider_id assigned to *doc_type*, or None
+    """The hop provider decider: the provider_id assigned to *doc_type*, or None
     when there is no rule OR the assigned provider is not in the effective enabled chain.
 
     None means "use the default/fallback" — so an unmapped type, a disabled assignment, or
     any lookup hiccup all degrade to today's behavior. Never raises: a resolution failure in
-    the continuous hot path must not stall an otherwise-healthy chain (D0004 §3, fallback)."""
+    the continuous hot path must not stall an otherwise-healthy chain (fallback)."""
     normalized = _norm_doctype(doc_type)
     if not normalized:
         return None

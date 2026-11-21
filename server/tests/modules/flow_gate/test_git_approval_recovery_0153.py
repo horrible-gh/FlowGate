@@ -1,7 +1,7 @@
-"""0153 T#5: durable approval/recovery journal with real Git and sqlite.
+"""durable approval/recovery journal with real Git and sqlite.
 
 Only remote command failures are injected. Locks, claims, preservation refs and the
-deferred AC/root/consume transaction are real. Fixtures reuse T#2 and 0555.
+deferred AC/root/consume transaction are real. Fixtures reuse the earlier implementation and 0555.
 """
 import copy
 import json
@@ -76,7 +76,7 @@ def request(real, mid, action='retry', body=None):
     return gs.mutate_merge_recovery(real.group, mid, action, actor='reviewer', **body), body
 
 
-# T0013 section 5: shared postconditions, checked against real rows below.
+# shared postconditions, checked against real rows below.
 TRANSITIONS = {
     'pending': ('conflict', 'open', 'pending_review', 'wf_in_progress', True),
     'approval_pending': ('merged', 'done', 'pending_review', 'wf_in_progress', True),
@@ -509,7 +509,7 @@ def test_R2_post_push_cleanup_is_explicit_and_retry_never_repushes(real, monkeyp
 
 
 # ---------------------------------------------------------------------------
-# TR0014 rev1 (review rej_01M71H9VTMH02NF3): receipt in error envelopes, the
+# (review rej_01M71H9VTMH02NF3): receipt in error envelopes, the
 # request's own first preservation, and unknown remote outcomes.
 # ---------------------------------------------------------------------------
 
@@ -589,7 +589,7 @@ def test_P1_started_receipt_is_kept_in_error_envelope(real, monkeypatch):
 
 def legacy_commit_without_round(real, monkeypatch):
     """A committed candidate whose DB write was lost after commit: no preserve round
-    has been recorded yet (T0013 3.1 / A3)."""
+    has been recorded yet."""
     mid, fp = ready(real)
     original = gs.db_git.set_session_context
     lost = []

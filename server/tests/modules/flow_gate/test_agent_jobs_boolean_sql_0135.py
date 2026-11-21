@@ -1,6 +1,6 @@
 """PostgreSQL BOOLEAN columns of the Agent tables are never written or compared as integers.
 
-flowgate.v02.0135 T#1. On PostgreSQL ``agent_jobs.cancel_requested`` / ``stdout_truncated`` /
+On PostgreSQL ``agent_jobs.cancel_requested`` / ``stdout_truncated`` /
 ``stderr_truncated`` (and the ``agents`` capability flags) are BOOLEAN; on SQLite they are
 INTEGER. ``cancel_requested=0`` is fine on SQLite and a parse error on PostgreSQL
 (``operator does not exist: boolean = integer``) -- and because ``claim()`` always runs

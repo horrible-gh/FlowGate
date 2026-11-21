@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0073 T#2 — the review popover of the work plan edit window (one per window; WorkPlanEditBody opens it
+// the review popover of the work plan edit window (one per window; WorkPlanEditBody opens it
 // from a row's review button): the review count (a Select of the server's review_count_choices, -1 / 0 by their
 // existing words), the reviewer (a Select of the reviewer picker's options; off while the count is 0) and [완료].
 // No other review step. A change goes straight to the editor's draft (setStepReview — that row only; the server save

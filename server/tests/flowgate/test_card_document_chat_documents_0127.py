@@ -1,6 +1,6 @@
-"""0127 CH0028: chat read / existing-body edit / new-document create by doc_id.
+"""chat read / existing-body edit / new-document create by doc_id.
 
-Real SQLite, files, CAS, revisions, events and contacts (the T#1/T#7 fixtures). The user and
+Real SQLite, files, CAS, revisions, events and contacts (the the earlier implementation/the earlier implementation fixtures). The user and
 the model send only a doc_id: the server resolves the card line or takes the non-card path.
 """
 import json

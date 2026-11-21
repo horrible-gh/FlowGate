@@ -1,4 +1,4 @@
-"""0156 T3: deterministic persistence checks; no provider, Git repo, or waiting window."""
+"""deterministic persistence checks; no provider, Git repo, or waiting window."""
 import json
 import threading
 from types import SimpleNamespace

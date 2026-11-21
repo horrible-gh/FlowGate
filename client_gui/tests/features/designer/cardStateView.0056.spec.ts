@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0056 F2-1 — cardStateView as tables (O1 0005-TR §4-2, O2 0007-TR §4-2): the three card states
+ * cardStateView as tables: the three card states
  * by the node run alone — Working (open: Writing instruction / Writing result; review while an AI still works), 승인 대기
  * (awaiting_approval), 승인됨 (done) — a rejected R/B root that never offers [승인], and the [승인] refusals grouped
  * by the server's code (O1 4-1). Every key the rules produce has a ko / en / ja string.

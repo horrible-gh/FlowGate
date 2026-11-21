@@ -1,8 +1,8 @@
-"""One-query authentication preamble and TTL-cache single-flight (flowgate.default.0291 T1).
+"""One-query authentication preamble and TTL-cache single-flight.
 
-The CH0016 measurements showed repeated authentication reads: token_blacklist,
+The the discussion measurements showed repeated authentication reads: token_blacklist,
 auth_sessions, and users separately for each request, four times in succession,
-despite the five-second TTL cache introduced in 0276 T0009.
+despite the five-second TTL cache introduced in the earlier implementation.
 
 Pin the two causes independently:
 
@@ -52,7 +52,7 @@ class TestSingleFlightLoads:
     def test_concurrent_misses_run_the_loader_once(self):
         """N concurrent misses for one key reach the DB once.
 
-        Hold the loader to deterministically reproduce the CH0016 users ×4 burst:
+        Hold the loader to deterministically reproduce the the discussion users ×4 burst:
         followers arrive while the initial loader is still running.
         """
         cache = TTLCache(_ttl(60))

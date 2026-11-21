@@ -1,8 +1,8 @@
-// flowgate.v02.0066 — Center Diff: the single owner of the one group file diff on screen (0066 D#2
+// Center Diff: the single owner of the one group file diff on screen (the earlier implementation
 // §2-2, §3-10), not a Pinia store. It opens only worktree intents of the current project and Flow
 // group, reads them through the group diff loader (GET .../groups/{gid}/diff) and drops any answer
 // that is not for the latest request of the diff still open.
-// flowgate.v02.0067 T#4 — it is the detail of the Git modeless `Diff` tab (0067-R §6), no longer a
+// it is the detail of the Git modeless `Diff` tab, no longer a
 // Designer Center screen: DesignerGitPanel owns it for its lifetime and hands it the GitSource read
 // (`worktree.loadFileDiff`).
 import { reactive, readonly, type DeepReadonly } from 'vue'

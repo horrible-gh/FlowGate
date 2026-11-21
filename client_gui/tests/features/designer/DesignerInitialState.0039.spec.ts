@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0039 T#3 — Designer initial unselected state (0001-R rev1, confirmed design
+ * Designer initial unselected state (the earlier implementation, confirmed design
  * MirageGlass 1jnmunhp v11 `15-designer-shell-initial-state-v7.html`).
  *
  * Entering the Designer in a Project context gives it no work target: nothing is chosen in the
@@ -8,7 +8,7 @@
  * the right Tool Panel and the left navigation chrome are dimmed and unavailable, the Toolbar is
  * unavailable and only the confirmed menu items stay enabled. The Project tree itself stays
  * shown and clickable.
- * flowgate.v02.0042: a plain click there only selects; opening a Flow (double click / Enter)
+ * a plain click there only selects; opening a Flow (double click / Enter)
  * continues into the existing Designer, and closing the last open Flow returns here.
  *
  * Mounted with the real Shell / parts and the real project store; only the HTTP layer
@@ -33,7 +33,7 @@ import { answerFlowCanvas } from './flowCanvasResponse'
 import { createFlowRunServer, type FlowRunServer } from './flowRunServer'
 
 const getRequest = vi.hoisted(() => vi.fn())
-// flowgate.v02.0053 T#9: the run buttons start the server run (an in-memory run server answers).
+// the run buttons start the server run (an in-memory run server answers).
 const postRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
   getRequest,
@@ -116,7 +116,7 @@ beforeEach(() => {
       return { data: { ok: true, items: [] } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
-    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    // the Designer reads Flow Graphs from the server Canvas API.
     const canvas = answerFlowCanvas(url)
     if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
@@ -248,7 +248,7 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
       'designer-menubar',
       'designer-toolbar',
     ])
-    // flowgate.v02.0046: a resize handle on each Dock ↔ Center line.
+    // a resize handle on each Dock ↔ Center line.
     expect([...get(w, 'designer-body').element.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-left-dock',
       'designer-left-resize',
@@ -286,7 +286,7 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
     expect(getRequest.mock.calls.map(([url]) => String(url)).filter((url) => !url.endsWith('/groups/tree') && url !== '/api/v1/ai-invoke/active-all' && url !== '/api/v1/q')).toEqual([])
   })
 
-  // flowgate.v02.0043: the File menu follows each command's own precondition — with the entered
+  // the File menu follows each command's own precondition — with the entered
   // Project context the Group / Flow commands and Project Close are available, Group Close waits for a
   // chosen Group and Flow Close for an open Flow (DesignerFileMenu.0043.spec.ts). Edit / Run / View
   // still wait for the work target.
@@ -340,7 +340,7 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
   })
 })
 
-// flowgate.v02.0042: only an open Flow is the work target. A plain click (click = select) on a
+// only an open Flow is the work target. A plain click (click = select) on a
 // Project, Group or Flow row leaves the Designer unselected; a Flow double click / Enter
 // (select + open) continues into the existing Designer.
 describe('Designer initial state — only an open Flow continues into the Designer (0042)', () => {
@@ -388,7 +388,7 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(isDisabled(get(w, 'project-explorer-search'))).toBe(false)
     expect(get(w, 'designer-toolbar').attributes('aria-disabled')).toBeUndefined()
     // flowgate.v02.0045 TR0020 rev2: 검증 waits for an edited structure (none on this Flow).
-    // flowgate.v02.0059 T#2: Undo / Redo wait for an edit history (none on this Flow).
+    // Undo / Redo wait for an edit history (none on this Flow).
     const toolbarButtons = get(w, 'designer-toolbar').findAll('button')
     const waiting = ['run.validate', 'edit.undo', 'edit.redo']
     expect(toolbarButtons.filter((b) => waiting.includes(b.attributes('data-command') ?? '')).every(isDisabled)).toBe(true)
@@ -478,7 +478,7 @@ describe('ProjectExplorer — reports the user selection (0039 T#3)', () => {
     await settle()
     expect(wrapper.emitted('update:selection')).toBeUndefined()
 
-    // flowgate.v02test.0002 R0001 #5: a Project click also folds the root, so the Group is chosen first.
+    // #5: a Project click also folds the root, so the Group is chosen first.
     await click(wrapper, 'UI 개선')
     await click(wrapper, 'Alpha')
     expect(wrapper.emitted('update:selection')).toEqual([[{ kind: 'group', id: 'module:p:ui' }], [{ kind: 'project', id: 'project:p' }]])
@@ -515,7 +515,7 @@ describe('designerTop model — work target (0039 T#3)', () => {
     entry.kind === 'command' ? [entry.command] : [],
   )
 
-  // flowgate.v02.0043: targets are the Project context, a chosen Group and the open Flow.
+  // targets are the Project context, a chosen Group and the open Flow.
   it('without any target only 새 Project / Project 열기… / Designer 닫기 and Help stay enabled', () => {
     expect(commands.filter((cmd) => isMenuCommandEnabled(cmd, null, NO_MENU_TARGETS))).toEqual([
       'project.new',

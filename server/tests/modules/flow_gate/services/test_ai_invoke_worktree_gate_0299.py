@@ -1,4 +1,4 @@
-"""AI execution worktree gate (flowgate.default.0299, follow-up to R0001 / TR0008 §5-2).
+"""AI execution worktree gate (follow-up to the requirement / the earlier implementation).
 
 TR scope validation detects work in the wrong location at reporting time. This gate
 prevents it at execution time: without a verified group worktree, AI execution never
@@ -92,7 +92,7 @@ def test_group_less_run_is_untouched(monkeypatch):
 
 
 def test_blocking_cause_is_reported(monkeypatch, wt, tmp_path):
-    """A missing-worktree error without a cause cannot guide recovery (0280 NR0003 §4-B)."""
+    """A missing-worktree error without a cause cannot guide recovery."""
     base = tmp_path / "proj" / "main"
     base.mkdir(parents=True)
     _wire(monkeypatch, worktree=wt, resolved=base, provision_error="clone timed out")
@@ -128,8 +128,8 @@ def test_is_group_worktree_is_false_when_the_ledger_has_no_branch(monkeypatch, w
     assert aiv._is_group_worktree("p", "g", wt) is False
 
 
-# ── T0004 task 6/8: worktree_unavailable 409 follows the requested locale ────────
-# NR0003 finding 6: this 409 used to be a fixed Korean f-string with no locale parameter
+# ── the earlier implementation task 6/8: worktree_unavailable 409 follows the requested locale ────────
+# this 409 used to be a fixed Korean f-string with no locale parameter
 # at all -- invisible to 0355's locale-branch scanner because nothing about it looked
 # like a locale branch. These pin the en/ja no-leak contract, the preserved dynamic
 # cause + ko meaning, and the continuation_locale wiring from start_run().
@@ -165,7 +165,7 @@ def test_blocked_response_is_localized_and_has_no_korean(
 
 def test_ko_default_preserves_existing_meaning(monkeypatch, wt, tmp_path):
     """No locale argument (non-continuous run, or a legacy NULL continuation_locale)
-    keeps the pre-T0004 Korean wording."""
+    keeps the pre-the earlier implementation Korean wording."""
     base = tmp_path / "proj" / "main"
     base.mkdir(parents=True)
     _wire(monkeypatch, worktree=wt, resolved=base)
@@ -201,11 +201,11 @@ def test_non_integrated_and_group_less_stay_unblocked_with_a_locale(monkeypatch)
 
 def test_start_run_wires_continuation_locale_into_the_worktree_gate(monkeypatch):
     """start_run() already carried continuation_locale for token/mention plumbing but
-    never forwarded it to _require_group_worktree until T0004 task 6. Pin the wiring
+    never forwarded it to _require_group_worktree until the earlier implementation task 6. Pin the wiring
     directly rather than trusting the two functions independently."""
     captured = {}
 
-    # 0481 T0010 #1 added `action_scope` so a project-scoped run can skip the gate; capture
+    # #1 added `action_scope` so a project-scoped run can skip the gate; capture
     # it here too, so this test keeps pinning the whole call and not just the locale.
     def _fake_require(project_id, module, group_id, branch, locale=None, action_scope=None):
         captured["locale"] = locale

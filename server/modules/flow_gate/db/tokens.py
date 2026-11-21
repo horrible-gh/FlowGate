@@ -23,7 +23,7 @@ def _token_cache():
 
 
 def _invalidate_token_cache() -> None:
-    """A tokens row changed; drop the cached lookups (0288 NR0003 recommendation 3).
+    """A tokens row changed; drop the cached lookups.
 
     Called from every write path in this module so the cache can never keep a
     consumed or revoked token alive: single-use enforcement stays exact and the
@@ -37,7 +37,7 @@ def _invalidate_token_cache() -> None:
 
 
 def _dump_auto_approve_item_seqs(value: Any) -> Optional[str]:
-    """Serialize the N/T auto-approve item_seq selection for storage (0352 T0004 §2).
+    """Serialize the N/T auto-approve item_seq selection for storage.
 
     A positive-int list -> a JSON array TEXT; empty/None -> NULL ("no selection", same
     meaning as an empty list per §2). Round-trips with :func:`_load_auto_approve_item_seqs`.
@@ -51,7 +51,7 @@ def _dump_auto_approve_item_seqs(value: Any) -> Optional[str]:
 
 
 def _load_auto_approve_item_seqs(value: Any) -> list:
-    """Deserialize the stored JSON-text item_seq list back to a Python list (0352 T0004 §2).
+    """Deserialize the stored JSON-text item_seq list back to a Python list.
 
     Defensive like ai_invoke_paused_chains.load_json_map: a missing/corrupt value degrades
     to an empty list (== "no selection") rather than raising, so a damaged row cannot break
@@ -90,7 +90,7 @@ def get_by_id(token_id: str) -> Optional[dict]:
 def get_by_hash(token_hash: str) -> Optional[dict]:
     """Look up a token by its peppered hash — the per-request auth query.
 
-    0288 NR0003 finding 5: this ran once for every authenticated call (the log shows
+    this ran once for every authenticated call (the log shows
     the same hash re-read 10+ times while the explorer loads), each one taking a
     connection out of the pool the same request then needs for its real work.
     Cached like the other auth lookups (auth/auth_cache.py); every writer in this
@@ -132,25 +132,25 @@ def create(data: dict[str, Any]) -> dict:
             data["created_at"], data["expires_at"],
             data.get("consumed_at"), data.get("revoked_at"),
             data.get("scratch_dir"),
-            # Continuous work (group 0051 / migration 050). NULL/0 for ordinary tokens.
+            # Continuous work (migration 050). NULL/0 for ordinary tokens.
             data.get("continuation_target_seq"),
             1 if data.get("continuation_review_mode") else 0,
-            # Chosen locale carried across the unmanned self-chain (group 0099 / migration
+            # Chosen locale carried across the unmanned self-chain (the earlier change / migration
             # 051). NULL for ordinary + legacy continuation tokens → header/ko fallback.
             data.get("continuation_locale"),
             data.get("merge_id"),
             data.get("continuation_instruction_mode"),
             data.get("provider_id"),
             data.get("ai_run_id"),
-            # 0352 T0004 §2: per-item_seq N/T auto-approve selection (migration 078).
+            # per-item_seq N/T auto-approve selection (migration 078).
             # NULL/[] for every non-ai_direct or selection-less continuation token.
             _dump_auto_approve_item_seqs(data.get("continuation_auto_approve_item_seqs")),
             data.get("failure_origin_target_run_id"),
             data.get("failure_origin_before_marker"),
-            # 0515 T0009 (D0006 §2.3, DB0008 §2.2): capability fixed at issue time for
+            # capability fixed at issue time for
             # a chat (CH) token -- "read"/"read_write"/NULL (legacy or non-CH).
             data.get("source_access"),
-            # flowgate.v02test.0026 (migration 185): "execute" only for a chat token issued in
+            # (migration 185): "execute" only for a chat token issued in
             # execute mode -- commands allowed, source_access stays "read". NULL otherwise.
             data.get("command_access"),
         ],
@@ -178,10 +178,10 @@ def consume_claim(token_id: str) -> bool:
     cannot answer that: it re-reads the row afterwards, and a row consumed a
     millisecond earlier by a competing request looks exactly like one this call
     consumed itself. A single guarded UPDATE is atomic against every other writer
-    regardless of process boundary (the db_tokens.revoke() precedent, 0447 T0007 rev1),
+    regardless of process boundary (the db_tokens.revoke precedent, the earlier implementation),
     so exactly one concurrent caller can ever see True.
 
-    0535 T0007 §3: the review path claims its token this way *inside* the same
+    the review path claims its token this way *inside* the same
     transaction that stores the review, which is what makes "one submission = one
     review row + one consumed token" hold under a retry or a double submit.
     """
@@ -196,12 +196,12 @@ def consume_claim(token_id: str) -> bool:
 def set_source_access(token_id: str, source_access: str) -> None:
     """Fix up ``tokens.source_access`` after a deferred edit_once claim resolves it.
 
-    0515 T0009 §6 / DB0008 §2.1: the claim CAS's ``one_shot_token_id`` has an FK to
+    : the claim CAS's ``one_shot_token_id`` has an FK to
     ``tokens(token_id)``, so the token row has to exist before the claim can reference
     it -- token_service.issue() therefore inserts the row with a conservative "read"
     placeholder first and calls this only when the claim actually won, still inside the
     same transaction the INSERT belongs to. No reader outside that transaction can ever
-    observe the placeholder, so "fixed at issue time" (D0006 §2.3) holds from any other
+    observe the placeholder, so "fixed at issue time" holds from any other
     caller's point of view even though this is technically a second write to the column.
     Never called once issuance has returned.
     """
@@ -213,7 +213,7 @@ def set_source_access(token_id: str, source_access: str) -> None:
 
 
 def increment_dry_run(token_id: str) -> None:
-    """Atomically bump the per-token dry-run attempt counter (R0001 dry-run, group 0050).
+    """Atomically bump the per-token dry-run attempt counter (dry-run, the earlier change).
 
     Single-statement read-modify-write (`= dry_run_count + 1`) so concurrent dry-runs
     can't lose an update. Returns nothing: the handler already holds the post-increment
@@ -229,7 +229,7 @@ def increment_dry_run(token_id: str) -> None:
 def revoke(token_id: str, claim: Optional[str] = None) -> Optional[dict]:
     """Record revoked_at = now(), stamping a per-call claim marker atomically.
 
-    0447 T0007 review rev1: the guarded UPDATE can only ever apply once per
+    review: the guarded UPDATE can only ever apply once per
     token_id, and a single UPDATE statement is atomic against every other
     writer regardless of process boundary -- so when two different processes
     race this call against the same active token_id, only one caller's
@@ -241,14 +241,14 @@ def revoke(token_id: str, claim: Optional[str] = None) -> Optional[dict]:
     ``claim`` defaults to a fresh UUID for call sites that only care about the
     revoked_at side effect.
 
-    0447 T0007 review rev2: the guard also requires ``consumed_at IS NULL``.
+    review: the guard also requires ``consumed_at IS NULL``.
     ``WHERE revoked_at IS NULL`` alone only protects against a second revoke --
     it says nothing about a token that was consumed in between the caller's
     query (token_service.revoke's db_tokens.get_by_id read) and this UPDATE.
     Without the consumed_at predicate, that race would still flip
     revoked_at/revoke_claim on an already-consumed token, and the caller would
     then (wrongly) record a token_revoked event for a consumed-then-revoked
-    token, which T0007 forbids: a consumed token must never be revoked after
+    token, which the earlier implementation forbids: a consumed token must never be revoked after
     the fact, and an event is only emitted for a genuine active->revoked
     transition. Adding the predicate here means the same single atomic
     statement decides both "not already revoked" and "not already consumed" --
@@ -308,7 +308,7 @@ def count_by_date_prefix(date_str: str) -> int:
 def get_latest_consumed_by_scope_doc_ref(action_scope: str, doc_ref: str) -> Optional[dict]:
     """Latest consumed token for (action_scope, doc_ref).
 
-    Chain detection for server-run tests (group 0150): a consumed test_run token whose
+    Chain detection for server-run tests (the earlier change): a consumed test_run token whose
     continuation_target_seq is non-NULL marks its run as an unmanned-chain run, which is
     what authorizes the auto-assembled TSR's auto-approve. Persisted on the token row, so
     the signal survives a server restart between run start and TSR assembly.

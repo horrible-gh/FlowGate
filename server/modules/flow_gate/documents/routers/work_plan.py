@@ -1,4 +1,4 @@
-"""Work plan (WP) human API — flowgate.default.0395 P0009 §4.
+"""Work plan (WP) human API — the earlier change the plan
 
     POST /api/v1/documents/work-plan                      create        (§4.2 / §4.3)
     GET  /api/v1/documents/{doc_id}/work-plan             read          (§4.4 / §4.5)
@@ -6,11 +6,11 @@
     POST /api/v1/documents/{doc_id}/work-plan/suggest     AI suggestion (§4.9)
 
 These routes only marshal HTTP. Every rule lives in services/work_plan_service, which
-the AI inbox branch calls too — D0007 §2.2 makes one validator the whole point of the
+the AI inbox branch calls too — the design makes one validator the whole point of the
 design. A rule written here instead would apply to people and not to AI workers.
 
-Apply / preview / applications (P0009 §7·§8) are deliberately absent: they need the
-workflow sequence and belong to the next task set. Nothing here starts a run (P0009 §9).
+Apply / preview / applications are deliberately absent: they need the
+workflow sequence and belong to the next task set. Nothing here starts a run.
 """
 from __future__ import annotations
 
@@ -94,13 +94,13 @@ class WorkPlanSuggest(BaseModel):
 
 class WorkPlanApplyPreview(BaseModel):
     instruction_mode: str = "auto_approved"
-    # 0649 T#1 (NR0003 O0/§5.4): codes the person already confirmed, e.g.
+    # codes the person already confirmed, e.g.
     # "legacy_card_unresolved" — the preview then no longer counts it as a blocker.
     acknowledged_codes: Optional[list[str]] = None
 
 
 class WorkPlanSequenceCandidates(BaseModel):
-    # Not an enum and not defaulted on purpose: L0011 §4.2 refuses anything that is not one
+    # Not an enum and not defaulted on purpose: the earlier implementation refuses anything that is not one
     # of the two modes rather than quietly picking one, because a silently defaulted mode
     # would rewrite a sequence the person never chose to rewrite.
     mode: str
@@ -111,7 +111,7 @@ class WorkPlanApply(BaseModel):
     change_workflow: bool
     workflow_tag: str
     wp_revision_no: int
-    # 0649 T#1 (NR0003 O0/§5.4): without "legacy_card_unresolved" here, an apply over started
+    # without "legacy_card_unresolved" here, an apply over started
     # legacy rows whose card cannot be proven is refused with 409 legacy_card_unresolved.
     acknowledged_codes: Optional[list[str]] = None
 
@@ -139,7 +139,7 @@ def _load_doc(doc_id: str) -> dict:
 
 
 def _plan_path(doc: dict):
-    # 0403 NR0004 F3 — path computation lives in work_plan_service alone. A sequence save
+    # path computation lives in work_plan_service alone. A sequence save
     # recording an application calls the same function, so the two paths cannot diverge.
     return wp.plan_path_for_doc(doc)
 
@@ -257,11 +257,11 @@ def _unreadable_response(doc: dict, exc: wp.WorkPlanUnreadable, locale: str) -> 
     return JSONResponse(status_code=409, content=content)
 
 
-# 0403 NR0004 F1 — an advisory lock allowing only one save per document at a time.
+# an advisory lock allowing only one save per document at a time.
 # Same mechanism and same reason as document-number reservation (numbering_service._get_lock):
 # every invariant of the form "two concurrent requests, only one wins" rests on this
 # in-process lock. The lock is per document, so requests saving different plans never wait
-# on each other. flowgate.v02.0074 T#4 (D0006 §3.6.3): the lock lives in work_plan_locks, so
+# on each other. the earlier change the earlier implementation: the lock lives in work_plan_locks, so
 # the v0.2 work plan deploy takes the very same lock object as the save and the restore here.
 from modules.flow_gate.services.work_plan_locks import plan_save_lock as _plan_save_lock  # noqa: E402
 
@@ -354,7 +354,7 @@ def _read_view(doc: dict, body: dict) -> dict:
         meta = {}
     plan_meta = meta.get("work_plan") or {}
     applications = wpa.read_applications(_plan_path(doc), doc.get("doc_id") or "", limit=1)
-    # 0403 NR0004 F7 — the screen does not compute editability on its own.
+    # the screen does not compute editability on its own.
     # The screen locked the whole table on doc_review_status == 'approved' alone, while the
     # server looked at group final approval and closed state. So a plan could be "locked on
     # screen but editable via API/AI" and another "open on screen but 422 on save" at the same
@@ -386,7 +386,7 @@ def _read_view(doc: dict, body: dict) -> dict:
         "updated_by": _last_editor(doc),
         "updated_at": doc.get("updated_at"),
         "body": body,
-        # 0411 T0004 (B0001 "each provider should be changeable from the full provider list"):
+        # ("each provider should be changeable from the full provider list"):
         # ship the registered list already read above. Without it the editor knows nothing to
         # choose from beyond the candidate snapshot frozen into the plan, and cannot even draw
         # a non-candidate provider's name. It is read at the same moment as the plan body, so the two cannot disagree on screen.
@@ -403,7 +403,7 @@ def _read_view(doc: dict, body: dict) -> dict:
         "step_execution_status": [
             {
                 "step_key": step.get("key"),
-                # 0649 T#3 (NR0003 O7): which card the row belongs to and whether that card
+                # which card the row belongs to and whether that card
                 # already started in the workflow (it cannot be moved or removed).
                 "card_id": step.get("card_id"),
                 "started": step.get("card_id") in started_cards,
@@ -435,7 +435,7 @@ def _read_view(doc: dict, body: dict) -> dict:
         "assignment_summary": wp.assignment_summary(body, providers),
         "unassigned_step_count": wp.unassigned_step_count(body),
         "totals": wp.totals(body),
-        # 0406 T0022 item 6: where the screen used to hold its own 200 and block input silently.
+        # where the screen used to hold its own 200 and block input silently.
         # The server states the cap and the editor draws the remaining count from that value.
         "limits": {
             "note_max_chars": wp.NOTE_MAX_CHARS,
@@ -446,7 +446,7 @@ def _read_view(doc: dict, body: dict) -> dict:
     }
 
 
-# ── Create (P0009 §4.2 / §4.3) ───────────────────────────────────────────────
+# ── Create ───────────────────────────────────────────────
 
 @router.post("/work-plan", status_code=201)
 @require_permission("perm_document_create")
@@ -471,7 +471,7 @@ def _project_branch(project_id: Optional[str]) -> str:
         return "main"
 
 
-# ── Read (P0009 §4.4 / §4.5) ─────────────────────────────────────────────────
+# ── Read ─────────────────────────────────────────────────
 
 def _workflow_items(doc: dict) -> list[dict]:
     """The slot list of the workflow sequence this document belongs to; empty when there is none."""
@@ -537,7 +537,7 @@ def restore_work_plan_revision(
     return _dedicated_write("wp_restore", request, doc_id, revision_no, body, current_user)
 
 
-# ── Save (P0009 §4.6 ~ §4.8) ─────────────────────────────────────────────────
+# ── Save ─────────────────────────────────────────────────
 
 @router.put("/{doc_id}/work-plan")
 @require_permission("perm_document_update")
@@ -608,7 +608,7 @@ async def upload_pre_instruction_attachment(
     return {"ok": True, **uploaded}
 
 
-# ── Suggestion (P0009 §4.9) ──────────────────────────────────────────────────
+# ── Suggestion ──────────────────────────────────────────────────
 
 @router.post("/{doc_id}/work-plan/suggest")
 @require_permission("perm_document_read")
@@ -621,7 +621,7 @@ def suggest_work_plan(
     """Return a scoped, unsaved proposal from the project's existing assignment map."""
     locale = _locale(request)
     doc = _load_doc(doc_id)
-    # 0403 NR0004 F6 — actually check the base_revision_no the request sent.
+    # actually check the base_revision_no the request sent.
     # This route validates the scope the screen sent against the canonical file on disk. But
     # the screen may hold an unsaved plan, so a perfectly valid step key created by raising a
     # quantity on screen was absent from the server's canonical file and got rejected with
@@ -645,7 +645,7 @@ def suggest_work_plan(
         str(entry.get("provider_id")) for entry in (plan.get("provider_candidates") or [])
         if entry.get("provider_id")
     }
-    # 0411 T0004 (NR0003 §6 option B-2): the AI scope dialog now shows every registered
+    # (option B-2): the AI scope dialog now shows every registered
     # provider, so this gate widens to the same set. Left narrow, the value picked by the
     # screen's [all] button comes straight back as a 422 — an [all] that is not all.
     selectable_ids = candidate_ids | {str(provider_id) for provider_id in providers}
@@ -720,7 +720,7 @@ def suggest_work_plan(
     return result
 
 
-# ── Apply preview / apply / journal (P0009 §7·§8) ───────────────────────────
+# ── Apply preview / apply / journal ───────────────────────────
 
 def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
     doc = _load_doc(doc_id)
@@ -798,7 +798,7 @@ def _apply_sync(
                 "en": "The work plan changed after preview. Re-read it.",
                 "ja": "プレビュー後に作業計画が変わりました。読み直してください。",
             },
-            # 0649 T#1 (NR0003 O0): the same copy the preview warning shows.
+            # the same copy the preview warning shows.
             "legacy_card_unresolved": {
                 lang: wpa._COPY[lang]["legacy_card_unresolved"].format(
                     count=len(exc.payload.get("rows") or []),
@@ -806,7 +806,7 @@ def _apply_sync(
                 for lang in ("ko", "en", "ja")
             },
         }
-        # 0649 T#2 (NR0003 O2-O5): the card-order refusals speak with the preview's own copy.
+        # the card-order refusals speak with the preview's own copy.
         if exc.code not in copy and exc.code in wpa._COPY["ko"]:
             count = len(
                 exc.payload.get("rows") or exc.payload.get("cards") or exc.payload.get("keys") or []
@@ -859,7 +859,7 @@ def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, loc
             doc_id=doc.get("doc_id"),
         )
     except wp.WorkPlanUnreadable as exc:
-        # L0011 §4.1-2 "plan_unreadable": a plan nobody can open as a table is a different
+        # "plan_unreadable": a plan nobody can open as a table is a different
         # problem from a plan with nothing in it, and the person's next move differs, so it
         # keeps the reader's own 409 rather than being folded into an empty result.
         return _unreadable_response(doc, exc, locale)

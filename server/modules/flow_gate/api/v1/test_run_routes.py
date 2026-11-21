@@ -50,11 +50,11 @@ def post_test_run(body: TestRunBody, request: Request):
         triggered_via = "ui"
         locale = request.headers.get("x-locale") or "ko"
     elif auth.get("action_scope") == "test_run" and auth.get("doc_ref") == body.doc_id:
-        # flowgate.default.0157 (P §relaunch after repair): an auto-recovery repair token bound to THIS doc
+        # (P §relaunch after repair): an auto-recovery repair token bound to THIS doc
         # opens the user_session wall so the unmanned chain re-fires itself without a human. Single-use
         # — consume it here so it cannot be replayed. The consumed token still carries the chain's
         # continuation fields, so a passing re-run auto-approves the TSR (_maybe_chain_auto_approve_tsr).
-        # T0004 (flowgate.default.0520 NR0003): the token's own continuation_locale -- inherited hop-to-hop
+        # the token's own continuation_locale -- inherited hop-to-hop
         # by engine_recipe_service._emit_repair -- outranks the request header, the same priority order
         # every other continuation-token consumer in this codebase already uses (inbox_routes.py).
         locale = auth.get("continuation_locale") or request.headers.get("x-locale") or "ko"

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// flowgate.v02.0024 T0005 — Flow file context wrappers added to features/project/api.ts.
+// Flow file context wrappers added to features/project/api.ts.
 const getRequest = vi.hoisted(() => vi.fn())
 const extractApiErrorMessage = vi.hoisted(() => vi.fn((_error: unknown, fallback: string) => fallback))
 
@@ -46,14 +46,14 @@ describe('fetchProjectGitStatus', () => {
         { groupId: 'p.m.0001', branch: 'flow-1', status: 'active', writable: true },
         { groupId: 'p.m.0002', branch: null, status: 'active', writable: false },
       ],
-      // flowgate.v02.0033 additive fields: empty when the server sends none.
+      // additive fields: empty when the server sends none.
       pending: [],
       baseDirty: { files: [], mergeInProgress: false, aiRun: false },
       baseUntracked: { files: [], truncated: false, total: null },
     })
   })
 
-  // flowgate.v02.0033 — what the Designer Git part reads from the same status answer.
+  // what the Designer Git part reads from the same status answer.
   it('normalizes pending rows, Base dirty and untracked without the project default action', async () => {
     getRequest.mockResolvedValue({
       data: {
@@ -135,7 +135,7 @@ describe('fetchProjectGitStatus', () => {
     expect((await fetchProjectGitStatus('p'))?.baseBranch).toBeNull()
   })
 
-  // 0024 TR0006: server project_git_status answers an unset/blank stored Base with its legacy
+  // server project_git_status answers an unset/blank stored Base with its legacy
   // "main" fallback and base_branch_configured=false. That "main" is not the Project Base.
   it.each([
     ['the server main fallback', { base_branch: 'main', base_branch_configured: false }],
@@ -259,7 +259,7 @@ describe('fetchFlowAiActivity', () => {
   })
 })
 
-// flowgate.v02.0033 — the Designer Git part's file reads.
+// the Designer Git part's file reads.
 describe('fetchBaseFileDiff / fetchMergeReviewFileDiff', () => {
   const side = { exists: true, binary: false, truncated: false, size: 3, content: 'abc' }
 

@@ -87,7 +87,7 @@ class _MockDB:
 
 @pytest.fixture(scope="module")
 def attempt_db(tmp_path_factory):
-    """0630 T0005: every branch merge now writes a persistent attempt row
+    """every branch merge now writes a persistent attempt row
     (git_merge_session, owner branch_merge) before `git merge` runs, so the merge
     cases need a real store with the real sqlite migrations (123 included)."""
     db_path = tmp_path_factory.mktemp("bm-db") / "flowgate.db"
@@ -137,7 +137,7 @@ def repo(tmp_path, monkeypatch, attempt_db):
     monkeypatch.setattr(git_service, "_load_secret_for", lambda cfg: "")
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", lambda: [])
-    # 0613 T0013: the delete guard also asks which live groups pin a branch as their
+    # the delete guard also asks which live groups pin a branch as their
     # Base Branch; none do in these catalog/delete scenarios.
     from modules.flow_gate.db import groups as db_groups
     monkeypatch.setattr(db_groups, "list_open_groups_by_work_base", lambda project_id, ref: [])
@@ -382,9 +382,9 @@ def test_branch_merge_rejects_self_remote_and_actual_slots(repo):
 
 
 def test_branch_merge_conflict_keeps_a_persistent_attempt_and_its_workspace(repo, monkeypatch):
-    # flowgate.default.0630 T0005 §15 — replaces
+    # replaces
     # test_branch_merge_conflict_aborts_cleans_and_creates_no_session, whose contract
-    # (abort + clean + no session) is exactly what T0005 removes. A conflict is now a
+    # (abort + clean + no session) is exactly what the earlier implementation removes. A conflict is now a
     # live, addressable attempt: no `merge --abort`, the managed workspace keeps
     # MERGE_HEAD and the markers, and nothing about the target moved.
     _git(repo, "checkout", "-b", "target")
@@ -419,7 +419,7 @@ def test_branch_merge_conflict_keeps_a_persistent_attempt_and_its_workspace(repo
     assert "<<<<<<<" in (trees[0] / "same.txt").read_text(encoding="utf-8")
 
 
-# flowgate.default.0612 T0006 §10 — merge/push separation. The existing
+# merge/push separation. The existing
 # test_branch_merge_clean_pushes_target_without_switching_base above already
 # covers T1 (push omitted defaults to the old always-push behavior).
 
@@ -469,7 +469,7 @@ def test_branch_merge_push_false_skips_push_and_preserves_local_ref(repo):
 def test_branch_merge_push_false_base_target_updates_local_ref_without_push(repo):
     # T5 — merging into the project base branch itself with push=False must
     # land the ref and the shared base checkout's working tree together.
-    # 0630 T0005: the merge now runs in a detached managed workspace (so a
+    # the merge now runs in a detached managed workspace (so a
     # conflict never sits in the shared checkout) and a clean result is applied
     # to the base checkout by fast-forward before that workspace is cleaned up —
     # the merge commit is never left unreachable.
@@ -503,7 +503,7 @@ def test_branch_merge_push_false_base_target_updates_local_ref_without_push(repo
 
 
 def test_branch_merge_push_false_base_target_conflict_leaves_base_clean(repo):
-    # T7, 0630 T0005 — a base-target conflict is kept as a persistent attempt, but
+    # T7, the earlier implementation — a base-target conflict is kept as a persistent attempt, but
     # never in the shared base checkout: it lives in a detached managed workspace,
     # and the base checkout stays exactly as it was (clean, same ref, same branch).
     (repo / "same.txt").write_text("main\n", encoding="utf-8")
@@ -544,7 +544,7 @@ def test_branch_merge_push_false_base_target_rejects_dirty_checkout(repo):
 
 
 def test_branch_merge_push_false_base_target_rejects_open_merge_session(repo, monkeypatch):
-    # TR0007 rev1 fix #2: a direct base-checkout merge (push=False, target=base)
+    # fix #2: a direct base-checkout merge (push=False, target=base)
     # mutates base like any other base-mutating op — guard_base_free() must
     # reject it while an unresolved merge session elsewhere still holds the
     # base checkout, exactly like the existing base-mutating entry points.
@@ -565,7 +565,7 @@ def test_branch_merge_push_false_base_target_rejects_open_merge_session(repo, mo
 
 
 def test_branch_merge_push_false_base_target_untracked_collision_is_409_not_abort_failure(repo):
-    # TR0007 rev1 fix #1: the pre-merge dirty guard is include_untracked=False
+    # fix #1: the pre-merge dirty guard is include_untracked=False
     # by design, so an untracked file at a path the source branch also adds
     # sails through it. Git then refuses the merge itself with "untracked
     # working tree files would be overwritten" BEFORE creating MERGE_HEAD —
@@ -592,7 +592,7 @@ def test_branch_merge_push_false_base_target_untracked_collision_is_409_not_abor
 
 
 def test_branch_merge_push_false_base_target_untracked_ff_only_is_409_not_diverged(repo):
-    # TR0007 rev1 fix #1 (second stage): the same untracked collision can hit
+    # fix #1 (second stage): the same untracked collision can hit
     # the earlier `merge --ff-only origin/{target}` sync — a fast-forward that
     # really could land, just blocked by a local untracked file — and must not
     # be misclassified as branch_merge_target_diverged.
@@ -654,7 +654,7 @@ def test_branch_routes_rbac_delegation_and_error_envelope(monkeypatch):
 
 
 def test_branch_merge_route_forwards_push_and_defaults_to_true(monkeypatch):
-    # T0006 §4/§8 — BranchMergeBody.push must reach merge_branches() verbatim,
+    # BranchMergeBody.push must reach merge_branches verbatim,
     # and an omitted field must keep the pre-existing always-push behavior.
     calls = []
 

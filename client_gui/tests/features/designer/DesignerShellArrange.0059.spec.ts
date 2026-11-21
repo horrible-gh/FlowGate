@@ -1,5 +1,5 @@
 /**
- * flowgate.v02.0059 T#2 (0011-CH contracts C / D) — on the real Shell (project store, Center session, server
+ * (CH contracts C / D) — on the real Shell (project store, Center session, server
  * Graph source, real Vue Flow Canvas; only `@shared/api` is mocked, as DesignerShellSelection.0059):
  * - alignment / layout ▾ (Toolbar) and 편집 › alignment / layout move the selected cards on the Canvas; items wait for enough
  *   selected cards; auto-layout lays the cards out by the server rules and spacing, whatever the density.
@@ -282,7 +282,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
   })
 
-  // flowgate.v02.0059 0017-T: the density is the step a card drag moves in (moveDensity.0059); choosing it lays
+  // the density is the step a card drag moves in (moveDensity.0059); choosing it lays
   // nothing out.
   it('배치 밀도 moves no card: no 자동 배치, no save, no 실행 취소, no zoom change; Toolbar and View menu show one value', async () => {
     const w = await mountShell()

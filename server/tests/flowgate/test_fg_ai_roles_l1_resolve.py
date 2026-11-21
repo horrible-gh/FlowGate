@@ -1,4 +1,4 @@
-"""0113 T#2 V/X: every legacy truth-table row and slot/availability precedence."""
+"""V/X: every legacy truth-table row and slot/availability precedence."""
 import pytest
 from test_fg_card_settings import db_path, env, FA, placed
 
@@ -169,7 +169,7 @@ def test_optional_read_restores_aborted_transaction_before_reraising(monkeypatch
     assert not store.aborted
     assert statements==["SAVEPOINT fg_role_test_read","ROLLBACK TO SAVEPOINT fg_role_test_read","RELEASE SAVEPOINT fg_role_test_read"]
 
-# Reuse T#1's real SQLite assignment fixture to exercise the durable R-5 path.
+# Reuse the earlier implementation's real SQLite assignment fixture to exercise the durable R-5 path.
 from test_fg_ai_roles_db1_stores import env as assignment_env, _assignment
 
 

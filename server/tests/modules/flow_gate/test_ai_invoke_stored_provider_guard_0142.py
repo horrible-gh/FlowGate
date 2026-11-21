@@ -1,4 +1,4 @@
-"""0142 T#2: admission selection only; all I/O is replaced by memory doubles."""
+"""admission selection only; all I/O is replaced by memory doubles."""
 from copy import deepcopy
 import json
 import logging

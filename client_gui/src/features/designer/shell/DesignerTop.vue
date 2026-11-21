@@ -1,15 +1,15 @@
 <template>
-  <!-- Final container for the Designer's top band. flowgate.v02.0038 (0007-T §5): stacks the
+  <!-- Final container for the Designer's top band. the earlier change: stacks the
        real Header / Menu Bar / Toolbar parts and owns only their order and row heights. What
        each part shows comes from the Shell as props, and every part event passes straight up
-       to the Shell — this container handles none of them itself. flowgate.v02.0039 T#3 /
+       to the Shell — this container handles none of them itself. the earlier change the earlier implementation /
        v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
        Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
-       Group / Flow lists go to the Menu Bar's recent submenus. flowgate.v02.0053 T#9: the open Flow's
-       server run status goes to the Toolbar's run dot (flowgate.v02.0056 F2-1: with its waiting cards).
-       flowgate.v02.0059 T#2: the menu targets also go to
+       Group / Flow lists go to the Menu Bar's recent submenus. the earlier change the earlier implementation: the open Flow's
+       server run status goes to the Toolbar's run dot (F2-1: with its waiting cards).
+       the menu targets also go to
        the Toolbar's 정렬 / 배치 ▾ (the same availability as the Edit menu's 정렬 / 배치).
-       flowgate.v02.0061 T#14: the run phase goes to both (the run commands of each phase) and the run band (status,
+       the run phase goes to both (the run commands of each phase) and the run band (status,
        command, idle reason, executions) to the Toolbar, in place of 0056's waiting cards line. -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader :notifications-open="notificationsOpen" :notification-project-id="notificationProjectId" :notification-project="notificationProject" @close-notifications="emit('close-notifications')" @command="emit('command', $event)" @search="emit('search', $event)" />
@@ -69,7 +69,7 @@ import {
 
 withDefaults(
   defineProps<{
-    /** flowgate.v02.0061 T#14: the open Flow's run phase. */
+    /** the open Flow's run phase. */
     notificationsOpen?: boolean
     notificationProjectId?: string | null
     notificationProject?: ExplorerProject | null
@@ -78,7 +78,7 @@ withDefaults(
     /** Zoom of the active Flow's Canvas, in percent. */
     zoom: number
     windowState: DesignerWindowState
-    /** Project context / chosen Group / open Flow (0039 T#3, 0042, 0043). */
+    /** Project context / chosen Group / open Flow. */
     targets: DesignerMenuTargets
     /** Recent Project / Group / Flow entries for the File menu (0043). */
     recent?: DesignerRecentLists
@@ -89,7 +89,7 @@ withDefaults(
     archiveReason?: string
     /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (the Center session's). */
     selectMode?: boolean
-    /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null. */
+    /** the open Flow's run band (runBandView), or null. */
     runBand?: DesignerRunBand | null
   }>(),
   { recent: () => EMPTY_RECENT_LISTS, canValidate: false, selectMode: false, runBand: null },

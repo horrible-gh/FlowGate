@@ -1,4 +1,4 @@
-"""Operation Job Store (flowgate.default.0669 units 5a/5b; 0666 0009-L §1.3, §2.13~2.16, §2.19.1, §3.2).
+"""Operation Job Store (units 5a/5b; the earlier implementation, ~2.16).
 
 Creation with request_key idempotency, the three claim modes, lease renewal and
 checks, the fenced ``job_write`` and run-result classification with backoff.
@@ -92,7 +92,7 @@ KINDS = ("final_approval_publish", "branch_merge_publish", "worktree_provision",
          "archive_purge", "project_provision", "gate_publish", "gate_cleanup")
 FREEZE_KINDS = frozenset(("final_approval_publish",))
 
-# flowgate.v02.0085 T#1 (D0007 §7.2 operation job): ``gate_publish`` is one confirm gate decision's Git apply, archive
+# (operation job): ``gate_publish`` is one confirm gate decision's Git apply, archive
 # and completion. Its request key is the decision id (never a client key), so a decision has at most one job and a
 # decision's key can never be reused. It has no freeze phase and, until the gate card installs its executor, no
 # executor: the runner never claims it. A gate job ends ``succeeded`` or ``cancelled``; why it was cancelled is told by
@@ -102,7 +102,7 @@ GATE_PUBLISH = "gate_publish"
 GATE_CANCEL_NO_EFFECT = "no_effect_canceled"
 GATE_CANCEL_ABANDONED = "recovery_abandoned"
 GATE_CANCEL_REASONS = (GATE_CANCEL_NO_EFFECT, GATE_CANCEL_ABANDONED)
-# flowgate.v02.0085 T#3 rework (D0007 §7.1 end cleanup, migration 161): ``gate_cleanup`` is the end cleanup of a Flow's
+# (end cleanup, migration 161): ``gate_cleanup`` is the end cleanup of a Flow's
 # group slot after its run completed - its own job, so a lock wait, a crash or a restart resumes it at its recorded
 # step. Its key is a fresh cleanup id per completion (one job per completion, made in the completion's transaction).
 GATE_CLEANUP = "gate_cleanup"
@@ -343,12 +343,12 @@ def get_job(job_id: str) -> Optional[dict]:
 
 def insert_gate_publish(project_id: str, req: dict, *, group_id: str, target_key: str, payload=None,
                         requested_by: Optional[str] = None) -> dict:
-    """flowgate.v02.0085 T#2 (D0007 §3.3 / §7.3): the ``gate_publish`` job of one confirm, written INSIDE the caller's
+    """the ``gate_publish`` job of one confirm, written INSIDE the caller's
     transaction so the decision intent and its job commit together. Its key is the decision id the same transaction
     creates, so no unique race can hit it (the reason ``create_or_get_job`` keeps its own transaction does not apply).
     No wake-up here: the caller signals ``notify_created`` after its commit.
 
-    T#3 rework (D0007 §7.3: a group's external publishes go in their acceptance order): the payload gets the job's
+    (a group's external publishes go in their acceptance order): the payload gets the job's
     ``group_seq``, one more than any gate job of the group had. The caller's Flow guard serializes the acceptances of
     a group, so the number is the acceptance order (``created_at`` has a one-second grain, the job id is random)."""
     if not in_transaction():
@@ -361,7 +361,7 @@ def insert_gate_publish(project_id: str, req: dict, *, group_id: str, target_key
 
 def insert_gate_cleanup(project_id: str, req: dict, *, group_id: str, payload=None,
                         requested_by: Optional[str] = None) -> dict:
-    """flowgate.v02.0085 T#3 rework (D0007 §7.1): the ``gate_cleanup`` job of a completed run, written INSIDE the
+    """the ``gate_cleanup`` job of a completed run, written INSIDE the
     completion's transaction (its key is a fresh cleanup id). The caller signals ``notify_created`` after the commit."""
     if not in_transaction():
         raise JobProgramError("gate_cleanup_outside_transaction", kind=GATE_CLEANUP)
@@ -408,7 +408,7 @@ def next_gate_publish_seq(group_id: str) -> int:
 
 
 def gate_publish_predecessor(job: dict) -> Optional[dict]:
-    """The unfinished gate job of the same group accepted before ``job`` (D0007 §7.3 group serialization), or None.
+    """The unfinished gate job of the same group accepted before ``job`` (group serialization), or None.
     Unfinished = not succeeded / failed / cancelled: waiting, running and parked for a person alike. Once None it stays
     None: an earlier job never becomes unfinished again (a terminal job is never resumed, I5; a retry only reopens a
     parked, i.e. still unfinished, job) and no job is ever accepted before an existing one."""
@@ -440,7 +440,7 @@ def cancel_unstarted_gate_publish(job_id: str, note: str = GATE_CANCEL_NO_EFFECT
     return db.cancel_unstarted_gate_publish(job_id, now_iso(), note) == 1
 
 
-# flowgate.v02.0085 T#3 (D0007 §7.2 / §7.3): a ``gate_publish`` job that waits for a person is ``recovery_required``
+# a ``gate_publish`` job that waits for a person is ``recovery_required``
 # with one of these ``phase_note`` values and no ``recovery_since``, so the Sweeper never retries it on its own; a
 # conflict hand-off keeps ``recovery_since`` so the job goes on by itself once the merge review closed.
 GATE_PARKED_FAILED = "gate_failed"
@@ -511,7 +511,7 @@ def claim(job_id: str, mode: str) -> ClaimResult:
     if mode not in _CLAIMS:
         raise JobProgramError("unknown_claim_mode", mode=mode)
     if mode == PUBLISH:
-        # flowgate.v02.0085 T#3 rework (D0007 §7.3): a group's gate jobs run in their acceptance order - one whose
+        # a group's gate jobs run in their acceptance order - one whose
         # earlier job is unfinished is not claimed (the predicate only turns true once; see gate_publish_predecessor).
         job = _fresh_job(job_id)
         if job is not None and job.get("kind") == GATE_PUBLISH and gate_publish_predecessor(job) is not None:
@@ -834,7 +834,7 @@ def request_cancel(job_id: str, by: Optional[str] = None) -> str:
     return job["status"] if job else "not_found"
 
 
-# 0134 T#2: advisory view and authoritative CAS share these conservative boundaries.
+# advisory view and authoritative CAS share these conservative boundaries.
 APPROVAL_CANCEL_PHASES = frozenset(("freeze_pending", "F1", "F3", "publish_pending", "admission", "fetched"))
 
 

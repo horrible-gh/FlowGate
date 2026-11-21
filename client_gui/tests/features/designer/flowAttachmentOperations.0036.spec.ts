@@ -8,7 +8,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 import { announceAuthSessionEnded, AUTH_SESSION_ENDED_EVENT } from '@shared/authSessionSignal'
 import type { FlowFile } from '@/features/designer/flowAttachments/api'
 
-// flowgate.v02test.0036 T#1 (R1): the Flow attachment work manager — pending deletes belong to the session, the
+// (R1): the Flow attachment work manager — pending deletes belong to the session, the
 // Project and the Flow, not to a window. Fake timers: nothing before five seconds, exactly one request at five.
 
 const order = vi.hoisted(() => [] as string[])

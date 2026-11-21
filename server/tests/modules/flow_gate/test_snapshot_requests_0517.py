@@ -123,8 +123,8 @@ def test_human_approval_http_endpoint_materializes_to_created(monkeypatch):
  assert captured==[("snap_route","human")]
 
 
-# T0012 §12/§13 — the client's Pending badge/list and the auto-open dialog have nothing
-# to refresh on without a signal; §17 allows a small connection fix within T#3's scope.
+# the client's Pending badge/list and the auto-open dialog have nothing
+# to refresh on without a signal; allows a small connection fix within the earlier implementation's scope.
 @pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_create_and_approve_broadcast_refresh_signal_not_the_list_itself(monkeypatch):
  events=[]

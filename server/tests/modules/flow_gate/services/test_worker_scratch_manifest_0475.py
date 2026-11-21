@@ -74,7 +74,7 @@ def test_create_rejects_path_injection(monkeypatch, tmp_path):
 
 def test_cli_env_is_fully_run_owned(monkeypatch, tmp_path):
     run_id, scratch = _new(monkeypatch, tmp_path)
-    # T0004 (0581 NR0003): token scratch (FLOWGATE_SCRATCH / the /inbox doc_path jail)
+    # token scratch (FLOWGATE_SCRATCH / the /inbox doc_path jail)
     # is deliberately a DIFFERENT directory from run scratch here, matching production
     # where the two live under separate storage roots (scratch/ vs work/).
     token_scratch = tmp_path / "token-owned" / "tok-0475"
@@ -107,7 +107,7 @@ def test_actual_mention_points_all_artifacts_and_doc_path_to_same_boundary():
         head_status="pending", scratch_dir=scratch, raw_token="token",
         api_base_url="http://localhost/api/v1", continuous=True, locale="en",
     )
-    # T0004 (0506): the worker-facing mention keeps the boundary guidance but no longer
+    # : the worker-facing mention keeps the boundary guidance but no longer
     # interpolates the actual server-local absolute path.
     assert scratch not in out
     assert "every non-source artifact" in out
@@ -136,7 +136,7 @@ def test_review_mention_keeps_all_review_artifacts_inside_run_scratch():
         locale="en",
     )
     assert out is not None
-    # T0004 (0506): same boundary-guidance-without-literal-path contract as the
+    # : same boundary-guidance-without-literal-path contract as the
     # standard mention above.
     assert scratch not in out
     assert "every non-source artifact" in out

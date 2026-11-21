@@ -1,4 +1,4 @@
-// flowgate.v02.0156 T1 W6 (R4-B) / W7 — page driven by server/tests/flowgate/lan_run_harness_0156.py.
+// W6 (R4-B) / W7 — page driven by server/tests/flowgate/lan_run_harness_0156.py.
 //
 // The real run path of the Designer, nothing stubbed in it: createFlowRunControl -> runCommandStore (default wiring: on
 // this insecure origin the cross-tab lease and the default identity source) -> serverFlowGraphSource -> flowRunApi ->

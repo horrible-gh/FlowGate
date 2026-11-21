@@ -1,4 +1,4 @@
-"""0406 T0022 — durable continuous handoff, worker visibility, and prompt audit."""
+"""durable continuous handoff, worker visibility, and prompt audit."""
 from __future__ import annotations
 
 import hashlib
@@ -122,8 +122,8 @@ def test_request_auto_resume_persists_the_complete_i3_bundle(monkeypatch):
 
 
 def test_request_auto_resume_persists_the_provider_pin(monkeypatch):
-    """flowgate.default.0501 T0004 required item 2: continuation_provider_pinned is real state (the
-    0448 force_all pick), distinct from continuation_base_provider_id -- _run()'s own
+    """required item 2: continuation_provider_pinned is real state (the
+    force_all pick), distinct from continuation_base_provider_id -- _run's own
     "complete i3 bundle" fixture above does not set it, so a regression that dropped just
     this one field would still show every other assertion in that test green. An ordinary
     hop boundary (request_auto_resume -> _write_handoff_row), not a pause/resume path.
@@ -196,7 +196,7 @@ def test_startup_marks_memory_lost_handoff_resumable(monkeypatch):
 def test_prompt_audit_records_source_length_and_hash(monkeypatch):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 7})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: {"item_seq": 3, "type": "TR"})
-    # This item_seq carries no pre-instruction of its own (0554 T0014 §5's fail-closed check
+    # This item_seq carries no pre-instruction of its own (the earlier implementation's fail-closed check
     # needs a real row to read, not an unmocked store, to reach that "no pre-instruction"
     # conclusion instead of a lookup-failure error).
     monkeypatch.setattr(
@@ -471,7 +471,7 @@ def test_audit_columns_exist_in_the_real_schema_and_round_trip(migrated_sqlite_d
 def test_worker_crash_parks_the_intent_instead_of_dropping_it(monkeypatch):
     """Task 4: the third non-spawn branch, when the worker itself crashes.
 
-    NR0021 §5 used clear_auto_resume only here. Clearing the queue is correct because
+    used clear_auto_resume only here. Clearing the queue is correct because
     a crashed hop must not auto-continue. But begin_handoff already changed the lease,
     and _finalize_run skips release while pending exists. Clearing only the queue
     would block the group's next run until lease expiry.

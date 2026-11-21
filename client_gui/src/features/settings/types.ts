@@ -1,5 +1,5 @@
 // Environment Settings (환경 설정) domain types — mirrors the server's
-// /api/v1/workspaces and /api/v1/system/{users,security} payloads (flowgate.v02.0020).
+// /api/v1/workspaces and /api/v1/system/{users,security} payloads.
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member'
 export type ProjectAccess = 'admin' | 'dev' | 'review' | 'none'
@@ -133,7 +133,7 @@ export interface SystemUsersResponse {
   workspaces: { workspace_id: string; name: string }[]
 }
 
-/** POST /system/users. flowgate.v02.0076 T#3: the screen no longer picks a workspace, so the
+/** POST /system/users. the earlier change the earlier implementation: the screen no longer picks a workspace, so the
  *  body carries no workspace_id at all (not even an empty one); the server's field stays. */
 export interface CreateUserInput {
   name: string
@@ -220,11 +220,11 @@ export interface SystemAgent {
   /** 'agent_pull' for remote, null for local. */
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
-  /** flowgate.v02.0135 CH0006: the directory sent to this Agent's Jobs; `${AGENT_JOB_ID}` is replaced by the Job id. null = not set. */
+  /** the directory sent to this Agent's Jobs; `${AGENT_JOB_ID}` is replaced by the Job id. null = not set. */
   remote_workdir?: string | null
-  /** flowgate.v02test.0019: the Agent deletes finished Job folders after the retention time (default ON). */
+  /** the Agent deletes finished Job folders after the retention time (default ON). */
   workspace_cleanup_enabled?: boolean
-  /** flowgate.v02test.0019: whole hours 1..720 (default 24), kept while cleanup is OFF. */
+  /** whole hours 1..720 (default 24), kept while cleanup is OFF. */
   workspace_cleanup_retention_hours?: number
   max_concurrent_jobs?: number
   running_jobs?: number

@@ -1,10 +1,10 @@
 /**
- * flowgate.v02.0051 stage 2 — the per-card parts (0051-R §2.3): the rules that turn the target into each
+ * stage 2 — the per-card parts: the rules that turn the target into each
  * card's v7 lines, actions and settings (pure), and what the parts draw for them — the lines with their
  * names, pills and buttons; the disabled header actions and menu items with their reason; the settings
  * blocks drawn inactive with the reason. None of these parts reaches the server; a Node without a
  * document still shows the card's structure.
- * flowgate.v02.0053 T#5: the lines are `name · state dot · [document icon] · ✎` with no type code, no
+ * the lines are `name · state dot · [document icon] · ✎` with no type code, no
  * "아직 없음" and no ＋; the 설계 card is instruction · report without the "설명 대기" note; a Custom card is instruction ·
  * report. The cards built from card lines are checked in cardLines.0053.spec.ts.
  * flowgate.v02.0074 T#3 (R §3): the 설계 card's two lines are named 설계 지시 · design document; 조사 · 작업 keep instruction · report.
@@ -98,7 +98,7 @@ describe('조사 card lines (researchCardModel)', () => {
 
   it('the document state: review status first, else the document status, unknown values as sent', () => {
     expect(researchDocumentState(null, null)).toBeNull()
-    // flowgate.v02.0056 F1: a document being written is a neutral state (the line draws no badge for it).
+    // a document being written is a neutral state (the line draws no badge for it).
     expect(researchDocumentState(null, 'draft')).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'neutral' })
     expect(researchDocumentState(null, 'closed')).toEqual({ key: 'slot_state.closed', raw: 'closed', tone: 'neutral' })
     expect(researchDocumentState('rejected', 'open')).toEqual({ key: 'review_status.rejected', raw: 'rejected', tone: 'danger' })
@@ -157,7 +157,7 @@ describe('Graph gate (gateCardModel)', () => {
     })
   })
 
-  // flowgate.v02.0053 T#9: the gate decision of the Flow's run (P0008 S6-1).
+  // the gate decision of the Flow's run.
   it('a gate decides while it is open in a running run; a stopped run, another turn, a decision in flight or a conflict wait', () => {
     const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open', gate: { can_decide: true } as any }] }
     expect(gateActions(GATE, open).confirm).toEqual({ visible: true, enabled: true, reason: null })
@@ -260,7 +260,7 @@ describe('테스트 card lines (testSpecModel, stage 2)', () => {
   })
 })
 
-// flowgate.v02.0053 T#7: a Graph card keeps these settings (connected, cardSettings.0053); a Node without a card
+// a Graph card keeps these settings (connected, cardSettings.0053); a Node without a card
 // (a v0.1 / unassigned document Node) still draws them, off, with the reason as a tooltip.
 describe('settings views of a Node without a card', () => {
   const NONE = { card: false, node: null, pending: {}, readOnly: null, placing: false, disposed: false, failure: null } as const
@@ -365,7 +365,7 @@ describe('card documents tab parts', () => {
 })
 
 describe('card header parts', () => {
-  // flowgate.v02.0074 T#5: two icon buttons of the ⋯ kind (no text label; the name and the reason in the tooltip).
+  // two icon buttons of the ⋯ kind (no text label; the name and the reason in the tooltip).
   it('WorkPlanActions: ⇉ 전개 · ⇉ 재전개 ▾ disabled with the reason', async () => {
     deployStatusRead.mockReset()
     deployStatusRead.mockResolvedValue({

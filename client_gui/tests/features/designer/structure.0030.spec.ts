@@ -5,7 +5,7 @@ import * as DesignerFeature from '@/features/designer'
 import { DEFAULT_PALETTE_ITEMS, PALETTE_CATEGORIES, PALETTE_COLOR_CHOICES } from '@/features/designer/palette/paletteCatalog'
 import { PALETTE_ICON_CHOICES } from '@/features/designer/palette/paletteIcons'
 
-// flowgate.v02.0030 — source-level guards for the Palette part (R0001 §3, §4, §6) that a DOM
+// source-level guards for the Palette part that a DOM
 // test cannot see.
 const SRC = resolve(__dirname, '../../../src')
 const PALETTE = join(SRC, 'features/designer/palette')

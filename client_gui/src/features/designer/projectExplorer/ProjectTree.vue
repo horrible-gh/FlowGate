@@ -1,10 +1,10 @@
 <template>
-  <!-- Assembles Project > Group > Flow from the already-derived display tree (D0002 §4).
+  <!-- Assembles Project > Group > Flow from the already-derived display tree.
        Expansion/selection/active state comes in as props; every row event goes straight
        back up — no Project/Group/Flow business logic lives here.
-       flowgate.v02.0060 T#2: a right click on a row goes up as `context` with the row it hit (the innermost row's
+       a right click on a row goes up as `context` with the row it hit (the innermost row's
        handler runs first; the Explorer decides). Nothing is selected, activated or toggled by it.
-       flowgate.v02gui.0027: a Group's ⋯ button goes up the same way (same menu, anchored at the button). -->
+       a Group's ⋯ button goes up the same way (same menu, anchored at the button). -->
   <ul
     ref="rootEl"
     class="explorer-tree"
@@ -67,7 +67,7 @@ import GroupRow from './GroupRow.vue'
 import ProjectRow from './ProjectRow.vue'
 import type { ExplorerFlow, ExplorerGroup, ExplorerProject, ExplorerSelection } from './projectExplorerTree'
 
-/** flowgate.v02.0060 T#2: the row a right click hit. */
+/** the row a right click hit. */
 type ExplorerContextRow = { kind: 'project' } | { kind: 'group'; group: ExplorerGroup } | { kind: 'flow'; flow: ExplorerFlow }
 
 const props = defineProps<{

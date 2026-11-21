@@ -1,20 +1,20 @@
 <template>
-  <!-- flowgate.v02.0051 — the v7 documents tab body of a card (0035 insp.js docPane): the card's slot
+  <!-- the v7 documents tab body of a card (insp.js docPane): the card's slot
        lines, one InspectorSlotRow each, with the buttons on the right — 🛡 n (review rounds) and
        "{nav} ↗" (go somewhere else). Display only: the card feature builds the lines (which slots the
        card has, what each shows, which buttons are usable) and hears the presses as events; a button
        whose operation is not connected is shown disabled with its reason (0051-R §2.3), never left out.
        A feature may hand its own test ids per line (`testIds`) and may render a line's summary itself
        through the `summary` scoped slot.
-       flowgate.v02.0053 T#3 — opening shows the document in its document window in this tab
+       opening shows the document in its document window in this tab
        (openDocument). With `editable`, a line that opens also has ✎, which opens the same window straight
        in its editor (an `edit` event).
-       flowgate.v02.0053 T#5 (0053 CH) — `name · state · [document icon] · ✎`: the document icon
+       (CH) — `name · state · [document icon] · ✎`: the document icon
        (tooltip 열기) replaces ↗, and the line's name opens the document as well (both an `open` event).
-       flowgate.v02.0056 F1 (0056 CH §2) — a line that opens also has the history button (a clock, before
+       (CH) — a line that opens also has the history button (a clock, before
        the document icon): the document's 검수·반려 이력 window (a `history` event). A line may leave it out
        (`history: false`) or hand the number of entries it knows (`historyCount`).
-       flowgate.v02.0056 F2-1 — a line may carry its `author` (the row names the instruction line's).
+       a line may carry its `author` (the row names the instruction line's).
        flowgate.v02.0056 F2-2 (O3 0009-TR §4) — the three states of a card line: no document ("문서 없음" with
        [작성]), a document without a body (`blank`: "비어 있음" — its name and document icon open it straight in
        the editor) and a usual line. A line carries its row actions (`actions`, the docRowActions list: [작성] ·
@@ -22,7 +22,7 @@
        for the history button's hover text (`historyDetail`).
        flowgate.v02.0056 (0017-CH) — [AI 호출] is a robot icon button (its words the tooltip, a spinner while it runs).
        A blank line's document icon is the hollow outline (no "비어 있음" words).
-       flowgate.v02.0068 T#1 — the `io` scoped slot (`{ line, docId }`): drawn before the buttons of a line that has
+       the `io` scoped slot (`{ line, docId }`): drawn before the buttons of a line that has
        a document — a document line with an id, not empty, not a nav line. The card feature puts the document's
        [업로드][다운로드] group there; result and nav lines and lines without a document get none. -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
@@ -74,7 +74,7 @@
       >{{ line.nav.label }} ↗</Button>
       <template v-for="action in line.actions ?? []" :key="action.key">
         <!-- 0017-CH: [AI 호출] is the robot icon, its words the tooltip; a running call turns it into a spinner
-             (InspectorAiButton, flowgate.v02.0094). -->
+             (InspectorAiButton, the earlier change). -->
         <InspectorAiButton
           v-if="action.key === 'ai_invoke'"
           :label="actionLabel(action)"
@@ -170,7 +170,7 @@ export interface InspectorSlotView {
   readonly kind?: 'document' | 'result'
   readonly name: string
   /**
-   * flowgate.v02.0088 F14/F15: the i18n key `name` was made from, when the line's kind is a UI word. UI only: it is
+   * the i18n key `name` was made from, when the line's kind is a UI word. UI only: it is
    * handed to the [작성] / [AI 호출] windows so they show the kind in the current language, and is never sent to an
    * API or stored.
    */
@@ -192,17 +192,17 @@ export interface InspectorSlotView {
   /** The document icon (and the name, when enabled): open the line's document. */
   readonly open?: InspectorSlotButton
   readonly openReason?: string | null
-  /** flowgate.v02.0056 F1 — the history button (default: on every line that opens); false leaves it out. */
+  /** the history button (default: on every line that opens); false leaves it out. */
   readonly history?: boolean
   /** Entries in the line's review history when the feature knows them (a number on the history button). */
   readonly historyCount?: number | null
-  /** flowgate.v02.0056 F2-1: who writes the line (the card line's `author`, as sent); the row names some. */
+  /** who writes the line (the card line's `author`, as sent); the row names some. */
   readonly author?: string | null
-  /** flowgate.v02.0056 F2-2: the card line (its slot) behind the line, when the line shows one. */
+  /** the card line (its slot) behind the line, when the line shows one. */
   readonly cardSlot?: string | null
   /** flowgate.v02.0056 F2-2: the line's document has no body yet ("비어 있음"; opening it opens its editor). */
   readonly blank?: boolean
-  /** flowgate.v02.0056 F2-2: the AI reviews and rejections behind `historyCount` (the history button's hover text). */
+  /** the AI reviews and rejections behind `historyCount` (the history button's hover text). */
   readonly historyDetail?: { readonly reviews: number; readonly rejections: number } | null
   /** flowgate.v02.0056 F2-2: the line's row actions ([작성] · [AI 호출]), drawn before the history button. */
   readonly actions?: readonly SlotAction[]
@@ -226,7 +226,7 @@ const emit = defineEmits<{
   review: [line: InspectorSlotView]
   nav: [line: InspectorSlotView]
   history: [line: InspectorSlotView]
-  /** flowgate.v02.0056 F2-2: a row action was pressed. */
+  /** a row action was pressed. */
   action: [line: InspectorSlotView, key: SlotActionKey]
 }>()
 
@@ -254,12 +254,12 @@ function stateOf(line: InspectorSlotView) {
     tone: state === 'rejected' ? 'danger' as const : 'success' as const }
 }
 
-/** flowgate.v02.0068 T#1: a line that stands for a document of its own (the upload / download group's lines). */
+/** a line that stands for a document of its own (the upload / download group's lines). */
 function hasDocument(line: InspectorSlotView): boolean {
   return (line.kind ?? 'document') === 'document' && !!line.id && !line.empty && !line.nav
 }
 
-/** Opening a line: a line whose document has no body yet opens straight in its editor (flowgate.v02.0056 F2-2). */
+/** Opening a line: a line whose document has no body yet opens straight in its editor. */
 function open(line: InspectorSlotView) {
   if (line.blank && !line.empty) emit('edit', line)
   else emit('open', line)
@@ -286,7 +286,7 @@ function historyTitle(line: InspectorSlotView): string | null {
   container-type: inline-size;
 }
 
-/* flowgate.v02.0052 T#4 — on a narrow line (264px Inspector) the "{nav} ↗" label gives way first
+/* on a narrow line (264px Inspector) the "{nav} ↗" label gives way first
    (ellipsis), so the document icon and ✎ after it stay in the line. */
 .inspector-slot-nav {
   flex: 0 1 auto;

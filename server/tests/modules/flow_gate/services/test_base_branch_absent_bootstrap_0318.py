@@ -1,4 +1,4 @@
-"""Base-branch-absent provisioning bootstrap (flowgate.default.0318 — B0001).
+"""Base-branch-absent provisioning bootstrap.
 
 Bug: connecting a remote that DOES advertise refs but NOT the configured base
 branch (a default-branch name mismatch — remote `master` vs base `main`, or a new
@@ -9,7 +9,7 @@ with "Remote branch <base> not found in upstream origin". No base checkout, no s
 README, every downstream op (worktree, base-commit, first push) blocked.
 
 The 0313 fix only closed the *fully bare* remote case (zero refs). This pins the
-0318 generalization: route ANY remote lacking `refs/heads/<base>` to the seed
+generalization: route ANY remote lacking `refs/heads/<base>` to the seed
 bootstrap so the base branch is BORN with a README, exactly like the empty case.
 
 These tests exercise the new detection helper directly (no DB needed):
@@ -30,7 +30,7 @@ import pytest
 from scratch_support import remove_tree, session_scratch
 
 _SERVER_DIR = Path(__file__).resolve().parents[4]
-# 0382 B0001: the old default was _SERVER_DIR / ".test-tmp-0318".
+# the old default was _SERVER_DIR / ".test-tmp-0318".
 # FLOWGATE_TEST_SCRATCH is set only for FlowGate-managed runs. Manual pytest runs
 # created directories inside the repository even during collection, and final
 # git add -A absorbed them. The default now resides outside the repository.
@@ -53,7 +53,7 @@ needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 def scratch_path():
     """Per-case directory under this spec's scratch root — never inside the repo
     (mirrors test_empty_remote_bootstrap_0313 — Python 3.14 / Windows ACL, and the
-    0382 proposal 7 cleanup that makes keeping the directory unnecessary)."""
+    proposal 7 cleanup that makes keeping the directory unnecessary)."""
     path = _TEST_SCRATCH / f"case-{uuid.uuid4().hex}"
     path.mkdir(parents=True)
     yield path

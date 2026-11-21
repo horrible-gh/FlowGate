@@ -1,4 +1,4 @@
-"""The review stages of an assigned attempt (flowgate.v02.0113 T#3, L-2 §2.2.2, §2.8, §2.9, §2.11).
+"""The review stages of an assigned attempt.
 
 - ``open_review_stage_locked`` / ``ensure_intent_locked`` (§2.2.2): inside one Flow guard a submission's review
   assignment and its execution intent — the review loop's ledger request (``execution.request_loop_locked``, refused
@@ -11,7 +11,7 @@
   reconciliation share them.
 - ``after_result_work`` / ``after_loop_end`` / ``reconcile_row`` (§2.9, §2.11): the run-end and run-read branches of an
   assigned attempt; a pre-feature attempt never reaches them (``review_stage`` keeps its own functions).
-- ``command_review`` (flowgate.v02.0125 T#1, Q #544): the person's explicit step / full command asks again for the
+- ``command_review``: the person's explicit step / full command asks again for the
   result review of an AI card whose review count was spent on a revision its loop reworked and no review answered —
   only that command (``card_settings_ports.command_review``), never a run read nor the reconciliation.
 
@@ -80,7 +80,7 @@ def _b1_stage(a: dict) -> str:
 
 
 def command_cycle(run_id: Optional[str], key: str, attempt_id: Optional[str], stage: str) -> tuple[int, int]:
-    """flowgate.v02.0124 T#1 (rework, review P1): where the recovery cycle of the attempt's review in the B-1 ``stage``
+    """(rework, review P1): where the recovery cycle of the attempt's review in the B-1 ``stage``
     begins — the latest explicit command re-request of it (``sa.restart_review_stage``: its ``stage_assigned`` event
     with ``rerequest_cause`` ``user_command``), as ``(that event's event_seq, the seq it opened)``; ``(0, 0)`` when no
     command requested it again (the whole attempt is one cycle, as before).
@@ -125,7 +125,7 @@ def _cycle_waits(run_id: str, key: str, attempt_id: Optional[str], stage: str) -
 def approval_waits_for(run_id: str, key: str, attempt_id: Optional[str], submission: Optional[dict],
                        stage: str, reason: Optional[str] = None) -> bool:
     """A B-1 of this submission (its mark) is recorded (L-2 §2.7.2: a mark-less B-1 is a pre-feature record) — in the
-    current recovery cycle (``command_cycle``; 0124 T#1 rework: a command's re-request records its own failures)."""
+    current recovery cycle (``command_cycle``; the earlier implementation rework: a command's re-request records its own failures)."""
     if not submission:
         return False
     for row in _cycle_waits(run_id, key, attempt_id, stage):
@@ -137,8 +137,8 @@ def approval_waits_for(run_id: str, key: str, attempt_id: Optional[str], submiss
 
 def approval_wait_reasons_for(run_id: str, key: str, attempt_id: Optional[str], submission: Optional[dict],
                               stage: str) -> list[str]:
-    """flowgate.v02.0119 T#3 (T-2): the B-1 reasons recorded for this submission (its mark) and stage, oldest first —
-    of the current recovery cycle (``command_cycle``, flowgate.v02.0124 T#1 rework)."""
+    """(T-2): the B-1 reasons recorded for this submission (its mark) and stage, oldest first —
+    of the current recovery cycle (``command_cycle``, the earlier change the earlier implementation rework)."""
     if not submission:
         return []
     return [str(row["reason"]) for row in _cycle_waits(run_id, key, attempt_id, stage)
@@ -217,7 +217,7 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
                          after: list, ctx=None) -> dict:
     """Inside the Flow guard: the assignment's execution intent, recorded once (idempotent, E-43).
 
-    ``ctx`` (flowgate.v02.0158): the caller's guarded step context, when it has one. A refused start's
+    ``ctx``: the caller's guarded step context, when it has one. A refused start's
     ``stage_failed`` event is numbered from the stored run row; without ``ctx`` the caller's in-memory
     ``last_event_seq`` stays behind it and its next event (``run_apply.emit_run_status``) reuses the same
     ``event_seq`` (``UNIQUE(run_id, event_seq)``). Callers that number events from ``ctx`` must pass it."""
@@ -246,7 +246,7 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
     project_id = legacy.project_of(flow_id)
 
     def request():
-        # flowgate.v02test.0015: the card's stage decides its next step. A submission with no review status (the v0.1
+        # the card's stage decides its next step. A submission with no review status (the v0.1
         # submit step never ran on it) is put in review by the system first, in this same savepoint -- and an AI's
         # submission whose finished review answered ``issues`` with no rejection is rejected by it, so the loop starts
         # with that rework. The v0.1 refusal (``document_not_submitted``) no longer stops a card on every try.
@@ -264,7 +264,7 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
     except Exception as exc:  # noqa: BLE001 — E-42: the request is rolled back, the assignment stays failed
         _log.info("card review not started flow=%s node=%s: %s", flow_id, a["node_key"], exc)
         from modules.flow_gate.graph_workflow.services import node_dispatch  # noqa: PLC0415
-        info = node_dispatch._start_failure_info(exc)          # flowgate.v02test.0015: why, kept on its stage_failed
+        info = node_dispatch._start_failure_info(exc)          # why, kept on its stage_failed
         failed = sa.fail(a, sa.REVIEW_NOT_STARTED, ctx, detail=info)
         after.append(lambda error=exc: execution.start_failed(None, error))   # a fence refusal recorded after the commit
         after.append(lambda: _review_not_started(flow_id, failed, doc))
@@ -284,7 +284,7 @@ def _start_loop(flow_id: str, a: dict, doc_id: str, issuer: str, loop: dict, cri
         # L-2 §2.10 / E-13: an admission refusal keeps its own code (``start_refused:<code>``), any other failure of
         # the start is ``start_failed``; no other AI is asked, and no read restarts it (E-40)
         cause = failure.get("cause") or sa.START_FAILED
-        # flowgate.v02.0140 T#1-3: the refusal's safe detail (code / message / phase / retryable) on its stage_failed
+        # the refusal's safe detail (code / message / phase / retryable) on its stage_failed
         detail = {"detail": failure["detail"]} if failure.get("detail") else {}
         failed = legacy.with_flow_guard(flow_id, lambda: sa.fail(store.read(a["attempt_id"], a["stage"], a["seq"])
                                                                  or a, cause, **detail))
@@ -299,7 +299,7 @@ def _review_not_started(flow_id: str, a: dict, doc: Optional[dict]) -> None:
             a["run_id"], a["node_key"], "review_not_started:" + str(a.get("fail_cause") or "refused")))
 
 
-# ── a review start that failed: a system error, retried (flowgate.v02.0119 T#3, T-2 rework) ──
+# ── a review start that failed: a system error, retried ──
 
 REVIEW_RETRY = "review_retry"
 
@@ -322,7 +322,7 @@ def review_start_tries(a: dict) -> int:
     """How many times the automatic review of ``a``'s submission (its basis) was tried in its stage and did not start:
     its review assignments that failed and those that waited on a setting that could not be read. Each try is an
     assignment of its own (a retry opens the next ``seq``), so the count is the rows themselves, apart from the B-1
-    records (``record_once`` keeps one per submission and reason, which counts no try). flowgate.v02.0124 T#1 rework:
+    records (``record_once`` keeps one per submission and reason, which counts no try). the earlier change the earlier implementation rework:
     only the rows of the current recovery cycle — from the ``seq`` the latest command re-request opened
     (``command_cycle``) — count."""
     basis = sa.basis_of(a)
@@ -335,7 +335,7 @@ def review_start_tries(a: dict) -> int:
 def review_retry_due(a: dict) -> bool:
     """May the review of ``a``'s submission be tried again: no needs_intervention reason recorded for that submission
     (its mark and stage) and fewer than ``SYSTEM_ERROR_RETRY_LIMIT`` tries made — both of the current recovery cycle
-    (flowgate.v02.0124 T#1 rework, ``command_cycle``: a command's re-request starts it again; a needs_intervention reason
+    (the earlier change the earlier implementation rework, ``command_cycle``: a command's re-request starts it again; a needs_intervention reason
     recorded after it still stops the retries)."""
     from flowgate.card_intervention import reasons as intervention  # noqa: PLC0415
 
@@ -364,13 +364,13 @@ def _start_errors(a: dict) -> tuple:
 
 
 def retry_review_stage(flow_id: str, a: dict, mode: str, jobs: list) -> None:
-    """flowgate.v02.0119 T#3 (T-2 rework, review P1): the automatic review of ``a``'s submission is tried again while
+    """(T-2 rework, review P1): the automatic review of ``a``'s submission is tried again while
     ``review_retry_due`` allows it: a new review assignment (the next ``seq``, the same author and basis, its role
     resolved again: a start that failed for a moment, a setting fixed since) with its intent, in one Flow guard under
     ``hold_of(mode)``; a setting wait it replaces is failed (``setting_unreadable``: its try counted, kept as history).
     A try that fails again is the next row (``review_start_tries``); past the limit the card stays a system error and
     nothing is tried again (an explicit command opens a new attempt). Nothing else is retried here: a needs_intervention
-    reason, a node moved on, another consumer's newer assignment. flowgate.v02.0125 T#1 (Q #544) changed the 0119 T-2
+    reason, a node moved on, another consumer's newer assignment. the earlier change the earlier implementation (Q #544) changed the 0119 T-2
     contract for one case only, outside this retry: a review count spent on a revision no review answered is asked
     again by the person's explicit step / full command (``command_review``), never by a read or a reconciliation."""
     if not _retryable(a) or not review_retry_due(a):
@@ -410,9 +410,9 @@ def retry_review_stage(flow_id: str, a: dict, mode: str, jobs: list) -> None:
         drive_review_assignment(flow_id, nxt, mode, jobs)
 
 
-# ── an explicit command's re-request of a review that spent its budget (flowgate.v02.0124 T#1) ──
+# ── an explicit command's re-request of a review that spent its budget ──
 #
-# 0003-NR §5.1: a card in ``needs_intervention`` whose result review loop spent its budget (its reason
+# a card in ``needs_intervention`` whose result review loop spent its budget (its reason
 # ``review_not_passed:`` retry_exhausted / review_count_exhausted / total_timeout) was moved by nothing a v0.2 screen
 # sends — a step / full command was accepted and opened nothing. An explicit command now requests that review again as
 # the assignment's next ``seq``, on the conditions of §5.1.2 (all of them, judged here inside the command's Flow guard);
@@ -425,7 +425,7 @@ def retry_review_stage(flow_id: str, a: dict, mode: str, jobs: list) -> None:
 # to ``SYSTEM_ERROR_RETRY_LIMIT`` of this cycle): the ``review_not_passed`` record the command answered belongs to the
 # cycle it ended and no longer stops them. The earlier ``seq`` rows and B-1 records stay as they are.
 #
-# Lock order (0003-NR §5.1.3-6, decided here): the command already holds its Flow guard (``run_service.start_run`` /
+# Lock order (NR, decided here): the command already holds its Flow guard (``run_service.start_run`` /
 # ``_guarded_run``), and ``retry_review_stage`` takes the node's hold (the Stop gate's shared hold, ``hold_of``) *before*
 # the guard. Taking that hold here would invert the order against a Stop / Time Machine rewind that holds the gate
 # exclusively and waits for the guard (a deadlock), so no hold is taken: the re-request is a compare-and-set inside the
@@ -441,7 +441,7 @@ REREQUEST_SAVEPOINT = "fg_command_rerequest"
 
 def rerequest_due(flow_id: str, run_row: dict, row: dict, attempt_id: Optional[str], *,
                   idle_ok: bool = False) -> Optional[tuple]:
-    """0126 explicit reentry: (node, previous assignment, live document), or None.
+    """explicit reentry: (node, previous assignment, live document), or None.
 
     Result and instruction review waits use current settings only after an explicit command.
     Body/approval, active work, card Hold, attempt and reason guards precede a new seq.
@@ -494,8 +494,8 @@ def rerequest_due(flow_id: str, run_row: dict, row: dict, attempt_id: Optional[s
         return None                              # a passed review repairs approval/completion, never reruns AI
     if cur.get("basis_doc_id") != doc_id:
         return None
-    # 0125 Q544: an unchanged command never asks/judges the same revised revision twice.
-    # A known settings change is new explicit intent. Pre-T#5 events have no version;
+    # Q544: an unchanged command never asks/judges the same revised revision twice.
+    # A known settings change is new explicit intent. Pre-the earlier implementation events have no version;
     # unknown is not version zero and must retain the original per-revision guard.
     version = sa.assigned_settings_version(cur) if cur.get("seq") else None
     if (stage == sa.RESULT_REVIEW and reason == EXHAUSTED_REASON and doc.get("doc_review_status") == REVISED
@@ -630,9 +630,9 @@ def rerequest_review_locked(ctx, row: dict) -> bool:
     return opened
 
 
-# ── a spent review asked again by the person's step / full command (flowgate.v02.0125 T#1, Q #544) ──
+# ── a spent review asked again by the person's step / full command ──
 #
-# Beside the flowgate.v02.0124 T#1 re-request above (the same command, inside its Flow guard, so it runs first): when
+# Beside the the earlier change the earlier implementation re-request above (the same command, inside its Flow guard, so it runs first): when
 # that one opened ``seq + 1`` for the card, the latest result review is no longer the spent one and nothing is asked
 # here; this asks what it does not admit (e.g. a spent assignment without its rework AI recorded, or a command held by
 # its integrations). Lock order: this runs as a job after the command's guard and fence, and takes the node's hold
@@ -674,7 +674,7 @@ def command_review(flow_id: str, run_id: str) -> None:
 
 def command_review_due(flow_id: str, run_id: str, row: Optional[dict]) -> Optional[tuple]:
     """(the spent result review assignment, the document) when the node run ``row`` takes a command's re-review now,
-    else None (0005-NR §3.5 guards 2 ~ 5, Q #544 5): an assigned attempt, the card not held; its latest result review
+    else None (NR guards 2 ~ 5, Q #544 5): an assigned attempt, the card not held; its latest result review
     an AI one, done with ``not_passed:review_count_exhausted`` (an AI author) and its B-1 recorded for its basis; the
     node still in review on that document (``_stage_holds``), the document ``revised``; its latest revision — by
     ``(doc_id, revision_no)``, never its submission mark — neither asked already (a result review assignment of any
@@ -774,7 +774,7 @@ def _command_review_row(flow_id: str, run_row: dict, row: dict) -> None:
 def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry: bool = False) -> None:
     """Outside every guard (the caller's hold, if any, is re-entrant). Only what is left, once.
 
-    flowgate.v02.0119 T#3 (T-2 rework): ``retry`` (the run read's reconciliation, RC-1 / RC-4) — a review whose start
+    (T-2 rework): ``retry`` (the run read's reconciliation, RC-1 / RC-4) — a review whose start
     failed (``failed``: ``review_not_started``) or whose setting could not be read (``wait_setup(setting_unreadable)``:
     ``review_result_unknown``) is a system error, tried again by ``retry_review_stage`` up to its limit."""
     a = store.read(a["attempt_id"], a["stage"], a["seq"]) or a
@@ -801,7 +801,7 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry:
                 return
             _review_not_started(flow_id, a, _doc(doc_id))
             if retry:
-                retry_review_stage(flow_id, a, mode, jobs)     # 0119 T-2: a system error, retried (bounded)
+                retry_review_stage(flow_id, a, mode, jobs)     # T-2: a system error, retried (bounded)
             return
         loop = legacy.loop_of_assignment(a["attempt_id"], a["stage"], a["seq"])
         if loop is None or (loop.get("current_stage") != STOPPED and not a.get("verdict")):
@@ -818,7 +818,7 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry:
         record_once(flow_id, run_id, key, a["attempt_id"], doc_id, legacy.REVIEW_RESULT_UNKNOWN, sa.basis_of(a),
                     _b1_stage(a))
         if retry:
-            retry_review_stage(flow_id, a, mode, jobs)         # 0119 T-2: the setting is read again (bounded)
+            retry_review_stage(flow_id, a, mode, jobs)         # T-2: the setting is read again (bounded)
         return
     if a["actor"] == sa.WAIT_UNAVAILABLE and a["stage"] == sa.INSTRUCTION_REVIEW:
         error = "ai_unavailable:" + str(a.get("cause"))
@@ -827,7 +827,7 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry:
 
 
 def _consume_failed_pass(flow_id: str, a: dict, mode: str, jobs: list) -> bool:
-    """0128 T#2: before retrying, restore only this submission's latest ended pass to the normal consumer.
+    """before retrying, restore only this submission's latest ended pass to the normal consumer.
 
     The hold fences Stop/rewind; the guard rechecks the current seq, basis and ledger before the FAILED -> ACTIVE
     CAS. ``_claim`` still accepts only ACTIVE/WAITING, and approval keeps its own revision check. Never search past
@@ -881,11 +881,11 @@ def consume_loop_verdict(flow_id: str, a: dict, loop: dict, mode: str, jobs: lis
     from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
 
     if question_loop_wait.handed_on(loop):
-        return                                              # v02test.0051 T0005: a parked run's row, never a verdict
+        return                                              # v02test.0051 the earlier implementation: a parked run's row, never a verdict
     row = legacy.node_run(a["run_id"], a["node_key"])
     doc = _doc(review_target(a, row))
     if loop.get("run_id") and question_wait.open_questions(flow_id, loop["run_id"]) != []:
-        return                                              # 0111 T#3: its answers come first
+        return                                              # its answers come first
     stop = loop.get("stop_reason")
     if stop == PASSED_STOP and not sa.needs_new_submission(a, doc) and doc and legacy.submission_passed(doc["doc_id"]):
         reviewed = int(doc.get("revision_no") or 0)        # the revision the pass answered (K-6, L-2 §2.8.4)
@@ -962,7 +962,7 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
             return MOVED
         if current.get("doc_review_status") in APPROVED and a["stage"] == sa.INSTRUCTION_REVIEW:
             return True
-        # flowgate.v02.0119 T#2 (T-1): a result approved before (0038-T T#3 A-4, a report taken already approved) is no
+        # (T-1): a result approved before (T the earlier implementation A-4, a report taken already approved) is no
         # node completion by itself — this attempt's pass completes it — and is judged as any other result first: the
         # reviewed revision must still be the document's and the submission the one the assignment reviewed.
         if int(current.get("revision_no") or 0) != expected \
@@ -995,7 +995,7 @@ def auto_approve(flow_id: str, a: dict, mode: str, jobs: list) -> None:
 
 def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: list) -> None:
     """An approved instruction's next step: the result stage (a repeated call does nothing). A result's approval moves
-    the node through the binder's contact — 0038-T T#3 A-4: a report approved before the attempt took it makes no new
+    the node through the binder's contact — the earlier implementation the earlier implementation A-4: a report approved before the attempt took it makes no new
     approval (no contact), so once this attempt's review passed it the binder's reconciliation moves the node."""
     if a["stage"] == sa.RESULT_REVIEW and doc and doc.get("doc_review_status") in APPROVED \
             and legacy.taken_judged(a["run_id"], a["node_key"], a["attempt_id"], doc["doc_id"]):
@@ -1004,7 +1004,7 @@ def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: 
     if a["stage"] != sa.INSTRUCTION_REVIEW or not doc:
         return
     if doc.get("doc_review_status") not in APPROVED:
-        return              # 0119 T-2 rework: its automatic approval failed — a system error, retried (``after_verdict``)
+        return              # T-2 rework: its automatic approval failed — a system error, retried (``after_verdict``)
     row = legacy.node_run(a["run_id"], a["node_key"])
     if row is None or row["status"] != "open" or row.get("stage") != sa.INSTRUCTION:
         return
@@ -1020,7 +1020,7 @@ def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: 
 
 def after_verdict(flow_id: str, a: dict, mode: str, jobs: list) -> None:
     """The verdict was consumed already: only the step left after it (a lost approval / result stage, a takeover).
-    flowgate.v02.0119 T#3 (T-2): an approval its B-1 tells failed on the automatic path (a system error: ``approval_refused``,
+    (T-2): an approval its B-1 tells failed on the automatic path (a system error: ``approval_refused``,
     ``issuer_missing``, …) is tried again while ``card_intervention.reasons.retry_due`` allows it — each failure records
     its reason again (``legacy.approve``), so the retries end at ``SYSTEM_ERROR_RETRY_LIMIT`` records; it was tried once
     before. A needs_intervention reason is never tried again.
@@ -1030,7 +1030,7 @@ def after_verdict(flow_id: str, a: dict, mode: str, jobs: list) -> None:
     (a new revision, a rejection counted) keeps its assignment (``needs_new_submission`` is False for an AI author), so
     the basis would find none of its failures and the retries would never end (0119 T-2 rework, review P1). Another
     submission's or attempt's records are not this one's (``approval_wait_reasons_for``: its mark and attempt), nor those
-    of a recovery cycle a command's re-request ended (``command_cycle``, flowgate.v02.0124 T#1 rework)."""
+    of a recovery cycle a command's re-request ended (``command_cycle``, the earlier change the earlier implementation rework)."""
     from flowgate.card_intervention import reasons as intervention  # noqa: PLC0415
 
     row = legacy.node_run(a["run_id"], a["node_key"])
@@ -1203,7 +1203,7 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
             return
         elif ra is not None and ra["actor"] != sa.PERSON and ra["stage_state"] == sa.DONE and rr is None \
                 and not legacy.result_ai_run(flow_id, run_id, key, row["result_doc_id"]):
-            _reconcile_taken_result(flow_id, run_row, row, attempt_id)                         # 0038-T A-4
+            _reconcile_taken_result(flow_id, run_row, row, attempt_id)                         # A-4
         elif ra is not None and ra["actor"] == sa.AI:
             _reconcile_lost_result_end(flow_id, run_row, row, attempt_id)                      # RC-2
         elif ra is not None and ra["actor"] == sa.PERSON and ra["stage_state"] != sa.FAILED:
@@ -1239,10 +1239,10 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
 
 
 def _reconcile_due(run_id: str, key: str, attempt_id: Optional[str], doc: dict) -> bool:
-    """flowgate.v02.0119 T#3 (T-2 rework, review P1): may the lost review opening of the submission ``doc`` be taken
+    """(T-2 rework, review P1): may the lost review opening of the submission ``doc`` be taken
     now? Not when a needs_intervention reason is recorded for it (``run_not_clean``, ``review_not_passed``, ...): the
     card waits for a memo rework / re-review, an explicit step / full command's re-review of a spent count
-    (``command_review``, flowgate.v02.0125 T#1) or the Time Machine. A system error recorded (``assignment_unreadable`` of
+    (``command_review``, the earlier change the earlier implementation) or the Time Machine. A system error recorded (``assignment_unreadable`` of
     a post-commit step, ...) no longer stops it for good, as any record did before. Its tries are bounded apart from
     the records: the opening either makes the review assignment (the next read drives it, RC-1, where a review that
     does not start is counted, ``review_start_tries``) or fails on a read and writes nothing (the node is skipped)."""
@@ -1271,7 +1271,7 @@ def _reconcile_lost_result_end(flow_id: str, run_row: dict, row: dict, attempt_i
 
 
 def _reconcile_taken_result(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:
-    """0038-T T#3 A-4: a result stage of an AI or a wait that took its written report (its assignment done, no AI run
+    """A-4: a result stage of an AI or a wait that took its written report (its assignment done, no AI run
     wrote the bound result) whose review opening after the commit was lost: opened now, as at the taking — a report
     approved before the attempt took it as well (its old approval is no review of this attempt)."""
     run_id, key, doc_id = run_row["run_id"], row["node_key"], row["result_doc_id"]

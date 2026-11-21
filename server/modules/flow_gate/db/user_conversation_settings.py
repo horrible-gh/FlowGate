@@ -1,4 +1,4 @@
-"""Each user's settings of one chat (flowgate.v02test.0025, migrations 185 and 186).
+"""Each user's settings of one chat (migrations 185 and 186).
 
     provider_id              the AI picked in this chat. NULL (or no row) = the user's default AI.
                              A soft-deleted AI reads as NULL (the JOIN below), so a removed AI is

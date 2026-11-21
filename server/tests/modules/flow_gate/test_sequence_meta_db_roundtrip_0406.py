@@ -1,8 +1,8 @@
-"""0406 T0013: preserve the three note/source values through real DB round trips (NR0003 §6-2).
+"""preserve the three note/source values through real DB round trips.
 
 Other suites replaced modules.flow_gate.db with recording doubles, proving only Python
 argument propagation. They never exercised SQL writing and reading migration 079 columns.
-B0001 found zero production rows with a populated note, demonstrating why that evidence
+The review found zero production rows with a populated note, demonstrating why that evidence
 was insufficient. Run edit_workflow_pending against fully migrated SQLite and read it
 back using the same SELECT as production.
 """
@@ -151,7 +151,7 @@ def test_canonical_query_reads_the_metadata_out_of_the_database(seeded_sequence)
 
 
 def test_no_edit_save_round_trip_keeps_every_value_in_the_database(seeded_sequence):
-    """B0001 regression: saving without edits preserves all three values."""
+    """regression: saving without edits preserves all three values."""
     loaded = workflow_decision_service.get_workflow_sequence(_ROOT_DOC)
     before = _metadata(loaded["items"])
 
