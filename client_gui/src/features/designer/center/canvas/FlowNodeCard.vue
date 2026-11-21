@@ -151,7 +151,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="CARD_MARK_ICONS.conflict"
           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
-      <button v-if="data.cancelable" type="button" class="flow-node-action nodrag nopan"
+      <button v-if="data.cancelable" type="button" class="flow-node-action flow-node-cancel nodrag nopan"
         :disabled="data.approving || data.approvalBlocked || !data.gateAttemptId" :title="t('gui.inspector.gateCard.cancel')" :aria-label="t('gui.inspector.gateCard.cancel')"
         data-test="designer-canvas-node-cancel" @pointerdown.stop @mousedown.stop @dblclick.stop @click.stop="cancelAttempt = data.gateAttemptId ?? null">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
@@ -614,6 +614,16 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: var(--fg2-status-danger-fg);
 }
 .flow-node-conflict:hover { background: color-mix(in srgb, var(--fg2-status-danger-fg) 26%, transparent); }
+
+/* flowgate.v02test.0064 #22: [취소] is a quiet way out, not a call to action — no fill or status color (without a class
+   the browser's own light button face showed through on the dark card); it tints only on hover. */
+.flow-node-cancel {
+  border-color: var(--fg2-line-strong);
+  background: transparent;
+  color: var(--fg2-text-2);
+}
+.flow-node-cancel:hover:not(:disabled) { color: var(--fg2-text); background: rgba(255, 255, 255, 0.06); }
+.flow-node-cancel:disabled { cursor: not-allowed; opacity: var(--fg2-control-disabled-opacity); }
 
 .flow-node-approve {
   border-color: var(--fg2-status-warning-border);
