@@ -413,10 +413,11 @@ def _help_index_response(auth: dict, ctx: dict) -> JSONResponse:
         "child_url": f"{base}/help/items/{{name}}/{{child}}",
         "bulk_url": f"{base}/help?items={{name1}},{{name2}}",
         "detail_url": f"{base}/help?detail=true",
-        "context": help_catalog.context_envelope(ctx),
         "items": assembled["items"],
-        "hidden": assembled["hidden"],
     })
+    if ctx.get("principal_kind") == "user_session":
+        payload["context"] = help_catalog.context_envelope(ctx)
+        payload["hidden"] = assembled["hidden"]
     _record_help_event(auth, ctx, view="index", count=len(assembled["items"]))
     return JSONResponse(content=payload)
 
@@ -554,6 +555,6 @@ def get_help(
         return _help_bulk_response(auth, ctx, names)
 
     if detail == "true":
-        return _help_bulk_response(auth, ctx, help_catalog.visible_names(ctx))
+        return _help_bulk_response(auth, ctx, [item["name"] for item in help_catalog.build_index(ctx)["items"]])
 
     return _help_index_response(auth, ctx)

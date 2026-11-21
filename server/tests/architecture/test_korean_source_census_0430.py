@@ -198,7 +198,10 @@ FILE_LINE_CAPS: dict[str, int] = {
     # 142 -> 149: flowgate.v02gui.0028, measured with _korean_lines. HEAD measured 144 (drift from other merged
     # groups); QUESTION_HELP_COPY["ko"] adds exactly five locale-dictionary lines (the question item's
     # before_asking steps and search_note) with complete en/ja siblings. No comment or docstring Korean is added.
-    "modules/flow_gate/services/help_catalog.py": 149,
+    "modules/flow_gate/services/help_catalog.py": 0,
+    # 0061: relocated existing contract copy; no increase in the shared budget.
+    "modules/flow_gate/services/help/locale.py": 72,
+    "modules/flow_gate/services/help/content.py": 75,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
     # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still
