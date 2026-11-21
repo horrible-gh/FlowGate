@@ -234,8 +234,9 @@ def test_catalog_entries_are_pinned_unique_and_testable():
             if not {"en", "multilingual"} & set(model["languages"]):
                 assert model["self_test"]["sample"] and model["self_test"]["expect"], model["id"]
     whisper = {m["id"]: m for m in vs.specification("whisper.cpp")["models"]}
-    assert {"large-v3-turbo", "large-v3", "large-v3-turbo-q5_0", "medium", "small", "tiny.en"} <= set(whisper)
-    assert whisper["tiny.en"]["languages"] == ["en"]
+    # Only the six multilingual base models: no quantized, English-only or older large builds.
+    assert list(whisper) == ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
+    assert all("multilingual" in m["languages"] for m in whisper.values())
     realtime = {(s["id"], m["id"]) for s in services for m in s["models"] if m["realtime"]}
     assert ("sherpa-onnx", "zipformer-ko") in realtime and ("vosk", "small-ko") in realtime
     assert not any(service == "whisper.cpp" for service, _ in realtime)

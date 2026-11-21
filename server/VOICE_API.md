@@ -80,9 +80,9 @@ binary version is rejected rather than executed. Catalog versions: whisper.cpp
 1.8.2, sherpa-onnx 1.12.20, Vosk 0.3.45, ffmpeg 8.0.
 
 Catalog contents (`services/voice_catalog.json`, the only source of the list):
-whisper.cpp carries every ggml model of the pinned upstream revision (tiny to
-large-v3 and large-v3-turbo, their q5/q8 quantized builds, and the English-only
-`.en` builds); sherpa-onnx carries SenseVoiceSmall and the English and Korean
+whisper.cpp carries the six multilingual base models of the pinned upstream
+revision (tiny, base, small, medium, large-v3-turbo, large-v3) and no quantized,
+English-only `.en` or older large-v1/v2 builds; sherpa-onnx carries SenseVoiceSmall and the English and Korean
 streaming Zipformers; Vosk carries the small Korean and US English models.
 
 The first model installs its runtime. Every model must pass a real sample

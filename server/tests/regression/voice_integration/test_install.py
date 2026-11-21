@@ -11,7 +11,7 @@ STREAMING = {"zipformer-en-20m": "country", "zipformer-ko": "주민등록증", "
 
 
 @pytest.mark.parametrize("service,model", [
-    ("whisper.cpp", "tiny"), ("whisper.cpp", "large-v3-turbo-q5_0"),
+    ("whisper.cpp", "tiny"), ("whisper.cpp", "large-v3-turbo"),
     ("sherpa-onnx", "sensevoice-small-int8"), ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
     ("vosk", "small-en-us"), ("vosk", "small-ko")])
 def test_real_install_and_inference(request, tmp_path, monkeypatch, service, model):
