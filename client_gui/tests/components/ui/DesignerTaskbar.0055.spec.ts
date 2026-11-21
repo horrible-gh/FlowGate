@@ -8,7 +8,7 @@ import ModelessShell from '@/components/ui/ModelessShell.vue'
 import DesignerTaskbar from '@/features/designer/shell/DesignerTaskbar.vue'
 import { modelessWindows, modelessTaskbarHeight, taskbarCapacity, normalizeTaskbarStyle } from '@/core/overlay/modelessRegistry'
 
-vi.mock('@shared/api', () => ({ getRequest: vi.fn(async () => ({ data: { settings: { designer_taskbar_style: 'future' } } })) }))
+vi.mock('@shared/api', async (original) => ({ ...await original<typeof import('@shared/api')>(), getRequest: vi.fn(async () => ({ data: { settings: { designer_taskbar_style: 'future' } } })), patchRequest: vi.fn(async () => ({ data: { settings: { designer_taskbar_style: 'flowgate' } } })) }))
 registerAppMessages(i18n)
 const mounted: VueWrapper[] = []
 afterEach(() => { mounted.splice(0).reverse().forEach(w => w.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks() })
@@ -78,7 +78,7 @@ describe('taskbar window lifecycle', () => {
     expect(modelessWindows.value.filter(entry => entry.minimized)).toHaveLength(11)
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
   })
-  it('opens settings and closes the menu on Escape and outside pointer', async () => {
+  it('opens the theme window from its card and closes the menu on Escape and outside pointer', async () => {
     const { wrapper, router } = bar(); await tick()
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await tick()
@@ -87,8 +87,27 @@ describe('taskbar window lifecycle', () => {
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await tick()
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
-    await wrapper.get('[role="menuitem"]').trigger('click'); await tick()
-    expect(router.currentRoute.value.name).toBe('settings-me-account')
+    const card = () => wrapper.get('[data-card="theme"]')
+    expect(card().attributes('data-card-state')).toBe('closed')
+    await card().trigger('click'); await tick()
+    // The card opens a window over the Designer; the page does not change.
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    expect(document.querySelectorAll('[data-test="me-theme-window"]')).toHaveLength(1)
+    expect(document.querySelector('[data-test="me-theme-window"] select')).not.toBeNull()
+    clickMinimize(); await tick()
+    expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
+    await wrapper.get('.menu-trigger').trigger('click'); await tick()
+    expect(card().attributes('data-card-state')).toBe('minimized')
+    // A minimized window is brought back by its card, never opened twice.
+    await card().trigger('click'); await tick()
+    expect(document.querySelectorAll('[data-test="me-theme-window"]')).toHaveLength(1)
+    expect(wrapper.find('.minimized-item').exists()).toBe(false)
+    await wrapper.get('.menu-trigger').trigger('click'); await tick()
+    expect(card().attributes('data-card-state')).toBe('open')
+    ;(document.querySelector('[data-modeless-action="close"]') as HTMLButtonElement).click(); await tick()
+    expect(document.querySelector('[data-test="me-theme-window"]')).toBeNull()
+    expect(card().attributes('data-card-state')).toBe('closed')
   })
   it('always falls back to the implemented style', () => {
     expect(normalizeTaskbarStyle('future')).toBe('flowgate')
