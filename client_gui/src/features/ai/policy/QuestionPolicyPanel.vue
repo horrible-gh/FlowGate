@@ -9,7 +9,7 @@
         <Button :disabled="!loaded || saving || busy || !dirty || [...body].length > 4000" @click="save">{{ t('save') }}</Button></footer>
     </template>
     <p v-if="error" role="alert">{{ error }} <Button v-if="!loaded" @click="load">{{ t('retry') }}</Button></p>
-    <ModelessShell :open="open" :title="t('assist')" :initial-x="80" :initial-y="100" :initial-width="510" :initial-height="570"
+    <ModelessShell kind-color="#a78bfa" :open="open" :title="t('assist')" :initial-x="80" :initial-y="100" :initial-width="510" :initial-height="570"
       :min-width="320" :min-height="340" @close="open = false">
       <!-- 0021 (0004-CH): the conversation looks and moves like the chat panel — the chat's own message bubbles
            (TimelineMessage), choices only as buttons under the current question, the draft once in its own box with

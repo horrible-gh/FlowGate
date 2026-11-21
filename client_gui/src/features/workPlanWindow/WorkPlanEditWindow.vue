@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#e7a244"
     ref="shell"
     :open="true"
     :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))"

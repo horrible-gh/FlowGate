@@ -53,15 +53,6 @@
           {{ code.toUpperCase() }}
         </button>
       </div>
-      <button
-        type="button"
-        class="designer-header-btn"
-        data-test="designer-header-settings"
-        :title="t('gui.accountMenu.settings')"
-        @click="openSettings()"
-      >
-        <LineIcon name="sliders" class="designer-header-icon" /><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
-      </button>
       <div v-if="user" ref="accountRoot" class="designer-account">
       <button
         ref="accountTrigger"
@@ -149,11 +140,6 @@ function toggleAccount() {
   emit('command', 'header.user')
   if (accountOpen.value) closeAccount(true)
   else void showAccount()
-}
-function openSettings() {
-  closeAccount()
-  emit('command', 'header.settings')
-  void router?.push({ name: 'settings-me-account' })
 }
 async function accountAction(key: typeof accountItems[number]['key']) {
   closeAccount(true)

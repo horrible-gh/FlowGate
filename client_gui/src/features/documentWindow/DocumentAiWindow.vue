@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#a78bfa"
     ref="shell"
     :open="true"
     :initial-x="win.x"

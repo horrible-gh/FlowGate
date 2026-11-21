@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 from modules.flow_gate.db import user_designer_layout as designer_layout_store
 from modules.flow_gate.db import user_ui_settings as ui_settings_store
+from modules.flow_gate.db import user_designer_theme as designer_theme_store
 from modules.flow_gate.db.connection import now_iso
 
 _log = logging.getLogger(__name__)
@@ -71,7 +72,22 @@ DESIGNER_SIZE_FIELDS = {
 
 # Validation order is fixed so a request with several bad fields always reports the same
 # one.
-PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS)
+TASKBAR_STYLE_FIELD = "designer_taskbar_style"
+TASKBAR_STYLE_DOMAIN = ("flowgate",)
+TASKBAR_STYLE_DEFAULT = "flowgate"
+PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS, TASKBAR_STYLE_FIELD)
+
+
+def resolve_taskbar_style(user_id: Optional[str]) -> str:
+    if user_id:
+        try:
+            row = designer_theme_store.get(user_id)
+            value = row.get("taskbar_style") if row else None
+            if isinstance(value, str) and value in TASKBAR_STYLE_DOMAIN:
+                return value
+        except Exception:
+            _log.warning("designer theme unavailable; answering default (user_id=%s)", user_id)
+    return TASKBAR_STYLE_DEFAULT
 
 
 class UiSettingsError(ValueError):
@@ -93,6 +109,7 @@ def defaults() -> dict:
     return {
         RETENTION_FIELD: RETENTION_DEFAULT_MINUTES,
         **designer_size_defaults(),
+        TASKBAR_STYLE_FIELD: TASKBAR_STYLE_DEFAULT,
         "updated_at": None,
     }
 
@@ -104,6 +121,7 @@ def domain() -> dict:
     """
     return {
         RETENTION_FIELD: list(RETENTION_DOMAIN_MINUTES),
+        TASKBAR_STYLE_FIELD: list(TASKBAR_STYLE_DOMAIN),
         **{
             field: {"min": minimum, "max": maximum}
             for field, (_column, _default, minimum, maximum) in DESIGNER_SIZE_FIELDS.items()
@@ -178,7 +196,7 @@ def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     # ``is_default`` and ``updated_at`` are the retention row's alone; the Designer sizes
     # come from their own row and do not change either.
     row = ui_settings_store.get(user_id)
-    sizes = resolve_designer_sizes(user_id)
+    sizes = {**resolve_designer_sizes(user_id), TASKBAR_STYLE_FIELD: resolve_taskbar_style(user_id)}
     if row is None:
         return {**defaults(), **sizes}, True
 
@@ -218,6 +236,10 @@ def validate_patch(patch: dict) -> None:
         if field not in patch:
             continue
         value = patch[field]
+        if field == TASKBAR_STYLE_FIELD:
+            if not isinstance(value, str) or value not in TASKBAR_STYLE_DOMAIN:
+                raise UiSettingsError(field, f"{field} must be one of: {', '.join(TASKBAR_STYLE_DOMAIN)}.")
+            continue
         if value is None:
             raise UiSettingsError(field, f"{field} must not be null.")
         if isinstance(value, bool) or not isinstance(value, int):
@@ -269,6 +291,8 @@ def save_ui_settings(user_id: Optional[str], patch: dict) -> dict:
             unset_columns={spec[0]: spec[1] for spec in DESIGNER_SIZE_FIELDS.values()},
             updated_at=now_iso(),
         )
+    if TASKBAR_STYLE_FIELD in patch and user_id:
+        designer_theme_store.save(user_id, patch[TASKBAR_STYLE_FIELD], now_iso())
     return settings_response(user_id)
 
 
@@ -301,6 +325,6 @@ def settings_response_safe(user_id: Optional[str]) -> dict:
             "ok": True,
             "settings": defaults(),
             "is_default": True,
-            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES, **designer_size_defaults()},
+            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES, **designer_size_defaults(), TASKBAR_STYLE_FIELD: TASKBAR_STYLE_DEFAULT},
             "domain": domain(),
         }

@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#52b788"
     v-if="wt.gateOpen.value"
     ref="shellRef"
     :open="open"

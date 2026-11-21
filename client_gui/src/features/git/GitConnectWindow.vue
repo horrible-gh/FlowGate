@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell
+  <ModelessShell kind-color="#52b788"
     :key="placement.seq"
     :open="open"
     :title="t('gui.git.connect.title')"

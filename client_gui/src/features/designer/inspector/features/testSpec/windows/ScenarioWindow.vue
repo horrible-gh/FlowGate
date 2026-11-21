@@ -1,5 +1,5 @@
 <template>
-  <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
+  <ModelessShell kind-color="#f0a23a" v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 90)" :initial-y="geometry('y', 80)" :initial-width="geometry('width', 1040)" :initial-height="geometry('height', 640)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <template #header>{{ t(k('title')) }}</template>

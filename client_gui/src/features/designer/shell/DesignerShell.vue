@@ -114,6 +114,7 @@
         />
       </template>
     </DesignerBody>
+    <DesignerTaskbar />
 
     <DesignerOpenDialog
       :open="dialog === 'group-open'"
@@ -266,6 +267,7 @@ import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import DesignerTaskbar from './DesignerTaskbar.vue'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
