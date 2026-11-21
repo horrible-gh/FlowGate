@@ -82,10 +82,10 @@ async function selectTool(w: VueWrapper<any>, label: string) {
 }
 
 describe('designerLayout — right Tool Panel state', () => {
-  it('starts on the Palette and keeps the 300px right column', () => {
+  it('starts on the Conversation and keeps the 300px right column', () => {
     const layout = createDesignerLayout()
-    expect(DESIGNER_RIGHT_TOOLS).toEqual(['palette', 'conversation', 'git'])
-    expect(layout.activeRightTool).toBe('palette')
+    expect(DESIGNER_RIGHT_TOOLS).toEqual(['conversation', 'palette', 'git'])
+    expect(layout.activeRightTool).toBe('conversation')
     expect(rightColumnWidth(layout)).toBe(300)
   })
 })

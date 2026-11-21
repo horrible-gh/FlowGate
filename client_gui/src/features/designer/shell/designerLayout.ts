@@ -65,7 +65,7 @@ export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.fr
   activeLeftMode: 'project',
   leftCollapsed: false,
   leftWidth: 280,
-  activeRightTool: 'palette',
+  activeRightTool: 'conversation',
   rightCollapsed: false,
   rightWidth: 300,
   bottomHeight: 320,
