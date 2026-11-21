@@ -83,11 +83,19 @@ async def unhandled_error_response(request, exc):
 
     Starlette still re-raises the exception after sending this response, so uvicorn
     records the original traceback exactly once. Do not swallow or log it here.
+
+    A lost database connection is answered 503 + Retry-After instead of 500 (flowgate.v02test.0060):
+    the client retries GETs and starts its connection recovery only on 502/503/504, so a 500 from a
+    route that hit the dead pool after the cached auth check would leave that panel failed for good.
     """
     from starlette.responses import PlainTextResponse
+    from modules.flow_gate.db.resilience import unavailable  # lazy: resilience imports this module
 
     rid = request_id_of_exception(exc) or request.scope.get("flowgate.request_id")
     headers = {REQUEST_ID_HEADER: rid} if rid else {}
+    if unavailable(exc):
+        return PlainTextResponse("Service Temporarily Unavailable", status_code=503,
+                                 headers={**headers, "Retry-After": "1"})
     return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)
 
 
