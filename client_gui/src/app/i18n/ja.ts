@@ -2489,6 +2489,7 @@ export default {
       limit_reached: 'AI は最大 {max} 件まで登録できます。',
       title: 'AI 一覧',
       subtitle: 'システム AI は管理者が、マイ AI は各自が管理します。どちらもこの一覧から選んで使います。',
+      empty_mine: 'マイ AI はまだありません。[＋ AI 追加] で作成できます。',
       filter_aria: '所有者で絞り込む',
       filter_all: 'すべて',
       filter_system: 'システム',

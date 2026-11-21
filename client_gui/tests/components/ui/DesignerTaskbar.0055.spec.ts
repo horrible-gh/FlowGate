@@ -128,7 +128,7 @@ describe('taskbar window lifecycle', () => {
     await card().trigger('click'); await tick()
     expect(router.currentRoute.value.path).toBe('/')
     expect(document.querySelectorAll('[data-test="my-ai-window"]')).toHaveLength(1)
-    // The window opens on my own AI unless I have none yet, and leaves the theme card untouched.
+    // The window lists my own AI only, and leaves the theme card untouched.
     expect(document.querySelector('[data-test="my-ai-window"] .ai-providers-panel')).not.toBeNull()
     clickMinimize(); await tick()
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)

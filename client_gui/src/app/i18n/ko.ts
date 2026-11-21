@@ -2500,6 +2500,7 @@ export default {
       limit_reached: 'AI는 최대 {max}개까지 등록할 수 있습니다.',
       title: 'AI 목록',
       subtitle: '시스템 AI는 관리자가, 내 AI는 각자 관리합니다. 둘 다 이 목록에서 고르고 씁니다.',
+      empty_mine: '아직 내 AI가 없습니다. [＋ AI 추가]로 만들 수 있습니다.',
       filter_aria: '소유 구분으로 거르기',
       filter_all: '전체',
       filter_system: '시스템',

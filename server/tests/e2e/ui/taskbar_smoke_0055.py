@@ -187,11 +187,10 @@ def main():
             body = window.locator('[data-test="my-ai-window"]')
             assert body.evaluate('el => [...el.querySelectorAll(".detail-head, .detail-toolbar, .provider-card")].every(n => n.scrollWidth <= n.clientWidth + 1 && n.getBoundingClientRect().right <= el.getBoundingClientRect().right + 1)')
             assert window.locator('.page-title').is_hidden()
-            mine = window.locator('.provider-card').count()
-            pressed = window.locator('.segmented button[aria-pressed="true"]').inner_text().strip()
-            print('MYAI_FILTER', pressed, 'cards', mine)
-            window.locator('.segmented button', has_text='전체').click()
-            assert window.locator('.provider-card').count() >= mine
+            # My own AI only: no owner filter and no system AI card, for an administrator too.
+            assert window.locator('.segmented').count() == 0
+            assert window.locator('.provider-card .mode-icon.owner.system').count() == 0
+            print('MYAI_MINE_ONLY cards', window.locator('.provider-card').count())
             if evidence: page.screenshot(path=str(Path(evidence) / f'myai_window_{width}x{height}.png'))
             # The add dialog opens above the window and closes again.
             window.get_by_role('button', name='AI 추가').click()

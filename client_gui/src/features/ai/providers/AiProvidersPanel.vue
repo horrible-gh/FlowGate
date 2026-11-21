@@ -32,7 +32,7 @@
            For an administrator the system AI's relative order is also the fallback order (linked). -->
       <section class="detail-panel">
         <div class="detail-toolbar">
-          <div class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
+          <div v-if="!mineOnly" class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
             <button
               v-for="key in OWNER_FILTERS"
               :key="key"
@@ -48,16 +48,18 @@
             ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.providers.search_placeholder')" />
           </label>
           <span class="detail-hint count-hint">
-            {{ t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
+            {{ mineOnly
+              ? t('gui.ai.owned.count', { count: myList.length, max: PROVIDERS_MAX })
+              : t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
           </span>
         </div>
         <p class="detail-hint order-hint" data-test="ai-order-hint">
-          {{ isAdmin ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
+          {{ isAdmin && !mineOnly ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
         </p>
 
         <div class="provider-cards">
           <div v-if="rows.length === 0" class="empty-row">
-            {{ t('gui.ai.providers.empty_list') }}
+            {{ mineOnly && !myList.length ? t('gui.ai.owned.empty_mine') : t('gui.ai.providers.empty_list') }}
           </div>
 
           <div
@@ -311,8 +313,9 @@ import { getAvatarClass, getInitials, getKindToneClass, isModeSupported, modeKey
 
 // Emitted after a successful save so screens listing usable AI can reload.
 const emit = defineEmits<{ changed: [] }>()
-// The Designer's "내 AI" window opens on my own AI; the AI 관리 screen keeps the full list.
-const props = defineProps<{ initialOwnerFilter?: 'all' | 'system' | 'user' }>()
+// The Designer's "내 AI" window lists my own AI only (no system AI, no owner filter, adds are mine);
+// the AI 관리 screen keeps the full list.
+const props = defineProps<{ mineOnly?: boolean }>()
 
 const { t } = useI18n()
 const { user } = useCurrentUser()
@@ -337,7 +340,7 @@ const loaded = ref(false)
 const loadError = ref('')
 const saving = ref(false)
 const searchQuery = ref('')
-const ownerFilter = ref<OwnerFilter>(props.initialOwnerFilter ?? 'all')
+const ownerFilter = ref<OwnerFilter>('all')
 
 const dialogOpen = ref(false)
 const dialogSaveError = ref('')
@@ -384,8 +387,6 @@ async function load(): Promise<void> {
     myDefaultId.value = mine.default_provider_id ?? null
     execPolicy.value = isAdmin.value ? system.execution_policy ?? null : null
     repeatMax.value = execPolicy.value?.repeat_count_max ?? 0
-    // With no AI of my own yet, an initial "mine" filter would open on an empty list.
-    if (!loaded.value && props.initialOwnerFilter === 'user' && !myList.value.length) ownerFilter.value = 'all'
     loaded.value = true
   } catch (err: unknown) {
     loadError.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
@@ -464,6 +465,13 @@ const rows = computed<Row[]>(() => {
     p.kind.toLowerCase().includes(query) ||
     p.id.toLowerCase().includes(query) ||
     modeLabel(p).toLowerCase().includes(query)
+  if (props.mineOnly) {
+    // Only my AI, numbered among themselves; a drag still moves within my whole order.
+    return orderedRows.value
+      .filter((row) => row.owner === 'user')
+      .map((row, index) => ({ ...row, rank: index + 1 }))
+      .filter((row) => matches(row.item))
+  }
   return orderedRows.value.filter((row) => (ownerFilter.value === 'all' || row.owner === ownerFilter.value) && matches(row.item))
 })
 
@@ -484,7 +492,7 @@ function dismissToast(id: string | number): void {
 
 // Owners the add dialog may pick; each list has its own PROVIDERS_MAX.
 const ownerChoices = computed<AiOwnerScope[]>(() => {
-  const owners: AiOwnerScope[] = isAdmin.value ? ['system', 'user'] : ['user']
+  const owners: AiOwnerScope[] = isAdmin.value && !props.mineOnly ? ['system', 'user'] : ['user']
   return owners.filter((owner) => listOf(owner).length < PROVIDERS_MAX)
 })
 const addBlocked = computed(() => ownerChoices.value.length === 0)
@@ -652,8 +660,7 @@ function openAddDialog() {
   if (saving.value || deleting.value || addBlocked.value) return
   clearDialogErrors()
   editingProvider.value = null
-  // From the "내 AI" window a new AI is mine unless I choose otherwise.
-  editingOwner.value = props.initialOwnerFilter === 'user' && ownerChoices.value.includes('user') ? 'user' : ownerChoices.value[0]
+  editingOwner.value = ownerChoices.value[0]
   dialogOpen.value = true
 }
 

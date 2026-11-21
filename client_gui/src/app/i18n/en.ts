@@ -2488,6 +2488,7 @@ export default {
       limit_reached: 'You can register up to {max} AI.',
       title: 'AI List',
       subtitle: 'Administrators manage system AI; everyone manages their own AI. Both are picked from this list.',
+      empty_mine: 'You have no AI of your own yet. Use [＋ Add AI] to create one.',
       filter_aria: 'Filter by owner',
       filter_all: 'All',
       filter_system: 'System',

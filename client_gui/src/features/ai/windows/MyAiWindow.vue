@@ -3,13 +3,13 @@
     :initial-x="48" :initial-y="initialY" :initial-width="initialWidth" :initial-height="initialHeight" :min-width="420" :min-height="260"
     @update:minimized="emit('update:minimized', $event)" @close="emit('close')">
     <div class="ai-my-window" data-test="my-ai-window">
-      <AiProvidersPanel initial-owner-filter="user" />
+      <AiProvidersPanel mine-only />
     </div>
   </ModelessShell>
 </template>
 <script setup lang="ts">
 // "AI 관리 · 내 AI" as a Designer window, opened from the taskbar menu card. Only the frame is
-// here; the list is AiProvidersPanel, the same component the AI 관리 screen shows.
+// here; the list is AiProvidersPanel, the component the AI 관리 screen shows, limited to my own AI.
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
