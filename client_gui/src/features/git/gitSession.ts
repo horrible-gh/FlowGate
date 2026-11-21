@@ -311,7 +311,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     const row = pendingRow.value
     if (!row || state.statusLoad === 'error') return null
     if (row.status === 'waiting') return 'hold'
-    if (row.status !== 'conflict' || row.mergeId === null) return null
+    if (row.status !== 'conflict') return null
+    if (row.mergeId === null) return 'conflict'
     // a Graph card result's merge is handled in its card — the conflict card only points there.
     if (state.conflict?.mergeId === row.mergeId && state.conflict.graphMerge) return 'unsupported'
     // A running resolver wins over any review state (§3.3).
