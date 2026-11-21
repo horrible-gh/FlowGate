@@ -233,12 +233,10 @@ def _start_paragraph(folded: int) -> list[str]:
     """Explain the invocation-local meaning of ``after_seq``."""
     del folded
     return [
-        "The after_seq above is the start of this invocation's conversation context window.",
-        "It is not a persisted model-memory cursor and may intentionally include turns seen by an",
-        "earlier invocation. `head` carries document metadata and intro only; conversation messages",
-        "are in `turns`. Read the selected turns first. If `next_after_seq` is not null, call again",
-        "with that value until it is null. Reading does not consume this token.",
+        "after_seq starts this invocation's window, not persisted model memory; overlap is intentional.",
+        "Read messages in `turns` (head is metadata). Follow next_after_seq until null; reads do not consume the token.",
     ]
+
 
 
 def _fold_notice(
@@ -412,13 +410,21 @@ def build_conversation_mention(
         for section in sections:
             lines += ["", section]
     from modules.flow_gate.services import question_policy
-    policy = question_policy.block(question_policy.text(user_id))
+    policy = question_policy.text(user_id)
     if policy:
-        lines += ["", policy]
+        lines += ["", "Before taking action or asking the user, read and follow their decision policy:",
+                  f"GET {api_base}/help/items/question/policy"]
     from modules.flow_gate.services import message_image_delivery
     context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
     from modules.flow_gate.services.prompt_blocks.compose import compose
-    text = compose(["\n".join(lines)], kind="chat", locale=_locale(locale),
+    # Deduplicate only generated credential lines; never rewrite policy or conversation data.
+    auth = f"Authorization: Bearer {raw_token}"
+    body = "\n".join(lines)
+    body = "\n".join(line for line in body.splitlines() if line != auth)
+    body = (auth + "\nUse this Authorization for all API calls below; never log the Bearer.\n"
+            + f"Bound flow_id: {group_name}. Read cards/state help to discover node keys when needed.\n\n"
+            + body)
+    text = compose([body], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)

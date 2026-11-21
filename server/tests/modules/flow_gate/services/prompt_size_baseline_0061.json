@@ -23,12 +23,12 @@
     "P6.sequence_edit": 4596,
     "P7.work_plan_fill": 923,
     "P8.failure_origin": 1225,
-    "P9.chat_read": 7002,
-    "P9.chat_read_unanswered_q": 7498,
-    "P9.chat_read_copy": 4882,
-    "P9.chat_execute": 8816,
-    "P9.chat_edit": 9684,
-    "P9.chat_edit_unanswered_q": 10263,
+    "P9.chat_read": 4224,
+    "P9.chat_read_unanswered_q": 4403,
+    "P9.chat_read_copy": 3751,
+    "P9.chat_execute": 6002,
+    "P9.chat_edit": 6331,
+    "P9.chat_edit_unanswered_q": 6509,
     "P10.next_step_copy": 895,
     "X.merge_review_conversation": 2419,
     "X.conflict_empty": 4647,
@@ -38,7 +38,7 @@
     "X.test_run_continuous": 1685,
     "X.spec_result": 2343,
     "X.auto_title": 489,
-    "SUM.P1-P10": 37345
+    "SUM.P1-P10": 34568
   },
   "responses": {
     "help_index:chat_edit": 913,

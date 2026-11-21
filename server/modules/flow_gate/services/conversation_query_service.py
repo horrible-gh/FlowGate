@@ -295,6 +295,13 @@ def list_turns(
         "me": _me_wire(doc_id, resolved) if include_head else None,
     }
     if actor.get("kind") == "worker":
+        # Workers use the same authenticated conversation URL as remote image delivery.
+        from config import settings
+        base = str(settings.CONTEXT or "").rstrip("/") + "/api/v1"
+        for turn in response["turns"]:
+            if turn.get("images"):
+                turn["images"] = [dict(image, url=message_image_service.conversation_image_url(
+                    base, doc_id, image["image_id"])) for image in turn["images"]]
         # An AI reads the page without the reader's own participant rows, read
         # boundary and null / empty fields. A session reader (the screen) gets the page above as is.
         return ai_response_slim.slim_turn_page(response)

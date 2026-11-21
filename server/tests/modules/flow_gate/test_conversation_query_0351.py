@@ -594,3 +594,21 @@ def test_worker_read_route_is_async_and_offloads_blocking_work():
     # ...and the detector is actually looking at this route (a renamed handler would
     # otherwise leave the assertion above trivially true).
     assert "list_worker_conversation_turns" in routes_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("prefix", ["", "/flowgate"])
+def test_worker_images_use_conversation_download_session_keeps_ui_url(store, doc, monkeypatch, prefix):
+    from config import settings
+    monkeypatch.setattr(settings, "CONTEXT", prefix)
+    _seed(1, body="image")
+    image = {"image_id": "img_test", "url": prefix + "/api/v1/flows/g/message-images/img_test/content",
+             "media_type": "image/png", "size": 1, "width": 1, "height": 1}
+    monkeypatch.setattr(query.message_image_service, "for_range", lambda *a: {1: [image]})
+    actor = {"kind": "worker", "token": {"token_id": "tok_1", "provider_id": "cx_opus", "project": "flowgate"}}
+    with patch.object(append_service, "_provider_row", return_value={"name": "test"}):
+        page = query.list_turns(doc_id=DOC_ID, actor=actor, after_seq=0)
+    assert page["turns"][0]["images"][0]["url"] == (
+        prefix + "/api/v1/conversation/" + DOC_ID + "/images/img_test/content")
+    session = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, after_seq=0)
+    assert session["turns"][0]["images"] == [image]
+    assert "/message-images/" in image["url"]

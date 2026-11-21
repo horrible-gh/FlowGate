@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.area("guard")
+
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("korean_comment_baseline", ROOT / "tools/korean_comment_baseline.py")
 guard = importlib.util.module_from_spec(SPEC)
