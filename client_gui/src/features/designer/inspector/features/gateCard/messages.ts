@@ -18,8 +18,8 @@ export default {
     confirm: '승인',
     reject: '✕ 반려',
     conflict: { open: 'Git 탭에서 해결' },
-    // flowgate.v02test.0052 0008 할 일 6: an earlier approval is still held → [이전 승인 취소] is in the Git tab; once cancelled the check card says the current commit can be approved.
-    old_approval: { open: '이전 승인 취소 (Git 탭)', cancelled: '이전 승인은 취소됐습니다. 현재 커밋으로 다시 승인합니다.' },
+    // flowgate.v02test.0052 0008 할 일 6: an earlier approval is still held → [이전 승인 취소] is in the Git tab.
+    old_approval: { open: '이전 승인 취소 (Git 탭)' },
     reason: {
       not_running: '실행 중이거나 대기 중인 확인 차례에 확인할 수 있습니다',
       not_open: '이 확인 차례가 오면 확인할 수 있습니다',
@@ -73,7 +73,7 @@ export default {
     confirm: 'Approve',
     reject: '✕ Reject',
     conflict: { open: 'Resolve in Git tab' },
-    old_approval: { open: 'Cancel earlier approval (Git tab)', cancelled: 'The earlier approval was cancelled. Approving now applies the current commit.' },
+    old_approval: { open: 'Cancel earlier approval (Git tab)' },
     reason: {
       not_running: 'It can be checked while the flow runs',
       not_open: 'It can be checked when its turn comes',
@@ -127,7 +127,7 @@ export default {
     confirm: '承認',
     reject: '✕ 差し戻し',
     conflict: { open: 'Git タブで解決' },
-    old_approval: { open: '前回の承認を取消 (Git タブ)', cancelled: '前回の承認は取り消されました。いま承認すると現在のコミットで反映します。' },
+    old_approval: { open: '前回の承認を取消 (Git タブ)' },
     reason: {
       not_running: '実行中に確認できます',
       not_open: 'この確認の順番が来たら確認できます',
