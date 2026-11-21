@@ -18,10 +18,11 @@ export function gateApprovalView(flowId: string, nodeId: string, attemptId?: str
   const busy = acquiring.has(key) || !!context?.busy.value
   if (!context || context.node.value?.attemptId !== attemptId) return { busy, blocked: busy, reason: busy ? 'gui.inspector.gateCard.reason.busy' : null }
   const failed = Object.keys(context.failures.value).length > 0
+  const contextualReason = gateDecisionReason({ nodeId, readOnly: null }, context.run.value, busy || Object.keys(context.pending.value).length > 0)
   const blocked = busy || failed || Object.keys(context.pending.value).length > 0 || context.gate.value?.decision_in_progress === true
   const error = context.decisionError.value ?? context.error.value ?? Object.values(context.failures.value)[0]
   const specific = error ? checkControlFailure(error) : null
-  const reason = specific ? `gui.inspector.checkSettings.${specific.key}` : error ? `gui.inspector.gateCard.${gateFailureKey(documentErrorOf(error))}` : blocked ? 'gui.inspector.gateCard.reason.busy' : null
+  const reason = specific ? `gui.inspector.checkSettings.${specific.key}` : error ? `gui.inspector.gateCard.${gateFailureKey(documentErrorOf(error))}` : blocked ? `gui.inspector.gateCard.${contextualReason ?? 'reason.busy'}` : null
   return { busy, blocked, reason }
 }
 /** Scoped acquire/reload; it never changes selection and shares busy/request/version with every Inspector part. */

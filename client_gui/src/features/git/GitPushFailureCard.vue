@@ -46,7 +46,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { checkOperationErrorKey } from '@/features/document'
 import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
-import { isClosedSessionOperation, openGateCard, retryNextText, retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
+import { isClosedSessionOperation, isConflictOperation, openGateCard, retryNextText, retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 
 const props = defineProps<{ operation?: GateOperation }>()
@@ -86,6 +86,7 @@ const retryBlockedText = computed(() => {
   if (closed.value) return t('gui.git.gate_job.retry_blocked_closed')
   if (operation.gate.recovery?.retryable) return null
   if (operation.gate.git_active) return null
+  if (isConflictOperation(operation.gate)) return t('gui.git.gate_job.retry_blocked_conflict')
   return t(operation.gate.recovery?.cancelable ? 'gui.git.gate_job.retry_blocked_cancel' : 'gui.git.gate_job.retry_blocked')
 })
 function detail() {

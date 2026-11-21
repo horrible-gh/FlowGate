@@ -6,8 +6,9 @@ import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateDecide, se
 import { INSPECTOR_SELECTION } from '../inspector/inspectorHost'
 import type { InspectorTarget } from '../inspector/inspectorTarget'
 import { useInspectorEvents } from '../inspector/useInspectorResource'
+import { useGateRecoveryRefresh } from './useGateRecoveryRefresh'
 
-export const GATE_RUN_EVENTS = ['graph_run_status_changed', 'graph_node_state_changed', 'gate_publish_job_changed', 'git_status_changed'] as const
+export const GATE_RUN_EVENTS = ['graph_run_status_changed', 'graph_node_state_changed', 'gate_publish_job_changed', 'git_status_changed', 'git_pending_changed', 'git_finalize_done'] as const
 export const gateRunEventMatches = (frame: { groupId: string | null }, scope: { flowId: string }) => frame.groupId === scope.flowId
 export const gateOf = (target: InspectorTarget | null) => target?.nodeType === 'gate' && !target.nodeId.startsWith('tmp_') ? `${target.flowId}\n${target.nodeId}` : null
 
@@ -486,5 +487,9 @@ export function useGateContext(target: () => InspectorTarget | null) {
     events: GATE_RUN_EVENTS, matches: gateRunEventMatches,
     changed: () => { const c = context.value; if (c) void (c.hasRequest() ? c.replay() : c.reload()) },
   })
+  useGateRecoveryRefresh(() => {
+    const gate = context.value?.gate.value
+    return !!gate?.decision_in_progress && (gate.job?.phase_note === 'gate_conflict' || gate.git_active === true || gate.recovery?.status === 'accepted')
+  }, async () => { await context.value?.reload() })
   return context
 }

@@ -3215,6 +3215,9 @@ def _complete_merge_review(
         # ``none``, the Group slot kept, no approval to finish (it never carries one).
         _finish_reviewed_attempt(group_id, merge_id, project_id, merge_commit_short, pushed)
         db_git.consume_resolution_checkpoint(merge_id)
+        fresh = db_git.session_context(db_git.get_session(merge_id))
+        fresh["git_cleanup_done"] = True
+        db_git.set_session_context(merge_id, fresh)
         return {"ok": True, "result": {
             "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
             "merge_commit": merge_commit_short, "pushed": pushed,
@@ -3863,6 +3866,8 @@ def approve_merge_review(
             return {"ok": True, "result": recovery.replay_result(db_git.get_session(merge_id))}
     finally:
         _bmp.session_unlock(lock_ctx, lock_held)
+        from flowgate.gate_decisions.recovery import resume_after_merge
+        resume_after_merge(merge_id)
 
 
 def reject_merge_review(
@@ -4587,6 +4592,8 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         status = ((result or {}).get("result") or {}).get("status") if isinstance(result, dict) else None
         _session_claim.note(merge_id, f"reconcile:{status or 'none'}")
         _session_claim.release(claim)
+        from flowgate.gate_decisions.recovery import resume_after_merge
+        resume_after_merge(merge_id)
 
 
 # ── the earlier implementation: reconcile state machine executor ───────────────────────────────

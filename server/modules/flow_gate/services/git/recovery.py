@@ -810,6 +810,8 @@ def mutate(group_id, merge_id, action, *, request_id, recovery_version, approval
                               details={'recovery': error_projection(group_id, merge_id, request_id, None)})
     finally:
         session_claim.release(claim)
+        from flowgate.gate_decisions.recovery import resume_after_merge
+        resume_after_merge(merge_id)
 
 
 def error_projection(group_id, merge_id, request_id, prior):

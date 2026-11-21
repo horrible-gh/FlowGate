@@ -78,6 +78,16 @@ describe('existing Git operation details — D §8-10', () => {
     expect(w.get('[data-test="git-job-retry"]').attributes('disabled')).toBeUndefined()
     expect(mocks.recover).not.toHaveBeenCalled()
   })
+  it.each(['ko', 'en', 'ja'] as const)('names the conflict review and automatic refresh while retry is blocked in %s', async locale => {
+    i18n.global.locale.value = locale
+    current.nodes[0].gate.job.phase_note = 'gate_conflict'
+    current.nodes[0].gate.recovery.error_code = 'merge_conflict'
+    current.nodes[0].gate.recovery.retryable = false
+    const w = await show(true)
+    expect(w.get('[data-test="git-retry-blocked"]').text()).toBe(i18n.global.t('gui.git.gate_job.retry_blocked_conflict'))
+    expect(w.get('[data-test="git-push-retry"]').attributes('disabled')).toBeDefined()
+    expect(mocks.recover).not.toHaveBeenCalled()
+  })
   it('does not offer no-effect cancellation for partial/unknown effects', async () => {
     const w = await show()
     expect(w.get('[data-test="git-job-cancel"]').attributes('disabled')).toBeDefined()

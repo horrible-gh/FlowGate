@@ -332,6 +332,33 @@ describe('0148 card/header shared approval', () => {
   })
 })
 
+describe('conflict completion and first-click feedback', () => {
+  it.each(['git_pending_changed', 'git_finalize_done'])('refreshes an open Inspector on %s without another approval', async event => {
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true,
+      job: { phase_note: 'gate_conflict' }, recovery: { status: 'failed', retryable: false } })
+    await show()
+    const c = gateContextOf(target)!
+    expect(c.gate.value?.recovery?.retryable).toBe(false)
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true,
+      job: { status: 'pending' }, recovery: { status: 'accepted', retryable: false } })
+    stream.open(); stream.emit(event, { groupId: target.flowId })
+    await new Promise(resolve => setTimeout(resolve, 240)); await flushPromises()
+    expect(c.gate.value?.recovery?.status).toBe('accepted')
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it.each([
+    [{ phase_note: 'gate_conflict' }, { status: 'failed' }, 'reason.conflict'],
+    [{ status: 'pending' }, { status: 'accepted' }, 'reason.decision_in_progress'],
+  ])('explains the latest held approval after the first card click', async (job, recovery, reason) => {
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true, job, recovery })
+    expect(await approveGateTarget(target)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+    expect(gateApprovalView(target.flowId, target.nodeId, `attempt_${id}`)).toMatchObject({
+      blocked: true, reason: `gui.inspector.gateCard.${reason}`,
+    })
+  })
+})
+
 describe('0148 approval read failures and independent flows', () => {
   it('leaves a failed initial card read retryable and explains its cause', async () => {
     mocks.settings.mockRejectedValueOnce(error('forbidden', 403))
