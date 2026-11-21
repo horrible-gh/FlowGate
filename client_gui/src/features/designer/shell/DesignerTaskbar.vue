@@ -17,6 +17,7 @@
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
     <MyAiWindow :ref="(el) => setWindowRef('my-ai', el)" :open="windows['my-ai'].open" v-model:minimized="windows['my-ai'].minimized" @close="windows['my-ai'].open = false" />
+    <QuestionPolicyWindow :ref="(el) => setWindowRef('question-policy', el)" :open="windows['question-policy'].open" v-model:minimized="windows['question-policy'].minimized" @close="windows['question-policy'].open = false" />
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
   </div>
 </template>
@@ -27,7 +28,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import { UI_SETTINGS_PATH, type UiSettingsResponse } from '@shared/aiFinishedCardRetention'
 import { useCurrentUser } from '@/core/auth/currentUser'
-import { MyAiWindow } from '@/features/ai'
+import { MyAiWindow, QuestionPolicyWindow } from '@/features/ai'
 import MeThemeWindow from '@/features/settings/windows/MeThemeWindow.vue'
 import { modelessWindows, modelessStyle, normalizeTaskbarStyle, TASKBAR_STYLE_FIELD, setModelessTaskbar, removeModelessTaskbar, taskbarCapacity, type ModelessEntry } from '@/core/overlay/modelessRegistry'
 
@@ -61,12 +62,12 @@ function restore(entry: ModelessEntry) { close(); entry.restore() }
 // Menu cards open a window over the Designer instead of leaving the page. A card whose window
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
-type CardKey = 'my-ai' | 'theme'
+type CardKey = 'my-ai' | 'question-policy' | 'theme'
 const menuGroups: { key: string; label: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
-  { key: 'ai', label: 'gui.taskbar.group_ai', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }] },
+  { key: 'ai', label: 'gui.taskbar.group_ai', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
   { key: 'settings', label: 'gui.taskbar.group_settings', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }] },
 ]
-const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, theme: { open: false, minimized: false } })
+const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false } })
 const windowRefs: Partial<Record<CardKey, { bringToFront?: () => void } | null>> = {}
 function setWindowRef(key: CardKey, el: unknown) { windowRefs[key] = el as { bringToFront?: () => void } | null }
 function cardState(key: CardKey) { return !windows[key].open ? 'closed' : windows[key].minimized ? 'minimized' : 'open' }
@@ -144,8 +145,8 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .item-text b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overflow-trigger { width: 74px; }
 .taskbar-popup { position: absolute; bottom: calc(100% + 8px); z-index: 100000; padding: 14px; border: 1px solid var(--fg2-line-strong); border-radius: 10px; background-color: var(--fg2-panel); box-shadow: var(--fg2-overlay-shadow); }
-/* Cards keep the canvas-card size on a column grid instead of stretching across the board. */
-.menu-board { left: 10px; width: 360px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; min-height: 150px; box-sizing: border-box; background-image: radial-gradient(var(--fg2-line-strong) 1px, transparent 1px); background-size: 16px 16px; }
+/* Cards keep the canvas-card size on a column grid instead of stretching across the board; the board is two cards wide. */
+.menu-board { left: 10px; width: 392px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; min-height: 150px; box-sizing: border-box; background-image: radial-gradient(var(--fg2-line-strong) 1px, transparent 1px); background-size: 16px 16px; }
 .menu-group-label { display: flex; align-items: center; gap: 7px; margin: 12px 2px 8px; font-size: 12px; font-weight: 700; color: var(--fg2-text); }
 .menu-group-label:first-child { margin-top: 0; }
 .menu-group-label i { width: 8px; height: 8px; border-radius: 50%; background: var(--card-color, #94a3b8); flex: none; }
