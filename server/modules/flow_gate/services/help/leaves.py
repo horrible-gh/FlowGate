@@ -58,7 +58,7 @@ def leaf_content(area, leaf, ctx):
         keys = ("list", "read", "copy", "permission", "note") if leaf == "read" else ("upload_request", "permission", "absent", "note")
         return {key: data[key] for key in keys if key in data}
     if area == "question":
-        keys = {"register": ("note", "options_requires", "example"), "precheck": ("before_asking", "registration_precheck", "search"), "answers": ("answers",), "policy": ("policy",)}[leaf]
+        keys = {"register": ("note", "options_requires", "transport", "example"), "precheck": ("before_asking", "registration_precheck", "search"), "answers": ("answers",), "policy": ("policy",)}[leaf]
         return {key: data[key] for key in keys if key in data}
     if area == "conversation" and leaf in ("turn", "encoding"):
         from modules.flow_gate.services import prompt_blocks

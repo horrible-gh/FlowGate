@@ -199,7 +199,7 @@ def test_old_owners_render_the_block_text():
     lines = mention_service._document_lookup_lines(BASE, "tok", project="p", doc_id="d")
     assert lines == documents.document_lookup_brief(BASE, "tok", project="p", doc_id="d")
     assert lines[-1] == "Authorization: Bearer tok"
-    assert documents.BODY_UNREADABLE_RULES[4] in lines
+    assert documents.UNREAD_BODY_NO_QUOTE_RULE in lines
     assert len(lines) < len(documents.document_lookup_lines(BASE, "tok"))
     assert mention_service._remote_source_crud_lines(BASE, "", "T") == source_tools.remote_source_crud_lines(BASE, "", "T") == []
 
@@ -210,6 +210,34 @@ def test_help_reads_the_block_detail(monkeypatch):
 
     monkeypatch.setattr(documents, "BODY_UNREADABLE_RULES", ("ONLY RULE",))
     assert help_content._body_unreadable_rules() == ("ONLY RULE",)
+
+
+def test_lookup_brief_quotes_a_named_rule_not_a_list_position(monkeypatch):
+    """flowgate.v02test.0061 card 7: the brief used to read ``BODY_UNREADABLE_RULES[4]``. The sentence it sends is
+    the same as before, and reordering or shortening the list neither changes it nor raises IndexError."""
+    from modules.flow_gate.services.prompt_blocks.blocks import documents
+
+    rule = "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오."
+    expected = [
+        rule,
+        f"GET {BASE}/document/d/meta",
+        f"GET {BASE}/document/d/outline",
+        f"GET {BASE}/document/d/section?section_id=<section_id>",
+        f"GET {BASE}/search/documents/content?q=<keyword>&project=p",
+        f"GET {BASE}/help/items/documents/partial",
+        f"GET {BASE}/help/items/documents/unreadable",
+        "Authorization: Bearer tok",
+    ]
+    assert documents.UNREAD_BODY_NO_QUOTE_RULE == rule
+    assert documents.BODY_UNREADABLE_RULES[4] == rule                 # the full list itself is unchanged
+    assert documents.BODY_UNREADABLE_RULES.count(rule) == 1
+    assert documents.document_lookup_brief(BASE, "tok", project="p", doc_id="d") == expected
+    original = documents.BODY_UNREADABLE_RULES
+    for changed in (tuple(reversed(original)), original[5:], ("ONLY RULE",), ()):
+        monkeypatch.setattr(documents, "BODY_UNREADABLE_RULES", changed)
+        assert documents.document_lookup_brief(BASE, "tok", project="p", doc_id="d") == expected
+    source = inspect.getsource(documents.document_lookup_brief)
+    assert "BODY_UNREADABLE_RULES[" not in source
 
 
 # ── one rework composition ───────────────────────────────────────────────────

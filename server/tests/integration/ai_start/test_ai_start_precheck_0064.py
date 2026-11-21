@@ -559,9 +559,11 @@ def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monke
     from modules.flow_gate.services.prompt_blocks.blocks import documents as documents_block
 
     # flowgate.v02test.0061 card 4: the one constant now lives in the prompt block registry.
-    # (card 5: the lookup brief quotes the fifth rule, so the stand-in list has five entries)
-    stand_in = ("RULE 0", "RULE 1", "RULE 2", "RULE 3", "RULE X")
+    # (card 7: the lookup brief quotes the named rule UNREAD_BODY_NO_QUOTE_RULE, no longer the fifth list entry, so
+    # the stand-in replaces that name too and the list may have any length)
+    stand_in = ("RULE 0", "RULE X")
     monkeypatch.setattr(documents_block, "BODY_UNREADABLE_RULES", stand_in)
+    monkeypatch.setattr(documents_block, "UNREAD_BODY_NO_QUOTE_RULE", "RULE X")
     assert "RULE X" in documents_block.document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")
     assert _help_document_access(monkeypatch)["rules"] == list(stand_in)
     section = ai_start_precheck.unreadable_section(

@@ -384,7 +384,7 @@ class TestEditTurnEndAddendum:
         clarify = mention_service._CLARIFY_TEXT[locale]
         assert clarify["lead"] in text
         assert clarify["warn"] in text
-        assert clarify["positive"] in text
+        assert "options" in clarify["warn"] and "positive" not in clarify   # 0061 card 7: one guard paragraph
         assert '/help/items/question' in text
         assert 'do not ask interactive questions' in text
 

@@ -306,9 +306,9 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko", *, kind="
 # body format. The help item's example (help_catalog.build_question_content) now also
 # demonstrates the `options` array the prescription below tells the worker to use.
 _QUESTION_FORMAT_POINTER: dict[str, str] = {
-    "ko": "질문 본문 서식과 예시는 도움말 항목에 있습니다: GET {url}",
-    "ja": "質問本文の形式と例はヘルプ項目にあります: GET {url}",
-    "en": "The question body format and an example are in the help item: GET {url}",
+    "ko": "질문 본문 서식·예시·전송 규칙은 도움말 항목에 있습니다: GET {url}",
+    "ja": "質問本文の形式・例・送信ルールはヘルプ項目にあります: GET {url}",
+    "en": "The question body format, an example and the transport rule are in the help item: GET {url}",
 }
 
 # flowgate.v02gui.0028: card AIs registered Qs the user's question policy says the AI decides itself (Q624: past run
@@ -348,6 +348,41 @@ _QUESTION_PRECHECK_TEXT: dict[str, str] = {
 }
 
 
+# flowgate.v02test.0061 card 7: most cards never register a Q, so the ordinary Clarification guide carries only what
+# is needed BEFORE deciding to ask -- the policy line and the token-specific past Q&A search address. What is needed
+# only WHILE registering (server reuse / 409 handling, list format, transport rule) is read from the help leaves
+# `question/precheck` and `question/register`. The full text below stays for the guides whose task is to register a Q.
+_QUESTION_PRECHECK_BRIEF: dict[str, str] = {
+    "ko": (
+        "Q를 등록하기 전에 사용자 질의 방침(도움말 notices 항목의 [사용자 질의 방침])을 먼저 적용하십시오. "
+        "방침상 AI가 정할 일이면 Q를 남기지 말고 정해서 진행하십시오.\n"
+        "과거 Q&A를 먼저 검색하고 같은 질문에 답이 있으면 그 답을 따르십시오: GET {search}\n"
+        "등록 응답(reused_answer·409) 처리와 검색 결과 형식: GET {precheck}"
+    ),
+    "ja": (
+        "Qを登録する前に、ユーザーの質問方針(ヘルプ notices 項目の方針ブロック)を先に適用してください。"
+        "方針上AIが決めることなら、Qを残さず決めて進めてください。\n"
+        "過去のQ&Aを先に検索し、同じ質問に回答があればそれに従ってください: GET {search}\n"
+        "登録応答(reused_answer・409)の扱いと検索結果の形式: GET {precheck}"
+    ),
+    "en": (
+        "Before you register a Q, apply the user's question policy first (the policy block of the `notices` help "
+        "item). If the policy says the AI decides, do not leave a Q: decide and go on.\n"
+        "Search the past Q&A first and follow an existing answer to the same question: GET {search}\n"
+        "Handling the registration response (reused_answer, 409) and the search result format: GET {precheck}"
+    ),
+}
+
+
+def _question_precheck_brief(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
+    """The check-before-asking lines of the ordinary Clarification guide (policy, past Q&A search, help leaf)."""
+    loc = template_provision.normalize_locale(locale)
+    return _QUESTION_PRECHECK_BRIEF[loc].format(
+        search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10",
+        precheck=f"{base}/help/items/question/precheck",
+    )
+
+
 def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
     """The check-before-asking steps with the token-specific past Q&A search address (flowgate.v02gui.0028)."""
     loc = template_provision.normalize_locale(locale)
@@ -365,69 +400,48 @@ def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str
         "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>") + "\n" + ai_text_guard.transport_rule(loc)
 
 
-# Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.
+# Lead-in (2 lines) / the no-choices guard with its "register a Q" redirect, per locale.
+# flowgate.v02test.0061 card 7: the guard used to say "no choices -> register a Q" three times (warn, positive and
+# the bottom Reminder). It is now said once here (`warn`, prohibition + the options-carrying Q prescription) and
+# once, in one line, in the Reminder. The Q&A panel sentence moved to the help leaf `question/register` (note).
 _CLARIFY_TEXT = {
     "ko": {
         "lead": (
             "불명확한 점이 있으면 추측하거나 가정으로 진행하지 마십시오.\n"
-            "질문은 해당 문서에 바인딩된 질의 데이터로 등록하십시오 (this is NOT a Q document):\n"
-            "질문을 채워 아래의 POST로 전송하십시오."
+            "질문은 해당 문서에 바인딩된 질의 데이터로 등록하십시오 (this is NOT a Q document):"
         ),
         "warn": (
             "⚠️ 사용자에게 선택지나 옵션을 제시하지 마십시오 — Do NOT present choices "
-            "(객관식 목록·대화형 선택 프롬프트 금지).\n"
-            "당신은 무인(UNMANNED) 시스템의 원격 워커입니다: 그런 프롬프트는 응답을 받지 못하고 "
-            "실행이 답변 없이 강제 종료(force-terminated)됩니다."
-        ),
-        "positive": (
-            "✅ 확실한 답(definite answer)을 받으려면 선택지를 제시하지 말고 반드시 "
-            "Q(질의)를 등록(register a Q)해야 합니다.\n"
-            "옵션 중 선택을 요청하려는 자신을 발견하면 STOP — 그 옵션들을 options 배열에 담아 "
-            "Q 1건으로 등록하십시오(사용자는 문서의 [질의 응답] 패널에서 보기를 고르거나 자유 "
-            "서술로 답합니다). Q 작성이 이 시스템에서 답을 받는 유일한 방법이며, 항상 선택지 대신 "
-            "다음 행동(next action)으로 남기십시오."
+            "(객관식 목록·대화형 선택 프롬프트 금지). 무인(UNMANNED) 시스템이라 그런 프롬프트는 응답을 받지 못하고 "
+            "실행이 강제 종료(force-terminated)됩니다.\n"
+            "확실한 답(definite answer)이 필요하면 보기를 options 배열에 담아 Q 1건으로 등록(register a Q)하고, "
+            "선택지 대신 다음 행동(next action)으로 남기십시오."
         ),
     },
     "ja": {
         "lead": (
             "不明な点があれば推測せず、仮定で進めないでください。\n"
-            "質問は当該文書に紐づくクエリデータとして登録してください (this is NOT a Q document):\n"
-            "質問を記入し、下記のPOSTで送信してください。"
+            "質問は当該文書に紐づくクエリデータとして登録してください (this is NOT a Q document):"
         ),
         "warn": (
             "⚠️ ユーザーに選択肢やオプションを提示しないでください — Do NOT present choices "
-            "(多肢選択リスト・対話的な選択プロンプト禁止)。\n"
-            "あなたは無人(UNMANNED)システムのリモートワーカーです: そうしたプロンプトは応答を "
-            "得られず、実行は回答なしで強制終了(force-terminated)されます。"
-        ),
-        "positive": (
-            "✅ 確実な回答(definite answer)を得るには、選択肢を提示せず必ず "
-            "Q(質問)を登録(register a Q)してください。\n"
-            "オプションの選択を求めようとしている自分に気づいたらSTOP — その選択肢をoptions配列に入れた "
-            "Q 1件として登録してください(ユーザーは文書の[質疑応答]パネルで選択肢を選ぶか、自由記述で "
-            "回答します)。Qの作成がこのシステムで回答を得る唯一の方法であり、常に "
+            "(多肢選択リスト・対話的な選択プロンプト禁止)。無人(UNMANNED)システムのため、そうしたプロンプトは応答を "
+            "得られず、実行は強制終了(force-terminated)されます。\n"
+            "確実な回答(definite answer)が必要なら、選択肢をoptions配列に入れたQ 1件として登録(register a Q)し、"
             "選択肢ではなく次の行動(next action)として残してください。"
         ),
     },
     "en": {
         "lead": (
             "If anything is unclear, do NOT guess and do NOT proceed on assumptions.\n"
-            "Register your question as document-bound query data (this is NOT a Q document):\n"
-            "fill in the question(s) and send them with the POST below."
+            "Register your question as document-bound query data (this is NOT a Q document):"
         ),
         "warn": (
-            "⚠️ Do NOT present choices or options to the user (no multiple-choice lists,\n"
-            "no interactive selection prompts). You are a remote worker on an UNMANNED\n"
-            "system: such prompts get no response and the run is force-terminated with no\n"
-            "answer."
-        ),
-        "positive": (
-            "✅ To get a definite answer you MUST register a Q, not offer a choice.\n"
-            "If you find yourself about to ask the user to pick between options, STOP and\n"
-            "convert it: register ONE Q carrying those options in its options array (the\n"
-            "user picks an option or writes freely in the document's Q&A panel). Writing\n"
-            "a Q is the ONLY way to get an answer from this system — always leave it as the\n"
-            "next action instead of a choice."
+            "⚠️ Do NOT present choices or options to the user (no multiple-choice lists, no interactive "
+            "selection prompts). This is an UNMANNED system: such prompts get no response and the run is "
+            "force-terminated.\n"
+            "For a definite answer, register a Q carrying the alternatives in its options array, and leave it "
+            "as the next action instead of a choice."
         ),
     },
 }
@@ -436,30 +450,16 @@ _CLARIFY_TEXT = {
 # {post} is filled with the POST line at format time.
 _REMINDER_TEXT = {
     "ko": (
-        "⚠️ 행동하기 전에 다시 읽으십시오 — do NOT present choices: 선택지/옵션을 제시하지 말고 "
-        "사용자에게 대화형 질문을 하지 마십시오. 이것은 무인 시스템이므로 원격 실행은 답을 받지 못하고 "
-        "강제 종료됩니다. 확신이 서지 않으면, 확실한 답(definite answer)을 받는 유일한 방법은 "
-        "Q(질의)를 작성(register a Q)하는 것입니다: {post} 로 등록하십시오 "
-        "(위 Clarification guide 참조). 보기가 필요하면 그 옵션들을 options 배열에 담아 Q 1건으로 "
-        "등록하십시오. 항상 선택지가 아니라 다음 행동(next action)으로 'Q 작성'을 남기십시오."
+        "⚠️ 다시 확인: 선택지를 제시하거나 대화형 질문을 하지 마십시오(do NOT present choices). "
+        "사용자 판단이 필요하면 {post} 로 Q를 등록하십시오(보기는 options 배열에)."
     ),
     "ja": (
-        "⚠️ 行動する前にもう一度読んでください — do NOT present choices: 選択肢/オプションを提示せず、"
-        "ユーザーに対話的な質問をしないでください。これは無人システムなので、リモート実行は回答を得られず "
-        "強制終了されます。不明な場合、確実な回答(definite answer)を得る唯一の方法は "
-        "Q(質問)を作成(register a Q)することです: {post} で登録してください "
-        "(上記 Clarification guide 参照)。選択肢が必要な場合は、その選択肢をoptions配列に入れた "
-        "Q 1件として登録してください。常に選択肢ではなく次の行動(next action)として「Qの作成」を "
-        "残してください。"
+        "⚠️ 再確認: 選択肢を提示したり対話的な質問をしたりしないでください(do NOT present choices)。"
+        "ユーザーの判断が必要なら {post} でQを登録してください(選択肢はoptions配列に)。"
     ),
     "en": (
-        "⚠️ Read this again before you act: do NOT present choices/options and do NOT ask "
-        "the user an interactive question — this is an unmanned system, so a remote run "
-        "gets no answer and is force-terminated. If you are unsure, the ONLY way to get a "
-        "definite answer is to write a Q: register it with {post} "
-        "(see the Clarification guide above). If you need to offer alternatives, register "
-        "ONE Q carrying them in its options array. "
-        "Leave 'write a Q' as the next action — never a choice."
+        "⚠️ Reminder: do NOT present choices and do NOT ask the user an interactive question. "
+        "If a user decision is needed, register a Q with {post} (alternatives go in its options array)."
     ),
 }
 
@@ -714,16 +714,12 @@ def _clarification_guide_body(
     pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question/register")
     body = (
         f"{txt['lead']}\n"
-        "\n"
         f"POST {base}/q/{anchor_doc_id}/questions\n"
         f"Authorization: Bearer {raw_token}\n"
         f"{pointer}\n"
+        f"{_question_precheck_brief(base, anchor_doc_id, loc)}\n"
         "\n"
-        f"{_question_precheck(base, anchor_doc_id, loc)}\n"
-        "\n"
-        f"{txt['warn']}\n"
-        "\n"
-        f"{txt['positive']}"
+        f"{txt['warn']}"
     )
     # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions additionally carry
     # the turn-end / no-background-wait addendum after the Q guidance above.
