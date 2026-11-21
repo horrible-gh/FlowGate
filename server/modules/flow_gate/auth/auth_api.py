@@ -223,6 +223,18 @@ def revoke_others(payload:dict=Depends(verify_token)):
     if not payload.get("sid"):raise HTTPException(409,"current_session_unknown")
     count=revoke_other_sessions(payload["sub"],payload["sid"],"revoke_others")
     return {"message":"Other sessions revoked","revoked_count":count}
+@router.get("/connection-check")
+def connection_check(current_user:dict=Depends(get_current_user)):
+    # Auth lookups may be cached: always reach the DB before announcing recovery.
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.db.resilience import auth_unavailable
+    from fastapi.responses import JSONResponse
+    try:
+        get_store()._fetch_one("SELECT 1 AS ok")
+    except Exception as exc:
+        raise auth_unavailable(exc) from exc
+    return JSONResponse({"ok":True},headers={"Cache-Control":"no-store"})
+
 @router.get("/me")
 def me(current_user:dict=Depends(get_current_user)):
     return {"user_id":current_user["user_id"],"username":current_user.get("username"),"email":current_user.get("email"),"is_admin":bool(current_user.get("is_admin")),"first_login_required":bool(current_user.get("first_login_required")),"roles":_roles(current_user["user_id"])}
