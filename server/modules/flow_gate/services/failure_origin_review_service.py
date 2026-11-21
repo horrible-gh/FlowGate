@@ -1,6 +1,7 @@
 """Dedicated failure-origin review issuance and evidence prompt (0503 T0009)."""
 from __future__ import annotations
 from modules.flow_gate.services import terminal_prompt
+from modules.flow_gate.services.prompt_blocks.compose import compose
 
 from typing import Optional
 
@@ -94,7 +95,7 @@ def build_failure_origin_mention(*, doc: dict, run: dict, items: list[dict],
     evidence = _build_evidence(doc=doc, run=run, items=items)
     lines = "\n".join(f"- {key}: {value}" for key, value in evidence.items())
     return (
-        terminal_prompt.prepare("## Failure-origin review\n---\n"
+        compose("## Failure-origin review\n---\n"
         "Classify which side violates the original requirement; do not merely choose the "
         "fastest way to make tests green. Use exactly one canonical classification: "
         "product_defect, test_defect, or hold.\n\n"

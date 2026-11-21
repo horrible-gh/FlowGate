@@ -93,7 +93,8 @@ def contract_mention(api_base: str, raw_token: str) -> str:
 
 
 def cli_mention(api_base: str, raw_token: str) -> str:
-    return contract_mention(api_base, raw_token)
+    from modules.flow_gate.services.prompt_blocks.blocks.attachments import upload_request_brief
+    return upload_request_brief(api_base, raw_token)
 
 
 def chat_descriptor() -> dict:

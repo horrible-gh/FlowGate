@@ -81,5 +81,19 @@ register(Block("documents.unreadable", brief=_unreadable_rules, detail=_unreadab
                help_leaf="documents/unreadable"))
 register(Block("documents.unreadable_answer", brief=_answer_reference, detail=_answer_reference,
                help_leaf="documents/unreadable"))
-register(Block("documents.lookup", brief=document_lookup_lines, detail=document_lookup_lines,
+def document_lookup_brief(base, raw_token, *, project="", doc_id="", **_kwargs):
+    target = doc_id or "<doc_id>"
+    return [
+        BODY_UNREADABLE_RULES[4],
+        f"GET {base}/document/{target}/meta",
+        f"GET {base}/document/{target}/outline",
+        f"GET {base}/document/{target}/section?section_id=<section_id>",
+        f"GET {base}/search/documents/content?q=<keyword>&project={project}",
+        f"GET {base}/help/items/documents/partial",
+        f"GET {base}/help/items/documents/unreadable",
+        f"Authorization: Bearer {raw_token}",
+    ]
+
+
+register(Block("documents.lookup", brief=document_lookup_brief, detail=document_lookup_lines,
                help_leaf="documents/partial"))
