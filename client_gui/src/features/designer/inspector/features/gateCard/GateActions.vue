@@ -8,7 +8,6 @@
     <ConfirmDialog :open="cancelAttempt !== null" :title="t(k('cancel_dialog.title'))" :message="t(k('cancel_dialog.message'))"
       :confirm-label="t(k('cancel'))" :cancel-label="t(k('cancel_dialog.keep'))" :busy="busy !== null"
       @cancel="cancelAttempt = null" @confirm="confirmCancel" />
-    <span v-if="shownReason" class="inspector-gate-reason" :title="shownReason" data-test="gate-confirm-reason">{{ shownReason }}</span>
     <!-- task 6: the failed approval is cancelled in the Git tab — take the person there. -->
     <Button v-if="oldApprovalHeld" size="sm" variant="ghost" data-test="gate-open-git" @click="host?.request({ kind: 'show-tool', tool: 'git' })">{{ t(k('old_approval.open')) }}</Button>
   </div>
@@ -24,7 +23,7 @@ import { useGateDecision, type GateDecisionState } from './useGateDecision'
 const props = defineProps<{ target: InspectorTarget; state?: GateDecisionState }>()
 const { t } = useI18n()
 const k = (key: string) => `gui.inspector.gateCard.${key}`
-const { actions, cancelAction, attemptId, decisionHeld, result, busy, failureKey, decide } = props.state ?? useGateDecision(() => props.target)
+const { actions, cancelAction, attemptId, result, busy, failureKey, decide } = props.state ?? useGateDecision(() => props.target)
 const cancelAttempt = ref<string | null>(null)
 watch(() => `${props.target.flowId}/${props.target.nodeId}/${attemptId?.value}`, () => { cancelAttempt.value = null })
 async function confirmCancel() {
@@ -33,15 +32,7 @@ async function confirmCancel() {
   if (attempt && attempt === attemptId.value) await decide('cancel')
 }
 const host = inject(INSPECTOR_HOST, null)
-// The blocked-[승인] reason line is gone: the disabled button keeps its reason as a tooltip, and a conflict is already
-// the result row's pill. The one line left beside the buttons says where to undo an approval once it is held or done,
-// because [취소] no longer applies then.
 const oldApprovalHeld = computed(() => !actions.value.confirm.enabled && actions.value.confirm.reason === 'reason.old_approval_failed')
-const shownReason = computed(() => {
-  if (decisionHeld?.value || result?.value.key === 'confirmed') return t(k('cancel_dialog.after_approval'))
-  const reason = actions.value.confirm.reason
-  return reason === 'reason.decision_in_progress' || reason === 'reason.old_approval_failed' ? t(k('cancel_dialog.after_approval')) : null
-})
 function tipOf(reason: string | null): string | undefined {
   if (failureKey.value) return t(failureKey.value.startsWith('settings:') ? `gui.inspector.checkSettings.${failureKey.value.slice(9)}` : k(failureKey.value))
   return reason ? t(k(reason)) : undefined
@@ -54,5 +45,4 @@ function tipOf(reason: string | null): string | undefined {
    stays an outline (no fill) so it never outweighs the approve button, and fills lightly only on hover. */
 .inspector-gate-actions .inspector-gate-cancel { border-color: var(--fg2-status-danger-border); background: transparent; color: var(--fg2-status-danger-fg); }
 .inspector-gate-actions .inspector-gate-cancel:hover:not(:disabled) { border-color: var(--fg2-status-danger-fg); background: var(--fg2-status-danger-bg); color: var(--fg2-status-danger-fg); }
-.inspector-gate-reason { max-width: 260px; overflow: hidden; color: var(--fg2-status-warning-fg); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 </style>
