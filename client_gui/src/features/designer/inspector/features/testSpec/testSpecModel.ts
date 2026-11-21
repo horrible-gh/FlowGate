@@ -18,6 +18,7 @@
 // Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all in the document window), the
 // Graph TS Node run (Graph execution integration) and the separate Case document kind.
 import type { InspectorCardDocument, InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 /** The parts of the target the section reads. */
 export interface TestSpecTargetFacts {
@@ -508,7 +509,7 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
       }
     : emptyLine('report', 'empty.after_run')
 
-  return instructionOmitted ? [scenario, report] : [instruction, scenario, report]
+  return instructionSlotVisible(instructionOmitted, target.cardDocuments, tsId) ? [instruction, scenario, report] : [scenario, report]
 }
 
 

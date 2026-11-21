@@ -58,7 +58,7 @@ afterEach(() => {
 
 /** A card line as the server answers it right after the card was placed (an empty draft). */
 function line(slot: string, docType: string, docId: string, author: 'human' | 'run'): FlowGraphCardDocument {
-  return { slot, docType, author, docId, title: `카드 · ${slot}`, status: 'draft', docReviewStatus: null }
+  return { slot, docType, author, docId, title: `카드 · ${slot}`, status: 'draft', docReviewStatus: null, hasBody: false, bodyState: 'readable' }
 }
 
 /** A draft node just placed, as the shown Graph has it once the save answered its key and lines. */

@@ -46,6 +46,7 @@ from typing import Iterable, Optional
 from flowgate.card_documents import legacy_adapter as legacy
 from flowgate.card_documents import repository
 from flowgate.card_documents import slots as cs
+from flowgate.card_settings import repository as card_settings
 
 
 
@@ -127,6 +128,11 @@ def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, regis
     here is titled (in ``locale``); a shown root or shared document keeps its own title."""
     # Existing WP lines stay readable, but saving an old card cannot regenerate missing plan/deploy drafts.
     if node.get("doc_type") == "WP":
+        return None, False
+    # 0065 #33: preserve the slot, but do not create an omitted instruction draft.
+    # TS also owns the scenario, so its shared document remains available.
+    if (slot.slot == cs.INSTRUCTION and slot.doc_type != "TS"
+            and card_settings.values(group["group_id"], node["node_key"]).get("instruction") == "omit"):
         return None, False
     if slot.shares:
         return made.get(slot.shares), False
@@ -315,6 +321,7 @@ def _shown_rows(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str
 def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
     """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
     written (``has_body``) and its review history counts (0 without a document)."""
+    omitted = card_settings.keys_with(flow_id, "instruction", "omit")
     shown_rows = _shown_rows(flow_id, docs_by_id, node_keys)
     reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
     out: dict[str, list[dict]] = {}
@@ -330,6 +337,7 @@ def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[s
             "title": (shown or {}).get("title"), "status": (shown or {}).get("status"),
             "doc_review_status": (shown or {}).get("doc_review_status"),
             "has_body": written, "body_state": body_state,
+            "instruction_omitted": row["node_key"] in omitted,
             "review_count": review_count, "rejection_count": rejection_count,
             "history_count": review_count + rejection_count,
             **decision,
@@ -398,7 +406,17 @@ class CardView:
     def __init__(self, flow_id: str, docs_by_id: dict):
         available = repository.available()
         self._lines = lines_by_node(flow_id, docs_by_id) if available else {}
+        self._omitted = card_settings.keys_with(flow_id, "instruction", "omit")
         self.hidden_doc_ids = frozenset(repository.doc_ids(flow_id, owned_only=True)) if available else frozenset()
 
     def lines_for(self, node: dict) -> list:
-        return cs.lines_of(node.get("node_type"), node.get("doc_type"), self._lines.get(node.get("node_key")) or [])
+        shown = cs.lines_of(node.get("node_type"), node.get("doc_type"), self._lines.get(node.get("node_key")) or [])
+        # Missing instruction documents still have a virtual slot, including after use is restored.
+        signatures = {(line["slot"], line["doc_type"]) for line in shown}
+        for slot in cs.card_slots(node.get("node_type"), node.get("doc_type")):
+            if slot.slot == cs.INSTRUCTION and cs.slot_signature(slot) not in signatures:
+                shown.insert(0, {"slot": slot.slot, "doc_type": slot.doc_type, "author": slot.author,
+                                 "doc_id": None, "title": None, "status": None, "doc_review_status": None,
+                                 "has_body": False, "body_state": None,
+                                 "instruction_omitted": node.get("node_key") in self._omitted})
+        return shown

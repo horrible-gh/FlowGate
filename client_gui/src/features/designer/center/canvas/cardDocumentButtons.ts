@@ -1,4 +1,5 @@
 import type { FlowGraphNode } from '../graph/flowGraph'
+import { instructionVisible } from '../graph/instructionVisibility'
 
 export interface CardDocumentButton {
   docId: string
@@ -30,11 +31,13 @@ export function cardDocumentButtons(node: Pick<FlowGraphNode, 'cardDocuments' | 
   const scenarios = new Map<string, CardDocumentButton>()
   for (const line of node.cardDocuments ?? []) {
     if (!line.docId) continue
+    if (line.slot === 'instruction' && !instructionVisible(line.instructionOmitted === true, line)) continue
     if (line.slot === 'scenario') {
       scenarios.set(line.docId, {
         docId: line.docId, docType: line.docType, title: line.title ?? line.docId,
         ownerSlot: line.slot, report: false, scenario: true, empty: emptyLine(line),
       })
+      continue
     }
     const previous = docs.get(line.docId)
     if (previous && line.slot !== 'instruction') continue
@@ -54,6 +57,13 @@ export function cardDocumentButtons(node: Pick<FlowGraphNode, 'cardDocuments' | 
     buttons.push(doc)
     const scenario = doc.ownerSlot === 'instruction' ? scenarios.get(doc.docId) : undefined
     if (scenario) buttons.push(scenario)
+  }
+  // A hidden instruction must not remove the separate scenario of its shared TS document.
+  for (const scenario of scenarios.values()) {
+    if (!buttons.some(button => button.scenario && button.docId === scenario.docId)) {
+      const reportIndex = buttons.findIndex(button => button.report)
+      buttons.splice(reportIndex < 0 ? buttons.length : reportIndex, 0, scenario)
+    }
   }
   return buttons
 }

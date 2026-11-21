@@ -7,6 +7,7 @@
 // on the report line; the other line has no document (a hollow dot saying why — no "not yet" text). The
 // instruction line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 export type ResearchSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -86,5 +87,6 @@ function researchLine(key: ResearchSlot['key'], types: readonly string[], facts:
 /** The card's lines: instruction (unless the settings omit it) · report. */
 export function researchCardSlots(facts: ResearchCardFacts, instructionOmitted = false): readonly ResearchSlot[] {
   const report = researchLine('report', RESEARCH_REPORT_TYPES, facts)
-  return instructionOmitted ? [report] : [researchLine('instruction', RESEARCH_INSTRUCTION_TYPES, facts), report]
+  const instruction = researchLine('instruction', RESEARCH_INSTRUCTION_TYPES, facts)
+  return instructionSlotVisible(instructionOmitted, facts.cardDocuments, instruction.id) ? [instruction, report] : [report]
 }
