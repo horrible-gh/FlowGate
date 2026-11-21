@@ -237,7 +237,31 @@ def r018_store(r018_db):
 
 @pytest.fixture(scope="module")
 
-def seed(r018_db):
+def document_write_gate():
+
+    """Register the real startup gate in this isolated app, then restore it."""
+
+    from flowgate.card_document_edit import write_gate
+
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+
+
+    with pytest.MonkeyPatch.context() as mp:
+
+        mp.setitem(card_document_ports._handlers,
+
+                   card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+
+        yield
+
+
+
+
+
+@pytest.fixture(scope="module")
+
+def seed(r018_db, document_write_gate):
 
     """Seed test data."""
 
@@ -423,7 +447,10 @@ def _issue_bearer(tmp_path, continuation_locale=None) -> str:
 
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+    # token_scratch only accepts <storage>/work/<project>/<token_id>, so point the
+    # storage root at tmp_path instead of overriding the scratch path itself.
+
+    with patch.dict(os.environ, {"FLOWGATE_STORAGE_DIR": str(tmp_path / "storage")}):
 
         issued = token_service.issue(
 
@@ -876,7 +903,7 @@ class TestMentionSections:
 
             "## Clarification guide",
 
-            "## 도움말",
+            "## Help",
 
             "## Instruction to include next document header",
 
@@ -1388,9 +1415,12 @@ class TestMentionSections:
         assert "/help/doc_type" not in mention
 
         # The central help block replaces it as the discovery path (L-0005 §2-10).
-        assert "## 도움말" in mention
-        assert "/help/items/{name}" in mention
-        assert "?detail=true" in mention
+        # v02test.0061 card 5: the block lists the needed leaf addresses directly,
+        # with no {name} placeholder and no detail=true instruction.
+        assert "## Help" in mention
+        assert "http://localhost:8000/ctx/flow_gate/api/v1/help/items/" in mention
+        assert "/help/items/{name}" not in mention
+        assert "?detail=true" not in mention
 
 
 
@@ -1443,13 +1473,23 @@ class TestMentionSections:
 
         assert "/help/question" not in mention
 
-        # NR0003 recency: the no-choices guard is repeated at the bottom.
+        # NR0003 recency: the bottom Reminder still repeats the Q-only redirect.
+
+        # flowgate.v02test.0061 card 7: the guide states the no-choices guard once;
+
+        # the Reminder carries the short Q redirect instead of a second copy.
 
         idx_reminder = mention.find("## Reminder")
 
         assert idx_reminder > idx_q, "Reminder section must be at the bottom, after the hoisted guide"
 
-        assert mention.count("do NOT present choices") + mention.count("Do NOT present choices") >= 2
+        assert mention.count("Do NOT present choices") == 1
+
+        reminder = mention[idx_reminder:]
+
+        assert "do not ask interactive questions" in reminder
+
+        assert "help/items/question/register" in reminder
 
         # rejection (2026-06-15): the prohibition alone was ignored. The guard must
         # pair "no choices" with an explicit positive redirect — write a Q to get a

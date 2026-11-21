@@ -701,7 +701,13 @@ def test_help_tools_answers_for_attachments_as_well_as_source_tools(env, action_
     body = resp.json()
     assert body["kind"] == kind
 
-    block = body["document_attachments"]
+    # group 0061 card 3: the AI summary names only the attachment operations this kind may call;
+    # the block below (denied / absent details, notes) is what the help item document_attachments
+    # and /help/tools/{name} are built from, and it is unchanged.
+    assert "document_attachments" not in body and "notes" not in body
+    assert body.get("attachments", []) == tool_registry.attachment_names(kind)
+
+    block = tool_registry.attachment_view(kind, "ko", "/api/v1")
     assert block["kind"] == kind
     assert [op["name"] for op in block["operations"]] == tool_registry.attachment_names(kind)
     assert block["available"] is bool(tool_registry.attachment_names(kind))
@@ -712,18 +718,22 @@ def test_help_tools_answers_for_attachments_as_well_as_source_tools(env, action_
     assert named == set(tool_registry.ATTACHMENT_DISPLAY_ORDER)
     assert [op["name"] for op in block["absent"]] == list(tool_registry.ATTACHMENT_ABSENT_OPS)
     assert all(op["reason"] for op in block["denied"] + block["absent"])
-    assert block["help_item_url"].endswith("/help/items/document_attachments")
+    assert block["help_item_url"].endswith("/help/items/attachments/read")
 
-    # The list-level notes say it too, for a worker that reads notes and skips keys.
+    # The full registry notes still say it too, for the console and the help items.
     note_key = "attachments" if kind != "none" else "attachments_none"
-    assert tool_registry.NOTES["ko"][note_key] in body["notes"]
+    registry = tool_registry.resolve_registry(_token(action_scope), PROJECT_ID, "ko")
+    assert tool_registry.NOTES["ko"][note_key] in registry["notes"]
 
 
 def test_help_tools_read_kind_names_copy_as_denied_not_missing(env):
-    body = _help_get("/api/v1/help/tools", _token("review")).json()
-    block = body["document_attachments"]
+    from modules.flow_gate.services import tool_registry
 
+    body = _help_get("/api/v1/help/tools", _token("review")).json()
     # flowgate.chat.0017 CH0002: a read kind may also ask a person to approve an attachment it produced.
+    assert body["attachments"] == ["attachment_list", "attachment_read", "attachment_upload_request"]
+    assert "attachment_copy" not in body["attachments"]
+    block = tool_registry.attachment_view("read", "ko", "/api/v1")
     assert [op["name"] for op in block["operations"]] == ["attachment_list", "attachment_read", "attachment_upload_request"]
     assert [op["name"] for op in block["denied"]] == ["attachment_copy"]
     assert "read" in block["denied"][0]["reason"]

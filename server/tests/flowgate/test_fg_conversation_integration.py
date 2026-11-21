@@ -446,8 +446,8 @@ def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
     writer = _mention(True)
     for marker in ["/canvas", "/runs/current", "/attachment-requests", "/documents/{doc_id}", "/ai-options"]:
         assert marker in reader and marker in writer
-    assert "/help/items/chat_documents" not in reader
-    assert "/help/items/chat_documents" in writer
+    assert "/help/items/documents/edit" not in reader
+    assert "/help/items/documents/edit" in writer
     assert "/revisions" not in reader and "place_flow_cards" not in reader
     assert "## Command execution" in writer and "## Command execution" not in reader
 

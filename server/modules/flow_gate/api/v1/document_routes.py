@@ -21,6 +21,7 @@ from modules.flow_gate.storage.paths import resolve_storage_path
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.q_service import get_answers_for_document
+from modules.flow_gate.services import ai_response_slim
 from modules.flow_gate.services import conversation_markdown_service
 from modules.flow_gate.services import document_outline_service as outline_svc
 from modules.flow_gate.services.conversation_turn_service import ConversationTurnError
@@ -687,6 +688,8 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth, None, None
+    # group 0061 card 3: the three reads below slim their answer for an AI token only.
+    ai_response_slim.remember_auth(request, auth)
 
     try:
         _validate_outbound_doc_id(doc_id)
@@ -741,7 +744,7 @@ def get_document_outline(
     # rejected. Bouncing one outline read with a 422 buys nothing in unattended work.
     level = max(1, min(int(max_level), outline_svc.MAX_HEADING_LEVEL))
     items, truncated = outline_svc.outline_items(text, level)
-    return JSONResponse(content={
+    return JSONResponse(content=ai_response_slim.for_ai(request, {
         "ok": True,
         "doc_id": doc_id,
         "revision_no": int(doc.get("revision_no", 0) or 0),
@@ -756,7 +759,7 @@ def get_document_outline(
         "max_level": level,
         "truncated": truncated,
         "items": items,
-    })
+    }, keep=ai_response_slim.OUTLINE_KEEP, whole=ai_response_slim.OUTLINE_WHOLE))
 
 
 @router.get("/document/{doc_id}/section")
@@ -814,7 +817,7 @@ def get_document_section(
             char_end=text.char_end_of(resolved.line_end),
         )
 
-    return JSONResponse(content={
+    return JSONResponse(content=ai_response_slim.for_ai(request, {
         "ok": True,
         "doc_id": doc_id,
         "revision_no": rev,
@@ -835,7 +838,7 @@ def get_document_section(
         "document_chars": text.document_chars,
         "truncated": truncated,
         "next_locator": next_locator,
-    })
+    }, keep=ai_response_slim.SECTION_KEEP, whole=ai_response_slim.SECTION_WHOLE))
 
 
 @router.get("/document/{doc_id}/meta")
@@ -902,7 +905,7 @@ def get_document_meta(
     body["state"] = _content_state(doc, text)
     resp["body"] = body
     resp["content_state"] = body["state"]
-    return JSONResponse(content=resp)
+    return JSONResponse(content=ai_response_slim.for_ai(request, resp))
 
 
 _RELATIONS_REFERENCED_BY_MAX = 50

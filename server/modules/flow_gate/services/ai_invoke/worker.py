@@ -38,6 +38,7 @@ from modules.flow_gate.services import chat_settings_service
 from modules.flow_gate.services import chat_command_service
 from modules.flow_gate.services import node_title_hooks
 from modules.flow_gate.services import q_service
+from modules.flow_gate.services.prompt_blocks.blocks import submit as _submit_block
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import work_plan_attachment_service
@@ -580,64 +581,9 @@ _CLI_REVIEW_FILE_FIRST: dict[str, str] = {
 }
 
 
-_REMOTE_CLI_TRANSPORT: dict[str, str] = {
-    "ko": (
-        "## 원격 CLI 실행 규약\n---\n"
-        "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
-        "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
-        "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문(리뷰 JSON 포함)은 현재 작업 "
-        "디렉터리에 UTF-8 파일로 작성하고, 그 파일 내용을 POST /inbox 요청 본문의 content로 "
-        "보내십시오(명령줄 문자열에 직접 넣지 않음). body_chars와 body_sha256을 함께 보내고 "
-        "doc_path는 쓰지 마십시오. 이 규약은 위의 doc_path 제출 안내보다 우선합니다."
-    ),
-    "ja": (
-        "## リモートCLI実行規約\n---\n"
-        "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
-        "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
-        "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文"
-        "(レビューJSONを含む)は現在の作業ディレクトリにUTF-8ファイルとして作成し、そのファイルの"
-        "内容をPOST /inboxリクエスト本文のcontentとして送ってください(コマンドライン文字列に直接"
-        "入れない)。body_charsとbody_sha256も送り、doc_pathは使わないでください。この規約は上記の"
-        "doc_path提出案内より優先されます。"
-    ),
-    "en": (
-        "## Remote CLI execution contract\n---\n"
-        "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
-        "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
-        "`{SCRATCH}` and the scratch directory mean the current working directory. Write every "
-        "body you submit (review JSON included) as a UTF-8 file in the current working directory "
-        "and send that file's content as `content` in the POST /inbox request body (never inline "
-        "on a command line), together with body_chars and body_sha256; do not use doc_path. This "
-        "contract overrides the doc_path submission guidance above."
-    ),
-}
-
-
-_REMOTE_CLI_CHAT_TRANSPORT: dict[str, str] = {
-    "ko": (
-        "## 원격 CLI 실행 규약\n---\n"
-        "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
-        "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
-        "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문은 현재 작업 디렉터리에 UTF-8 "
-        "파일로 작성하고, 위의 대화 턴 제출 안내에 따라 보내십시오(명령줄 문자열에 직접 넣지 않음)."
-    ),
-    "ja": (
-        "## リモートCLI実行規約\n---\n"
-        "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
-        "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
-        "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文は"
-        "現在の作業ディレクトリにUTF-8ファイルとして作成し、上記の会話ターン提出案内に従って"
-        "送ってください(コマンドライン文字列に直接入れない)。"
-    ),
-    "en": (
-        "## Remote CLI execution contract\n---\n"
-        "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
-        "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
-        "`{SCRATCH}` and the scratch directory mean the current working directory. Write the "
-        "body you submit as a UTF-8 file in the current working directory and submit it "
-        "following the conversation turn instructions above (never inline on a command line)."
-    ),
-}
+# flowgate.v02test.0061 card 4: the remote CLI contracts live in the prompt block registry.
+_REMOTE_CLI_TRANSPORT = _submit_block.REMOTE_CLI_TRANSPORT
+_REMOTE_CLI_CHAT_TRANSPORT = _submit_block.REMOTE_CLI_CHAT_TRANSPORT
 
 
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
@@ -1482,7 +1428,7 @@ def _chat_tool_definitions() -> list[dict]:
         {
             "name": "read_help",
             "description": (
-                "Read personalized FlowGate Help in-process. Use item=document_access for "
+                "Read personalized FlowGate Help in-process. Use item=documents/access for "
                 "conversation forward/backward paging rules."
             ),
             "schema": api_server_tools.READ_HELP_SCHEMA,
@@ -1674,7 +1620,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 "The server fetched this invocation's configured conversation context window. "
                 "Reply from it directly. If `older_history` is present and earlier context is "
                 "needed, call `read_chat_history` with its `before_seq`; `read_help` with "
-                "item=document_access explains the paging contract."
+                "item=documents/access explains the paging contract."
                 # Only a run offered run_command is told about it (never a read-only chat).
                 + (" When the work needs a test, build or git command, call `run_command`; its "
                    "result (or the user's refusal) comes back here and you continue from it."
@@ -2619,7 +2565,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,
                 "tool": _CHAT_HISTORY_TOOL_NAME,
-                "help_item": "document_access",
+                "help_item": "documents/access",
             }
         return 200, merged
     except Exception as exc:

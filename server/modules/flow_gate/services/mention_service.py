@@ -35,6 +35,7 @@ Insert a placeholder into next_type based on the head state:
 """
 from __future__ import annotations
 from modules.flow_gate.services import terminal_prompt
+from modules.flow_gate.services.prompt_blocks.compose import compose
 
 import json
 import logging
@@ -51,6 +52,8 @@ from modules.flow_gate.services import conversation_query_service
 from modules.flow_gate.services.conversation_turn_service import turn_wire
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.documents import document_service
+from modules.flow_gate.services.prompt_blocks.blocks import documents as _documents_block
+from modules.flow_gate.services.prompt_blocks.blocks import source_tools as _source_tools_block
 # AUTO_REPORT_MAP is imported lazily at its use site to avoid a service import cycle.
 
 logger = logging.getLogger(__name__)
@@ -101,38 +104,10 @@ def _remote_source_crud_lines(
     locale: str = "ko",
     kind: Optional[str] = None,
 ) -> list[str]:
-    """The five mention lines that survive the 0349 shrink (P0005 [notes] / D0004 D-4).
-
-    Every request format, field description and JSON example the mention used to carry now
-    lives behind GET /help/tools — the mention was growing one block per tool and workers
-    were reading the top and skipping the rest (R0001). What stays is exactly what a worker
-    that never calls help must still know: call help first, do not touch the disk, which
-    tools exist, the token, and where the detail is. All five are built from fixed strings
-    plus ``kind``, so no lookup failure can empty the section (D0004 D-6).
-
-    ``kind`` comes from tool_registry — the same judge the permission check uses — so the
-    mention can no longer advertise a tool the server would refuse. Pass it directly when
-    the caller holds a token rather than a step type (see q_answer_invoke_service); leave it
-    None to have the step type judged here.
-    """
-    if not raw_token:
-        return []
-    loc = template_provision.normalize_locale(locale)
-    if kind is None:
-        kind, _reason = tool_registry.kind_for_step(action_scope, step_type)
-    names = tool_registry.tool_names(kind, action_scope)
-    if not names:
-        # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
-        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 normal-3).
-        return []
-    text = tool_registry.MENTION_LINES[loc]
-    return [
-        text["first_action"].format(url=f"{base}/help/tools"),
-        text["no_disk_edit"],
-        f"{text['tools_label']}: " + ", ".join(names),
-        f"Authorization: Bearer {raw_token}",
-        text["detail"].format(url=f"{base}/help/tools/{{name}}"),
-    ]
+    """Compatibility entry: ``prompt_blocks`` block ``source_tools.crud`` (the five 0349 mention lines)."""
+    return _source_tools_block.source_tools_brief(
+        base, raw_token, step_type, action_scope=action_scope, locale=locale, kind=kind
+    )
 
 
 def _remote_source_crud_section(
@@ -242,32 +217,10 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
     return lines
 
 
-# 0064 T-B1e (D0004 §3.6 rules 1-5, L0005 2.15, P0006 §2.9): the one wording of the unread-body rules. The Q&A
-# answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
-# documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
-BODY_UNREADABLE_RULES: tuple[str, ...] = (
-    "content가 null이면 읽지 못한 문서로 판단하십시오.",
-    "content_state가 readable이 아니면 읽지 못한 문서로 판단하십시오.",
-    "content_state가 readable이고 front matter뿐이면 읽은 빈 문서로 판단하십시오.",
-    "문서의 열람 여부를 판단한 결과는 내부에서만 쓰고 답변에 나열하지 마십시오.",
-    "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "읽지 못한 문서가 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오.",
-    "대체 근거가 없으면 지어내지 마십시오.",
-    "읽지 못한 문서가 없으면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 마십시오.",
-    "읽지 못한 문서가 현재 답변과 무관하면 열람 상태 보고를 쓰지 마십시오.",
-    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
-    "질문이 읽지 못한 문서의 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 표시하십시오. 이 표시는 필요한 문서의 미열람 보고와 별개로 하십시오.",
-    "이관 안내가 제공된 경우에만 그 안내의 조건으로 이관 여부를 판단하십시오. 문서를 읽지 못한 사실을 새 이관 조건으로 삼지 마십시오.",
-    "읽지 못한 이유가 권한 오류(403)이면 이 이유만으로 이관하지 마십시오. 이관 안내가 있으면 사람이 승인하거나 부여해야 하는 접근·실행 권한인지 그 안내에 따라 판단하십시오.",
-)
-
-BODY_UNREADABLE_ANSWER_REFERENCE = (
-    "[문서 조회 도구]의 본문 미열람 규칙에 따라, 필요한 미열람 문서의 문서 번호·사유(content_state 값)·"
-    "답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히고 대체 근거를 지어내지 마십시오. "
-    "미열람 문서가 없거나 답변과 무관하면 열람 상태 보고를 쓰지 마십시오. "
-    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오. "
-    "질문이 미열람 문서 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 별도로 표시하십시오."
-)
+# 0064 T-B1e: the unread-body rules and the bounded document reads now live in the prompt block registry
+# (prompt_blocks/blocks/documents.py, flowgate.v02test.0061 card 4). The names stay importable from here.
+BODY_UNREADABLE_RULES = _documents_block.BODY_UNREADABLE_RULES
+BODY_UNREADABLE_ANSWER_REFERENCE = _documents_block.BODY_UNREADABLE_ANSWER_REFERENCE
 
 
 def _document_lookup_lines(
@@ -277,35 +230,8 @@ def _document_lookup_lines(
     project: str = "",
     doc_id: str = "",
 ) -> list[str]:
-    """Advertise the bounded document reads added by group 0370.
-
-    These endpoints existed but the worker mentions still advertised only the legacy full-body
-    GET. Keep one shared block for creation/edit, workflow, review, chat and Q-answer work so a
-    worker can discover the efficient route at the point where it is about to read documents.
-
-    Merge note (group 0372 set 3 x group 0370): the document mentions built in THIS module no
-    longer inline these lines — `document_access` (help_catalog._content_document_access) serves
-    the same endpoints behind the help index, which every mention now teaches. The chat and
-    Q-answer mentions are not help-index clients, so invoke_mention_service and
-    q_answer_invoke_service still call this builder directly; that is why the line builder
-    survives the shrink while its `_document_lookup_section` wrapper does not.
-    """
-    target = doc_id or "<doc_id>"
-    project_filter = f"&project={project}" if project else ""
-    return [
-        "Read only the document data you need; use the full-document GET only when necessary:",
-        f"- Metadata without body: GET {base}/document/{target}/meta",
-        f"- Outline without body: GET {base}/document/{target}/outline",
-        f"- One section from that outline: GET {base}/document/{target}/section?section_id=<section_id>",
-        f"- Relationships without body: GET {base}/document/{target}/relations",
-        (
-            f"- Search bodies with match locations/context: GET {base}/search/documents/content"
-            f"?q=<keyword>{project_filter}&include_matches=true&context_lines=2&hits_per_doc=5"
-        ),
-        "Section reads accept exactly one of section, section_id, lines, or chars.",
-        *BODY_UNREADABLE_RULES,          # 0064 T-B1e: always, right before the credential line (P0006 §2.9 ②)
-        f"Authorization: Bearer {raw_token}",
-    ]
+    """Compatibility entry: ``prompt_blocks`` block ``documents.lookup``."""
+    return _documents_block.document_lookup_brief(base, raw_token, project=project, doc_id=doc_id)
 
 
 # ── Central help-index block (group 0372 set 3 — L-0005 §2-10) ────────────────
@@ -324,7 +250,7 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "목차의 항목 중 필요한 것을 GET {base}/help/items/{{name}} 으로 골라 받습니다.\n"
         "한 번에 모두 받으려면 GET {base}/help?detail=true 를 쓰세요.\n"
         "문서 첨부파일 목록·읽기·복사 방법은 별도 도구가 아니라 도움말 항목에 있습니다: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
     "ja": (
@@ -332,7 +258,7 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "目次から必要な項目を GET {base}/help/items/{{name}} で選んで取得します。\n"
         "表示可能な全項目を一度に取得するには GET {base}/help?detail=true を使ってください。\n"
         "文書添付ファイルの一覧・読み取り・コピー方法は専用ツールではなくヘルプ項目にあります: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
     "en": (
@@ -340,20 +266,16 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "Choose what you need from the index with GET {base}/help/items/{{name}}.\n"
         "To receive all visible items at once, use GET {base}/help?detail=true.\n"
         "Document attachment list/read/copy is not a separate tool — it is in the help item: "
-        "GET {base}/help/items/document_attachments\n"
+        "GET {base}/help/items/attachments/read\n"
         "Authorization: Bearer {token}"
     ),
 }
 
 
-def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
-    loc = template_provision.normalize_locale(locale)
-    from flowgate.graph_read.tools import cli_mention
-    return _section(
-        _HELP_INDEX_HEADER[loc],
-        _HELP_INDEX_TEXT[loc].format(base=base, token=raw_token),
-    ) + "\n\n" + cli_mention(base, None)
-
+def _help_index_section(base: str, raw_token: str, locale: str = "ko", *, kind="new") -> str:
+    from modules.flow_gate.services.prompt_blocks.compose import guidance
+    from modules.flow_gate.services.prompt_blocks.blocks.cards import graph_state_read
+    return guidance(base, raw_token, kind=kind) + "\n\n" + graph_state_read(base)
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
 # B0001 recurred because the choice-prohibition guard was body text only AND the
@@ -384,9 +306,9 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
 # body format. The help item's example (help_catalog.build_question_content) now also
 # demonstrates the `options` array the prescription below tells the worker to use.
 _QUESTION_FORMAT_POINTER: dict[str, str] = {
-    "ko": "질문 본문 서식과 예시는 도움말 항목에 있습니다: GET {url}",
-    "ja": "質問本文の形式と例はヘルプ項目にあります: GET {url}",
-    "en": "The question body format and an example are in the help item: GET {url}",
+    "ko": "질문 본문 서식·예시·전송 규칙은 도움말 항목에 있습니다: GET {url}",
+    "ja": "質問本文の形式・例・送信ルールはヘルプ項目にあります: GET {url}",
+    "en": "The question body format, an example and the transport rule are in the help item: GET {url}",
 }
 
 # flowgate.v02gui.0028: card AIs registered Qs the user's question policy says the AI decides itself (Q624: past run
@@ -426,6 +348,41 @@ _QUESTION_PRECHECK_TEXT: dict[str, str] = {
 }
 
 
+# flowgate.v02test.0061 card 7: most cards never register a Q, so the ordinary Clarification guide carries only what
+# is needed BEFORE deciding to ask -- the policy line and the token-specific past Q&A search address. What is needed
+# only WHILE registering (server reuse / 409 handling, list format, transport rule) is read from the help leaves
+# `question/precheck` and `question/register`. The full text below stays for the guides whose task is to register a Q.
+_QUESTION_PRECHECK_BRIEF: dict[str, str] = {
+    "ko": (
+        "Q를 등록하기 전에 사용자 질의 방침(도움말 notices 항목의 [사용자 질의 방침])을 먼저 적용하십시오. "
+        "방침상 AI가 정할 일이면 Q를 남기지 말고 정해서 진행하십시오.\n"
+        "과거 Q&A를 먼저 검색하고 같은 질문에 답이 있으면 그 답을 따르십시오: GET {search}\n"
+        "등록 응답(reused_answer·409) 처리와 검색 결과 형식: GET {precheck}"
+    ),
+    "ja": (
+        "Qを登録する前に、ユーザーの質問方針(ヘルプ notices 項目の方針ブロック)を先に適用してください。"
+        "方針上AIが決めることなら、Qを残さず決めて進めてください。\n"
+        "過去のQ&Aを先に検索し、同じ質問に回答があればそれに従ってください: GET {search}\n"
+        "登録応答(reused_answer・409)の扱いと検索結果の形式: GET {precheck}"
+    ),
+    "en": (
+        "Before you register a Q, apply the user's question policy first (the policy block of the `notices` help "
+        "item). If the policy says the AI decides, do not leave a Q: decide and go on.\n"
+        "Search the past Q&A first and follow an existing answer to the same question: GET {search}\n"
+        "Handling the registration response (reused_answer, 409) and the search result format: GET {precheck}"
+    ),
+}
+
+
+def _question_precheck_brief(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
+    """The check-before-asking lines of the ordinary Clarification guide (policy, past Q&A search, help leaf)."""
+    loc = template_provision.normalize_locale(locale)
+    return _QUESTION_PRECHECK_BRIEF[loc].format(
+        search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10",
+        precheck=f"{base}/help/items/question/precheck",
+    )
+
+
 def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
     """The check-before-asking steps with the token-specific past Q&A search address (flowgate.v02gui.0028)."""
     loc = template_provision.normalize_locale(locale)
@@ -443,69 +400,48 @@ def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str
         "{detail}", f"{base}/q/{anchor_doc_id}/search/<answer_id>") + "\n" + ai_text_guard.transport_rule(loc)
 
 
-# Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.
+# Lead-in (2 lines) / the no-choices guard with its "register a Q" redirect, per locale.
+# flowgate.v02test.0061 card 7: the guard used to say "no choices -> register a Q" three times (warn, positive and
+# the bottom Reminder). It is now said once here (`warn`, prohibition + the options-carrying Q prescription) and
+# once, in one line, in the Reminder. The Q&A panel sentence moved to the help leaf `question/register` (note).
 _CLARIFY_TEXT = {
     "ko": {
         "lead": (
             "불명확한 점이 있으면 추측하거나 가정으로 진행하지 마십시오.\n"
-            "질문은 해당 문서에 바인딩된 질의 데이터로 등록하십시오 (this is NOT a Q document):\n"
-            "질문을 채워 아래의 POST로 전송하십시오."
+            "질문은 해당 문서에 바인딩된 질의 데이터로 등록하십시오 (this is NOT a Q document):"
         ),
         "warn": (
             "⚠️ 사용자에게 선택지나 옵션을 제시하지 마십시오 — Do NOT present choices "
-            "(객관식 목록·대화형 선택 프롬프트 금지).\n"
-            "당신은 무인(UNMANNED) 시스템의 원격 워커입니다: 그런 프롬프트는 응답을 받지 못하고 "
-            "실행이 답변 없이 강제 종료(force-terminated)됩니다."
-        ),
-        "positive": (
-            "✅ 확실한 답(definite answer)을 받으려면 선택지를 제시하지 말고 반드시 "
-            "Q(질의)를 등록(register a Q)해야 합니다.\n"
-            "옵션 중 선택을 요청하려는 자신을 발견하면 STOP — 그 옵션들을 options 배열에 담아 "
-            "Q 1건으로 등록하십시오(사용자는 문서의 [질의 응답] 패널에서 보기를 고르거나 자유 "
-            "서술로 답합니다). Q 작성이 이 시스템에서 답을 받는 유일한 방법이며, 항상 선택지 대신 "
-            "다음 행동(next action)으로 남기십시오."
+            "(객관식 목록·대화형 선택 프롬프트 금지). 무인(UNMANNED) 시스템이라 그런 프롬프트는 응답을 받지 못하고 "
+            "실행이 강제 종료(force-terminated)됩니다.\n"
+            "확실한 답(definite answer)이 필요하면 보기를 options 배열에 담아 Q 1건으로 등록(register a Q)하고, "
+            "선택지 대신 다음 행동(next action)으로 남기십시오."
         ),
     },
     "ja": {
         "lead": (
             "不明な点があれば推測せず、仮定で進めないでください。\n"
-            "質問は当該文書に紐づくクエリデータとして登録してください (this is NOT a Q document):\n"
-            "質問を記入し、下記のPOSTで送信してください。"
+            "質問は当該文書に紐づくクエリデータとして登録してください (this is NOT a Q document):"
         ),
         "warn": (
             "⚠️ ユーザーに選択肢やオプションを提示しないでください — Do NOT present choices "
-            "(多肢選択リスト・対話的な選択プロンプト禁止)。\n"
-            "あなたは無人(UNMANNED)システムのリモートワーカーです: そうしたプロンプトは応答を "
-            "得られず、実行は回答なしで強制終了(force-terminated)されます。"
-        ),
-        "positive": (
-            "✅ 確実な回答(definite answer)を得るには、選択肢を提示せず必ず "
-            "Q(質問)を登録(register a Q)してください。\n"
-            "オプションの選択を求めようとしている自分に気づいたらSTOP — その選択肢をoptions配列に入れた "
-            "Q 1件として登録してください(ユーザーは文書の[質疑応答]パネルで選択肢を選ぶか、自由記述で "
-            "回答します)。Qの作成がこのシステムで回答を得る唯一の方法であり、常に "
+            "(多肢選択リスト・対話的な選択プロンプト禁止)。無人(UNMANNED)システムのため、そうしたプロンプトは応答を "
+            "得られず、実行は強制終了(force-terminated)されます。\n"
+            "確実な回答(definite answer)が必要なら、選択肢をoptions配列に入れたQ 1件として登録(register a Q)し、"
             "選択肢ではなく次の行動(next action)として残してください。"
         ),
     },
     "en": {
         "lead": (
             "If anything is unclear, do NOT guess and do NOT proceed on assumptions.\n"
-            "Register your question as document-bound query data (this is NOT a Q document):\n"
-            "fill in the question(s) and send them with the POST below."
+            "Register your question as document-bound query data (this is NOT a Q document):"
         ),
         "warn": (
-            "⚠️ Do NOT present choices or options to the user (no multiple-choice lists,\n"
-            "no interactive selection prompts). You are a remote worker on an UNMANNED\n"
-            "system: such prompts get no response and the run is force-terminated with no\n"
-            "answer."
-        ),
-        "positive": (
-            "✅ To get a definite answer you MUST register a Q, not offer a choice.\n"
-            "If you find yourself about to ask the user to pick between options, STOP and\n"
-            "convert it: register ONE Q carrying those options in its options array (the\n"
-            "user picks an option or writes freely in the document's Q&A panel). Writing\n"
-            "a Q is the ONLY way to get an answer from this system — always leave it as the\n"
-            "next action instead of a choice."
+            "⚠️ Do NOT present choices or options to the user (no multiple-choice lists, no interactive "
+            "selection prompts). This is an UNMANNED system: such prompts get no response and the run is "
+            "force-terminated.\n"
+            "For a definite answer, register a Q carrying the alternatives in its options array, and leave it "
+            "as the next action instead of a choice."
         ),
     },
 }
@@ -514,30 +450,16 @@ _CLARIFY_TEXT = {
 # {post} is filled with the POST line at format time.
 _REMINDER_TEXT = {
     "ko": (
-        "⚠️ 행동하기 전에 다시 읽으십시오 — do NOT present choices: 선택지/옵션을 제시하지 말고 "
-        "사용자에게 대화형 질문을 하지 마십시오. 이것은 무인 시스템이므로 원격 실행은 답을 받지 못하고 "
-        "강제 종료됩니다. 확신이 서지 않으면, 확실한 답(definite answer)을 받는 유일한 방법은 "
-        "Q(질의)를 작성(register a Q)하는 것입니다: {post} 로 등록하십시오 "
-        "(위 Clarification guide 참조). 보기가 필요하면 그 옵션들을 options 배열에 담아 Q 1건으로 "
-        "등록하십시오. 항상 선택지가 아니라 다음 행동(next action)으로 'Q 작성'을 남기십시오."
+        "⚠️ 다시 확인: 선택지를 제시하거나 대화형 질문을 하지 마십시오(do NOT present choices). "
+        "사용자 판단이 필요하면 {post} 로 Q를 등록하십시오(보기는 options 배열에)."
     ),
     "ja": (
-        "⚠️ 行動する前にもう一度読んでください — do NOT present choices: 選択肢/オプションを提示せず、"
-        "ユーザーに対話的な質問をしないでください。これは無人システムなので、リモート実行は回答を得られず "
-        "強制終了されます。不明な場合、確実な回答(definite answer)を得る唯一の方法は "
-        "Q(質問)を作成(register a Q)することです: {post} で登録してください "
-        "(上記 Clarification guide 参照)。選択肢が必要な場合は、その選択肢をoptions配列に入れた "
-        "Q 1件として登録してください。常に選択肢ではなく次の行動(next action)として「Qの作成」を "
-        "残してください。"
+        "⚠️ 再確認: 選択肢を提示したり対話的な質問をしたりしないでください(do NOT present choices)。"
+        "ユーザーの判断が必要なら {post} でQを登録してください(選択肢はoptions配列に)。"
     ),
     "en": (
-        "⚠️ Read this again before you act: do NOT present choices/options and do NOT ask "
-        "the user an interactive question — this is an unmanned system, so a remote run "
-        "gets no answer and is force-terminated. If you are unsure, the ONLY way to get a "
-        "definite answer is to write a Q: register it with {post} "
-        "(see the Clarification guide above). If you need to offer alternatives, register "
-        "ONE Q carrying them in its options array. "
-        "Leave 'write a Q' as the next action — never a choice."
+        "⚠️ Reminder: do NOT present choices and do NOT ask the user an interactive question. "
+        "If a user decision is needed, register a Q with {post} (alternatives go in its options array)."
     ),
 }
 
@@ -762,7 +684,7 @@ def _continuous_review_guide_body(
     set 3 — D-0003 §3-2 "move the question-registration example into the help").
     """
     loc = template_provision.normalize_locale(locale)
-    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question/register")
     return (
         f"{_CONTINUOUS_REVIEW_TEXT[loc]}\n"
         "\n"
@@ -789,19 +711,15 @@ def _clarification_guide_body(
 ) -> str:
     loc = template_provision.normalize_locale(locale)
     txt = _CLARIFY_TEXT[loc]
-    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question/register")
     body = (
         f"{txt['lead']}\n"
-        "\n"
         f"POST {base}/q/{anchor_doc_id}/questions\n"
         f"Authorization: Bearer {raw_token}\n"
         f"{pointer}\n"
+        f"{_question_precheck_brief(base, anchor_doc_id, loc)}\n"
         "\n"
-        f"{_question_precheck(base, anchor_doc_id, loc)}\n"
-        "\n"
-        f"{txt['warn']}\n"
-        "\n"
-        f"{txt['positive']}"
+        f"{txt['warn']}"
     )
     # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions additionally carry
     # the turn-end / no-background-wait addendum after the Q guidance above.
@@ -1048,12 +966,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "전달 멘트",
         "none": "(없음)",
         "tail": (
-            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 후보에 없는 공급자를 steps[].provider_id 에 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 documents/group_list 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 후보에 없는 공급자를 steps[].provider_id 에 "
             "적지 마십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
         "tail_no_providers": (
-            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 documents/group_list 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
@@ -1093,13 +1011,13 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "Delivery note",
         "none": "(none)",
         "tail": (
-            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. Do not write a provider outside these "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect documents/group_list and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. Do not write a provider outside these "
             "candidates into steps[].provider_id.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
         ),
         "tail_no_providers": (
-            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. This project has no registered AI "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect documents/group_list and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. This project has no registered AI "
             "provider, so leave steps[].provider_id empty.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
@@ -1131,12 +1049,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "伝達メモ",
         "none": "(なし)",
         "tail": (
-            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。候補にないプロバイダーを "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、documents/group_list と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。候補にないプロバイダーを "
             "steps[].provider_id に書かないでください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
         "tail_no_providers": (
-            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。このプロジェクトには登録済みの AI "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、documents/group_list と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。このプロジェクトには登録済みの AI "
             "プロバイダーがないため、steps[].provider_id は空欄にしてください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
@@ -2333,14 +2251,14 @@ def build_mention(
         s5_body = (
             f"Artifact registration: POST {base}/inbox\n"
             f"Authorization: Bearer {raw_token}\n"
-            + _SUBMIT_POINTER_TEXT[loc].format(url=f"{base}/help/items/submit") + "\n"
+            + _SUBMIT_POINTER_TEXT[loc].format(url=f"{base}/help/items/submit/format") + "\n"
             + "Submission context (send complete document content):\n"
             + json.dumps(registration_context, ensure_ascii=False, indent=2)
             + rejection_required_notice
             + "\nInspect change_summary after a successful save; report refusals honestly."
         )
         if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
-            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/changed_files_format")
+            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/submit/changed_files")
     else:
         # group 0372 set 3 (D-0003 §3-2 / §3-5): the request format, the field-by-field
         # example and the dry-run guide now live behind the `submit` help item, which
@@ -2355,11 +2273,11 @@ def build_mention(
             f"Artifact registration: POST {base}/inbox\n"
             f"Authorization: Bearer {raw_token}\n"
             f"\n"
-            f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+            f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
         )
         if str(doc_type_value).upper() in tool_registry.MUTATING_STEP_TYPES:
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
-                url=f"{base}/help/items/changed_files_format"
+                url=f"{base}/help/items/submit/changed_files"
             )
         # group 0370 (merge): what the response CONTAINS is not a request format, so
         # D-0003 §3-1 keeps it inline — a worker cannot inspect a field it was never
@@ -2377,7 +2295,7 @@ def build_mention(
         "never in the source tree, server cwd, or OS temp."
     )
     if not review_continuous:
-        s6_body += f" Submission file details: GET {base}/help/items/submit"
+        s6_body += f" Submission file details: GET {base}/help/items/submit/format"
 
     # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
     # It was already a bare one-line help URL; the always-visible `doc_type` entry of
@@ -2450,7 +2368,7 @@ def build_mention(
         # group 0372 set 3 (L-0005 §2-10): the central help-index block sits once per
         # mention, directly below the identity + guide blocks and above everything the
         # index can answer in depth.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="review" if review_continuous else "edit" if is_edit else "new"),
     ]
     # 0349 D0004 D-5: the tool section moves up to the highest slot it is allowed to take —
     # under the identity header and the continuous/clarification block (which tell the worker
@@ -2518,14 +2436,14 @@ def build_mention(
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=False)))
     else:
         sections.append(_section("Reminder", "Register necessary questions through Q; do not ask interactive questions. "
-                                 f"Read GET {base}/help/items/question before registering."))
+                                 f"Read GET {base}/help/items/question/register before registering."))
 
     task_kind = (
         "first_write" if is_edit and first_write else
         "rework" if is_edit and edit_reason == "rejected" else
         "edit" if is_edit else "preflight" if review_continuous else "new"
     )
-    return terminal_prompt.prepare("\n\n".join(sections), kind=task_kind, locale=locale)
+    return compose(sections, kind=task_kind, locale=locale)
 
 
 def build_mention_from_token_rec(
@@ -2710,7 +2628,7 @@ def build_workflow_decision_mention(
         "decision through the workflow decision API below. Do not edit the root document and\n"
         "do not create a report document. Report steps (NR/TR/TSR) are attached\n"
         "automatically to each N/T/TS step, so submit only the instruction and design\n"
-        f"steps. Valid type codes: GET {base}/help/items/doc_type"
+        f"steps. Valid type codes: GET {base}/help/items/documents/doc_type"
     )
     if continuous and not continuous_review_mode:
         # The decision is the first step of an unmanned chain: after it is saved the
@@ -2769,7 +2687,7 @@ def build_workflow_decision_mention(
         _section("Clarification guide", clarification_body),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention — once, right below the identity + guide blocks.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="workflow"),
     ]
     # 0349 D0004 D-3: a workflow_decide token already resolves to ["read", "grep"] server
     # side, but this mention never said so — the worker deciding a sequence could not read
@@ -2799,7 +2717,7 @@ def build_workflow_decision_mention(
         f"Submit the workflow decision: POST {base}/workflow/decide\n"
         f"Authorization: Bearer {raw_token}\n"
         f"\n"
-        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
     )
     sections.append(_section("Workflow decision submission", s5_body))
     # doc_type guide section — REMOVED (D-0003 §3-2 "dropped"): absorbed into the help index.
@@ -2809,7 +2727,7 @@ def build_workflow_decision_mention(
         # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
         # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
         sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
-    return terminal_prompt.prepare("\n\n".join(sections), kind='workflow', locale=locale)
+    return compose(sections, kind='workflow', locale=locale)
 
 
 # ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
@@ -2931,7 +2849,7 @@ def build_sequence_edit_mention(
         "Submit the FULL replacement pending list (not a diff) through the PATCH below. Report\n"
         "steps (NR/TR/TSR) are attached automatically to each N/T/TS step, so submit only the\n"
         "instruction and design steps. Do NOT edit the root document. Valid type codes:\n"
-        f"GET {base}/help/items/doc_type\n"
+        f"GET {base}/help/items/documents/doc_type\n"
         "You may not empty a decided workflow that has no locked\n"
         "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
         f"{metadata_rules}"
@@ -2951,7 +2869,7 @@ def build_sequence_edit_mention(
         f"Submit the sequence edit: PATCH {base}/workflow/sequence\n"
         f"Authorization: Bearer {raw_token}\n"
         f"\n"
-        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}"
     )
 
     sections = [
@@ -2959,7 +2877,7 @@ def build_sequence_edit_mention(
         _section("Clarification guide", _clarification_guide_body(base, doc_id, raw_token, locale)),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention. doc_type guide section — REMOVED (absorbed into the index).
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="sequence"),
         _section("Sequence edit instructions", s2_body),
         _section("Current sequence", seq_body),
         _section("Reference documents", s3_body),
@@ -2969,7 +2887,7 @@ def build_sequence_edit_mention(
         _section("Sequence edit submission", s5_body),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
     ]
-    return terminal_prompt.prepare("\n\n".join(sections), kind='sequence', locale=locale)
+    return compose(sections, kind='sequence', locale=locale)
 
 
 # ── Review-request mention builder ────────────────────────────────────────────
@@ -3171,7 +3089,7 @@ def build_review_mention(
         f"Submit your review: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
         "\n"
-        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}\n"
+        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit/format')}\n"
         f"{_REVIEW_FILE_SUBMIT_TEXT[loc]}"
     )
 
@@ -3213,7 +3131,7 @@ def build_review_mention(
         _section("Clarification guide", s8_body),
         # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
         # build_mention.
-        _help_index_section(base, raw_token, locale),
+        _help_index_section(base, raw_token, locale, kind="review"),
     ]
     # 0349 D0004 D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
     # TR against the source it claims to have changed needs exactly that, and the mention
@@ -3240,7 +3158,7 @@ def build_review_mention(
     # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
-    return terminal_prompt.prepare("\n\n".join(sections), kind='review', locale=locale)
+    return compose(sections, kind='review', locale=locale)
 def build_work_plan_fill_mention(
     *,
     token_rec: dict,
@@ -3345,7 +3263,7 @@ def build_work_plan_fill_mention(
 
     doc_id = target_doc.get("doc_id") or ""
     return (
-        terminal_prompt.prepare(f"## {copy['title']}\n\n"
+        compose(f"## {copy['title']}\n\n"
         f"- target_doc_id: {doc_id}\n"
         f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
         f"- Authorization: Bearer {raw_token}\n\n"
