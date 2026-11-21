@@ -68,7 +68,7 @@ const mergeRows = computed(() => {
 })
 const counts = computed(() => {
   const base = notificationCounts(rows.value, questions.value)
-  return { ...base, runs: base.runs + mergeRows.value.length, bell: base.bell + mergeRows.value.length }
+  return { ...base, runs: base.runs, bell: base.bell + mergeRows.value.length }
 })
 /** [열기] of a merge row: the card's '병합 · 충돌' tab (the Designer's one "open this card's merge" event). */
 function openMerge(item: CardMergeItem & { flowName: string }) {

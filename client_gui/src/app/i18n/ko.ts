@@ -856,8 +856,8 @@ export default {
           ai: 'AI',
           questions: '질의응답',
         },
-        project_only: '현재 프로젝트 {name}의 실행만 표시합니다.',
-        empty_runs: '진행 중이거나 대기 중인 실행이 없습니다.',
+        project_only: '현재 프로젝트 {name}의 작업입니다. 실행 숫자는 실행 중인 AI 작업만 셉니다.',
+        empty_runs: '실행·대기·결과 회수 중인 작업이 없습니다.',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
           needs_choice: '‘{title}’ 카드 병합 충돌 — 선택 필요',
@@ -887,6 +887,9 @@ export default {
         failure: '실패',
         unknown: '상태 미확인',
         phases: {
+          queued_capacity: '대기 (Agent 자리 없음)',
+          retrieving: '결과 회수 중',
+          settling: '종료 확인 중',
           running: '실행 중',
           queued: '대기 중',
           starting: '시작 중',
