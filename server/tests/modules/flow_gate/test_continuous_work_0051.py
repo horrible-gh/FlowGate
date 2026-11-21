@@ -61,10 +61,10 @@ def test_continuous_mention_replaces_q_guard_ko():
     assert "Clarification guide" not in out
     assert "/questions" not in out
     # Operational sections are preserved. (group 0372 set 3: the standalone doc_type
-    # guide section was absorbed into the help index — the central "## 도움말" block
-    # is the discovery path now.)
+    # guide section was absorbed into the help index — the central help block
+    # is the discovery path now; v02test.0061 renamed its header to "## Help".)
     assert "## Artifact registration" in out
-    assert "## 도움말" in out
+    assert "## Help" in out
     # The bottom Reminder repeats the continuous directive, not the no-choices guard.
     assert "Do NOT present choices" not in out
 
