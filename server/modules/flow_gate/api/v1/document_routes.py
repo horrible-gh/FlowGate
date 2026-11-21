@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from modules.flow_gate.db.resilience import unavailable
 from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_reviews
@@ -552,7 +553,9 @@ def get_document_by_path(
     try:
         from modules.flow_gate.graph_workflow.services import card_document_ports
         document, content, content_state = card_document_ports.card_edit("read", document)
-    except (OSError, UnicodeError, RuntimeError):
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        if unavailable(exc):
+            raise
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
@@ -704,7 +707,9 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
         from modules.flow_gate.graph_workflow.services import card_document_ports
         doc, content, content_state = card_document_ports.card_edit("read", doc)
         text = outline_svc.DocumentText.from_raw(content) if content is not None else None
-    except (OSError, UnicodeError, RuntimeError):
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        if unavailable(exc):
+            raise
         return _fail_with(500, "An error occurred while reading the document content"), None, None
     current = int(doc.get("revision_no", 0) or 0)
     if revision_no is not None and int(revision_no) != current:
@@ -1161,7 +1166,9 @@ def download_document(request: Request, doc_id: str):
     try:
         from modules.flow_gate.graph_workflow.services import card_document_ports
         doc, content, content_state = card_document_ports.card_edit("read", doc)
-    except (OSError, UnicodeError, RuntimeError):
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        if unavailable(exc):
+            raise
         return _fail(500, "An error occurred while reading the document content")
     if content is None:
         return _fail(500, "An error occurred while reading the document content")
@@ -1192,7 +1199,9 @@ def get_document(request: Request, doc_id: str):
     try:
         from modules.flow_gate.graph_workflow.services import card_document_ports
         doc, content, content_state = card_document_ports.card_edit("read", doc)
-    except (OSError, UnicodeError, RuntimeError):
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        if unavailable(exc):
+            raise
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {

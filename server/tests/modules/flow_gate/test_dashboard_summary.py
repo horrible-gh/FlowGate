@@ -383,6 +383,8 @@ def test_summary_degrades_workflow_card_on_unexpected_aggregation_failure(
 
 def test_summary_reads_open_question_snapshot_once_for_both_projections(dashboard_store, monkeypatch):
     _seed_base(dashboard_store)
+    from modules.flow_gate.db import question_search_audits
+    monkeypatch.setattr(question_search_audits, "for_doc", lambda _: [])
     calls = 0
 
     def snapshot(_project_id):
@@ -398,10 +400,11 @@ def test_summary_reads_open_question_snapshot_once_for_both_projections(dashboar
     result = dashboard_service.get_dashboard_summary("flowgate", 50, 50)
 
     assert calls == 1
+    no_search = {"searched": None, "status": "no_record", "label": "기록 없음"}
     assert result["open_queries"]["items"] == [
-        {"doc_id": "doc-b", "seq": 2, "title": "item two", "type_code": "T"},
-        {"doc_id": "doc-a", "seq": 1, "title": "item one", "type_code": "P"},
-        {"doc_id": "doc-a", "seq": 3, "title": "item three", "type_code": "P"},
+        {"doc_id": "doc-b", "seq": 2, "title": "item two", "type_code": "T", "search_summary": no_search},
+        {"doc_id": "doc-a", "seq": 1, "title": "item one", "type_code": "P", "search_summary": no_search},
+        {"doc_id": "doc-a", "seq": 3, "title": "item three", "type_code": "P", "search_summary": no_search},
     ]
     assert result["notification_open_questions"] == {
         "limit": 50,
