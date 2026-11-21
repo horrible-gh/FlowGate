@@ -3284,6 +3284,7 @@ export default {
       general: '一般',
       agents: 'システム Agent',
       projects: '全プロジェクト',
+      voice: '音声入力',
     },
     me_nav: {
       account: 'アカウント · 画面',

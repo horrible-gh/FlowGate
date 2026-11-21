@@ -51,6 +51,17 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'TimelineMessage.vue',
         // a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
         'TimelineMessageMenu.vue',
+        // Voice input: the composer's mic and recording pill, its status line, the ⚙ voice
+        // section, a voice message's player, and the voice module (API, recorder, shared state, composable, strings).
+        'ComposerVoiceBar.vue',
+        'ComposerVoiceNotice.vue',
+        'ComposerVoiceSettings.vue',
+        'TimelineAudio.vue',
+        'voice/api.ts',
+        'voice/messages.ts',
+        'voice/recorder.ts',
+        'voice/useVoiceInput.ts',
+        'voice/voiceStore.ts',
         'api.ts',
         'changeDiff.ts',
         // B: the chat's own request failures kept in its history.
@@ -82,7 +93,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   it('reaches the server only through api.ts and the shared transport', () => {
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) {
-        if (/^@shared\/api$|^axios$/.test(spec)) expect(rel(file), spec).toBe('api.ts')
+        if (/^@shared\/api$|^axios$/.test(spec)) expect(['api.ts', 'voice/api.ts'], spec).toContain(rel(file))
         expect(spec, rel(file)).not.toMatch(/^pinia$|^vue-router$|^axios$/)
       }
     }
@@ -94,6 +105,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
       /^vue$/,
       /^vue-i18n$/,
       /^\.\/[A-Za-z]+(\.vue)?$/,
+      // The voice module's own files.
+      /^\.\/voice\/[A-Za-z]+$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^\.\.\/\.\.\/core\/interaction\/clipboard$/,
       /^\.\.\/\.\.\/core\/markdown\/markdownRenderer$/,

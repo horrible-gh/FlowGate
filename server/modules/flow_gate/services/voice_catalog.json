@@ -1,0 +1,240 @@
+{
+  "services": [
+    {
+      "id": "whisper.cpp",
+      "name": "whisper.cpp",
+      "version": "1.8.2",
+      "license": "MIT",
+      "platforms": [
+        "Windows-AMD64",
+        "Windows-x86_64"
+      ],
+      "artifacts": [
+        {
+          "filename": "whisper-bin-x64.zip",
+          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.2/whisper-bin-x64.zip",
+          "size_bytes": 3832432,
+          "sha256": "b1514ebc099765e39fa37eb780b92a140a94c86bb0b3b3d98226b38825979732",
+          "expanded": [
+            {
+              "filename": "ggml-base.dll",
+              "relative_path": "Release/ggml-base.dll",
+              "size_bytes": 528384,
+              "sha256": "3eefa9a256a7ef4774ec07d553ccecb771498a92000d0db7ab3443d79b795e86"
+            },
+            {
+              "filename": "ggml-cpu.dll",
+              "relative_path": "Release/ggml-cpu.dll",
+              "size_bytes": 603648,
+              "sha256": "91240f9a352783312430e3b5d816621675afd2dfb9df28161bea235c4b7f1ce3"
+            },
+            {
+              "filename": "ggml.dll",
+              "relative_path": "Release/ggml.dll",
+              "size_bytes": 67584,
+              "sha256": "4f681cca3014879e623b9b44f69b0864a9ddd530c32ce05c106105f4eec0897a"
+            },
+            {
+              "filename": "SDL2.dll",
+              "relative_path": "Release/SDL2.dll",
+              "size_bytes": 2500096,
+              "sha256": "de23db1694a3c7a4a735e7ecd3d214b2023cc2267922c6c35d30c7fc7370d677"
+            },
+            {
+              "filename": "whisper-server.exe",
+              "relative_path": "Release/whisper-server.exe",
+              "size_bytes": 721408,
+              "sha256": "a2c982310ca6823bf32674e9b23c6fed408a83fabacfc5aa888b8287544794f8"
+            },
+            {
+              "filename": "whisper.dll",
+              "relative_path": "Release/whisper.dll",
+              "size_bytes": 483840,
+              "sha256": "4155edb6868810b56423cb0089fee85f4e8739fb86053b269f4e7c6350ec61ff"
+            }
+          ]
+        },
+        {
+          "filename": "ffmpeg-8.0-essentials_build.zip",
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.0/ffmpeg-8.0-essentials_build.zip",
+          "size_bytes": 105748282,
+          "sha256": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569",
+          "license": "GPL-3.0-or-later",
+          "expanded": [
+            {
+              "filename": "ffmpeg.exe",
+              "relative_path": "ffmpeg-8.0-essentials_build/bin/ffmpeg.exe",
+              "size_bytes": 98730496,
+              "sha256": "1fcb0cb525085cc5be3ad4be16799d60786b65cc36951622a018d00f78c0fb5d"
+            },
+            {
+              "filename": "LICENSE",
+              "relative_path": "ffmpeg-8.0-essentials_build/LICENSE",
+              "size_bytes": 35147,
+              "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+            }
+          ]
+        },
+        {
+          "filename": "jfk.wav",
+          "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
+          "size_bytes": 352078,
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        }
+      ],
+      "models": [
+        {
+          "id": "tiny",
+          "name": "tiny",
+          "filename": "ggml-tiny.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin",
+          "size_bytes": 77691713,
+          "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
+        },
+        {
+          "id": "base",
+          "name": "base",
+          "filename": "ggml-base.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
+          "size_bytes": 147951465,
+          "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
+        },
+        {
+          "id": "small",
+          "name": "small",
+          "filename": "ggml-small.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+          "size_bytes": 487601967,
+          "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
+        },
+        {
+          "id": "medium",
+          "name": "medium",
+          "filename": "ggml-medium.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
+          "size_bytes": 1533763059,
+          "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
+        }
+      ]
+    },
+    {
+      "id": "sherpa-onnx",
+      "name": "sherpa-onnx",
+      "version": "1.12.20",
+      "license": "Apache-2.0",
+      "platforms": [
+        "Windows-AMD64",
+        "Windows-x86_64"
+      ],
+      "artifacts": [
+        {
+          "filename": "sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2",
+          "size_bytes": 23161059,
+          "sha256": "c10a095df39d10d48d97e22d9297ebd3bc12cca80ec3be70eb71f7a5b4a2f6c3",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2"
+        },
+        {
+          "filename": "ffmpeg-8.0-essentials_build.zip",
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.0/ffmpeg-8.0-essentials_build.zip",
+          "size_bytes": 105748282,
+          "sha256": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569",
+          "license": "GPL-3.0-or-later",
+          "expanded": [
+            {
+              "filename": "ffmpeg.exe",
+              "relative_path": "ffmpeg-8.0-essentials_build/bin/ffmpeg.exe",
+              "size_bytes": 98730496,
+              "sha256": "1fcb0cb525085cc5be3ad4be16799d60786b65cc36951622a018d00f78c0fb5d"
+            },
+            {
+              "filename": "LICENSE",
+              "relative_path": "ffmpeg-8.0-essentials_build/LICENSE",
+              "size_bytes": 35147,
+              "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+            }
+          ]
+        },
+        {
+          "filename": "jfk.wav",
+          "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
+          "size_bytes": 352078,
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        }
+      ],
+      "models": [
+        {
+          "filename": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "size_bytes": 163002883,
+          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "id": "sensevoice-small-int8",
+          "name": "SenseVoiceSmall int8",
+          "license": "Apache-2.0",
+          "languages": [
+            "zh",
+            "en",
+            "ja",
+            "ko",
+            "yue"
+          ],
+          "realtime": false,
+          "gpu_required": false,
+          "archive": true,
+          "kind": "sense_voice"
+        },
+        {
+          "filename": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+          "size_bytes": 127887156,
+          "sha256": "9c559283e8498d3fe95913c79ca1cb454bb26281ac2b102b41306c7d752765d9",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+          "id": "zipformer-en-20m",
+          "name": "Streaming Zipformer English 20M",
+          "license": "Apache-2.0",
+          "languages": [
+            "en"
+          ],
+          "realtime": true,
+          "gpu_required": false,
+          "archive": true,
+          "kind": "zipformer"
+        }
+      ]
+    }
+  ]
+}

@@ -69,6 +69,7 @@
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
       <!-- the message's images (thumbnails; one opens the original). -->
       <p v-if="mutationError" role="alert">{{ mutationError }}</p>
+      <TimelineAudio v-if="!turn.deletedAt && turn.audio" :audio="turn.audio" />
       <TimelineImages v-if="!turn.deletedAt && turn.images?.length" :images="turn.images" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
@@ -85,6 +86,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
+import TimelineAudio from './TimelineAudio.vue'
 import TimelineImages from './TimelineImages.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'

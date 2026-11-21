@@ -101,7 +101,7 @@ class TestResolveSettings:
     def test_never_saved_is_manual_delete_only_and_says_so(self, memory_store):
         settings, is_default = uss.resolve_ui_settings("u1")
         assert is_default is True
-        assert settings == {FIELD: -1, **DESIGNER_DEFAULTS, "updated_at": None}
+        assert settings == {FIELD: -1, **DESIGNER_DEFAULTS, **uss.voice_preferences.DEFAULTS, "updated_at": None}
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
         assert uss.resolve_ui_settings(None) == (uss.defaults(), True)
@@ -154,9 +154,9 @@ class TestResolveSettings:
     def test_response_carries_the_domain_so_no_screen_holds_its_own_copy(self, memory_store):
         body = uss.settings_response("u1")
         assert body["domain"][FIELD] == [-1, 0, 30, 60, 120, 180, 360, 720, 1440]
-        assert body["defaults"] == {FIELD: -1, **DESIGNER_DEFAULTS}
+        assert body["defaults"] == {FIELD: -1, **DESIGNER_DEFAULTS, **uss.voice_preferences.DEFAULTS}
         assert "updated_at" not in body["defaults"]
-        assert body["settings"] == {FIELD: -1, **DESIGNER_DEFAULTS, "updated_at": None}
+        assert body["settings"] == {FIELD: -1, **DESIGNER_DEFAULTS, **uss.voice_preferences.DEFAULTS, "updated_at": None}
         assert body["is_default"] is True
 
     def test_an_unreachable_store_answers_defaults_instead_of_failing(self, monkeypatch):

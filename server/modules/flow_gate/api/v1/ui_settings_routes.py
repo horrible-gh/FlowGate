@@ -41,6 +41,10 @@ class UiSettingsPatch(BaseModel):
     designer_left_width: Any = None
     designer_right_width: Any = None
     designer_bottom_height: Any = None
+    voice_action: Any = None
+    voice_service: Any = None
+    voice_model: Any = None
+    voice_realtime: Any = None
 
 
 def _invalid_request(exc: ui_settings_service.UiSettingsError) -> JSONResponse:

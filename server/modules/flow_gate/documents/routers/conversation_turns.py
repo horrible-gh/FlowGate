@@ -33,6 +33,7 @@ class ConversationTurnAppend(BaseModel):
     body: str
     idempotency_key: str
     images: Optional[list[str]] = None
+    audio_id: Optional[str] = None
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
     # Accepted only for backward wire compatibility.  The session boundary always
@@ -289,6 +290,7 @@ def append_conversation_turn(
             force_encoding_reason=body.force_encoding_reason,
             timing=timing,
             images=body.images,
+            audio_id=body.audio_id,
         )
     except conversation_turn_service.ConversationTurnError as exc:
         timing.mark("response", exc.status_code)

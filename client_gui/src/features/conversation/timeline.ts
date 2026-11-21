@@ -68,6 +68,8 @@ export interface PendingTurn {
    * and an F5 send the same images under the same idempotency key).
    */
   images?: string[]
+  /** Id of the uploaded voice recording this message carries (sent again with the same key on retry and after F5). */
+  audio?: string
 }
 
 export type TimelineItem =

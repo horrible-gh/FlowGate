@@ -81,6 +81,12 @@ const settingsRoute: RouteRecordRaw = {
       meta: { settingsAccess: 'admin' },
     },
     {
+      path: 'system/voice',
+      name: 'settings-system-voice',
+      component: () => import('@/features/settings/views/SystemVoiceSettingsView.vue'),
+      meta: { settingsAccess: 'admin' },
+    },
+    {
       path: 'system/users',
       name: 'settings-system-users',
       component: () => import('@/features/settings/views/SystemUsersView.vue'),

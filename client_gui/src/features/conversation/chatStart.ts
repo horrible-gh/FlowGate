@@ -157,7 +157,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const providerOrigin = state.providerOrigin
     // the bubble shows now (Sending), before the create; a held try of this text keeps its intent.
     const held = session.holdFirstSend({ intentId: origin.owner.intentId, createIntentId: draftCreateIntent(origin.owner),
-      body: text, providerId, providerOrigin, sendAction: state.settings.sendAction, ...(origin.images?.length ? { images: origin.images } : {}) })
+      body: text, providerId, providerOrigin, sendAction: state.settings.sendAction, ...(origin.images?.length ? { images: origin.images } : {}),
+      ...(origin.audio ? { audio: origin.audio } : {}) })
     origin.createIntentId = held?.createIntentId ?? draftCreateIntent(origin.owner)
     const heldSendId = held?.localId
     const typed = draftTitle.value
@@ -228,7 +229,9 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       if (!item || !state.scope || !draftIntentId.value) return false
       const owner: DraftOwner = { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }
       // the failed message is tried again with the images it was written with.
-      const retrySnapshot: DraftSendSnapshot | undefined = item.images?.length ? { owner, body: item.body, revision: 0, images: [...item.images] } : undefined
+      const retrySnapshot: DraftSendSnapshot | undefined = item.images?.length || item.audio
+        ? { owner, body: item.body, revision: 0, ...(item.images?.length ? { images: [...item.images] } : {}), ...(item.audio ? { audio: item.audio } : {}) }
+        : undefined
       const ok = await send(item.body, retrySnapshot)
       // The composer still holds the text of a failed first send; once accepted it is not left to be sent again.
       if (ok && loadDraft(owner).trim() === item.body) saveDraft(owner, '')

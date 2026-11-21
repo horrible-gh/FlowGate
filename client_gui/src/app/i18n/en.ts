@@ -3283,6 +3283,7 @@ export default {
       general: 'General',
       agents: 'System agents',
       projects: 'All projects',
+      voice: 'Voice input',
     },
     me_nav: {
       account: 'Account · display',

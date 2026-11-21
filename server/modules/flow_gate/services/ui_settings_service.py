@@ -33,6 +33,7 @@ from modules.flow_gate.db import user_designer_layout as designer_layout_store
 from modules.flow_gate.db import user_ui_settings as ui_settings_store
 from modules.flow_gate.db import user_designer_theme as designer_theme_store
 from modules.flow_gate.db.connection import now_iso
+from . import voice_preferences
 
 _log = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ DESIGNER_SIZE_FIELDS = {
 TASKBAR_STYLE_FIELD = "designer_taskbar_style"
 TASKBAR_STYLE_DOMAIN = ("flowgate",)
 TASKBAR_STYLE_DEFAULT = "flowgate"
-PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS, TASKBAR_STYLE_FIELD)
+PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS, TASKBAR_STYLE_FIELD, *voice_preferences.DEFAULTS)
 
 
 def resolve_taskbar_style(user_id: Optional[str]) -> str:
@@ -110,6 +111,7 @@ def defaults() -> dict:
         RETENTION_FIELD: RETENTION_DEFAULT_MINUTES,
         **designer_size_defaults(),
         TASKBAR_STYLE_FIELD: TASKBAR_STYLE_DEFAULT,
+        **voice_preferences.DEFAULTS,
         "updated_at": None,
     }
 
@@ -122,6 +124,8 @@ def domain() -> dict:
     return {
         RETENTION_FIELD: list(RETENTION_DOMAIN_MINUTES),
         TASKBAR_STYLE_FIELD: list(TASKBAR_STYLE_DOMAIN),
+        "voice_action": ["text", "audio"],
+        "voice_realtime": [False, True],
         **{
             field: {"min": minimum, "max": maximum}
             for field, (_column, _default, minimum, maximum) in DESIGNER_SIZE_FIELDS.items()
@@ -196,7 +200,11 @@ def resolve_ui_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     # ``is_default`` and ``updated_at`` are the retention row's alone; the Designer sizes
     # come from their own row and do not change either.
     row = ui_settings_store.get(user_id)
-    sizes = {**resolve_designer_sizes(user_id), TASKBAR_STYLE_FIELD: resolve_taskbar_style(user_id)}
+    sizes = {
+        **resolve_designer_sizes(user_id),
+        TASKBAR_STYLE_FIELD: resolve_taskbar_style(user_id),
+        **voice_preferences.resolve(user_id),
+    }
     if row is None:
         return {**defaults(), **sizes}, True
 
@@ -240,6 +248,10 @@ def validate_patch(patch: dict) -> None:
             if not isinstance(value, str) or value not in TASKBAR_STYLE_DOMAIN:
                 raise UiSettingsError(field, f"{field} must be one of: {', '.join(TASKBAR_STYLE_DOMAIN)}.")
             continue
+        if field in voice_preferences.DEFAULTS:
+            if not voice_preferences.valid(field, value):
+                raise UiSettingsError(field, f"Invalid {field} value.")
+            continue
         if value is None:
             raise UiSettingsError(field, f"{field} must not be null.")
         if isinstance(value, bool) or not isinstance(value, int):
@@ -269,6 +281,7 @@ def save_ui_settings(user_id: Optional[str], patch: dict) -> dict:
     ``is_default`` to false for somebody who never chose anything (DB0004 §3-4).
     """
     validate_patch(patch)
+    voice_preferences.save(user_id, {key: value for key, value in patch.items() if key in voice_preferences.DEFAULTS})
     # Each field goes to its own row: a size-only patch must not create the retention row
     # (that would flip ``is_default``), and a retention-only patch writes no size.
     retention = {key: value for key, value in patch.items() if key == RETENTION_FIELD}
@@ -325,6 +338,6 @@ def settings_response_safe(user_id: Optional[str]) -> dict:
             "ok": True,
             "settings": defaults(),
             "is_default": True,
-            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES, **designer_size_defaults(), TASKBAR_STYLE_FIELD: TASKBAR_STYLE_DEFAULT},
+            "defaults": {RETENTION_FIELD: RETENTION_DEFAULT_MINUTES, **designer_size_defaults(), TASKBAR_STYLE_FIELD: TASKBAR_STYLE_DEFAULT, **voice_preferences.DEFAULTS},
             "domain": domain(),
         }

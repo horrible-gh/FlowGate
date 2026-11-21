@@ -70,6 +70,8 @@
       </label>
       <input v-if="draftTimeout === 'custom'" v-model="draftTimeoutText" class="csx-select" inputmode="numeric" data-test="conv-setting-timeout-minutes" :aria-label="t('gui.conversation.settings.timeout')" />
       <div v-if="!timeoutValid" class="csx-err" role="alert">{{ t('gui.conversation.settings.timeout_invalid') }}</div>
+      <!-- This person's voice input settings (saved on change, not by 저장 below). -->
+      <ComposerVoiceSettings />
       <div class="csx-foot">
         <button type="button" class="csx-link" @click="close">{{ t('gui.conversation.cancel') }}</button>
         <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving || !turnsValid || !timeoutValid" @click="saveSettings">
@@ -83,6 +85,7 @@
 <script setup lang="ts">
 import { computed, ref, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ComposerVoiceSettings from './ComposerVoiceSettings.vue'
 import { usePopover } from './popover'
 import type { ChatSettings, ChatSettingsPatch, SendAction } from './types'
 
@@ -220,6 +223,9 @@ function saveSettings(): void {
   padding: 8px;
   font-size: 11px;
   color: var(--fg2-muted);
+  /* The voice section makes the popover taller; it scrolls instead of leaving the screen. */
+  max-height: min(70vh, 620px);
+  overflow: auto;
 }
 
 .csx-head {
