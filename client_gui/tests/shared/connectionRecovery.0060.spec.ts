@@ -89,26 +89,69 @@ describe('0060 connection recovery', () => {
     await vi.advanceTimersByTimeAsync(100000)
     expect(probe).toHaveBeenCalledTimes(1)
   })
-  it.each(['online', 'focus', 'visibilitychange'])('stops on %s without duplicate hub resync', async name => {
+  it.each(['online', 'focus', 'visibilitychange'])('keeps probing after %s until an actual response succeeds', async name => {
     const resync = subscriber(); Stream.all[0].open()
-    const probe = vi.spyOn(axios, 'get')
+    const probe = vi.spyOn(axios, 'get').mockRejectedValue(new Error('still down'))
     await exhaust()
     if (name === 'visibilitychange') {
       vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
       document.dispatchEvent(new Event(name))
     } else window.dispatchEvent(new Event(name))
     expect(resync).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    probe.mockResolvedValue({ data: {} })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(probe).toHaveBeenCalledTimes(2)
+    expect(resync).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(100000)
-    expect(probe).not.toHaveBeenCalled()
+    expect(probe).toHaveBeenCalledTimes(2)
   })
-  it.each([false, true])('replaces a non-open stream and resyncs on its open (previously opened: %s)', async opened => {
+  it.each([false, true])('resyncs before SSE opens, then catches up on open (previously opened: %s)', async opened => {
     const resync = subscriber(); if (opened) Stream.all[0].open(); Stream.all[0].readyState = 0
     vi.spyOn(axios, 'get').mockResolvedValue({ data: {} })
     await exhaust(); await vi.advanceTimersByTimeAsync(5000)
     expect(Stream.all).toHaveLength(2)
     expect(Stream.all[0].readyState).toBe(Stream.CLOSED)
-    Stream.all[1].open()
     expect(resync).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(resync).toHaveBeenCalledTimes(1)
+    Stream.all[1].open()
+    expect(resync).toHaveBeenCalledTimes(2)
+  })
+  it.each([false, true])('refreshes an expired probe token (transient refresh failure: %s)', async transient => {
+    sessionStorage.setItem('fg_refresh_token', 'refresh-old')
+    sessionStorage.setItem('fg_access_token', 'access-old')
+    window.__accessToken__ = 'access-old'
+    const resync = subscriber(); Stream.all[0].open()
+    const unauthorized = new AxiosError('expired', undefined, undefined, undefined,
+      { status: 401, data: {}, statusText: '', headers: {}, config: {} as any })
+    const probe = vi.spyOn(axios, 'get').mockRejectedValueOnce(unauthorized)
+    const refresh = vi.spyOn(axios, 'post')
+    if (transient) {
+      refresh.mockRejectedValueOnce(new Error('server restarting'))
+      probe.mockRejectedValueOnce(unauthorized)
+    }
+    refresh.mockResolvedValue({ data: { access_token: 'access-new', refresh_token: 'refresh-new' } })
+    probe.mockResolvedValue({ data: {} })
+    try {
+      await exhaust(); await vi.advanceTimersByTimeAsync(5000)
+      if (transient) {
+        expect(resync).not.toHaveBeenCalled()
+        expect(sessionStorage.getItem('fg_refresh_token')).toBe('refresh-old')
+        await vi.advanceTimersByTimeAsync(10000)
+      }
+      expect(refresh).toHaveBeenCalledTimes(transient ? 2 : 1)
+      expect(probe.mock.calls.at(-1)?.[1]?.headers?.Authorization).toBe('Bearer access-new')
+      expect(resync).toHaveBeenCalledTimes(1)
+      const count = probe.mock.calls.length
+      await vi.advanceTimersByTimeAsync(100000)
+      expect(probe).toHaveBeenCalledTimes(count)
+    } finally {
+      sessionStorage.removeItem('fg_refresh_token')
+      sessionStorage.removeItem('fg_access_token')
+      delete window.__accessToken__
+    }
   })
   it.each(['ERR_NETWORK', 'ECONNABORTED', 'ETIMEDOUT'])('starts after exhausted %s', async code => {
     const probe = vi.spyOn(axios, 'get').mockResolvedValue({ data: {} })

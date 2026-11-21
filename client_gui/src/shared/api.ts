@@ -732,13 +732,38 @@ export const shouldRetryGet = (error: AxiosError): boolean => {
   return error.code === 'ERR_NETWORK' && count < GET_RETRY_MAX
 }
 
-// A raw axios request bypasses this instance's retry, diagnostics and refresh interceptors.
+// Keep probe retries in the recovery loop, but share the normal token rotation lock.
 // The endpoint performs an uncached-per-request DB read even when auth caches are warm.
 const connectionRecovery = createConnectionRecovery(
-  signal => axios.get(`${getBaseUrl()}/auth/connection-check`, {
-    signal, timeout: 5000,
-    headers: { Authorization: `Bearer ${window.__accessToken__ || sessionStorage.getItem('fg_access_token') || ''}` },
-  }),
+  async signal => {
+    const check = () => axios.get(`${getBaseUrl()}/auth/connection-check`, {
+      signal, timeout: 5000,
+      headers: { Authorization: `Bearer ${currentAccessToken() || ''}` },
+    })
+    try {
+      return await check()
+    } catch (error) {
+      if (signal.aborted || (error as AxiosError).response?.status !== 401) throw error
+      if (sessionStorage.getItem('fg_logout_in_progress')) {
+        connectionRecovery.stop()
+        throw error
+      }
+      try {
+        await ensureFreshToken()
+      } catch (refreshError) {
+        if (!signal.aborted && isAuthRejection(refreshError)) {
+          connectionRecovery.stop()
+          if (refreshIsShared()) tokenChannel?.postMessage({ type: 'logout' })
+          clearStoredAuth()
+          window.location.href = buildRefreshFailureRedirect()
+        }
+        throw refreshError
+      }
+      // An ordinary GET may have recovered (and stopped this probe) during rotation.
+      if (signal.aborted) throw error
+      return check()
+    }
+  },
   () => window.dispatchEvent(new Event('fg:connection_recovered')),
 )
 
