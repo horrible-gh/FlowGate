@@ -15,12 +15,16 @@ from ..registry import Block, register
 SECTION_READ_RULE = "Section reads accept exactly one of section, section_id, lines, or chars."
 CONTENT_SEARCH_OPTIONS = "&include_matches=true&context_lines=2&hits_per_doc=5"
 
+# The one rule the short lookup brief quotes. It is named so the brief never depends on where the rule sits in
+# ``BODY_UNREADABLE_RULES`` (flowgate.v02test.0061 card 7: the brief used to read position ``[4]``).
+UNREAD_BODY_NO_QUOTE_RULE = "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오."
+
 BODY_UNREADABLE_RULES: tuple[str, ...] = (
     "content가 null이면 읽지 못한 문서로 판단하십시오.",
     "content_state가 readable이 아니면 읽지 못한 문서로 판단하십시오.",
     "content_state가 readable이고 front matter뿐이면 읽은 빈 문서로 판단하십시오.",
     "문서의 열람 여부를 판단한 결과는 내부에서만 쓰고 답변에 나열하지 마십시오.",
-    "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
+    UNREAD_BODY_NO_QUOTE_RULE,
     "읽지 못한 문서가 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오.",
     "대체 근거가 없으면 지어내지 마십시오.",
     "읽지 못한 문서가 없으면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 마십시오.",
@@ -84,7 +88,7 @@ register(Block("documents.unreadable_answer", brief=_answer_reference, detail=_a
 def document_lookup_brief(base, raw_token, *, project="", doc_id="", **_kwargs):
     target = doc_id or "<doc_id>"
     return [
-        BODY_UNREADABLE_RULES[4],
+        UNREAD_BODY_NO_QUOTE_RULE,
         f"GET {base}/document/{target}/meta",
         f"GET {base}/document/{target}/outline",
         f"GET {base}/document/{target}/section?section_id=<section_id>",

@@ -296,10 +296,14 @@ def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
     # flowgate.v02gui.0029: with a token context (GET /help/question, the `question` help item) the user's
     # question policy rides along.
     policy = _question_policy_block(ctx) if ctx else ""
+    # flowgate.v02test.0061 card 7: the transport rule left the ordinary Clarification guide; the worker reads it
+    # here (leaf `question/register`) when it actually registers a Q.
+    from modules.flow_gate.services import ai_text_guard   # noqa: PLC0415
     return {
         **({"question_policy": policy} if policy else {}),
         "note": copy["note"],
         "options_requires": copy["requires_note"],          # flowgate.v02gui.0015 T3
+        "transport": ai_text_guard.transport_rule(locale),
         "before_asking": copy["before_asking"],             # flowgate.v02gui.0028
         "registration_precheck": {
             "search": "Literal word OR; relevance score descending; next_cursor is bound to project/query/version. Legacy next_before_id is a ranked anchor, not a numeric cutoff.",

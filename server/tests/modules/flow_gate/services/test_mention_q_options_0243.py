@@ -30,7 +30,9 @@ def _clarify(locale: str) -> str:
 @pytest.mark.parametrize("locale", _LOCALES)
 def test_prescription_directs_to_a_single_options_carrying_q(locale):
     body = _clarify(locale)
-    assert "options" in mention_service._CLARIFY_TEXT[locale]["positive"]
+    # flowgate.v02test.0061 card 7: the separate "positive" paragraph is folded into the guard paragraph.
+    assert "options" in mention_service._CLARIFY_TEXT[locale]["warn"]
+    assert "positive" not in mention_service._CLARIFY_TEXT[locale]
     # 각 옵션을 개별 Q로 쪼개라는 옛 처방(선택지 기능이 없어서 우회시키던 것)은 사라졌다
     assert "각 옵션을 질문으로 변환" not in body
     assert "turn each option into a question" not in body
@@ -39,12 +41,15 @@ def test_prescription_directs_to_a_single_options_carrying_q(locale):
 
 @pytest.mark.parametrize("locale", _LOCALES)
 def test_prohibition_block_is_unchanged(locale):
-    """금지 블록은 한 글자도 바뀌지 않는다 — 이 단언이 깨지면 §2.6 위반이다."""
+    """금지 블록의 핵심(⚠️, Do NOT present choices, force-terminated)은 그대로 남는다 — 이 단언이 깨지면 §2.6 위반이다.
+    flowgate.v02test.0061 카드 7: 금지와 처방을 한 단락으로 합쳤고, 안내 본문에서 금지는 한 번만 말한다."""
     warn = mention_service._CLARIFY_TEXT[locale]["warn"]
     assert "⚠️" in warn
     assert "Do NOT present choices" in warn
     assert "force-terminated" in warn
     assert warn in _clarify(locale)
+    assert _clarify(locale).count("Do NOT present choices") == 1
+    assert _clarify(locale).count("force-terminated") == 1
 
 
 @pytest.mark.parametrize("locale", _LOCALES)
@@ -73,6 +78,9 @@ def test_reminder_keeps_prohibition_and_gains_options_prescription(locale):
     reminder = mention_service._no_choices_reminder(_API_BASE, _ANCHOR, locale)
     assert "⚠️" in reminder
     assert "options" in reminder
+    # flowgate.v02test.0061 card 7: the recency repeat is one line (prohibition + where to register)
+    assert "\n" not in reminder and "do NOT present choices" in reminder
+    assert f"POST {_API_BASE}/q/{_ANCHOR}/questions" in reminder
 
 
 @pytest.mark.parametrize("locale", _LOCALES)
