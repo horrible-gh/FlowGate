@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import threading
 import zipfile
 
@@ -213,3 +214,34 @@ def test_persisted_interrupted_job_can_be_read(manager):
     result = manager.job(job_id)
     assert result["done"] is True
     assert result["error"]["code"] == "voice_install_interrupted"
+
+
+def test_catalog_entries_are_pinned_unique_and_testable():
+    services = vs.CATALOG["services"]
+    assert [s["id"] for s in services] == ["whisper.cpp", "sherpa-onnx", "vosk"]
+    for service in services:
+        ids = [m["id"] for m in service["models"]]
+        assert len(set(ids)) == len(ids)
+        names = [a["filename"] for a in service["artifacts"]]
+        assert {"jfk.wav"} <= set(names) and any(n.startswith("ffmpeg") for n in names)
+        for item in [*service["artifacts"], *service["models"]]:
+            assert item["url"].startswith("https://") and item["size_bytes"] > 0, item
+            assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"]), item
+        for model in service["models"]:
+            assert prefs.valid("voice_model", model["id"]), model["id"]
+            assert isinstance(model["realtime"], bool) and model["languages"]
+            # A model that cannot read the English sample must name its own sample.
+            if not {"en", "multilingual"} & set(model["languages"]):
+                assert model["self_test"]["sample"] and model["self_test"]["expect"], model["id"]
+    whisper = {m["id"]: m for m in vs.specification("whisper.cpp")["models"]}
+    assert {"large-v3-turbo", "large-v3", "large-v3-turbo-q5_0", "medium", "small", "tiny.en"} <= set(whisper)
+    assert whisper["tiny.en"]["languages"] == ["en"]
+    realtime = {(s["id"], m["id"]) for s in services for m in s["models"] if m["realtime"]}
+    assert ("sherpa-onnx", "zipformer-ko") in realtime and ("vosk", "small-ko") in realtime
+    assert not any(service == "whisper.cpp" for service, _ in realtime)
+
+
+def test_catalog_response_hides_download_and_self_test_details(manager):
+    models = [m for s in manager.catalog(True)["services"] for m in s["models"]]
+    assert len(models) == sum(len(s["models"]) for s in vs.CATALOG["services"])
+    assert not any({"url", "sha256", "filename", "self_test"} & set(m) for m in models)

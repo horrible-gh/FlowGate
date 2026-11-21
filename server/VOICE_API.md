@@ -37,9 +37,10 @@ a realtime-capable installed model. Responses retain the existing settings envel
 
 ## Realtime input
 
-Only `sherpa-onnx` / `zipformer-en-20m` is realtime-capable in this catalog.
-Whisper models and SenseVoiceSmall are not. Zipformer is English; SenseVoiceSmall
-supports Chinese, English, Japanese, Korean and Cantonese.
+Realtime-capable models: `sherpa-onnx` / `zipformer-en-20m` (English) and
+`zipformer-ko` (Korean), and every `vosk` model (`small-ko`, `small-en-us`).
+Whisper models and SenseVoiceSmall are not. SenseVoiceSmall supports Chinese,
+English, Japanese, Korean and Cantonese.
 
 1. POST `/voice/streams` with JSON `{}` or paired `service`/`model`.
 2. Receive `stream_id`, `sample_rate:16000`, `channels:1`, `format:"pcm_s16le"`.
@@ -76,14 +77,26 @@ catalog archives/model and `jfk.wav`. For whisper.cpp, exact-version expanded
 executables/DLLs and ffmpeg are also accepted and checked against per-file hashes.
 `Recording_1.m4a` may substitute for the offline smoke-test sample. A mismatched
 binary version is rejected rather than executed. Catalog versions: whisper.cpp
-1.8.2, sherpa-onnx 1.12.20, ffmpeg 8.0.
+1.8.2, sherpa-onnx 1.12.20, Vosk 0.3.45, ffmpeg 8.0.
+
+Catalog contents (`services/voice_catalog.json`, the only source of the list):
+whisper.cpp carries every ggml model of the pinned upstream revision (tiny to
+large-v3 and large-v3-turbo, their q5/q8 quantized builds, and the English-only
+`.en` builds); sherpa-onnx carries SenseVoiceSmall and the English and Korean
+streaming Zipformers; Vosk carries the small Korean and US English models.
 
 The first model installs its runtime. Every model must pass a real sample
 transcription before publication; installation then activates the default.
+The sample is `jfk.wav` (must contain "country") unless the model entry has
+`self_test {sample, expect}`: `sample` is a file inside the model archive or a
+pinned service artifact, and `expect` must appear in the transcript (whitespace
+ignored). Models without English need this entry.
 Deleting the default switches voice off; deleting a service's last model removes
 that runtime and its download cache. Shell arguments are never accepted from users.
-Whisper runs on a random loopback port; sherpa uses an authenticated loopback HTTP
-worker and pinned C ABI bindings, with no additional Python ML dependencies.
+Whisper runs on a random loopback port; sherpa and Vosk each use an authenticated
+loopback HTTP worker with the same contract (`voice_sherpa_worker.py`,
+`voice_vosk_worker.py`) over the pinned native C API, with no additional Python
+ML dependencies.
 
 Apply migrations 207 (user voice settings) and 208 (audio and conversation link)
 through the normal server migration mechanism before using these endpoints.
@@ -101,4 +114,5 @@ Full isolated download/install tests are opt-in:
 from `server/`. They use temporary voice storage and in-memory system settings.
 
 Upstream contracts: [whisper server](https://github.com/ggml-org/whisper.cpp/tree/v1.8.2/examples/server),
-[sherpa C API](https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.20/sherpa-onnx/c-api/c-api.h).
+[sherpa C API](https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.20/sherpa-onnx/c-api/c-api.h),
+[Vosk C API](https://github.com/alphacep/vosk-api/blob/v0.3.45/src/vosk_api.h).
