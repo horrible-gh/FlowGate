@@ -51,22 +51,22 @@ def test_migration_201_exists_for_every_dialect(dialect):
                    "queue_requeue_count", "queue_order", "queue_claimed_at"):
         assert column in text, (dialect, column)
     assert "'queued', 'pending', 'running', 'completed', 'failed', 'cancelled'" in text
-def test_quota_three_starts_then_refusal_and_timeout_clamp(env):
+def test_quota_ten_starts_then_refusal_and_timeout_clamp(env):
     from modules.flow_gate.services import tr_self_check_quota as quota
-    for remaining in (2, 1, 0):
+    for remaining in range(9, -1, -1):
         row = env.admit(DOCS[P][0], timeout_seconds=3600)
-        assert row["timeout_seconds"] == 120                    # clamped to the card default of 2 minutes
+        assert row["timeout_seconds"] == 60                    # clamped to the card default of 1 minute
         assert row["verification"]["remaining"] == remaining + 1
         assert queue.dispatch_once()
         final = service.public(_row(row["self_check_run_id"]))
         assert final["status"] == "completed"
         assert final["verification"]["remaining"] == remaining
-        assert final["verification"]["notice"].startswith("⚠ Self-check:")
+        assert final["verification"]["notice"].startswith("⚠ ") == (remaining <= 2)
     with pytest.raises(service.SelfCheckError) as error:
         env.admit(DOCS[P][0])
     assert error.value.code == "selfcheck_quota_exhausted"
     # Another work stage has its own budget; rereading the first retains its zero.
-    assert env.admit(DOCS[P][1])["verification"]["remaining"] == 3
+    assert env.admit(DOCS[P][1])["verification"]["remaining"] == 10
     assert service.public(_row(row["self_check_run_id"]))["verification"]["remaining"] == 0
 def test_quota_waiting_superseded_cancelled_and_invalid_cost_nothing(env):
     first = env.admit(DOCS[P][0])
@@ -76,17 +76,17 @@ def test_quota_waiting_superseded_cancelled_and_invalid_cost_nothing(env):
     with pytest.raises(service.SelfCheckError):
         env.admit(DOCS[P][0], timeout_seconds=0)
     third = env.admit(DOCS[P][0], timeout_seconds=10)
-    assert third["verification"]["remaining"] == 3 and third["timeout_seconds"] == 10
-    assert third["verification"]["run_timeout_sec"] == 120
+    assert third["verification"]["remaining"] == 10 and third["timeout_seconds"] == 10
+    assert third["verification"]["run_timeout_sec"] == 60
 def test_quota_failed_and_timed_out_runs_count(env):
     failed = env.admit(DOCS[P][0], args=("missing.py",))
     assert queue.dispatch_once()
     final = service.public(_row(failed["self_check_run_id"]))
-    assert final["exit_code"] != 0 and final["verification"]["remaining"] == 2
+    assert final["exit_code"] != 0 and final["verification"]["remaining"] == 9
     timed = env.admit(DOCS[P][0], args=("slow.py",), timeout_seconds=1)
     assert queue.dispatch_once()
     final = service.public(_row(timed["self_check_run_id"]))
-    assert final["timed_out"] and final["verification"]["remaining"] == 1
+    assert final["timed_out"] and final["verification"]["remaining"] == 8
 def test_quota_no_process_spawn_failure_refunds_once(env, monkeypatch):
     row = env.admit(DOCS[P][0])
     def no_process(*args, **kwargs):

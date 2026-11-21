@@ -82,8 +82,8 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
 # (1-A): the two verification (self-check) options of a run card. They are managed per card only
-# (no system setting): a card with no stored value runs with the fixed defaults below (3 runs,
-# 2 minutes); the field's ``choices`` are the combo's presets, and any whole number inside the range below is also a
+# (no system setting): a card with no stored value runs with the fixed defaults below (10 runs,
+# 1 minute); the field's ``choices`` are the combo's presets, and any whole number inside the range below is also a
 # value (the combo's custom entry).
 VERIFY_RUNS, VERIFY_MINUTES = "verify_runs", "verify_minutes"
 # an exact local branch name with no repository context (no BRANCH pattern, no choices).
@@ -98,10 +98,10 @@ DEFAULT_RESTART_COUNT = 3
 LIMIT_MIN, LIMIT_MAX = 1, 999
 # flowgate.v02test.0053 0003-T (1-A): 검증 최대 횟수 (a whole number of 1 or more) and 검증 1회 최대 시간 (minutes, 1..30: the
 # self-check run's own ceiling of 1800 seconds, ``tr_self_check_service``).
-VERIFY_RUN_CHOICES = (3, 5, 10)
+VERIFY_RUN_CHOICES = (1, 2, 3, 5, 10)
 VERIFY_RUNS_MIN = 1                     # no upper bound: the earlier implementation 'a whole number of 1 or more'
-VERIFY_MINUTE_CHOICES = (2, 3, 5, 10, 20, 30)
-DEFAULT_VERIFY_MAX_RUNS, DEFAULT_VERIFY_RUN_MINUTES = 3, 2
+VERIFY_MINUTE_CHOICES = (1, 2, 3, 5, 10)
+DEFAULT_VERIFY_MAX_RUNS, DEFAULT_VERIFY_RUN_MINUTES = 10, 1
 VERIFY_MINUTES_MIN, VERIFY_MINUTES_MAX = 1, 30
 TEXT_MAX_LEN = 191
 # The v0.1 document review loop names of the two review bases.
@@ -151,7 +151,7 @@ _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMI
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
 # (1-A): a run card's verification options (the run AI's advanced ⚙). No stored value = the card
-# default 3 runs / 2 minutes (``verify_limits.resolve_verify_limits`` reads the same constants).
+# default 10 runs / 1 minute (``verify_limits.resolve_verify_limits`` reads the same constants).
 VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, DEFAULT_VERIFY_MAX_RUNS, VERIFY_RUN_CHOICES)
 VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, DEFAULT_VERIFY_RUN_MINUTES, VERIFY_MINUTE_CHOICES)
 # the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a

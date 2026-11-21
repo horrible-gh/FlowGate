@@ -54,8 +54,8 @@ export default {
     },
     // flowgate.v02test.0053 0003-T: the tooltips of the two 검증 options (managed per card, default 3회 / 2분).
     verify: {
-      max_runs_hint: '카드별 검증 횟수 · 기본값 3회 · 사용자 정의는 1 이상의 정수',
-      run_minutes_hint: '검증 1회 최대 시간(분) · 기본값 2분 · 사용자 정의는 1~30분',
+      max_runs_hint: '카드별 검증 횟수 · 기본값 10회 · 사용자 정의는 1 이상의 정수',
+      run_minutes_hint: '검증 1회 최대 시간(분) · 기본값 1분 · 사용자 정의는 1~30분',
     },
     count: {
       until_pass: '통과할 때까지',
@@ -176,8 +176,8 @@ export default {
       custom: 'Custom',
     },
     verify: {
-      max_runs_hint: 'Verifications per card · default 3 · custom: 1 or more',
-      run_minutes_hint: 'Minutes per verification · default 2 · custom 1 to 30',
+      max_runs_hint: 'Verifications per card · default 10 · custom: 1 or more',
+      run_minutes_hint: 'Minutes per verification · default 1 · custom 1 to 30',
     },
     count: {
       until_pass: 'Until it passes',
@@ -296,8 +296,8 @@ export default {
       custom: 'ユーザー定義',
     },
     verify: {
-      max_runs_hint: 'カードごとの検証回数 · 既定値 3 回 · ユーザー定義は 1 以上の整数',
-      run_minutes_hint: '検証 1 回の最大時間(分) · 既定値 2 分 · ユーザー定義は 1~30 分',
+      max_runs_hint: 'カードごとの検証回数 · 既定値 10 回 · ユーザー定義は 1 以上の整数',
+      run_minutes_hint: '検証 1 回の最大時間(分) · 既定値 1 分 · ユーザー定義は 1~30 分',
     },
     count: {
       until_pass: '合格するまで',

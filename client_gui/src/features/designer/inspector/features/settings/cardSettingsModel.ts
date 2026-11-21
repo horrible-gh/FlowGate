@@ -73,7 +73,7 @@ const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count',
 
 /**
  * The two verification options of a work card, managed per card only (there is no system setting). A card with no
- * stored value shows the server's default (3 runs / 2 minutes); the server's `choices` are the combo's presets and any
+ * stored value shows the server's default (10 runs / 1 minute); the server's `choices` are the combo's presets and any
  * whole number inside the range below is a value too (the combo's custom entry, the number box beside it).
  */
 export type CardSettingsVerifyField = 'verify_max_runs' | 'verify_run_minutes'
@@ -100,7 +100,7 @@ export function cardSettingsVerifyCustomValue(field: CardSettingsVerifyField, te
 }
 
 /**
- * The combo of a verification option: the presets (the default 3 runs / 2 minutes among them; there is no blank system
+ * The combo of a verification option: the presets (the default 10 runs / 1 minute among them; there is no blank system
  * defaults entry), the stored value when it is none of them (so the shown value stays the stored one), then the custom
  * entry. A preset or stored value is labelled with the `count.times` / `option.minutes` messages.
  */

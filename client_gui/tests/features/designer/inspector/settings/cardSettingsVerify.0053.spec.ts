@@ -1,6 +1,6 @@
 /**
  * flowgate.v02test.0053 0003-T (1-A) — the two 검증 options of a work card (실행 AI's advanced ⚙): their place, the value a
- * combo entry stands for (a preset, a custom whole number inside the range; managed per card only, default 3 runs / 2 minutes —
+ * combo entry stands for (a preset, a custom whole number inside the range; managed per card only, default 10 runs / 1 minute —
  * 0002-CH turn 68), the combo's options and the strings of the three locales.
  */
 import { describe, expect, it } from 'vitest'
@@ -20,8 +20,8 @@ import {
 import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS } from '@/features/designer/inspector/features/settings/cardRolesModel'
 import messages from '@/features/designer/inspector/features/settings/messages'
 
-const RUNS_PRESETS = [3, 5, 10]
-const MINUTES_PRESETS = [2, 3, 5, 10, 20, 30]
+const RUNS_PRESETS = [1, 2, 3, 5, 10]
+const MINUTES_PRESETS = [1, 2, 3, 5, 10]
 
 describe('검증 options — where they live', () => {
   it('a work card has both, under the 실행 AI ⚙ after the time limit; a test and a plan card have neither', () => {
@@ -77,19 +77,21 @@ describe('검증 options — the value a combo entry stands for', () => {
 describe('검증 options — the combo', () => {
   it('the server presets (no system default entry), then 사용자 정의', () => {
     expect(cardSettingsVerifyOptions('verify_max_runs', RUNS_PRESETS, 3).map((o) => [o.value, o.key, o.params])).toEqual([
+      ['1', 'count.times', { n: 1 }],
+      ['2', 'count.times', { n: 2 }],
       ['3', 'count.times', { n: 3 }],
       ['5', 'count.times', { n: 5 }],
       ['10', 'count.times', { n: 10 }],
       [VERIFY_CUSTOM, 'option.custom', {}],
     ])
-    expect(cardSettingsVerifyOptions('verify_run_minutes', MINUTES_PRESETS, 2).map((o) => o.value)).toEqual(['2', '3', '5', '10', '20', '30', VERIFY_CUSTOM])
+    expect(cardSettingsVerifyOptions('verify_run_minutes', MINUTES_PRESETS, 2).map((o) => o.value)).toEqual(['1', '2', '3', '5', '10', VERIFY_CUSTOM])
     expect(cardSettingsVerifyOptions('verify_run_minutes', MINUTES_PRESETS, 10).every((o) => o.key !== null)).toBe(true)
   })
 
   it('a stored custom value stays shown, in order, so opening a card changes nothing', () => {
-    expect(cardSettingsVerifyOptions('verify_max_runs', RUNS_PRESETS, 7).map((o) => o.value)).toEqual(['3', '5', '7', '10', VERIFY_CUSTOM])
-    expect(cardSettingsVerifyOptions('verify_run_minutes', MINUTES_PRESETS, 17).map((o) => o.value)).toEqual(['2', '3', '5', '10', '17', '20', '30', VERIFY_CUSTOM])
-    expect(cardSettingsVerifyOptions('verify_max_runs', RUNS_PRESETS, 5).map((o) => o.value)).toEqual(['3', '5', '10', VERIFY_CUSTOM])
+    expect(cardSettingsVerifyOptions('verify_max_runs', RUNS_PRESETS, 7).map((o) => o.value)).toEqual(['1', '2', '3', '5', '7', '10', VERIFY_CUSTOM])
+    expect(cardSettingsVerifyOptions('verify_run_minutes', MINUTES_PRESETS, 17).map((o) => o.value)).toEqual(['1', '2', '3', '5', '10', '17', VERIFY_CUSTOM])
+    expect(cardSettingsVerifyOptions('verify_max_runs', RUNS_PRESETS, 5).map((o) => o.value)).toEqual(['1', '2', '3', '5', '10', VERIFY_CUSTOM])
     expect(cardSettingsChoiceOptions('verify_run_minutes', MINUTES_PRESETS, 17).map((o) => o.value)).toContain('17')
   })
 

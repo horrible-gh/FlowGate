@@ -1,7 +1,7 @@
 """The one place that tells a card's verification limits — the earlier change the earlier implementation (1-A).
 
 ``resolve_verify_limits(flow_id, node_key) -> VerifyLimits(max_runs, run_timeout_sec)``: the card's own value, else the
-fixed card default (``fields.DEFAULT_VERIFY_MAX_RUNS`` / ``DEFAULT_VERIFY_RUN_MINUTES``: 3 runs, 2 minutes). There is no
+fixed card default (``fields.DEFAULT_VERIFY_MAX_RUNS`` / ``DEFAULT_VERIFY_RUN_MINUTES``: 10 runs, 1 minute). There is no
 system setting any more (verification is managed per card only; a value an older
 server stored in the system settings is left in place and no longer read). Cards 1-C (count / time applied to the
 self-check) and 1-D (the card document's verification line) must read the limits through this function and nowhere else.
@@ -41,7 +41,7 @@ def _whole(value: object, low: int, high: Optional[int] = None) -> Optional[int]
 
 
 def default_limits() -> VerifyLimits:
-    """The fixed card defaults alone (what a card with no value of its own has): 3 runs, 2 minutes."""
+    """The fixed card defaults alone (what a card with no value of its own has): 10 runs, 1 minute."""
     return VerifyLimits(max_runs=fields.DEFAULT_VERIFY_MAX_RUNS,
                         run_timeout_sec=min(fields.DEFAULT_VERIFY_RUN_MINUTES * 60, RUN_TIMEOUT_CEILING_SEC))
 

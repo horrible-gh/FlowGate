@@ -45,9 +45,9 @@ def test_the_read_answers_the_run_settings_with_their_choices(env, decided, guar
     assert answer["applicable_settings"] == ["review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"]
     assert set(answer["settings"]) == {"review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
     # flowgate.v02test.0053 0003-T: the two 검증 options show no value of their own (the system default stands) and the presets
-    assert answer["settings"]["verify_max_runs"] == {"value": 3, "stored": False, "default": 3, "choices": [3, 5, 10]}
-    assert answer["settings"]["verify_run_minutes"] == {"value": 2, "stored": False, "default": 2,
-                                                        "choices": [2, 3, 5, 10, 20, 30]}
+    assert answer["settings"]["verify_max_runs"] == {"value": 10, "stored": False, "default": 10, "choices": [1, 2, 3, 5, 10]}
+    assert answer["settings"]["verify_run_minutes"] == {"value": 1, "stored": False, "default": 1,
+                                                        "choices": [1, 2, 3, 5, 10]}
     assert set(answer["settings"]["review_count"]) == {"value", "stored", "default", "choices"}
     assert answer["settings"]["time_limit"]["choices"] == list(fields.TIME_LIMIT_MINUTES)
     assert answer["settings"]["restart"]["default"] == fields.DEFAULT_RESTART_COUNT
@@ -80,7 +80,7 @@ def test_the_two_verify_options_are_changed_audited_and_cleared_like_the_other_s
     assert rows["verify_max_runs"]["after"] == {"value": 7, "stored": True} and rows["verify_max_runs"]["changed"] is True
     back = card_roles.change(_caller(), mine, {"settings": {"verify_max_runs": None}, "expected_settings_version": version + 1})
     assert back["changed_settings"] == ["verify_max_runs"] and "verify_max_runs" not in repository.values(FA, mine)
-    assert verify_limits.resolve_verify_limits(FA, mine).max_runs == 3
+    assert verify_limits.resolve_verify_limits(FA, mine).max_runs == 10
     for bad in (0, -1, 31):
         field = "verify_run_minutes" if bad == 31 else "verify_max_runs"
         err = _refused(lambda: card_roles.change(_caller(), mine, {"settings": {field: bad},

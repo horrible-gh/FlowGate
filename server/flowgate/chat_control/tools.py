@@ -324,7 +324,7 @@ def contract_place(api_base, raw_token):
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
         "T only), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; both T only, null = the",
-        "default 3 / 2 minutes). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
+        "default 10 / 1 minute). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
         "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",

@@ -458,7 +458,7 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS + ["hold"])
     assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 3,
                            "review_ai": None, "review_count": 0, "time_limit": 240, "review_basis": "type",
-                           "after_review_exhausted": "continue", "verify_max_runs": 3, "verify_run_minutes": 2,
+                           "after_review_exhausted": "continue", "verify_max_runs": 10, "verify_run_minutes": 1,
                            "instruction_review_ai": None, "instruction_review_count": 0,
                            "instruction_note": "", "run_note": "", "run_pre_instruction": "", "hold": False}
     assert not any(f["stored"] for f in body["fields"].values())
