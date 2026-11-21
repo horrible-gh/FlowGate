@@ -34,6 +34,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from modules.flow_gate.db import documents
+from modules.flow_gate.services import ai_response_slim
 from . import call_ledger, chat_authz, chat_errors, chat_gate, target
 from .chat_adapter import _object, serialized_length, success_body, tool_result_limit
 from .errors import GraphApiError, invalid, internal_error
@@ -259,7 +260,8 @@ def _item_view(item, include_answer):
                                      "created_at": latest.get("created_at")}
             if answer_cut:
                 view["latest_answer"]["body_truncated"] = True
-    return view
+    # group 0061 card 3: the chat reads the question without its empty fields (same names, same meaning).
+    return ai_response_slim.slim_question_view(view, keep=())
 
 
 def _document_view(doc, include_answered):
@@ -267,9 +269,11 @@ def _document_view(doc, include_answered):
     items = db_question_items.list_by_doc(doc["doc_id"]) or []
     shown = [_item_view(i, include_answered) for i in items
              if include_answered or int(i.get("answer_count") or 0) == 0]
-    return {"doc_id": doc["doc_id"], "type_code": doc.get("type_code"), "title": doc.get("title"),
-            "status": doc.get("status"), "cards": _cards(doc),
-            "open_count": sum(1 for i in items if int(i.get("answer_count") or 0) == 0), "questions": shown}
+    return ai_response_slim.slim_question_view(
+        {"doc_id": doc["doc_id"], "type_code": doc.get("type_code"), "title": doc.get("title"),
+         "status": doc.get("status"), "cards": _cards(doc),
+         "open_count": sum(1 for i in items if int(i.get("answer_count") or 0) == 0), "questions": shown},
+        keep=("questions",))
 
 
 def _fit(payload):
