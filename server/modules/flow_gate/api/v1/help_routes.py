@@ -27,6 +27,7 @@ from modules.flow_gate.db import events as db_events
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import (
+    ai_response_slim,
     auth_outbound,
     help_catalog,
     remote_tool_service,
@@ -154,21 +155,26 @@ def get_help_tools(request: Request, locale: Optional[str] = None):
         return auth
 
     base_url = outbound_api_base()
-    payload = {
-        "ok": True,
-        "version": tool_registry.VERSION,
-        "base_url": base_url,
-        "locale": normalized_locale,
-        "kind": registry["kind"],
-        "source_mode": registry["source_mode"],
-        "reason": registry["reason"],
-        "detail_url": f"{base_url}/help/tools/{{name}}",
-        "tools": registry["tools"],
-        "document_attachments": tool_registry.attachment_view(
-            registry["kind"], normalized_locale, base_url
-        ),
-        "notes": registry["notes"],
-    }
+    if ai_response_slim.is_ai_token(auth):
+        # group 0061 card 3: an AI reads name + one line + path. The attachment block, denied /
+        # absent details, notes and examples are one call deeper (/help/tools/{name}).
+        payload = ai_response_slim.tools_summary(registry, normalized_locale, base_url)
+    else:
+        payload = {
+            "ok": True,
+            "version": tool_registry.VERSION,
+            "base_url": base_url,
+            "locale": normalized_locale,
+            "kind": registry["kind"],
+            "source_mode": registry["source_mode"],
+            "reason": registry["reason"],
+            "detail_url": f"{base_url}/help/tools/{{name}}",
+            "tools": registry["tools"],
+            "document_attachments": tool_registry.attachment_view(
+                registry["kind"], normalized_locale, base_url
+            ),
+            "notes": registry["notes"],
+        }
     _record_help_tools_event(
         auth,
         view="list",

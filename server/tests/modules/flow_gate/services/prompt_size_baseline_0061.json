@@ -150,14 +150,14 @@
   "help_item:review_TR:source_tools/show": 2052,
   "help_item:review_TR:source_tools/stat": 1624,
   "help_item:review_TR:submit": 1840,
-  "help_tools:chat_edit": 4498,
-  "help_tools:chat_read": 3699,
-  "help_tools:edit_TR": 4498,
-  "help_tools:new_T": 3699,
-  "help_tools:review_TR": 3699,
-  "turns:worker_first_page": 1921,
-  "turns:worker_first_page:body_excluded": 1812,
-  "turns:worker_next_page": 1260,
-  "turns:worker_next_page:body_excluded": 1151
+  "help_tools:chat_edit": 1021,
+  "help_tools:chat_read": 724,
+  "help_tools:edit_TR": 1021,
+  "help_tools:new_T": 724,
+  "help_tools:review_TR": 724,
+  "turns:worker_first_page": 790,
+  "turns:worker_first_page:body_excluded": 681,
+  "turns:worker_next_page": 553,
+  "turns:worker_next_page:body_excluded": 444
  }
 }
