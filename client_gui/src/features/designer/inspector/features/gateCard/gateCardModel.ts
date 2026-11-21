@@ -2,6 +2,7 @@
 import { gateHeaderState } from './gateHeaderModel'
 import type { RunGateState } from '../../inspectorTarget'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 export type GateSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -75,7 +76,8 @@ export function gateCardSlots(facts: GateCardFacts, instructionOmitted = false):
       return [{ key: 'result', kind: 'result', id: null, empty: true, emptyKey: 'empty.before', state: null, focus: false, open: 'none' }]
     case 'custom': {
       const report = customLine('report', facts)
-      return instructionOmitted ? [report] : [customLine('instruction', facts), report]
+      const instruction = customLine('instruction', facts)
+      return instructionSlotVisible(instructionOmitted, facts.cardDocuments, instruction.id) ? [instruction, report] : [report]
     }
     case 'document':
       return [filled('document', facts.docId!, facts.docReviewStatus, facts.docStatus)]

@@ -514,6 +514,7 @@ export interface FlowCanvasCardDocument {
    * without a document); absent when not sent. M and WP lines are always true (the v0.1 approval rule).
    */
   hasBody?: boolean
+  readonly instructionOmitted?: boolean
   readonly bodyState?: string | null
   /** (O3): AI reviews of the line's document (`ai_review_history` length); absent when not sent. */
   reviewCount?: number

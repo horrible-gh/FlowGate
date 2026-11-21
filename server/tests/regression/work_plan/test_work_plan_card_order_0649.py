@@ -1095,8 +1095,9 @@ def test_apply_leaves_another_plans_row_with_the_same_card_id_as_it_was(env, cha
 
 @pytest.mark.parametrize("mode", [None, "use", "omit"])
 def test_paired_row_types_are_the_rows_plan_to_rows_makes_whatever_the_instruction_mode(env, mode):
-    """plan_to_rows does not read instruction_mode: an omitted DS (or T) step is poured like
-    any other, so the card's row_types keep it and the pour saves."""
+    """0065 #33: omit keeps the DS/T rows, but must not create instruction documents.
+    plan_to_rows only constructs rows; the Graph document factory is tested separately.
+    This replaces the old implication that keeping rows requires empty documents."""
     body = _paired_body()
     if mode is not None:
         for step in body["steps"]:
@@ -1112,6 +1113,9 @@ def test_paired_row_types_are_the_rows_plan_to_rows_makes_whatever_the_instructi
 
     _save_candidates(env, _candidates(env, plan, "replace_after"), "replace_after")
     assert _pairs(_plan_rows(seq_id)) == _PAIRED_ROWS
+    # 0065 #33: row preservation is independent of instruction document allocation.
+    if mode == "omit":
+        assert all(not row.get("result_doc_id") for row in _plan_rows(seq_id))
 
 
 # ══ O0 legacy history — G9 delete and re-add ════════════════════════════════

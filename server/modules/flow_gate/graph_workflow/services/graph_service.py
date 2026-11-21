@@ -240,7 +240,8 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
 
 
 def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],
-                registered: set[str], locale: Optional[str] = None) -> dict:
+                registered: set[str], locale: Optional[str] = None, *,
+                initial_instruction_modes: Optional[dict[str, str]] = None) -> dict:
     """The draft save inside the caller's Flow guard of ``group`` (internal draft-save function).
 
     ``save_draft`` runs it in a guard of its own; the work plan deploy runs it in the guard that also writes its
@@ -291,6 +292,13 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
         removed_edges = [e["edge_id"] for e in (current or {}).get("edges", []) if e["edge_id"] not in new_edges]
         for key in removed_nodes:
             layout_store.retire(flow_id, key, "draft_removed")
+        # 0065 #33: deploy modes must exist before the document factory runs.
+        # Internal, new-node-only input; the public draft contract stays unchanged.
+        if initial_instruction_modes:
+            from flowgate.card_settings import repository as card_settings
+            for client_key, mode in initial_instruction_modes.items():
+                if client_key in key_map and mode in ("use", "omit"):
+                    card_settings.put(flow_id, key_map[client_key], "instruction", mode, user_id)
         try:
             card_documents = card_document_ports.draft_saved(group, user_id, nodes, removed_nodes, registered,
                                                              ((current or latest) or {}).get("nodes", []),

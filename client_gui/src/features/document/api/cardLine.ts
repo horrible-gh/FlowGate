@@ -38,6 +38,7 @@ export interface CardLineRecord {
   readonly status: string | null
   readonly docReviewStatus: string | null
   readonly hasBody?: boolean
+  readonly instructionOmitted?: boolean
   readonly bodyState?: string | null
   readonly reviewCount?: number
   readonly rejectionCount?: number
@@ -74,6 +75,7 @@ export function toCardLineRecord(raw: unknown): CardLineRecord | null {
     status: text(line.status),
     docReviewStatus: text(line.doc_review_status),
     ...(typeof line.has_body === 'boolean' ? { hasBody: line.has_body } : {}),
+    ...(typeof line.instruction_omitted === 'boolean' ? { instructionOmitted: line.instruction_omitted } : {}),
     ...(typeof line.body_state === 'string' || line.body_state === null ? { bodyState: line.body_state } : {}),
     ...(reviewCount !== null ? { reviewCount } : {}),
     ...(rejectionCount !== null ? { rejectionCount } : {}),

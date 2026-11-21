@@ -676,7 +676,11 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
     # document a confirmed revision (or another line) keeps stays with its whole history.
     for doc_id in card_lines.disposed_documents(state.flow_id, work.removes):
         legacy.drop_deploy_save_evidence(doc_id)
-    saved = legacy.write_draft(state.group, user_id, work.draft, registered, locale)
+    initial_modes = {key: deploy_plan.instruction_mode(target)
+                     for key, target in zip(work.new_keys, work.creates)
+                     if deploy_plan.instruction_mode(target) is not None}
+    saved = legacy.write_draft(state.group, user_id, work.draft, registered, locale,
+                               initial_instruction_modes=initial_modes)
     key_map = saved.get("key_map") or {}
 
     written: list[tuple] = []                      # (node_key, target, doc, path, identity, text)
