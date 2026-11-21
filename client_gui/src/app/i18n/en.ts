@@ -644,6 +644,7 @@ export default {
       no_flows: 'No flows.',
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
+      reconnecting: 'Reconnecting…',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
