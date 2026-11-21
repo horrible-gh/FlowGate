@@ -47,7 +47,7 @@ describe('Canvas card', () => {
     // behind a card that is merging (not conflicting) it says so
     const merging = render({ integration: 'pending', integrationBlockedTitle: '작업C' })
     expect(merging.get('[data-test="designer-canvas-node-integration"]').attributes('title')).toBe('‘작업C’ 카드의 병합이 끝나기를 기다리는 중')
-    expect(w.find('.flow-node-footer').exists()).toBe(false)
+    expect(w.findAll('.flow-node-footer button')).toHaveLength(0)
     expect(w.findAll('.flow-node-card > *').map((el) => el.classes()[0])).not.toContain('flow-node-below')
   })
 

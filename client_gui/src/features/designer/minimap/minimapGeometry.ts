@@ -10,9 +10,9 @@ import type { CanvasSize, CanvasViewport } from '../center/canvasView'
 import { edgeAnchors } from '../center/canvas/edgeGeometry'
 import type { FlowGraph, FlowGraphNode } from '../center/graph/flowGraph'
 
-/** Size of one Node card on the Canvas (FlowNodeCard: 176 x 92). */
+/** Size of one Node card on the Canvas (FlowNodeCard: 176 x 108). */
 export const MINIMAP_NODE_WIDTH = 176
-export const MINIMAP_NODE_HEIGHT = 92
+export const MINIMAP_NODE_HEIGHT = 108
 /** Room kept around the drawn content, as a share of its larger side. */
 export const MINIMAP_PADDING_RATIO = 0.08
 

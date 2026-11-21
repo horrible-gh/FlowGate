@@ -293,19 +293,19 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
 
   it('anchors at the middle of the facing side and enters the opposite side of the target', () => {
     expect(edgeAnchors(rect(0, 0), rect(300, 40))).toEqual({
-      sourceX: 176, sourceY: 46, sourcePosition: Position.Right, targetX: 300, targetY: 86, targetPosition: Position.Left,
+      sourceX: 176, sourceY: 54, sourcePosition: Position.Right, targetX: 300, targetY: 94, targetPosition: Position.Left,
     })
     expect(edgeAnchors(rect(0, 0), rect(40, 300))).toEqual({
-      sourceX: 88, sourceY: 92, sourcePosition: Position.Bottom, targetX: 128, targetY: 300, targetPosition: Position.Top,
+      sourceX: 88, sourceY: 108, sourcePosition: Position.Bottom, targetX: 128, targetY: 300, targetPosition: Position.Top,
     })
     expect(edgeAnchors(rect(40, 300), rect(0, 0))).toEqual({
-      sourceX: 128, sourceY: 300, sourcePosition: Position.Top, targetX: 88, targetY: 92, targetPosition: Position.Bottom,
+      sourceX: 128, sourceY: 300, sourcePosition: Position.Top, targetX: 88, targetY: 108, targetPosition: Position.Bottom,
     })
     expect(edgeAnchors(rect(300, 40), rect(0, 0))).toMatchObject({ sourcePosition: Position.Left, sourceX: 300, targetPosition: Position.Right, targetX: 176 })
   })
 
   it('takes a Vue Flow node as its absolute rectangle, the card size until it is measured', () => {
-    expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 0, height: 0 } })).toEqual({ x: 10, y: 20, width: 176, height: 92 })
+    expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 0, height: 0 } })).toEqual({ x: 10, y: 20, width: 176, height: 108 })
     expect(nodeRect({ computedPosition: { x: 10, y: 20 }, dimensions: { width: 200, height: 100 } })).toEqual({ x: 10, y: 20, width: 200, height: 100 })
   })
 
@@ -318,14 +318,14 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
     )
     const edge = () => w.get('[data-test="designer-canvas-edge"]')
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['bottom', 'top'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,92 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,108 C/)
     // The arrow tip sits on the target's top middle and points down into it.
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M128,300 L123,291 L133,291 Z$/)
     ;(w.vm as unknown as { b: GraphNode }).b.computedPosition = { x: 400, y: 20, z: 0 }
     await flushPromises()
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['right', 'left'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,46 C/)
-    expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,66 L391,/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,54 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,74 L391,/)
   })
 })
 

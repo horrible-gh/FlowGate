@@ -1,7 +1,9 @@
 /**
  * flowgate.v02.0068 T#2 — 가로 / 세로 자동정렬, pure (arrange/directionalLayout.ts):
  * - 0005-L §5.4 L1 ~ L15, horizontal and vertical, at the coordinates the L rules give (card size 176 x 92 unless
- *   given, movable and shown unless said);
+ *   given, movable and shown unless said). flowgate.v02test.0063: the real card is 176 x 108 now; the L coordinates
+ *   are still the rules' 176 x 92 ones, so the helpers hand that size in as a measured one (`RULE_CARD`). What an
+ *   unmeasured card gets (176 x 108) has its own case at the end;
  * - 0004-D §7 B: branch -> merge, isolated cards apart, a fixed start, a cycle, a collapsed document, a lone sequence
  *   card, the same result after a `tmp_` key became a stored key, wide branches and far merges, branches of other
  *   lengths, several starts and groups, real card sizes, obstacles, a forced candidate refused, and the same sides
@@ -17,6 +19,8 @@ import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/
 import { miniMapEdges } from '@/features/designer/minimap/minimapGeometry'
 
 type Size = { width: number; height: number }
+/** The card size the 0005-L coordinates are written for. */
+const RULE_CARD: Size = { width: 176, height: 92 }
 
 let scatter = 0
 /** A card (a Graph node) somewhere away from where it will go. `root`: a 요구사항 (R) document card. */
@@ -57,7 +61,7 @@ function graph(nodes: FlowGraphNode[], edges: Array<[string, string]>, extra: Pa
 }
 
 function lay(g: FlowGraph, dir: LayoutDirection, sizes: Record<string, Size> = {}, basis?: FlowLayoutBasis) {
-  const plan = planDirectionalLayout(g, basis, dir, (id) => sizes[id])
+  const plan = planDirectionalLayout(g, basis, dir, (id) => sizes[id] ?? RULE_CARD)
   const at = Object.fromEntries(plan.candidate.map((p) => [p.nodeId, [p.x, p.y]]))
   return { plan, at, refusal: checkDirectionalLayout(plan) }
 }
@@ -70,7 +74,7 @@ const applied = (g: FlowGraph, at: Record<string, number[]>): FlowGraph => ({
 
 const rectOf = (g: FlowGraph, id: string, sizes: Record<string, Size> = {}): NodeRect => {
   const node = g.nodes.find((n) => n.id === id)!
-  return { x: node.x, y: node.y, width: sizes[id]?.width ?? 176, height: sizes[id]?.height ?? 92 }
+  return { x: node.x, y: node.y, width: sizes[id]?.width ?? RULE_CARD.width, height: sizes[id]?.height ?? RULE_CARD.height }
 }
 
 /** The side every execution edge leaves from, judged by the unchanged facingSide at the given sizes. */
@@ -324,7 +328,8 @@ describe('0004-D §7 B — 자동정렬 cases (flowgate.v02.0068 T#2)', () => {
   it('same positions, same sides: the Canvas (edgeAnchors) and the MiniMap draw each line from the same points', () => {
     for (const dir of ['horizontal', 'vertical'] as const) {
       const after = applied(branchMerge(), lay(branchMerge(), dir).at)
-      const lines = miniMapEdges(after, new Set(after.edges.map((e) => e.id)))
+      const measured = Object.fromEntries(after.nodes.map((n) => [n.id, RULE_CARD]))
+      const lines = miniMapEdges(after, new Set(after.edges.map((e) => e.id)), measured)
       const canvas = after.edges.map((e) => {
         const a = edgeAnchors(rectOf(after, e.source), rectOf(after, e.target))
         return { id: e.id, x1: a.sourceX, y1: a.sourceY, x2: a.targetX, y2: a.targetY }
@@ -333,5 +338,23 @@ describe('0004-D §7 B — 자동정렬 cases (flowgate.v02.0068 T#2)', () => {
       // Vertical: from the bottom middle of the source to the top middle of the target.
       if (dir === 'vertical') expect(lines[0]).toEqual({ id: 'e0', x1: 88, y1: 92, x2: 88, y2: 228 })
     }
+  })
+
+  it('a card nothing measured is 176 x 108 (flowgate.v02test.0063): stages and lanes keep clear of it', () => {
+    const chain = graph([R(), card('A', 'A'), card('B', 'B')], [['R', 'A'], ['A', 'B']])
+    const fork = graph([R(), card('A', 'A'), card('B', 'B')], [['R', 'A'], ['R', 'B']])
+    const unmeasured = (g: FlowGraph, dir: LayoutDirection) => {
+      const plan = planDirectionalLayout(g, undefined, dir)
+      return { at: Object.fromEntries(plan.candidate.map((p) => [p.nodeId, [p.x, p.y]])), refusal: checkDirectionalLayout(plan) }
+    }
+    // Vertical: a stage is the card's 108 + the 84 gap (it was 92 + 84 = 176).
+    expect(unmeasured(chain, 'vertical')).toEqual({ at: { R: [0, 0], A: [0, 192], B: [0, 384] }, refusal: null })
+    // Horizontal: a lane is the card's 108 + the 48 gap (it was 92 + 48 = 140).
+    const h = unmeasured(fork, 'horizontal')
+    expect(h.refusal).toBeNull()
+    expect(h.at.B[1] - h.at.A[1]).toBe(156)
+    // The Canvas and the MiniMap draw an unmeasured card's line from the same 108px-high box.
+    const after = applied(chain, unmeasured(chain, 'vertical').at)
+    expect(miniMapEdges(after, new Set(['e0']))[0]).toEqual({ id: 'e0', x1: 88, y1: 108, x2: 88, y2: 192 })
   })
 })

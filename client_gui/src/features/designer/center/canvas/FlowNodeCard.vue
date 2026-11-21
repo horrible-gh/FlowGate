@@ -1,6 +1,6 @@
 <template>
   <!-- flowgate.v02.0026 — FlowGate Node card (0003-D §6.3, look of MirageGlass 03-designer-shell):
-       a fixed 176x92 card in a kind-colored frame. The head row holds the kind icon box, the kind
+       a fixed 176x108 card in a kind-colored frame. The head row holds the kind icon box, the kind
        name and the state; the body holds the one-line title. The handles give Edges an anchor
        (target on the left, source on the right). flowgate.v02.0045 S3: on a node of an editable
        draft (`data.connectable`) they are shown and a connection can be dragged from / to them;
@@ -25,11 +25,14 @@
        flowgate.v02.0063: a card whose document holds a question still unanswered shows the [Q] mark in its head row.
        flowgate.v02.0070 T#1 (B1): the card only shows its title (the session's, one line) — a click on it is the card's
        selection as anywhere else on the card. The title is edited in the Inspector header (InspectorHeader).
-       flowgate.v02test.0044 (mockup v4): every card is exactly 176x92, whatever it shows, so cards line up and the
+       flowgate.v02test.0044 (mockup v4): every card is exactly 176x108, whatever it shows, so cards line up and the
        Edges meet them evenly. The head row carries the integration states one only looks at (병합 대기 · 병합 중 ·
        병합 실패) and 미인계 as 18px icons next to the state / Q / Hold marks. The footer is the card's buttons only, all
-       22x22 icon buttons on one line: its documents on the left; 병합 충돌 and [승인] at the right end. Every icon names
-       itself on hover and to assistive technology. -->
+       icon buttons on one line: its documents on the left; 병합 충돌 and [승인] at the right end. Every icon names
+       itself on hover and to assistive technology.
+       flowgate.v02test.0063 (#38, mockup v19 B): the footer is a 26px strip added below the content and always drawn,
+       also on a card with nothing to press: head 32 + title 47 + footer 26 + border 3 = 108. The title stays where it
+       was (same top padding); the buttons are 20x20 with a 13px icon. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true, 'has-conflict': data.integration === 'conflict' }"
@@ -125,7 +128,7 @@
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
     </div>
-    <div v-if="data.documents?.length || showConflict || showApprove" class="flow-node-footer">
+    <div class="flow-node-footer" data-test="designer-canvas-node-footer">
       <div class="flow-node-documents">
         <button v-for="doc in data.documents" :key="cardDocumentButtonKey(doc)" type="button"
           class="flow-node-document nodrag nopan" :class="{ 'is-empty': doc.empty }"
@@ -302,12 +305,12 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 <style scoped>
 .flow-node-body-warning { color: var(--fg2-status-warning-fg); margin-left: 4px; }
 
-/* flowgate.v02test.0044: a fixed 176x92 whatever the card shows (Edges are drawn from the measured size). */
+/* flowgate.v02test.0044 / 0063: a fixed 176x108 whatever the card shows (Edges are drawn from the measured size). */
 .flow-node-card {
   position: relative;
   box-sizing: border-box;
   width: 176px;
-  height: 92px;
+  height: 108px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -494,25 +497,31 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   white-space: nowrap;
 }
 
+/* flowgate.v02test.0063 (#38 B): a 26px strip below the content, always there — the head row's 1px line on top
+   (inside the 26px), a little darker than the card. */
 .flow-node-footer {
   display: flex;
-  align-items: flex-end;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
   gap: 4px;
-  margin-top: auto;
-  padding: 0 11px 7px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  border-top: 1px solid rgba(128, 160, 199, 0.18);
+  background: rgba(4, 10, 18, 0.35);
 }
 /* One line only: the card's height is fixed, a second row would be cut off. */
 .flow-node-documents { display: flex; flex: 1; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
 /* Tinted with the card's kind color, the same rounded box as the head row's kind icon (quieter). */
 .flow-node-document {
   position: relative; z-index: 4; display: grid; place-items: center;
-  width: 22px; height: 22px; padding: 0;
+  box-sizing: border-box; width: 20px; height: 20px; padding: 0;
   border: 1px solid color-mix(in srgb, var(--flow-node-accent) 38%, transparent);
-  border-radius: 6px; background: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
+  border-radius: 5px; background: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
   flex: none; color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff); cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
-.flow-node-document svg { display: block; width: 14px; height: 14px; }
+.flow-node-document svg { display: block; width: 13px; height: 13px; }
 .flow-node-document:hover {
   border-color: color-mix(in srgb, var(--flow-node-accent) 75%, transparent);
   background: color-mix(in srgb, var(--flow-node-accent) 30%, transparent);
@@ -534,11 +543,15 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff);
 }
 
+/* flowgate.v02test.0063: the title cell is a fixed 47px; the title keeps the top padding it had on the 92px card. */
 .flow-node-body {
   display: flex;
+  flex: none;
   flex-direction: column;
   align-items: flex-start;
+  box-sizing: border-box;
   gap: 5px;
+  height: 47px;
   padding: 7px 11px 0;
 }
 
@@ -556,7 +569,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: var(--fg2-status-danger-fg);
 }
 
-/* flowgate.v02test.0044: the footer's action buttons (병합 충돌, [승인]) — 22x22 icon buttons like the document buttons,
+/* flowgate.v02test.0044: the footer's action buttons (병합 충돌, [승인]) — 20x20 icon buttons like the document buttons,
    at the right end; above the connection strips (z-index 2) so a press reaches them. */
 .flow-node-action {
   position: relative;
@@ -564,16 +577,17 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   display: grid;
   flex: none;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 1px solid;
-  border-radius: 6px;
+  border-radius: 5px;
   font: inherit;
   cursor: pointer;
   transition: background 0.14s ease, filter 0.14s ease;
 }
-.flow-node-action svg { display: block; width: 14px; height: 14px; }
+.flow-node-action svg { display: block; width: 13px; height: 13px; }
 .flow-node-action:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
 
 .flow-node-conflict {

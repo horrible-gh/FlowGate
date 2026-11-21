@@ -9,7 +9,7 @@ import { Position } from '@vue-flow/core'
 
 /** The card size FlowNodeCard fixes — used until Vue Flow has measured a card. */
 export const NODE_CARD_WIDTH = 176
-export const NODE_CARD_HEIGHT = 92
+export const NODE_CARD_HEIGHT = 108
 
 export interface NodeRect {
   x: number
