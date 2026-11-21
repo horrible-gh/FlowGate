@@ -6,6 +6,7 @@
 // document Node) shows its own document on its line and a run's result on the report line. The instruction
 // line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 export type DesignSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -79,6 +80,5 @@ function designLine(key: DesignSlot['key'], types: readonly string[], facts: Des
 export function designCardSlots(facts: DesignCardFacts, instructionOmitted = false): readonly DesignSlot[] {
   const report = designLine('report', DESIGN_REPORT_TYPES, facts)
   const instruction = designLine('instruction', DESIGN_INSTRUCTION_TYPES, facts)
-  // Execution omission must not make an existing design instruction inaccessible.
-  return instructionOmitted && instruction.id === null ? [report] : [instruction, report]
+  return instructionSlotVisible(instructionOmitted, facts.cardDocuments, instruction.id) ? [instruction, report] : [report]
 }

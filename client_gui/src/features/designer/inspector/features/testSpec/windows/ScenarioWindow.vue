@@ -91,9 +91,10 @@ function resultMark(id: string) {
   const item = c.cases.value.find(item => item.caseId === id)
   const runnable = item?.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(c.view.value?.caseCapabilities[id] ?? '')
   if (c.test.runState.value.active && runnable && (c.presentation.value.runScope === 'all' || c.presentation.value.retryCaseId === id)) return TEST_PENDING_MARK
-  if (!['done', 'unchecked'].includes(c.presentation.value.resultState.key)) return null
+  // Do not disguise a failed read or an obsolete result as a fresh NOT_RUN.
+  if (c.test.status.value !== 'ready' || !['none', 'done', 'unchecked'].includes(c.presentation.value.resultState.key)) return null
   const status = c.rows.value.find(r => r.caseId === id)?.status
-  return status ? testVerdictMark(status) : null
+  return testVerdictMark(status ?? 'NOT_RUN')
 }
 async function rewrite() {
   if (!current() || !card.value?.can('rewriteAll').enabled) return

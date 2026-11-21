@@ -109,6 +109,7 @@ export interface FlowGraphCardDocument {
    * when the server did not send it. M and WP lines are always true.
    */
   readonly hasBody?: boolean
+  readonly instructionOmitted?: boolean
   readonly bodyState?: string | null
   /** AI reviews of the line's document; absent when not sent. */
   readonly reviewCount?: number

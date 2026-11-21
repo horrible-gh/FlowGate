@@ -961,6 +961,9 @@ def _build_spec_result_mention(
         "the evidence you observed (log, structured output, file, url, screenshot).\n"
         "- Submit PASS/FAIL only for what you actually verified; otherwise BLOCKED (with the "
         "reason) or NOT_RUN.\n"
+        "- A prose report alone is not a result submission. Record every Case you own via "
+        "the results array below, with actual observations and evidence; use BLOCKED or "
+        "NOT_RUN when verification could not be completed.\n"
         "- Never report PASS for a case you did not verify, and never weaken an expected "
         "result to match the actual one. Do not edit the TS in this step.\n"
         "- The automated Cases are NOT yours: their official result comes from the FlowGate "
@@ -1537,7 +1540,17 @@ def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
     if not ts_id:
         return {"applies": False, "passed": True}
     latest_any = db_test_runs.latest_by_doc(ts_id)
+    ts_doc = db_docs.get_by_id(ts_id)
     if latest_any is None or latest_any.get("contract_version") != test_spec_service.CONTRACT_SPEC:
+        # Preserve the historical exemption for already-approved reports.
+        if (tsr_doc or {}).get("doc_review_status") == "approved":
+            return {"applies": False, "passed": True}
+        # The TS contract, not the existence of a run, decides whether results are required.
+        # A report-only submission must not bypass the specification gate.
+        content = _read_doc_content_or_empty(ts_doc) if ts_doc else ""
+        if test_spec_service.is_spec_content(content) and test_spec_service.parse_spec(content)["cases"]:
+            return {"applies": True, "passed": False, "overall": "NOT_RUN",
+                    "run_id": None, "reason": "case_results_missing"}
         return {"applies": False, "passed": True}
     active_execution = db_test_runs.get_running_by_doc(ts_id)
     if active_execution and active_execution.get("contract_version") == test_spec_service.CONTRACT_SPEC:

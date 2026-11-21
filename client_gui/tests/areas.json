@@ -180,6 +180,7 @@
         "tests/features/designer/heldCardDrag.v02gui0020.spec.ts",
         "tests/features/designer/kindSwitchCanvasRead.0013.spec.ts",
         "tests/features/designer/mergeSurfaces.v02test0042.spec.ts",
+        "tests/features/designer/mergeEdges.spec.ts",
         "tests/features/designer/minimapGeometry.0049.spec.ts",
         "tests/features/designer/moveDensity.0059.spec.ts",
         "tests/features/designer/moveHistory.0059.spec.ts",

@@ -40,3 +40,33 @@ function isProgressed(
   if (!target || !REACHED_STATES.has(target)) return false
   return requirements.has(edge.source) || states.get(edge.source) === 'done'
 }
+
+/** Display only: a completed input has arrived at a join still waiting for a known peer.
+ * Missing states and references are not evidence. Requirement roots are already satisfied
+ * once execution passes them (the same exception as progressed edges above).
+ * This set deliberately has no effect on deletion protection or execution scheduling.
+ */
+export function waitingEdgeIds(graph: FlowGraph): Set<string> {
+  const nodes = new Map(graph.nodes.map(node => [node.id, node]))
+  const inputs = new Map<string, FlowGraphEdge[]>()
+  for (const edge of graph.edges) {
+    if (edge.edgeClass !== 'execution' || edge.source === edge.target) continue
+    const incoming = inputs.get(edge.target) ?? []
+    incoming.push(edge)
+    inputs.set(edge.target, incoming)
+  }
+  const unfinished = new Set(['draft', 'in_progress', 'review', 'blocked'])
+  const result = new Set<string>()
+  for (const [targetId, incoming] of inputs) {
+    if (nodes.get(targetId)?.state !== 'draft') continue
+    for (const edge of incoming) {
+      if (nodes.get(edge.source)?.state !== 'done') continue
+      if (incoming.some(peer => {
+        const source = nodes.get(peer.source)
+        return peer.source !== edge.source && source?.kind !== 'requirement'
+          && source?.state != null && unfinished.has(source.state)
+      })) result.add(edge.id)
+    }
+  }
+  return result
+}

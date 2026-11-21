@@ -9,6 +9,7 @@
 // on the report line; the other line has no document (a hollow dot saying why — no "not yet" text). The
 // instruction line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 export type TaskSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -88,5 +89,6 @@ function taskLine(key: TaskSlot['key'], types: readonly string[], facts: TaskCar
 /** The card's lines: instruction (unless the settings omit it) · report. */
 export function taskCardSlots(facts: TaskCardFacts, instructionOmitted = false): readonly TaskSlot[] {
   const report = taskLine('report', TASK_REPORT_TYPES, facts)
-  return instructionOmitted ? [report] : [taskLine('instruction', TASK_INSTRUCTION_TYPES, facts), report]
+  const instruction = taskLine('instruction', TASK_INSTRUCTION_TYPES, facts)
+  return instructionSlotVisible(instructionOmitted, facts.cardDocuments, instruction.id) ? [instruction, report] : [report]
 }

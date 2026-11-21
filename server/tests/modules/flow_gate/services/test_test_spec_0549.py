@@ -272,15 +272,30 @@ def test_overall_is_computed_from_required_cases(statuses, overall):
 # ── 3. Service against a real migrated SQLite result store ─────────────────────
 
 
-class _Store:
+from modules.flow_gate.db import connection as db_connection
+
+
+class _Store(db_connection.FlowGateStore):
     def __init__(self, path: str) -> None:
+        self._db = None
+        self._sq = None
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = OFF")
 
+    def table_exists(self, name):
+        return self._fetch_one("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [name]) is not None
+
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
-        self._conn.commit()
+        if not db_connection.in_transaction():
+            self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cursor = self._conn.execute(sql, params or [])
+        if not db_connection.in_transaction():
+            self._conn.commit()
+        return cursor.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -290,8 +305,14 @@ class _Store:
         return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
 
     @contextmanager
-    def transaction(self):
-        yield self
+    def _transaction_frame(self):
+        # Exercise the real commit/rollback callback queues and document guard.
+        db_connection._tx_local.txn = self._conn
+        try:
+            with self._conn:
+                yield self
+        finally:
+            db_connection._tx_local.txn = None
 
 
 class _Env:
@@ -329,7 +350,15 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
     from modules.flow_gate.workflow import event_logger, pipeline_service
 
     store = _Store(migrated_sqlite_db("spec_0549.db"))
+    # Every imported get_store (document locks and file ownership included)
+    # must use the isolated migrated database, never the unconnected host DB.
+    monkeypatch.setattr(db_connection, "STORE", store)
     monkeypatch.setattr(db_test_runs, "get_store", lambda: store)
+    # Generated TSR ownership checks must read this suite's migrated database too.
+    from modules.flow_gate.graph_workflow.store import definition_store
+    monkeypatch.setattr(definition_store, "get_store", lambda: store)
+    from modules.flow_gate.db import groups as db_groups
+    monkeypatch.setattr(db_groups, "get_store", lambda: store)
     monkeypatch.setattr(db_events, "insert_event", lambda *args, **kwargs: 1)
     e = _Env()
     e.docs[TS_ID] = {
@@ -625,12 +654,33 @@ def test_approval_guard_blocks_a_non_pass_tsr_and_allows_pass(env):
     _submit(env, [{"case_id": "TC-002", "status": "PASS"}])
     pipeline_service._require_test_gate_for_approval(tsr, "ko")  # no raise
 
-    # A legacy TSR (latest run is an executable run) keeps its approval semantics.
+    # A legacy TS keeps its approval semantics; a legacy run cannot exempt a spec TS.
+    env.contents[TS_ID] = LEGACY_TS
     env.store._execute("DELETE FROM test_runs")
     env.store._execute(
         "INSERT INTO test_runs (run_id, doc_id, revision_no, status, triggered_via, runner_id, created_at) "
         "VALUES ('trun_legacy', ?, 2, 'passed', 'ui', 'u', '2026-09-27T00:00:00+09:00')", [TS_ID])
     assert env.svc.tsr_gate_state(tsr) == {"applies": False, "passed": True}
+
+
+def test_report_only_spec_has_no_gate_bypass(env):
+    from modules.flow_gate.workflow import pipeline_service
+    from modules.flow_gate.workflow.pipeline_service import TransitionError
+
+    tsr = {"doc_id": TSR_ID, "target_id": TS_ID, "type_code": "TSR"}
+    tsr["meta"] = json.dumps({"overall": "PASS"})
+    gate = env.svc.tsr_gate_state(tsr)
+    assert gate["applies"] is True and gate["passed"] is False
+    assert gate["reason"] == "case_results_missing"
+    with pytest.raises(TransitionError):
+        pipeline_service._require_test_gate_for_approval(tsr, "ko")
+
+
+def test_legacy_run_does_not_exempt_current_spec(env):
+    env.store._execute(
+        "INSERT INTO test_runs (run_id, doc_id, revision_no, status, triggered_via, runner_id, created_at) "
+        "VALUES ('legacy_for_spec', ?, 2, 'passed', 'ui', 'u', '2026-09-27T00:00:00+09:00')", [TS_ID])
+    assert env.svc.tsr_gate_state({"target_id": TS_ID})["passed"] is False
 
 
 def test_ts_approval_requires_a_valid_specification(env):
@@ -1936,6 +1986,18 @@ def test_0094_results_do_not_require_instruction_approval(env, review):
         results=[{"case_id": "TC-001", "status": "PASS"}])
     assert response
     assert not any(t.get("action") == "approve" and t.get("doc_id") == TS_ID for t in env.transitions)
+
+
+@pytest.mark.parametrize("legacy_run", [False, True])
+def test_approved_report_without_spec_results_keeps_historical_exemption(env, legacy_run):
+    if legacy_run:
+        env.db_test_runs.insert_run(doc_id=TS_ID, revision_no=2, cases=[], runner_id="u", triggered_via="ui", contract_version=1)
+    report = {"target_id": TS_ID, "doc_review_status": "approved"}
+    assert env.svc.tsr_gate_state(report) == {"applies": False, "passed": True}
+    report["doc_review_status"] = "pending_review"
+    state = env.svc.tsr_gate_state(report)
+    assert state["applies"] and not state["passed"]
+    assert state["reason"] == "case_results_missing"
 
 
 def test_0094_optional_results_keep_failure_evidence_without_blocking():

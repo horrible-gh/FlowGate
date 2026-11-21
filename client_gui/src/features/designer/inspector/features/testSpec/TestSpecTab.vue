@@ -43,6 +43,7 @@
           :reason="decisions.row(line.key, line.id).reason" @click="decisions.decide(line.key, line.id)" />
       </InspectorSlotRow>
     </div>
+    <InspectorReason v-if="lines.some(line => line.key === 'report' && line.id) && stage.hasScenario && stage.resultState.key === 'none' && !card?.test.runState.value.active && card?.test.status.value === 'ready'" :text="t(k('missing_case_results'))" data-test="test-spec-missing-results" />
     <InspectorReason v-if="decisions.failure.value" tone="danger" :text="decisions.failure.value" role="alert" data-test="document-decision-failure" />
     <InspectorReason v-if="card?.test.failure.value" tone="danger" :text="t(k(card.test.failure.value.key))" data-test="test-spec-failure" />
   </section>

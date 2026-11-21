@@ -18,6 +18,7 @@
 // Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all in the document window), the
 // Graph TS Node run (Graph execution integration) and the separate Case document kind.
 import type { InspectorCardDocument, InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
+import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 /** The parts of the target the section reads. */
 export interface TestSpecTargetFacts {
@@ -508,7 +509,7 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
       }
     : emptyLine('report', 'empty.after_run')
 
-  return instructionOmitted ? [scenario, report] : [instruction, scenario, report]
+  return instructionSlotVisible(instructionOmitted, target.cardDocuments, tsId) ? [instruction, scenario, report] : [scenario, report]
 }
 
 
@@ -547,7 +548,7 @@ export function testCardPresentation(
   const resultState = retry ? base : testSpecRunState(view)
   const counts = testSpecCounts(view)
   const failed = rows.filter((r) => r.status === 'FAIL' || r.status === 'BLOCKED').length
-  const manual = view?.cases.filter((c) => c.executionMode === 'manual' && !rows.some((r) => r.caseId === c.caseId && ['PASS', 'FAIL', 'BLOCKED'].includes(r.status ?? ''))).length ?? 0
+  const manual = view?.cases.filter((c) => !rows.some((r) => r.caseId === c.caseId && ['PASS', 'FAIL', 'BLOCKED'].includes(r.status ?? ''))).length ?? 0
   const pending = Math.max(failed, (counts?.fail ?? 0) + (counts?.blocked ?? 0)) + manual
   let stage: TestCardStage
   if (!hasScenario) stage = writing === 'initial' ? 2 : 1

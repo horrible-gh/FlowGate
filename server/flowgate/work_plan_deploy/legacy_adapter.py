@@ -147,8 +147,9 @@ def latest_revision(flow_id: str) -> tuple[Optional[int], Optional[dict]]:
 
 
 def write_draft(group_row: dict, user_id: Optional[str], req, registered: set[str],
-                locale: Optional[str] = None) -> dict:
-    return graph_service.write_draft(group_row, user_id, req, None, registered, locale)
+                locale: Optional[str] = None, *, initial_instruction_modes: Optional[dict[str, str]] = None) -> dict:
+    return graph_service.write_draft(group_row, user_id, req, None, registered, locale,
+                                     initial_instruction_modes=initial_instruction_modes)
 
 
 def protected_nodes(flow_id: str) -> set[str]:
