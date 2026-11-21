@@ -90,7 +90,7 @@ MiniMap을 누르거나 끌면 같은 zoom의 Viewport를 세션 `recordViewport
 flowgate.v02.0037에서 Shell의 Right Dock Placeholder를 우측 Tool Panel로 바꿨습니다. `DesignerRightDock`이
 `[팔레트] [대화] [Git]` 한 줄 헤더(Tabs primitive)와 본문을 가지고 0030 `PalettePanel`, 0031/0032
 `ConversationPanel`(`@/features/conversation`), 0033 `DesignerGitPanel`(`@/features/git`)을 그대로 부착합니다.
-선택 탭은 Layout 상태 `activeRightTool`(기본 `palette`)이고, 각 부품은 처음 보일 때 mount된 뒤 탭 전환·접기에서는
+선택 탭은 Layout 상태 `activeRightTool`(기본 `conversation`)이고, 각 부품은 처음 보일 때 mount된 뒤 탭 전환·접기에서는
 숨기기만 해 세션을 유지합니다(Git은 숨김 중 `active=false`). Conversation/Git에는 Shell의 현재 Project와 활성
 FlowRef를 그대로 넘깁니다. 하단 Inspector는 0036에서 이미 Center 하단 Bottom Dock에 부착되어 있어 그대로
 둡니다. Palette select/drag, Conversation `open-change`, Git `open-diff`/`open-confirm-settings`/`windows-change`/
