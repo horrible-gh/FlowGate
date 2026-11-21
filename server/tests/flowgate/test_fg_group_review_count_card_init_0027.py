@@ -32,18 +32,19 @@ def test_type_then_common_then_zero_stored_explicitly_per_card_kind(env):
     group_count(1)
     group_count(2, "T")
     group_count(0, "N")
-    km = put_draft(env, FA, 0, [node("tmp_t", "T"), node("tmp_n", "N"), node("tmp_ts", "TS"), node("tmp_wp", "WP"),
+    # New WP cards are retired; legacy WP profile values remain covered below.
+    km = put_draft(env, FA, 0, [node("tmp_t", "T"), node("tmp_n", "N"), node("tmp_ts", "TS"),
                                 node("tmp_d", "D"), node("tmp_r", "R"), node("tmp_g", None, "gate")])["key_map"]
     assert stored(km["tmp_t"]) == 2                     # the type row
     assert stored(km["tmp_n"]) == 0                     # the type row's explicit 0 wins over common
-    for ref in ("tmp_ts", "tmp_wp", "tmp_d"):
+    for ref in ("tmp_ts", "tmp_d"):
         assert stored(km[ref]) == 1                     # no type row value: common
     for ref in ("tmp_r", "tmp_g"):                    # no 검수 횟수 on these kinds: nothing is stored
         assert stored(km[ref]) is repository.ABSENT
     # Only the count is added to the stored settings (no extra field).
     assert set(repository.values(FA, km["tmp_t"])) == {"review_count"}
     # One creation = one settings version, as before the count was copied.
-    assert all(state(FA, km[ref])[2] == 1 for ref in ("tmp_t", "tmp_n", "tmp_ts", "tmp_wp", "tmp_d"))
+    assert all(state(FA, km[ref])[2] == 1 for ref in ("tmp_t", "tmp_n", "tmp_ts", "tmp_d"))
 
 
 def test_no_role_group_or_no_counts_store_zero(env):
@@ -178,10 +179,11 @@ def test_api_effective_count_is_what_a_new_card_copies_after_the_max_changes(env
     assert {k: counts[k]["review_count"] for k in expected} == {
         "common": 5, "T": None, "N": 4, "TS": 2, "WP": -1}
     assert {k: (counts[k]["effective_review_count"], counts[k]["source"]) for k in expected} == expected
-    km = put_draft(env, FA, 0, [node("tmp_t", "T"), node("tmp_n", "N"), node("tmp_ts", "TS"), node("tmp_wp", "WP"),
+    # New WP cards are retired; legacy WP profile values remain covered below.
+    km = put_draft(env, FA, 0, [node("tmp_t", "T"), node("tmp_n", "N"), node("tmp_ts", "TS"),
                                 node("tmp_d", "D")])["key_map"]
     # D has no type row: a new D card copies what the common row shows.
-    for ref, type_key in (("tmp_t", "T"), ("tmp_n", "N"), ("tmp_ts", "TS"), ("tmp_wp", "WP"), ("tmp_d", "common")):
+    for ref, type_key in (("tmp_t", "T"), ("tmp_n", "N"), ("tmp_ts", "TS"), ("tmp_d", "common")):
         assert stored(km[ref]) == counts[type_key]["effective_review_count"], type_key
 
 

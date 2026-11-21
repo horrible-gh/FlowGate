@@ -60,13 +60,26 @@ def test_deployment_marker_persists_through_fk_enforced_store(monkeypatch, test_
 
 def test_startup_calls_deployment_marker_once(monkeypatch):
     calls = []
-    monkeypatch.setattr(startup, "configure_console_encoding", lambda: None)
+    # Exercise orchestration without starting services, touching host storage, or opening a DB.
+    phases = (
+        "configure_console_encoding", "check_runtime_dependencies", "preload_singletons",
+        "recover_ai_invoke_leases", "recover_git_sessions", "encrypt_ai_provider_keys",
+        "start_scratch_sweeps", "register_server_instance", "start_conversation_integration",
+        "start_card_document_integration", "start_card_settings_integration",
+        "start_card_completion_integration", "start_card_memo_integration",
+        "start_graph_policy_integration", "start_graph_validation_integration",
+        "start_graph_run_integration", "start_work_plan_deploy_integration",
+        "recover_graph_time_machine", "repair_graph_drafts", "start_remote_ai_supervisor",
+        "check_agent_pepper", "recover_ai_evaluations", "start_snapshot_cleanup",
+        "remove_retired_source_bundle_storage", "recover_chat_commands", "start_attachment_requests",
+    )
+    for phase in phases:
+        monkeypatch.setattr(startup, phase, lambda: None)
+    from flowgate.graph_run import execution
+    from flowgate.card_document_edit import integration
+    monkeypatch.setattr(execution, "recover", lambda: None)
+    monkeypatch.setattr(integration, "register", lambda: None)
     monkeypatch.setattr(startup, "record_deployment", lambda: calls.append(1))
-    monkeypatch.setattr(startup, "preload_singletons", lambda: None)
-    monkeypatch.setattr(startup, "recover_ai_invoke_leases", lambda: None)
-    monkeypatch.setattr(startup, "recover_git_sessions", lambda: None)
-    monkeypatch.setattr(startup, "encrypt_ai_provider_keys", lambda: None)
-    monkeypatch.setattr(startup, "start_scratch_sweeps", lambda: None)
     startup.run_all()
     assert calls == [1]
 

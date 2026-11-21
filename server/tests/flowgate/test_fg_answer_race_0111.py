@@ -39,7 +39,29 @@ from test_fg_question_pending_0111 import (  # noqa: F401 — fixtures used by n
 
 
 # Imported helpers do not inherit their module usefixtures marker.
-pytestmark = pytest.mark.usefixtures("legacy_cards")
+pytestmark = pytest.mark.usefixtures("legacy_cards", "question_index")
+
+
+@pytest.fixture
+def question_index(questions, monkeypatch):
+    from flowgate.card_settings import legacy_adapter as legacy
+
+    ask = legacy.ask_responder
+
+    def claim(doc_id, item_id, issued_to, provider, source, **kwargs):
+        result = ask(doc_id, item_id, issued_to, provider, source, **kwargs)
+        for items in questions["asked"].values():
+            for item in items:
+                if item["id"] == item_id:
+                    item.update(responder_state="running", responder_run_id=result["run_id"])
+        return result
+
+    # The real answer service claims the item before recovery reads it again.
+    monkeypatch.setattr(legacy, "ask_responder", claim)
+    monkeypatch.setattr(legacy, "open_ai_questions", lambda flow_id: [
+        {**item, "asker_ai_run_id": run_id}
+        for run_id, items in questions["asked"].items() for item in items
+    ])
 
 
 @pytest.fixture()
@@ -86,6 +108,13 @@ def _passed_review(env, questions, doc_id):
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
     from modules.flow_gate.services import ai_run_end_hooks
 
+    pending = _sql(env["db"], "SELECT exec_id FROM graph_attempt_runs WHERE kind = 'review' "
+                   "AND status = 'requested' ORDER BY created_at, exec_id")
+    if pending:
+        _review_ended(env, questions, doc_id, pending[-1]["exec_id"], "review_passed", item=904)
+        assert questions["responders"][-1] == (904, "aip_review")
+        return
+
     db_loops.insert({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": doc_id, "review_count": 1,
                      "reviewer_provider_id": "aip_review", "review_criteria": "document_type_default",
                      "rework_provider_id": "aip_assignee", "rework_timeout_sec": 3600,
@@ -97,7 +126,8 @@ def _passed_review(env, questions, doc_id):
     _ai_run_finished(env, REVIEW_RUN, None, doc_ref=doc_id)
     _ask(questions, REVIEW_RUN, 904)
     ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": doc_id, "action_scope": "review",
-                                "mode": "single", "issued_to": "u_kim",
+                                "mode": "single", "issued_to": "u_kim", "provider_id": "aip_review",
+                                "end_reason": "exited", "stop_code": None, "outcome": "complete",
                                 "document_review_loop": {"current_stage": "stopped", "stop_reason": "review_passed"}})
     legacy.settle_graph_run(FA)
     assert questions["responders"] and questions["responders"][-1] == (904, "aip_review")
@@ -118,8 +148,10 @@ def _ledgered_review_start(monkeypatch):
     starts: list = []
 
     def start(project_id, flow_id, doc_id, issued_to, loop, basis_note, node_key=None, graph_exec_id=None,
-              attempt_id=None):
+              attempt_id=None, failure=None):
         if graph_exec_id:
+            if graph_exec_id not in starts:
+                starts.append(graph_exec_id)
             return {"run_id": REVIEW_RUN}       # the replay of a requested execution: its launch, not a new request
         exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop, basis_note(None), node_key,
                                          None, attempt_id=attempt_id)
@@ -162,7 +194,8 @@ def _review_ended(env, questions, doc_id, exec_id, stop_reason, *, item=None):
         _ask(questions, REVIEW_RUN, item)
     ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": doc_id, "action_scope": "review",
                                 "mode": "single", "issued_to": "u_kim", "graph_exec_id": exec_id,
-                                "document_review_loop": {"current_stage": "stopped", "stop_reason": stop_reason}})
+                                "provider_id": "aip_review", "end_reason": "exited", "stop_code": None,
+                                "outcome": "complete", "document_review_loop": {"current_stage": "stopped", "stop_reason": stop_reason}})
     legacy.settle_graph_run(FA)
 
 
@@ -195,7 +228,7 @@ def test_an_answered_written_instruction_raced_idle_starts_its_result_stage_once
 
     _once_and_unrefused(env, racing_wake)
     job = _after_answers(env, key, execs, attempts)
-    assert job["stage"] == "result" and job["ref_doc_ids"] == [line_doc]
+    assert job["stage"] == "result" and job["ref_doc_ids"] == [f"{FA}.0001-R", line_doc]
     assert _review_status(line_doc) == "approved"
     _answer(questions, INSTRUCTION_RUN, "both")
     assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1 and _refusals(env) == []
@@ -222,11 +255,9 @@ def test_an_answered_passed_instruction_review_raced_idle_starts_its_result_stag
     """``_after_review`` of an instruction: its approval and the result stage (``instruction_review_approval``)."""
     from flowgate.card_settings import legacy_adapter as legacy
 
-    reviews: list = []
-    monkeypatch.setattr(legacy, "start_review_loop",
-                        lambda *args, **kw: reviews.append(args) or {"run_id": REVIEW_RUN})
+    reviews = _ledgered_review_start(monkeypatch)
     key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None, body="## 작업\n\n지시서\n",
-                                              ask=False, settings=(("instruction_review_count", 1),))
+                                              ask=False, settings=(("instruction_review_count", 1), ("instruction_review_ai", "aip_review")))
     assert len(reviews) == 1 and env["jobs"] == []                     # its review first
     _passed_review(env, questions, line_doc)
     assert _review_status(line_doc) != "approved" and _run_status(env) == "idle"
@@ -236,7 +267,7 @@ def test_an_answered_passed_instruction_review_raced_idle_starts_its_result_stag
 
     _once_and_unrefused(env, racing_wake)
     job = _after_answers(env, key, execs, attempts)
-    assert job["stage"] == "result" and job["ref_doc_ids"] == [line_doc]
+    assert job["stage"] == "result" and job["ref_doc_ids"] == [f"{FA}.0001-R", line_doc]
     assert _review_status(line_doc) == "approved"
     _answer(questions, REVIEW_RUN, "both")
     assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1 and _refusals(env) == []
@@ -428,10 +459,10 @@ def _refused_result_stage(env, monkeypatch, questions):
     key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None, body="## 작업\n\n지시서\n")
     approve = review_stage.approve_instruction
 
-    def settled_then_approved(*args):
+    def settled_then_approved(*args, **kwargs):
         legacy.settle_graph_run(FA)
         assert _run_status(env) == "idle"
-        return approve(*args)
+        return approve(*args, **kwargs)
 
     questions["asked"][INSTRUCTION_RUN] = []
     monkeypatch.setattr(review_stage, "approve_instruction", settled_then_approved)
@@ -441,7 +472,7 @@ def _refused_result_stage(env, monkeypatch, questions):
     monkeypatch.setattr(review_stage, "approve_instruction", approve)
     assert _review_status(line_doc) == "approved"
     assert (_row(env, key)["status"], _row(env, key)["stage"]) == ("open", "instruction")
-    assert _refusals(env) == [("result_stage", "run_idle")]
+    assert _refusals(env) == [("instruction_result_stage", "run_idle")]
     assert env["jobs"] == [] and _run_status(env) == "idle"
     return key, line_doc
 
@@ -481,24 +512,24 @@ def test_a4_the_run_read_right_after_a_refused_result_stage_starts_it_once(env, 
         _resume(env)
 
     [job] = env["jobs"]
-    assert job["stage"] == "result" and job["ref_doc_ids"] == [line_doc]
+    assert job["stage"] == "result" and job["ref_doc_ids"] == [f"{FA}.0001-R", line_doc]
     assert len(_executions(env)) == execs + 1
     assert _row(env, key)["stage"] == "result" and _run_status(env) == "running"
-    assert _refusals(env) == [("result_stage", "run_idle")]               # only seq 11's
+    assert _refusals(env) == [("instruction_result_stage", "run_idle")]               # only seq 11's
     _current(env)
     assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1
 
 
 def test_a4_a_result_writer_s_durable_row_is_found_by_its_minted_token_s_action_scope(env, decided, monkeypatch):
     """The same cause on the result's reconciliation (``result_ai_run``): the writer's durable row has no
-    ``action_scope``; the token its AI start minted (``new``) tells it."""
+    ``action_scope``; the token its AI start minted (``edit``) tells it."""
     from flowgate.card_settings import legacy_adapter as legacy
 
     key, result, _token = _in_review(env, monkeypatch)
     _ai_run_finished(env, WORK_RUN, _executions(env)[-1]["exec_id"])
     assert legacy.ai_run_record(WORK_RUN).get("action_scope") is None
     found = legacy.result_ai_run(FA, _run_id(env), key, result)
-    assert found is not None and (found["run_id"], found["action_scope"]) == (WORK_RUN, "new")
+    assert found is not None and (found["run_id"], found["action_scope"]) == (WORK_RUN, "edit")
     assert legacy.stage_ai_run(FA, _run_id(env), key)["run_id"] == WORK_RUN
 
 
@@ -566,7 +597,7 @@ def test_a_passed_instruction_review_whose_questions_wait_is_not_reconciled_befo
 
     starts = _ledgered_review_start(monkeypatch)
     key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None, body="## 작업\n\n지시서\n",
-                                              ask=False, settings=(("instruction_review_count", 1),))
+                                              ask=False, settings=(("instruction_review_count", 1), ("instruction_review_ai", "aip_review")))
     [loop_exec] = starts
     assert loop_exec is not None and env["jobs"] == []
     approvals = _counted(monkeypatch, review_stage, "approve_instruction", 2)
@@ -598,7 +629,7 @@ def test_a_passed_instruction_review_whose_questions_wait_is_not_reconciled_befo
     _answer(questions, REVIEW_RUN, "both")
 
     job = _after_answers(env, key, execs, attempts)
-    assert job["stage"] == "result" and job["ref_doc_ids"] == [line_doc]
+    assert job["stage"] == "result" and job["ref_doc_ids"] == [f"{FA}.0001-R", line_doc]
     assert approvals == [line_doc] and _review_status(line_doc) == "approved"
     _current(env)
     assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1 and approvals == [line_doc]

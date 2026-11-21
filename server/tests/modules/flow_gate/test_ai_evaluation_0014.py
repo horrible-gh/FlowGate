@@ -1,4 +1,7 @@
-"""Evaluation schema, fingerprint, ordering and execution boundary regression tests."""
+"""0014 baseline probe regressions, now owned by AI connection tests (0017).
+
+The capability evaluation service no longer owns the baseline or suitable verdict.
+Keep these cancellation, fingerprint and transport cases on the moved connection service."""
 from __future__ import annotations
 
 import base64
@@ -70,7 +73,26 @@ def test_sqlite_sequence_dedupe_and_cascade_constraints():
     db.close()
 
 
-def test_fingerprint_stability_and_key_rotation(monkeypatch, tmp_path):
+@pytest.fixture
+def connection_store(monkeypatch, migrated_sqlite_db, tmp_path):
+    from modules.flow_gate.db import connection, ai_run_identity
+    from tests.integration.ai_run_identity.test_ai_run_identity_0138 import open_store
+    from flowgate.card_document_edit import write_gate
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    store = open_store(migrated_sqlite_db("connection-probe.db"))
+    monkeypatch.setattr(connection, "STORE", store)
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
+    monkeypatch.setitem(ports._handlers, ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+    store._execute("INSERT INTO projects (project_id, project_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                   ["p", "Probe", "2026-11-21", "2026-11-21"])
+    ai_run_identity.initialize(scratch_roots=[])
+    try:
+        yield store
+    finally:
+        store._db.close()
+
+
+def test_fingerprint_stability_and_key_rotation(monkeypatch, tmp_path, connection_store):
     from modules.flow_gate.services import ai_evaluation_fingerprint as fp
     monkeypatch.setattr(fp, "_root", lambda: tmp_path)
     monkeypatch.setattr(fp, "_history_exists", lambda: False)
@@ -87,20 +109,20 @@ def test_fingerprint_stability_and_key_rotation(monkeypatch, tmp_path):
 
 
 def test_subject_is_immutable_and_diagnostic_is_redacted():
-    from modules.flow_gate.services import ai_evaluation_service as service
-    subject = service.EvaluationExecutionSubject("p", "a", "project", "name", "api", "openai",
+    from modules.flow_gate.services import ai_connection_test_service as service
+    subject = service.ConnectionSubject("p", "a", "project", "name", "api", "openai",
         None, "https://example.test/v1", "m", "secret-value", "a" * 64, 1)
     with pytest.raises(FrozenInstanceError):
         subject.api_model = "changed"
-    text = service._safe_summary("Authorization: Bearer xyz API key: abc secret-value " + "x" * 2500,
-                                 "secret-value")
+    from modules.flow_gate.db.ai_evaluations import redact
+    text = redact("Authorization: Bearer xyz API key: abc API key: secret-value " + "x" * 2500, 2000)
     assert len(text) == 2000
     assert "xyz" not in text and "abc" not in text and "secret-value" not in text
 
 
 def test_current_prefers_newer_active_run_even_with_inverted_id(monkeypatch):
-    from modules.flow_gate.services import ai_evaluation_service as service
-    current = service.EvaluationExecutionSubject("p", "provider", "project", "name", "cli", "codex",
+    from modules.flow_gate.services import ai_connection_test_service as service
+    current = service.ConnectionSubject("p", "provider", "project", "name", "cli", "codex",
         "codex exec", None, None, None, "a" * 64, 1)
     older = dict(evaluation_id="z", project_id="p", provider_id="provider", project_run_seq=1,
                  subject_fingerprint="a" * 64, subject_fingerprint_version=1, lifecycle="completed",
@@ -109,20 +131,20 @@ def test_current_prefers_newer_active_run_even_with_inverted_id(monkeypatch):
     monkeypatch.setattr(service, "_current_subject", lambda *_: current)
     monkeypatch.setattr(service.repo, "latest", lambda _p, _id, *_: newer)
     result = service.current("p", "provider")
-    assert result["current"]["evaluation_id"] == "a"
+    assert result["current"]["test_id"] == "a"
     assert result["current"]["lifecycle"] == "pending"
 
 
 def test_safety_recheck_uses_identity_only(monkeypatch):
-    from modules.flow_gate.services import ai_evaluation_service as service
-    subject = service.EvaluationExecutionSubject("p", "a", "project", "name", "api", "openai",
+    from modules.flow_gate.services import ai_connection_test_service as service
+    subject = service.ConnectionSubject("p", "a", "project", "name", "api", "openai",
         None, "https://old.example/v1", "old-model", "accepted-secret", "a" * 64, 1)
     monkeypatch.setattr(service, "_effective", lambda _: {"source": "project", "providers": [
         {"id": "a", "api_model": "new-model", "api_base_url": "https://new.example/v1"}]})
-    assert service._safety_available(subject)
+    assert service.still_effective(subject)
     assert subject.api_model == "old-model" and subject.credential == "accepted-secret"
     monkeypatch.setattr(service, "_effective", lambda _: {"source": "project", "providers": []})
-    assert not service._safety_available(subject)
+    assert not service.still_effective(subject)
 
 
 class _SqliteStore:
@@ -207,31 +229,31 @@ def test_repository_terminal_cancel_and_orphan_release(monkeypatch):
 
 
 def _probe_subject(**over):
-    from modules.flow_gate.services import ai_evaluation_service as service
+    from modules.flow_gate.services import ai_connection_test_service as service
     fields = dict(project_id="p", provider_id="a", scope="project", name="A", exec_type="api",
                   kind="openai", cli_command=None, api_base_url=None, api_model="model",
                   credential="secret", fingerprint="a" * 64, version=1)
     fields.update(over)
-    return service.EvaluationExecutionSubject(**fields)
+    return service.ConnectionSubject(**fields)
 
 
 class _Harness:
     """Real repository + real worker/cancel paths over the migration schema.
 
-    Only the transport call (`service._execute`) is ever swapped, so every terminal write goes
+    Only the transport call (`service.execute_prompt`) is ever swapped, so every terminal write goes
     through the production `_settle` -> `repo.finish` conditional UPDATE.
     """
 
     def __init__(self, monkeypatch):
         from modules.flow_gate.db import ai_evaluation_runs as repo
-        from modules.flow_gate.services import ai_evaluation_service as service
+        from modules.flow_gate.services import ai_connection_test_service as service
         self.service, self.repo = service, repo
         self.store = _SqliteStore()
         self.events: list[tuple[str, str]] = []
         self.ids: list[str] = []
         monkeypatch.setattr(repo, "get_store", lambda: self.store)
         monkeypatch.setattr(service, "_emit", lambda kind, row: self.events.append((kind, row["lifecycle"])))
-        monkeypatch.setattr(service, "_safety_available", lambda _subject: True)
+        monkeypatch.setattr(service, "still_effective", lambda _subject: True)
 
     def create(self, subject):
         from modules.flow_gate.services.ai_invoke import runtime as probe
@@ -260,7 +282,7 @@ class _Harness:
 
 
 def _fake_execute(monkeypatch, service, outcome, *, gate=None, entered=None):
-    def execute(_subject, _handle):
+    def execute(_subject, _prompt, _handle, _timeout):
         if entered is not None:
             entered.set()
         if gate is not None:
@@ -268,7 +290,7 @@ def _fake_execute(monkeypatch, service, outcome, *, gate=None, entered=None):
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
-    monkeypatch.setattr(service, "_execute", execute)
+    monkeypatch.setattr(service, "execute_prompt", execute)
 
 
 def _blocking_api_server():
@@ -302,7 +324,7 @@ def test_cancel_interrupts_blocking_api_request_and_ends_cancelled(monkeypatch):
         eid, _state, worker = harness.start(
             _probe_subject(api_base_url=f"http://127.0.0.1:{server.server_port}/v1"))
         assert entered.wait(5)
-        assert service.cancel("p", eid) == {"evaluation_id": eid, "lifecycle": "cancelled", "verdict": None}
+        assert service.cancel("p", eid) == {"test_id": eid, "lifecycle": "cancelled", "result": None}
         worker.join(5)
         assert not worker.is_alive(), "cancel left the API request blocked"
         row = harness.row(eid)
@@ -316,7 +338,7 @@ def test_cancel_interrupts_blocking_api_request_and_ends_cancelled(monkeypatch):
         harness.close()
 
 
-def test_cancel_kills_the_cli_process_tree_and_ends_cancelled(monkeypatch, tmp_path):
+def test_cancel_kills_the_cli_process_tree_and_ends_cancelled(monkeypatch, tmp_path, connection_store):
     import sys
     import time
     from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
@@ -383,9 +405,9 @@ def test_completion_wins_over_a_late_cancel(monkeypatch):
     try:
         eid, _state, worker = harness.start(_probe_subject())
         worker.join(5)
-        with pytest.raises(service.EvaluationError) as raised:
+        with pytest.raises(service.ConnectionTestError) as raised:
             service.cancel("p", eid)
-        assert (raised.value.code, raised.value.status) == ("evaluation_not_cancellable", 409)
+        assert (raised.value.code, raised.value.status) == ("connection_test_not_cancellable", 409)
         row = harness.row(eid)
         assert (row["lifecycle"], row["verdict"]) == ("completed", "suitable")
         assert harness.events == [("started", "running"), ("completed", "completed")]
@@ -420,9 +442,9 @@ def test_cancel_wins_over_a_racing_timeout_and_a_timeout_wins_over_a_late_cancel
     try:
         eid, _state, worker = harness.start(_probe_subject())
         worker.join(5)
-        with pytest.raises(service.EvaluationError) as raised:
+        with pytest.raises(service.ConnectionTestError) as raised:
             service.cancel("p", eid)
-        assert raised.value.code == "evaluation_not_cancellable"
+        assert raised.value.code == "connection_test_not_cancellable"
         row = harness.row(eid)
         assert (row["lifecycle"], row["reason_code"]) == ("failed", "timeout")
         assert harness.events == [("started", "running"), ("failed", "failed")]
@@ -452,7 +474,7 @@ def test_cancel_before_the_worker_starts_never_executes(monkeypatch):
 
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("a cancelled pending evaluation must not reach the transport")
-    monkeypatch.setattr(service, "_execute", must_not_run)
+    monkeypatch.setattr(service, "execute_prompt", must_not_run)
     try:
         eid, state = harness.create(_probe_subject())
         service.cancel("p", eid)
@@ -471,9 +493,9 @@ def test_cancel_before_the_worker_starts_never_executes(monkeypatch):
 def test_cancel_of_an_unknown_evaluation_is_404(monkeypatch):
     harness = _Harness(monkeypatch)
     try:
-        with pytest.raises(harness.service.EvaluationError) as raised:
+        with pytest.raises(harness.service.ConnectionTestError) as raised:
             harness.service.cancel("p", "missing")
-        assert (raised.value.code, raised.value.status) == ("evaluation_not_found", 404)
+        assert (raised.value.code, raised.value.status) == ("connection_test_not_found", 404)
     finally:
         harness.close()
 
@@ -526,11 +548,11 @@ def test_ok_outcomes_choose_the_verdict_and_unexpected_errors_are_internal(monke
 def test_provider_that_became_unavailable_fails_before_any_transport(monkeypatch):
     harness = _Harness(monkeypatch)
     service = harness.service
-    monkeypatch.setattr(service, "_safety_available", lambda _subject: False)
+    monkeypatch.setattr(service, "still_effective", lambda _subject: False)
 
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("an unavailable provider must not be executed")
-    monkeypatch.setattr(service, "_execute", must_not_run)
+    monkeypatch.setattr(service, "execute_prompt", must_not_run)
     try:
         eid, _state, worker = harness.start(_probe_subject())
         worker.join(5)
@@ -541,7 +563,7 @@ def test_provider_that_became_unavailable_fails_before_any_transport(monkeypatch
 
 
 def test_execute_dispatches_to_the_shared_ai_invoke_transports(monkeypatch):
-    from modules.flow_gate.services import ai_evaluation_service as service
+    from modules.flow_gate.services import ai_connection_test_service as service
     from modules.flow_gate.services.ai_invoke import provider_api, provider_cli
     from modules.flow_gate.services.ai_invoke import runtime as probe
     calls = []
@@ -551,9 +573,9 @@ def test_execute_dispatches_to_the_shared_ai_invoke_transports(monkeypatch):
                         lambda **kw: calls.append(("cli", kw)) or probe.ProbeOutcome(probe.PROBE_OK, "c"))
     handle = probe.ProbeHandle()
     api = _probe_subject(kind="claude", api_base_url="https://api.example/v1")
-    assert service._execute(api, handle).text == "a"
+    assert service.execute_prompt(api, service.BASELINE, handle, service.TIMEOUT_SEC).text == "a"
     cli = _probe_subject(exec_type="cli", kind="custom", cli_command="tool -p -")
-    assert service._execute(cli, handle).text == "c"
+    assert service.execute_prompt(cli, service.BASELINE, handle, service.TIMEOUT_SEC).text == "c"
     assert [name for name, _ in calls] == ["api", "cli"]
     api_kw, cli_kw = calls[0][1], calls[1][1]
     assert api_kw["handle"] is handle and cli_kw["handle"] is handle
@@ -562,12 +584,12 @@ def test_execute_dispatches_to_the_shared_ai_invoke_transports(monkeypatch):
     assert (api_kw["kind"], api_kw["base_url"], api_kw["model"], api_kw["credential"]) == (
         "claude", "https://api.example/v1", "model", "secret")
     assert (cli_kw["project_id"], cli_kw["kind"], cli_kw["command"]) == ("p", "custom", "tool -p -")
-    assert service._execute(_probe_subject(exec_type="other"), handle).kind == probe.PROBE_LAUNCH_FAILED
+    assert service.execute_prompt(_probe_subject(exec_type="other"), service.BASELINE, handle, service.TIMEOUT_SEC).kind == probe.PROBE_LAUNCH_FAILED
 
 
 def test_evaluation_service_owns_no_transport_or_process_of_its_own():
     import ast
-    from modules.flow_gate.services import ai_evaluation_service as service
+    from modules.flow_gate.services import ai_connection_test_service as service
     tree = ast.parse(Path(service.__file__).read_text(encoding="utf-8"))
     forbidden_modules = {"http", "socket", "subprocess", "tempfile", "urllib", "process_runner"}
     imported = set()

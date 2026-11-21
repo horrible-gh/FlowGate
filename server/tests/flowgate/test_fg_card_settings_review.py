@@ -321,7 +321,13 @@ def test_the_source_tools_follow_what_the_node_ai_was_told_to_write(
         result = _doc(FA, 81, "TR")
         v01_contact.after_inbox_registered(FA, result, "TR", issued[0]["token_id"])
         assert _node(env, key) == ("review", result)
-        assert all("write" not in _source_scopes(raw) for raw in tokens)
+        # Bound edit tokens still describe a TR after registration. Their source grant
+        # ends when the backing token is consumed, as the inbox does after the contact.
+        from modules.flow_gate.services import remote_tool_service, token_service
+        assert all("write" in _source_scopes(raw) for raw in tokens)
+        for issue in [job["token"], *issued]:
+            token_service.consume(issue["token_id"], "flowgate", result)
+            assert remote_tool_service._authenticate(issue["raw_token"]) is None
 
 
 def test_a_token_the_graph_never_mapped_is_judged_as_before(env, decided, monkeypatch):

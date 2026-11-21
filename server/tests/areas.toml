@@ -117,6 +117,7 @@ also = []
 
 [area."ai.invoke"]
 source = [
+  "tests/modules/flow_gate/test_ai_evaluation_0014.py",
   "db_bootstrap.py",
   "modules/flow_gate/api/v1/ai_invoke*",
   "modules/flow_gate/db/connection.py",
@@ -761,7 +762,164 @@ tests = [
 ]
 also = []
 
-[area."conversation.question"]
+[area."conversation.question.answers"]
+source = [
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/modules/flow_gate/test_qa_answer_author_0064.py",
+  "tests/modules/flow_gate/test_qa_container.py",
+]
+also = []
+
+[area."conversation.question.api"]
+source = [
+  "tests/modules/flow_gate/test_q_handoff_park_0688.py",
+  "tests/modules/flow_gate/test_q_responder_startup_0111.py",
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/modules/flow_gate/services/test_mention_q_options_0243.py",
+  "tests/modules/flow_gate/services/test_q_service_status.py",
+  "tests/modules/flow_gate/services/test_question_policy_0029.py",
+  "tests/modules/flow_gate/test_ch_no_q_0261.py",
+  "tests/modules/flow_gate/test_prompt_copy_qa_options_0243.py",
+  "tests/modules/flow_gate/test_q_anchor_0059.py",
+  "tests/modules/flow_gate/test_q_answer_check_0688.py",
+  "tests/modules/flow_gate/test_q_answer_lease_owner_0389.py",
+  "tests/modules/flow_gate/test_q_doc_response_answers.py",
+  "tests/modules/flow_gate/test_q_sse_publish_0059.py",
+  "tests/modules/flow_gate/test_qa_ai_request_dispatch_0248.py",
+  "tests/modules/flow_gate/test_qa_answer_ai_run_owner_0396.py",
+  "tests/modules/flow_gate/test_qa_route_auth.py",
+]
+also = []
+
+[area."conversation.question.card"]
+source = [
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/flowgate/test_chat_card_questions_v02gui_0010.py",
+  "tests/flowgate/test_fg_command_result_qa_0143.py",
+  "tests/flowgate/test_fg_question_wait_loop_v02test_0032.py",
+  "tests/flowgate/test_fg_run_wire_qa_responding_0143.py",
+  "tests/flowgate/test_question_policy_0021.py",
+]
+also = []
+
+[area."conversation.question.continuation"]
+source = [
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/flowgate/test_fg_answer_race_0111.py",
+  "tests/flowgate/test_fg_question_pending_0111.py",
+]
+also = []
+
+[area."conversation.question.dispatch"]
+source = [
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/flowgate/test_fg_question_wait_responder.py",
+  "tests/modules/flow_gate/services/test_q_responder_auto_dispatch_0551.py",
+  "tests/modules/flow_gate/test_q_auto_resume_0551.py",
+  "tests/modules/flow_gate/test_q_handoff_park_0688.py",
+  "tests/modules/flow_gate/test_q_responder_chain_0661.py",
+  "tests/modules/flow_gate/test_q_responder_startup_0111.py",
+]
+also = []
+
+[area."conversation.question.loop"]
+source = [
+  "db_bootstrap.py",
+  "modules/flow_gate/api/v1/q_*",
+  "modules/flow_gate/api/v1/qa_*",
+  "modules/flow_gate/db/answers.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/question_items.py",
+  "modules/flow_gate/db/questions.py",
+  "modules/flow_gate/db/user_question_policies.py",
+  "modules/flow_gate/services/q_*",
+  "modules/flow_gate/services/qa_service.py",
+  "modules/flow_gate/services/question_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/flowgate/test_fg_question_loop_wait_0051.py",
+]
+also = []
+
+[area."conversation.question.precheck"]
 source = [
   "db_bootstrap.py",
   "modules/flow_gate/api/v1/q_*",
@@ -780,39 +938,10 @@ source = [
 ]
 tests = [
   "tests/flowgate/test_ai_text_guard_0051.py",
-  "tests/flowgate/test_fg_question_loop_wait_0051.py",
   "tests/flowgate/test_question_loop_precheck_integration_0051.py",
   "tests/flowgate/test_question_precheck_ingress_0051.py",
   "tests/flowgate/test_question_search_precheck_0051.py",
-  "tests/flowgate/test_chat_card_questions_v02gui_0010.py",
-  "tests/flowgate/test_fg_answer_race_0111.py",
-  "tests/flowgate/test_fg_command_result_qa_0143.py",
-  "tests/flowgate/test_fg_question_pending_0111.py",
-  "tests/flowgate/test_fg_question_wait_loop_v02test_0032.py",
-  "tests/flowgate/test_fg_question_wait_responder.py",
-  "tests/flowgate/test_fg_run_wire_qa_responding_0143.py",
-  "tests/flowgate/test_question_policy_0021.py",
   "tests/flowgate/test_question_precheck_v02gui_0028.py",
-  "tests/modules/flow_gate/services/test_mention_q_options_0243.py",
-  "tests/modules/flow_gate/services/test_q_responder_auto_dispatch_0551.py",
-  "tests/modules/flow_gate/services/test_q_service_status.py",
-  "tests/modules/flow_gate/services/test_question_policy_0029.py",
-  "tests/modules/flow_gate/test_ch_no_q_0261.py",
-  "tests/modules/flow_gate/test_prompt_copy_qa_options_0243.py",
-  "tests/modules/flow_gate/test_q_anchor_0059.py",
-  "tests/modules/flow_gate/test_q_answer_check_0688.py",
-  "tests/modules/flow_gate/test_q_answer_lease_owner_0389.py",
-  "tests/modules/flow_gate/test_q_auto_resume_0551.py",
-  "tests/modules/flow_gate/test_q_doc_response_answers.py",
-  "tests/modules/flow_gate/test_q_handoff_park_0688.py",
-  "tests/modules/flow_gate/test_q_responder_chain_0661.py",
-  "tests/modules/flow_gate/test_q_responder_startup_0111.py",
-  "tests/modules/flow_gate/test_q_sse_publish_0059.py",
-  "tests/modules/flow_gate/test_qa_ai_request_dispatch_0248.py",
-  "tests/modules/flow_gate/test_qa_answer_ai_run_owner_0396.py",
-  "tests/modules/flow_gate/test_qa_answer_author_0064.py",
-  "tests/modules/flow_gate/test_qa_container.py",
-  "tests/modules/flow_gate/test_qa_route_auth.py",
 ]
 also = []
 
@@ -1279,7 +1408,72 @@ tests = [
 ]
 also = []
 
-[area."card.review"]
+[area."card.review.output"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_settings/assigned_review.py",
+  "flowgate/card_settings/review_*",
+  "flowgate/card_settings/verify_limits.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/review_receipts.py",
+  "modules/flow_gate/services/failure_origin_review_service.py",
+  "modules/flow_gate/services/review_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/modules/flow_gate/services/ai_invoke/test_cli_review_file_first_0474.py",
+  "tests/modules/flow_gate/test_cli_review_doc_path_windows_0474.py",
+  "tests/modules/flow_gate/test_review_doc_path_0393.py",
+  "tests/regression/review/test_review_package_0534.py",
+  "tests/regression/review_observability/test_review_observability_0468.py",
+]
+also = []
+
+[area."card.review.persistence"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_settings/assigned_review.py",
+  "flowgate/card_settings/review_*",
+  "flowgate/card_settings/verify_limits.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/review_receipts.py",
+  "modules/flow_gate/services/failure_origin_review_service.py",
+  "modules/flow_gate/services/review_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/integration/review/test_review_postgres_integration_0535.py",
+  "tests/modules/flow_gate/test_review_atomicity_0535.py",
+  "tests/modules/flow_gate/test_review_round_idempotency_0583.py",
+]
+also = []
+
+[area."card.review.recovery"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_settings/assigned_review.py",
+  "flowgate/card_settings/review_*",
+  "flowgate/card_settings/verify_limits.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/review_receipts.py",
+  "modules/flow_gate/services/failure_origin_review_service.py",
+  "modules/flow_gate/services/review_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
+  "tests/flowgate/test_fg_review_exhaustion_0029.py",
+  "tests/flowgate/test_fg_review_loop_sweeper_0159.py",
+  "tests/flowgate/test_review_loop_rework_binding_0136.py",
+]
+also = []
+
+[area."card.review.stage"]
 source = [
   "db_bootstrap.py",
   "flowgate/card_settings/assigned_review.py",
@@ -1300,23 +1494,30 @@ tests = [
   "tests/flowgate/test_fg_group_review_count_rounds_0027.py",
   "tests/flowgate/test_fg_rejection_history_0126.py",
   "tests/flowgate/test_fg_review_duplicate_start_0128.py",
-  "tests/flowgate/test_fg_review_exhaustion_0029.py",
-  "tests/flowgate/test_fg_review_loop_sweeper_0159.py",
   "tests/flowgate/test_fg_review_retry_verdict_0128.py",
-  "tests/flowgate/test_review_loop_rework_binding_0136.py",
-  "tests/integration/review/test_review_postgres_integration_0535.py",
-  "tests/modules/flow_gate/services/ai_invoke/test_cli_review_file_first_0474.py",
+]
+also = []
+
+[area."card.review.submission"]
+source = [
+  "db_bootstrap.py",
+  "flowgate/card_settings/assigned_review.py",
+  "flowgate/card_settings/review_*",
+  "flowgate/card_settings/verify_limits.py",
+  "modules/flow_gate/db/connection.py",
+  "modules/flow_gate/db/dialect.py",
+  "modules/flow_gate/db/review_receipts.py",
+  "modules/flow_gate/services/failure_origin_review_service.py",
+  "modules/flow_gate/services/review_*",
+  "requirements.txt",
+  "sql/migrations/**",
+]
+tests = [
   "tests/modules/flow_gate/services/test_failure_origin_review_0503.py",
-  "tests/modules/flow_gate/test_cli_review_doc_path_windows_0474.py",
   "tests/modules/flow_gate/test_reject_resubmit_own_slot_0457.py",
-  "tests/modules/flow_gate/test_review_atomicity_0535.py",
-  "tests/modules/flow_gate/test_review_doc_path_0393.py",
-  "tests/modules/flow_gate/test_review_round_idempotency_0583.py",
   "tests/modules/flow_gate/test_review_token_scope_B0057.py",
   "tests/modules/flow_gate/test_review_validation_provenance_0545.py",
   "tests/modules/flow_gate/test_t574_rejection_history.py",
-  "tests/regression/review/test_review_package_0534.py",
-  "tests/regression/review_observability/test_review_observability_0468.py",
 ]
 also = []
 

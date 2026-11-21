@@ -31,7 +31,7 @@ from modules.flow_gate.services import workflow_decision_service as wds  # noqa:
 from modules.flow_gate.services.ai_invoke import finalize  # noqa: E402
 
 import test_ai_invoke_no_output_retry_0359 as base  # noqa: E402
-from test_ai_invoke_no_output_retry_0359 import env  # noqa: E402,F401
+from tests.modules.flow_gate.test_q_responder_startup_0111 import env  # noqa: E402,F401
 
 
 DOC = "flowgate.default.0551.0007-T"
@@ -197,6 +197,8 @@ def test_register_answer_invokes_auto_resume_only_after_last_item(
 ):
     calls = []
     monkeypatch.setattr(q_service, "get_store", lambda: _fake_store())
+    monkeypatch.setattr(q_service.db_documents, "get_by_id",
+                        lambda doc_id: {"doc_id": doc_id, "group_id": GROUP})
     monkeypatch.setattr(
         q_service.db_questions,
         "get_container_by_doc",

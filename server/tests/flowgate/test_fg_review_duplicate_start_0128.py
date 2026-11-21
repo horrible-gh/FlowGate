@@ -40,6 +40,7 @@ def _pending(env, monkeypatch, stage):
         roles(follow, execution="not_used", review="not_used")
         env["follow_key"] = follow
         roles(key, execution="not_used", review=B)
+        stored(key, "review_count", 1)
         start(env)
         doc = write_line(env, key, "report", "## Result\n\nBody\n")["doc_id"]
     else:

@@ -15,16 +15,15 @@ from tests.modules.flow_gate import test_ai_invoke_no_output_retry_0359 as base
 def env(monkeypatch, tmp_path, migrated_sqlite_db):
     # The engine now reserves durable run identities even when document persistence is fake.
     from modules.flow_gate.db import ai_run_identity
-    from tests.modules.flow_gate.test_qa_container import _MockDB
+    from tests.integration.ai_run_identity.test_ai_run_identity_0138 import open_store
     import os
     monkeypatch.setenv("FLOWGATE_AGENT_PEPPER_ID", os.environ.get("FLOWGATE_AGENT_PEPPER_ID", "test-pepper"))
     value = base.env.__wrapped__(monkeypatch, tmp_path)
-    from modules.flow_gate.db.connection import FlowGateStore
-    identity_store = FlowGateStore()
-    identity_store._db = _MockDB(migrated_sqlite_db("qa-identities.db"))
+    identity_store = open_store(migrated_sqlite_db("qa-identities.db"))
     monkeypatch.setattr(ai_run_identity, "get_store", lambda: identity_store)
     from modules.flow_gate.db import connection
     monkeypatch.setattr(connection, "STORE", identity_store)
+    monkeypatch.setattr(base.svc, "_next_run_id", ai_run_identity.allocate)
     def scratch(project_id, run_id, execution_nonce=None):
         path = tmp_path / run_id
         path.mkdir()

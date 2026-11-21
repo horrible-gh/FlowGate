@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.modules.flow_gate.test_ai_evaluation_0014 import connection_store  # noqa: F401
+
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 SERVER = Path(__file__).resolve().parents[5]
@@ -219,7 +221,7 @@ def test_api_without_a_handle_keeps_the_plain_urlopen_path(monkeypatch):
 # child processes against a temp scratch root and pin the boundary, not a re-implementation.
 
 @pytest.fixture(autouse=True)
-def scratch_root(monkeypatch, tmp_path):
+def scratch_root(monkeypatch, tmp_path, connection_store):
     root = tmp_path / "scratch" / "probe"
     monkeypatch.setattr(probe, "_project_scratch_root", lambda project_id: root)
     monkeypatch.setattr(probe.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path)
@@ -268,7 +270,7 @@ def test_cli_child_runs_in_a_managed_scratch_that_is_deleted_afterwards(tmp_path
     cwd, tmp, scratch = [line.strip() for line in outcome.text.splitlines()]
     root = scratch_root.resolve()
     assert Path(cwd).resolve().parent == root
-    assert Path(cwd).name.startswith("aiv_")
+    assert Path(cwd).name.startswith("aiv2_")
     assert Path(scratch).resolve() == Path(cwd).resolve()
     assert Path(tmp).resolve().is_relative_to(Path(cwd).resolve())
     assert _leftover(scratch_root) == []
@@ -318,7 +320,7 @@ def test_cli_blocked_launch_policy_is_launch_failed_and_nothing_is_spawned(tmp_p
 
 
 def test_cli_scratch_that_cannot_be_created_is_launch_failed(tmp_path, monkeypatch):
-    def boom(project_id, run_id):
+    def boom(project_id, run_id, execution_nonce=None):
         raise OSError("disk full")
     monkeypatch.setattr(provider_cli, "_create_scratch", boom)
     assert _cli(_script(tmp_path, "print('x')\n")).kind == probe.PROBE_LAUNCH_FAILED
@@ -415,4 +417,6 @@ def test_the_cli_process_lifecycle_exists_once_and_is_shared_with_runs():
     assert calls.count("normalize_cli_command") == 1
     cli_execute = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_cli_execute")
     used = {n.id for n in ast.walk(cli_execute) if isinstance(n, ast.Name)}
-    assert {"_CliProcess", "_prepare_cli_command", "_cli_popen_kwargs", "_cli_scratch_env"} <= used
+    assert {"_execute_local", "_prepare_cli_command", "_cli_scratch_env"} <= used
+    local = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_execute_local")
+    assert {"_CliProcess", "_cli_popen_kwargs"} <= set(_called_names(local))

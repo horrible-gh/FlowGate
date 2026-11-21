@@ -694,7 +694,8 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
         return ProbeOutcome(PROBE_LAUNCH_FAILED)
     try:
         provider = {"kind": kind}
-        run = {"run_id": run_id, "project_id": project_id, "scratch_dir": str(scratch)}
+        run = {"run_id": run_id, "project_id": project_id, "scratch_dir": str(scratch),
+               "execution_nonce": execution_nonce}
         last_message_file = (scratch / "last_message.txt" if owned else
                              scratch / "tmp" / f"last_message_{time.monotonic_ns()}.txt")
         decision, reason = _resolve_cli_launch(

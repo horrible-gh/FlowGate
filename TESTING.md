@@ -40,6 +40,14 @@ python tools/test_run.py verify --all
 파일 2분 초과도 분할 대상이다. 15~23초 파일을 무조건 다시 쪼개지 않는다.
 기준선의 누락·실패는 0초나 통과로 취급하지 않는다. 아래 기존 측정 결과는 전체 수정 완료의 근거가 아니다.
 
+On 2026-11-21, `conversation.question` (34 files) and `card.review` (23 files) each
+hit the 300-second verification limit. Question tests now use the `api`, `answers`,
+`card`, `continuation`, `dispatch`, `loop`, and `precheck` subareas; review tests use
+`output`, `persistence`, `recovery`, `stage`, and `submission`.
+For example: `verify --area=conversation.question.dispatch`. Parent names still select
+all descendants. Run each subarea separately when the external command limit is 300 seconds.
+Splitting alone does not establish passing tests or budget compliance; verify each subarea.
+
 
 서버에서 바꾼 기능만 검증할 때는 `server/`에서 실행한다.
 
@@ -77,7 +85,7 @@ Self-check 요청으로는 이렇게 보낸다(셸 연산자 없이 `python` 하
 
 병렬 실행은 기존 지침대로 `parallel_share`도 맞춘다. 상위 영역 이름은 `ai`, `git`,
 `gate`, `selfcheck`, `document`, `conversation`, `graph`, `card`, `platform`, `db`, `guard`다.
-큰 영역 7개는 소영역으로 나뉘어 있다(0053, 모두 36개).
+Seven large areas have subareas; the timeout section above lists the additional question/review subdivisions.
 
 | 상위 | 소영역 |
 |---|---|

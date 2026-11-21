@@ -43,7 +43,7 @@ from modules.flow_gate.services.ai_invoke import finalize  # noqa: E402
 from modules.flow_gate.services.ai_invoke import review  # noqa: E402
 
 import tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 as base  # noqa: E402
-from tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 import env  # noqa: E402,F401  (pytest fixture)
+from tests.modules.flow_gate.test_q_responder_startup_0111 import env  # noqa: E402,F401  (pytest fixture)
 
 
 def _provider(pid, name):

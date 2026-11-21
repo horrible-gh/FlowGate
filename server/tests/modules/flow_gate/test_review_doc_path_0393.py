@@ -234,7 +234,7 @@ def test_review_submission_snapshots_requested_and_actual_provider_mismatch(revi
     assert kwargs == {
         "doc_id": DOC_ID,
         "revision_no": 2,
-        "reviewer_id": USER,
+        "reviewer_id": "aip_opus",
         "verdict": "pass",
         "findings_json": "[]",
         "comment": "ok",
