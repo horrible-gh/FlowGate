@@ -42,16 +42,16 @@ describe('minimapGeometry (flowgate.v02.0049)', () => {
       { id: 'b', kind: 'design', docType: 'P', x: 300, y: 100, width: MINIMAP_NODE_WIDTH, height: MINIMAP_NODE_HEIGHT },
       { id: 'c', kind: 'task', docType: null, x: -200, y: 300, width: MINIMAP_NODE_WIDTH, height: MINIMAP_NODE_HEIGHT },
     ])
-    expect([MINIMAP_NODE_WIDTH, MINIMAP_NODE_HEIGHT]).toEqual([176, 92])
+    expect([MINIMAP_NODE_WIDTH, MINIMAP_NODE_HEIGHT]).toEqual([176, 108])
   })
 
   it('draws only the given (Canvas-drawn) Edges, between the facing sides of their Nodes', () => {
     const lines = miniMapEdges(graph, new Set(['ab', 'bc']))
     expect(lines.map((line) => line.id)).toEqual(['ab', 'bc'])
     // a -> b goes right: a's right side to b's left side.
-    expect(lines[0]).toEqual({ id: 'ab', x1: 176, y1: 46, x2: 300, y2: 146 })
+    expect(lines[0]).toEqual({ id: 'ab', x1: 176, y1: 54, x2: 300, y2: 154 })
     // b -> c goes left: b's left side to c's right side.
-    expect(lines[1]).toEqual({ id: 'bc', x1: 300, y1: 146, x2: -24, y2: 346 })
+    expect(lines[1]).toEqual({ id: 'bc', x1: 300, y1: 154, x2: -24, y2: 354 })
     // An id whose Node is missing is skipped.
     expect(miniMapEdges({ ...graph, nodes: graph.nodes.slice(0, 1) }, new Set(['ab']))).toEqual([])
   })
@@ -66,9 +66,9 @@ describe('minimapGeometry (flowgate.v02.0049)', () => {
   it('bounds all Nodes and the shown area with padding, and nothing without Nodes', () => {
     const nodes = miniMapNodes(graph)
     const content = unionRect(nodes)!
-    expect(content).toEqual({ x: -200, y: 0, width: 676, height: 392 })
+    expect(content).toEqual({ x: -200, y: 0, width: 676, height: 408 })
     const pad = 676 * MINIMAP_PADDING_RATIO
-    expect(miniMapBounds(nodes, null)).toEqual({ x: -200 - pad, y: 0, width: 676 + pad * 2, height: 392 + pad })
+    expect(miniMapBounds(nodes, null)).toEqual({ x: -200 - pad, y: 0, width: 676 + pad * 2, height: 408 + pad })
     const far = { x: 2000, y: 2000, width: 100, height: 100 }
     const withView = miniMapBounds(nodes, far)!
     expect(containsPoint(withView, { x: 2100, y: 2100 })).toBe(true)
