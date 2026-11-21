@@ -187,6 +187,64 @@ def _after(flow_id: str, run_id: str, jobs: list) -> None:
     jobs.append(lambda: publish.after_terminal(flow_id, run_id))
 
 
+def _reopen(run: dict, jobs: list, row: dict, job: dict, actor: str) -> None:
+    """Shared retry transition, inside the Flow guard; the job CAS excludes a live writer."""
+    store = _store()
+    if store.gate_writer_active(job) or not store.reopen_gate_publish(job["job_id"]):
+        raise _error(409, JOB_ACTIVE, row, job_id=job["job_id"])
+    if not repo.move(row["decision_id"], row["decision_version"], repo.ACCEPTED, last_error_code=None):
+        raise AssertionError("gate decision moved under the Flow guard")
+    from flowgate.gate_decisions.run_hold import gate_resume_wake
+    gate_resume_wake(legacy.load_context(run, job.get("project_id"), actor, jobs), repo.get(row["decision_id"]))
+    reopened = legacy.get_job(job["job_id"])
+    from flowgate.gate_decisions import publish
+    jobs.append(lambda: publish.notify(reopened))
+    jobs.append(lambda: legacy.notify_job(reopened))
+
+
+def resume_after_merge(merge_id: int) -> bool:
+    """After releasing the review's Git locks, wake only its completed conflict's existing job.
+
+    Replays and competing retry/Sweeper claims are harmless. Failure leaves the durable
+    conflict reservation for the Sweeper or manual retry; it must not fail a completed merge.
+    """
+    try:
+        from modules.flow_gate.services import git_service as gs
+        from flowgate.gate_decisions import publish
+        session = gs.db_git.get_session(merge_id)
+        if session is None or session.get("status") != "done":
+            return False
+        context = gs.db_git.session_context(session)
+        if context.get("git_cleanup_done") is not True:
+            return False
+        decision_id = context.get("gate_sync_decision_id") or context.get("gate_decision_id")
+        row = repo.get(decision_id) if decision_id else None
+        if row is None or row["group_id"] != session.get("group_id"):
+            return False
+        publish.install()
+
+        def resume(run: dict, jobs: list) -> bool:
+            current = repo.get(decision_id)
+            if current is None or current["status"] not in (repo.FAILED, repo.RECOVERY_REQUIRED):
+                return False
+            job = legacy.get_job(current.get("job_id"))
+            store = _store()
+            if (job is None or job.get("status") != "recovery_required"
+                    or job.get("phase_note") != store.GATE_PARKED_CONFLICT
+                    or publish._conflict_merge_id(job) != int(merge_id)):
+                return False
+            fresh = gs.db_git.get_session(merge_id)
+            if fresh is None or fresh.get("status") != "done":
+                return False
+            _reopen(run, jobs, current, job, current["actor_user_id"])
+            return True
+
+        return legacy.guarded_run(row["run_id"], resume)
+    except Exception:
+        _log.warning("gate resume after merge %s deferred to recovery", merge_id, exc_info=True)
+        return False
+
+
 # ── retry ────────────────────────────────────────────────────────────────────
 
 def retry(run_id: str, node_key: str, decision_id: str, user_id: str, body: dict) -> dict:
@@ -215,16 +273,9 @@ def retry(run_id: str, node_key: str, decision_id: str, user_id: str, body: dict
             return answer(run_id, decision_id, 202)                     # the same job is already going on
         if job.get("phase_note") == store.GATE_PARKED_CONFLICT and _conflict_open(row):
             raise _error(409, NOT_RETRYABLE, row, reason="merge_conflict_open")
-        if store.gate_writer_active(job) or not store.reopen_gate_publish(job["job_id"]):
-            raise _error(409, JOB_ACTIVE, row, job_id=job["job_id"])
-        if not repo.move(decision_id, row["decision_version"], repo.ACCEPTED, last_error_code=None):
-            raise AssertionError("gate decision moved under the Flow guard")
+        _reopen(run, jobs, row, job, user_id)
         repo.insert_recovery_request(decision_id, user_id, repo.RETRY, body["request_id"], fp, 202,
                                      {"outcome": "resumed", "job_id": job["job_id"]})
-        from flowgate.gate_decisions.run_hold import gate_resume_wake
-        gate_resume_wake(legacy.load_context(run, job.get("project_id"), user_id, jobs), repo.get(decision_id))
-        reopened = legacy.get_job(job["job_id"])
-        jobs.append(lambda: legacy.notify_job(reopened))
         return answer(run_id, decision_id, 202)
 
     return legacy.guarded_run(run_id, body_of)

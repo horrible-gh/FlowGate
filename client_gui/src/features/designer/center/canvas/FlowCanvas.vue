@@ -116,6 +116,7 @@
           :data="nodeProps.data"
           @conflict="emit('node-conflict', $event)"
           @approve="emit('node-approve', $event)"
+          @cancel="(nodeId, attemptId) => emit('node-cancel', nodeId, attemptId)"
           @open-document="emit('open-document', $event)"
         />
       </template>
@@ -300,6 +301,7 @@ const emit = defineEmits<{
   /** flowgate.v02.0056 F2-1: a card's [승인]. */
   'open-document': [document: import('./cardDocumentButtons').CardDocumentOpen]
   'node-approve': [nodeId: string]
+  'node-cancel': [nodeId: string, attemptId: string]
   /** flowgate.v02.0061 T#14: a card's 병합 충돌 (its result's merge conflict) was pressed. */
   'node-conflict': [nodeId: string]
   /** an item of a card's context menu was chosen. */

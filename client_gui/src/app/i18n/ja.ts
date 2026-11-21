@@ -463,6 +463,7 @@ export default {
       // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        canceled: '取消済み',
         needs_intervention: '介入が必要',
         system_error: 'システムエラー',
         waiting_confirm: '確認待ち',
@@ -1447,7 +1448,7 @@ export default {
   },
   // Designer Git part (features/git).
   git: {
-    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "今は再試行できません · サーバー処理待ち", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能", "cancel_approval": "この承認を取消", "closed_note": "この承認は再び反映できません。マージセッションはすでに閉じています。", "closed_next": "[この承認を取消] のあと、確認カードで [承認] → 現在のコミットで反映", "retry_blocked_closed": "再試行が無効な理由: 閉じたマージセッションを読み直すだけで、結果は常に同じです。", "goto_gate": "確認カードへ移動", "retry_same_next": "原因が変わらないため、再度押しても同じです。[!] 詳細で原因を確認するか、[キャンセル] のあと確認カードで再承認してください。", "retry_changed_next": "今回は別の理由で止まりました。[!] 詳細で新しい原因を確認してください。", "retry_closed_next": "マージセッションが閉じているため、やり直しても同じです。[この承認を取消] のあと、確認カードで [承認] を押して現在のコミットで再び反映してください。"},
+    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "反映処理の状態を確認しています。[!] 詳細で現在の段階を確認してください。", "retry_blocked_conflict": "競合解決のレビュー完了待ち · 完了すると自動で再開します。状態は5秒ごとに確認します。", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能", "cancel_approval": "この承認を取消", "closed_note": "この承認は再び反映できません。マージセッションはすでに閉じています。", "closed_next": "[この承認を取消] のあと、確認カードで [承認] → 現在のコミットで反映", "retry_blocked_closed": "再試行が無効な理由: 閉じたマージセッションを読み直すだけで、結果は常に同じです。", "goto_gate": "確認カードへ移動", "retry_same_next": "原因が変わらないため、再度押しても同じです。[!] 詳細で原因を確認するか、[キャンセル] のあと確認カードで再承認してください。", "retry_changed_next": "今回は別の理由で止まりました。[!] 詳細で新しい原因を確認してください。", "retry_closed_next": "マージセッションが閉じているため、やり直しても同じです。[この承認を取消] のあと、確認カードで [承認] を押して現在のコミットで再び反映してください。"},
     header: {
       base: 'プロジェクトベース',
       flow_base: 'フローベース',

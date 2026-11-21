@@ -12,7 +12,7 @@ vi.mock('@/features/document', async original => ({
   cardMemoList: (...a: unknown[]) => mocks.memos(...a), cardMemoUpdate: (...a: unknown[]) => mocks.update(...a), cardMemoCreate: (...a: unknown[]) => mocks.create(...a),
 }))
 import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
-import { approveGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/useGateApproval'
+import { approveGateTarget, cancelGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/useGateApproval'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import { gateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
 import { useGateDecision } from '@/features/designer/inspector/features/gateCard/useGateDecision'
@@ -67,6 +67,83 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); removeProjectEventStream() })
 
 describe('gate Inspector — D §8-10', () => {
+  it.each([null, 'revision'] as const)('cancels after confirmation with readOnly=%s and shows the canceled receipt', async readOnly => {
+    target = { ...target, readOnly }
+    current.nodes[0].gate.can_cancel = true
+    mocks.decide.mockImplementation(async () => current = { ...current, idleReason: 'stopped', nodes: [{
+      ...current.nodes[0], status: 'pending', attemptId: null,
+      gate: { ...current.nodes[0].gate, can_cancel: false, can_decide: false, decision: { ...result(false), status: 'canceled', result: 'canceled' } },
+    }] })
+    const w = await show()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    expect(mocks.decide).not.toHaveBeenCalled()
+    const dialog = w.findComponent({ name: 'ConfirmDialog' })
+    expect(dialog.props('open')).toBe(true)
+    dialog.vm.$emit('cancel'); await flushPromises()
+    expect(mocks.decide).not.toHaveBeenCalled()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    dialog.vm.$emit('confirm'); await flushPromises()
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(mocks.decide.mock.calls[0][2]).toBe('cancel')
+    expect(w.find('[data-test="gate-cancel"]').exists()).toBe(false)
+    expect(w.get('[data-test="gate-result-value"]').text()).toBe('취소됨')
+  })
+  it.each(['archived', 'conflict'] as const)('blocks Inspector and canvas cancellation for %s', async readOnly => {
+    target = { ...target, readOnly }
+    current.nodes[0].gate.can_cancel = true
+    const w = await show()
+    expect(w.get('[data-test="gate-cancel"]').attributes('disabled')).toBeDefined()
+    expect(await cancelGateTarget(target, `attempt_${id}`)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it('cancels a revision-view canvas gate using the fresh attempt and settings version', async () => {
+    target = { ...target, readOnly: 'revision' }
+    current.nodes[0].gate.can_cancel = true
+    saved.settingsVersion = 17
+    mocks.decide.mockResolvedValue(current)
+    expect(await cancelGateTarget(target, `attempt_${id}`)).toBe(true)
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(mocks.decide.mock.calls[0][2]).toBe('cancel')
+    expect(mocks.decide.mock.calls[0][4]).toMatchObject({ expected_attempt_id: `attempt_${id}`, expected_settings_version: 17 })
+  })
+  it.each(['stale-attempt', 'forbidden', 'decision-held'])('refuses canvas cancellation after reload: %s', async reason => {
+    target = { ...target, readOnly: 'revision' }
+    current.nodes[0].gate.can_cancel = reason !== 'forbidden'
+    current.nodes[0].gate.decision_in_progress = reason === 'decision-held'
+    expect(await cancelGateTarget(target, reason === 'stale-attempt' ? 'old-attempt' : `attempt_${id}`)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it('hides pre-decision cancel while an approval is held', async () => {
+    current.nodes[0].gate.decision_in_progress = true
+    current.nodes[0].gate.can_decide = false
+    current.nodes[0].gate.can_cancel = false
+    const w = await show()
+    expect(w.find('[data-test="gate-cancel"]').exists()).toBe(false)
+    expect(w.text()).toContain('Time Machine')
+  })
+  it('dismisses a cancel confirmation when the attempt changes', async () => {
+    current.nodes[0].gate.can_cancel = true
+    const w = await show()
+    await w.get('[data-test="gate-cancel"]').trigger('click')
+    const dialog = w.findComponent({ name: 'ConfirmDialog' })
+    current = { ...current, nodes: [{ ...current.nodes[0], attemptId: 'new-attempt' }] }
+    await gateContextOf(target)!.reload(); await flushPromises()
+    expect(dialog.props('open')).toBe(false)
+    dialog.vm.$emit('confirm'); await flushPromises()
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it('requires the canvas cancellation dialog and binds it to the shown attempt', async () => {
+    const data = { kind: 'approval', title: 'Check', state: null, selected: false, cancelable: true, gateAttemptId: 'attempt-canvas' }
+    const w = mount(FlowNodeCard, { props: { id: 'gate-canvas', data }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    wrappers.push(w)
+    await w.get('[data-test="designer-canvas-node-cancel"]').trigger('click')
+    expect(w.emitted('cancel')).toBeUndefined()
+    w.findComponent({ name: 'ConfirmDialog' }).vm.$emit('confirm'); await flushPromises()
+    expect(w.emitted('cancel')).toEqual([['gate-canvas', 'attempt-canvas']])
+    await w.setProps({ data: { ...data, cancelable: false } })
+    expect(w.find('[data-test="designer-canvas-node-cancel"]').exists()).toBe(false)
+  })
+
   it.each(['running', 'idle'])('open + can_decide in %s enables the document actions', async status => {
     current = gate('open', status)
     const w = await show()
@@ -271,7 +348,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.find('[data-test="gate-memo-panel"]').exists()).toBe(false)
     expect(mocks.decide).not.toHaveBeenCalled()
   })
-  it('real Frame keeps header kind/title/memo/status/more and Q&A; actions are only in documents', async () => {
+  it('real Frame keeps header kind/title/memo/status/more; a 확인 card draws no documents or Q&A tab', async () => {
     const selection = SELECTIONS.graphGate
     const w = await show(DesignerInspector, { selection })
     const header = w.get('[data-test="designer-inspector-header"]')
@@ -281,8 +358,12 @@ describe('gate Inspector — D §8-10', () => {
     expect(header.find('[data-test="designer-inspector-title"]').exists()).toBe(true)
     expect(header.find('[data-test="designer-inspector-more"]').exists()).toBe(true)
     expect(header.text()).not.toContain('시안 상태 초기화')
-    expect(w.text()).toContain('Q&A'); expect(w.findAll('[role="tab"]').map(tab => tab.text())).not.toContain('첨부')
-    expect(w.find('[data-test="gate-result"]').exists()).toBe(true)
+    // A 확인 card shows the settings tab only (DesignerInspector `tabs`): no documents, Q&A or attachment tab.
+    const tabs = w.findAll('[role="tab"]').map(tab => tab.text())
+    expect(tabs).not.toContain('문서'); expect(tabs).not.toContain('Q&A'); expect(tabs).not.toContain('첨부')
+    expect(w.text()).not.toContain('Q&A')
+    // The result row (GateSlots) is the documents-tab contribution, so it is not drawn for a 확인 card either.
+    expect(w.find('[data-test="gate-result"]').exists()).toBe(false)
   })
 })
 
@@ -329,6 +410,33 @@ describe('0148 card/header shared approval', () => {
     const w = await show(DesignerInspector, { selection: { ...SELECTIONS.graphGate, node: { ...SELECTIONS.graphGate.node, id: target.nodeId } } })
     expect(w.get('[data-test="gate-header-state"]').attributes('data-state')).toBe('publishing')
     expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
+  })
+})
+
+describe('conflict completion and first-click feedback', () => {
+  it.each(['git_pending_changed', 'git_finalize_done'])('refreshes an open Inspector on %s without another approval', async event => {
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true,
+      job: { phase_note: 'gate_conflict' }, recovery: { status: 'failed', retryable: false } })
+    await show()
+    const c = gateContextOf(target)!
+    expect(c.gate.value?.recovery?.retryable).toBe(false)
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true,
+      job: { status: 'pending' }, recovery: { status: 'accepted', retryable: false } })
+    stream.open(); stream.emit(event, { groupId: target.flowId })
+    await new Promise(resolve => setTimeout(resolve, 240)); await flushPromises()
+    expect(c.gate.value?.recovery?.status).toBe('accepted')
+    expect(mocks.decide).not.toHaveBeenCalled()
+  })
+  it.each([
+    [{ phase_note: 'gate_conflict' }, { status: 'failed' }, 'reason.conflict'],
+    [{ status: 'pending' }, { status: 'accepted' }, 'reason.decision_in_progress'],
+  ])('explains the latest held approval after the first card click', async (job, recovery, reason) => {
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true, job, recovery })
+    expect(await approveGateTarget(target)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+    expect(gateApprovalView(target.flowId, target.nodeId, `attempt_${id}`)).toMatchObject({
+      blocked: true, reason: `gui.inspector.gateCard.${reason}`,
+    })
   })
 })
 

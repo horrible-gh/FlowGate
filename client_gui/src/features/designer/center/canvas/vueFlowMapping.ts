@@ -76,6 +76,8 @@ export interface FlowGateNodeData {
   gateState?: GateHeaderState
   /** flowgate.v02.0056 F2-1: the chip offers [승인]. */
   approvable?: boolean
+  cancelable?: boolean
+  gateAttemptId?: string | null
   /** flowgate.v02.0056 F2-1: this card's [승인] is being answered. */
   approving?: boolean
   approvalBlocked?: boolean
@@ -175,6 +177,8 @@ export function toVueFlowNodes(
     if (node.definition?.nodeType === 'gate') {
       const current = cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))
       data.gateState = gateHeaderState(current?.gate, current)
+      data.cancelable = options.canApprove === true && graph.ownership !== 'conflict' && current?.gate?.can_cancel === true && !current.gate.decision_in_progress
+      data.gateAttemptId = current?.attemptId
       data.approvable = options.canApprove === true && graph.ownership !== 'conflict' && data.gateState.key === 'waiting_confirm'
       const approval = gateApprovalView(graph.flowId, node.id, current?.attemptId)
       data.approving = options.approvingNodeId === node.id || approval.busy

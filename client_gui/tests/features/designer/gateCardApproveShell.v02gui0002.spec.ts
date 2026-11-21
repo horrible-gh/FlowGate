@@ -145,6 +145,27 @@ async function openGraph() {
 const card = () => wrapper!.get('[data-test="designer-canvas-node"][data-node-id="gn_gate"]')
 
 describe('v02gui.0002 B: the confirm card approves on the mounted Shell', () => {
+  it('cancels from the mounted canvas through its shared Inspector context', async () => {
+    run = runOf('open', gate({ can_cancel: true }))
+    postRequest.mockImplementation(async (url: string, body: unknown) => {
+      expect(url).toBe('/api/v1/runs/run_g/nodes/gn_gate/gate-cancel')
+      decisions.push(body)
+      run = runOf('pending', gate({ can_decide: false, can_cancel: false }))
+      return { data: { ok: true, run } }
+    })
+    await openGraph()
+    await card().get('[data-test="designer-canvas-node-cancel"]').trigger('click')
+    expect(postRequest).not.toHaveBeenCalled()
+    const confirm = Array.from(document.querySelectorAll('.ui-confirm-actions button')).find(el => el.textContent === '취소')
+    expect(confirm).toBeDefined()
+    ;(confirm as HTMLButtonElement).click()
+    await settle()
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({ expected_attempt_id: 'att_1', expected_settings_version: 3 })
+    expect(decisions[0]).not.toHaveProperty('decision')
+    expect(card().find('[data-test="designer-canvas-node-cancel"]').exists()).toBe(false)
+  })
+
   it('shows [승인] while the server says can_decide and sends one confirm through the Inspector path', async () => {
     await openGraph()
     const button = card().find('[data-test="designer-canvas-node-approve"]')

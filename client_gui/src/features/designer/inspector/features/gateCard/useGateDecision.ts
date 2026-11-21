@@ -28,21 +28,30 @@ export function useGateDecision(target: () => InspectorTarget | null) {
     return gateActions(current ?? { docId: null, docType: null, docReviewStatus: null, docStatus: null, nodeType: null, cardDocuments: [] },
       c?.run.value ?? null, busy.value !== null || c?.status.value !== 'ready' || Object.keys(c?.pending.value ?? {}).length > 0 || Object.keys(c?.failures.value ?? {}).length > 0 || !c?.node.value?.attemptId || c?.settings.value?.settingsVersion === undefined)
   })
+  const cancelAction = computed(() => {
+    const c = context.value
+    const current = target()
+    const visible = current?.nodeType === 'gate' && c?.gate.value?.can_cancel === true && !c.gate.value.decision_in_progress
+    return { visible, enabled: visible && current?.readOnly !== 'archived' && current?.readOnly !== 'conflict' && busy.value === null && c?.status.value === 'ready'
+      && Object.keys(c.pending.value).length === 0 && !!c.node.value?.attemptId && c.settings.value?.settingsVersion !== undefined }
+  })
+  const attemptId = computed(() => context.value?.node.value?.attemptId ?? null)
   const result = computed(() => gateResult(context.value?.node.value ?? null))
   watch(() => context.value?.gate.value?.job?.last_error_code, error => {
     if (error) host?.request({ kind: 'show-tool', tool: 'git' })
   })
   async function decide(decision: RunGateDecision, comment?: string) {
-    if (decision !== 'confirm') return false
+    if (decision !== 'confirm' && decision !== 'cancel') return false
     const c = context.value
     const current = target()
-    if (!actions.value[decision].enabled || !c || !current) return false
+    if (!(decision === 'cancel' ? cancelAction.value.enabled : actions.value.confirm.enabled) || !c || !current) return false
     const ok = await c.decide(decision, comment)
     host?.request({ kind: 'refresh-flow', flowId: current.flowId })
     if (!ok && target()?.flowId === current.flowId && target()?.nodeId === current.nodeId && c.gate.value?.decision_in_progress) host?.request({ kind: 'show-tool', tool: 'git' })
     return ok
   }
-  return { actions, busy, failureKey, result, decide,
+  return { actions, cancelAction, attemptId, busy, failureKey, result, decide,
+    decisionHeld: computed(() => context.value?.gate.value?.decision_in_progress === true),
     settings: computed(() => context.value?.settings.value ?? null),
     receipt: computed(() => {
       const c = context.value

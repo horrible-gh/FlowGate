@@ -151,6 +151,14 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="CARD_MARK_ICONS.conflict"
           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
+      <button v-if="data.cancelable" type="button" class="flow-node-action flow-node-cancel nodrag nopan"
+        :disabled="data.approving || data.approvalBlocked || !data.gateAttemptId" :title="t('gui.inspector.gateCard.cancel')" :aria-label="t('gui.inspector.gateCard.cancel')"
+        data-test="designer-canvas-node-cancel" @pointerdown.stop @mousedown.stop @dblclick.stop @click.stop="cancelAttempt = data.gateAttemptId ?? null">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+      </button>
+      <ConfirmDialog :open="cancelAttempt !== null" :title="t('gui.inspector.gateCard.cancel_dialog.title')" :message="t('gui.inspector.gateCard.cancel_dialog.message')"
+        :confirm-label="t('gui.inspector.gateCard.cancel')" :cancel-label="t('gui.inspector.gateCard.cancel_dialog.keep')"
+        @cancel="cancelAttempt = null" @confirm="confirmCancel" />
       <button v-if="showApprove" type="button"
         class="flow-node-action flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked"
         :title="approveTitle" :aria-label="approveTitle"
@@ -173,7 +181,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHeaderIcon } from './flowNodeKinds'
@@ -190,8 +199,17 @@ const emit = defineEmits<{
   /** flowgate.v02.0061 T#14: the card's 병합 충돌 was pressed (the Git tool panel resolves it). */
   conflict: [nodeId: string]
   approve: [nodeId: string]
+  cancel: [nodeId: string, attemptId: string]
   'open-document': [document: CardDocumentOpen]
 }>()
+
+const cancelAttempt = ref<string | null>(null)
+watch(() => `${props.id}/${props.data.gateAttemptId}/${props.data.cancelable}`, () => { cancelAttempt.value = null })
+function confirmCancel() {
+  const attempt = cancelAttempt.value
+  cancelAttempt.value = null
+  if (attempt && attempt === props.data.gateAttemptId && props.data.cancelable && !props.data.approving) emit('cancel', props.id, attempt)
+}
 
 /** The four start strips of a connectable card, one source handle per side. */
 const LINK_SIDES = [
@@ -339,8 +357,7 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 
 .flow-node-card.is-selected:not(.has-conflict) {
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 70%, transparent),
-    0 0 0 5px color-mix(in srgb, var(--flow-node-accent) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--flow-node-accent) 40%, transparent),
     0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
@@ -596,6 +613,16 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: var(--fg2-status-danger-fg);
 }
 .flow-node-conflict:hover { background: color-mix(in srgb, var(--fg2-status-danger-fg) 26%, transparent); }
+
+/* flowgate.v02test.0064 #22/#29: [취소] is a red outline X — colored so it reads as "stop this run", but unfilled so it
+   stays lighter than the filled conflict mark and the amber approve button; it fills lightly on hover. */
+.flow-node-cancel {
+  border-color: var(--fg2-status-danger-border);
+  background: transparent;
+  color: var(--fg2-status-danger-fg);
+}
+.flow-node-cancel:hover:not(:disabled) { border-color: var(--fg2-status-danger-fg); background: var(--fg2-status-danger-bg); }
+.flow-node-cancel:disabled { cursor: not-allowed; opacity: var(--fg2-control-disabled-opacity); }
 
 .flow-node-approve {
   border-color: var(--fg2-status-warning-border);

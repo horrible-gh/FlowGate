@@ -6,8 +6,9 @@ import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateDecide, se
 import { INSPECTOR_SELECTION } from '../inspector/inspectorHost'
 import type { InspectorTarget } from '../inspector/inspectorTarget'
 import { useInspectorEvents } from '../inspector/useInspectorResource'
+import { useGateRecoveryRefresh } from './useGateRecoveryRefresh'
 
-export const GATE_RUN_EVENTS = ['graph_run_status_changed', 'graph_node_state_changed', 'gate_publish_job_changed', 'git_status_changed'] as const
+export const GATE_RUN_EVENTS = ['graph_run_status_changed', 'graph_node_state_changed', 'gate_publish_job_changed', 'git_status_changed', 'git_pending_changed', 'git_finalize_done'] as const
 export const gateRunEventMatches = (frame: { groupId: string | null }, scope: { flowId: string }) => frame.groupId === scope.flowId
 export const gateOf = (target: InspectorTarget | null) => target?.nodeType === 'gate' && !target.nodeId.startsWith('tmp_') ? `${target.flowId}\n${target.nodeId}` : null
 
@@ -276,9 +277,10 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
     return replaying
   }
   async function decide(decision: RunGateDecision, comment?: string): Promise<boolean> {
-    if (decision !== 'confirm' || busy.value || Object.keys(pending.value).length) return false
-    if (request) return replay()
-    if (status.value !== 'ready' || !gate.value?.can_decide || !node.value?.attemptId || settings.value?.settingsVersion === undefined) return false
+    if (!['confirm', 'cancel'].includes(decision) || busy.value || Object.keys(pending.value).length) return false
+    if (request) return request.decision === decision ? replay() : false
+    const permitted = decision === 'cancel' ? gate.value?.can_cancel : gate.value?.can_decide
+    if (status.value !== 'ready' || !permitted || !node.value?.attemptId || settings.value?.settingsVersion === undefined) return false
     request = { runId: run.value!.runId, decision, comment, intent: { request_id: randomUuid(), expected_attempt_id: node.value.attemptId, expected_settings_version: settings.value.settingsVersion } }
     const keeps = rights()
     busy.value = decision
@@ -486,5 +488,9 @@ export function useGateContext(target: () => InspectorTarget | null) {
     events: GATE_RUN_EVENTS, matches: gateRunEventMatches,
     changed: () => { const c = context.value; if (c) void (c.hasRequest() ? c.replay() : c.reload()) },
   })
+  useGateRecoveryRefresh(() => {
+    const gate = context.value?.gate.value
+    return !!gate?.decision_in_progress && (gate.job?.phase_note === 'gate_conflict' || gate.git_active === true || gate.recovery?.status === 'accepted')
+  }, async () => { await context.value?.reload() })
   return context
 }

@@ -159,6 +159,7 @@ export function flowNodeStateDisplay(state: string | null | undefined): FlowNode
 export const NO_ICON_KEYS: readonly string[] = ['draft', 'pending']
 export const HEADER_GLYPHS = {
   clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2',
+  canceled: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M8 8l8 8 M16 8l-8 8',
   check: 'M5 12l4 4L19 6',
   /** v02gui.0029: approved after the review count ran out - the check with an exclamation mark beside it. */
   checkAlert: 'M3 12.5l4 4L15 8 M20 5v8 M20 17.5h.01',
@@ -176,7 +177,7 @@ export const HEADER_ICON_KEYS: Readonly<Record<string, keyof typeof HEADER_GLYPH
   waiting_answer: 'clock', waiting_writer: 'clock', writing_instruction: 'clock', writing_result: 'clock',
   working: 'clock', needs_intervention: 'intervention', system_error: 'error', approved: 'check',
   rejected: 'rejected', revised: 'revised', closed: 'clock', waiting_confirm: 'hand', publishing: 'clock',
-  conflict_review: 'conflict', recovery_required: 'error', confirmed: 'check',
+  conflict_review: 'conflict', recovery_required: 'error', confirmed: 'check', canceled: 'canceled',
   in_progress: 'clock', review: 'clock', done: 'check', blocked: 'error',
 }
 export function flowNodeHeaderIcon(state: { key: string; tone: FlowNodeStateTone } | null | undefined) {

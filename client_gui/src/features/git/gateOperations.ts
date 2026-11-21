@@ -4,6 +4,7 @@ import { computed, inject, ref, shallowRef, watch, type InjectionKey } from 'vue
 import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateRecover, type RunCurrent, type RunGateState, type RunGateRecoveryRequest } from '@/features/document'
 import { checkOperationErrorKey } from '@/features/document'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
+import { useGateRecoveryRefresh } from '../designer/resources/useGateRecoveryRefresh'
 export interface GateOperation { runId: string; nodeKey: string; gate: RunGateState }
 /**
  * how an accepted retry  ended once the decision failed again: `same` = the same error code
@@ -225,10 +226,12 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     void reload()
   }, { immediate: true })
   useInspectorEvents(() => project() && flow() ? { projectId: project()!, flowId: flow()!, docId: null } : null, {
-    events: ['graph_run_status_changed', 'graph_node_state_changed', 'git_status_changed', 'gate_publish_job_changed'],
+    events: ['graph_run_status_changed', 'graph_node_state_changed', 'git_status_changed', 'gate_publish_job_changed', 'git_pending_changed', 'git_finalize_done'],
     matches: (frame, scope) => frame.groupId === scope.flowId,
     changed: () => { void reload() },
   })
+  useGateRecoveryRefresh(() => (run.value?.nodes ?? []).some(({ gate }) =>
+    !!gate?.decision_in_progress && (isConflictOperation(gate) || gate.git_active === true || gate.recovery?.status === 'accepted')), reload)
   function select(operation: GateOperation) {
     // The immutable GET snapshot is exactly the evidence/version the person is reviewing.
     selected.value = operation

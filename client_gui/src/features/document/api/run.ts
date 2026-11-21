@@ -16,7 +16,7 @@ const API = '/api/v1'
 /** The longest comment the server takes (run_request.RUN_REASON_MAX_LEN). */
 export const RUN_COMMENT_MAX_LENGTH = 500
 
-export type RunGateDecision = 'confirm' | 'reject'
+export type RunGateDecision = 'confirm' | 'reject' | 'cancel'
 
 export interface RunNodeState {
   readonly nodeKey: string
@@ -84,8 +84,8 @@ export async function runCurrentRead(flowId: string): Promise<RunCurrent | null>
 export async function runGateDecide(runId: string, nodeKey: string, decision: RunGateDecision, comment?: string, intent?: RunGateIntent): Promise<RunCurrent | null> {
   const text = comment?.trim() ?? ''
   const response = await postRequest<Raw>(
-    `${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/gate-decision`,
-    { decision, ...(text ? { comment: text.slice(0, RUN_COMMENT_MAX_LENGTH) } : {}), ...intent },
+    `${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/${decision === 'cancel' ? 'gate-cancel' : 'gate-decision'}`,
+    decision === 'cancel' ? { ...intent } : { decision, ...(text ? { comment: text.slice(0, RUN_COMMENT_MAX_LENGTH) } : {}), ...intent },
   )
   return toRunCurrent(response.data?.run)
 }
@@ -135,6 +135,7 @@ export interface RunGateState {
   readonly decision: RunGateResult | null
   readonly decision_in_progress: boolean
   readonly can_decide: boolean
+  readonly can_cancel?: boolean
   readonly settings_locked: boolean
   /**
    * why the settings are locked (the server's `settings_lock_reason`: `decision_reserved`,
@@ -158,6 +159,7 @@ export function toRunGateState(raw: unknown): RunGateState | null {
     decision: (row.decision ?? null) as RunGateResult | null,
     decision_in_progress: row.decision_in_progress === true,
     can_decide: row.can_decide === true,
+    can_cancel: row.can_cancel === true,
     settings_locked: row.settings_locked === true,
     ...('settings_lock_reason' in row ? { settings_lock_reason: typeof row.settings_lock_reason === 'string' ? row.settings_lock_reason : null } : {}),
     ...(typeof row.git_active === 'boolean' ? { git_active: row.git_active } : {}),
