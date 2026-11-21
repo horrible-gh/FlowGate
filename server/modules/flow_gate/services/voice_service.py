@@ -102,7 +102,7 @@ class Manager:
                 installed = self.installed(entry["id"], spec["id"])
                 if not can_manage and not installed:
                     continue
-                models.append({k: copy.deepcopy(v) for k, v in spec.items() if k not in ("url", "sha256", "filename")} | {
+                models.append({k: copy.deepcopy(v) for k, v in spec.items() if k not in ("url", "sha256", "filename", "self_test")} | {
                     "installed": installed, "available": supported,
                     "unavailable_reason": None if supported else "This release requires Windows x64",
                     "is_default": config["default"] == {"service": entry["id"], "model": spec["id"]}})
@@ -255,6 +255,18 @@ class Manager:
                             wav = convert(staging, sample_data, Path(temporary))
                             transcript = trial.transcribe(wav)
                         passed = bool(transcript.strip())
+                    elif spec.get("self_test"):
+                        # Models that cannot read the English sample name their own:
+                        # a file inside the model archive or a pinned service artifact.
+                        test = spec["self_test"]
+                        sample = next((p for base in (staged_model, staging) if base.is_dir()
+                                       for p in sorted(base.rglob(test["sample"]))), None)
+                        if sample is None:
+                            raise VoiceError("voice_self_test_failed", "Self-test sample is missing", 422)
+                        with tempfile.TemporaryDirectory(prefix="flowgate-voice-test-") as temporary:
+                            transcript = trial.transcribe(convert(staging, sample.read_bytes(), Path(temporary)))
+                        # Spacing differs between engines; compare without whitespace.
+                        passed = "".join(test["expect"].split()) in "".join(transcript.split())
                     else:
                         transcript = trial.transcribe(staging / "jfk.wav")
                         passed = "country" in transcript.lower()

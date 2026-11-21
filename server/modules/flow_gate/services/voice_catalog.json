@@ -150,6 +150,40 @@
           ],
           "realtime": false,
           "gpu_required": false
+        },
+        {
+          "id": "large-v3-turbo",
+          "name": "large-v3-turbo",
+          "filename": "ggml-large-v3-turbo.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
+          "size_bytes": 1624555275,
+          "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
+        },
+        {
+          "id": "large-v3",
+          "name": "large-v3",
+          "filename": "ggml-large-v3.bin",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
+          "size_bytes": 3095033483,
+          "sha256": "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+          "license": "MIT",
+          "languages": [
+            "multilingual",
+            "ko",
+            "en",
+            "ja"
+          ],
+          "realtime": false,
+          "gpu_required": false
         }
       ]
     },
@@ -233,6 +267,116 @@
           "gpu_required": false,
           "archive": true,
           "kind": "zipformer"
+        },
+        {
+          "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
+          "size_bytes": 418218652,
+          "sha256": "e346a5882a409650472be17326237e24df7bf409db6b4a8a52e1a61422bf2500",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
+          "id": "zipformer-ko",
+          "name": "Streaming Zipformer Korean",
+          "license": "Apache-2.0",
+          "languages": [
+            "ko"
+          ],
+          "realtime": true,
+          "gpu_required": false,
+          "archive": true,
+          "kind": "zipformer",
+          "self_test": {
+            "sample": "test_wavs/3.wav",
+            "expect": "\uc8fc\ubbfc\ub4f1\ub85d\uc99d"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vosk",
+      "name": "Vosk",
+      "version": "0.3.45",
+      "license": "Apache-2.0",
+      "platforms": [
+        "Windows-AMD64",
+        "Windows-x86_64"
+      ],
+      "artifacts": [
+        {
+          "filename": "vosk-win64-0.3.45.zip",
+          "url": "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip",
+          "size_bytes": 14882445,
+          "sha256": "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b"
+        },
+        {
+          "filename": "ffmpeg-8.0-essentials_build.zip",
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.0/ffmpeg-8.0-essentials_build.zip",
+          "size_bytes": 105748282,
+          "sha256": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569",
+          "license": "GPL-3.0-or-later",
+          "expanded": [
+            {
+              "filename": "ffmpeg.exe",
+              "relative_path": "ffmpeg-8.0-essentials_build/bin/ffmpeg.exe",
+              "size_bytes": 98730496,
+              "sha256": "1fcb0cb525085cc5be3ad4be16799d60786b65cc36951622a018d00f78c0fb5d"
+            },
+            {
+              "filename": "LICENSE",
+              "relative_path": "ffmpeg-8.0-essentials_build/LICENSE",
+              "size_bytes": 35147,
+              "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+            }
+          ]
+        },
+        {
+          "filename": "jfk.wav",
+          "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
+          "size_bytes": 352078,
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        },
+        {
+          "filename": "korean-sample.wav",
+          "url": "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/84fd200583460a3adb7f68b8dd6a740359a775ff/test_wavs/3.wav",
+          "size_bytes": 85834,
+          "sha256": "b1d2de5f90c73dfacddc1d6ab93a41427c89573f261ed2d425a6a37b3ee32931",
+          "license": "Apache-2.0"
+        }
+      ],
+      "models": [
+        {
+          "id": "small-ko",
+          "name": "small Korean 0.22",
+          "filename": "vosk-model-small-ko-0.22.zip",
+          "url": "https://alphacephei.com/vosk/models/vosk-model-small-ko-0.22.zip",
+          "size_bytes": 86914329,
+          "sha256": "eea36124087fed26c59996a4761519458e3bd185e8ea9d9865ad8760c4a1d989",
+          "license": "Apache-2.0",
+          "languages": [
+            "ko"
+          ],
+          "realtime": true,
+          "gpu_required": false,
+          "archive": true,
+          "kind": "vosk",
+          "self_test": {
+            "sample": "korean-sample.wav",
+            "expect": "\uc8fc\ubbfc\ub4f1\ub85d\uc99d"
+          }
+        },
+        {
+          "id": "small-en-us",
+          "name": "small English (US) 0.15",
+          "filename": "vosk-model-small-en-us-0.15.zip",
+          "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+          "size_bytes": 41205931,
+          "sha256": "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+          "license": "Apache-2.0",
+          "languages": [
+            "en"
+          ],
+          "realtime": true,
+          "gpu_required": false,
+          "archive": true,
+          "kind": "vosk"
         }
       ]
     }

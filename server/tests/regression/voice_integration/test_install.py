@@ -7,7 +7,13 @@ from modules.flow_gate.services import voice_service as vs
 from modules.flow_gate.services.voice_sherpa_runtime import SherpaRuntime
 
 
-@pytest.mark.parametrize("service,model", [("whisper.cpp", "tiny"), ("sherpa-onnx", "sensevoice-small-int8"), ("sherpa-onnx", "zipformer-en-20m")])
+STREAMING = {"zipformer-en-20m": "country", "zipformer-ko": "주민등록증", "small-en-us": "country", "small-ko": "주민등록증"}
+
+
+@pytest.mark.parametrize("service,model", [
+    ("whisper.cpp", "tiny"), ("whisper.cpp", "large-v3-turbo"),
+    ("sherpa-onnx", "sensevoice-small-int8"), ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
+    ("vosk", "small-en-us"), ("vosk", "small-ko")])
 def test_real_install_and_inference(request, tmp_path, monkeypatch, service, model):
     if not request.config.getoption("--voice-downloads"):
         pytest.skip("Pass --voice-downloads to fetch pinned artifacts into temporary storage")
@@ -25,9 +31,17 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
         assert job["done"] and not job["error"], job
         assert manager.status()["enabled"]
         sample = manager.service_dir(service) / "jfk.wav"
+        expected = "country"
+        test = vs.specification(service, model).get("self_test")
+        if test:
+            # Non-English models are checked with the sample their catalog entry names.
+            sample = next(p for base in (manager.model_path(service, model), manager.service_dir(service))
+                          if base.is_dir() for p in sorted(base.rglob(test["sample"])))
+            expected = test["expect"]
         result = manager.transcribe(sample.read_bytes(), service, model)
-        assert "country" in result["text"].lower(), result
-        if model == "zipformer-en-20m":
+        print("VOICE_RESULT", service, model, result["elapsed_ms"], ascii(result["text"]))
+        assert expected in "".join(result["text"].lower().split()), result
+        if model in STREAMING:
             runtime = SherpaRuntime()
             try:
                 runtime.start(manager.service_dir(service), manager.model_path(service, model))
@@ -40,7 +54,8 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
                         partial = runtime.request("/chunk", pcm)
                         assert partial["final"] is False
                 final = runtime.request("/finish", b"")
-                assert "country" in final["text"].lower(), final
+                print("VOICE_STREAM", service, model, ascii(final["text"]))
+                assert STREAMING[model] in "".join(final["text"].lower().split()), final
             finally:
                 runtime.stop()
         if service == "whisper.cpp":

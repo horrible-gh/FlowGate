@@ -3,7 +3,8 @@
 // Which one follows the person's voice settings (녹음 후 글로/음성, 실시간) and the model in use.
 // The server resolves the model itself (personal pick, else the administrator default), so no model is sent here.
 
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import type { DraftOwner } from '../drafts'
 import {
   VoiceRequestError,
   cancelVoiceStream,
@@ -21,11 +22,11 @@ export type VoicePhase = 'idle' | 'starting' | 'recording' | 'processing'
 export type VoiceMode = 'text' | 'audio' | 'live'
 
 export interface VoiceInputOptions {
-  flowId: () => string | null
+  owner: () => DraftOwner | null
   /** Final text for the input (text and live modes). */
   onText: (text: string) => void
   /** Sends an uploaded recording as a message; resolves true when the server accepted it. */
-  onAudio: (audio: TurnAudio) => Promise<boolean>
+  onAudio: (audio: TurnAudio, owner: DraftOwner) => Promise<boolean>
 }
 
 /** An error to show: an i18n key under gui.voice.errors (code) or the 2-minute notice. */
@@ -50,6 +51,19 @@ export function useVoiceInput(options: VoiceInputOptions) {
   const notice = ref<VoiceNotice | null>(null)
 
   let generation = 0
+  let sessionOwner: DraftOwner | null = null
+  const ownerKey = (owner: DraftOwner | null) => owner && JSON.stringify([
+    owner.userId, owner.projectId, owner.groupId, owner.intentId, owner.chatId,
+  ])
+  // Synchronous invalidation also covers leaving and returning before an upload resolves.
+  watch(() => ownerKey(options.owner()), () => discard(), { flush: 'sync' })
+
+  function isCurrent(gen: number): boolean {
+    if (gen !== generation) return false
+    // The login identity can change outside Vue reactivity; check it at async boundaries too.
+    if (ownerKey(sessionOwner) !== ownerKey(options.owner())) { discard(); return false }
+    return true
+  }
   let tick: ReturnType<typeof setInterval> | null = null
   let processingTick: ReturnType<typeof setInterval> | null = null
   let recording: RecordingHandle | null = null
@@ -91,15 +105,16 @@ export function useVoiceInput(options: VoiceInputOptions) {
   }
 
   function enqueueChunk(samples: Int16Array, final: boolean, gen: number): Promise<void> {
+    if (!isCurrent(gen)) return Promise.resolve()
     const index = chunkIndex++
     const bytes = pcmBytes(samples)
     chunkQueue = chunkQueue.then(async () => {
-      if (gen !== generation || !streamId || streamFailed) return
+      if (!isCurrent(gen) || !streamId || streamFailed) return
       try {
         const result = await sendVoiceChunk(streamId, index, new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' }), final)
-        if (gen === generation) liveText.value = result.text
+        if (isCurrent(gen)) liveText.value = result.text
       } catch (error) {
-        streamFailed = error
+        if (isCurrent(gen)) streamFailed = error
       }
     })
     return chunkQueue
@@ -107,6 +122,9 @@ export function useVoiceInput(options: VoiceInputOptions) {
 
   async function start(): Promise<void> {
     if (phase.value !== 'idle') return
+    const owner = options.owner()
+    if (!owner) return
+    sessionOwner = { ...owner }
     const gen = ++generation
     notice.value = null
     liveText.value = ''
@@ -115,45 +133,51 @@ export function useVoiceInput(options: VoiceInputOptions) {
     mode.value = prefs.action === 'audio' ? 'audio' : realtimeActive(prefs, voice.model.value) ? 'live' : 'text'
     phase.value = 'starting'
     const onLimit = () => {
-      if (gen !== generation || phase.value !== 'recording') return
+      if (!isCurrent(gen) || phase.value !== 'recording') return
       notice.value = { kind: 'info', code: 'limit' }
       void stop()
     }
     try {
       if (mode.value === 'live') {
         const session = await openVoiceStream()
-        if (gen !== generation) { void cancelVoiceStream(session.streamId).catch(() => undefined); return }
+        if (!isCurrent(gen)) { void cancelVoiceStream(session.streamId).catch(() => undefined); return }
         streamId = session.streamId
         chunkIndex = 0
         chunkQueue = Promise.resolve()
         streamFailed = null
         try {
-          capture = await startPcmCapture({ onChunk: (samples) => { void enqueueChunk(samples, false, gen) }, onLimit })
+          const handle = await startPcmCapture({ onChunk: (samples) => { void enqueueChunk(samples, false, gen) }, onLimit })
+          if (!isCurrent(gen)) { handle.stop(); return }
+          capture = handle
         } catch (error) {
           void cancelVoiceStream(session.streamId).catch(() => undefined)
           throw error
         }
       } else {
-        recording = await startRecording({ onLimit })
+        const handle = await startRecording({ onLimit })
+        if (!isCurrent(gen)) { handle.cancel(); return }
+        recording = handle
       }
-      if (gen !== generation) { recording?.cancel(); capture?.stop(); return }
+      if (!isCurrent(gen)) return
       phase.value = 'recording'
       tick = setInterval(() => { seconds.value += 1 }, 1000)
     } catch (error) {
-      if (gen === generation) fail(error)
+      if (isCurrent(gen)) fail(error)
     }
   }
 
   async function stop(): Promise<void> {
     if (phase.value !== 'recording') return
     const gen = generation
+    if (!isCurrent(gen) || !sessionOwner) return
+    const owner = { ...sessionOwner }
     beginProcessing()
     try {
       if (mode.value === 'live') {
         const rest = capture?.stop() ?? new Int16Array(0)
         capture = null
         await enqueueChunk(rest, true, gen)
-        if (gen !== generation) return
+        if (!isCurrent(gen)) return
         if (streamFailed) throw streamFailed
         const text = liveText.value.trim()
         liveText.value = ''
@@ -163,29 +187,29 @@ export function useVoiceInput(options: VoiceInputOptions) {
         return
       }
       const audio = await recording!.stop()
+      if (!isCurrent(gen)) return
       recording = null
-      if (gen !== generation) return
       if (audio.blob.size === 0) throw new VoiceRequestError('empty recording', 'voice_empty_transcription', null)
       if (mode.value === 'text') {
         const result = await transcribeAudio(audio.blob, audio.filename)
-        if (gen !== generation) return
+        if (!isCurrent(gen)) return
         if (result.text.trim()) options.onText(result.text.trim())
         else notice.value = { kind: 'error', code: 'voice_empty_transcription' }
         finish()
         return
       }
-      const flowId = options.flowId()
+      const flowId = owner.groupId
       if (!flowId) throw new VoiceRequestError('no flow', 'message_audio_forbidden', null)
       const uploaded = await uploadMessageAudio(flowId, audio.blob, audio.filename)
-      if (gen !== generation) {
+      if (!isCurrent(gen)) {
         // Cancelled while uploading: the unsent upload is removed (it would expire after 24h anyway).
         void deleteMessageAudio(flowId, uploaded.audio.audioId).catch(() => undefined)
         return
       }
       finish()
-      await options.onAudio(uploaded.audio)
+      await options.onAudio(uploaded.audio, owner)
     } catch (error) {
-      if (gen === generation) fail(error)
+      if (isCurrent(gen)) fail(error)
     }
   }
 

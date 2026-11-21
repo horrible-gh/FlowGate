@@ -1,4 +1,4 @@
-"""Lifecycle for the private sherpa HTTP worker, bound only to 127.0.0.1."""
+"""Lifecycle for the private sherpa/Vosk HTTP worker, bound only to 127.0.0.1."""
 import json
 import logging
 import tempfile
@@ -40,15 +40,21 @@ class SherpaRuntime:
         if self.model == model and self.healthy():
             return
         self.stop()
+        # One loopback worker contract (/health, /inference, /start, /chunk, /finish);
+        # the service directory decides which native library hosts it.
+        worker = "voice_sherpa_worker.py"
         libraries = list(directory.rglob("sherpa-onnx-c-api.dll"))
         if not libraries:
-            raise VoiceError("voice_not_installed", "Sherpa runtime is not installed", 409)
+            worker = "voice_vosk_worker.py"
+            libraries = list(directory.rglob("libvosk.dll"))
+        if not libraries:
+            raise VoiceError("voice_not_installed", "Voice runtime is not installed", 409)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             self.port = sock.getsockname()[1]
         environment = {**os.environ, "FLOWGATE_VOICE_WORKER_SECRET": self.secret}
         self.diagnostics = tempfile.TemporaryFile()
-        self.process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("voice_sherpa_worker.py")),
+        self.process = subprocess.Popen([sys.executable, str(Path(__file__).with_name(worker)),
                                          "--library", str(libraries[0]), "--model", str(model), "--port", str(self.port)],
                                         cwd=str(directory), env=environment, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.DEVNULL, stderr=self.diagnostics)
