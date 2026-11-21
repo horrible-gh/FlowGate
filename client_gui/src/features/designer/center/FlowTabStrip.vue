@@ -88,6 +88,9 @@
           data-test="designer-flow-tab-run-end"
           :data-tone="runEndOf(tab.flowId)!.tone"
         ><svg v-if="isCheckTone(runEndOf(tab.flowId)!.tone)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M3.6 6.2l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg><svg v-else viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.6" fill="currentColor" /><path d="M6 3.2v3.4" stroke="var(--fg2-panel, #0d1a28)" stroke-width="1.5" stroke-linecap="round" /><circle cx="6" cy="8.7" r="0.85" fill="var(--fg2-panel, #0d1a28)" /></svg></span>
+        <span v-if="conflicts?.[tab.flowId]" class="flow-tab-conflict" role="img"
+          :aria-label="t('gui.designer.center.integration.conflict')" :title="t('gui.designer.center.integration.conflict')"
+          data-test="designer-flow-tab-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
         <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
         <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
           :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>
@@ -170,7 +173,10 @@
               <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
                 :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" data-test="designer-flow-tab-list-chat-end"
                 :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>
-              <span class="flow-tab-list-name">{{ tab.name }}</span>
+              <span v-if="conflicts?.[tab.flowId]" class="flow-tab-conflict" role="img"
+          :aria-label="t('gui.designer.center.integration.conflict')" :title="t('gui.designer.center.integration.conflict')"
+          data-test="designer-flow-tab-list-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+        <span class="flow-tab-list-name">{{ tab.name }}</span>
             </button>
           </div>
         </div>
@@ -187,6 +193,7 @@ import IconButton from '../../../components/ui/IconButton.vue'
 import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import LineIcon from '../../../components/ui/LineIcon.vue'
+import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 
 export interface FlowTabStripItem {
@@ -202,6 +209,7 @@ const props = withDefaults(
     tabs: readonly FlowTabStripItem[]
     activeFlowId: string | null
     /** a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
+    conflicts?: Readonly<Record<string, boolean | undefined>>
     chatStates?: Readonly<Record<string, boolean>>
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
     /** Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
@@ -512,7 +520,7 @@ function updateHiddenMark() {
   }
   const view = strip.getBoundingClientRect()
   hiddenMark.value = props.tabs.some((tab) => {
-    if (!hasEndMark(tab.flowId)) return false
+    if (!props.conflicts?.[tab.flowId] && !hasEndMark(tab.flowId)) return false
     const rect = tabRefs.get(tab.flowId)?.getBoundingClientRect()
     return !!rect && (rect.left < view.left - 1 || rect.right > view.right + 1)
   })
@@ -530,7 +538,7 @@ onMounted(() => {
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
     JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
-    JSON.stringify(props.chatEnds ?? {}), props.activeFlowId],
+    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), props.activeFlowId],
   () => nextTick(updateOverflow),
 )
 
@@ -884,6 +892,17 @@ function pickFromList(flowId: string, close: () => void) {
 .flow-tab-chat.is-failed::after {
   background: var(--fg2-orange);
 }
+
+.flow-tab-conflict {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -3px;
+  color: var(--fg2-status-warning-fg, #ffc072);
+}
+.flow-tab-conflict svg { width: 14px; height: 14px; }
 
 .flow-tab-archive {
   display: inline-flex;

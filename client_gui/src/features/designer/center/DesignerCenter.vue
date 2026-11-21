@@ -33,6 +33,7 @@
       :archived="tabArchived"
       :run-ends="tabRunEnds"
       :chat-ends="tabChatEnds"
+      :conflicts="tabConflicts"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -123,6 +124,9 @@ import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
+import { cardNodeRun } from './graph/cardStateView'
+import type { FlowGraphNodeRun } from './graph/flowGraph'
+import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
 import RevisionNotice from './RevisionNotice.vue'
 import DraftActionNotice from './edit/DraftActionNotice.vue'
 import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
@@ -177,6 +181,22 @@ const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab
 const chatFinishes: Record<string, FlowTabChatEnd> = {}
 const tabChatStates = useFlowChatActivity(() => props.center.state.projectId, () => props.center.state.tabs.map(tab => tab.flowId),
   (flowId, failed) => { chatFinishes[flowId] = failed ? 'failed' : 'done' })
+// Read the same current gate and integration facts as the Canvas, for every open Flow.
+const tabConflicts = computed(() => {
+  const conflicts: Record<string, boolean> = {}
+  for (const tab of props.center.state.tabs) {
+    const graph = props.center.state.graphs[tab.flowId]
+    if (graph?.status !== 'ready') continue
+    const marks = props.center.runMarks(tab.flowId)
+    conflicts[tab.flowId] = graph.graph.nodes.some((node) => {
+      const runNode = marks.nodeRuns.get(node.id)
+      const current = cardNodeRun(node.nodeRun as FlowGraphNodeRun | null | undefined, runNode)
+      if (node.definition?.nodeType === 'gate' && gateHeaderState(current?.gate, current).key === 'conflict_review') return true
+      return (runNode && 'integrationStatus' in runNode ? runNode.integrationStatus : node.nodeRun?.integrationStatus) === 'conflict'
+    })
+  }
+  return conflicts
+})
 const tabRunStates = computed(() => {
   const states: Record<string, FlowTabRunState> = {}
   for (const tab of props.center.state.tabs) {

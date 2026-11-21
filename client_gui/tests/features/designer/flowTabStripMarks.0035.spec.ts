@@ -19,6 +19,21 @@ function mountStrip(props: Record<string, unknown>) {
 }
 const tabOf = (w: VueWrapper<any>, id: string) => w.get(`[data-test="designer-flow-tab"][data-flow-id="${id}"]`)
 
+describe('Flow tab merge conflict', () => {
+  it('marks active and inactive tabs, keeps the mark on activation, and clears on resolution', async () => {
+    const w = mountStrip({ conflicts: { a: true, b: true } })
+    for (const id of ['a', 'b']) {
+      expect(tabOf(w, id).get('[data-test="designer-flow-tab-conflict"]').attributes('title')).toBe('병합 충돌')
+    }
+    expect(tabOf(w, 'c').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(false)
+    await w.setProps({ activeFlowId: 'b' })
+    expect(tabOf(w, 'b').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(true)
+    await w.setProps({ conflicts: { a: true, b: false } })
+    expect(tabOf(w, 'b').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(false)
+    expect(tabOf(w, 'a').find('[data-test="designer-flow-tab-conflict"]').exists()).toBe(true)
+  })
+})
+
 describe('archived Flow tab', () => {
   it('is dimmed with the archive icon and its "아카이브됨" tooltip; the active one too', () => {
     const w = mountStrip({ archived: { a: true, b: true, c: false } })

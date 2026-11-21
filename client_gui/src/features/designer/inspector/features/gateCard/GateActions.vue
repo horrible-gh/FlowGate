@@ -33,18 +33,14 @@ async function confirmCancel() {
   if (attempt && attempt === attemptId.value) await decide('cancel')
 }
 const host = inject(INSPECTOR_HOST, null)
-// flowgate.v02gui.0004 (0001-B observation 5/6): a blocked [승인] says why beside it, not only in a tooltip. `busy` is the
-// button's own spinner, "not your turn yet" needs no line, and a conflict is already the result row's pill.
-// reason.read_only_archived is not listed: the archive state is re-read after every approve/reject, and the line flashed
-// for that moment on Flows that are not archived. The disabled button keeps it as a tooltip.
-const SHOWN_REASONS = ['reason.decision_in_progress', 'reason.read_only_conflict', 'reason.old_approval_failed']
+// The blocked-[승인] reason line is gone: the disabled button keeps its reason as a tooltip, and a conflict is already
+// the result row's pill. The one line left beside the buttons says where to undo an approval once it is held or done,
+// because [취소] no longer applies then.
 const oldApprovalHeld = computed(() => !actions.value.confirm.enabled && actions.value.confirm.reason === 'reason.old_approval_failed')
 const shownReason = computed(() => {
   if (decisionHeld?.value || result?.value.key === 'confirmed') return t(k('cancel_dialog.after_approval'))
   const reason = actions.value.confirm.reason
-  if (reason === 'reason.decision_in_progress' || reason === 'reason.old_approval_failed') return t(k('cancel_dialog.after_approval'))
-  if (actions.value.confirm.enabled || !reason || !SHOWN_REASONS.includes(reason)) return null
-  return t(k(reason))
+  return reason === 'reason.decision_in_progress' || reason === 'reason.old_approval_failed' ? t(k('cancel_dialog.after_approval')) : null
 })
 function tipOf(reason: string | null): string | undefined {
   if (failureKey.value) return t(failureKey.value.startsWith('settings:') ? `gui.inspector.checkSettings.${failureKey.value.slice(9)}` : k(failureKey.value))
