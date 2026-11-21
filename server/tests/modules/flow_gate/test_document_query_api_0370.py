@@ -197,8 +197,20 @@ def _write_doc_file(storage_root: Path, rel_path: str, body: str) -> None:
     target.write_text(body, encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def document_write_gate():
+    """Register the real startup gate in this isolated app, then restore it."""
+    from flowgate.card_document_edit import write_gate
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(card_document_ports._handlers,
+                   card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+        yield
+
+
 @pytest.fixture(scope="module", autouse=True)
-def seed_data(tmp_db, storage_root):
+def seed_data(tmp_db, storage_root, patch_store, document_write_gate):
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.db import projects, users
