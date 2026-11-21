@@ -99,6 +99,10 @@ def main():
             assert page.locator('[data-test="designer-header-settings"]').count() == 0
             bar.locator('.menu-trigger').click()
             assert bar.locator('[role="menuitem"]').count() == 1
+            card = bar.locator('.settings-card').bounding_box()
+            # The menu card keeps the canvas-card size and must not stretch across the board.
+            assert card and 160 <= card['width'] <= 176 and abs(card['height'] - 92) <= 1, card
+            print('CARD_OK', width, height, card)
             page.keyboard.press('Escape')
             assert bar.locator('[role="menu"]').count() == 0
             bar.locator('.menu-trigger').click()

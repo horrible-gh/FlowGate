@@ -118,11 +118,12 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .item-text b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overflow-trigger { width: 74px; }
 .taskbar-popup { position: absolute; bottom: calc(100% + 8px); z-index: 100000; padding: 14px; border: 1px solid var(--fg2-line-strong); border-radius: 10px; background-color: var(--fg2-panel); box-shadow: var(--fg2-overlay-shadow); }
-.menu-board { left: 10px; width: 360px; max-width: calc(100vw - 48px); min-height: 150px; background-image: radial-gradient(var(--fg2-line-strong) 1px, transparent 1px); background-size: 16px 16px; }
+/* Cards keep the canvas-card size on a column grid instead of stretching across the board. */
+.menu-board { left: 10px; width: 360px; max-width: calc(100vw - 48px); min-height: 150px; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 174px)); gap: 12px; align-content: start; background-image: radial-gradient(var(--fg2-line-strong) 1px, transparent 1px); background-size: 16px 16px; }
 .taskbar-popup button { display: block; padding: 12px 16px; border: 1px solid var(--fg2-line-strong); border-left: 4px solid var(--kind-color, #6478dc); border-radius: 6px; background: var(--fg2-panel); color: var(--fg2-text); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
 .taskbar-popup .settings-card { position: relative; display: flex; flex-direction: column; width: 100%; height: 92px; padding: 0; border: 1.5px solid #94a3b8; border-radius: 7px; box-shadow: 0 6px 18px #0003; }
 .settings-card-heading { display: flex; align-items: center; width: 100%; height: 28px; padding: 0 9px; box-sizing: border-box; font-weight: 700; background: color-mix(in srgb, #94a3b8 16%, transparent); }
-.settings-card-body { padding: 10px; color: var(--fg2-muted); }
+.settings-card-body { padding: 8px 10px 0; line-height: 1.35; color: var(--fg2-muted); }
 .card-port { position: absolute; right: -5px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--fg2-panel); border: 1.5px solid #94a3b8; }
 .overflow-list { right: 10px; width: min(360px, calc(100vw - 48px)); max-height: min(400px, 60vh); overflow: auto; }
 .overflow-list button { width: 100%; margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
