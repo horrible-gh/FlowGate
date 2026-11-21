@@ -352,7 +352,7 @@ onBeforeUnmount(() => attach.dispose())
 // ── Voice input: the mic records; the text goes into the input, or the recording is sent as a voice message ─────
 const voiceDisabled = computed(() => props.disabled || !!props.readOnly || props.sending)
 const voice = useVoiceInput({
-  flowId: () => props.groupId ?? null,
+  owner: currentOwner,
   onText: insertText,
   onAudio: sendAudio,
 })
@@ -378,13 +378,17 @@ function insertText(text: string): void {
  * in the input stays there. When the message cannot go out now, the transcript is put into the input instead and the
  * unsent upload is removed, so nothing said is lost.
  */
-async function sendAudio(audio: TurnAudio): Promise<boolean> {
-  const owner = visibleOwner
+async function sendAudio(audio: TurnAudio, owner: DraftOwner): Promise<boolean> {
+  const current = currentOwner()
+  if (!current || !sameScope(owner, current) || owner.chatId !== current.chatId) {
+    void deleteMessageAudio(owner.groupId, audio.audioId).catch(() => undefined)
+    return false
+  }
   const body = audio.text.trim()
   const blocked = !owner || !body || props.disabled || props.readOnly || props.sending || aiPending.value ||
     [...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))
   if (blocked) {
-    const flowId = props.groupId
+    const flowId = owner.groupId
     if (flowId) void deleteMessageAudio(flowId, audio.audioId).catch(() => undefined)
     if (body) insertText(body)
     return false

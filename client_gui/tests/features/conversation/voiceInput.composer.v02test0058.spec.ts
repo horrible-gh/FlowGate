@@ -209,7 +209,7 @@ describe('음성: the recording is sent as a voice message', () => {
     expect(onSend).toHaveBeenCalledTimes(1)
     const [text, snapshot] = onSend.mock.calls[0] as unknown as [string, { audio?: string; body: string }]
     expect(text).toBe(AUDIO.text)
-    expect(snapshot).toMatchObject({ body: AUDIO.text, audio: AUDIO.audioId })
+    expect(snapshot).toMatchObject({ body: AUDIO.text, audio: AUDIO.audioId, owner: { userId: 'guest', projectId: 'p', groupId: FLOW, chatId: CHAT } })
     expect(input(w).value).toBe('따로 쓰던 글')
   })
 
@@ -227,6 +227,112 @@ describe('음성: the recording is sent as a voice message', () => {
     expect(onSend).not.toHaveBeenCalled()
     expect(net.removeAudio).toHaveBeenCalledWith(FLOW, AUDIO.audioId)
     expect(input(w).value).toBe(AUDIO.text)
+  })
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+describe('voice stays bound to its recording owner', () => {
+  it.each([
+    { groupId: 'p.m.0002', chatId: 'p.m.0002.0001-CH' },
+    { chatId: 'p.m.0001.0003-CH' },
+    { chatId: null, draftIntentId: 'new-chat' },
+  ])('discards a late upload after navigation to %j, even after returning', async (target) => {
+    net.prefs.mockResolvedValue({ ...PREFS, action: 'audio' })
+    recording()
+    const upload = deferred<{ audio: typeof AUDIO; elapsedMs: number }>()
+    net.upload.mockReturnValue(upload.promise)
+    const onSend = vi.fn(async () => true)
+    const w = mountComposer({ onSend })
+    await flushPromises()
+    await mic(w).trigger('click')
+    await flushPromises()
+    await mic(w).trigger('click')
+    await flushPromises()
+    expect(net.upload).toHaveBeenCalledWith(FLOW, expect.any(Blob), 'recording.webm')
+    await w.setProps(target)
+    await w.setProps({ groupId: FLOW, chatId: CHAT, draftIntentId: undefined })
+    upload.resolve({ audio: AUDIO, elapsedMs: 900 })
+    await flushPromises()
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input(w).value).toBe('')
+    expect(net.removeAudio).toHaveBeenCalledWith(FLOW, AUDIO.audioId)
+  })
+
+  it('checks a changed login even without reactive prop changes', async () => {
+    net.prefs.mockResolvedValue({ ...PREFS, action: 'audio' })
+    recording()
+    const upload = deferred<{ audio: typeof AUDIO; elapsedMs: number }>()
+    net.upload.mockReturnValue(upload.promise)
+    const onSend = vi.fn(async () => true)
+    const w = mountComposer({ onSend })
+    const authWindow = window as unknown as { __accessToken__?: string }
+    const previous = authWindow.__accessToken__
+    try {
+      await flushPromises()
+      await mic(w).trigger('click')
+      await flushPromises()
+      await mic(w).trigger('click')
+      await flushPromises()
+      authWindow.__accessToken__ = `x.${btoa(JSON.stringify({ sub: 'another-user' }))}.x`
+      upload.resolve({ audio: AUDIO, elapsedMs: 900 })
+      await flushPromises()
+      expect(onSend).not.toHaveBeenCalled()
+      expect(input(w).value).toBe('')
+    } finally {
+      authWindow.__accessToken__ = previous
+    }
+  })
+
+  it('does not insert a delayed transcript into another chat', async () => {
+    recording()
+    const transcript = deferred<{ text: string }>()
+    net.transcribe.mockReturnValue(transcript.promise)
+    const w = mountComposer()
+    await flushPromises()
+    await mic(w).trigger('click')
+    await flushPromises()
+    await mic(w).trigger('click')
+    await flushPromises()
+    await w.setProps({ chatId: 'p.m.0001.0003-CH' })
+    await w.get('[data-test="conv-input"]').setValue('new draft')
+    transcript.resolve({ text: 'old transcript' })
+    await flushPromises()
+    expect(input(w).value).toBe('new draft')
+  })
+
+  it('cancels recording on navigation before upload begins', async () => {
+    net.prefs.mockResolvedValue({ ...PREFS, action: 'audio' })
+    const handle = recording()
+    const w = mountComposer()
+    await flushPromises()
+    await mic(w).trigger('click')
+    await flushPromises()
+    await w.setProps({ chatId: 'p.m.0001.0003-CH' })
+    expect(handle.cancel).toHaveBeenCalledTimes(1)
+    expect(net.upload).not.toHaveBeenCalled()
+  })
+
+  it('a late microphone handle cannot cancel the new recording', async () => {
+    const oldStart = deferred<ReturnType<typeof recording>>()
+    net.record.mockReturnValueOnce(oldStart.promise)
+    const w = mountComposer()
+    await flushPromises()
+    await mic(w).trigger('click')
+    await w.setProps({ chatId: 'p.m.0001.0003-CH' })
+    const fresh = recording()
+    await mic(w).trigger('click')
+    await flushPromises()
+    const old = { stop: vi.fn(), cancel: vi.fn() }
+    oldStart.resolve(old as unknown as ReturnType<typeof recording>)
+    await flushPromises()
+    expect(old.cancel).toHaveBeenCalledTimes(1)
+    expect(fresh.cancel).not.toHaveBeenCalled()
+    expect(w.find('[data-test="conv-voice-pill"]').exists()).toBe(true)
   })
 })
 
