@@ -208,16 +208,15 @@ class TestFoldedMention:
             "This invocation's context is the latest 20 turns (seq 11 to 30).\n"
             "Turns before seq 11 are not included. Read them only when the request depends on them:\n"
             f"GET http://h:1/api/v1/conversation/{self.DOC}/turns?before_seq=11\n"
-            "Authorization: Bearer RAW\n"
             "If `prev_before_seq` is not null, call again with that value to keep going further back.\n"
             "Paging back does not consume this token either."
         ) in text
 
     def test_start_paragraph_describes_this_invocation_window(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=30)
-        assert "The after_seq above is the start of this invocation's conversation context window" in text
+        assert "after_seq starts this invocation's window, not persisted model memory" in text
         assert "Read the conversation context selected for this invocation:" in text
-        assert "`head` carries document metadata and intro only" in text
+        assert "head is metadata" in text
         assert "opening of the conversation" not in text
         for stale in (
             "Read what you have not read yet",
@@ -230,7 +229,7 @@ class TestFoldedMention:
     def test_notice_sits_between_the_start_paragraph_and_the_reply_instructions(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=30)
         assert (
-            text.index("start of this invocation's conversation context window")
+            text.index("after_seq starts this invocation's window")
             < text.index("This invocation's context is the latest")
             < text.index("To reply, append ONE turn")
         )
@@ -254,7 +253,7 @@ class TestFoldedMention:
 
     def test_short_conversation_uses_the_same_invocation_wording_and_adds_no_fold_notice(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=8)
-        assert "The after_seq above is the start of this invocation's conversation context window" in text
+        assert "after_seq starts this invocation's window, not persisted model memory" in text
         assert "last read position" not in text
         assert "Turns before seq" not in text
         assert "?after_seq=0&include_head=1" in text

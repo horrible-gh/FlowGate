@@ -34,14 +34,16 @@ def test_cli_and_api_situation_matrix(hooks, mode, unanswered, current_run):
     assert ('answer_card_question' in names) == (unanswered is not False)
     assert ('BEFORE you submit' in text) == (unanswered is not False)
     assert ('read_flow_recovery_basis' in names) == (current_run is not False)
-    assert ('/recovery-basis' in text) == (current_run is not False)
+    assert ('/help/items/conversation/recovery' in text) == (current_run is not False)
     for name in selection._CONTROL_WRITE | selection._DOCUMENT_WRITE:
         assert (name in names) == (mode == 'edit')
     for name in selection._RECOVERY_WRITE:
         assert (name in names) == (mode == 'edit' and current_run is not False)
     assert {'get_ai_options', 'get_card_roles', 'read_card_document', 'read_document_by_id'} <= names
     assert any('attachment' in name for name in names)
-    assert '/documents/{doc_id}' in text and '/ai-options' in text and '/roles' in text
+    assert '/help/items/documents/access' in text and '/cards/ai_options' in text and '/cards/roles' in text
+    assert '{flow_id}' not in text and '{node_key}' not in text
+    assert '/help/items/cards/state' in text and '/help/items/attachments/upload_request' in text
     if mode != 'edit':
         descriptions = '\n'.join(t['description'] + t.get('prompt_hint', '') for t in visible)
         for forbidden in ['{flow_id}/cards', '/revisions', 'retry_flow_card', 'restart_flow_run',
@@ -173,7 +175,9 @@ def test_read_chat_length_before_after(hooks, monkeypatch):
     before = invoke_mention_service.build_conversation_mention(**params)
     print(f'READ_CHAT_CHARS before={len(before)} after={len(after)}')
     assert len(after) < len(before)
-    assert '/cards' in before and '/cards' not in after
+    assert '/help/items/cards/state' in after and '{flow_id}' not in after
+    assert after.count('Authorization: Bearer test-token') == 1
+    assert 'Bound flow_id: p.m.0001' in after
     assert '/revisions' in before and '/revisions' not in after
 
 
@@ -205,3 +209,19 @@ def test_preflight_never_advertises_authoring_or_source_mutation(mention_context
     for excluded in ['write, patch', '## Work scope', '## TR test responsibility', '## Artifact registration',
                      '## Document template', '## N/T authoring', '## TS authoring']:
         assert excluded not in text
+
+
+def test_chat_policy_is_lazy_but_required_before_action(hooks, monkeypatch):
+    from modules.flow_gate.services import question_policy
+    monkeypatch.setattr(invoke_mention_service.chat_settings_service, 'resolve_chat_settings_safe', lambda user: {})
+    monkeypatch.setattr(invoke_mention_service.chat_doc_settings_service, 'context_window',
+                        lambda *a, **kw: {'after_seq': 0, 'folded': 0})
+    monkeypatch.setattr(question_policy, 'text', lambda user: 'PRIVATE POLICY TEXT')
+    monkeypatch.setattr(selection, 'chat_situation', lambda *a, **kw: selection.ChatSituation())
+    text = invoke_mention_service.build_conversation_mention(
+        doc_id='p.m.0001.0003-CH', project='p', module='m', group_name='p.m.0001',
+        raw_token='test-token', token_id='test-id', api_base_url=BASE, command_execution=True)
+    assert 'PRIVATE POLICY TEXT' not in text
+    assert 'Before taking action or asking the user' in text
+    assert '/help/items/question/policy' in text
+    assert text.count('Authorization: Bearer test-token') == 1

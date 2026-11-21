@@ -104,15 +104,14 @@ def conversation_turn_brief(*, api_base, doc_id, raw_token, token_id,
         f"GET {api_base}/help/items/conversation/turn",
     ]
     if can_write:
-        # Keep the existing commit contract verbatim; it is a prohibition/required field.
-        full = conversation_turn_submission_lines(
-            api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
-            payload_lines=[], can_write=True, provider=provider)
-        start = full.index("If you changed source files in this chat, put the commit message in commit_message:")
-        lines += full[start:]
-    else:
-        lines += (["display_name is a badge only and is not used to determine identity.",
-                   "Keep the pinned provider name." if provider else "If your model name is unknown, omit display_name."])
+        lines += [
+            "If the worktree has uncommitted changes (including earlier edits), commit_message is required:",
+            "one English line, type(scope): summary. Do not commit yourself; FlowGate commits when this chat ends.",
+            "422 commit_message_required registers nothing, even in dry_run; resend with commit_message.",
+        ]
+    lines += ["display_name is a badge only, not identity.",
+              "Keep the pinned provider name." if provider else "If your model name is unknown, omit display_name."]
+
     return lines
 
 

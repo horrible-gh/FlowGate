@@ -77,15 +77,13 @@ def codex_image_argument(path):
 
 def _remote_prompt(prompt, provider, run, context, total):
     """Offer authenticated downloads; never send a server-local scratch path."""
-    from urllib.parse import quote
     ko = context["locale"] == "ko"
     base = (run.get("api_base_url") or "").rstrip("/")
     rows = images.images_for_window(context["conversation_id"], context["after_seq"], through_seq=context.get("through_seq"))
     lines = ["## 메시지 이미지" if ko else "## Message images"]
     if base:
         for row in rows:
-            url = (f"{base}/conversation/{quote(context['conversation_id'], safe='')}/images/"
-                   f"{quote(row['image_id'], safe='')}/content")
+            url = images.conversation_image_url(base, context['conversation_id'], row['image_id'])
             lines.append(f"- Message #{row['seq']}, image {row['position'] + 1} ({row['media_type']}): GET {url}")
         lines.append(
             "위 URL을 이 대화의 Authorization: Bearer 작업 토큰으로 GET하여 현재 작업 디렉터리에 이미지 파일로 저장한 뒤 "
