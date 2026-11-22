@@ -507,7 +507,7 @@ function keepStoredSend(userId: string, entry: StoredSend): void {
   writeStoredList(key, [...readStoredList(key).filter((e) => e.localId !== entry.localId), entry])
 }
 
-function patchStoredSend(userId: string, projectId: string, localId: string, patch: Partial<Pick<StoredSend, 'chatId' | 'phase'>>): void {
+function patchStoredSend(userId: string, projectId: string, localId: string, patch: Partial<Pick<StoredSend, 'chatId' | 'phase' | 'basedOnSeq'>>): void {
   const key = outboxStorageKey(userId, projectId)
   const list = readStoredList(key)
   if (list.some((e) => e.localId === localId)) writeStoredList(key, list.map((e) => e.localId === localId ? { ...e, ...patch } : e))
@@ -1970,11 +1970,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   /**
-   * POST one turn; every replay keeps its original CH, body, head and key. True when it was accepted, else why the
+   * POST one turn; every replay keeps its original CH, body and key. Only an explicit future-head rejection
+   * permits a freshly read basis. True when it was accepted, else why the
    * last attempt failed (A: shown on the failed bubble).
    */
   async function postPending(chatId: string, gen: number, key: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<true | SendFailure> {
     let failure = sendFailureOf(null)
+    let repairedHead = false
     const userId = draftUserId()
     // a send belongs to its chat, not to the screen. Moving to another chat or Flow neither stops
     // it nor its replays (same CH, body and idempotency key: the server stores the turn once); only a disposed session
@@ -2003,8 +2005,30 @@ export function createConversationSession(options: ConversationSessionOptions = 
       } catch (error) {
         const status = error instanceof ConversationRequestError ? error.status : null
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'error', ...(status === null ? {} : { status }) })
-        failure = sendFailureOf(status)
-        if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || ended()) {
+        failure = { ...sendFailureOf(status),
+          ...(error instanceof ConversationRequestError && error.message ? { detail: error.message } : {}),
+          ...(error instanceof ConversationRequestError && error.code ? { code: error.code } : {}) }
+        // This exact rejection rolls back the insert. Read the current head before repairing its basis;
+        // keep the key so a concurrent acceptance or a lost response can only replay the same message.
+        const ahead = status === 422 && error instanceof ConversationRequestError &&
+          /^based_on_seq \d+ is ahead of head_seq \d+\.$/.test(error.message)
+        if (ahead && !repairedHead && attempt < SEND_RETRY_MAX && !ended()) {
+          repairedHead = true
+          try {
+            const page = await source.fetchTurns(chatId, { limit: 1 })
+            if (ended()) return failure
+            if (Number.isSafeInteger(page.headSeq) && page.headSeq >= 0 && page.headSeq < item.basedOnSeq) {
+              item.basedOnSeq = page.headSeq
+              publishOutbox(key, (outbox.get(key) ?? []).map((p) => p.localId === item.localId ? { ...p, basedOnSeq: item.basedOnSeq } : p))
+              const owner = sendOwners.get(item.localId)
+              if (owner) patchStoredSend(userId, owner.projectId, item.localId, { basedOnSeq: item.basedOnSeq })
+              continue
+            }
+          } catch {
+            // Keep the rejected request intact if its new basis could not be read.
+          }
+        }
+        if ((status != null && status >= 400 && status < 500) || attempt === SEND_RETRY_MAX || ended()) {
           recordChatError(chatId, gen, 'send_failed', error, true, !ended())
           return failure
         }

@@ -773,7 +773,7 @@ const connectionRecovery = createConnectionRecovery(
 
 const isRecoveryFailure = (error: AxiosError): boolean => {
   const config = error.config
-  if (config?.method?.toLowerCase() !== 'get' || config.signal?.aborted || error.code === 'ERR_CANCELED') return false
+  if (!config || config.signal?.aborted || error.code === 'ERR_CANCELED') return false
   return error.response ? GET_RETRY_STATUSES.has(error.response.status)
     : isTimeoutError(error) || error.code === 'ERR_NETWORK'
 }
