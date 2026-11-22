@@ -213,7 +213,8 @@ class TestMessagesRouter:
         assert body["project_id"] == "msgprj"       # project -> project_id reflection
         assert "project" not in body
         assert "created_at" not in body             # internal audit only
-        assert set(body.keys()) == {"id", "project_id", "doc_type", "message", "updated_at"}
+        assert set(body.keys()) == {"id", "project_id", "doc_type", "message", "updated_at",
+                                    "usage", "title", "kind", "sort_order"}
 
     def test_list_management_envelope(self, seed):
         resp = self.client.get("/api/v1/projects/msgprj/messages")
@@ -251,3 +252,97 @@ class TestMessagesRouter:
             f"/api/v1/projects/msgprj/messages/{mid}", json={"message": "x"}
         ).status_code == 404
         assert self.client.delete(f"/api/v1/projects/msgprj/messages/{mid}").status_code == 404
+
+
+class TestChatQuickMessages:
+    def setup_method(self):
+        self.client = _make_client()
+        self.url = "/api/v1/projects/msgprj/messages"
+
+    def create(self, **updates):
+        payload = {"usage": "chat", "title": "계속 검토", "message": "한국어 English 日本語",
+                   "kind": "sticky", "sort_order": 20}
+        payload.update(updates)
+        return self.client.post(self.url, json=payload)
+
+    def test_chat_isolation_and_persistent_order(self, seed):
+        first = self.create()
+        assert first.status_code == 201
+        row = first.json()
+        assert row["usage"] == "chat" and row["kind"] == "sticky"
+        assert row["title"] == "계속 검토" and row["sort_order"] == 20
+        assert row["message"] == "한국어 English 日本語"
+        second = self.create(title="한 번", kind="once", sort_order=10).json()
+        chat = self.client.get(self.url, params={"usage": "chat"}).json()["data"]
+        assert all(r["usage"] == "chat" for r in chat)
+        assert [r["id"] for r in chat].index(second["id"]) < [r["id"] for r in chat].index(row["id"])
+        for params in ({}, {"doc_type": "T"}, {"doc_type": "*"}):
+            legacy = self.client.get(self.url, params=params).json()["data"]
+            assert all(r["usage"] == "document" for r in legacy)
+            assert row["id"] not in [r["id"] for r in legacy]
+        patched = self.client.patch(self.url + f'/{row["id"]}', json={"sort_order": -10})
+        assert patched.status_code == 200
+        again = self.client.get(self.url, params={"usage": "chat"}).json()["data"]
+        assert again[0]["id"] == row["id"]
+        # Same order is deterministic for ties.
+        self.client.patch(self.url + f'/{second["id"]}', json={"sort_order": -10})
+        again = self.client.get(self.url, params={"usage": "chat"}).json()["data"]
+        tied = [r["id"] for r in again if r["sort_order"] == -10]
+        assert tied == sorted(tied)
+        for mid in (row["id"], second["id"]):
+            assert self.client.delete(self.url + f"/{mid}").status_code == 200
+
+    @pytest.mark.parametrize("updates", [
+        {"title": ""}, {"title": "   "}, {"title": "가" * 13}, {"title": None},
+        {"message": ""}, {"message": " \n "}, {"kind": "invalid"}, {"kind": None},
+        {"usage": "invalid"},
+    ])
+    def test_invalid_create(self, seed, updates):
+        assert self.create(**updates).status_code == 422
+
+    @pytest.mark.parametrize("updates", [
+        {"title": ""}, {"title": " "}, {"title": "a" * 13}, {"title": None},
+        {"message": ""}, {"message": " "}, {"message": None},
+        {"kind": "invalid"}, {"kind": None}, {"sort_order": None},
+    ])
+    def test_invalid_patch(self, seed, updates):
+        row = self.create().json()
+        assert self.client.patch(self.url + f'/{row["id"]}', json=updates).status_code == 422
+        assert self.client.delete(self.url + f'/{row["id"]}').status_code == 200
+
+    def test_other_project_cannot_mutate(self, seed):
+        from modules.flow_gate.db import messages as db
+        for usage in ("document", "chat"):
+            row = db.create("otherprj", "*", "unchanged", usage=usage, title="제목")
+            url = self.url + f'/{row["id"]}'
+            assert self.client.patch(url, json={"message": "attacked"}).status_code == 404
+            assert self.client.delete(url).status_code == 404
+            assert db.get_by_id(row["id"])["message"] == "unchanged"
+            assert db.update(row["id"], {"message": "attacked"}, project="msgprj") is None
+            assert db.delete(row["id"], project="msgprj") is False
+            assert db.delete(row["id"], project="otherprj") is True
+
+    def test_title_limit_and_defaults(self, seed):
+        row = self.client.post(self.url, json={"usage": "chat", "title": "가" * 12,
+                                             "message": "text"}).json()
+        assert row["title"] == "가" * 12 and row["kind"] == "once"
+        assert row["sort_order"] == 0 and row["doc_type"] == "*"
+        assert self.client.patch(self.url + f'/{row["id"]}',
+                                 json={"title": "새 제목", "kind": "sticky", "message": "new"}).status_code == 200
+        assert self.client.delete(self.url + f'/{row["id"]}').status_code == 200
+
+
+def test_quick_message_migration_preserves_legacy_rows():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE projects (project_id TEXT PRIMARY KEY)")
+    conn.execute("INSERT INTO projects VALUES ('legacy')")
+    conn.executescript((_SCHEMA_DIR / "042_project_messages.sql").read_text(encoding="utf-8"))
+    conn.execute("INSERT INTO project_messages (project, doc_type, message) VALUES ('legacy', 'T', '기존 문구')")
+    before = dict(conn.execute("SELECT * FROM project_messages").fetchone())
+    conn.executescript((_SCHEMA_DIR / "210_project_message_quick_fields.sql").read_text(encoding="utf-8"))
+    after = dict(conn.execute("SELECT * FROM project_messages").fetchone())
+    assert all(after[k] == v for k, v in before.items())
+    assert {k: after[k] for k in ("message_usage", "title", "kind", "sort_order")} == {
+        "message_usage": "document", "title": "", "kind": "once", "sort_order": 0}
+    conn.close()
